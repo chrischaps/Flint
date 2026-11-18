@@ -25,6 +25,16 @@
 //! bundle is complete on its own: [`Bundle::insert_into`] adds its files to a
 //! [`MemorySource`], and the web player installs the grown source again.
 //!
+//! A bundle holds the game's files as they are on the disk, plus one kind
+//! the packer makes: a user style's **guarded module** (#550,
+//! `styles/<style>.guarded.wgsl`, or `<style>.<pass>.guarded.wgsl` for a
+//! style of several passes, beside its `.shader.toml`). It is the style's
+//! WGSL as the native build compiles it, every loop that could run forever
+//! stopped after `LOOP_LIMIT` turns. The browser has no naga to write it,
+//! so it builds the packed one (`flint_render::stylize::custom::packed_guarded`).
+//! Only a pass with a loop to guard has one. The format is unchanged: it is
+//! a file like any other, found by its path.
+//!
 //! ```
 //! use flint_core::bundle::{Bundle, BundleManifest};
 //!

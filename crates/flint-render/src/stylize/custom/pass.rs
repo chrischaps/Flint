@@ -300,6 +300,17 @@ pub(super) fn build(d: &StyleDevice) -> CustomPass {
     pass
 }
 
+/// A style's `reach` (points) in pixels at `pixels_per_point`, rounded
+/// out, plus one for the filtered read of a pixel at its edge (#538).
+pub(super) fn reach_pixels(reach: f32, pixels_per_point: f32) -> u32 {
+    let ppp = if pixels_per_point.is_finite() && pixels_per_point > 0.0 {
+        pixels_per_point
+    } else {
+        1.0
+    };
+    (reach.max(0.0) * ppp).ceil() as u32 + 1
+}
+
 pub(super) fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -1234,7 +1245,22 @@ impl StylePass for CustomPass {
                 None => output,
             };
             let pipeline = builds[i].pipeline.as_ref().expect("checked above");
-            kit::fullscreen_pass(encoder, names.passes[i].pass, out, pipeline, &groups);
+            match source.reach.filter(|_| pass.target.is_none()) {
+                // A style that says how far past its entities it reaches
+                // (#538): the last pass inside that, its passthrough (the
+                // same prelude and epilogue around `return p.color`, so
+                // the pixels it returns there) around it
+                Some(reach) => kit::scissored_pass_around(
+                    encoder,
+                    names.passes[i].pass,
+                    out,
+                    [frame.width, frame.height],
+                    (pipeline, &groups),
+                    frame.styled_rect(reach_pixels(reach, frame.pixels_per_point)),
+                    (&self.passthrough, &[&frame_bg, &input_bg]),
+                ),
+                None => kit::fullscreen_pass(encoder, names.passes[i].pass, out, pipeline, &groups),
+            }
         }
         if source.has_history() {
             history.parity = previous;

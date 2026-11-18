@@ -25,6 +25,16 @@ const KEPT: &[(&str, &str, &str)] = &[
         "the golden `user-style-broken` draws a style whose WGSL fails",
     ),
     (
+        "crates/flint-cli/tests/golden/fixtures/styles/broken_hdr.wgsl",
+        "bad-user-style",
+        "the golden `user-style-broken-hdr` draws an HDR style whose WGSL fails",
+    ),
+    (
+        "crates/flint-cli/tests/golden/fixtures/styles/broken_inputs.wgsl",
+        "bad-user-style",
+        "the golden `user-style-broken-inputs` draws a style with every input whose WGSL fails",
+    ),
+    (
         "tests/fixtures/scenes/styles/darkroom.shader.toml",
         "bad-user-style",
         "its images are borrowed by `../` path (#759), which an image option refuses; \

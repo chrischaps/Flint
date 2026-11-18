@@ -1833,17 +1833,99 @@ fn a_style_with_no_blend_code_fades_by_the_framework() {
 /// at a time; at each place its cells (those its full style changes) and
 /// its turned cells (those drawn as the full style) are counted. On the
 /// order alone a 6x5 prop turned 30-73% of its cells at 0.5 by where it
-/// sat; ranked among its own cells it turns round(0.5 x n). The places run
-/// past 32 dissolves switched on and off in one renderer, which once
-/// wrapped the glyph pass's bind key onto a stale rank texture.
+/// sat; ranked among its own cells it turns half of them ([`turns_half`]).
+/// In 4-pixel cells every pixel is a lattice sample, so no cell is a
+/// sliver (#554's test is).
 #[test]
 fn a_small_props_dissolve_turns_blend_of_its_cells_wherever_it_sits() {
     let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
+    turns_half(&dissolve_shares(&gpu, &DissolveBench::BOX));
+}
+
+/// #554: the cells the 16 lattice samples miss are ranked too. In 8-pixel
+/// cells the samples are 2 pixels apart, so a tilted box's slanted edges
+/// leave slivers of a pixel or so in cells no sample of it lands in. Those
+/// cells took their place in the raw order, which isn't balanced against
+/// the ranked cells, so a prop turned a cell or two more or fewer than
+/// half. Each of the variant's cells is now found from its pixels, so at
+/// every place half of them turn.
+#[test]
+fn a_dissolve_ranks_the_sliver_cells_between_the_lattice_samples() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    turns_half(&dissolve_shares(&gpu, &DissolveBench::TILTED));
+}
+
+/// Every place's (cells, turned) at blend 0.5 is exactly half. The ranks
+/// are (k + 0.5) / n, so for an odd n the middle cell's is 0.5 itself, and
+/// it turns or not by the blend's last bit in the mask (0.5 is stored as
+/// 32768 / 65535, a hair over, so it turns): either half is exact.
+fn turns_half(shares: &[(usize, usize)]) {
+    let off: Vec<_> = shares
+        .iter()
+        .enumerate()
+        .filter(|(_, &(cells, turned))| turned != cells / 2 && turned != cells.div_ceil(2))
+        .collect();
+    assert!(
+        off.is_empty(),
+        "places whose (cells, turned) at blend 0.5 aren't half: {off:?}"
+    );
+}
+
+/// A box slid across the grid for [`dissolve_shares`].
+struct DissolveBench {
+    /// ASCII's cell, points (the frame has one pixel a point)
+    cell: usize,
+    /// Places to measure
+    steps: usize,
+    /// The box's half extents
+    half: [f64; 3],
+    /// Its rotation, degrees
+    rotation: [f64; 3],
+    /// Screen right and up of the first place, and the step of each
+    start: [f64; 2],
+    step: [f64; 2],
+    /// The cells it should cover at every place
+    cells: std::ops::RangeInclusive<usize>,
+}
+
+impl DissolveBench {
+    /// #398's box: about 6x5 cells of 4 pixels, facing the camera, slid
+    /// over 40 places
+    const BOX: DissolveBench = DissolveBench {
+        cell: 4,
+        steps: 40,
+        half: [4.5, 1.6, 0.8],
+        rotation: [0.0, 45.0, 0.0],
+        start: [-1.3, -0.8],
+        step: [0.23, 0.14],
+        cells: 20..=48,
+    };
+    /// #554's: in 8-pixel cells, and tilted so its edges slant across them
+    const TILTED: DissolveBench = DissolveBench {
+        cell: 8,
+        steps: 24,
+        half: [8.0, 4.0, 1.0],
+        rotation: [18.0, 45.0, 14.0],
+        start: [-0.9, -0.6],
+        step: [0.17, 0.11],
+        cells: 16..=56,
+    };
+}
+
+/// Slides `bench`'s box across the grid a part of a cell at a time and, at
+/// each place, counts its cells (those its full style changes) and those
+/// turned at blend 0.5 (drawn as the full style). The places run past 32
+/// dissolves switched on and off in one renderer, which once wrapped the
+/// glyph pass's bind key onto a stale rank texture (#398).
+fn dissolve_shares(gpu: &Gpu, bench: &DissolveBench) -> Vec<(usize, usize)> {
     use flint_render::entity_style::{set_entity_style, set_style_param};
-    const CELL: usize = 4;
+    let cell_px = bench.cell;
     let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
     let mut renderer = SceneRenderer::new_headless(
         gpu.device,
@@ -1855,15 +1937,15 @@ fn a_small_props_dissolve_turns_blend_of_its_cells_wherever_it_sits() {
     );
     let mut shares = Vec::new();
     let mut binds = None;
-    for step in 0..40 {
+    for step in 0..bench.steps {
         let mut world = FlintWorld::new();
         let prop = world.spawn("prop").unwrap();
         let mut transform = toml::Table::new();
         // Across the screen (the default camera looks down (-1, -1, -1), so
         // (1, 0, -1) is its right) and up, by uneven steps, so the prop
         // meets the cell grid (and the noise) at a new phase each time
-        let across = -1.3 + step as f64 * 0.23;
-        let up = -0.8 + (step * 7 % 12) as f64 * 0.14;
+        let across = bench.start[0] + step as f64 * bench.step[0];
+        let up = bench.start[1] + (step * 7 % 12) as f64 * bench.step[1];
         transform.insert(
             "position".into(),
             vec3([
@@ -1872,15 +1954,16 @@ fn a_small_props_dissolve_turns_blend_of_its_cells_wherever_it_sits() {
                 -across * std::f64::consts::FRAC_1_SQRT_2,
             ]),
         );
-        // Turned to face the camera, and wide: the frame is squeezed to the
-        // camera's 16:9
-        transform.insert("rotation".into(), vec3([0.0, 45.0, 0.0]));
+        // Turned to face the camera (or tilted off it), and wide: the frame
+        // is squeezed to the camera's 16:9
+        transform.insert("rotation".into(), vec3(bench.rotation));
         world
             .set_component(prop, "transform", transform.into())
             .unwrap();
         let mut bounds = toml::Table::new();
-        bounds.insert("min".into(), vec3([-4.5, -1.6, -0.8]));
-        bounds.insert("max".into(), vec3([4.5, 1.6, 0.8]));
+        let [hx, hy, hz] = bench.half;
+        bounds.insert("min".into(), vec3([-hx, -hy, -hz]));
+        bounds.insert("max".into(), vec3([hx, hy, hz]));
         world.set_component(prop, "bounds", bounds.into()).unwrap();
         let plain = gpu.frame(&mut renderer, &world);
         set_entity_style(
@@ -1895,7 +1978,7 @@ fn a_small_props_dissolve_turns_blend_of_its_cells_wherever_it_sits() {
             &flint_render::stylize::StyleRegistry::new(),
             prop,
             "cell",
-            (CELL as f64).into(),
+            (cell_px as f64).into(),
         )
         .unwrap();
         let full = gpu.frame(&mut renderer, &world);
@@ -1916,31 +1999,44 @@ fn a_small_props_dissolve_turns_blend_of_its_cells_wherever_it_sits() {
         )
         .unwrap();
         let half = gpu.frame(&mut renderer, &world);
-        // 64 / 4: the grid starts at the frame's corner
-        let cells = SIZE as usize / CELL;
+        // 64 / 4 or 64 / 8: the grid starts at the frame's corner
+        let cells = SIZE as usize / cell_px;
         let (mut member, mut turned) = (0usize, 0usize);
         for cy in 0..cells {
             for cx in 0..cells {
-                let (mut styled, mut glyph) = (false, false);
-                for py in cy * CELL..(cy + 1) * CELL {
-                    for px in cx * CELL..(cx + 1) * CELL {
+                let (mut styled, mut glyph, mut mixed, mut n) = (false, false, 0, 0usize);
+                for py in cy * cell_px..(cy + 1) * cell_px {
+                    for px in cx * cell_px..(cx + 1) * cell_px {
                         let (p, f, h) = (
                             pixel(&plain, px, py),
                             pixel(&full, px, py),
                             pixel(&half, px, py),
                         );
-                        assert!(h == p || h == f, "dissolve drew a mixed pixel");
+                        if h != p && h != f {
+                            mixed += 1;
+                        }
                         styled |= p != f;
                         glyph |= p != f && h == f;
+                        n += (p != f) as usize;
                     }
                 }
+                // A cell turns whole or not at all. A turned cell's line
+                // glyph can still differ from the full style's, since the
+                // edge passes give a line to whichever of two cells is drawn
+                // (#910), and at 0.5 its neighbour may not be
+                assert!(
+                    mixed == 0 || (glyph && bench.cell > 4),
+                    "step {step}: cell {cx},{cy} drew {mixed} of its {n} styled pixels \
+                     as neither the scene nor the style"
+                );
                 member += styled as usize;
                 turned += glyph as usize;
             }
         }
         assert!(
-            (20..=48).contains(&member),
-            "the prop should be about 6x5 cells: {member} at step {step}"
+            bench.cells.contains(&member),
+            "the prop should cover {:?} cells: {member} at step {step}",
+            bench.cells
         );
         shares.push((member, turned));
         // Switching the dissolve on and off makes nothing new
@@ -1952,14 +2048,7 @@ fn a_small_props_dissolve_turns_blend_of_its_cells_wherever_it_sits() {
         );
     }
     eprintln!("cells, turned at blend 0.5: {shares:?}");
-    for (step, &(member, turned)) in shares.iter().enumerate() {
-        let share = turned as f64 / member as f64;
-        assert!(
-            (share - 0.5).abs() <= 0.1,
-            "{turned} of {member} cells turned at blend 0.5 at step {step}: {:.0}%",
-            share * 100.0
-        );
-    }
+    shares
 }
 
 /// #335: two entities in one frame draw in two glyph sets. The right cube
@@ -3077,6 +3166,125 @@ fn per_entity_styles_scissored_to_their_props_draw_the_same_bytes() {
     assert!(gpu.frame(&mut renderer, &world) == scissored);
 }
 
+/// #538: per-entity watercolor (its wash, blur and paint passes) and a
+/// user style that declares its `reach` are scissored as pencil and ASCII
+/// are: the frame is the full one byte for byte, and a style that breaks
+/// its promise (it changes every pixel but says `reach = 0`) shows the
+/// scissor is drawing only around its entity.
+#[test]
+fn per_entity_watercolor_and_a_user_style_with_a_reach_draw_the_same_bytes_scissored() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::set_entity_style;
+    let dir = std::env::temp_dir().join(format!("flint-reach-538-{}", std::process::id()));
+    let styles = dir.join("styles");
+    std::fs::create_dir_all(&styles).unwrap();
+    // A rim two points out around its entities, read from the mask: what
+    // `reach = 2` promises
+    std::fs::write(
+        styles.join("utest_rim.shader.toml"),
+        "version = 1\nname = \"utest_rim\"\nshader = \"utest_rim.wgsl\"\ninputs = [\"mask\"]\nreach = 2\n",
+    )
+    .unwrap();
+    std::fs::write(
+        styles.join("utest_rim.wgsl"),
+        "fn style(p: StylePixel) -> vec4<f32> {\n    \
+         let o = 2.0 * flint.pixels_per_point * flint.texel;\n    \
+         var near = flint_style_blend(p.uv);\n    \
+         near = max(near, flint_style_blend(p.uv + vec2<f32>(o.x, 0.0)));\n    \
+         near = max(near, flint_style_blend(p.uv - vec2<f32>(o.x, 0.0)));\n    \
+         near = max(near, flint_style_blend(p.uv + vec2<f32>(0.0, o.y)));\n    \
+         near = max(near, flint_style_blend(p.uv - vec2<f32>(0.0, o.y)));\n    \
+         if (near <= 0.0) {\n        return p.color;\n    }\n    \
+         return vec4<f32>(1.0 - p.color.rgb, 1.0);\n}\n",
+    )
+    .unwrap();
+    // Inverts every pixel, its entities' or not, yet says it reaches none
+    std::fs::write(
+        styles.join("utest_leak.shader.toml"),
+        "version = 1\nname = \"utest_leak\"\nshader = \"utest_leak.wgsl\"\ninputs = [\"mask\"]\nreach = 0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        styles.join("utest_leak.wgsl"),
+        "fn style(p: StylePixel) -> vec4<f32> {\n    \
+         return vec4<f32>(1.0 - p.color.rgb, 1.0);\n}\n",
+    )
+    .unwrap();
+    let mut registry = flint_render::stylize::StyleRegistry::new();
+    let messages = registry.load_dir(&dir);
+    assert!(messages.is_empty(), "{messages:?}");
+
+    let mut world = FlintWorld::new();
+    boxed(&mut world, "floor", 30.0, -30.0, None);
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    for (name, at) in [("wash", [2.5, 0.0, -2.5]), ("rim", [-2.5, 0.0, 2.5])] {
+        let id = world.spawn(name).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(at));
+        transform.insert("rotation".into(), vec3([10.0, 30.0, 0.0]));
+        world
+            .set_component(id, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-0.6; 3]));
+        bounds.insert("max".into(), vec3([0.6; 3]));
+        world.set_component(id, "bounds", bounds.into()).unwrap();
+    }
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    renderer.set_styles(registry.clone());
+    let plain = gpu.frame(&mut renderer, &world);
+    let (wash, rim) = (world.get_id("wash").unwrap(), world.get_id("rim").unwrap());
+    set_entity_style(&mut world, &registry, wash, "watercolor").unwrap();
+    set_entity_style(&mut world, &registry, rim, "utest_rim").unwrap();
+    renderer.set_style_scissor(true);
+    let scissored = gpu.frame(&mut renderer, &world);
+    let changed = plain
+        .chunks(4)
+        .zip(scissored.chunks(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(changed > 20, "the styles changed only {changed} pixels");
+    renderer.set_style_scissor(false);
+    for _ in 0..2 {
+        assert!(
+            gpu.frame(&mut renderer, &world) == scissored,
+            "the scissored frame differs from the full one"
+        );
+    }
+
+    // The broken promise: scissored, the far corner from its entity is the
+    // plain frame's; drawn whole, it is inverted
+    set_entity_style(&mut world, &registry, rim, "utest_leak").unwrap();
+    flint_render::entity_style::clear_entity_style(&mut world, &registry, wash);
+    let full = gpu.frame(&mut renderer, &world);
+    renderer.set_style_scissor(true);
+    let cut = gpu.frame(&mut renderer, &world);
+    let far = SIZE as usize - 2;
+    let corners = [(1, 1), (far, 1), (1, far), (far, far)];
+    let untouched = corners
+        .iter()
+        .filter(|&&(x, y)| pixel(&cut, x, y) == pixel(&plain, x, y))
+        .count();
+    assert!(untouched >= 1, "the scissor drew every corner");
+    for (x, y) in corners {
+        assert!(
+            pixel(&full, x, y) != pixel(&plain, x, y),
+            "drawn whole, {x},{y} isn't inverted"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn pixel(frame: &[u8], x: usize, y: usize) -> &[u8] {
     &frame[(y * SIZE as usize + x) * 4..][..4]
 }
@@ -4174,10 +4382,18 @@ fn a_loop_that_never_ends_draws_a_frame() {
     renderer.set_styles(registry.clone());
     let all = ["utest_forever"];
     with_styles(&gpu, &mut renderer, &world, &all, &[]);
+    // The first frame builds the style's pipeline as well, which side by
+    // side competes for the CPU with every other test building theirs
+    // (1.07 s once, #560); what the guard bounds is the draw, so the
+    // limit is on a frame after it. An unguarded loop never returns from
+    // either frame, and the GPU wait or the harness's watchdog names it.
+    let start = std::time::Instant::now();
+    with_styles(&gpu, &mut renderer, &world, &all, &all);
+    let built = start.elapsed();
     let start = std::time::Instant::now();
     let pixels = with_styles(&gpu, &mut renderer, &world, &all, &all);
     let took = start.elapsed();
-    eprintln!("a never-ending loop's frame, built and drawn: {took:?}");
+    eprintln!("a never-ending loop's frame: built and drawn {built:?}, drawn {took:?}");
     assert!(
         registry.errors().iter().all(|(n, _)| n != "utest_forever"),
         "{:?}",

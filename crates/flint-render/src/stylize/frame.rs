@@ -199,11 +199,35 @@ pub struct StyleFrame<'a> {
 
 /// Whether per-entity styles scissor their passes to their entities
 /// (#385): on unless `FLINT_STYLE_SCISSOR=0`, which is for checking that
-/// the scissored frame is the full one, byte for byte. Read once.
+/// the scissored frame is the full one, byte for byte. Read once, unless a
+/// host said otherwise first ([`set_scissor_enabled`]).
 pub fn scissor_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| flint_core::env::STYLE_SCISSOR.flag().unwrap_or(true))
+    use std::sync::atomic::Ordering;
+    match SCISSOR_SET.load(Ordering::Relaxed) {
+        SCISSOR_ON => true,
+        SCISSOR_OFF => false,
+        _ => {
+            static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            *ON.get_or_init(|| flint_core::env::STYLE_SCISSOR.flag().unwrap_or(true))
+        }
+    }
 }
+
+/// Switch the per-entity style scissor for the process, over
+/// `FLINT_STYLE_SCISSOR` (#538): the web page's `?scissor=0`, which has no
+/// environment, for measuring what the scissor saves in a browser. Call it
+/// before the renderer is made, which reads it for its own switch
+/// ([`SceneRenderer::set_style_scissor`](crate::SceneRenderer::set_style_scissor)).
+pub fn set_scissor_enabled(on: bool) {
+    SCISSOR_SET.store(
+        if on { SCISSOR_ON } else { SCISSOR_OFF },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+const SCISSOR_ON: u8 = 1;
+const SCISSOR_OFF: u8 = 2;
+static SCISSOR_SET: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// A weight `w` that means "keep this much of last frame, per 60 Hz frame"
 /// as this frame's weight, `w^(dt * 60)` (#342): at 120 Hz two frames keep

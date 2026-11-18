@@ -210,12 +210,16 @@ impl ReplayHost {
             }
         }
         // Which engine drew it against which draws it now (#1208: a render's
-        // capture names its commit too, so both sides usually can)
+        // capture names its commit too, so both sides usually can): the
+        // commit this binary was built from, not the checkout it runs in
+        // (#1290)
         let captured_at = description.engine.as_ref().and_then(|e| e.commit.as_ref());
-        let (here, here_dirty) = super::super::render_frame_dump::checkout_of(&scene_path);
-        if let Some(note) =
-            commit_note(captured_at.map(String::as_str), here.as_deref(), here_dirty)
-        {
+        let here = flint_player::provenance::engine();
+        if let Some(note) = commit_note(
+            captured_at.map(String::as_str),
+            here.commit.as_deref(),
+            here.dirty,
+        ) {
             notes.push(note);
         }
 
@@ -496,7 +500,7 @@ fn commit_note(captured: Option<&str>, here: Option<&str>, dirty: Option<bool>) 
     let captured = captured?;
     let short = |c: &str| c.chars().take(9).collect::<String>();
     let changes = if dirty == Some(true) {
-        "; this checkout has uncommitted changes"
+        "; this engine's source has uncommitted changes"
     } else {
         ""
     };

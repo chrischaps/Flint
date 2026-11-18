@@ -31,7 +31,7 @@ struct Row {
     flags: u32,
     paper: vec3<f32>,
     layers: f32,
-    // 1: paint on the paper image (#390)
+    // The paper image's layer plus one (#390, #547); 0 = procedural
     image: f32,
     _p0: f32,
     _p1: f32,
@@ -46,8 +46,8 @@ struct PaintUniforms {
     passthrough: u32,
     near: f32,
     far: f32,
-    // The paper image's mean and spread of luma (#390)
-    paper_stats: vec4<f32>,
+    // Each layer of the paper stack (#547): measures and size
+    papers: array<StyleImageLayer, 4>,
 };
 
 @group(0) @binding(0) var<uniform> params: PaintUniforms;
@@ -61,8 +61,8 @@ struct PaintUniforms {
 @group(2) @binding(1) var wash_sampler: sampler;
 @group(3) @binding(0) var mask_texture: texture_2d<u32>;
 @group(3) @binding(1) var depth_texture: texture_depth_2d;
-// The paper image (#390), a blank texel while none is named
-@group(3) @binding(2) var paper_texture: texture_2d<f32>;
+// The paper stack (#390, #547), a blank texel while none is named
+@group(3) @binding(2) var paper_texture: texture_2d_array<f32>;
 
 const PASS_THROUGH: u32 = 1u;
 
@@ -162,6 +162,15 @@ fn sample_display(t: texture_2d<f32>, s: sampler, uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(select(rgb, flint_to_display(rgb), params.srgb == 1u), c.a);
 }
 
+// An unpainted pixel, as fs_main returns one whose wobbled read finds no
+// painted entity either (#538): the per-entity paint pass is scissored to
+// its entities, and this entry point draws the frame around them, so the
+// pixels there are fs_main's own bytes
+@fragment
+fn fs_passthrough(in: VertexOutput) -> @location(0) vec4<f32> {
+    return textureSampleLevel(input_texture, input_sampler, in.uv, 0.0);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ppp = params.pixels_per_point;
@@ -234,8 +243,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var tint = vec3<f32>(1.0);
     if (r.image > 0.5) {
         let lod = log2(max(1.0 / (r.grain_scale * ppp), 1e-3));
-        let c = img_read(paper_texture, pt / r.grain_scale, lod, true, vec2<f32>(0.0), vec2<f32>(0.0));
-        h = img_paper_height(c, params.paper_stats.x, params.paper_stats.y);
+        let layer = img_layer(r.image);
+        let info = params.papers[layer];
+        let c = img_read(paper_texture, layer, info, pt / r.grain_scale, lod, true, vec2<f32>(0.0), vec2<f32>(0.0));
+        h = img_paper_height(c, info.stats.x, info.stats.y);
         tint = img_paper_tint(c);
     }
     let load = 1.0 - flint_luma(base);

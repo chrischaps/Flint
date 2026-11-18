@@ -640,6 +640,32 @@ pub fn scissored_pass(
     blit: &Blit,
     input: &wgpu::BindGroup,
 ) {
+    scissored_pass_around(
+        encoder,
+        label,
+        target,
+        size,
+        (pipeline, groups),
+        rect,
+        (&blit.pipeline, &[input]),
+    );
+}
+
+/// [`scissored_pass`] whose bands around `rect` are drawn by `around`, a
+/// pipeline and its bind groups, rather than a [`Blit`] (#538). For a style
+/// whose passthrough isn't a `textureLoad` of the pixel (watercolor samples
+/// its input; a user style's goes through its epilogue): `around` is that
+/// passthrough itself, an entry point of the same text over the same
+/// vertex stage, so the bands are its bytes by construction.
+pub fn scissored_pass_around(
+    encoder: &mut wgpu::CommandEncoder,
+    label: &str,
+    target: &wgpu::TextureView,
+    size: [u32; 2],
+    (pipeline, groups): (&wgpu::RenderPipeline, &[&wgpu::BindGroup]),
+    rect: Option<PixelRect>,
+    (around, around_groups): (&wgpu::RenderPipeline, &[&wgpu::BindGroup]),
+) {
     let [width, height] = size;
     let rect = match rect.map(|r| r.clamp_to(width, height)) {
         Some(r) if !r.covers(width, height) => r,
@@ -661,8 +687,10 @@ pub fn scissored_pass(
         occlusion_query_set: None,
         multiview_mask: None,
     });
-    pass.set_pipeline(&blit.pipeline);
-    pass.set_bind_group(0, input, &[]);
+    pass.set_pipeline(around);
+    for (i, group) in around_groups.iter().enumerate() {
+        pass.set_bind_group(i as u32, *group, &[]);
+    }
     for band in rect.outside(width, height) {
         pass.set_scissor_rect(band.x, band.y, band.width, band.height);
         pass.draw(0..3, 0..1);

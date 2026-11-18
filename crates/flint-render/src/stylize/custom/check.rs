@@ -24,8 +24,9 @@ pub struct Report {
     pub warnings: Vec<String>,
     /// The WGSL to give wgpu when it isn't the composed text: the module
     /// written back out by naga with every user loop guarded (#411).
-    /// `None` when there is no loop to guard, the guard is off, or on the
-    /// web (no naga there).
+    /// `None` when there is no loop to guard or the guard is off. On the
+    /// web (no naga there) it is the module a bundle packed for the pass
+    /// ([`packed_guarded`], #550), else `None`.
     pub guarded: Option<String>,
 }
 
@@ -499,7 +500,90 @@ pub(super) fn inspect(
             report.texture_reads
         ));
     }
+    // What the browser refuses and naga lets through (#573)
+    for found in uniformity::derivatives_under_branches(module, &in_user) {
+        report
+            .warnings
+            .push(derivative_warning(composed, file, &found));
+    }
     Ok(report)
+}
+
+/// `file:line:col: warning: ...` for a derivative the browser will refuse
+/// (#573), the line quoted as an error's is, with how to move it.
+#[cfg(not(target_arch = "wasm32"))]
+fn derivative_warning(composed: &Composed, file: &str, found: &uniformity::Finding) -> String {
+    use uniformity::Why;
+    let line_of = |span: naga::Span| {
+        let at = span.location(&composed.text);
+        (composed.user_line(at.line_number as usize), at)
+    };
+    let (line, at) = line_of(found.at);
+    let text = composed
+        .text
+        .lines()
+        .nth((at.line_number as usize).saturating_sub(1))
+        .unwrap_or("")
+        .trim_end();
+    let what = found.what;
+    let subject = match (&found.via, &found.through) {
+        (Some((name, inner)), _) => match line_of(*inner).0 {
+            Some(l) => format!("a call to `{name}`, which takes `{what}` at line {l},"),
+            None => format!("a call to `{name}`, which takes `{what}`,"),
+        },
+        (None, Some((name, call))) => match line_of(*call).0 {
+            Some(l) => format!("`{what}` in `{name}`, which is called at line {l}"),
+            None => format!("`{what}` in `{name}`, which is called"),
+        },
+        (None, None) => format!("`{what}`"),
+    };
+    let place = match line_of(found.cause.span).0 {
+        Some(l) => format!(" at line {l}"),
+        None => String::new(),
+    };
+    let (where_, before) = match found.cause.why {
+        Why::If => (
+            format!("under the `if`{place}, whose condition can differ from pixel to pixel"),
+            "the `if`",
+        ),
+        Why::Switch => (
+            format!("under the `switch`{place}, whose selector can differ from pixel to pixel"),
+            "the `switch`",
+        ),
+        Why::Loop => (
+            format!("in the loop{place}, which pixels can leave on different turns"),
+            "the loop",
+        ),
+        Why::Return => (
+            format!("after the `return`{place}, which only some pixels take"),
+            "the `return`",
+        ),
+    };
+    let params = if found.cause.params {
+        " (`params` counts: it is per pixel)"
+    } else {
+        ""
+    };
+    let taken = match (&found.via, &found.through) {
+        (Some((name, _)), _) | (None, Some((name, _))) => format!("call `{name}`"),
+        (None, None) => format!("take `{what}`"),
+    };
+    let at_text = match line {
+        Some(line) => format!("{file}:{line}:{}", at.line_position),
+        None => file.to_string(),
+    };
+    let mut out = format!(
+        "{at_text}: warning: {subject} {where_}{params}: the browser's WebGPU refuses the \
+         style (derivatives need uniform control flow), though it draws natively"
+    );
+    if let Some(line) = line {
+        out.push_str(&format!("\n    {line} | {text}"));
+    }
+    out.push_str(&format!(
+        "\n    hint: {taken} before {before} and use the result there, or put \
+         @diagnostic(off, derivative_uniformity) on the function if a quad's pixels always agree"
+    ));
+    out
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -574,9 +658,17 @@ pub(super) fn count_helper_calls(statement: &naga::Statement, module: &naga::Mod
 /// it and checking here would add it to the download (#415). The browser's
 /// own WGSL compiler reports instead, a frame or two later
 /// ([`compiler_error`], read when the build settles).
+///
+/// The loop guard can't run here either, so a bundle carries its result:
+/// `flint bundle` packs each pass's guarded module beside the style
+/// (#550), and when one was written from the text this pass composes to,
+/// it is what gets built ([`packed_guarded`]).
 #[cfg(target_arch = "wasm32")]
-pub fn check_pass(_source: &StyleSource, _pass: usize, _user: &str) -> Result<Report, String> {
-    Ok(Report::default())
+pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Report, String> {
+    Ok(Report {
+        guarded: packed_guarded(source, pass, user),
+        ..Report::default()
+    })
 }
 
 /// The first error in a compiler's report on `composed` (the browser's

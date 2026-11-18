@@ -82,6 +82,31 @@ fn descriptions_are_checked() {
         .contains("built-in"));
 }
 
+/// #538: `reach` is a mask-reading style's, in points, and becomes pixels
+/// rounded out with one for the filter.
+#[test]
+fn a_reach_is_a_per_entity_styles_and_counts_in_points() {
+    let base = "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\n";
+    let file = "styles/x.shader.toml";
+    let read = |extra: &str| source(&format!("{base}{extra}"), file);
+    assert_eq!(read("").unwrap().reach, None);
+    assert_eq!(
+        read("inputs = [\"mask\"]\nreach = 3\n").unwrap().reach,
+        Some(3.0)
+    );
+    assert!(read("reach = 3\n").unwrap_err().contains("needs inputs"));
+    assert!(read("inputs = [\"mask\"]\nreach = -1\n")
+        .unwrap_err()
+        .contains("0..512"));
+    assert!(read("inputs = [\"mask\"]\nreach = 1e9\n")
+        .unwrap_err()
+        .contains("0..512"));
+    assert_eq!(super::pass::reach_pixels(0.0, 1.0), 1);
+    assert_eq!(super::pass::reach_pixels(3.0, 1.5), 6);
+    assert_eq!(super::pass::reach_pixels(2.5, 2.0), 6);
+    assert_eq!(super::pass::reach_pixels(2.0, f32::NAN), 3);
+}
+
 #[test]
 fn a_mask_reading_style_is_per_entity() {
     let base = "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\n";

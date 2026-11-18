@@ -824,7 +824,7 @@ a render scale the chain owns its depth and all of them are kept. Since
 #379 the player passes its depth view with an id
 (`RenderContext::depth_target()`, a fresh `new_depth_id()` whenever the
 context makes the texture again) and those groups are kept at scale 1
-too (measured below the table, "Bind groups over the caller's depth").
+too (measured below the tables, "Bind groups over the caller's depth").
 
 **Re-read with `tools/web-perf/run.mjs` (#381, 2026-11-12).** The table
 above is now one command over a `flint export web` folder of the same three
@@ -858,6 +858,29 @@ but the canvas kept the display's 1.5 (2880x1620 at "DPR 1"), since winit
 sizes it from a ResizeObserver's device-pixel box. `?begin=auto` lifts the
 gate, so the screenshots need no hiding.
 
+**Bind groups over the caller's depth (#565, 2026-11-18).** #379's reading in
+the browser, at render scale 1 (`&scale=1`, scene 1920x1080 on a 1920x1080
+canvas at DPR 1). The player was main's Play site build at 7f835647; the
+ASCII bundle is `tools/phone-perf/ascii_variants.py`'s three scenes, and
+Float's is the one that site serves (Float@8595f72e). The readout rounds a
+frame's count to one decimal, so `run.mjs` now also keeps the page's running
+totals (`window.flintGpuCalls`) at each read and prints the difference
+between the first read and the last (`between` in the page's JSON). Three
+reads, 20 s apart end to end, Chrome 157:
+
+| page | frames between reads | `createBindGroup` | `createBuffer` | passes a frame |
+|---|---|---|---|---|
+| `ascii_none` | 1201 | 0 | 0 | 17 |
+| `ascii_entities` | 1201 | 0 | 0 | 30 |
+| `ascii_full` | 1201 | 0 | 0 | 30 |
+| Float, `scenes/float.scene.toml` | 1202 | 0 | 0 | 16--19 |
+
+None at all, where #270's table above read 3 a frame on the styled pages and
+2 on the plain one. Every group a page makes is made in its first 25 s
+(the totals at the first read: 103 on `ascii_entities`, 563 on Float), and
+none after. The styled pages draw 30 passes a frame here, against #381's 26:
+the style's passes have changed since, which this reading doesn't look into.
+
 **Cells are output pixels.** ASCII runs at the display stage, after the
 upscale, so a render scale or the web's DPR cap changes only the scene
 under the glyphs, never the grid: 8 pt cells are 16 device pixels at DPR
@@ -886,7 +909,51 @@ Desktop, 1920x1080, RTX 4070 laptop, best of five alternating runs:
 
 The control isn't scissored and moved within this machine's run-to-run
 spread. The saving scales with the share of the screen the props leave
-untouched, which is what a phone pays for. The browser is unmeasured.
+untouched, which is what a phone pays for.
+
+**In the browser (#538).** Measured with `tools/web-perf/run.mjs` on a
+`flint export web` folder of #270's ASCII variants plus
+`examples/watercolor.scene.toml` (watercolor is scissored since #538 too),
+each page twice: as written, and with the page's `?scissor=0`, which draws
+the full passes as `FLINT_STYLE_SCISSOR=0` does natively. Chrome 157, RTX
+4070 laptop, 1920x1080 device pixels, two 10 s windows a page, three runs
+(two at DPR 1, one at DPR 2) on 2026-11-17, the player built from the
+#538 branch:
+
+| page | canvas / scene | pass | scissored | `scissor=0` |
+|---|---|---|---|---|
+| DPR 1, `ascii_entities` | 1920x1080 / 1920x1080 | ASCII | 0.83--0.89 | 1.52--1.60 ms |
+| | | Style edges | 0.24--0.26 | 0.50--0.54 ms |
+| DPR 1, `watercolor` | 1920x1080 / 1920x1080 | Watercolor | 0.61--0.67 | 1.07--1.22 ms |
+| DPR 2 (cap 1.5), `ascii_entities` | 1920x1080 / 1440x810 | ASCII | 1.34 | 1.56--1.61 ms |
+| | | Style edges | 0.26 | 0.36--0.37 ms |
+| DPR 2, `watercolor` | 1920x1080 / 1440x810 | Watercolor | 0.76--0.79 | 1.44--1.53 ms |
+
+Every page said `under vsync at idle clocks` (39--46% busy), so the
+times read about four times the desktop's (`flint render --gpu-time`:
+watercolor 0.110 against 0.236 ms, ASCII 0.17 against 0.45). Compare the
+two columns, taken minutes apart in one Chrome, rather than either with
+the desktop. One more read is left out of the table: the first DPR 1
+`watercolor+scissor=0` window caught the GPU at 12% busy and read every
+pass lower (Watercolor 0.29, SSAO 1.00, against 3.3 on its next window).
+The control page (`ascii_none`) and the passes nothing scissors (Style
+mask 0.13--0.16, Bloom, Composite) are the same in both columns.
+
+- **The browser saves what the desktop does, in proportion.** ASCII at
+  DPR 1 is 45% cheaper scissored (desktop 63%), watercolor 45% (desktop
+  53%), and the shared edge pass, which reads only inside the per-entity
+  readers' rect (#743), half.
+- **DPR 2 saves less on ASCII**: its glyph rect is grown by two of the
+  largest cell, and 8 pt cells are 16 device pixels there, so the rect
+  holds more of the frame around the six props (15% off). Watercolor's
+  reach is a few points, and it still halves.
+- **The scissor adds a render pass on ASCII** (30 passes a frame against
+  29) and no bind group or buffer write; watercolor's count is the same
+  (22).
+
+The phone (#378's Pixel) is still unmeasured: it needs the pixel lock and
+Chris's phone. Mali's timestamps read 0.00 after `Scene` there, so it is a
+frame-time comparison, unpaced (`?fps=native`), against `?scissor=0`.
 
 **DX12.** The ASCII and mask passes read every texture with
 `textureLoad` and bind no sampler of their own (the chain's one linear

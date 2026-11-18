@@ -62,6 +62,13 @@ impl Tabs {
                     .and_then(|cpu| cpu.hitch.as_ref())
                     .map(|h| h.frame as i64);
             }
+            if profile_start.capture_frame.is_none() {
+                profile_start.capture_frame = c
+                    .description
+                    .frame
+                    .index
+                    .and_then(|i| u32::try_from(i).ok());
+            }
         }
         let frame = opened
             .capture

@@ -691,8 +691,11 @@ fn requested_style(world: &FlintWorld, id: EntityId) -> Option<&str> {
 /// options as strings, its parameters as numbers, and a colour `x` (a
 /// 3-array, [`StyleColor`](crate::stylize::StyleColor)) as the parameters
 /// `x_r`, `x_g`, `x_b`. Anything else (`enabled`, a key the
-/// style doesn't take, a value of the wrong type) is skipped: the scene
-/// loader has already warned about it against the component's schema.
+/// style doesn't take, a value of the wrong type) is skipped, having been
+/// said against the component's schema: a built-in's by the scene loader,
+/// a user style's (which has no schema file) by `bind_scene` and `flint
+/// check` against [`component_schema`](crate::stylize::component_schema)
+/// (#556).
 pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut StyleVariant) {
     let number = |v: &toml::Value| flint_core::toml_util::toml_f64(v).map(|n| n as f32);
     for (key, value) in table {
@@ -716,90 +719,6 @@ pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut St
 
 /// `blend`'s range, a setting every per-entity style takes (#278).
 pub const BLEND_RANGE: StyleParam = StyleParam::new(BLEND_FIELD, 1.0, 0.0..=1.0);
-
-/// The fields of a style component `table` whose values lie outside the
-/// style's ranges (#492): a parameter, a colour's channel or `blend`, each
-/// with what [`StyleParam::range_error`] says of it (`cell=400 is outside
-/// its range 4..32`; a colour's channel by its own name, `tint_r=2`), in
-/// key order. [`read_overrides`] still reads them as written; this is for
-/// the author. A key the style doesn't take, or a value of the wrong type,
-/// isn't a range's to judge and is left out.
-pub fn out_of_range(d: &StyleDescriptor, table: &toml::Table) -> Vec<(String, String)> {
-    let number = |v: &toml::Value| flint_core::toml_util::toml_f64(v).map(|n| n as f32);
-    let mut keys: Vec<&String> = table.keys().collect();
-    keys.sort_unstable();
-    let mut found = Vec::new();
-    for key in keys {
-        let value = &table[key.as_str()];
-        let mut check = |p: &StyleParam, n: f32| {
-            if let Some(e) = p.range_error(n) {
-                found.push((key.clone(), e));
-            }
-        };
-        if let Some(p) = d.params.iter().find(|p| p.name == key) {
-            if let Some(n) = number(value) {
-                check(p, n);
-            }
-        } else if let Some(color) = d.color_setting(key) {
-            if let Some(rgb) = crate::stylize::color_from_toml(value) {
-                for (p, n) in color.channels.iter().zip(rgb) {
-                    check(p, n);
-                }
-            }
-        } else if key == BLEND_FIELD {
-            if let Some(n) = number(value) {
-                check(&BLEND_RANGE, n);
-            }
-        }
-    }
-    found
-}
-
-/// What [`out_of_range`] finds on each entity's user-style component
-/// (`hologram_style`, #414), one line a field naming the entity, by entity
-/// name: `entity 'barrel' hologram_style.glow=9 is outside its range 0..4;
-/// drawn clamped into it`: the settings row clamps each param. A built-in
-/// style's component has a schema whose fields carry these ranges, so the
-/// scene loader already says it of `ascii_style`; a user style's
-/// component is declared open (it loads at run time), so this is where its
-/// ranges are said. [`SceneRenderer::bind_scene`](crate::SceneRenderer::bind_scene)
-/// logs them.
-pub fn user_style_range_warnings(world: &FlintWorld, styles: &StyleRegistry) -> Vec<String> {
-    let mut found = Vec::new();
-    for d in styles.iter() {
-        let Some(component) = d.component else {
-            continue;
-        };
-        if !styles.is_user_style(d.name) {
-            continue;
-        }
-        let mut lines: Vec<(String, String)> = Vec::new();
-        for &id in world.entities_with_component(component) {
-            let Some(table) = world
-                .get_component(id, component)
-                .and_then(|c| c.as_table())
-            else {
-                continue;
-            };
-            let name = world.get_name(id).unwrap_or("?").to_string();
-            for (field, error) in out_of_range(d, table) {
-                // The message leads with the setting's own name, which
-                // starts with the field's: `glow=9 ..`, a colour's `tint_r=2 ..`
-                let error = error
-                    .strip_prefix(field.as_str())
-                    .unwrap_or(&error)
-                    .to_string();
-                lines.push((
-                    name.clone(),
-                    format!("entity '{name}' {component}.{field}{error}; drawn clamped into it"),
-                ));
-            }
-        }
-        lines.sort();
-        found.extend(lines.into_iter().map(|(_, line)| line));
-    }
-    found
-}
 
 /// The name a variant goes by: its style, `@root` when it is anchored to
 /// one, then its settings in key order (`{off}` for an opt-out). Equal
@@ -2101,35 +2020,6 @@ fn record_draws(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_style_components_fields_past_their_ranges_are_named() {
-        let ascii = crate::stylize::builtin("ascii").unwrap();
-        let table: toml::Table = toml::from_str(
-            r#"
-            cell = 400
-            glow = 1.0
-            tint = [2.0, 0.5, -1.0]
-            blend = 3
-            ramp = "blocks"
-            bogus = 9
-            "#,
-        )
-        .unwrap();
-        assert_eq!(
-            out_of_range(ascii, &table),
-            [
-                ("blend", "blend=3 is outside its range 0..1"),
-                ("cell", "cell=400 is outside its range 4..32"),
-                ("tint", "tint_r=2 is outside its range 0..1"),
-                ("tint", "tint_b=-1 is outside its range 0..1"),
-            ]
-            .map(|(k, e)| (k.to_string(), e.to_string()))
-        );
-        // In range, and the "#rrggbb" form of a colour, say nothing
-        let fine: toml::Table = toml::from_str("cell = 32\ntint = \"#ff8000\"").unwrap();
-        assert!(out_of_range(ascii, &fine).is_empty());
-    }
 
     /// A built-in style's component schema gives every number the range
     /// its `StyleParam` has (#492): the schema is how the scene loader and

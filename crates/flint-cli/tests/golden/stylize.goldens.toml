@@ -508,6 +508,25 @@ name = "pencil-world-stroke-image"
 scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=../../../examples/strokes/graphite.png,stroke_rows=4,thickness=1.5"]
 
+# A paper each (#547): four props on four paper images in one frame (cold
+# press, cotton with the graphite strip, kraft, washi), a fifth on the
+# procedural paper, the images stacked as layers of one texture array.
+# The page case draws the whole frame too, its table naming no image, so
+# the ground stays procedural round the props' papers. A paper is texture,
+# not tone: main's one-paper-a-frame render is 0.39% past 48, mean 1.05,
+# inside the suite's limits, so these hold a tenth of them
+[[case]]
+name = "pencil-papers"
+scene = "tests/fixtures/scenes/pencil_papers.scene.toml"
+args = ["--no-grid"]
+tolerance = { level = 48, share = 0.001, mean = 0.5 }
+
+[[case]]
+name = "pencil-papers-page"
+scene = "tests/fixtures/scenes/pencil_papers.scene.toml"
+args = ["--no-grid", "--style", "pencil:scope=screen"]
+tolerance = { level = 48, share = 0.001, mean = 0.5 }
+
 # --- the other registered styles ------------------------------------------
 #
 # Smooth styles get a tighter tolerance than glyphs: a cell flipping glyph
@@ -705,6 +724,13 @@ scene = "tests/fixtures/scenes/watercolor.scene.toml"
 args = ["--no-grid"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
+# Three props on three paper images in one frame (#547)
+[[case]]
+name = "watercolor-papers"
+scene = "tests/fixtures/scenes/watercolor_papers.scene.toml"
+args = ["--no-grid"]
+tolerance = { level = 8, share = 0.005, mean = 0.3 }
+
 # --- user-authored styles (#274, #417) ---------------------------------------
 #
 # Styles a game writes (tests/fixtures/scenes/styles/*.shader.toml + WGSL), loaded at run time
@@ -752,6 +778,29 @@ scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
 args = ["--no-grid", "--style", "broken"]
 matches = ["--no-grid"]
 error = "broken.wgsl:9:9"
+
+# The same at the HDR stage (#563): `broken_hdr` sits before fog, bloom and
+# the tonemap and feeds bloom, so its passthrough (`return p.color`, no
+# curves) is what bloom's threshold reads. The bench's lamp is linear light
+# well above 1 and bloom is on, strong: a passthrough that clamped the HDR
+# values, or handed bloom another source, moves the lamp and its halo
+[[case]]
+name = "user-style-broken-hdr"
+scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
+args = ["--no-grid", "--set", "post.bloom_enabled=true", "--set", "post.bloom_intensity=0.3", "--style", "broken_hdr"]
+matches = ["--no-grid", "--set", "post.bloom_enabled=true", "--set", "post.bloom_intensity=0.3"]
+error = "broken_hdr.wgsl:10:16"
+
+# A broken style that asks for every input (#563): depth, the mask and the
+# shared edges. Its passthrough is built with none of them, so it must still
+# bind, and must leave the one edges pass a frame alone: `edges_view` beside
+# it draws that pass, and the frame must equal `edges_view` alone
+[[case]]
+name = "user-style-broken-inputs"
+scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
+args = ["--no-grid", "--style", "edges_view", "--style", "broken_inputs"]
+matches = ["--no-grid", "--style", "edges_view"]
+error = "broken_inputs.wgsl:11:9"
 
 # --- looks (#279) -----------------------------------------------------------
 # Each shipped styles/<name>.look.toml over the plain props bench, so only

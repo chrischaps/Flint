@@ -26,6 +26,7 @@ pub(crate) mod read;
 pub(crate) mod stats;
 mod top;
 
+use crate::commands::frame::trace::{meant_hitch, HitchMark};
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use read::Trace;
@@ -92,8 +93,9 @@ pub enum TopSort {
 pub struct FrameArgs {
     /// The trace
     pub trace: PathBuf,
-    /// The frame: its index, `worst` (the longest) or `hitch` (the last
-    /// hitch the detector found: the one a `--trace-on-hitch` file was saved for)
+    /// The frame: its index, `worst` (the longest) or `hitch` (the one a
+    /// `--trace-on-hitch` file was saved for, else the worst hitch the
+    /// detector found; the profiler tab's default too)
     pub frame: String,
     /// Leave out scopes shorter than this (each parent says how many it
     /// left out and their time)
@@ -160,7 +162,24 @@ pub(crate) fn pick_frame(trace: &Trace, which: &str) -> Result<usize> {
     match which {
         "worst" => Ok(worst()),
         "hitch" => {
-            if let Some(pos) = trace.hitch_frames().into_iter().flatten().next_back() {
+            // The profiler tab's rule (#1289): the hitch a `--trace-on-hitch`
+            // file was saved for, else the worst
+            let frames = trace.hitch_frames();
+            let marks: Vec<HitchMark> = trace
+                .hitches
+                .iter()
+                .zip(&frames)
+                .map(|(h, f)| HitchMark {
+                    game_time: h.game_time,
+                    // A mark with no judgement: its frame's length
+                    judged_ms: h
+                        .judged_ms
+                        .unwrap_or_else(|| f.map_or(0.0, |f| trace.frames[f].ms())),
+                })
+                .collect();
+            let reason = trace.header.get("reason").and_then(|v| v.as_str());
+            let meant = meant_hitch(reason, &marks).and_then(|h| frames[h]);
+            if let Some(pos) = meant.or_else(|| frames.into_iter().flatten().next_back()) {
                 return Ok(pos);
             }
             let w = worst();
@@ -248,6 +267,7 @@ pub(crate) fn about_json(trace: &Trace) -> serde_json::Value {
         "build": pick("build"),
         "adapter": pick("adapter"),
         "engine_commit": pick("engine_commit"),
+        "project_commit": pick("project_commit"),
         "frames": trace.frames.len(),
         "frames_from_scopes": trace.frames_derived,
         "threads": trace.thread_names(),

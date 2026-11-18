@@ -273,6 +273,7 @@ pub fn run(args: OpenArgs) -> Result<()> {
             scope: args.trace.scope.clone(),
             compare: args.trace.compare,
             capture_hitch: None,
+            capture_frame: None,
         },
         on_profile: args.trace.profile,
     };

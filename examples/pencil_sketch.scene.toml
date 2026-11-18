@@ -3,9 +3,10 @@
 # [post_process.styles.pencil] table is only a preset here
 # (scope = "entities"); each prop's pencil_style changes what it needs:
 #
-#   barrel   the preset: graphite on paper, strokes round the surface
+#   barrel   the preset's graphite, on a cold-press paper (papers/cold_press.png, #547)
 #   cask     coloured pencil: sepia lead over the cask's own colour
-#   crate    screen hatching at one angle, four layers deep (the lid inherits it)
+#   crate    screen hatching at one angle, four layers deep, on kraft paper
+#            (styles/papers/kraft.png; the lid inherits it)
 #   tag      opts back out with enabled = false
 #   block    hatching pinned to the block (grid = "object"): strokes travel with it
 #   ybot     blue pencil, heavy doubled outline (a skinned mesh)
@@ -97,6 +98,8 @@ scale = [0.5, 0.5, 0.5]
 [entities.barrel.model]
 asset = "barrel"
 [entities.barrel.pencil_style]
+paper_image = "cold_press"
+grain = 0.8
 
 [entities.cask]
 archetype = "furniture"
@@ -122,6 +125,9 @@ max = [0.4, 0.8, 0.4]
 color = [0.55, 0.38, 0.22, 1.0]
 roughness = 0.8
 [entities.crate.pencil_style]
+paper_image = "styles/papers/kraft.png"
+paper = [0.80, 0.66, 0.47]
+grain = 0.8
 direction = "screen"
 angle = 35.0
 layers = 4.0

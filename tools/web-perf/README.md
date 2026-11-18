@@ -61,8 +61,12 @@ Each page's JSON keeps the readout's text and its copyable line at every read
 (`reads[].text`, `reads[].line`), the line parsed into numbers
 (`reads[].parsed`, `perfline.mjs`), what the page saw (DPR, viewport, canvas,
 user agent, whether the adapter has `timestamp-query`) and
-`window.flintGpuCalls`' totals. A page whose gate never lifts is recorded
-with its status line as `error`, and the run exits 1.
+`window.flintGpuCalls`' totals, at the end (`calls`) and at each read
+(`reads[].calls`). With two reads or more, `between` is the last read's totals
+less the first's, printed to the log too: the readout rounds a frame's count to
+one decimal, and this is exact (`submit` is one a frame, so it counts the
+frames). `"createBindGroup": 0` over 1200 frames is #565's reading. A page whose
+gate never lifts is recorded with its status line as `error`, and the run exits 1.
 
 **What it needs from the machine.** Chrome draws WebGPU only headed, and gives
 no frames to a window that is off screen or covered, so the window opens at

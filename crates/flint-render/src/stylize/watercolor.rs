@@ -41,7 +41,9 @@
 //! ([`images`](super::images)): one texel every `grain_scale` points, its
 //! luma against its own mean and spread the paper's height (so `grain` and
 //! `granulation` read it as they read the noise), its hue tinting `paper`.
-//! One paper a frame: the scene table's, else the first entity's.
+//! Each entity may paint on its own (#547): up to
+//! [`MAX_LAYERS`](super::images::MAX_LAYERS) papers a frame, stacked in
+//! one texture array; a row naming one more paints on the procedural one.
 //!
 //! ## Per entity
 //!
@@ -60,7 +62,7 @@
 //! the other, and they share nothing (Kuwahara's structure tensor is an
 //! HDR-stage intermediate; the wash is the only smoothing watercolor does).
 
-use super::images::{ImageSlot, ImageUse, StyleImage};
+use super::images::{ImageStack, ImageUse, LayerInfo, StackedImages, MAX_LAYERS};
 use super::kit;
 use super::variant_table::{report_drop, storage_entry, VariantTable};
 use super::{
@@ -188,13 +190,16 @@ struct PaintUniforms {
     passthrough: u32,
     near: f32,
     far: f32,
-    /// The paper image's mean and spread of luma (#390), then 0, 0.
-    paper_stats: [f32; 4],
+    /// Each layer of the paper stack (#547): its measures and size.
+    papers: [LayerInfo; MAX_LAYERS],
 }
 
 struct Watercolor {
     wash_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     paint_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    /// `fs_passthrough` (#538): the paint pass's unpainted pixel, drawn
+    /// around the per-entity rect the paint pass is scissored to.
+    passthrough_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniform_bgl: wgpu::BindGroupLayout,
     /// The paint pass's group 0: its uniform and the variant table (#740).
     paint_bgl: wgpu::BindGroupLayout,
@@ -207,7 +212,7 @@ struct Watercolor {
     no_mask_view: wgpu::TextureView,
     /// The variant table (#740): grows with the frame.
     table: Mutex<VariantTable>,
-    paper: Mutex<ImageSlot>,
+    paper: Mutex<ImageStack>,
 }
 
 impl Watercolor {
@@ -256,7 +261,7 @@ impl Watercolor {
                     },
                     count: None,
                 },
-                super::pencil::image_entry(2),
+                super::pencil::image_stack_entry(2),
             ],
         });
         let module = kit::shader(device, "Watercolor Shader", PAINT_SHADER);
@@ -296,6 +301,14 @@ impl Watercolor {
                 &[&paint_bgl, &sampled_bgl, &sampled_bgl, &entity_bgl],
                 d.format,
             ),
+            passthrough_pipeline: kit::fullscreen_pipeline_entry(
+                device,
+                "Watercolor Passthrough Pipeline",
+                &module,
+                "fs_passthrough",
+                &[&paint_bgl, &sampled_bgl],
+                d.format,
+            ),
             wash_h: kit::uniform_buffer::<WashUniforms>(device, "Watercolor Wash H Uniforms"),
             wash_v: kit::uniform_buffer::<WashUniforms>(device, "Watercolor Wash V Uniforms"),
             uniforms: kit::uniform_buffer::<PaintUniforms>(device, "Watercolor Uniforms"),
@@ -310,7 +323,7 @@ impl Watercolor {
                 "Watercolor",
                 std::mem::size_of::<RowUniform>(),
             )),
-            paper: Mutex::new(ImageSlot::new(ImageUse::Paper, "watercolor paper")),
+            paper: Mutex::new(ImageStack::new(ImageUse::Paper, "watercolor paper")),
         }
     }
 
@@ -319,7 +332,7 @@ impl Watercolor {
         &self,
         frame: &StyleFrame<'_>,
         with_mask: bool,
-        paper: &StyleImage,
+        paper: &StackedImages,
     ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
         let key = mask.is_some() as u64 | paper.generation << 1;
@@ -350,13 +363,14 @@ impl Watercolor {
 
 const PAINT_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "style_image_layer.wgsl",
     "watercolor.wgsl",
     "style_image.wgsl"
 );
 
 /// A row from a settings source: the scene's (`param` = the frame's) or a
-/// variant's. Its `image` flag is set later, once the frame's paper is
-/// known.
+/// variant's. Its `image` layer is set later, once the frame's papers
+/// are stacked.
 fn row(param: impl Fn(&str) -> f32, off: bool) -> RowUniform {
     RowUniform {
         wobble: param("wobble").clamp(0.0, 16.0),
@@ -435,36 +449,29 @@ impl StylePass for Watercolor {
             rows.push(row(|n| frame.variant_param(v, n), v.off));
             papers.push(frame.variant_option(v, "paper_image").to_string());
         }
-        // The frame's one paper image (#390): the scene's, else the first
-        // entity's; a row naming it paints on it, any other row on noise
-        let chosen = papers
-            .iter()
-            .find(|n| super::pencil::names_image(n))
-            .cloned()
-            .unwrap_or_default();
-        let paper = self.paper.lock().unwrap_or_else(|e| e.into_inner()).get(
+        // The frame's papers (#390), a layer each up to MAX_LAYERS (#547): a
+        // row paints on its own, past the cap (or a miss) on noise
+        let stacked = self.paper.lock().unwrap_or_else(|e| e.into_inner()).get(
             frame.device,
             frame.queue,
             frame.assets,
-            &chosen,
+            &papers,
             frame.frame.is_multiple_of(15),
         );
-        for (r, name) in rows.iter_mut().zip(&papers) {
-            r.image = (paper.found && *name == chosen) as u32 as f32;
+        for (r, layer) in rows.iter_mut().zip(&stacked.layer) {
+            r.image = *layer as f32;
         }
-        // One paper a frame: the first entity naming another is said (#740)
-        if let Some(i) = papers
-            .iter()
-            .position(|n| super::pencil::names_image(n) && *n != chosen)
-        {
+        // The first entity past the cap is said (#740)
+        if let Some(i) = stacked.over_cap {
             report_drop(
                 "watercolor",
                 "paper images",
-                1,
+                MAX_LAYERS,
                 frame.style_ids.entity(ids[i]).unwrap_or("?"),
-                &format!("painted on procedural paper (the frame's is \"{chosen}\")"),
+                "painted on procedural paper",
             );
         }
+        let paper = stacked.images;
         let with_mask = rows.len() > 1;
         let passthrough = !(frame.whole_frame() && frame.option("scope") != "entities");
 
@@ -480,22 +487,34 @@ impl StylePass for Watercolor {
             };
             frame.queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
         }
+        // Per entity (#538), each pass runs only where what follows reads
+        // it: the paint inside its entities' rect, the wash inside the
+        // paint's reads, the first blur inside the second's
+        let ppp = frame.pixels_per_point.max(0.25);
+        let reach = Reach::of(&rows, ppp, radius);
+        let size = [frame.width, frame.height];
+        let paint_rect = frame.styled_rect(reach.paint);
+        let wash_rect = paint_rect.map(|r| r.padded(reach.wash, frame.width, frame.height));
+        let half_rect = wash_rect.map(|r| r.padded(reach.blur, frame.width, frame.height));
         let half = frame.target("watercolor.wash.h", frame.format);
         let washed = frame.target("watercolor.wash", frame.format);
-        kit::fullscreen_pass(
+        kit::fullscreen_pass_in(
             encoder,
             "Watercolor Wash H",
             &half.view,
+            size,
             &self.wash_pipeline,
             &[
                 &frame.uniform("Watercolor Wash H BG", &self.uniform_bgl, &self.wash_h),
                 &frame.sampled_input("Watercolor Input BG", &self.sampled_bgl, input),
             ],
+            half_rect,
         );
-        kit::fullscreen_pass(
+        kit::fullscreen_pass_in(
             encoder,
             "Watercolor Wash V",
             &washed.view,
+            size,
             &self.wash_pipeline,
             &[
                 &frame.uniform("Watercolor Wash V BG", &self.uniform_bgl, &self.wash_v),
@@ -505,6 +524,7 @@ impl StylePass for Watercolor {
                     &half.view,
                 ),
             ],
+            wash_rect,
         );
 
         // Pass 3: paint
@@ -516,27 +536,63 @@ impl StylePass for Watercolor {
             passthrough: passthrough as u32,
             near: frame.camera.near,
             far: frame.camera.far,
-            paper_stats: [paper.stats.mean, paper.stats.spread, 0.0, 0.0],
+            papers: paper.layers,
         };
         frame
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
-        kit::fullscreen_pass(
+        let paint_bind = self.paint_bind(frame, &rows, &slots);
+        let input_bind =
+            frame.sampled_input("Watercolor Paint Input BG", &self.sampled_bgl, input);
+        kit::scissored_pass_around(
             encoder,
             "Watercolor Pass",
             output,
-            &self.paint_pipeline,
-            &[
-                &self.paint_bind(frame, &rows, &slots),
-                &frame.sampled_input("Watercolor Paint Input BG", &self.sampled_bgl, input),
-                &frame.sampled(
-                    "Watercolor Wash Texture BG",
-                    &self.sampled_bgl,
-                    &washed.view,
-                ),
-                &self.entity_bind(frame, with_mask, &paper),
-            ],
+            size,
+            (
+                &self.paint_pipeline,
+                &[
+                    &paint_bind,
+                    &input_bind,
+                    &frame.sampled(
+                        "Watercolor Wash Texture BG",
+                        &self.sampled_bgl,
+                        &washed.view,
+                    ),
+                    &self.entity_bind(frame, with_mask, &paper),
+                ],
+            ),
+            paint_rect,
+            (&self.passthrough_pipeline, &[&paint_bind, &input_bind]),
         );
+    }
+}
+
+/// How far, in pixels, each of watercolor's passes reads past the pixels
+/// it serves (#538), so a per-entity frame scissors them without changing
+/// a byte.
+#[derive(Debug, PartialEq)]
+struct Reach {
+    /// The paint pass: a pixel takes the paint of the mask read at its
+    /// wobbled position, up to `wobble` points away on each axis, so a
+    /// painted silhouette wanders that far out over its surroundings.
+    paint: u32,
+    /// The wash, read by a painted pixel at its own wobbled position and
+    /// 1.5 points either side of it (the glazes' slope), filtered.
+    wash: u32,
+    /// The first blur, read by the second up to two radii away, filtered.
+    blur: u32,
+}
+
+impl Reach {
+    fn of(rows: &[RowUniform], pixels_per_point: f32, radius: f32) -> Self {
+        let wobble = rows.iter().map(|r| r.wobble).fold(0.0f32, f32::max);
+        let px = |points: f32| (points * pixels_per_point).ceil() as u32;
+        Self {
+            paint: px(wobble) + 1,
+            wash: px(wobble + 1.5) + 2,
+            blur: (2.0 * radius).ceil() as u32 + 2,
+        }
     }
 }
 
@@ -548,10 +604,7 @@ mod tests {
     fn uniforms_match_the_shader_layout() {
         assert_eq!(std::mem::size_of::<RowUniform>(), 80);
         assert_eq!(std::mem::size_of::<WashUniforms>(), 32);
-        assert_eq!(
-            std::mem::size_of::<PaintUniforms>(),
-            48
-        );
+        assert_eq!(std::mem::size_of::<PaintUniforms>(), 32 + 4 * 32);
     }
 
     #[test]
@@ -584,6 +637,33 @@ mod tests {
         assert_eq!(r.paper, [0.5, 0.94, 0.87], "the entity's, then defaults");
         assert_eq!(r.flags, 0);
         assert_eq!(row(|n| STYLE.param(&config, n), true).flags, PASS_THROUGH);
+    }
+
+    /// #538: the paint reaches as far as the widest wobble any row has
+    /// (an opt-out's and the scene's too: an unpainted pixel wobbles by its
+    /// own row), the wash that plus the glazes' 1.5 pt, the first blur two
+    /// radii; each rounded out and grown for the filter.
+    #[test]
+    fn each_pass_reaches_as_far_as_what_reads_it() {
+        let config = crate::postprocess::PostProcessConfig::default();
+        let with = |wobble: f32| {
+            let mut r = row(|n| STYLE.param(&config, n), false);
+            r.wobble = wobble;
+            r
+        };
+        let reach = Reach::of(&[with(2.0), with(0.5)], 1.0, 4.0);
+        assert_eq!(
+            reach,
+            Reach {
+                paint: 3,
+                wash: 6,
+                blur: 10
+            }
+        );
+        let wide = Reach::of(&[with(0.0), with(2.5)], 2.0, 9.6);
+        assert_eq!(wide.paint, 6);
+        assert_eq!(wide.wash, 10);
+        assert_eq!(wide.blur, 22);
     }
 
     #[test]
