@@ -23,7 +23,7 @@ v = {'ascii_none': strip_ascii(text), 'ascii_entities': text, 'ascii_full': full
      'ascii_entities_edges': edge(text), 'ascii_full_edges': edge(full)}
 for k, t in v.items():
     (out / f'{k}.scene.toml').write_text(t)
-for d in ['models', 'mesh_meadow']:
+for d in ['models', 'textures', 'mesh_meadow']:  # textures: the tavern GLBs name ../textures/
     shutil.copytree(src.parent / d, out / d, dirs_exist_ok=True)
 shutil.copytree(eng / 'schemas', out / 'engine' / 'schemas', dirs_exist_ok=True)
 (out / 'bundle.toml').write_text('scene = "ascii_entities.scene.toml"\nschemas = ["engine/schemas", "engine/schemas/examples"]\n')
