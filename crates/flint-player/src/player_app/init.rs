@@ -57,6 +57,14 @@ impl PlayerApp {
             if let Some(missing) = dump.and_then(|d| d.missing()) {
                 return Some(missing);
             }
+            // `--expression-listen`'s port, taken when it opened (#584)
+            let feed = self
+                .core
+                .subsystems
+                .find::<super::expression_feed::ExpressionSubsystem>();
+            if let Some(failure) = feed.and_then(|f| f.failure()) {
+                return Some(failure);
+            }
         }
         if self.launch.strict_scripts {
             if let Some(failure) = self.core.script.errors().strict_failure() {

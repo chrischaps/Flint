@@ -18,13 +18,20 @@ pub const MAX_CONNECTIONS: usize = 8;
 /// one). Anything but a loopback address is refused: these sockets talk to
 /// the same machine, never to a network.
 pub fn bind(flag: &str, addr: &str) -> anyhow::Result<TcpListener> {
+    let wanted = check(flag, addr)?;
+    TcpListener::bind(wanted).map_err(|e| anyhow::anyhow!("{flag} {addr}: {e}"))
+}
+
+/// `addr` as [`bind`] would take it, without binding: an IP:port whose IP is
+/// loopback. Whether the port is free is known only by binding it.
+pub fn check(flag: &str, addr: &str) -> anyhow::Result<SocketAddr> {
     let wanted: SocketAddr = addr.parse().map_err(|e| {
         anyhow::anyhow!("{flag} {addr}: expected IP:port, like 127.0.0.1:7777 ({e})")
     })?;
     if !wanted.ip().is_loopback() {
         anyhow::bail!("{flag} {addr}: only a loopback address (127.0.0.1 or ::1) can listen");
     }
-    TcpListener::bind(wanted).map_err(|e| anyhow::anyhow!("{flag} {addr}: {e}"))
+    Ok(wanted)
 }
 
 /// Accept on a thread named `name` until `closed` is set, handing each

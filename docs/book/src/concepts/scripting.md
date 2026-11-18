@@ -607,6 +607,31 @@ owns their vocabulary and how strictly to check it.
   more than 256 states are waiting, the oldest go: each is a whole snapshot,
   so the latest is the one that matters.
 
+  The socket opens once the first frame has been presented, not when the
+  player starts (#584). Starting (the GPU, the window, the shaders, the first
+  draw) takes a second or more (3.4 s for a debug build of a small scene),
+  and states sent in it would all be heard at once, on the first frame, with
+  `expression()` holding only the last. So until frames
+  run a connect is refused: a client that retries until it connects knows
+  every state it sends from then on is heard on the frame it arrives at. A
+  launcher that would rather wait on the log has one line, under the `listen`
+  target, which `--quiet` keeps (with `--log-format json` its `addr`, `frame`
+  and `t` are fields):
+
+  ```text
+  INFO listen: [listen] expression: listening on 127.0.0.1:7777 from frame 2 (game time 0.017 s); a state sent now is heard on the frame it arrives at
+  ```
+
+  A malformed or non-loopback address still fails the run when the player
+  starts. Whether the port is free is known only when the socket opens: a
+  taken one is an error under `listen`, and the player exits with it, so a
+  launcher waiting on the socket sees it go rather than waiting for ever.
+
+  Two states that arrive between the same two frames are heard on the same
+  frame, each through `on_expression` in order, and `expression()` then holds
+  the later one. At 60 Hz, two sent 14 ms apart share a frame about one time
+  in six; on a slower frame, more often.
+
 The feed logs each state it delivers at info under the `expression` target
 (`RUST_LOG=expression=info,script=info` shows them beside the scripts' own
 `log` lines). While the game state pauses scripts, states wait for them, up to

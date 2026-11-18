@@ -13,6 +13,7 @@
 //! | `input`      | the controls banner                                     |
 //! | `music`      | music and rhythm sessions                               |
 //! | `player`     | the player's own notices: debug keys, looks, bundles    |
+//! | `listen`     | `--expression-listen`'s socket opening, after the first frame (#584) |
 //!
 //! `RUST_LOG` replaces the filter whole (`RUST_LOG=load=debug` lists every
 //! file again). A load's summary is counted by [`LoadTallyLayer`], which
@@ -33,11 +34,12 @@ use web_time::Instant;
 
 /// What the player shows by default: warnings, and each target's info.
 pub const DEFAULT_FILTER: &str = "warn,load=info,transition=info,perf=info,report=info,\
-     script=info,input=info,music=info,player=info,inspect=info";
+     script=info,input=info,music=info,player=info,inspect=info,listen=info";
 
 /// `--quiet`: warnings, errors and what a flag asked for (`--perf`'s lines,
-/// the exit report, and `--inspect-listen`'s and `--dump-world`'s, #713).
-pub const QUIET_FILTER: &str = "warn,perf=info,report=info,inspect=info";
+/// the exit report, `--inspect-listen`'s and `--dump-world`'s, #713, and
+/// `--expression-listen`'s opening, #584).
+pub const QUIET_FILTER: &str = "warn,perf=info,report=info,inspect=info,listen=info";
 
 /// How log lines are written.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -479,6 +481,31 @@ mod tests {
         assert!(text.contains("[perf] 120 frames"), "{text}");
         assert!(!text.contains("Scene loaded"), "{text}");
         assert!(!text.contains("Loaded scene"), "{text}");
+    }
+
+    #[test]
+    fn the_expression_sockets_opening_is_said_quiet_or_not() {
+        for quiet in [false, true] {
+            let buffer = Buffer::default();
+            let args = LogArgs {
+                log_format: LogFormat::Text,
+                quiet,
+            };
+            let (subscriber, _) = subscriber(&args, None, buffer.clone(), false);
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::info!(target: "listen", "[listen] expression: listening on 127.0.0.1:7777");
+                tracing::info!(target: "expression", "   0.000s socket: {{}}");
+            });
+            let text = buffer.text();
+            assert!(
+                text.contains("[listen] expression"),
+                "quiet {quiet}: {text}"
+            );
+            assert!(
+                !text.contains("socket:"),
+                "each state is still opt-in: {text}"
+            );
+        }
     }
 
     #[test]

@@ -261,6 +261,87 @@ fn the_expression_feed_is_a_subsystem_only_when_the_run_has_one() {
     });
 }
 
+/// Whether something listens at `addr`: a connect within a short wait. (A
+/// refused loopback connect takes Windows about 2 s; past the wait it's no.)
+#[cfg(not(target_arch = "wasm32"))]
+fn accepts(addr: std::net::SocketAddr) -> bool {
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(300)).is_ok()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_socket_opens_once_the_first_frame_is_presented() {
+    use super::expression_feed::ExpressionSubsystem;
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    vfs::scoped(Arc::new(game()), || {
+        // A port that was free a moment ago
+        let addr = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let feed = ExpressionFeed::open(None, Some(&addr.to_string()))
+            .unwrap()
+            .unwrap();
+        assert!(!accepts(addr), "checked at start, not listening");
+        let mut app = started_in_a(Some(feed));
+        app.tick();
+        assert!(!accepts(addr), "the first frame: still starting");
+        app.tick();
+        assert!(accepts(addr), "frames are running: it listens");
+
+        // Two states sent apart are heard on frames of their own, not drained
+        // together as a slow first frame drained them (#584). The client
+        // waits for its reader thread to start (a connection's first lines
+        // can land before it does), and the gap is several of this loop's
+        // frames (about 10 ms each here), so a busy machine still sees two.
+        let client = std::thread::spawn(move || {
+            let mut s = std::net::TcpStream::connect(addr).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            s.write_all(b"{\"state\": \"arriving\"}\n").unwrap();
+            std::thread::sleep(Duration::from_millis(60));
+            s.write_all(b"{\"state\": \"listening\"}\n").unwrap();
+            std::thread::sleep(Duration::from_millis(200)); // hang up after they're read
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let record = loop {
+            app.tick();
+            let feed = app.core.subsystems.find::<ExpressionSubsystem>().unwrap();
+            let view = feed.view(app.core.clock.total_time);
+            if view.record.delivered() >= 2 {
+                break view.record;
+            }
+            assert!(Instant::now() < deadline, "{:?}", view.socket);
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        client.join().unwrap();
+        let frames: Vec<(u64, &str)> = record
+            .newest_first()
+            .map(|a| (a.frame, a.state["state"].as_str().unwrap()))
+            .collect();
+        assert_eq!(frames.len(), 2, "{frames:?}");
+        assert_eq!((frames[1].1, frames[0].1), ("arriving", "listening"));
+        assert!(frames[0].0 > frames[1].0, "two frames: {frames:?}");
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_taken_port_ends_the_run_when_the_socket_would_open() {
+    vfs::scoped(Arc::new(game()), || {
+        let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = busy.local_addr().unwrap().to_string();
+        let feed = ExpressionFeed::open(None, Some(&addr)).unwrap().unwrap();
+        let mut app = started_in_a(Some(feed));
+        app.tick();
+        assert!(!app.outcome.exit_requested && app.run_failure().is_none());
+        app.tick();
+        assert!(app.outcome.exit_requested, "a launcher sees the player go");
+        let why = app.run_failure().expect("the run fails");
+        assert!(why.contains(&addr), "{why}");
+    });
+}
+
 /// The F3 Expression panel the feed added, if any (#525).
 #[cfg(feature = "debug-hud")]
 fn expression_panel(app: &mut PlayerApp) -> Option<&mut super::expression_panel::ExpressionPanel> {
@@ -339,10 +420,15 @@ fn a_malformed_socket_line_raises_the_panels_dropped_count() {
         let feed = ExpressionFeed::open(None, Some("127.0.0.1:0"))
             .unwrap()
             .unwrap();
-        let addr = feed.listener.as_ref().unwrap().local_addr();
         let mut app = started_in_a(Some(feed));
         app.tick();
         expression_panel(&mut app).unwrap().toggle();
+        // The socket opens at the second frame (#584), and the panel says where
+        app.tick();
+        let socket = expression_panel(&mut app).unwrap().view().unwrap().socket;
+        let socket = socket.unwrap();
+        assert!(socket.open, "{socket:?}");
+        let addr = socket.addr;
 
         let mut s = std::net::TcpStream::connect(addr).unwrap();
         s.write_all(b"{\"state\": \"listening\"}\n{oops\n").unwrap();
