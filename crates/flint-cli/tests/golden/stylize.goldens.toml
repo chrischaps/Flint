@@ -467,6 +467,13 @@ name = "pencil-world"
 scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:grid=world,scope=screen"]
 
+# Strokes in each prop's own space (#544): the back cask on the world's
+# strokes, the front cask (rolled) and the crate (turned) on their own
+[[case]]
+name = "pencil-local"
+scene = "tests/fixtures/scenes/pencil_rolling.scene.toml"
+args = ["--no-grid"]
+
 # Per-entity pencil_style variants (coloured, screen, object grid, blue
 # lead, an opt-out) as the demo scene authors them
 [[case]]

@@ -427,10 +427,21 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var offsets = array<f32, 4>(0.0, 0.36 * PI, -0.22 * PI, 0.14 * PI);
     var light = 1.0;
 
-    // A world grid's plane weights, from the surface's normal
+    // A world grid's plane weights, from the surface's normal. A local
+    // grid (#544) takes the point, how it moves across a pixel and the
+    // normal into its root's own space first, so the strokes ride on it
     var weights = vec3<f32>(0.0);
+    var hp = wp.xyz;
+    var hdx = wdx;
+    var hdy = wdy;
     if on_world {
-        let n = oct_decode(textureLoad(prep_texture, px, 0).zw);
+        var n = oct_decode(textureLoad(prep_texture, px, 0).zw);
+        if local_grid(row) {
+            hp = to_local(row, wp.xyz);
+            hdx = dir_to_local(row, wdx);
+            hdy = dir_to_local(row, wdy);
+            n = normal_to_local(row, n);
+        }
         let an = pow(abs(n), vec3<f32>(6.0));
         weights = an / max(an.x + an.y + an.z, 1e-6);
     }
@@ -451,14 +462,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 if wt < 0.02 {
                     continue;
                 }
-                let q = plane_coords(wp.xyz, axis);
+                let q = plane_coords(hp, axis);
                 // Metres `across` moves per point on screen, from the
                 // quad's derivatives: the octave is picked per plane and
                 // per stroke direction, so a floor seen edge-on climbs to
                 // wider rows across its depth (an anisotropic mip)
                 let rate = max(length(vec2<f32>(
-                    dot(plane_coords(wdx, axis), perp),
-                    dot(plane_coords(wdy, axis), perp),
+                    dot(plane_coords(hdx, axis), perp),
+                    dot(plane_coords(hdy, axis), perp),
                 )) * ppp, 1e-7);
                 let lvl = log2(row.a.x * rate);
                 let octave = floor(lvl);

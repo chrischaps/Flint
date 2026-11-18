@@ -237,6 +237,11 @@ topic = "stylize"
 purpose = "Pencil on chosen props: hatching, contours and paper (#273)"
 
 [[example]]
+scene = "pencil_rolling.scene.toml"
+topic = "stylize"
+purpose = "Rolling casks: world strokes hold still while a cask rolls under them, local strokes ride on it (#544)"
+
+[[example]]
 scene = "pencil_draw_on.scene.toml"
 topic = "stylize"
 purpose = "Three props drawn into the live clearing stroke by stroke: outlines, then hatching, then paper (#879)"
