@@ -3166,6 +3166,125 @@ fn per_entity_styles_scissored_to_their_props_draw_the_same_bytes() {
     assert!(gpu.frame(&mut renderer, &world) == scissored);
 }
 
+/// #538: per-entity watercolor (its wash, blur and paint passes) and a
+/// user style that declares its `reach` are scissored as pencil and ASCII
+/// are: the frame is the full one byte for byte, and a style that breaks
+/// its promise (it changes every pixel but says `reach = 0`) shows the
+/// scissor is drawing only around its entity.
+#[test]
+fn per_entity_watercolor_and_a_user_style_with_a_reach_draw_the_same_bytes_scissored() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::set_entity_style;
+    let dir = std::env::temp_dir().join(format!("flint-reach-538-{}", std::process::id()));
+    let styles = dir.join("styles");
+    std::fs::create_dir_all(&styles).unwrap();
+    // A rim two points out around its entities, read from the mask: what
+    // `reach = 2` promises
+    std::fs::write(
+        styles.join("utest_rim.shader.toml"),
+        "version = 1\nname = \"utest_rim\"\nshader = \"utest_rim.wgsl\"\ninputs = [\"mask\"]\nreach = 2\n",
+    )
+    .unwrap();
+    std::fs::write(
+        styles.join("utest_rim.wgsl"),
+        "fn style(p: StylePixel) -> vec4<f32> {\n    \
+         let o = 2.0 * flint.pixels_per_point * flint.texel;\n    \
+         var near = flint_style_blend(p.uv);\n    \
+         near = max(near, flint_style_blend(p.uv + vec2<f32>(o.x, 0.0)));\n    \
+         near = max(near, flint_style_blend(p.uv - vec2<f32>(o.x, 0.0)));\n    \
+         near = max(near, flint_style_blend(p.uv + vec2<f32>(0.0, o.y)));\n    \
+         near = max(near, flint_style_blend(p.uv - vec2<f32>(0.0, o.y)));\n    \
+         if (near <= 0.0) {\n        return p.color;\n    }\n    \
+         return vec4<f32>(1.0 - p.color.rgb, 1.0);\n}\n",
+    )
+    .unwrap();
+    // Inverts every pixel, its entities' or not, yet says it reaches none
+    std::fs::write(
+        styles.join("utest_leak.shader.toml"),
+        "version = 1\nname = \"utest_leak\"\nshader = \"utest_leak.wgsl\"\ninputs = [\"mask\"]\nreach = 0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        styles.join("utest_leak.wgsl"),
+        "fn style(p: StylePixel) -> vec4<f32> {\n    \
+         return vec4<f32>(1.0 - p.color.rgb, 1.0);\n}\n",
+    )
+    .unwrap();
+    let mut registry = flint_render::stylize::StyleRegistry::new();
+    let messages = registry.load_dir(&dir);
+    assert!(messages.is_empty(), "{messages:?}");
+
+    let mut world = FlintWorld::new();
+    boxed(&mut world, "floor", 30.0, -30.0, None);
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    for (name, at) in [("wash", [2.5, 0.0, -2.5]), ("rim", [-2.5, 0.0, 2.5])] {
+        let id = world.spawn(name).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(at));
+        transform.insert("rotation".into(), vec3([10.0, 30.0, 0.0]));
+        world
+            .set_component(id, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-0.6; 3]));
+        bounds.insert("max".into(), vec3([0.6; 3]));
+        world.set_component(id, "bounds", bounds.into()).unwrap();
+    }
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    renderer.set_styles(registry.clone());
+    let plain = gpu.frame(&mut renderer, &world);
+    let (wash, rim) = (world.get_id("wash").unwrap(), world.get_id("rim").unwrap());
+    set_entity_style(&mut world, &registry, wash, "watercolor").unwrap();
+    set_entity_style(&mut world, &registry, rim, "utest_rim").unwrap();
+    renderer.set_style_scissor(true);
+    let scissored = gpu.frame(&mut renderer, &world);
+    let changed = plain
+        .chunks(4)
+        .zip(scissored.chunks(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(changed > 20, "the styles changed only {changed} pixels");
+    renderer.set_style_scissor(false);
+    for _ in 0..2 {
+        assert!(
+            gpu.frame(&mut renderer, &world) == scissored,
+            "the scissored frame differs from the full one"
+        );
+    }
+
+    // The broken promise: scissored, the far corner from its entity is the
+    // plain frame's; drawn whole, it is inverted
+    set_entity_style(&mut world, &registry, rim, "utest_leak").unwrap();
+    flint_render::entity_style::clear_entity_style(&mut world, &registry, wash);
+    let full = gpu.frame(&mut renderer, &world);
+    renderer.set_style_scissor(true);
+    let cut = gpu.frame(&mut renderer, &world);
+    let far = SIZE as usize - 2;
+    let corners = [(1, 1), (far, 1), (1, far), (far, far)];
+    let untouched = corners
+        .iter()
+        .filter(|&&(x, y)| pixel(&cut, x, y) == pixel(&plain, x, y))
+        .count();
+    assert!(untouched >= 1, "the scissor drew every corner");
+    for (x, y) in corners {
+        assert!(
+            pixel(&full, x, y) != pixel(&plain, x, y),
+            "drawn whole, {x},{y} isn't inverted"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn pixel(frame: &[u8], x: usize, y: usize) -> &[u8] {
     &frame[(y * SIZE as usize + x) * 4..][..4]
 }
@@ -4263,10 +4382,18 @@ fn a_loop_that_never_ends_draws_a_frame() {
     renderer.set_styles(registry.clone());
     let all = ["utest_forever"];
     with_styles(&gpu, &mut renderer, &world, &all, &[]);
+    // The first frame builds the style's pipeline as well, which side by
+    // side competes for the CPU with every other test building theirs
+    // (1.07 s once, #560); what the guard bounds is the draw, so the
+    // limit is on a frame after it. An unguarded loop never returns from
+    // either frame, and the GPU wait or the harness's watchdog names it.
+    let start = std::time::Instant::now();
+    with_styles(&gpu, &mut renderer, &world, &all, &all);
+    let built = start.elapsed();
     let start = std::time::Instant::now();
     let pixels = with_styles(&gpu, &mut renderer, &world, &all, &all);
     let took = start.elapsed();
-    eprintln!("a never-ending loop's frame, built and drawn: {took:?}");
+    eprintln!("a never-ending loop's frame: built and drawn {built:?}, drawn {took:?}");
     assert!(
         registry.errors().iter().all(|(n, _)| n != "utest_forever"),
         "{:?}",
