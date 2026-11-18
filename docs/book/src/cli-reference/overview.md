@@ -320,13 +320,13 @@ A manifest carries an integer `version` (ADR 0126). `flint frame` reads its own 
 ```bash
 flint-player examples/hitch_metronome.scene.toml --trace-on-hitch   # make one (traces/)
 flint profile explain traces/hitch_metronome-hitch-t3.000.json      # why the worst frame was slow
-flint profile explain out.json hitch                 # the last hitch the detector found
+flint profile explain out.json hitch                 # the hitch it was saved for, else the worst
 flint profile frame out.json 412 --min-ms 0.2        # that frame's scope tree
 flint profile top out.json --sort self --thread main --frames 400..500
 flint profile diff before.json after.json            # what moved, and what the spread explains
 ```
 
-`flint profile` reads a scope trace: the Chrome trace-event JSON that `flint-player --trace`, `--trace-on-hitch`, Shift+F3 and a frame capture's `trace.json` hold ([Recording a trace](../guides/profiling.md#recording-a-trace)). It reads only that file: no GPU, no scene, no schemas. A frame is named by the trace's own frame index, the `frame` each scope carries, which Perfetto shows in its args; `worst` is the longest frame, and `hitch` the last hitch on the trace's `hitches` track, which for a `--trace-on-hitch` file is the one it was saved for. Every view answers `--json` with one document carrying the numbers its text shows. A trace of a newer version than the reader knows is refused, naming both.
+`flint profile` reads a scope trace: the Chrome trace-event JSON that `flint-player --trace`, `--trace-on-hitch`, Shift+F3 and a frame capture's `trace.json` hold ([Recording a trace](../guides/profiling.md#recording-a-trace)). It reads only that file: no GPU, no scene, no schemas. A frame is named by the trace's own frame index, the `frame` each scope carries, which Perfetto shows in its args; `worst` is the longest frame, and `hitch` the hitch the file means: for a `--trace-on-hitch` file the one it was saved for (the hitch at the game time its `reason` names, else the last on the `hitches` track), for any other the worst the detector found. The profiler tab of `flint frame open` opens a trace on the same frame. Every view answers `--json` with one document carrying the numbers its text shows. A trace of a newer version than the reader knows is refused, naming both.
 
 ### `flint profile explain`
 
