@@ -39,6 +39,8 @@ pub struct SheetText {
     pub notes: Vec<String>,
     /// A crop sheet's map of where its cells come from (#501), top right.
     pub locator: Option<Locator>,
+    /// Cells a row before the sheet wraps (a `--strip`'s `--columns`, #574).
+    pub per_row: usize,
 }
 
 impl SheetText {
@@ -51,6 +53,7 @@ impl SheetText {
             labels,
             notes: Vec::new(),
             locator: None,
+            per_row: PER_ROW,
         }
     }
 }
@@ -199,8 +202,9 @@ fn text_scale(cell_width: u32) -> u32 {
 /// each with its label beneath.
 pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
     let (cell_w, cell_h) = cells.first().map_or((1, 1), RgbaImage::dimensions);
-    let columns = cells.len().clamp(1, PER_ROW) as u32;
-    let rows = cells.len().div_ceil(PER_ROW).max(1) as u32;
+    let per_row = text.per_row.max(1);
+    let columns = cells.len().clamp(1, per_row) as u32;
+    let rows = cells.len().div_ceil(per_row).max(1) as u32;
     let scale = text_scale(cell_w);
     let line = GLYPH * scale;
 
@@ -225,7 +229,7 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
     let top = MARGIN + head.height;
 
     for (i, cell) in cells.iter().enumerate() {
-        let (col, row) = ((i % PER_ROW) as u32, (i / PER_ROW) as u32);
+        let (col, row) = ((i % per_row) as u32, (i / per_row) as u32);
         let x = MARGIN + col * (cell_w + 2 + GUTTER);
         let y = top + row * (row_h + GUTTER);
         debug_assert_eq!((x + 1, y + 1), cell_origin(cell_w, cell_h, text, i));
@@ -260,17 +264,43 @@ pub fn cell_origin(cell_w: u32, cell_h: u32, text: &SheetText, i: usize) -> (u32
     let scale = text_scale(cell_w);
     let line = GLYPH * scale;
     // The subtitle wraps at the sheet's width, as `compose` lays it out
-    let columns = text.labels.len().clamp(1, PER_ROW) as u32;
+    let per_row = text.per_row.max(1);
+    let columns = text.labels.len().clamp(1, per_row) as u32;
     let width = MARGIN * 2 + columns * (cell_w + 2) + (columns - 1) * GUTTER;
     let head = Head::new(width, cell_w, scale, &text.subtitle, text.locator.as_ref()).height;
     let noted = text.notes.iter().any(|note| !note.is_empty());
     let note_band = if noted { 3 * scale + line } else { 0 };
     let row_h = cell_h + 2 + 6 * scale + line + note_band + 4 * scale;
-    let (col, row) = ((i % PER_ROW) as u32, (i / PER_ROW) as u32);
+    let (col, row) = ((i % per_row) as u32, (i / per_row) as u32);
     (
         MARGIN + col * (cell_w + 2 + GUTTER) + 1,
         MARGIN + head + row * (row_h + GUTTER) + 1,
     )
+}
+
+/// What lies between the tiles of an unlabelled sheet ([`compose_plain`]).
+pub const PLAIN_GUTTER: u32 = 4;
+
+/// `cells` (all one size) in rows of `columns`, with nothing but
+/// [`PLAIN_GUTTER`] pixels of paper between them: no title, no labels, no
+/// frames and no margin, so cell `i` starts at `(c * (w + 4), r * (h + 4))`
+/// and a reader can cut it back out by arithmetic (`--strip --label off`,
+/// #574).
+pub fn compose_plain(cells: &[RgbaImage], columns: usize) -> RgbaImage {
+    let (cell_w, cell_h) = cells.first().map_or((1, 1), RgbaImage::dimensions);
+    let columns = columns.clamp(1, cells.len().max(1));
+    let rows = cells.len().div_ceil(columns).max(1);
+    let (across, down) = (columns as u32, rows as u32);
+    let width = across * cell_w + (across - 1) * PLAIN_GUTTER;
+    let height = down * cell_h + (down - 1) * PLAIN_GUTTER;
+    let mut sheet = RgbaImage::from_pixel(width, height, PAPER);
+    for (i, cell) in cells.iter().enumerate() {
+        let (c, r) = ((i % columns) as u32, (i / columns) as u32);
+        let x = c * (cell_w + PLAIN_GUTTER);
+        let y = r * (cell_h + PLAIN_GUTTER);
+        image::imageops::replace(&mut sheet, cell, i64::from(x), i64::from(y));
+    }
+    sheet
 }
 
 /// The moment a sheet shows, right-aligned on the title's line and clipped at
@@ -594,6 +624,39 @@ mod tests {
             "a cell was cropped or drawn over"
         );
         assert_eq!(sheet.width(), 2 * MARGIN + 3 * 66 + 2 * GUTTER);
+    }
+
+    /// A strip's `--columns` (#574): three a row, and `cell_origin` agrees.
+    #[test]
+    fn a_sheet_wraps_where_it_is_told() {
+        let cells = vec![RgbaImage::from_pixel(64, 48, RED); 5];
+        let mut t = text(&["0", "1", "2", "3", "4"]);
+        t.per_row = 3;
+        let sheet = compose(&cells, &t);
+        assert_eq!(sheet.width(), 2 * MARGIN + 3 * 66 + 2 * GUTTER);
+        assert_eq!(count(&sheet, RED), 5 * 64 * 48);
+        let (x3, y3) = cell_origin(64, 48, &t, 3);
+        let (x0, y0) = cell_origin(64, 48, &t, 0);
+        assert_eq!(x3, x0, "the fourth cell starts the second row");
+        assert!(y3 > y0);
+        assert_eq!(*sheet.get_pixel(x3, y3), RED);
+    }
+
+    /// `--label off`: tiles 4 pixels apart, nothing else.
+    #[test]
+    fn a_plain_sheet_is_only_its_tiles() {
+        let cells = vec![
+            RgbaImage::from_pixel(10, 6, RED),
+            RgbaImage::from_pixel(10, 6, BLUE),
+            RgbaImage::from_pixel(10, 6, RED),
+        ];
+        let sheet = compose_plain(&cells, 2);
+        assert_eq!(sheet.dimensions(), (2 * 10 + 4, 2 * 6 + 4));
+        assert_eq!(*sheet.get_pixel(0, 0), RED);
+        assert_eq!(*sheet.get_pixel(14, 0), BLUE);
+        assert_eq!(*sheet.get_pixel(10, 0), PAPER);
+        assert_eq!(*sheet.get_pixel(0, 10), RED);
+        assert_eq!(count(&sheet, RED), 2 * 60);
     }
 
     #[test]

@@ -415,6 +415,102 @@ fn a_strip_can_be_a_gif() {
     assert_eq!(frames[0].buffer().width(), 64);
 }
 
+/// #574's done-when: a span is one labelled contact sheet in one command,
+/// and each tile is, pixel for pixel, `--time <its t>` rendered alone at the
+/// tile's size.
+#[test]
+fn a_strip_is_a_sheet_of_its_moments_each_as_rendered_alone() {
+    let dir = project("strip_sheet");
+    let ascii = ["--style", "ascii"];
+    let o = render(
+        &dir,
+        "strip.png",
+        &[
+            &["--time", "0..2", "--strip", "--every", "1", "--cols", "2"][..],
+            &ascii,
+        ]
+        .concat(),
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let said = String::from_utf8_lossy(&o.stdout);
+    assert!(said.contains("3 tiles of 64x48"), "{said}");
+    let sheet = image::open(dir.join("strip.png")).unwrap().into_rgb8();
+    assert_eq!(sheet.width(), sheet_width(2, 64));
+
+    let mut corners = Vec::new();
+    for t in ["0", "1", "2"] {
+        let name = format!("alone_{t}.png");
+        ok(&render(&dir, &name, &[&["--time", t][..], &ascii].concat()));
+        let cell = image::open(dir.join(&name)).unwrap().into_rgb8();
+        let at = find_cell(&sheet, &cell)
+            .unwrap_or_else(|| panic!("t = {t}: no tile of the strip is its render alone"));
+        corners.push(at);
+    }
+    // 0 and 1 along the first row, 2 under 0
+    assert!(
+        corners[0].1 == corners[1].1 && corners[0].0 < corners[1].0,
+        "{corners:?}"
+    );
+    assert!(
+        corners[2].0 == corners[0].0 && corners[2].1 > corners[0].1,
+        "{corners:?}"
+    );
+    let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
+    assert_ne!(
+        read("alone_0.png"),
+        read("alone_2.png"),
+        "the props never moved"
+    );
+}
+
+/// `--label off`: the tiles alone, 4 pixels apart, so a tile is cut back out
+/// by arithmetic. A list's moments make a strip as a span's do. The ASCII
+/// style keeps a history (#277) that a GIF's frames follow on from; at this
+/// size and 0.05 s apart, a capture that followed on from the one before
+/// differs from the render alone (a `--time` list's stills do, measured
+/// 2026-11-18), so this holds each tile to being drawn as a first frame.
+#[test]
+fn a_strip_without_labels_is_its_tiles_four_pixels_apart() {
+    let dir = project("strip_plain");
+    let run = |out: &str, args: &[&str]| {
+        std::process::Command::new(FLINT)
+            .arg("render")
+            .arg(dir.join("grove.scene.toml"))
+            .arg("--schemas")
+            .arg(schemas())
+            .args([
+                "--width", "320", "--height", "240", "--style", "ascii", "-o",
+            ])
+            .arg(dir.join(out))
+            .args(args)
+            .output()
+            .expect("run flint")
+    };
+    let times = ["0", "0.05", "0.1"];
+    let o = run(
+        "plain.png",
+        &["--time", &times.join(","), "--strip", "--label", "off"],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let sheet = image::open(dir.join("plain.png")).unwrap().into_rgb8();
+    // Three tiles are two across: the fewest that keep the sheet no taller than wide
+    assert_eq!(sheet.dimensions(), (2 * 320 + 4, 2 * 240 + 4));
+    for (i, t) in times.iter().enumerate() {
+        let name = format!("alone_{i}.png");
+        ok(&run(&name, &["--time", t]));
+        let alone = image::open(dir.join(&name)).unwrap().into_rgb8();
+        let (x, y) = ((i as u32 % 2) * 324, (i as u32 / 2) * 244);
+        let tile = image::imageops::crop_imm(&sheet, x, y, 320, 240).to_image();
+        assert!(tile == alone, "tile {i} isn't --time {t} alone");
+    }
+}
+
 /// The flags the one-renderer path took and the clocked one refused until #596.
 /// A grid of two wooze knobs: a stage a cell, each cell reporting both its
 /// values, and each value reaching the props.
@@ -827,6 +923,24 @@ fn what_cant_be_written_is_refused_and_says_why() {
     refused("a.png", &["--sweep", "fog.density=1"], "at least two");
     refused("a.png", &["--time", "soon"], "'soon'");
     refused("a.png", &["--frame-step", "0.1"], "--time");
+
+    // A strip (#574) is one PNG of several moments
+    refused("a.gif", &["--time", "0..4", "--strip"], ".png");
+    refused("f-%04d.png", &["--time", "0..4", "--strip"], "plain .png");
+    refused("a.png", &["--time", "3", "--strip"], "is one");
+    refused("a.png", &["--strip"], "--time");
+    refused(
+        "a.png",
+        &["--time", "1,2", "--strip", "--every", "1"],
+        "drop --every",
+    );
+    refused("a.png", &["--time", "0..900", "--strip"], "at most 100");
+    refused(
+        "a.png",
+        &["--time", "0..2", "--strip", "--sweep", "wooze.glide=0,1"],
+        "cannot be used with",
+    );
+    refused("a.png", &["--time", "0..2", "--every", "1"], "--strip");
 
     // What a clocked render can't mean (#596)
     let reference = dir.join("tiny.png");

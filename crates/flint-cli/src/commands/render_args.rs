@@ -96,6 +96,9 @@ pub struct RenderArgs {
     pub clock: ClockArgs,
 
     #[command(flatten)]
+    pub strip: StripArgs,
+
+    #[command(flatten)]
     pub seq: SequenceArgs,
 
     #[command(flatten)]
@@ -323,6 +326,55 @@ pub struct ClockArgs {
     /// are identical, different values differ)
     #[arg(long)]
     pub grain_time: Option<f32>,
+}
+
+/// `--strip` (#574): a span as one contact sheet, for a reviewer that can
+/// open a PNG but sees only a GIF's first frame.
+#[derive(clap::Args)]
+#[command(next_help_heading = TIME)]
+pub struct StripArgs {
+    /// With a --time span or list: write one PNG contact sheet of it to
+    /// --output (#574), a tile every --every seconds, each labelled with
+    /// its time. A span's end is a tile when an --every lands on it (0..8
+    /// --every 1 is 9 tiles). On the GIF's clock (--frame-step), and each
+    /// tile drawn as a first frame, so a tile is the pixels of --time
+    /// <its t> rendered alone at the tile's size. Tiles default to 640x360
+    #[arg(long, requires = "clock",
+          conflicts_with_all = ["sweep", "frames", "mesh", "variant", "variants", "ai_refine"])]
+    pub strip: bool,
+
+    /// With --strip and a span: seconds of game time from one tile to the
+    /// next [default: 1]
+    #[arg(long, value_name = "SECONDS", requires = "strip", value_parser = parse_every)]
+    pub every: Option<f64>,
+
+    /// With --strip: tiles a row [default: the fewest that make the sheet
+    /// no taller than it is wide]
+    #[arg(long = "columns", visible_alias = "cols", requires = "strip",
+          value_parser = clap::value_parser!(u32).range(1..))]
+    pub columns: Option<u32>,
+
+    /// With --strip: `off` draws the tiles alone, no title and no times, 4
+    /// pixels apart with no border, so tile (c, r) of WxH starts at
+    /// (c*(W+4), r*(H+4))
+    #[arg(long, requires = "strip", value_enum, default_value_t = StripLabel::On)]
+    pub label: StripLabel,
+}
+
+/// `--label`: whether a strip writes what each tile is.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StripLabel {
+    On,
+    Off,
+}
+
+fn parse_every(text: &str) -> Result<f64, String> {
+    match text.parse::<f64>() {
+        Ok(every) if every.is_finite() && every > 0.0 => Ok(every),
+        _ => Err(format!(
+            "'{text}' isn't a strip's spacing: it's seconds, more than 0"
+        )),
+    }
 }
 
 /// A sequence of frames on one renderer: --frames or --mesh.
