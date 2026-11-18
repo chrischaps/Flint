@@ -210,8 +210,11 @@ impl Profiler {
             return 0..0;
         }
         let one = |r: usize| r..r + 1;
+        // Only a row with its scopes is chosen for the user (#1288)
+        let covered = self.p.first_covered;
         let worst_hitch = || {
             (0..self.p.trace.hitches.len())
+                .filter(|&h| self.p.hitch_row(h).is_some_and(|r| r >= covered))
                 .max_by(|&a, &b| {
                     let (a, b) = (&self.p.trace.hitches[a], &self.p.trace.hitches[b]);
                     a.judged_ms.total_cmp(&b.judged_ms)
@@ -229,11 +232,19 @@ impl Profiler {
                         .position(|h| h.history_frame == Some(f))
                 })
                 .and_then(|h| self.p.hitch_row(h))
+                .filter(|&r| r >= covered)
                 .or_else(worst_hitch)
         };
         let worst = self.p.worst_row().unwrap_or(n - 1);
         match &start.frame {
             Some(FrameChoice::Index(i)) => match self.p.row_of(*i) {
+                Some(r) if r < covered => {
+                    let first = self.p.rows[covered].index;
+                    self.notice = Some(format!(
+                        "frame {i} is before the scopes begin (frame {first}): shown as recorded"
+                    ));
+                    one(r)
+                }
                 Some(r) => one(r),
                 None => {
                     let (a, b) = (self.p.rows[0].index, self.p.rows[n - 1].index);
@@ -595,6 +606,9 @@ impl Profiler {
                     .color(ink::FAINT),
             );
         }
+        if let Some(c) = &self.p.coverage {
+            ui.label(RichText::new(c).small().color(ink::TEXT));
+        }
     }
 
     // ── The frame strip ──
@@ -641,6 +655,30 @@ impl Profiler {
                 .clamp(rect.left(), rect.right())
         };
         let painter = ui.painter_at(rect.expand(2.0));
+        // The frames before the scopes begin (#1288): veiled, the edge
+        // marked and named, so an empty chart there reads as no record,
+        // not as a frame where nothing ran
+        if self.p.first_covered > 0 {
+            let edge = x_of(self.p.rows[self.p.first_covered].start_ns);
+            let veil = Rect::from_x_y_ranges(rect.left()..=edge, rect.y_range());
+            painter.rect_filled(veil, 0.0, Color32::from_black_alpha(150));
+            painter.line_segment(
+                [Pos2::new(edge, rect.top()), Pos2::new(edge, rect.bottom())],
+                Stroke::new(1.0, ink::DIM),
+            );
+            let label = painter.layout_no_wrap(
+                "no scopes: the ring wrapped".into(),
+                FontId::proportional(10.0),
+                ink::DIM,
+            );
+            if label.size().x + 8.0 < edge - rect.left() {
+                painter.galley(
+                    Pos2::new(edge - label.size().x - 4.0, rect.top() + 2.0),
+                    label,
+                    ink::DIM,
+                );
+            }
+        }
         // The chosen frames, and the chart's window when it is narrower
         if let Some((a, b)) = self.p.span_of(self.sel.clone()) {
             let (x0, x1) = (x_of(a), x_of(b));
@@ -1307,7 +1345,18 @@ impl Profiler {
                     }
                     continue;
                 }
-                let label = self.p.name(s.name);
+                // A summed record (#1288) is lighter and counts its calls:
+                // it is laid from the first call for their total, so it
+                // may overlap a sibling
+                let summed_label;
+                let label = match s.summed {
+                    Some(sum) => {
+                        fill = fill.gamma_multiply(0.6);
+                        summed_label = format!("{} x{}", self.p.name(s.name), sum.calls);
+                        summed_label.as_str()
+                    }
+                    None => self.p.name(s.name),
+                };
                 let br = bar(&painter, x0, x1, by, fill, label, Some(s.dur_ns), text);
                 if chosen == Some(s.name) {
                     painter.rect_stroke(
@@ -1534,6 +1583,17 @@ impl Profiler {
                 out.push((self.p.name(s.name).to_string(), ink::TEXT, strong));
                 if let Some(d) = &s.detail {
                     out.push((d.to_string(), ink::ENTITY, body.clone()));
+                }
+                if let Some(sum) = s.summed {
+                    out.push((
+                        format!(
+                            "{} calls summed, laid from the first  ·  longest {} ms",
+                            sum.calls,
+                            ms_text(sum.worst_ns)
+                        ),
+                        ink::ENTITY,
+                        body.clone(),
+                    ));
                 }
                 out.push((share(s.dur_ns, s.frame), ink::TEXT, body.clone()));
                 out.push((
@@ -1784,6 +1844,49 @@ mod tests {
         });
         assert_eq!(t.selection(), 2..3);
         assert!(t.notice.as_deref().unwrap().contains("0 to 2"));
+    }
+
+    /// The sample with its main ring cut at frame 1's start (#1288): frame
+    /// 0 has scopes in the file, but the header says they may be partial.
+    fn wrapped_tab(start: ProfileStart) -> Profiler {
+        let text = sample().replace(
+            "\"reason\":\"exit\"",
+            "\"reason\":\"exit\",\"seconds\":5,\"wrapped\":\"main\",\
+             \"covered_from_ms\":11.0,\"cut_threads\":\"main\"",
+        );
+        Profiler::new(Trace::read(&text).unwrap(), "t.json".into(), &start)
+    }
+
+    #[test]
+    fn a_wrapped_trace_opens_on_a_covered_frame_and_veils_the_rest() {
+        let t = wrapped_tab(ProfileStart::default());
+        assert_eq!(t.profile().first_covered, 1);
+        assert_eq!(t.selection(), 2..3, "the hitch, which has its scopes");
+        let line = t.profile().coverage.clone().unwrap();
+        assert!(
+            line.starts_with("scopes cover frames 1..2")
+                && line.contains("the main ring wrapped, so the 1 frame before them has none"),
+            "{line}"
+        );
+        // Asked for a frame before them: shown, and said
+        let t = wrapped_tab(ProfileStart {
+            frame: Some(FrameChoice::Index(0)),
+            ..Default::default()
+        });
+        assert_eq!(t.selection(), 0..1);
+        assert!(
+            t.notice
+                .as_deref()
+                .unwrap()
+                .contains("frame 0 is before the scopes begin (frame 1)"),
+            "{:?}",
+            t.notice
+        );
+        // And it draws, veil and all
+        let ctx = egui::Context::default();
+        let mut t = wrapped_tab(ProfileStart::default());
+        frame(&ctx, &mut t, vec![]);
+        frame(&ctx, &mut t, vec![]);
     }
 
     #[test]

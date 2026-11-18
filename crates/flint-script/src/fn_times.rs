@@ -4,8 +4,16 @@
 //! but not the cause: a 12 ms `on_update` could be one loop or one engine
 //! call made 400 times. While a callback is timed (`set_timing`, the
 //! player's `--perf`) or the recorder records (ADR 0128), every function it
-//! calls is counted here: calls, total and worst time, each also a scope
-//! in the trace, nested under the callback's.
+//! calls is counted here: calls, total and worst time. In the trace a
+//! script function's call is a scope, nested under the callback's; an
+//! engine function's calls are **summed** (#1288): one record a function in
+//! each scope that called it, laid from the first call for their total,
+//! with the count and the longest (`profile::record_calls`). A script
+//! making 800 engine calls a frame made 800 records a frame, which filled
+//! the ring's five seconds in under one. A call that recorded a scope
+//! inside it (an engine function with a `scope!` of its own, or one that
+//! called back into a script) is a scope of its own instead, so the tree
+//! under it stays whole.
 //!
 //! - **Engine functions** are wrapped where Flint registers them, the
 //!   declared API's builder (`api/builder.rs`): every overload of a name is
@@ -119,6 +127,19 @@ struct Slot {
     worst_ns: u64,
 }
 
+/// An engine function's calls inside one traced scope, folded (#1288): what
+/// one [`profile::record_calls`] record says when that scope closes.
+#[derive(Clone, Copy)]
+struct Summed {
+    id: FnId,
+    calls: u32,
+    /// The first call's start, clock ticks.
+    first: u64,
+    /// Ticks, summed and the longest.
+    total: u64,
+    worst: u64,
+}
+
 #[derive(Default)]
 struct Sink {
     slots: Vec<Slot>,
@@ -126,8 +147,14 @@ struct Sink {
     touched: Vec<FnId>,
     /// Each id's profiler site, made the first time it is traced here.
     sites: Vec<Option<&'static profile::Site>>,
-    /// Whether the recorder records: each call is a scope too.
+    /// Whether the recorder records: each script function's call is a
+    /// scope too, and each engine function's calls one summed record a
+    /// scope they were made in.
     trace: bool,
+    /// While tracing: the engine calls folded so far in each traced scope
+    /// open, the callback's first, then each script function's inside it.
+    /// Flushed as records when the scope closes ([`Sink::flush`]).
+    summed: Vec<Vec<Summed>>,
     /// Which [`begin`] the records are for: a guard from an earlier one
     /// (left in a scope by an error) closes into nothing.
     epoch: u32,
@@ -145,13 +172,50 @@ impl Sink {
         }
         slot.open += 1;
         let outer = slot.open == 1;
-        let site = self.trace.then(|| {
-            if self.sites.len() <= i {
-                self.sites.resize(i + 1, None);
-            }
-            *self.sites[i].get_or_insert_with(|| profile::site_named(text_of(id)))
-        });
+        let site = self.trace.then(|| self.site(id));
         (outer, site)
+    }
+
+    fn site(&mut self, id: FnId) -> &'static profile::Site {
+        let i = id as usize;
+        if self.sites.len() <= i {
+            self.sites.resize(i + 1, None);
+        }
+        *self.sites[i].get_or_insert_with(|| profile::site_named(text_of(id)))
+    }
+
+    /// An engine call of `id` that recorded nothing inside it, folded into
+    /// the innermost traced scope's sum.
+    fn fold(&mut self, id: FnId, start: u64, ticks: u64) {
+        let Some(frame) = self.summed.last_mut() else {
+            return;
+        };
+        match frame.iter_mut().find(|s| s.id == id) {
+            Some(s) => {
+                s.calls += 1;
+                s.total += ticks;
+                s.worst = s.worst.max(ticks);
+            }
+            None => frame.push(Summed {
+                id,
+                calls: 1,
+                first: start,
+                total: ticks,
+                worst: ticks,
+            }),
+        }
+    }
+
+    /// The innermost traced scope is closing: each engine function called
+    /// in it is one record, one level inside it (it is still open).
+    fn flush(&mut self) {
+        let Some(frame) = self.summed.pop() else {
+            return;
+        };
+        for s in frame {
+            let site = self.site(s.id);
+            profile::record_calls(site, s.first, s.total, s.calls, s.worst);
+        }
     }
 
     fn close(&mut self, id: FnId, outer: bool, ns: u64) {
@@ -184,18 +248,29 @@ pub(crate) fn begin(trace: bool) -> bool {
         let mut s = s.borrow_mut();
         s.trace = trace && profile::COMPILED_IN;
         s.epoch = s.epoch.wrapping_add(1);
+        s.summed.clear();
+        if s.trace {
+            // The callback's own scope, which the caller holds open
+            s.summed.push(Vec::new());
+        }
     });
     ON.with(|on| on.set(true));
     true
 }
 
 /// Stop counting and hand what was counted since [`begin`] to `out`, in
-/// the order each function was first called.
+/// the order each function was first called. Called while the callback's
+/// scope is still open: the engine calls it made are recorded inside it.
 pub(crate) fn end(out: &mut Vec<Took>) {
     ON.with(|on| on.set(false));
     SINK.with(|s| {
         let mut s = s.borrow_mut();
         let s = &mut *s;
+        // What is still folded: the callback's (and any scope an error
+        // left, innermost first, recorded at the callback's level)
+        while !s.summed.is_empty() {
+            s.flush();
+        }
         // A guard still open (a closure kept from a profiled call) closes
         // into nothing from here
         s.epoch = s.epoch.wrapping_add(1);
@@ -213,52 +288,104 @@ pub(crate) fn end(out: &mut Vec<Took>) {
     });
 }
 
+/// What a traced call is in the recorder.
+enum Traced {
+    /// Not tracing.
+    No,
+    /// A script function's call: a scope, and a sum of the engine calls
+    /// made directly inside it.
+    Scope(profile::Scope),
+    /// An engine function's call: folded into its scope's sum unless
+    /// something inside it was recorded (#1288, [`profile::Call`]).
+    Call(profile::Call, &'static profile::Site),
+}
+
 /// A call under way, recorded when it drops.
 pub(crate) struct Open {
     id: FnId,
     outer: bool,
     epoch: u32,
     start: web_time::Instant,
-    scope: Option<profile::Scope>,
+    traced: Traced,
 }
 
-/// Start timing a call of `id`, if this thread counts: off, one flag read.
+/// Start timing a script function's call of `id`, if this thread counts:
+/// off, one flag read. Traced, it is a scope.
 #[inline]
 pub(crate) fn enter(id: FnId) -> Option<Open> {
     if !ON.with(Cell::get) {
         return None;
     }
-    Some(open(id))
+    Some(open(id, false))
+}
+
+/// Start timing an engine function's call of `id` (`api/builder.rs`'s
+/// wrappers), if this thread counts: off, one flag read. Traced, its calls
+/// are summed: one record a function in each scope that called it, with
+/// the count (#1288), where a scope a call was 800 records a frame.
+#[inline]
+pub(crate) fn enter_engine(id: FnId) -> Option<Open> {
+    if !ON.with(Cell::get) {
+        return None;
+    }
+    Some(open(id, true))
 }
 
 #[inline(never)]
-fn open(id: FnId) -> Open {
+fn open(id: FnId, engine: bool) -> Open {
     let (outer, site, epoch) = SINK.with(|s| {
         let mut s = s.borrow_mut();
         let (outer, site) = s.open(id);
+        if site.is_some() && !engine {
+            // The engine calls made in this function are summed under it
+            s.summed.push(Vec::new());
+        }
         (outer, site, s.epoch)
     });
     // The scope opens before the clock starts and closes after it stops,
     // so the trace's bar holds the time counted
-    let scope = site.map(profile::Scope::enter);
+    let traced = match site {
+        None => Traced::No,
+        Some(site) if engine => Traced::Call(profile::Call::enter(), site),
+        Some(site) => Traced::Scope(profile::Scope::enter(site)),
+    };
     Open {
         id,
         outer,
         epoch,
         start: web_time::Instant::now(),
-        scope,
+        traced,
     }
 }
 
 impl Drop for Open {
     fn drop(&mut self) {
         let ns = self.start.elapsed().as_nanos() as u64;
-        drop(self.scope.take());
         let _ = SINK.try_with(|s| {
-            if let Ok(mut s) = s.try_borrow_mut() {
-                if s.epoch == self.epoch {
-                    s.close(self.id, self.outer, ns);
+            let Ok(mut s) = s.try_borrow_mut() else {
+                return;
+            };
+            let current = s.epoch == self.epoch;
+            match std::mem::replace(&mut self.traced, Traced::No) {
+                Traced::No => {}
+                Traced::Call(call, site) => {
+                    // Closed whatever the epoch, so the depth comes back
+                    if let Some((start, ticks)) = call.close(site) {
+                        if current {
+                            s.fold(self.id, start, ticks);
+                        }
+                    }
                 }
+                Traced::Scope(scope) => {
+                    // Its engine calls, inside it while it is still open
+                    if current {
+                        s.flush();
+                    }
+                    drop(scope);
+                }
+            }
+            if current {
+                s.close(self.id, self.outer, ns);
             }
         });
     }

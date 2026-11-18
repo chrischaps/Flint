@@ -49,8 +49,9 @@ pub(crate) fn per_frame(
                 k.incl_ns += s.dur_ns;
             }
             k.self_ns += t.self_ns[i];
-            k.calls += 1;
-            k.worst_ns = k.worst_ns.max(s.dur_ns);
+            // A summed record is its calls, and its longest (#1288)
+            k.calls += s.calls();
+            k.worst_ns = k.worst_ns.max(s.worst_ns());
         }
     }
     out
