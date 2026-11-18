@@ -32,7 +32,9 @@ pub enum FrameChoice {
     Index(u32),
     /// Frames `a` to `b`, both included.
     Range(u32, u32),
-    /// The capture's hitch, else the worst hitch, else the longest frame.
+    /// The hitch the file means: the capture's, else the one a trace was
+    /// saved for, else the worst (`trace::meant_hitch`, the rule `flint
+    /// profile`'s `hitch` follows too), else the longest frame.
     Hitch,
     /// The longest frame.
     Worst,
@@ -71,6 +73,10 @@ pub struct ProfileStart {
     /// The capture's hitch (its `cpu.hitch.frame`, the player's history
     /// frame), which a trace's hitch names too.
     pub capture_hitch: Option<i64>,
+    /// The frame a capture holds (its manifest's `frame.index`), which the
+    /// trace numbers the same: the tab opens on it when the capture wasn't
+    /// taken on a hitch, so P switches between two views of one frame.
+    pub capture_frame: Option<u32>,
 }
 
 /// A row of the chart, points.
@@ -210,18 +216,21 @@ impl Profiler {
             return 0..0;
         }
         let one = |r: usize| r..r + 1;
-        // Only a row with its scopes is chosen for the user (#1288)
+        // Only a row with its scopes is chosen for the user (#1288): each
+        // choice below holds only when its row is covered, and a hitch
+        // before the scopes gives way to the worst hitch after them
         let covered = self.p.first_covered;
-        let worst_hitch = || {
+        let kept = |r: &usize| *r >= covered;
+        let worst_covered_hitch = || {
             (0..self.p.trace.hitches.len())
-                .filter(|&h| self.p.hitch_row(h).is_some_and(|r| r >= covered))
+                .filter(|&h| self.p.hitch_row(h).is_some_and(|r| kept(&r)))
                 .max_by(|&a, &b| {
                     let (a, b) = (&self.p.trace.hitches[a], &self.p.trace.hitches[b]);
                     a.judged_ms.total_cmp(&b.judged_ms)
                 })
                 .and_then(|h| self.p.hitch_row(h))
         };
-        let the_hitch = || {
+        let capture_hitch = || {
             start
                 .capture_hitch
                 .and_then(|f| {
@@ -232,8 +241,22 @@ impl Profiler {
                         .position(|h| h.history_frame == Some(f))
                 })
                 .and_then(|h| self.p.hitch_row(h))
-                .filter(|&r| r >= covered)
-                .or_else(worst_hitch)
+                .filter(kept)
+        };
+        // The one a trace saved for a hitch was saved for, else the worst
+        let meant_hitch = || {
+            self.p
+                .trace
+                .meant_hitch()
+                .and_then(|h| self.p.hitch_row(h))
+                .filter(kept)
+                .or_else(worst_covered_hitch)
+        };
+        let capture_frame = || {
+            start
+                .capture_frame
+                .and_then(|i| self.p.row_of(i))
+                .filter(kept)
         };
         let worst = self.p.worst_row().unwrap_or(n - 1);
         match &start.frame {
@@ -264,7 +287,13 @@ impl Profiler {
                 }
             }
             Some(FrameChoice::Worst) => one(worst),
-            Some(FrameChoice::Hitch) | None => one(the_hitch().unwrap_or(worst)),
+            Some(FrameChoice::Hitch) => one(capture_hitch().or_else(meant_hitch).unwrap_or(worst)),
+            // A capture opens on its own frame (its hitch's, when it was
+            // taken on one); a trace alone on the hitch it means
+            None => one(capture_hitch()
+                .or_else(capture_frame)
+                .or_else(meant_hitch)
+                .unwrap_or(worst)),
         }
     }
 
@@ -1887,6 +1916,67 @@ mod tests {
         let mut t = wrapped_tab(ProfileStart::default());
         frame(&ctx, &mut t, vec![]);
         frame(&ctx, &mut t, vec![]);
+    }
+
+    /// The frame the tab opens on, as the trace numbers it.
+    fn opens_on(text: &str, start: ProfileStart) -> u32 {
+        let t = Profiler::new(Trace::read(text).unwrap(), "t.json".into(), &start);
+        let sel = t.selection();
+        assert_eq!(sel.len(), 1);
+        t.p.rows[sel.start].index
+    }
+
+    #[test]
+    fn the_tab_and_flint_profile_mean_one_hitch() {
+        use crate::commands::frame::trace::tests::{three_hitches, SAVED_ON_SECOND};
+        use crate::commands::profile::{pick_frame, read};
+        // #1289: saved for its second hitch, the tab opened on the worst
+        // (105) and `flint profile` on the last (117); both mean 114 now.
+        // On exit both mean the worst.
+        for (reason, meant) in [(SAVED_ON_SECOND, 114), ("exit", 105)] {
+            let text = three_hitches(reason);
+            let profile = read::Trace::parse(text.as_bytes(), "t.json").unwrap();
+            let explained = profile.frames[pick_frame(&profile, "hitch").unwrap()].frame;
+            for frame in [None, Some(FrameChoice::Hitch)] {
+                let start = ProfileStart {
+                    frame: frame.clone(),
+                    ..Default::default()
+                };
+                assert_eq!(opens_on(&text, start), meant, "{reason} {frame:?}");
+            }
+            assert_eq!(explained, meant, "{reason}");
+        }
+    }
+
+    #[test]
+    fn a_capture_opens_on_its_own_frame_or_the_hitch_it_was_taken_on() {
+        use crate::commands::frame::trace::tests::three_hitches;
+        let text = three_hitches("capture");
+        // Not taken on a hitch: the frame it holds, not the worst
+        let own = ProfileStart {
+            capture_frame: Some(110),
+            ..Default::default()
+        };
+        assert_eq!(opens_on(&text, own.clone()), 110);
+        // `hitch` asked for is still the hitch
+        let asked = ProfileStart {
+            frame: Some(FrameChoice::Hitch),
+            ..own.clone()
+        };
+        assert_eq!(opens_on(&text, asked), 105);
+        // Taken on a hitch: that hitch, matched by its history frame
+        let on_hitch = ProfileStart {
+            capture_hitch: Some(117),
+            capture_frame: Some(118),
+            ..Default::default()
+        };
+        assert_eq!(opens_on(&text, on_hitch), 117);
+        // A frame the trace's ring no longer holds: the hitch it means
+        let gone = ProfileStart {
+            capture_frame: Some(400),
+            ..Default::default()
+        };
+        assert_eq!(opens_on(&text, gone), 105);
     }
 
     #[test]

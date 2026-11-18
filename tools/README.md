@@ -34,6 +34,7 @@ CLAUDE.md asks.
 | `ascii_flips.py` | Counts ASCII glyph flips and A-B-A reversals (shimmer) across captured frames (#277) | reads `flint-player` captures | numpy, Pillow |
 | **Assets** | | | |
 | `assets/cap_textures.py` | Brings textures under the tree's caps (2048 texels a side, 3 MB; ADR 0122, #759): halves with `flint_pixels::mip_chain`'s own filter, colour maps to JPEG, data maps PNG, GLBs rewritten whole. `scripts/size-check.py` names it | | numpy, Pillow |
+| `assets/pack_book_images.py` | Packs the book's PNGs smaller with the same pixels (#1276): drops an opaque alpha, tries a palette, Pillow's slowest zlib, checks each against the original. `scripts/size-check.py` names it for a book PNG with alpha | | Pillow |
 | **Test fixtures** | | | |
 | `make_sphere_glb.py` | `demo/models/Sphere.glb`, a UV sphere for the ASCII edge tests (#267) | | standard library |
 | `test-models/double_sided_card.py` | `tests/fixtures/models/DoubleSidedCard.glb`, the glTF `doubleSided` fixture (#623) | | standard library |

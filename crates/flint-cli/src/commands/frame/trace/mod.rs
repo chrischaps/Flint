@@ -446,6 +446,59 @@ impl Trace {
         let names: Vec<&str> = cut.iter().map(|(n, _)| *n).collect();
         Some((from, names.join(", ")))
     }
+
+    /// The hitch this trace means by `hitch`, an index into
+    /// [`Trace::hitches`]: see [`meant_hitch`].
+    pub fn meant_hitch(&self) -> Option<usize> {
+        let marks: Vec<HitchMark> = self
+            .hitches
+            .iter()
+            .map(|h| HitchMark {
+                game_time: h.game_time,
+                judged_ms: h.judged_ms as f64,
+            })
+            .collect();
+        meant_hitch(self.header_str("reason"), &marks)
+    }
+}
+
+/// What [`meant_hitch`] needs of a hitch on a trace's `hitches` track.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HitchMark {
+    pub game_time: Option<f64>,
+    pub judged_ms: f64,
+}
+
+/// The game time a header's `reason` names, when the trace was saved for a
+/// hitch: the player writes `hitch at t=6.004 s, 120.3 ms: <cause>`.
+pub fn reason_hitch_time(reason: &str) -> Option<f64> {
+    let rest = reason.strip_prefix("hitch at t=")?;
+    rest.split_once(" s")?.0.trim().parse().ok()
+}
+
+/// Which of a trace's hitches (in track order, by start) `hitch` means
+/// (#1289). One rule, so the profiler tab and `flint profile` answer the
+/// same frame for the same file and word:
+///
+/// - a trace saved for a hitch (`--trace-on-hitch`; its `reason` says
+///   `hitch at t=...`) means that hitch: the one whose game time is the
+///   reason's (written to the millisecond), else the last on the track, which
+///   it is unless another hitch landed in the frames written after it;
+/// - any other trace (on exit, a key, a capture) means its worst hitch, the
+///   one judged longest (the later of two equal ones).
+pub fn meant_hitch(reason: Option<&str>, hitches: &[HitchMark]) -> Option<usize> {
+    if hitches.is_empty() {
+        return None;
+    }
+    if let Some(t) = reason.and_then(reason_hitch_time) {
+        let by_time = (0..hitches.len())
+            .filter_map(|i| Some((i, (hitches[i].game_time? - t).abs())))
+            .filter(|&(_, d)| d <= 0.000_6)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i);
+        return by_time.or(Some(hitches.len() - 1));
+    }
+    (0..hitches.len()).max_by(|&a, &b| hitches[a].judged_ms.total_cmp(&hitches[b].judged_ms))
 }
 
 #[cfg(test)]
@@ -638,6 +691,81 @@ pub(crate) mod tests {
             "{{\"traceEvents\":[\n{}\n],\"otherData\":{{\"scene\":\"synthetic.scene.toml\"}}}}",
             e.join(",\n")
         )
+    }
+
+    /// Twenty frames 100..119 of 16.7 ms, a `tick` each, and three hitches
+    /// as `--trace-on-hitch=2` lays them (#1289): frame 105 at t=3.000 s
+    /// (120 ms, the worst), frame 114 at t=6.004 s (60 ms, the one a
+    /// `hitch at t=6.004 s` trace was saved for) and frame 117 at t=6.100 s
+    /// (30 ms, in the frames written after it, so the last on the track).
+    pub(crate) fn three_hitches(reason: &str) -> String {
+        let mut e: Vec<String> = Vec::new();
+        for (tid, name) in [(1, "main"), (2, "frames"), (4, "hitches")] {
+            e.push(format!(
+                r#"{{"ph":"M","name":"thread_name","pid":1,"tid":{tid},"args":{{"name":"{name}"}}}}"#
+            ));
+        }
+        let hitches = [(105u32, 3.0, 120.0), (114, 6.004, 60.0), (117, 6.1, 30.0)];
+        let mut t = 0.0f64;
+        for f in 100..120u32 {
+            let hitch = hitches.iter().find(|h| h.0 == f);
+            let len = hitch.map_or(16_667.0, |h| h.2 * 1000.0);
+            e.push(format!(
+                r#"{{"ph":"X","name":"tick","pid":1,"tid":1,"ts":{:.3},"dur":{:.3},"args":{{"frame":{f},"depth":0}}}}"#,
+                t + 100.0,
+                len - 200.0
+            ));
+            e.push(format!(
+                r#"{{"ph":"X","name":"frame","pid":1,"tid":2,"ts":{t:.3},"dur":{len:.3},"args":{{"frame":{f}}}}}"#
+            ));
+            if let Some(&(_, game_time, ms)) = hitch {
+                e.push(format!(
+                    r#"{{"ph":"X","name":"hitch","pid":1,"tid":4,"ts":{t:.3},"dur":{len:.3},"args":{{"history_frame":{f},"game_time":{game_time},"judged_ms":{ms},"median_ms":16.7,"cause":"script stall.rhai:on_update"}}}}"#
+                ));
+            }
+            t += len;
+        }
+        format!(
+            "{{\"traceEvents\":[\n{}\n],\"otherData\":{{\"format\":\"flint-trace\",\"reason\":\"{reason}\"}}}}",
+            e.join(",\n")
+        )
+    }
+
+    /// The reason line of a trace `--trace-on-hitch` saved for the t=6.004 s
+    /// hitch, as the player writes it.
+    pub(crate) const SAVED_ON_SECOND: &str =
+        "hitch at t=6.004 s, 60.0 ms: script stall.rhai:on_update 58.2 ms";
+
+    #[test]
+    fn a_trace_saved_for_a_hitch_means_that_hitch_and_any_other_its_worst() {
+        assert_eq!(reason_hitch_time(SAVED_ON_SECOND), Some(6.004));
+        assert_eq!(reason_hitch_time("exit"), None);
+        let mark = |game_time: Option<f64>, judged_ms: f64| HitchMark {
+            game_time,
+            judged_ms,
+        };
+        let three = [
+            mark(Some(3.0), 120.0),
+            mark(Some(6.0042), 60.0),
+            mark(Some(6.1), 30.0),
+        ];
+        // Its own hitch by time: not the worst, not the last
+        assert_eq!(meant_hitch(Some(SAVED_ON_SECOND), &three), Some(1));
+        // No game times (an older file): the last on the track
+        let untimed = three.map(|h| mark(None, h.judged_ms));
+        assert_eq!(meant_hitch(Some(SAVED_ON_SECOND), &untimed), Some(2));
+        // On exit, a key or a capture: the worst
+        for reason in [Some("exit"), Some("key"), Some("capture"), None] {
+            assert_eq!(meant_hitch(reason, &three), Some(0), "{reason:?}");
+        }
+        assert_eq!(meant_hitch(Some(SAVED_ON_SECOND), &[]), None);
+        // And as read from a file
+        let t = Trace::read(&three_hitches(SAVED_ON_SECOND)).unwrap();
+        assert_eq!(t.meant_hitch(), Some(1));
+        assert_eq!(
+            Trace::read(&three_hitches("exit")).unwrap().meant_hitch(),
+            Some(0)
+        );
     }
 
     #[test]

@@ -26,6 +26,7 @@ pub(crate) mod read;
 pub(crate) mod stats;
 mod top;
 
+use crate::commands::frame::trace::{meant_hitch, HitchMark};
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use read::Trace;
@@ -92,8 +93,9 @@ pub enum TopSort {
 pub struct FrameArgs {
     /// The trace
     pub trace: PathBuf,
-    /// The frame: its index, `worst` (the longest) or `hitch` (the last
-    /// hitch the detector found: the one a `--trace-on-hitch` file was saved for)
+    /// The frame: its index, `worst` (the longest) or `hitch` (the one a
+    /// `--trace-on-hitch` file was saved for, else the worst hitch the
+    /// detector found; the profiler tab's default too)
     pub frame: String,
     /// Leave out scopes shorter than this (each parent says how many it
     /// left out and their time)
@@ -160,7 +162,32 @@ pub(crate) fn pick_frame(trace: &Trace, which: &str) -> Result<usize> {
     match which {
         "worst" => Ok(worst()),
         "hitch" => {
-            if let Some(pos) = trace.hitch_frames().into_iter().flatten().next_back() {
+            // The profiler tab's rule (#1289): the hitch a `--trace-on-hitch`
+            // file was saved for, else the worst
+            let frames = trace.hitch_frames();
+            let marks: Vec<HitchMark> = trace
+                .hitches
+                .iter()
+                .zip(&frames)
+                .map(|(h, f)| HitchMark {
+                    game_time: h.game_time,
+                    // A mark with no judgement: its frame's length
+                    judged_ms: h
+                        .judged_ms
+                        .unwrap_or_else(|| f.map_or(0.0, |f| trace.frames[f].ms())),
+                })
+                .collect();
+            let reason = trace.header.get("reason").and_then(|v| v.as_str());
+            let meant = meant_hitch(reason, &marks).and_then(|h| frames[h]);
+            // A hitch before the scopes begin has no frame here (#1288):
+            // the worst one after them, as the tab chooses
+            let worst_covered = || {
+                (0..marks.len())
+                    .filter(|&h| frames[h].is_some())
+                    .max_by(|&a, &b| marks[a].judged_ms.total_cmp(&marks[b].judged_ms))
+                    .and_then(|h| frames[h])
+            };
+            if let Some(pos) = meant.or_else(worst_covered) {
                 return Ok(pos);
             }
             let w = worst();
