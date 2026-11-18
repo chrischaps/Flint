@@ -111,7 +111,9 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    the case blessed alone, then run after the one that loads the style, byte-identical). A new style adds a case. A case's `matches = [flags]` (#417) compares with a second render
    made with those flags instead of a golden, exact by default, and `error = "<text>"` needs a user
    style's error to hold it (`user-style-broken`: `tests/golden/fixtures/styles/broken.*` must draw a
-   passthrough, which runs the prelude's sRGB round trip). A case's `text = "<x>.txt"`
+   passthrough, which runs the prelude's sRGB round trip; #563 added `user-style-broken-hdr`, an HDR style
+   that feeds bloom over the bench's lamp with bloom on, where a clamp in the passthrough moved 20% of the frame, and
+   `user-style-broken-inputs`, depth + mask + edges beside `edges_view`, held to `edges_view` alone). A case's `text = "<x>.txt"`
    (#317) also pins its ASCII grid exactly (`text_cells` allows some; `<case>.text.diff`).
    A case with `frames` (#478) is a sequence: no golden, a budget. `orbit` / `camera_path` / `frame_dt`
    become the render's flags (`Case::sequence_flags`), plus `--flip-json <case>.flips.json --last-frame`;
