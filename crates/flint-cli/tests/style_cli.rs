@@ -102,6 +102,108 @@ fn a_broken_shader_fails_with_its_line() {
     let report = text(&out);
     assert_eq!(out.status.code(), Some(1), "{report}");
     assert!(report.contains("ok: styles"), "{report}");
-    assert!(report.contains(&format!("typo.wgsl:{line}:")), "{report}");
+    // With `/` however the folder was walked (#567: `styles\typo.wgsl`
+    // on Windows before)
+    assert!(
+        report.contains(&format!("styles/typo.wgsl:{line}:")),
+        "{report}"
+    );
+    assert!(report.contains("ok: styles/ok_one.shader.toml"), "{report}");
+    assert!(!report.contains('\\'), "{report}");
     assert!(report.contains("1 of 2 styles failed"), "{report}");
+}
+
+/// #567: `--json` is one document an agent reads instead of the text: a
+/// style that checks with its counts, one that doesn't with each error's
+/// file, line, column, message, quoted line and hints.
+#[test]
+fn check_json_has_each_styles_counts_and_errors_in_parts() {
+    let dir = game("json");
+    assert!(flint(&dir, &["style", "new", "calm"]).status.success());
+    assert!(flint(&dir, &["style", "new", "inky"]).status.success());
+    let wgsl = dir.join("styles/inky.wgsl");
+    let source = std::fs::read_to_string(&wgsl).unwrap();
+    let line = source
+        .lines()
+        .position(|l| l.trim() == "let c = p.color;")
+        .unwrap()
+        + 1;
+    // A mask helper in a style that doesn't read the mask: an error with a hint
+    std::fs::write(
+        &wgsl,
+        source.replace(
+            "let c = p.color;",
+            "let c = p.color * flint_style_blend(p.uv);",
+        ),
+    )
+    .unwrap();
+
+    let out = flint(&dir, &["style", "check", "styles", "--json"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("{e}\n{}", String::from_utf8_lossy(&out.stdout)));
+    assert_eq!(doc["valid"], false, "{doc:#}");
+    assert_eq!(doc["failed"], 1, "{doc:#}");
+    let styles = doc["styles"].as_array().unwrap();
+    assert_eq!(styles.len(), 2, "{doc:#}");
+
+    let calm = &styles[0];
+    assert_eq!(calm["file"], "styles/calm.shader.toml", "{doc:#}");
+    assert_eq!(calm["ok"], true);
+    assert_eq!(calm["loops"], 0);
+    assert!(calm["texture_reads"].as_u64().is_some(), "{doc:#}");
+    assert_eq!(calm["warnings"], serde_json::json!([]));
+    assert_eq!(calm["errors"], serde_json::json!([]));
+
+    let inky = &styles[1];
+    assert_eq!(inky["file"], "styles/inky.shader.toml", "{doc:#}");
+    assert_eq!(inky["ok"], false);
+    let errors = inky["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 1, "{doc:#}");
+    let e = &errors[0];
+    assert_eq!(e["file"], "styles/inky.wgsl", "{doc:#}");
+    assert_eq!(e["line"], line, "{doc:#}");
+    assert!(e["col"].as_u64().is_some_and(|c| c > 0), "{doc:#}");
+    assert!(
+        e["message"].as_str().is_some_and(|m| !m.is_empty()),
+        "{doc:#}"
+    );
+    assert!(
+        e["source"]
+            .as_str()
+            .is_some_and(|s| s.contains("flint_style_blend")),
+        "{doc:#}"
+    );
+    assert_eq!(
+        e["hints"],
+        serde_json::json!(["add \"mask\" to inputs in the .shader.toml"]),
+        "{doc:#}"
+    );
+    // The text a host shows, for a reader that wants it whole
+    assert!(
+        inky["error"]
+            .as_str()
+            .is_some_and(|t| t.starts_with(&format!("styles/inky.wgsl:{line}:{}: ", e["col"]))),
+        "{doc:#}"
+    );
+}
+
+/// #567: `flint style new --dir a/b` names what it wrote with the
+/// separators it was given, not `a/b\x.wgsl`.
+#[test]
+fn new_names_its_files_with_forward_slashes() {
+    let dir = game("dir");
+    let out = flint(&dir, &["style", "new", "dusk", "--dir", "demo/styles"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let said = text(&out);
+    assert!(
+        said.contains("wrote demo/styles/dusk.shader.toml"),
+        "{said}"
+    );
+    assert!(said.contains("wrote demo/styles/dusk.wgsl"), "{said}");
+    assert!(
+        said.contains("flint style check demo/styles/dusk.shader.toml"),
+        "{said}"
+    );
+    assert!(!said.contains('\\'), "{said}");
 }

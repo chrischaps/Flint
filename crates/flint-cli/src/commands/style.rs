@@ -4,6 +4,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
+use flint_core::project::shown;
 use flint_render::stylize::{catalog, custom, StyleStage};
 use std::path::{Path, PathBuf};
 
@@ -115,30 +116,26 @@ fn new(args: NewArgs) -> Result<()> {
     if !args.force {
         for path in [&toml_path, &wgsl_path] {
             if path.exists() {
-                bail!(
-                    "{} is already there (--force overwrites it)",
-                    path.display()
-                );
+                bail!("{} is already there (--force overwrites it)", shown(path));
             }
         }
     }
-    std::fs::create_dir_all(&args.dir)
-        .with_context(|| format!("creating {}", args.dir.display()))?;
+    std::fs::create_dir_all(&args.dir).with_context(|| format!("creating {}", shown(&args.dir)))?;
     std::fs::write(&toml_path, &files.toml)
-        .with_context(|| format!("writing {}", toml_path.display()))?;
+        .with_context(|| format!("writing {}", shown(&toml_path)))?;
     std::fs::write(&wgsl_path, &files.wgsl)
-        .with_context(|| format!("writing {}", wgsl_path.display()))?;
+        .with_context(|| format!("writing {}", shown(&wgsl_path)))?;
     // What it is now: the template checks, so this is the first green light
     custom::check_file(&toml_path).map_err(anyhow::Error::msg)?;
     let next = [
-        format!("flint style check {}", toml_path.display()),
+        format!("flint style check {}", shown(&toml_path)),
         format!("flint render <scene> --style {name}:amount=1"),
     ];
     let written = [shown(&toml_path), shown(&wgsl_path)];
     let text = format!(
         "wrote {}\nwrote {}\nok: {name} checks. Next:\n  {}\n  {}",
-        toml_path.display(),
-        wgsl_path.display(),
+        shown(&toml_path),
+        shown(&wgsl_path),
         next[0],
         next[1]
     );
@@ -155,7 +152,7 @@ fn style_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     for path in paths {
         if path.is_dir() {
             let mut found: Vec<PathBuf> = std::fs::read_dir(path)
-                .with_context(|| format!("reading {}", path.display()))?
+                .with_context(|| format!("reading {}", shown(path)))?
                 .filter_map(|e| e.ok().map(|e| e.path()))
                 .filter(|p| {
                     p.file_name()
@@ -164,7 +161,7 @@ fn style_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
                 })
                 .collect();
             if found.is_empty() {
-                bail!("{}: no *{} files", path.display(), custom::SUFFIX);
+                bail!("{}: no *{} files", shown(path), custom::SUFFIX);
             }
             found.sort();
             files.extend(found);
@@ -180,28 +177,20 @@ fn check(args: CheckArgs) -> Result<()> {
     let mut failed = 0;
     let mut checked = Vec::new();
     for file in &files {
-        match custom::check_file(file) {
+        checked.push(match custom::check_file(file) {
             Ok(report) => {
                 for warning in &report.warnings {
                     eprintln!("{warning}");
                 }
-                crate::output::say!("ok: {}", file.display());
-                checked.push(serde_json::json!({
-                    "file": shown(file),
-                    "ok": true,
-                    "warnings": report.warnings.iter().map(|w| w.to_string()).collect::<Vec<_>>(),
-                }));
+                crate::output::say!("ok: {}", shown(file));
+                checked_json(file, Ok(&report))
             }
             Err(e) => {
                 eprintln!("error: {e}");
                 failed += 1;
-                checked.push(serde_json::json!({
-                    "file": shown(file),
-                    "ok": false,
-                    "error": e.to_string(),
-                }));
+                checked_json(file, Err(&e))
             }
-        }
+        });
     }
     crate::output::when_json(
         || serde_json::json!({ "valid": failed == 0, "failed": failed, "styles": checked }),
@@ -211,6 +200,33 @@ fn check(args: CheckArgs) -> Result<()> {
         return Err(crate::output::failed());
     }
     Ok(())
+}
+
+/// One style's entry in `flint style check --json` (#567): what the check
+/// counted when it compiles, each error in parts when it doesn't (the
+/// text as `error` too, as a host shows it).
+fn checked_json(file: &Path, result: Result<&custom::Report, &String>) -> serde_json::Value {
+    match result {
+        Ok(report) => serde_json::json!({
+            "file": shown(file),
+            "ok": true,
+            "loops": report.loops,
+            "bounded_loops": report.bounded,
+            "texture_reads": report.texture_reads,
+            "warnings": report.warnings,
+            "errors": [],
+        }),
+        Err(e) => serde_json::json!({
+            "file": shown(file),
+            "ok": false,
+            "loops": null,
+            "bounded_loops": null,
+            "texture_reads": null,
+            "warnings": [],
+            "errors": custom::error_parts(e, &shown(file)),
+            "error": e,
+        }),
+    }
 }
 
 fn prelude(args: PreludeArgs) -> Result<()> {
@@ -225,7 +241,7 @@ fn prelude(args: PreludeArgs) -> Result<()> {
                 let names: Vec<&str> = source.passes.iter().map(|p| p.name.as_str()).collect();
                 anyhow::anyhow!(
                     "{}: no pass \"{name}\" (its passes: {})",
-                    args.file.display(),
+                    shown(&args.file),
                     names.join(", ")
                 )
             })?,
@@ -233,7 +249,7 @@ fn prelude(args: PreludeArgs) -> Result<()> {
     let text = if args.composed {
         let path = &source.passes[pass].wgsl_path;
         let user =
-            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", shown(path)))?;
         custom::compose_pass(&source, pass, &user).text
     } else {
         custom::prelude_pass(&source, pass)
@@ -278,9 +294,4 @@ fn list(args: ListArgs) -> Result<()> {
         print!("{}", catalog::catalog_text_in(&styles, &assets));
     }
     Ok(())
-}
-
-/// A path as the JSON spells it: `/` on every platform.
-fn shown(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
 }

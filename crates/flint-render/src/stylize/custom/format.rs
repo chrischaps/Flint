@@ -729,7 +729,7 @@ pub(super) fn read_before_write(
 impl ShaderStyleDef {
     /// Check the description and resolve its shader beside `toml_path`.
     pub fn check(self, toml_path: &Path) -> Result<StyleSource, String> {
-        let at = toml_path.display();
+        let at = shown(toml_path);
         if self.version != VERSION {
             return Err(format!(
                 "{at}: version = {} is not one this engine reads (it reads {VERSION})",

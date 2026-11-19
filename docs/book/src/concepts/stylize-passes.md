@@ -1485,7 +1485,13 @@ flint style list levels/a.scene.toml         # the same list as flint render --l
 flint render levels/a.scene.toml --style dusk:amount=1
 ```
 
-`new` writes a commented passthrough: its header lists every field of `p` and `flint`, and every helper the chosen stage and inputs give (and which inputs would give more), with commented-out calls to the input helpers and one example parameter, `amount`, that does nothing at its default (so the new style renders byte-identical to no style until you change it). It refuses a built-in's name, a name that isn't lowercase letters, digits and `_`, and files that are already there (`--force` overwrites them), and it checks what it wrote. `check` runs the same naga check the hosts run on load, prints `file:line:col` errors with the line quoted (and the hint for a helper of an undeclared input) and the loop and texture-read warnings, and exits 1 if any style failed: the fast loop for an agent, or for CI. For a longer worked example, `examples/styles/template.shader.toml` and `template.wgsl` are a split tone.
+`new` writes a commented passthrough: its header lists every field of `p` and `flint`, and every helper the chosen stage and inputs give (and which inputs would give more), with commented-out calls to the input helpers and one example parameter, `amount`, that does nothing at its default (so the new style renders byte-identical to no style until you change it). It refuses a built-in's name, a name that isn't lowercase letters, digits and `_`, and files that are already there (`--force` overwrites them), and it checks what it wrote. `check` runs the same naga check the hosts run on load, prints `file:line:col` errors with the line quoted (and the hint for a helper of an undeclared input) and the loop and texture-read warnings, and exits 1 if any style failed: the fast loop for an agent, or for CI. Paths print with `/` on every platform (`styles/dusk.wgsl:38:15`, never `styles\dusk.wgsl`). With the global `--json` it prints one document instead (#567): `valid`, `failed`, and a `styles` entry for each file with `file`, `ok`, `loops`, `bounded_loops` and `texture_reads` (`null` when it doesn't compile), `warnings`, and `errors`, each error in parts (`file`, `line`, `col`, `message`, the quoted `source` line and `hints`), plus `error`, the whole text a host shows:
+
+```bash
+flint style check styles --json
+```
+
+For a longer worked example, `examples/styles/template.shader.toml` and `template.wgsl` are a split tone.
 
 ```toml
 # styles/greyscale.shader.toml

@@ -89,14 +89,14 @@ pub fn packed_guarded(source: &StyleSource, pass: usize, user: &str) -> Option<S
         tracing::info!(
             "style '{}': building {}, the loop-guarded module the bundle packed",
             source.name,
-            path.display()
+            shown(&path)
         );
         Some(text)
     } else {
         tracing::warn!(
             "{}: written from another version of the style's WGSL or prelude, so its loops \
              run unguarded here; pack the bundle again",
-            path.display()
+            shown(&path)
         );
         None
     }

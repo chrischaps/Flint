@@ -192,7 +192,7 @@ impl StyleRegistry {
             if self.is_game_style(&source.name) {
                 Err(format!(
                     "{}: \"{}\" is a style the game registers in Rust (#419); pick another name",
-                    path.display(),
+                    shown(path),
                     source.name
                 ))
             } else {
@@ -308,7 +308,7 @@ impl StyleRegistry {
                     Ok(source) => {
                         let name = source.name.clone();
                         self.install(source, &mut reload.messages, true);
-                        tracing::info!("style '{name}': {} reloaded", l.source.toml_path.display());
+                        tracing::info!("style '{name}': {} reloaded", shown(&l.source.toml_path));
                         reload.replaced.push(name);
                     }
                     Err(e) => {
@@ -490,7 +490,7 @@ impl StyleRegistry {
         if let Some(l) = self.user(name) {
             let e = format!(
                 "{}: building the style panicked; it stays off until its files change",
-                l.source.toml_path.display()
+                shown(&l.source.toml_path)
             );
             tracing::warn!("style '{name}': {e}");
             *l.error.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);
@@ -559,14 +559,13 @@ pub fn refresh_settings(
 /// Read and check the description at `path` (not its shader).
 pub fn read_source(path: &Path) -> Result<StyleSource, String> {
     let text =
-        flint_core::vfs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        flint_core::vfs::read_to_string(path).map_err(|e| format!("{}: {e}", shown(path)))?;
     parse_source(&text, path)
 }
 
 /// Check `text` as the description at `path` (which needn't exist yet).
 pub fn parse_source(text: &str, path: &Path) -> Result<StyleSource, String> {
-    let def: ShaderStyleDef =
-        toml::from_str(text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let def: ShaderStyleDef = toml::from_str(text).map_err(|e| format!("{}: {e}", shown(path)))?;
     def.check(path)
 }
 /// Check the style at `path` the way a host loads it, its description and
@@ -589,7 +588,7 @@ pub fn check_file(path: &Path) -> Result<Report, String> {
         let user = match flint_core::vfs::read_to_string(&pass.wgsl_path) {
             Ok(user) => user,
             Err(e) => {
-                errors.push(format!("{}: {e}", pass.wgsl_path.display()));
+                errors.push(format!("{}: {e}", shown(&pass.wgsl_path)));
                 continue;
             }
         };
@@ -607,7 +606,7 @@ pub fn check_file(path: &Path) -> Result<Report, String> {
         if source.passes.len() == 1 {
             // One pass: its own report, guarded text and all
             let user = flint_core::vfs::read_to_string(&source.wgsl_path)
-                .map_err(|e| format!("{}: {e}", source.wgsl_path.display()))?;
+                .map_err(|e| format!("{}: {e}", shown(&source.wgsl_path)))?;
             let mut report = check(&source, &user)?;
             report.warnings.splice(0..0, source.notes.iter().cloned());
             return Ok(report);
@@ -658,7 +657,7 @@ pub(super) fn build_loaded(source: StyleSource, messages: &mut Vec<String>) -> L
         .into_iter()
         .enumerate()
         .map(|(i, w)| match w {
-            Err(e) => Some(format!("{}: {e}", source.passes[i].wgsl_path.display())),
+            Err(e) => Some(format!("{}: {e}", shown(&source.passes[i].wgsl_path))),
             Ok(user) => match check_pass(&source, i, &user) {
                 Ok(report) => {
                     messages.extend(report.warnings);
@@ -688,7 +687,7 @@ pub(super) fn build_loaded(source: StyleSource, messages: &mut Vec<String>) -> L
             if !flint_core::vfs::is_file(&path) {
                 missing_images.push(format!(
                     "{}: image not found (style \"{}\", image {})",
-                    path.display(),
+                    shown(&path),
                     source.name,
                     image.name
                 ));

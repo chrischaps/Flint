@@ -424,7 +424,7 @@ fn errors_point_into_the_users_file() {
     let s = duotone();
     let user = "fn style(p: StylePixel) -> vec4<f32> {\n    let x = 1.0\n    return p.color;\n}\n";
     let e = check(&s, user).unwrap_err();
-    assert!(e.starts_with(&format!("{}:", s.wgsl_path.display())), "{e}");
+    assert!(e.starts_with(&format!("{}:", shown(&s.wgsl_path))), "{e}");
     // The missing `;` is reported at the line after it (line 3)
     assert!(e.contains(":3:") || e.contains(":2:"), "{e}");
     assert!(e.contains("return p.color") || e.contains("let x"), "{e}");
@@ -746,7 +746,7 @@ fn browser_messages_point_into_the_users_file() {
         ],
     };
     let e = compiler_error(&s, &c, &info).unwrap();
-    let file = s.wgsl_path.display().to_string();
+    let file = shown(&s.wgsl_path);
     assert!(
         e.starts_with(&format!("{file}:2:22: unresolved identifier 'glow'")),
         "{e}"
@@ -1348,7 +1348,7 @@ fn a_style_that_fails_to_load_is_an_error_until_it_loads_or_goes() {
     assert!(reg.find("utest_unloaded").is_none());
     let shown = error(&reg).expect("the load failure is an error");
     assert!(
-        shown.starts_with(&toml_path.display().to_string()),
+        shown.starts_with(&flint_core::project::shown(&toml_path)),
         "{shown}"
     );
     assert!(shown.contains("stage = \"hrd\""), "{shown}");
@@ -2234,4 +2234,101 @@ fn templates_check_for_every_stage_and_input() {
     assert!(parse_source(&t.toml, Path::new("styles/ascii.shader.toml"))
         .unwrap_err()
         .contains("built-in"));
+}
+
+/// #567: what `locate` writes, taken apart by `error_parts`: the place,
+/// the message, the quoted line and each hint; put back together they
+/// say what the text said.
+#[test]
+fn a_checks_error_comes_apart_into_its_place_and_hints() {
+    let s = duotone(); // depth, no mask
+    let user = "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                return p.color * flint_style_blend(p.uv);\n}\n";
+    let e = check(&s, user).unwrap_err();
+    let parts = error_parts(&e, "styles/duotone.shader.toml");
+    assert_eq!(parts.len(), 1, "{e}\n{parts:?}");
+    let p = &parts[0];
+    assert_eq!(p.file, "styles/duotone.wgsl", "{e}");
+    assert_eq!(p.line, Some(2), "{e}");
+    assert!(p.col.is_some(), "{e}");
+    assert!(
+        !p.message.is_empty() && !p.message.contains('\n'),
+        "{e}\n{p:?}"
+    );
+    assert!(
+        p.source
+            .as_deref()
+            .is_some_and(|s| s.contains("flint_style_blend")),
+        "{e}\n{p:?}"
+    );
+    assert_eq!(
+        p.hints,
+        ["add \"mask\" to inputs in the .shader.toml"],
+        "{e}"
+    );
+    assert!(
+        e.starts_with(&format!(
+            "{}:{}:{}: {}\n",
+            p.file,
+            p.line.unwrap(),
+            p.col.unwrap(),
+            p.message
+        )),
+        "{e}\n{p:?}"
+    );
+}
+
+/// #567: several passes' errors, a place with a line only, a drive in a
+/// path, a description's TOML error and text that names no file.
+#[test]
+fn errors_of_several_passes_and_descriptions_come_apart() {
+    let text = "C:/game/styles/a.wgsl:3:7: unknown identifier\n    3 | let x = y;\n\
+                styles/a_blur.wgsl:12: `t` declares a binding\n    \
+                hint: no pass writes a target \"t\"";
+    let parts = error_parts(text, "styles/a.shader.toml");
+    assert_eq!(parts.len(), 2, "{parts:?}");
+    assert_eq!(
+        (parts[0].file.as_str(), parts[0].line, parts[0].col),
+        ("C:/game/styles/a.wgsl", Some(3), Some(7))
+    );
+    assert_eq!(parts[0].message, "unknown identifier");
+    assert_eq!(parts[0].source.as_deref(), Some("let x = y;"));
+    assert_eq!(
+        (parts[1].file.as_str(), parts[1].line, parts[1].col),
+        ("styles/a_blur.wgsl", Some(12), None)
+    );
+    assert_eq!(parts[1].hints, ["no pass writes a target \"t\""]);
+
+    // A description's TOML error has its place in its message
+    let e = parse_source(
+        "version = 1\nstage = [\n",
+        Path::new("styles/b.shader.toml"),
+    )
+    .unwrap_err();
+    let parts = error_parts(&e, "styles/b.shader.toml");
+    assert_eq!(parts.len(), 1, "{e}\n{parts:?}");
+    assert_eq!(parts[0].file, "styles/b.shader.toml");
+    assert!(
+        parts[0].line.is_some() && parts[0].col.is_some(),
+        "{e}\n{parts:?}"
+    );
+
+    // Nothing leads with a style's file: one error in the fallback
+    let parts = error_parts("something odd", "styles/c.shader.toml");
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0].file, "styles/c.shader.toml");
+    assert_eq!(parts[0].message, "something odd");
+}
+
+/// #567: a style's files are named with `/` however its folder was given
+/// (`demo/styles\x.wgsl` before, on Windows).
+#[cfg(windows)]
+#[test]
+fn a_styles_files_are_named_with_forward_slashes() {
+    let user = "fn style(p: StylePixel) -> vec4<f32> {\n    return p.colour;\n}\n";
+    for given in [r"demo\styles\x.shader.toml", "demo/styles/x.shader.toml"] {
+        let s = source("version = 1\nname = \"x\"\nshader = \"x.wgsl\"\n", given).unwrap();
+        let e = check(&s, user).unwrap_err();
+        assert!(e.starts_with("demo/styles/x.wgsl:2:"), "{given}: {e}");
+    }
 }
