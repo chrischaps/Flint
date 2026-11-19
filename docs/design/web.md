@@ -1000,7 +1000,8 @@ A second run bisected it on the no-style scene with `?style=`
   nothing styled) and not the display stage (invert and palette hold
   60). Four times the cell area barely helps, so it doesn't follow the
   cell count, and a p90 near 100 ms says about one frame in ten stalls
-  rather than every frame paying the same. Edges add little on top.
+  rather than every frame paying the same. Edges seemed to add little on
+  top, but every row had them: `edges` defaults to 1 (#568, below).
 - **The CPU isn't it:** 2.3 ms a frame without, 3.6--5.7 with. No bind
   groups a frame at the 0.67 cap, as on the desktop under a scale.
 - **The pass timings can't say which.** Chrome exposes
@@ -1011,8 +1012,85 @@ A second run bisected it on the no-style scene with `?style=`
 - Paced (the phone's default `fps=auto`), the per-entity scene holds 30
   fps, one refresh in four at 120 Hz, with p99 117 ms.
 
-Finding and fixing the pass is #568. The suspects are the cell pass's
-ping-ponged `Rgba16Uint` history (#277) and the glyph pass.
+### The pass: the shared edges (#568)
+
+**Three quarters of ASCII's cost on the phone is the shared edge pass**,
+`edges.wgsl`'s `fs_main` (#743), which ASCII draws while `edges > 0`.
+`edges` defaults to 1, so every ASCII row above had it: the "edges" rows
+only set it again (`ascii_variants.py` writes `edges = 1.0`, the
+default), which is why edges seemed to "add little on top". The
+suspects above (the cell history, the glyph pass) are about 1 ms
+together.
+
+**How it was found.** A frame time snaps to whole refreshes, so a pass
+that costs 2 ms reads as nothing or as half the frame rate depending on
+where the frame sat. With the scene at `?scale=1` every page here is
+GPU-bound (the no-style control is about 29 ms), unpaced
+(`fps=native`), and 10 000 / frames in 10 s is the GPU's milliseconds a
+frame. `tools/phone-perf/submits.mjs` counts the player's submissions in
+the page; each round plays every page once, five or six rounds
+alternated. To cut one pass, a copy of the site serves main's wasm with
+that shader's WGSL swapped for text of the same length that returns
+early behind a runtime test, so the pipeline and its registers stay and
+the work goes. Pixel 8 Pro, Chrome 157, canvas 1008x2005, main at
+6194270 (the Play site's build), the no-style ASCII scene,
+2026-11-18, thermal status 1--2 and skin 39--43 °C throughout (on USB,
+not charging):
+
+| page, `?scale=1` | ms a frame (median of 5) | over that round's control |
+|---|---|---|
+| no style | 30.3 | |
+| `?style=ascii` | 34.9 | +4.3 |
+| the same, `edges.wgsl`'s full path skipped (its 25 loads and flat test kept) | 33.2 | +2.8 |
+| the same, `edges.wgsl` returning at once | 31.5 | +1.1 |
+
+An earlier run (two rounds) put `?style=ascii:edges=0` at +1.0,
+`invert` at +0.4 and `palette` at +1--3 over the control. Stubbing the
+edge cell pass, or the thin and corner passes, saved nothing beyond the
+noise (three rounds).
+
+- **The pass is about 3.1 ms at `scale=1`**, where the depth is the
+  canvas's 2.0 M pixels. At the web's 0.67 cap it draws half as many,
+  so about 1.5 ms. The rest of ASCII (cells, glyphs, the edge cell,
+  thin and corner passes, the history copies) is about 1 ms. Pencil
+  reads the same pass with its creases; contour reads `fs_steps`, which
+  wasn't measured here.
+- **Half of it is the 25 loads and the flat test every pixel makes**
+  (1.6 ms), and half the full path (1.5 ms), which only 11% of the
+  pixels take in this scene: the grass band, the figure and the props'
+  outlines. (Counted on the desktop: the same scene at 1008x2005 through
+  `edges_view`, with a copy of `edges.wgsl` that marks each patch that
+  isn't flat.) On the RTX 4070 the whole pass is 0.09 ms at 1080p.
+
+**Two fixes that didn't work**, each against main in the same run:
+
+| change to `edges.wgsl` | ASCII over control | pixels |
+|---|---|---|
+| main | +3.78 ms (median of 6) | |
+| nine `textureGather`s for the 25 loads (four for `fs_steps`' nine) | +3.65 (median of 6) | all 123 stylize goldens byte-identical |
+| no `pos` or `rel` arrays: each position and distance recomputed from the depths | about 2 ms slower than main (3 rounds) | 19 goldens drift, inside tolerance (8 glyph pixels in ASCII's, 1--3 levels in pencil's) |
+| that, and no depth array (each depth read again) | about 12 ms slower (3 rounds) | |
+
+So the pass isn't bound by texture fetches (the gathers cut them 2.8x
+and saved nothing), and recomputing what the arrays hold costs more than
+the registers it frees. On the desktop the gathers cost 5 µs (the pass's
+minimum 0.087 to 0.092 ms), so they were left out.
+
+**What it costs, and the lever today.** On a phone whose scene is near
+the 60 Hz budget, the edge pass's 1.5 ms at the 0.67 cap is what pushes
+ASCII's frame past a refresh: a frame that misses one waits for the
+next, so 60 becomes 40 or 30. In a round at the web's defaults
+(`?perf=1&fps=native`, thermal 1) the no-style control drew 557--633
+frames in 10 s, `invert` 449--450, `ascii` 363--420 and
+`ascii:edges=0` 409--542. That day `invert` fell short of the control as
+well, unlike #378's run, so the phone's ceiling was the scene, not the
+style. Without edges ASCII drew as many frames as `invert`; with them
+7--19% fewer (2--5 ms a frame, inside one 120 Hz refresh of it but not
+of the control). `edges = 0` in a scene's
+`[post_process.styles.ascii]` (or `?style=ascii:edges=0`) is the lever,
+at the price of the line glyphs. A cheaper edge detector for phones
+(half resolution, the steps alone, or the flat test as its own small
+pass in front of the heavy one) is the follow-up.
 
 ## Touch (#132)
 

@@ -25,6 +25,40 @@ EXTRA='&fps=native' node tools/phone-perf/phoneperf.mjs <work>/bisect \
 python -I tools/phone-perf/summarize.py <work>/out/log.txt <work>/out/rows.json
 ```
 
+## A pass's cost: `submits.mjs` (#568)
+
+Frame times snap to whole refreshes, so a pass that costs 2 ms reads as
+nothing, or as half the frame rate, depending on where the frame sat. To
+cost a pass, make every page GPU-bound and count frames instead:
+
+```bash
+# scale=1 puts the scene past 60 fps's budget, so every page is GPU-bound and
+# 10 000 / frames is the GPU's ms a frame; items split on ';', a style word keeps its commas
+BASE='&scale=1' node tools/phone-perf/submits.mjs <work>/s \
+  "ascii_none;ascii_none+style=ascii;ascii_none+style=ascii:edges=0" 12 3
+# `dir/scene` plays the site copy in dir/ (a patched or rebuilt wasm, the root's pack)
+BASE='&scale=1' node tools/phone-perf/submits.mjs <work>/ab \
+  "ascii_none+style=ascii;fix/ascii_none+style=ascii" 12 4
+```
+
+It wraps `GPUQueue.submit` in the page for 10 s (the player submits once a
+frame, #139) and counts the render passes between submissions. Each round
+plays every item once, so heat is a trend across rounds, not a step between
+items. A copy of the site in a folder needs `./` before its script paths in
+`index.html`. To find which pass costs, stub one shader in a copy: the wasm
+holds the WGSL as written (`include_str!`), so a same-length text swap that
+returns early behind a runtime test (`if in.position.x > -1.0 { return ..; }`)
+removes its work and keeps its pipeline.
+
+A nearly free scene (`BASE='&scale=0.25&quality=ssao=0,bloom=0,shadows=0'`)
+shows the opposite: there everything holds the refresh, so the display
+stage's passes fit in what the scene leaves.
+
+## Notes
+
+- ASCII's `edges` defaults to 1, so `ascii_variants.py`'s `_edges` scenes
+  draw the same passes as the ones without the suffix. The edges' cost
+  shows only against `?style=ascii:edges=0` (#568).
 - `fps=native` unpaces the frames, so frame time shows each scene's cost. The
   phone's default, `auto`, holds a rate and hides it.
 - Mali reads 0.00 ms for every GPU pass after `Scene`, so compare frame times
