@@ -115,6 +115,9 @@ pub struct PropReport {
     pub phase_offset: f32,
     /// Its clock, in steps it has run through.
     pub beats: f64,
+    /// The seconds its words have drifted along their lines through (#576): 0
+    /// until a form with `row_pace` runs, moving at `row_rate`.
+    pub row_time: f64,
     /// `None` only if it hasn't posed, which `flint render` doesn't let happen.
     pub poses: Option<PoseReport>,
     pub wooze: WoozeReport,
@@ -247,6 +250,7 @@ pub fn props_report(
                 position: prop.position(),
                 phase_offset: prop.phase_offset(),
                 beats: prop.beats(),
+                row_time: prop.row_time(),
                 poses,
                 wooze: WoozeReport {
                     amplitude: wooze.amplitude,
@@ -285,6 +289,7 @@ fn values_of(
         ("variance.keep_size", value(at.keep_size)),
         ("softness", value(at.softness)),
         ("jitter_rate", value(at.jitter_rate)),
+        ("row_rate", value(at.row_rate)),
     ])
 }
 

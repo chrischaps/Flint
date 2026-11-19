@@ -55,6 +55,7 @@ fn living_and_wooze_schemas_declare_only_what_is_read() {
     let living = tables.living.expect("[living]");
     assert!(living.shadows.is_some() && living.stagger.is_some() && living.softness.is_some());
     assert!(living.jitter_rate.is_some());
+    assert!(living.row_rate.is_some());
     let echoes = living.echoes.expect("echoes");
     assert!(echoes.count.is_some() && echoes.spread.is_some() && echoes.alpha.is_some());
     let variance = living.variance.expect("variance");
@@ -66,7 +67,7 @@ fn living_and_wooze_schemas_declare_only_what_is_read() {
     assert_eq!(wooze.zone.len(), 1);
     // ...and the count is the type's, so a field added to one is added to
     // the other
-    assert_eq!(registry.get_table("living").unwrap().fields.len(), 7);
+    assert_eq!(registry.get_table("living").unwrap().fields.len(), 8);
     assert_eq!(registry.get_table("wooze").unwrap().fields.len(), 6);
     // A zone's fields are the keys the field itself takes
     let FieldType::Array { element } = &registry

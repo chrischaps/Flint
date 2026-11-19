@@ -89,6 +89,8 @@ pub struct FormParams {
     pub word_gap: f32,
     pub paragraph_lines: f32,
     pub row_faces: RowFaces,
+    pub row_pace: f32,
+    pub row_pace_spread: f32,
     // The pose vocabulary.
     pub bend_deg: f32,
     pub ripple: f32,
@@ -144,6 +146,8 @@ impl Default for FormParams {
             word_gap: 0.012,
             paragraph_lines: 6.0,
             row_faces: RowFaces::Both,
+            row_pace: 0.0,
+            row_pace_spread: 0.3,
             bend_deg: 16.0,
             ripple: 0.5,
             ripple_waves: 1.4,
@@ -342,6 +346,8 @@ impl FormParams {
         )? {
             p.row_faces = faces;
         }
+        num!("row_pace", row_pace, closed(-5.0, 5.0));
+        num!("row_pace_spread", row_pace_spread, closed(0.0, 1.0));
         num!("bend_deg", bend_deg, closed(0.0, 90.0));
         num!("ripple", ripple, closed(0.0, 2.0));
         num!("ripple_waves", ripple_waves, closed(0.0, 6.0));
@@ -423,7 +429,16 @@ fn rotation_between(a: Vec3, b: Vec3) -> [f32; 4] {
 
 impl FormGenerator {
     fn skeleton(&self, built: &Built, lineage_seed: u64) -> LivingSkeleton {
-        let leaf_mesh = card_mesh(
+        self.skeleton_and_rows(built, lineage_seed).0
+    }
+
+    /// The skeleton, and with rows where each line and word was written.
+    fn skeleton_and_rows(
+        &self,
+        built: &Built,
+        lineage_seed: u64,
+    ) -> (LivingSkeleton, Option<cards::RowLayout>) {
+        let (leaf_mesh, layout) = card_mesh(
             &built.p,
             &built.lin,
             &built.spine,
@@ -444,14 +459,15 @@ impl FormGenerator {
                 [along.to_array(), segment.direction().to_array()]
             })
             .collect();
-        LivingSkeleton {
+        let skeleton = LivingSkeleton {
             lineage_seed,
             segments: built.segments.clone(),
             leaf_mesh,
             card_index_count: CARD_INDICES,
             leaf_bindings,
             place_axes,
-        }
+        };
+        (skeleton, layout)
     }
 }
 
@@ -479,7 +495,7 @@ impl LivingGenerator for FormGenerator {
 
     fn rig(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingRig> {
         let built = build(spec, lineage_seed)?;
-        let skeleton = self.skeleton(&built, lineage_seed);
+        let (skeleton, layout) = self.skeleton_and_rows(&built, lineage_seed);
         let Built {
             p,
             lin,
@@ -624,13 +640,37 @@ impl LivingGenerator for FormGenerator {
             skeleton: SkeletonDef { bones },
         };
         mesh.validate()?;
+        // Drifting words (#576) take the bones after the jitter's. Their own
+        // draws, so a spec whose words stay put lays out as it always did.
+        let first_row_bone = bone_segments.len() + BOIL_BONES;
+        let rows = layout.as_ref().and_then(|layout| {
+            cards::row_drift(
+                p,
+                lin,
+                spine,
+                layout,
+                n,
+                first_row_bone as u16,
+                MAX_SKINNED_BONES.saturating_sub(first_row_bone),
+                &mut SeededRng::new(lineage_seed).fork("row pace"),
+            )
+        });
+        let mut card_boil = skeleton.card_boil(bone_segments.len() as u16);
+        if rows.is_some() {
+            // A drifting word turns with its bone, not with the jitter's.
+            card_boil.fill(crate::living::CardBoil {
+                joints: [0; 3],
+                weights: [0.0; 3],
+            });
+        }
         Ok(LivingRig {
-            card_boil: skeleton.card_boil(bone_segments.len() as u16),
+            card_boil,
             mesh,
             segment_bones,
             bone_segments,
             first_leaf_vertex,
             leaf_parts: (1..=cards.submeshes.len()).collect(),
+            rows,
         })
     }
 
@@ -794,6 +834,10 @@ impl Generator for FormGenerator {
                     "description": "Rows: lines in a typical paragraph, whose last line stops short and whose next begins indented; 0 is one unbroken block" },
                 "row_faces": { "x-when": { "card_layout": ["rows"] }, "type": "string", "enum": ["front", "back", "both"], "default": "both",
                     "description": "Rows: which broad faces carry lines. The front is the face turned away from `facing_deg`, so a page curling away from you shows you its front" },
+                "row_pace": { "x-when": { "card_layout": ["rows"] }, "type": "number", "minimum": -5.0, "maximum": 5.0, "default": d.row_pace,
+                    "description": "Rows: metres a second the words drift along their lines, the way a line reads (below 0 the other way); a word slides out under one margin and back in under the other, as text reflows. 0 holds them where they were written. `[living] row_rate` multiplies it at run time" },
+                "row_pace_spread": { "x-when": { "card_layout": ["rows"] }, "type": "number", "minimum": 0.0, "maximum": 1.0, "default": d.row_pace_spread,
+                    "description": "Rows: how far each line's pace differs from `row_pace`, as a share either way, drawn once per line by the lineage: 0 moves every line together" },
                 "bend_deg": { "type": "number", "minimum": 0.0, "maximum": 90.0, "default": d.bend_deg,
                     "description": "Pose: how far a pose leans the tip, degrees, at drift amplitude 1. The slow lean of the whole form" },
                 "ripple": { "type": "number", "minimum": 0.0, "maximum": 2.0, "default": d.ripple,

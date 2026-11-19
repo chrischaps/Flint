@@ -47,14 +47,14 @@ pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
 pub use living::{
     boil_bones, CardBoil, LeafBinding, LivingClock, LivingJitter, LivingPose, LivingRig,
-    LivingSkeleton, PoseStream, SegmentPose, WarpedTime, BOIL_BONES, JITTER_CHANNELS,
-    STAGGER_PER_LEVEL,
+    LivingSkeleton, PoseStream, RowDrift, RowLine, RowWord, SegmentPose, WarpedTime, BOIL_BONES,
+    JITTER_CHANNELS, STAGGER_PER_LEVEL,
 };
 pub use living_props::{
-    jitter_rate_clamped, BlendFrame, ClockOverride, EchoOverride, LineageDone, LivingDefaults,
-    LivingLayer, LivingLayers, LivingProp, LivingPropId, LivingPropRequest, LivingProps,
-    LivingScope, LivingShadows, LivingStats, PropBlend, Resolved, ResolvedProp, SpeciesOverride,
-    VarianceOverride, JITTER_RATE_MAX, POSE_CACHE_BYTES,
+    jitter_rate_clamped, row_rate_clamped, BlendFrame, ClockOverride, EchoOverride, LineageDone,
+    LivingDefaults, LivingLayer, LivingLayers, LivingProp, LivingPropId, LivingPropRequest,
+    LivingProps, LivingScope, LivingShadows, LivingStats, PropBlend, Resolved, ResolvedProp,
+    SpeciesOverride, VarianceOverride, JITTER_RATE_MAX, POSE_CACHE_BYTES, ROW_RATE_MAX,
 };
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{

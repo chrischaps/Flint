@@ -47,9 +47,9 @@ use crate::spec::{ProcGenSpec, Stagger, VarianceConfig};
 
 pub use blend::{BlendFrame, PropBlend};
 pub use layers::{
-    jitter_rate_clamped, ClockOverride, EchoOverride, Layer, Layered, LivingDefaults, LivingLayer,
-    LivingLayers, LivingScope, LivingShadows, Resolved, ResolvedProp, SpeciesOverride,
-    VarianceOverride, JITTER_RATE_MAX,
+    jitter_rate_clamped, row_rate_clamped, ClockOverride, EchoOverride, Layer, Layered,
+    LivingDefaults, LivingLayer, LivingLayers, LivingScope, LivingShadows, Resolved, ResolvedProp,
+    SpeciesOverride, VarianceOverride, JITTER_RATE_MAX, ROW_RATE_MAX,
 };
 pub use prop::LivingProp;
 
@@ -351,6 +351,7 @@ impl LivingProps {
         for prop in &mut self.props {
             prop.beats += beats;
             prop.jitter_time += seconds * prop.jitter_rate_in(&species[prop.species]);
+            prop.row_time += seconds * prop.row_rate_in(&species[prop.species]);
         }
     }
 
@@ -431,6 +432,8 @@ impl LivingProps {
             jitter_step,
             // Where the props' clock is, so that at a rate of 1 the two agree.
             jitter_time: self.time,
+            // Its words start where they were written (#576).
+            row_time: 0.0,
             beats: f64::from(phase_offset),
             position: request.position,
             wooze,
@@ -459,6 +462,7 @@ impl LivingProps {
             stagger_entity: request.stagger.is_some(),
             softness_layers: Layered::new(living.softness, self.defaults.softness),
             jitter_rate_layers: Layered::new(1.0, self.defaults.jitter_rate),
+            row_rate_layers: Layered::new(1.0, self.defaults.row_rate),
         });
         (LivingPropId(self.props.len() - 1), asset_name)
     }

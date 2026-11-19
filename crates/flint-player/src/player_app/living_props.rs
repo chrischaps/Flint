@@ -78,6 +78,7 @@ pub fn defaults_of(table: Option<&flint_procgen::LivingDef>) -> LivingDefaults {
         variance: variance_of(table.variance.as_ref(), &mut warn),
         softness: softness_of(table.softness, &mut warn),
         jitter_rate: jitter_rate_of(table.jitter_rate, &mut warn),
+        row_rate: row_rate_of(table.row_rate, &mut warn),
         species,
     }
 }
@@ -92,6 +93,19 @@ pub fn jitter_rate_of(value: Option<f32>, say: &mut dyn FnMut(String)) -> Option
         Some(value)
     } else {
         say(format!("jitter_rate = {value} must be in [0.0, {max:?}]"));
+        None
+    }
+}
+/// A row rate (#576) as a scene or a tune gives it: 0 to
+/// [`ROW_RATE_MAX`](flint_procgen::ROW_RATE_MAX), or `None` with the reason
+/// sent to `say`.
+pub fn row_rate_of(value: Option<f32>, say: &mut dyn FnMut(String)) -> Option<f32> {
+    let value = value?;
+    let max = flint_procgen::ROW_RATE_MAX;
+    if value.is_finite() && (0.0..=max).contains(&value) {
+        Some(value)
+    } else {
+        say(format!("row_rate = {value} must be in [0.0, {max:?}]"));
         None
     }
 }
@@ -139,6 +153,7 @@ pub fn species_of(
         variance: variance_of(def.variance.as_ref(), say),
         softness: softness_of(def.softness, say),
         jitter_rate: jitter_rate_of(def.jitter_rate, say),
+        row_rate: row_rate_of(def.row_rate, say),
     }
 }
 
@@ -265,6 +280,7 @@ pub fn apply_preset(props: &mut LivingProps, living: &flint_procgen::LivingDef) 
     let variance = variance_of(living.variance.as_ref(), &mut say);
     let softness = softness_of(living.softness, &mut say);
     let jitter_rate = jitter_rate_of(living.jitter_rate, &mut say);
+    let row_rate = row_rate_of(living.row_rate, &mut say);
     let species: Vec<(String, SpeciesOverride)> = (living.species.iter())
         .map(|(name, def)| {
             let mut say = |problem: String| say(format!("species '{name}': {problem}"));
@@ -281,6 +297,9 @@ pub fn apply_preset(props: &mut LivingProps, living: &flint_procgen::LivingDef) 
     }
     if let Some(rate) = jitter_rate {
         props.tune_jitter_rate(LivingScope::All, rate);
+    }
+    if let Some(rate) = row_rate {
+        props.tune_row_rate(LivingScope::All, rate);
     }
     for (name, over) in species {
         if !props.set_species(&name, over) {

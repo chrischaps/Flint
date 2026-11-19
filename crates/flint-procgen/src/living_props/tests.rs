@@ -2330,6 +2330,7 @@ fn thorny() -> LivingDefaults {
             },
             softness: None,
             jitter_rate: None,
+            row_rate: None,
         },
     );
     defaults
@@ -2885,4 +2886,244 @@ fn an_echo_boils_at_its_props_rate_and_never_pops_through_a_change() {
     for (after, before) in echo_times(resolver.living_props()).iter().zip(&before) {
         assert!((after - before - 0.2).abs() < 1e-9, "{after} from {before}");
     }
+}
+
+// ── Drifting rows (#576) ─────────────────────────────────────────────────────
+
+/// A page whose words drift along their lines at 3 cm a second, with no boil,
+/// one prop of it, built.
+fn drifting_page(echoes: &str) -> (ProcGenResolver, LivingPropId) {
+    let spec = format!(
+        r#"
+generator = "form_v1"
+[meta]
+name = "page"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 1
+[params]
+height = 0.9
+radius = 0.3
+profile = [1.0, 1.0, 1.0]
+aspect = 0.1
+section_deg = 90.0
+curl_deg = 0.0
+lean = 0.0
+lobes = 0.0
+rings = 24
+sides = 16
+cards = 600
+card_layout = "rows"
+row_faces = "front"
+card_size = 0.012
+card_aspect = 4.0
+row_pace = 0.03
+[living]
+lineage_seed = 3
+pose_ring = 4
+jitter = {{ amplitude = 0.0 }}
+echoes = {echoes}
+"#
+    );
+    let mut resolver = resolver_with(&spec);
+    let mut req = request(1, "page");
+    req.spec_name = "page".to_string();
+    let id = resolver.add_living_prop(req).unwrap().0;
+    resolver.make_living_now();
+    (resolver, id)
+}
+
+/// The drift bones a prop's blend wrote this frame, if it wrote them.
+fn drift_bones(resolver: &mut ProcGenResolver, id: LivingPropId) -> Option<Vec<[[f32; 4]; 4]>> {
+    let props = resolver.living_props_mut();
+    let first = props
+        .rig_of(id)
+        .unwrap()
+        .1
+        .rows
+        .as_ref()
+        .unwrap()
+        .first_bone as usize;
+    let mut frame = BlendFrame::default();
+    let blend = props.blend_prop(id, &mut frame);
+    let at = blend.first_bone?;
+    Some(frame.bones[first - at..].to_vec())
+}
+
+/// How far apart two palettes' translations are, at most.
+fn farthest_move(a: &[[[f32; 4]; 4]], b: &[[[f32; 4]; 4]]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| {
+            let d: [f32; 3] = std::array::from_fn(|i| a[3][i] - b[3][i]);
+            (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+        })
+        .fold(0.0, f32::max)
+}
+
+#[test]
+fn a_drifting_page_writes_its_words_every_frame_it_moves() {
+    let (mut resolver, id) = drifting_page("{ count = 0 }");
+    resolver.process_living(1.0 / 60.0);
+    let first = drift_bones(&mut resolver, id).expect("the first blend writes everything");
+    let rig_len = resolver.living_props().rig_of(id).unwrap().1.palette_len();
+    let rows = resolver
+        .living_props()
+        .rig_of(id)
+        .unwrap()
+        .1
+        .rows
+        .clone()
+        .unwrap();
+    assert_eq!(first.len(), rows.words.len());
+    assert!(rig_len <= crate::MAX_SKINNED_BONES);
+    // A frame on, the words have moved, though the pose may be holding.
+    resolver.process_living(1.0 / 60.0);
+    let next = drift_bones(&mut resolver, id).expect("the words moved");
+    assert!(farthest_move(&first, &next) > 0.0);
+    // Held at a rate of 0, nothing moves and nothing is written for them.
+    resolver
+        .living_props_mut()
+        .tune_row_rate(LivingScope::All, 0.0);
+    let held = resolver.living_props().prop(id).row_time();
+    for _ in 0..10 {
+        resolver.process_living(1.0 / 60.0);
+    }
+    assert_eq!(resolver.living_props().prop(id).row_time(), held);
+}
+
+#[test]
+fn a_new_row_rate_moves_the_words_on_faster_from_where_they_are() {
+    // Two pages a second in. One goes on at its spec's pace; the other's rate
+    // goes to 3 on this frame. Nothing jumps at the change: the next frame's
+    // words are one frame's travel at the new pace from where they stood.
+    let dt = 1.0 / 60.0;
+    let (mut steady, a) = drifting_page("{ count = 0 }");
+    let (mut changed, b) = drifting_page("{ count = 0 }");
+    for r in [&mut steady, &mut changed] {
+        for _ in 0..60 {
+            r.process_living(dt);
+        }
+        drift_bones(r, a).unwrap();
+    }
+    assert_eq!(
+        steady.living_props().prop(a).row_time().to_bits(),
+        changed.living_props().prop(b).row_time().to_bits()
+    );
+    changed
+        .living_props_mut()
+        .tune_row_rate(LivingScope::All, 3.0);
+    assert_eq!(changed.living_props().row_rate(b), 3.0);
+    let row_time = |r: &ProcGenResolver, id| r.living_props().prop(id).row_time();
+    let (t_steady, t_changed) = (row_time(&steady, a), row_time(&changed, b));
+    assert_eq!(t_steady, t_changed, "setting a rate moves nothing");
+    steady.process_living(dt);
+    changed.process_living(dt);
+    assert!((row_time(&steady, a) - t_steady - dt).abs() < 1e-12);
+    assert!((row_time(&changed, b) - t_changed - 3.0 * dt).abs() < 1e-12);
+    // The words drawn are the rig's at that clock, over the frame's pose.
+    let after = drift_bones(&mut changed, b).unwrap();
+    let mut expected = Vec::new();
+    rows_at(&changed, b, row_time(&changed, b), &mut expected);
+    assert!(farthest_move(&expected, &after) < 1e-6);
+    // And a visible word moves along its line by at most a frame's travel at
+    // the new pace: it goes on from where it was.
+    let rig = changed.living_props().rig_of(b).unwrap().1.clone();
+    let rows = rig.rows.as_ref().unwrap();
+    let (from, to) = (t_changed, row_time(&changed, b));
+    let mut seen = 0;
+    for (w, word) in rows.words.iter().enumerate() {
+        let pace = rows.lines[word.line as usize].pace;
+        let ((x0, k0), (x1, k1)) = (rows.shown(w, from), rows.shown(w, to));
+        if k0 > 0.0 && k1 > 0.0 {
+            seen += 1;
+            let travel = pace * (to - from) as f32;
+            assert!(
+                (x1 - x0) >= -1e-6 && (x1 - x0) <= travel + 1e-6,
+                "word {w} went {} m along its line in a frame of {travel} m",
+                x1 - x0
+            );
+        }
+    }
+    assert!(seen > rows.words.len() / 2);
+}
+
+/// The drift bones a prop's rig gives at `row_time`, over its current pose: the
+/// segment bones it last wrote.
+fn rows_at(
+    resolver: &ProcGenResolver,
+    id: LivingPropId,
+    row_time: f64,
+    out: &mut Vec<[[f32; 4]; 4]>,
+) {
+    let props = resolver.living_props();
+    let rig = props.rig_of(id).unwrap().1;
+    let rows = rig.rows.as_ref().unwrap();
+    let mut palette = props.prop(id).drawn.bones.segments.clone();
+    palette.extend_from_slice(&[[[0.0; 4]; 4]; BOIL_BONES]);
+    rows.bones_into(
+        &[0.0; crate::living::JITTER_CHANNELS],
+        row_time,
+        &mut palette,
+    );
+    out.extend_from_slice(&palette[rows.first_bone as usize..]);
+}
+
+#[test]
+fn an_echo_shows_the_words_a_little_before_or_after_now() {
+    let (mut resolver, id) = drifting_page("{ count = 2, spread = 1.0, alpha = 0.3 }");
+    for _ in 0..90 {
+        resolver.process_living(1.0 / 60.0);
+    }
+    let props = resolver.living_props();
+    let prop = props.prop(id);
+    let now = prop.row_time();
+    let echoes: Vec<f64> = (0..prop.echo_count())
+        .map(|e| prop.echo_row_time(e, now))
+        .collect();
+    assert_eq!(echoes.len(), 2);
+    assert!(echoes.iter().all(|t| *t != now), "{echoes:?} at {now}");
+    assert!(echoes.iter().any(|t| *t < now) && echoes.iter().any(|t| *t > now));
+    // A rate moves the echoes' clocks with the prop's: the same steps away.
+    resolver
+        .living_props_mut()
+        .tune_row_rate(LivingScope::All, 2.0);
+    resolver.process_living(0.1);
+    let prop = resolver.living_props().prop(id);
+    let later: Vec<f64> = (0..prop.echo_count())
+        .map(|e| prop.echo_row_time(e, prop.row_time()))
+        .collect();
+    for (later, before) in later.iter().zip(&echoes) {
+        assert!((later - before - 0.2).abs() < 1e-9, "{later} from {before}");
+    }
+}
+
+#[test]
+fn a_row_rate_layers_like_the_jitter_rate() {
+    let mut resolver = grove(LivingDefaults {
+        row_rate: Some(1.5),
+        ..LivingDefaults::default()
+    });
+    let field = field("", &[]);
+    tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+    let props = resolver.living_props_mut();
+    let read = |props: &LivingProps, i: usize| props.resolved(LivingPropId(i), None).row_rate;
+    assert_eq!(read(props, 0).value, 1.5, "the scene's");
+    assert_eq!(read(props, 0).layer, LivingLayer::Global);
+    assert_eq!(props.global_row_rate(), Some(1.5));
+    assert!(props.tune_row_rate(LivingScope::Species("thorn"), 0.5));
+    assert!(props.tune_row_rate(LivingScope::All, 2.0));
+    assert_eq!(props.row_rate(LivingPropId(0)), 2.0);
+    assert_eq!(props.row_rate(LivingPropId(2)), 0.5);
+    assert_eq!(read(props, 2).layer, LivingLayer::Species);
+    assert!(props.tune_row_rate(LivingScope::All, 100.0));
+    assert_eq!(props.row_rate(LivingPropId(1)), ROW_RATE_MAX);
+    assert!(props.tune_row_rate(LivingScope::All, f32::NAN));
+    assert_eq!(props.row_rate(LivingPropId(1)), 1.0);
+    // "As loaded" puts it back.
+    let layers = props.layers();
+    props.tune_row_rate(LivingScope::All, 4.0);
+    props.restore_layers(&layers);
+    assert_eq!(props.row_rate(LivingPropId(1)), 1.0);
 }

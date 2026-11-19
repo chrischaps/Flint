@@ -13,7 +13,7 @@ use flint_core::Vec3;
 
 use super::body::{radius_along, surface, up_the_surface, widest, Lineage, Spine};
 use super::{CardLayout, FormParams, RowFaces};
-use crate::living::LeafBinding;
+use crate::living::{LeafBinding, RowDrift, RowLine, RowWord, JITTER_CHANNELS};
 use crate::types::{BoundingBox, BranchSegment, MaterialData, MeshData, SubMesh, Vertex};
 use crate::SeededRng;
 
@@ -27,20 +27,172 @@ pub(super) const CARD_INDICES: usize = 12;
 const BACK_OFFSET: f32 = 4e-4;
 
 /// The cards in the rest pose, in shade order: card `k` is indices
-/// `k * CARD_INDICES ..`, and vertices `k * CARD_VERTICES ..`.
+/// `k * CARD_INDICES ..`, and vertices `k * CARD_VERTICES ..`. With rows,
+/// also where each line and word was written, which is what they drift along.
 pub(super) fn card_mesh(
     p: &FormParams,
     lin: &Lineage,
     spine: &Spine,
     rng: &mut SeededRng,
-) -> MeshData {
+) -> (MeshData, Option<RowLayout>) {
     let shades = p.card_shades as usize;
     let mut per_shade: Vec<Vec<[Vertex; CARD_VERTICES]>> = vec![Vec::new(); shades];
-    match p.card_layout {
-        CardLayout::Scatter => scatter(p, lin, spine, rng, &mut per_shade),
-        CardLayout::Rows => rows(p, lin, spine, rng, &mut per_shade),
+    let layout = match p.card_layout {
+        CardLayout::Scatter => {
+            scatter(p, lin, spine, rng, &mut per_shade);
+            None
+        }
+        CardLayout::Rows => Some(rows(p, lin, spine, rng, &mut per_shade)),
+    };
+    // Card `k` was written into shade `k % shades`, and `assemble` lays the
+    // shades end to end.
+    let layout = layout.map(|mut layout| {
+        let before: Vec<usize> = (0..shades)
+            .scan(0, |sum, s| {
+                let at = *sum;
+                *sum += per_shade[s].len();
+                Some(at)
+            })
+            .collect();
+        for (k, word) in layout.words.iter_mut().enumerate() {
+            word.card = before[k % shades] + k / shades;
+        }
+        layout
+    });
+    (assemble(p, &per_shade), layout)
+}
+
+/// Where rows were written: each line, and each word on it in writing order.
+#[derive(Debug, Clone)]
+pub(super) struct RowLayout {
+    pub lines: Vec<LineAt>,
+    pub words: Vec<WordAt>,
+}
+
+/// One line of writing: its height, the face it's on and how it reads.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct LineAt {
+    pub u: f32,
+    /// `+1` or `-1`: which half of the section, as in [`front_side`].
+    pub side: f32,
+    /// Half its width, inside the margins.
+    pub half: f32,
+    /// `+1` if the broad-axis offset grows the way the line reads.
+    pub reading: f32,
+}
+
+/// One word: its line, where it starts and how long it is, from the line's
+/// left end as it reads; and which card it is in the assembled mesh.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct WordAt {
+    pub line: u32,
+    pub start: f32,
+    pub length: f32,
+    pub card: usize,
+}
+
+/// Samples along a line's track: enough that a word on a rounded section
+/// keeps to it.
+const TRACK_SAMPLES: usize = 48;
+
+/// The drift of a layout's lines (#576), on bones from `first_bone` with room
+/// for `room` of them: a word a bone, or neighbours on a line together when
+/// there are more words than that. Each line's pace is `row_pace`, spread by
+/// `row_pace_spread` either way from a draw of the lineage's.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn row_drift(
+    p: &FormParams,
+    lin: &Lineage,
+    spine: &Spine,
+    layout: &RowLayout,
+    segments: usize,
+    first_bone: u16,
+    room: usize,
+    rng: &mut SeededRng,
+) -> Option<RowDrift> {
+    if p.row_pace == 0.0 || layout.words.is_empty() || room == 0 {
+        return None;
     }
-    assemble(p, &per_shade)
+    // Words to a bone: the fewest that fit, neighbours on one line.
+    let per_line: Vec<usize> = (0..layout.lines.len())
+        .map(|l| layout.words.iter().filter(|w| w.line as usize == l).count())
+        .collect();
+    let together = (1..)
+        .find(|g| per_line.iter().map(|n| n.div_ceil(*g)).sum::<usize>() <= room)
+        .expect("one bone a line fits once every line is one group");
+
+    let mut lines = Vec::with_capacity(layout.lines.len());
+    for at in &layout.lines {
+        let segment = ((at.u * segments as f32) as usize).min(segments - 1);
+        let mut points = Vec::with_capacity(TRACK_SAMPLES);
+        let mut normals = Vec::with_capacity(TRACK_SAMPLES);
+        let r = radius_along(p, lin, at.u, at.side * FRAC_PI_2).max(1e-6);
+        for i in 0..TRACK_SAMPLES {
+            let x = -at.half + 2.0 * at.half * i as f32 / (TRACK_SAMPLES - 1) as f32;
+            let a = at.side * (x * at.reading / r).clamp(-1.0, 1.0).acos();
+            let (pos, n) = surface(p, lin, spine, at.u, a);
+            points.push(pos + n * p.card_lift);
+            normals.push(n);
+        }
+        let alongs = (0..TRACK_SAMPLES)
+            .map(|i| {
+                let (a, b) = (i.saturating_sub(1), (i + 1).min(TRACK_SAMPLES - 1));
+                (points[b] - points[a]).normalized()
+            })
+            .collect();
+        let pace = p.row_pace * (1.0 + p.row_pace_spread * rng.next_range(-1.0, 1.0));
+        lines.push(RowLine {
+            bone: segment as u16 + 1,
+            pace,
+            half: at.half,
+            period: 0.0,
+            points,
+            alongs,
+            normals,
+        });
+    }
+
+    let mut words: Vec<RowWord> = Vec::new();
+    let mut card_words = vec![0u32; layout.words.len()];
+    let mut i = 0;
+    while i < layout.words.len() {
+        let first = layout.words[i];
+        let mut j = i + 1;
+        while j < layout.words.len() && j - i < together && layout.words[j].line == first.line {
+            j += 1;
+        }
+        let last = layout.words[j - 1];
+        let w = words.len();
+        let hash = crate::living::mix64(w as u64 ^ 0x5157_6f72_6473);
+        let share = 0.5 + 0.5 * ((hash >> 8) & 0xff) as f32 / 255.0;
+        words.push(RowWord {
+            line: first.line,
+            start: first.start,
+            length: last.start + last.length - first.start,
+            channel: (hash % JITTER_CHANNELS as u64) as u16,
+            share: if hash & 0x10000 == 0 { share } else { -share },
+        });
+        for word in &layout.words[i..j] {
+            card_words[word.card] = w as u32;
+        }
+        i = j;
+    }
+    // A word has wholly gone at one end before it starts in at the other.
+    for (l, line) in lines.iter_mut().enumerate() {
+        let longest = words
+            .iter()
+            .filter(|w| w.line as usize == l)
+            .map(|w| w.length)
+            .fold(0.0, f32::max);
+        line.period = 2.0 * line.half + longest + p.word_gap;
+    }
+    Some(RowDrift {
+        lines,
+        words,
+        card_words,
+        card_vertices: CARD_VERTICES,
+        first_bone,
+    })
 }
 
 /// One card: a quad of half-axes `hx` and `hy` about `centre`, facing `normal`,
@@ -131,7 +283,11 @@ fn rows(
     spine: &Spine,
     rng: &mut SeededRng,
     per_shade: &mut [Vec<[Vertex; CARD_VERTICES]>],
-) {
+) -> RowLayout {
+    let mut layout = RowLayout {
+        lines: Vec::new(),
+        words: Vec::new(),
+    };
     let shades = per_shade.len();
     let front = front_side(p, lin, spine);
     let faces = match p.row_faces {
@@ -172,6 +328,9 @@ fn rows(
             };
             // Which way along the section is left to right, seen from outside.
             let reading = reading_sign(p, lin, spine, u, side);
+            // This line's index in the layout, once a word is on it (the
+            // paragraph's own count is `line`).
+            let written = layout.lines.len() as u32;
             let mut x = -half + indent;
             loop {
                 let length = word * (0.3 + 1.4 * rng.next_f32().powf(1.5));
@@ -181,6 +340,20 @@ fn rows(
                 if k >= p.cards as usize {
                     break 'lines;
                 }
+                if layout.lines.len() == written as usize {
+                    layout.lines.push(LineAt {
+                        u,
+                        side,
+                        half,
+                        reading,
+                    });
+                }
+                layout.words.push(WordAt {
+                    line: written,
+                    start: x,
+                    length,
+                    card: k,
+                });
                 let middle = (x + 0.5 * length) * reading;
                 let r = radius_along(p, lin, u, side * FRAC_PI_2).max(1e-6);
                 let a = side * (middle / r).clamp(-1.0, 1.0).acos();
@@ -212,6 +385,7 @@ fn rows(
         }
         u -= step;
     }
+    layout
 }
 
 /// How many lines the next paragraph runs to, 0 for one unbroken block.
