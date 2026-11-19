@@ -245,7 +245,10 @@ pub(super) fn render(
     HUMAN_TO_STDERR.store(report_json, Ordering::Relaxed);
     // A mesh sequence (#222) is its own span: its files are the frames
     let meshes = super::mesh_seq::resolve(&args.seq.mesh)?;
-    if meshes.is_empty() {
+    if args.strip.strip {
+        render_plan::check_strip_output(&args.output)?;
+        render_plan::strip_times(args.clock.time.as_ref(), args.strip.every)?;
+    } else if meshes.is_empty() {
         render_plan::check_output(&args.output, args.clock.time.as_ref())?;
     } else {
         check_mesh_output(args, meshes[0].files.len())?;
@@ -1723,13 +1726,15 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         camera_path,
     } = staged;
 
-    let animated = matches!(args.clock.time, Some(TimeSpec::Range(..)));
+    // A span or a list as one contact sheet (#574): neither a GIF nor stills
+    let strip = args.strip.strip;
+    let animated = !strip && matches!(args.clock.time, Some(TimeSpec::Range(..)));
     // A still a moment (#614), numbered in the order the moments were given.
-    let moments = matches!(args.clock.time, Some(TimeSpec::List(_)));
+    let moments = !strip && matches!(args.clock.time, Some(TimeSpec::List(_)));
     let report_file = args.measure.report.as_deref().filter(|_| !report_json);
     let measured = reference.is_some() || report_file.is_some();
     // What a clocked render can't mean (#596), each refused with why
-    if measured && (animated || moments) {
+    if measured && (animated || moments || strip) {
         anyhow::bail!(
             "--report FILE / --reference measure one moment, and this --time captures \
              several: give --time T (--report json reports every capture's props)"
@@ -1767,7 +1772,8 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         // Cells drawn small, or at the full size to be cropped or shrunk
         Some(_) => view.render_size(args.width, args.height),
         // A refine's rounds are sheet cells
-        None if args.refine.ai_refine => {
+        // A refine's rounds are sheet cells, and so are a strip's tiles
+        None if args.refine.ai_refine || strip => {
             let (w, h) = super::sweep::CELL_SIZE;
             (args.width.unwrap_or(w), args.height.unwrap_or(h))
         }
@@ -1837,6 +1843,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     let frame_dt = args.seq.frame_dt.map_or(1.0 / 60.0, f64::from);
     let times = match args.seq.frames {
         Some(frames) => (0..frames).map(|i| f64::from(i) * frame_dt).collect(),
+        None if strip => render_plan::strip_times(args.clock.time.as_ref(), args.strip.every)?,
         None => render_plan::capture_times(args.clock.time.as_ref(), args.clock.fps),
     };
     if let Some(frames) = args.seq.frames {
@@ -1860,6 +1867,8 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     let sequence = animated && render_plan::is_sequence(&args.output);
     let mut gif = None;
     let mut still = None;
+    // A strip's tiles, composed once the last is captured
+    let mut tiles = Vec::new();
     let mut written_bytes = 0u64;
     let (mut frame_width, mut frame_height) = (width, height);
     let mut captures = Vec::new();
@@ -1884,6 +1893,10 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         let mut texts = Vec::with_capacity(count);
         for (i, stage) in stages.iter_mut().enumerate() {
             stage.advance(ctx, t, frame_step);
+            // A strip's tile is --time t alone: a first frame, whatever came before
+            if strip {
+                stage.forget_history();
+            }
             // The camera's move, over where the scripts left it
             if args.seq.frames.is_some() {
                 if let Some(rate) = args.seq.orbit {
@@ -2067,6 +2080,8 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                 .save(&path)
                 .with_context(|| format!("Failed to save frame {index} to {path}"))?;
             written_bytes += std::fs::metadata(&path).map_or(0, |m| m.len());
+        } else if strip {
+            tiles.push(frame);
         } else if moments {
             let path = render_plan::numbered_still(&args.output, index, times.len());
             frame
@@ -2133,6 +2148,24 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
             args.clock.fps,
             args.output,
             written_bytes as f64 / 1e6,
+        );
+    } else if strip {
+        let sheet = strip_sheet(args, &scene_name, &times, &tiles, frame_step);
+        if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        sheet
+            .save(output)
+            .with_context(|| format!("Failed to save the strip to {}", args.output))?;
+        say!(
+            "Rendered {} tiles of {frame_width}x{frame_height} ({} .. {}) as one {}x{} strip to {}",
+            tiles.len(),
+            render_plan::strip_label(times[0]),
+            render_plan::strip_label(times[times.len() - 1]),
+            sheet.width(),
+            sheet.height(),
+            args.output
         );
     } else if animated {
         let spool = gif.context("a span captured no frames")?;
@@ -2264,6 +2297,55 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         }
     }
     Ok(())
+}
+
+/// A `--strip`'s sheet (#574): the tiles in rows of `--columns`, under the
+/// scene's name and what was asked, each labelled with its time; or with
+/// `--label off` the tiles alone.
+fn strip_sheet(
+    args: &RenderArgs,
+    scene_name: &str,
+    times: &[f64],
+    tiles: &[image::RgbaImage],
+    frame_step: f64,
+) -> image::RgbaImage {
+    let columns = render_plan::strip_columns(tiles.len(), args.strip.columns);
+    if args.strip.label == super::render_args::StripLabel::Off {
+        return super::style_sheet::compose_plain(tiles, columns);
+    }
+    let asked = match &args.clock.time {
+        Some(TimeSpec::Range(from, to)) => format!(
+            "--time {from}..{to}  a tile every {} s",
+            args.strip.every.unwrap_or(render_plan::STRIP_EVERY)
+        ),
+        Some(TimeSpec::List(moments)) => format!(
+            "--time {}",
+            moments
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        _ => String::new(),
+    };
+    let (w, h) = tiles.first().map_or((0, 0), image::RgbaImage::dimensions);
+    let mut subtitle = format!("{asked}  {} tiles of {w}x{h}", tiles.len());
+    if args.clock.scripts {
+        subtitle.push_str("  scripts on");
+    }
+    if let Some(look) = &args.look {
+        subtitle.push_str(&format!("  look {look}"));
+    }
+    if args.clock.frame_step.is_some() {
+        subtitle.push_str(&format!("  frame step {frame_step} s"));
+    }
+    let mut text = super::style_sheet::SheetText::new(
+        scene_name.to_string(),
+        subtitle,
+        times.iter().map(|&t| render_plan::strip_label(t)).collect(),
+    );
+    text.per_row = columns;
+    super::style_sheet::compose(tiles, &text)
 }
 
 /// Measures (#357) of each cell as the sheet shows it, a line each in the
@@ -3324,6 +3406,15 @@ impl Stage {
         self.mode_shim.forget();
         self.captured = None;
         self.capture(args, ctx, t, frame_step)
+    }
+
+    /// Draw the next capture as a first frame (#574): no style history to
+    /// follow on from and the load's frame dt, so a strip's tile at `t` is
+    /// what `--time t` rendered alone draws. The clocks are left as they are.
+    fn forget_history(&mut self) {
+        self.renderer.reset_style_history();
+        self.captured = None;
+        self.style_dt = FrameInputs::default().dt;
     }
 
     /// Move the clocks on to `t` a `frame_step` at a time, landing on `t` exactly,

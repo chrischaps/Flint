@@ -38,6 +38,55 @@ pub(crate) struct Trace {
     pub gpu: Vec<Span>,
     pub hitches: Vec<HitchMark>,
     pub notes: Vec<NoteMark>,
+    /// Where the scopes begin, when a ring lost part of the look-back
+    /// (#1288): `frames` then holds only the frames after it.
+    pub coverage: Option<Coverage>,
+}
+
+/// A look-back whose scopes begin late: a thread's ring wrapped inside
+/// the window it was saved for, so its oldest frames lack their scopes.
+#[derive(Clone, Debug)]
+pub(crate) struct Coverage {
+    /// Where every frame is whole, ns: a frame that began here or later.
+    pub from_ns: u64,
+    /// The rings that wrapped (`main`).
+    pub threads: String,
+    /// Every frame of the file, the ones without their scopes too.
+    pub all: Vec<FrameSpan>,
+    /// The look-back the trace was saved for, seconds.
+    pub window_s: Option<f64>,
+    /// What the scopes cover of it, seconds.
+    pub covered_s: f64,
+}
+
+impl Coverage {
+    /// `scopes cover frames 5729..5932 (0.85 s of 5 s): the main ring
+    /// wrapped, so the 994 frames before them are left out`.
+    pub fn line(&self, frames: &[FrameSpan]) -> String {
+        let span = match (frames.first(), frames.last()) {
+            (Some(a), Some(b)) => format!("frames {}..{}", a.frame, b.frame),
+            _ => "no whole frame".to_string(),
+        };
+        let of = self
+            .window_s
+            .map_or(String::new(), |w| format!(" of {w:.0} s"));
+        let before = self.all.len().saturating_sub(frames.len());
+        format!(
+            "scopes cover {span} ({:.2} s{of}): the {} ring wrapped, so the {before} frame{} \
+             before them {} left out",
+            self.covered_s,
+            self.threads,
+            if before == 1 { "" } else { "s" },
+            if before == 1 { "is" } else { "are" },
+        )
+    }
+
+    /// Whether frame index `frame` is one of the file's, before the scopes.
+    pub fn before(&self, frame: u32) -> bool {
+        self.all
+            .iter()
+            .any(|f| f.frame == frame && f.start_ns < self.from_ns)
+    }
 }
 
 pub(crate) struct Thread {
@@ -60,6 +109,16 @@ pub(crate) struct Scope {
     /// Open scopes around it on its thread (0 = outermost).
     pub depth: u16,
     pub detail: Option<Detail>,
+    /// A summed record (#1288): the calls of one engine function it
+    /// stands for, laid from the first for their total, and the longest.
+    /// A leaf: it may overlap its siblings, so it is nobody's parent.
+    pub summed: Option<Summed>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Summed {
+    pub calls: u32,
+    pub worst_ns: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -71,6 +130,16 @@ pub(crate) enum Detail {
 impl Scope {
     pub fn end_ns(&self) -> u64 {
         self.start_ns + self.dur_ns
+    }
+
+    /// The calls it stands for: one, or a summed record's count.
+    pub fn calls(&self) -> u32 {
+        self.summed.map_or(1, |s| s.calls)
+    }
+
+    /// Its longest single call.
+    pub fn worst_ns(&self) -> u64 {
+        self.summed.map_or(self.dur_ns, |s| s.worst_ns)
     }
 
     /// The name a view counts this scope under: its name, and with
@@ -244,6 +313,10 @@ impl Trace {
                             Some(v) => v.as_i64().map(Detail::Count),
                             None => None,
                         };
+                        let summed = int(&e.args, "calls").map(|calls| Summed {
+                            calls: calls.clamp(0, u32::MAX as i64) as u32,
+                            worst_ns: num(&e.args, "worst_us").map_or(dur_ns, ns),
+                        });
                         let at = *thread_of.entry(tid.clone()).or_insert_with(|| {
                             let name = names.get(&tid).cloned().unwrap_or_else(|| tid.clone());
                             threads.push((name, Vec::new()));
@@ -256,6 +329,7 @@ impl Trace {
                             frame,
                             depth: depth.clamp(0, u16::MAX as i64) as u16,
                             detail,
+                            summed,
                         });
                         continue;
                     }
@@ -315,6 +389,43 @@ impl Trace {
         if frames_derived {
             frames = derived_frames(&threads);
         }
+        // Only the frames the scopes cover (#1288): a frame before them
+        // would read as one where nothing ran
+        let coverage = covered_from(&header, &threads, &frames).and_then(|(from_ns, cut)| {
+            if frames.first().is_none_or(|f| f.start_ns >= from_ns) {
+                return None;
+            }
+            let all = frames.clone();
+            let kept: Vec<FrameSpan> = all
+                .iter()
+                .filter(|f| f.start_ns >= from_ns)
+                .cloned()
+                .collect();
+            let window_s = header
+                .get("seconds")
+                .and_then(Value::as_f64)
+                .filter(|s| *s > 0.0);
+            let to_ns = header
+                .get("window_to_ms")
+                .and_then(Value::as_f64)
+                .map(|ms| ns(ms * 1000.0))
+                .or_else(|| all.last().map(FrameSpan::end_ns))
+                .unwrap_or(from_ns);
+            let covered_s = to_ns.saturating_sub(from_ns) as f64 / 1e9;
+            // A cut so late no frame is whole: the last frame, as it is
+            frames = if kept.is_empty() {
+                all.last().cloned().into_iter().collect()
+            } else {
+                kept
+            };
+            Some(Coverage {
+                from_ns,
+                threads: cut,
+                all,
+                window_s,
+                covered_s,
+            })
+        });
         hitches.sort_by_key(|h| h.start_ns);
         notes.sort_by_key(|n| n.at_ns);
         Ok(Trace {
@@ -327,6 +438,7 @@ impl Trace {
             gpu,
             hitches,
             notes,
+            coverage,
         })
     }
 
@@ -460,7 +572,11 @@ impl Thread {
                 parent[i] = Some(top);
                 children_ns[top] += s.dur_ns;
             }
-            stack.push(i);
+            // A summed record is a leaf: it may overlap a sibling, whose
+            // children must not take it for their parent
+            if s.summed.is_none() {
+                stack.push(i);
+            }
         }
         let self_ns = scopes
             .iter()
@@ -500,6 +616,48 @@ impl Thread {
         out.reverse();
         out
     }
+}
+
+/// Where a trace's scopes begin, ns, and the rings that wrapped, when one
+/// lost part of the window. A writer since #1288 says (`cut_threads`, empty
+/// for a whole window, and `covered_from_ms`); for a trace from before it,
+/// a thread the header calls `wrapped` whose oldest scope closed after the
+/// file's second frame ended was cut there (a whole copy's first frame has
+/// scopes that close inside it).
+fn covered_from(
+    header: &Map<String, Value>,
+    threads: &[Thread],
+    frames: &[FrameSpan],
+) -> Option<(u64, String)> {
+    let text = |k: &str| {
+        header
+            .get(k)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    if header.contains_key("cut_threads") {
+        let ms = header.get("covered_from_ms").and_then(Value::as_f64)?;
+        let cut = text("cut_threads").unwrap_or_else(|| "?".into());
+        return Some((ns(ms * 1000.0), cut));
+    }
+    let wrapped = text("wrapped")?;
+    let second_end = frames.get(1).map(FrameSpan::end_ns)?;
+    let mut cut: Vec<(&str, u64)> = Vec::new();
+    for name in wrapped.split(',').map(str::trim) {
+        let Some(t) = threads.iter().find(|t| t.name == name) else {
+            continue;
+        };
+        let Some(oldest) = t.scopes.iter().map(Scope::end_ns).min() else {
+            continue;
+        };
+        if oldest > second_end {
+            cut.push((name, oldest));
+        }
+    }
+    let from = cut.iter().map(|(_, at)| *at).max()?;
+    let names: Vec<&str> = cut.iter().map(|(n, _)| *n).collect();
+    Some((from, names.join(", ")))
 }
 
 /// Frames from the scopes alone (a trace with no `frames` track): each
@@ -550,6 +708,116 @@ mod tests {
     }
 
     #[test]
+    fn a_summed_record_is_a_leaf_its_overlapped_siblings_children_keep_their_parent() {
+        // on_update holds helper() and get_field()'s summed record, which
+        // overlaps helper(); helper()'s child is helper()'s
+        let t = trace(
+            r#"{"ph":"X","name":"get_field()","pid":1,"tid":1,"ts":5.0,"dur":30.0,"args":{"frame":0,"depth":1,"calls":180,"worst_us":0.5}},
+               {"ph":"X","name":"clamp()","pid":1,"tid":1,"ts":20.0,"dur":2.0,"args":{"frame":0,"depth":2,"calls":4,"worst_us":0.75}},
+               {"ph":"X","name":"helper()","pid":1,"tid":1,"ts":10.0,"dur":50.0,"args":{"frame":0,"depth":1}},
+               {"ph":"X","name":"on_update","pid":1,"tid":1,"ts":0.0,"dur":100.0,"args":{"frame":0,"depth":0}}"#,
+        );
+        let main = &t.threads[0];
+        let at = |name: &str| main.scopes.iter().position(|s| s.name == name).unwrap();
+        assert_eq!(main.parent[at("get_field()")], Some(at("on_update")));
+        assert_eq!(main.parent[at("helper()")], Some(at("on_update")));
+        assert_eq!(
+            main.parent[at("clamp()")],
+            Some(at("helper()")),
+            "not the summed record it lies inside"
+        );
+        let s = &main.scopes[at("get_field()")];
+        assert_eq!((s.calls(), s.worst_ns()), (180, 500));
+        assert_eq!(main.self_ns[at("on_update")], 20_000, "100 - 50 - 30 us");
+        let per = super::super::stats::per_frame(&t, &[main], false);
+        assert_eq!(per[0]["get_field()"].calls, 180, "a view counts its calls");
+        assert_eq!(per[0]["get_field()"].worst_ns, 500, "and its longest");
+    }
+
+    /// Five frames, of which the first two began before the main ring's
+    /// oldest record: the second is the longest, and has no scopes.
+    fn wrapped(header: &str) -> Trace {
+        let mut events = vec![
+            r#"{"ph":"M","name":"thread_name","pid":1,"tid":1,"args":{"name":"main"}}"#.to_string(),
+            r#"{"ph":"M","name":"thread_name","pid":1,"tid":2,"args":{"name":"frames"}}"#
+                .to_string(),
+        ];
+        let lengths = [10.0, 90.0, 10.0, 12.0, 10.0];
+        let mut ts = 0.0;
+        for (f, len) in lengths.iter().enumerate() {
+            events.push(format!(
+                r#"{{"ph":"X","name":"frame","pid":1,"tid":2,"ts":{ts},"dur":{len},"args":{{"frame":{f},"ms":{}}}}}"#,
+                len / 1000.0
+            ));
+            if f >= 2 {
+                events.push(format!(
+                    r#"{{"ph":"X","name":"tick","pid":1,"tid":1,"ts":{ts},"dur":{},"args":{{"frame":{f},"depth":0}}}}"#,
+                    len - 1.0
+                ));
+            }
+            ts += len;
+        }
+        let text = format!(
+            r#"{{"traceEvents":[{}],"otherData":{{"format":"flint-trace","version":1,{header}}}}}"#,
+            events.join(",")
+        );
+        Trace::parse(text.as_bytes(), "w.json").unwrap()
+    }
+
+    #[test]
+    fn a_wrapped_trace_holds_only_the_frames_its_scopes_cover_and_says_so() {
+        for (header, kept, said) in [
+            // What the player writes since #1288: frame 2 began at 0.1 ms
+            (
+                r#""seconds":5,"wrapped":"main","covered_from_ms":0.1,"cut_threads":"main""#,
+                vec![2, 3, 4],
+                "scopes cover frames 2..4",
+            ),
+            // A trace from before it: from the wrapped ring's oldest close
+            // (frame 2's tick, 0.109 ms), so frame 2, which began before
+            // it and may have lost a scope, is left out too
+            (
+                r#""seconds":5,"wrapped":"main","window_from_ms":0"#,
+                vec![3, 4],
+                "scopes cover frames 3..4",
+            ),
+        ] {
+            let t = wrapped(header);
+            let c = t.coverage.as_ref().expect("the scopes begin late");
+            assert_eq!(
+                t.frames.iter().map(|f| f.frame).collect::<Vec<_>>(),
+                kept,
+                "{header}"
+            );
+            assert_eq!(c.all.len(), 5);
+            let line = c.line(&t.frames);
+            let before = 5 - kept.len();
+            assert!(
+                line.starts_with(said)
+                    && line.contains("of 5 s")
+                    && line.contains(&format!(
+                        "the main ring wrapped, so the {before} frames before them are left out"
+                    )),
+                "{line}"
+            );
+            let worst = super::super::pick_frame(&t, "worst").unwrap();
+            assert_eq!(t.frames[worst].frame, 3, "the worst covered frame, not 1");
+            let err = super::super::pick_frame(&t, "1").unwrap_err().to_string();
+            assert!(err.contains("before its scopes begin"), "{err}");
+        }
+        // Whole: a ring that never wrapped, and one that wrapped but held
+        // the window, which the writer says with an empty `cut_threads`
+        for header in [
+            r#""seconds":5,"wrapped":"""#,
+            r#""seconds":5,"wrapped":"main","cut_threads":"""#,
+        ] {
+            let whole = wrapped(header);
+            assert!(whole.coverage.is_none(), "{header}");
+            assert_eq!(whole.frames.len(), 5);
+        }
+    }
+
+    #[test]
     fn a_newer_version_is_refused_naming_both() {
         let err = Trace::parse(
             br#"{"traceEvents":[],"otherData":{"format":"flint-trace","version":9}}"#,
@@ -585,6 +853,7 @@ mod tests {
             frame: 0,
             depth: 0,
             detail: Some(Detail::Text("scripts/a.rhai".into())),
+            summed: None,
         };
         assert_eq!(s.key(true), "script::call (scripts/a.rhai)");
         assert_eq!(s.key(false), "script::call");

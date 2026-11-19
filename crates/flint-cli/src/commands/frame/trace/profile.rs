@@ -129,6 +129,12 @@ pub struct Profile {
     /// Each path's time in each row it appears in, (row, ns), by row.
     path_rows: Vec<Vec<(u32, u64)>>,
     baseline: Option<Baseline>,
+    /// The first row with all its scopes: 0 unless a ring lost part of
+    /// the look-back (#1288), when the rows before it lack theirs.
+    pub first_covered: usize,
+    /// What the strip and the tab say when it isn't 0: `scopes cover
+    /// frames 5729..5932 (0.85 s of 5 s): the main ring wrapped`.
+    pub coverage: Option<String>,
 }
 
 /// A system read from a scope's name, for scopes off the frame thread and
@@ -250,7 +256,11 @@ impl Profile {
                         _ => list.push((row as u32, s.dur_ns)),
                     }
                 }
-                stack.push(i);
+                // A summed record is a leaf (#1288): it may overlap a
+                // sibling, whose children must not take it for a parent
+                if s.summed.is_none() {
+                    stack.push(i);
+                }
             }
             // Each row's range of scopes
             f.rows = rows
@@ -281,6 +291,41 @@ impl Profile {
             }
             facts.push(f);
         }
+        let (first_covered, coverage) = match trace.covered_from() {
+            Some((from_ns, threads)) => {
+                let first = rows.partition_point(|r| r.start_ns < from_ns);
+                if first == 0 {
+                    (0, None)
+                } else {
+                    // A cut so late no row is whole: the last, as it is
+                    let first = first.min(rows.len().saturating_sub(1));
+                    let last = rows.len() - 1;
+                    let to = trace
+                        .header
+                        .get("window_to_ms")
+                        .and_then(serde_json::Value::as_f64)
+                        .map(|ms| (ms * 1e6) as u64)
+                        .unwrap_or(rows[last].end_ns);
+                    let covered_s = to.saturating_sub(from_ns) as f64 / 1e9;
+                    let of = trace
+                        .header
+                        .get("seconds")
+                        .and_then(serde_json::Value::as_f64)
+                        .filter(|s| *s > 0.0)
+                        .map_or(String::new(), |s| format!(" of {s:.0} s"));
+                    let line = format!(
+                        "scopes cover frames {}..{} ({covered_s:.2} s{of}): the {threads} ring wrapped, \
+                         so the {first} frame{} before them {} none",
+                        rows[first].index,
+                        rows[last].index,
+                        if first == 1 { "" } else { "s" },
+                        if first == 1 { "has" } else { "have" },
+                    );
+                    (first, Some(line))
+                }
+            }
+            None => (0, None),
+        };
         Self {
             trace,
             rows,
@@ -290,7 +335,14 @@ impl Profile {
             paths,
             path_rows,
             baseline: None,
+            first_covered,
+            coverage,
         }
+    }
+
+    /// The rows the scopes cover (all of them, unless a ring wrapped).
+    pub fn covered(&self) -> Range<usize> {
+        self.first_covered..self.rows.len()
     }
 
     pub fn name(&self, id: u32) -> &str {
@@ -327,9 +379,10 @@ impl Profile {
             .collect()
     }
 
-    /// The longest row.
+    /// The longest row the scopes cover.
     pub fn worst_row(&self) -> Option<usize> {
-        (0..self.rows.len()).max_by_key(|&r| self.rows[r].end_ns - self.rows[r].start_ns)
+        self.covered()
+            .max_by_key(|&r| self.rows[r].end_ns - self.rows[r].start_ns)
     }
 
     /// A path written out: `tick / script::update / stall.rhai:on_update`.
@@ -346,8 +399,19 @@ impl Profile {
     }
 
     /// Every name's statistics over `rows`, every thread's.
+    ///
+    /// A summed record (#1288) counts as its calls: `count` is calls,
+    /// `mean` a call's, `worst` the longest call, and its share of the p90
+    /// is its mean call, one value a record (a call's own time isn't kept).
     pub fn stats(&self, rows: Range<usize>) -> Vec<ScopeStat> {
-        let mut by_name: HashMap<u32, (Vec<u64>, (usize, usize))> = HashMap::new();
+        #[derive(Default)]
+        struct Acc {
+            durs: Vec<u64>,
+            calls: u64,
+            total: u64,
+            worst: u64,
+        }
+        let mut by_name: HashMap<u32, (Acc, (usize, usize))> = HashMap::new();
         for (ti, thread) in self.trace.threads.iter().enumerate() {
             let f = &self.facts[ti];
             let Some(first) = f.rows.get(rows.start) else {
@@ -356,28 +420,32 @@ impl Profile {
             let last = &f.rows[rows.end.saturating_sub(1).min(f.rows.len() - 1)];
             for i in first.start..last.end {
                 let s = &thread.scopes[i];
-                let entry = by_name.entry(s.name).or_insert((Vec::new(), (ti, i)));
-                if s.dur_ns > self.scope(entry.1 .0, entry.1 .1).dur_ns {
+                let entry = by_name.entry(s.name).or_insert((Acc::default(), (ti, i)));
+                if s.worst_ns() > self.scope(entry.1 .0, entry.1 .1).worst_ns() {
                     entry.1 = (ti, i);
                 }
-                entry.0.push(s.dur_ns);
+                let acc = &mut entry.0;
+                acc.durs.push(s.dur_ns / s.calls().max(1) as u64);
+                acc.calls += s.calls() as u64;
+                acc.total += s.dur_ns;
+                acc.worst = acc.worst.max(s.worst_ns());
             }
         }
         let mut out: Vec<ScopeStat> = by_name
             .into_iter()
-            .map(|(name, (mut durs, worst_at))| {
-                durs.sort_unstable();
-                let count = durs.len();
-                let total: u64 = durs.iter().sum();
+            .map(|(name, (mut acc, worst_at))| {
+                acc.durs.sort_unstable();
+                let n = acc.durs.len();
                 // Nearest rank
-                let p90 = durs[((count as f64 * 0.9).ceil() as usize).clamp(1, count) - 1];
+                let p90 = acc.durs[((n as f64 * 0.9).ceil() as usize).clamp(1, n) - 1];
+                let count = acc.calls.max(1);
                 ScopeStat {
                     name,
-                    count: count as u32,
-                    total_ns: total,
-                    mean_ns: total / count as u64,
+                    count: count.min(u32::MAX as u64) as u32,
+                    total_ns: acc.total,
+                    mean_ns: acc.total / count,
                     p90_ns: p90,
-                    worst_ns: *durs.last().unwrap_or(&0),
+                    worst_ns: acc.worst,
                     worst_at,
                 }
             })
@@ -736,5 +804,37 @@ mod tests {
         assert_eq!(p.facts[0].parent[2], 1);
         assert_eq!(p.rows_touching(0, 10_500), 0..2);
         assert_eq!(p.row_at(12_000), Some(1));
+    }
+
+    /// A summed record (#1288) overlapping a sibling is a leaf: the
+    /// sibling's child keeps the sibling, and the statistics count calls.
+    #[test]
+    fn a_summed_record_is_nobodys_parent_and_counts_as_its_calls() {
+        let x = |name: &str, ts: f64, dur: f64, args: &str| {
+            format!("{{\"ph\":\"X\",\"name\":\"{name}\",\"pid\":1,\"tid\":1,\"ts\":{ts},\"dur\":{dur},\"args\":{{\"frame\":0,{args}}}}}")
+        };
+        let events = [
+            "{\"ph\":\"M\",\"name\":\"thread_name\",\"pid\":1,\"tid\":1,\"args\":{\"name\":\"main\"}}".to_string(),
+            x("get_field()", 5.0, 30.0, "\"depth\":1,\"calls\":180,\"worst_us\":0.5"),
+            x("clamp()", 20.0, 2.0, "\"depth\":2,\"calls\":4,\"worst_us\":0.75"),
+            x("helper()", 10.0, 50.0, "\"depth\":1"),
+            x("on_update", 0.0, 100.0, "\"depth\":0"),
+        ];
+        let text = format!("{{\"traceEvents\":[{}]}}", events.join(","));
+        let p = Profile::new(Trace::read(&text).unwrap());
+        let at = |name: &str| find(&p, 0, name, 0);
+        let f = &p.facts[0];
+        assert_eq!(f.parent[at("get_field()")], at("on_update") as u32);
+        assert_eq!(f.parent[at("clamp()")], at("helper()") as u32);
+        assert_eq!(f.self_ns[at("on_update")], 20_000);
+        let stats = p.stats(0..p.rows.len());
+        let gf = stats
+            .iter()
+            .find(|s| p.name(s.name) == "get_field()")
+            .unwrap();
+        assert_eq!(gf.count, 180);
+        assert_eq!(gf.worst_ns, 500);
+        assert_eq!(gf.mean_ns, 30_000 / 180);
+        assert!(p.coverage.is_none());
     }
 }

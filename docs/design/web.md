@@ -824,7 +824,7 @@ a render scale the chain owns its depth and all of them are kept. Since
 #379 the player passes its depth view with an id
 (`RenderContext::depth_target()`, a fresh `new_depth_id()` whenever the
 context makes the texture again) and those groups are kept at scale 1
-too (measured below the table, "Bind groups over the caller's depth").
+too (measured below the tables, "Bind groups over the caller's depth").
 
 **Re-read with `tools/web-perf/run.mjs` (#381, 2026-11-12).** The table
 above is now one command over a `flint export web` folder of the same three
@@ -857,6 +857,29 @@ DPR: CDP's `Emulation.setDeviceMetricsOverride` changes `devicePixelRatio`,
 but the canvas kept the display's 1.5 (2880x1620 at "DPR 1"), since winit
 sizes it from a ResizeObserver's device-pixel box. `?begin=auto` lifts the
 gate, so the screenshots need no hiding.
+
+**Bind groups over the caller's depth (#565, 2026-11-18).** #379's reading in
+the browser, at render scale 1 (`&scale=1`, scene 1920x1080 on a 1920x1080
+canvas at DPR 1). The player was main's Play site build at 7f835647; the
+ASCII bundle is `tools/phone-perf/ascii_variants.py`'s three scenes, and
+Float's is the one that site serves (Float@8595f72e). The readout rounds a
+frame's count to one decimal, so `run.mjs` now also keeps the page's running
+totals (`window.flintGpuCalls`) at each read and prints the difference
+between the first read and the last (`between` in the page's JSON). Three
+reads, 20 s apart end to end, Chrome 157:
+
+| page | frames between reads | `createBindGroup` | `createBuffer` | passes a frame |
+|---|---|---|---|---|
+| `ascii_none` | 1201 | 0 | 0 | 17 |
+| `ascii_entities` | 1201 | 0 | 0 | 30 |
+| `ascii_full` | 1201 | 0 | 0 | 30 |
+| Float, `scenes/float.scene.toml` | 1202 | 0 | 0 | 16--19 |
+
+None at all, where #270's table above read 3 a frame on the styled pages and
+2 on the plain one. Every group a page makes is made in its first 25 s
+(the totals at the first read: 103 on `ascii_entities`, 563 on Float), and
+none after. The styled pages draw 30 passes a frame here, against #381's 26:
+the style's passes have changed since, which this reading doesn't look into.
 
 **Cells are output pixels.** ASCII runs at the display stage, after the
 upscale, so a render scale or the web's DPR cap changes only the scene

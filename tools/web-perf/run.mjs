@@ -364,8 +364,17 @@ async function playPage({ navigate, evaluate, screenshot }, scene, dpr, css) {
     if (r > 0) await sleep(10000); // the readout's window is 10 s: each read is its own
     const text = await evaluate(`document.getElementById('perf-text')?.innerText`);
     const line = await evaluate(`document.getElementById('perf')?.dataset.line`);
-    result.reads.push({ after: warmSecs + r * 10, text, line, parsed: parsePerfLine(line) });
+    // the page's running totals too: the readout rounds a frame's count to one
+    // decimal, the difference of two totals is exact (#565)
+    const calls = JSON.parse((await evaluate(`JSON.stringify(window.flintGpuCalls ?? null)`)) ?? 'null');
+    result.reads.push({ after: warmSecs + r * 10, text, line, parsed: parsePerfLine(line), calls });
     log(`${label} read ${r + 1}/${reads}: ${line ?? '(no line yet)'}`);
+  }
+  // exact counts between the first read and the last: `submit` is one a frame
+  const [first, last] = [result.reads[0]?.calls, result.reads.at(-1)?.calls];
+  if (reads > 1 && first && last) {
+    result.between = Object.fromEntries(Object.keys(last).map((k) => [k, last[k] - (first[k] ?? 0)]));
+    log(`${label} between reads: ${JSON.stringify(result.between)}`);
   }
   // the canvas the frames were drawn on, as the readout says it, not as asked
   const drawn = result.reads.at(-1)?.parsed.canvas;

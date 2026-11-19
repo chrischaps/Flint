@@ -269,9 +269,16 @@ fn fn_call_cost() {
     for which in ["script", "engine"] {
         let off = per_call(false, which);
         let on = per_call(true, which);
+        // While the recorder records (#1288): a script function's call a
+        // scope, an engine function's calls summed into one record
+        flint_core::profile::set_recording(true);
+        let recording = per_call(false, which);
+        flint_core::profile::set_recording(false);
         println!(
-            "{which} function: {off:.0} ns a call (loop included) off, {on:.0} on (+{:.0})",
-            on - off
+            "{which} function: {off:.0} ns a call (loop included) off, {on:.0} on (+{:.0}), \
+             {recording:.0} recording (+{:.0})",
+            on - off,
+            recording - off
         );
     }
 }

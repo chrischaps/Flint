@@ -62,7 +62,7 @@ The workspace has 32 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 0 | `flint-arch-analyzer` (`tools/arch-analyzer`) | *(none)* | *(none)* |
 | 0 | `flint-audio-worklet` | *(none)* | *(none)* |
 | 0 | `flint-core` | *(none)* | android, animation, asset, asset-gen, audio, cli, constraint, debug-ui, ecs, geometry, import, input-capture, music, particles, physics, player, procgen, query, render, rhythm, runtime, scene, schema, script, terrain, viewer, wooze |
-| 0 | `flint-pixels` | *(none)* | render |
+| 0 | `flint-pixels` | *(none)* | player, render |
 | 1 | `flint-asset` | core | asset-gen, cli, import, player, scene |
 | 1 | `flint-geometry` | core | cli, debug-ui, player, procgen, render, script, viewer |
 | 1 | `flint-music` | core | cli, input-capture, player (optional), rhythm |
@@ -87,7 +87,7 @@ The workspace has 32 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 5 | `flint-render` | core, ecs, geometry, import, particles, pixels, scene, schema, terrain, wooze | cli, debug-ui, player, viewer |
 | 5 | `flint-script` | animation, core, ecs, geometry, physics, runtime, terrain | cli, player |
 | 6 | `flint-debug-ui` | core, ecs, geometry, particles, procgen (optional), render, scene, schema, terrain, wooze | cli, player (optional), viewer |
-| 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, geometry, import, input-capture (optional), music (optional), particles, physics, procgen (optional), query, render, rhythm (optional), runtime, scene, schema, script, terrain, wooze | android, cli |
+| 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, geometry, import, input-capture (optional), music (optional), particles, physics, pixels, procgen (optional), query, render, rhythm (optional), runtime, scene, schema, script, terrain, wooze | android, cli |
 | 7 | `flint-viewer` | constraint, core, debug-ui, ecs, geometry, import, particles, procgen, render, scene, schema, wooze | cli |
 | 8 | `flint-android` | core, ecs, player, scene, schema | *(none)* |
 | 8 | `flint-cli` | ai-core, animation, asset, asset-gen, constraint, core, debug-ui, ecs, geometry, import, input-capture, music, particles, physics, player, procgen, procgen-ai, query, render, rhythm, runtime, scene, schema, script, terrain, viewer, wooze | *(none)* |

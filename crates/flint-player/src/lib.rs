@@ -13,6 +13,10 @@ mod music;
 mod player_app;
 // The desktop launch, shared by `flint play` and `flint-player` (#705)
 pub mod player_args;
+// The engine a binary was built from, the project a run is in (#1290)
+pub mod provenance;
+// `--record DIR --record-fps N` (#583)
+pub mod record_args;
 // The scope recorder's flags (#1097)
 pub mod trace_args;
 pub mod user_files;
@@ -37,8 +41,6 @@ pub use hitch_args::{HitchArgs, HitchClass, HitchGate};
 pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};
 pub use player_app::fonts::project_font_definitions;
-#[cfg(not(target_arch = "wasm32"))]
-pub use player_app::frame_capture::git_state;
 pub use player_app::frame_rate::FrameRateSetting;
 pub use player_app::headless_animation::HeadlessAnimation;
 pub use player_app::headless_game::{
@@ -87,6 +89,10 @@ pub use player_app::ProcGenMode;
 pub use player_app::StatsView;
 pub use player_app::{CaptureConfig, GameCore, LaunchOptions, PlayerApp, SceneSettings};
 pub use player_args::{launch, launch_bundle, PlayerArgs, PlayerCli, Prepared};
+#[cfg(not(target_arch = "wasm32"))]
+pub use provenance::git_state;
+pub use provenance::Provenance;
+pub use record_args::RecordArgs;
 pub use trace_args::TraceArgs;
 pub use window_args::WindowArgs;
 

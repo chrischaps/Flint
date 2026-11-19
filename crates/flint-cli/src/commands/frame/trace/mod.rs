@@ -39,11 +39,32 @@ pub struct Scope {
     pub depth: u16,
     /// The scope's detail (a file, a label, a count), as text.
     pub detail: Option<Box<str>>,
+    /// A summed record (#1288): `calls` calls of one engine function,
+    /// laid from the first for their total. A leaf, never a parent.
+    pub summed: Option<Summed>,
+}
+
+/// What a summed record stands for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Summed {
+    pub calls: u32,
+    /// The longest of them.
+    pub worst_ns: u64,
 }
 
 impl Scope {
     pub fn end_ns(&self) -> u64 {
         self.start_ns + self.dur_ns
+    }
+
+    /// The calls it stands for: one, or a summed record's count.
+    pub fn calls(&self) -> u32 {
+        self.summed.map_or(1, |s| s.calls)
+    }
+
+    /// Its longest single call.
+    pub fn worst_ns(&self) -> u64 {
+        self.summed.map_or(self.dur_ns, |s| s.worst_ns)
     }
 }
 
@@ -161,6 +182,8 @@ struct RawArgs {
     cause: Option<String>,
     history_frame: Option<i64>,
     game_time: Option<f64>,
+    calls: Option<i64>,
+    worst_us: Option<f64>,
 }
 
 /// The player's own tracks, by the name `trace.rs` gives each.
@@ -302,6 +325,10 @@ impl Trace {
                         frame: as_frame(e.args.frame),
                         depth: e.args.depth.unwrap_or(0).clamp(0, u16::MAX as i64) as u16,
                         detail,
+                        summed: e.args.calls.map(|calls| Summed {
+                            calls: calls.clamp(0, u32::MAX as i64) as u32,
+                            worst_ns: e.args.worst_us.map_or(ns(e.dur), ns),
+                        }),
                     };
                     threads[thread_of[k.as_str()]].scopes.push(scope);
                 }
@@ -381,6 +408,43 @@ impl Trace {
     /// Every scope, every thread's.
     pub fn scope_count(&self) -> usize {
         self.threads.iter().map(|t| t.scopes.len()).sum()
+    }
+
+    /// Where the scopes begin, ns, and the rings that wrapped, when one
+    /// lost part of the look-back (#1288). A writer since then says
+    /// (`cut_threads`, empty for a whole window, and `covered_from_ms`);
+    /// for a trace from before it, a thread the header calls `wrapped`
+    /// whose oldest scope closed after the second frame ended was cut
+    /// there. A frame that began here or later has all its scopes.
+    pub fn covered_from(&self) -> Option<(u64, String)> {
+        let text = |k: &str| self.header_str(k).map(str::to_string);
+        let ms_ns = |k: &str| {
+            self.header
+                .get(k)
+                .and_then(Value::as_f64)
+                .map(|ms| ns(ms * 1000.0))
+        };
+        if self.header.contains_key("cut_threads") {
+            let at = ms_ns("covered_from_ms")?;
+            return Some((at, text("cut_threads").unwrap_or_else(|| "?".into())));
+        }
+        let wrapped = text("wrapped")?;
+        let second_end = self.frames.get(1).map(|f| f.end_ns)?;
+        let mut cut: Vec<(&str, u64)> = Vec::new();
+        for name in wrapped.split(',').map(str::trim) {
+            let Some(t) = self.threads.iter().find(|t| t.name == name) else {
+                continue;
+            };
+            let Some(oldest) = t.scopes.iter().map(Scope::end_ns).min() else {
+                continue;
+            };
+            if oldest > second_end {
+                cut.push((name, oldest));
+            }
+        }
+        let from = cut.iter().map(|(_, at)| *at).max()?;
+        let names: Vec<&str> = cut.iter().map(|(n, _)| *n).collect();
+        Some((from, names.join(", ")))
     }
 
     /// The hitch this trace means by `hitch`, an index into

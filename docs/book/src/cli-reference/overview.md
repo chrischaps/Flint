@@ -416,9 +416,9 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain, the tear and the reality styles) at this many seconds |
 | `--motion-hold <rate>` | Motion on twos for the whole frame (#405): every entity's drawn position and pose, and the post time styles read, change only this many times a second (12 = on twos at 24 fps). Over every scene's `[post_process] motion_hold`, kept through transitions. See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--expression-timeline <file>` | Play expression states from a JSON timeline on the game clock, for scripts' `expression()` and `on_expression` (see [Expression API](../concepts/scripting.md#expression-api)) |
-| `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given |
+| `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given. It opens once the first frame is presented (until then a connect is refused) and says so in one `listen` line ([Expression API](../concepts/scripting.md#expression-api), #584) |
 | `--log-format <text\|json>` | How the player writes what it says, to stderr: `text` (default) or `json`, one object a line with `timestamp`, `level`, `target`, `message` and the event's fields (#716) |
-| `--quiet` | Say only warnings, errors and what a flag asked for (`--perf`'s lines, the `--exit-after` report): no load summary, controls line or transitions |
+| `--quiet` | Say only warnings, errors and what a flag asked for (`--perf`'s lines, the `--exit-after` report, `--inspect-listen`'s and `--expression-listen`'s opening): no load summary, controls line or transitions |
 | `--inspect-listen <ip:port>` | Answer questions about the live world at a loopback address, e.g. `127.0.0.1:7878`: `flint query --attach` and `flint entity show --attach` ask it. Off unless given ([Asking a running game](#asking-a-running-game)) |
 | `--dump-world <file>` | Write the world as JSON at `--dump-world-at` times, each entity `--dump-query` picks with its components' values ([Asking a running game](#asking-a-running-game)) |
 | `--dump-world-at <secs>` | Game times for `--dump-world`, repeatable or comma separated (`1,2.5`), each taken on the first frame at or after it. Default: `--exit-after`'s time, else the first frame |
@@ -433,7 +433,8 @@ Everything the player says goes through one log on stderr (#716); stdout is
 left for what a flag asks it to answer (`--list-gpus`). Each line has a
 target naming what it is about: `load`, `transition`, `perf` (the line
 `--perf` prints every 10 s), `report` (the exit report), `script`, `input`,
-`music` and `player` (debug keys, looks, bundles). A scene coming up says
+`music`, `player` (debug keys, looks, bundles), `inspect` (`--inspect-listen`,
+`--dump-world`) and `listen` (`--expression-listen`'s socket opening). A scene coming up says
 two lines, one for what it loaded and one for the controls it binds:
 
 ```text
@@ -460,7 +461,7 @@ transition that changes it. Each
 file a load reads is a `debug` line of target `load`, counted into the
 summary: `RUST_LOG=load=debug` lists them all again. `RUST_LOG` replaces the
 filter whole, under either format; the default is
-`warn,load=info,transition=info,perf=info,report=info,script=info,input=info,music=info,player=info`.
+`warn,load=info,transition=info,perf=info,report=info,script=info,input=info,music=info,player=info,inspect=info,listen=info`.
 An agent reading a run takes `--log-format json` and reads one object a line:
 
 ```bash
@@ -525,7 +526,9 @@ adapter, no window) also exits 1 now, from `flint play` too.
 | `--capture-frame-at <secs>` | Capture the frame at this game time for the frame debugger (#1086): a `<scene>-t<secs>.flintframe/` folder under `--capture-dir` with every pass's image, the frame's passes, draws and GPU times, the frame history around it and what a replay needs. Repeatable. With `--frame-step` two runs write the same folder apart from its timings. The run exits 1 when a time is never reached or a capture can't be written ([Capturing from the running player](../guides/profiling.md#capturing-from-the-running-player)) |
 | `--capture-on-hitch[=N]` | Capture the frame after each of the run's first N hitches past the start (default 1). Hitches in the first 2 s of game time are passed over, as the exit report and `--max-hitches` set them apart (#1207); the first one passed over is said on the console. A hitch is over by the time it is found, so the capture is the next frame, and the manifest's `cpu` holds the hitch, its cause and the frame history around it. Turns the frame history and script timing on, as `--hitch-log` does |
 | `--capture-on-hitch-startup` | Let `--capture-on-hitch` take the hitches of the first 2 s too, when the load is what you're chasing. Needs `--capture-on-hitch` |
-| `--capture-dir <dir>` | Where frame captures go: by default `captures/` at the project's root. Shift+F2 and an input script's `capture frame` write there too |
+| `--capture-dir <dir>` | Where frame captures go: by default `captures/` at the project's root. Shift+F2 and an input script's `capture frame` write there too, and so does a `capture` line on `--expression-listen` ([Asking the window for its frame](../concepts/scripting.md#asking-the-window-for-its-frame)) |
+| `--record <dir>` | Record the window's frames as shown, scene and HUD, while the game plays (#583): `frame_000001.png`, ... with `frames.jsonl` (each frame's file, game time, wall seconds and Unix milliseconds, for lining a recording up with a transcript) and, at exit, `frames.ffconcat`, which plays them at the times they were shown: `ffmpeg -f concat -i frames.ffconcat -pix_fmt yuv420p out.mp4`. The frame never waits for a read-back: it copies the surface in its own encoder and a writer thread encodes and writes, so the scripts' clock is the same recorded or not. If four frames are still on their way to the disk, the next due one is skipped and counted. The folder is made if it's missing and refused if it already holds a `frames.jsonl`. Desktop only |
+| `--record-fps <fps>` | Frames a second for `--record` (default 8, at most 240), on the wall clock, or on game time under `--frame-step`, so a stepped run records the same frames every time |
 | `--trace <file>` | Record the engine's scopes and write the last `--trace-seconds` of them to the file when the run ends (#1097): Chrome trace-event JSON with a track per thread, the frames, the phases, the GPU's passes, the hitches and the engine's notes, which [Perfetto](https://ui.perfetto.dev) opens. Needs the recorder in the build: every debug build, or a release build with `--features trace` ([Recording a trace](../guides/profiling.md#recording-a-trace)) |
 | `--trace-seconds <secs>` | How far back the recorder holds (default 5); `0` keeps the whole session, which grows without bound. Starts the recorder on its own, for Shift+F3 |
 | `--trace-on-hitch[=N]` | Write a trace eight frames after each of the run's first N hitches past the start (default 1), beside `--trace`'s file or in `traces/` at the project's root |
@@ -931,6 +934,10 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--expression-timeline <file>` | (none) | Feed scripts' `expression()` and `on_expression` from a JSON timeline on the render's clock. Implies `--scripts` |
 | `--strict-scripts` | `false` | Exit 1, after writing the picture, when any script failed to load, to compile or while running (#693). Implies `--scripts`. Either way a scripted render prints each error once with its count, and `--report json` lists them as `script_errors` |
 | `--fps <n>` | `12` | With a `--time` span: GIF frames per second of game time, up to 50 |
+| `--strip` | `false` | With a `--time` span or list: one PNG contact sheet of it instead of a GIF, a tile a moment, each labelled with its time; each tile is the pixels of `--time <t>` rendered alone at the tile's size (640 x 360 by default). See [A span as a contact sheet](../guides/headless-rendering.md#a-span-as-a-contact-sheet) (#574) |
+| `--every <s>` | `1` | With `--strip` and a span: seconds of game time between tiles; the span's end is a tile when a step lands on it. At most 100 tiles |
+| `--columns <n>` | about square | With `--strip`: tiles a row (alias: cols) |
+| `--label <on\|off>` | `on` | With `--strip`: `off` draws only the tiles, 4 pixels apart, no title, times or borders |
 | `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset`, and the scene's `[living] echoes` as `living.echoes.count`, `.spread`, `.alpha` (#531) |
 | `--report json` | (none) | One JSON object on stdout: each living prop's lineage seed, pose indices, the wooze values it read, and every species value with the layer that set it, and `script_errors`, each script error of the run with its entity, callback, line and count. Everything else moves to stderr |
 | `--oren-nayar <f32>` | `0` | Oren-Nayar diffuse blend (0 = Lambert, 1 = full); see [Lighting](../concepts/lighting.md) |

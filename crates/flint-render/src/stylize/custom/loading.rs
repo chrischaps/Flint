@@ -26,6 +26,11 @@ pub(crate) struct Loaded {
     /// ([`StyleRegistry::reload_changed_for`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) toml_modified: Mutex<Option<std::time::SystemTime>>,
+    /// Each image option that found its choices in a folder, with what the
+    /// reload poll last listed there (#558): another listing is a new
+    /// install with the new choices.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) folders: Mutex<Vec<(String, Vec<String>)>>,
 }
 
 /// A style's bind cache keys, pass labels and target names. The same
@@ -315,6 +320,7 @@ impl StyleRegistry {
                     }
                 }
             }
+            self.reload_rechosen(&mut reload);
             let before: Vec<(String, PathBuf)> = self
                 .users()
                 .map(|l| (l.source.name.clone(), l.source.toml_path.clone()))
@@ -367,6 +373,60 @@ impl StyleRegistry {
         #[cfg(target_arch = "wasm32")]
         let _ = scope;
         reload
+    }
+
+    /// The image options' folders (#558): a style with an image option that
+    /// found its choices in a folder is installed again, the description
+    /// read again, when the poll lists other images there than it last did,
+    /// so a PNG dropped into `luts/` is offered (F4, `--style`, a scene's
+    /// table) and one deleted is not. Its parameters can't have changed,
+    /// so it goes in [`Reload::rechosen`], not `replaced`: the host keeps
+    /// its settings. A style the `.shader.toml` poll just read is passed
+    /// over: its install listed the folder.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn reload_rechosen(&mut self, reload: &mut Reload) {
+        let current: Vec<Arc<Loaded>> = self.users().cloned().collect();
+        for l in current {
+            if reload.replaced.contains(&l.source.name) {
+                continue;
+            }
+            let listed = {
+                let mut folders = l.folders.lock().unwrap_or_else(|e| e.into_inner());
+                let mut changed = false;
+                for (option, last) in folders.iter_mut() {
+                    let Some((_, o)) = l.source.options.iter().find(|(n, _)| n == option) else {
+                        continue;
+                    };
+                    let Some(now) = listed_choices(l.source.dir(), &o.default) else {
+                        continue;
+                    };
+                    if now != *last {
+                        *last = now;
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    continue;
+                }
+                folders.clone()
+            };
+            match read_source(&l.source.toml_path) {
+                Ok(source) => {
+                    let name = source.name.clone();
+                    self.install(source, &mut reload.messages, true);
+                    // What the poll saw, not what the load's read listed: the
+                    // next poll compares with the same answer it gave
+                    if let Some(new) = self.user(&name) {
+                        *new.folders.lock().unwrap_or_else(|e| e.into_inner()) = listed;
+                    }
+                    tracing::info!("style '{name}': an image option's folder changed");
+                    reload.rechosen.push(name);
+                }
+                // The description itself doesn't read: the `.shader.toml`
+                // poll says so when it is saved again
+                Err(e) => reload.messages.push(e),
+            }
+        }
     }
 
     /// [`reload_changed_for`](Self::reload_changed_for) for a host that kept
@@ -453,6 +513,10 @@ pub struct Reload {
     pub replaced: Vec<String>,
     /// Styles found in a style folder for the first time.
     pub added: Vec<String>,
+    /// Styles installed again because an image option's folder holds other
+    /// images now (#558): the same parameters with other choices, so a host
+    /// hands the renderer the registry but keeps the settings it has.
+    pub rechosen: Vec<String>,
     /// Load errors and check warnings, one line each.
     pub messages: Vec<String>,
 }
@@ -460,8 +524,22 @@ pub struct Reload {
 impl Reload {
     /// Whether the registry changed.
     pub fn changed(&self) -> bool {
-        !self.replaced.is_empty() || !self.added.is_empty()
+        !self.replaced.is_empty() || !self.added.is_empty() || !self.rechosen.is_empty()
     }
+}
+
+/// An image option's choices as the reload poll sees its folder now
+/// ([`image_choices`] over [`flint_core::file_watch::list`], so the frame
+/// never waits on the disk, #633); `None` when the folder can't be listed
+/// (or hot reload is off), which changes nothing.
+#[cfg(not(target_arch = "wasm32"))]
+fn listed_choices(dir: &Path, default: &str) -> Option<Vec<String>> {
+    let entries = flint_core::file_watch::list(&dir.join(choice_folder(default)))?;
+    let names = entries
+        .into_iter()
+        .filter(|(_, is_dir)| !is_dir)
+        .filter_map(|(path, _)| Some(path.file_name()?.to_str()?.to_string()));
+    Some(image_choices(default, names))
 }
 
 /// Re-read the settings of each style `reload` touched from `authored`
@@ -731,6 +809,15 @@ pub(super) fn build_loaded(source: StyleSource, messages: &mut Vec<String>) -> L
         descriptor,
         #[cfg(not(target_arch = "wasm32"))]
         toml_modified: Mutex::new(modified(&source.toml_path)),
+        #[cfg(not(target_arch = "wasm32"))]
+        folders: Mutex::new(
+            source
+                .options
+                .iter()
+                .filter(|(_, o)| o.discovered)
+                .map(|(name, o)| (name.clone(), o.choices.clone()))
+                .collect(),
+        ),
         source,
         names,
         error: Mutex::new(error),

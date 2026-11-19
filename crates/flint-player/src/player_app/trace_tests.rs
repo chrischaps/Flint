@@ -208,12 +208,32 @@ fn a_hitchs_trace_holds_the_stalled_frame_under_its_scripts_scope() {
         "on_update {s0}..{s1} holds stall() {h0}..{h1}"
     );
     assert!(h1 - h0 >= 150_000.0, "stall() took the stall: {h0}..{h1}");
+    // The engine function's ten calls are one summed record (#1288), a
+    // level inside the callback, laid from the first call for their total
     let clamps = in_stalled_frame("clamp()");
-    assert_eq!(clamps.len(), 10, "each engine call is a scope");
-    for c in clamps {
-        let (c0, c1) = span(c);
-        assert!(s0 <= c0 && c1 <= s1, "on_update holds clamp() {c0}..{c1}");
-    }
+    assert_eq!(
+        clamps.len(),
+        1,
+        "ten engine calls are one record: {clamps:?}"
+    );
+    let clamp = clamps[0];
+    assert_eq!(clamp["args"]["calls"], 10, "{clamp}");
+    assert_eq!(
+        clamp["args"]["depth"].as_i64().unwrap(),
+        stalled["args"]["depth"].as_i64().unwrap() + 1,
+        "one level inside on_update: {clamp}"
+    );
+    let worst = clamp["args"]["worst_us"].as_f64().unwrap();
+    let (c0, c1) = span(clamp);
+    assert!(
+        worst <= c1 - c0,
+        "the longest call is in the total: {clamp}"
+    );
+    assert!(s0 <= c0 && c1 <= s1, "on_update holds clamp() {c0}..{c1}");
+
+    // The header says the scopes cover the whole look-back
+    assert!(header.get("covered_from_ms").is_none(), "{header}");
+    assert_eq!(header["cut_threads"], "", "said, so no reader guesses");
 
     // The frames track has the stalled frame, and the hitches track marks
     // it, both spanning the script's scope (to a millisecond: the frame

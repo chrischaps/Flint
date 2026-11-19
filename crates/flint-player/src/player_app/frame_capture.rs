@@ -412,6 +412,7 @@ impl FrameCaptures {
             version: env!("CARGO_PKG_VERSION").to_string(),
             commit: None,
             dirty: None,
+            subdir: None,
         });
         description.scene = Some(flint_render::frame_capture::SceneDescription {
             path: facts.scene_path.to_string(),
@@ -907,9 +908,23 @@ fn write(job: Job) -> Result<Written, String> {
             .and_then(|t| t.get("scene")?.get("name")?.as_str().map(str::to_string))
             .unwrap_or_default();
     }
+    // The engine the binary was built from, and the project's checkout
+    // beside it (#1290: the project's HEAD alone named a game's commit)
+    let origin = crate::provenance::Provenance::of(&project_root);
     if let Some(engine) = &mut description.engine {
-        (engine.commit, engine.dirty) = git_state(&project_root);
+        engine.commit = origin.engine.commit;
+        engine.dirty = origin.engine.dirty;
+        engine.subdir = origin.engine_subdir;
     }
+    let project = origin.project;
+    description.project =
+        project
+            .commit
+            .is_some()
+            .then_some(flint_render::frame_capture::ProjectDescription {
+                commit: project.commit,
+                dirty: project.dirty,
+            });
     description.captured_at = Some(utc_now());
     description.replay = Some(ReplayDescription {
         available: true,
@@ -938,29 +953,6 @@ fn write(job: Job) -> Result<Written, String> {
         ),
         dir,
     })
-}
-
-/// The checkout's commit at `root` and whether its tracked files changed,
-/// where git can say: a capture's `engine.commit` and `engine.dirty`. The
-/// player's writer and `flint render --frame-capture` both ask it (#1208).
-#[cfg(not(target_arch = "wasm32"))]
-pub fn git_state(root: &Path) -> (Option<String>, Option<bool>) {
-    let git = |args: &[&str]| {
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(args)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-    };
-    let commit = git(&["rev-parse", "HEAD"]).filter(|c| !c.is_empty());
-    let dirty = commit
-        .as_ref()
-        .and_then(|_| git(&["status", "--porcelain", "--untracked-files=no"]))
-        .map(|s| !s.is_empty());
-    (commit, dirty)
 }
 
 /// Now, UTC, as RFC 3339 to the second.

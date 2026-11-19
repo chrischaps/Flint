@@ -57,6 +57,14 @@ impl PlayerApp {
             if let Some(missing) = dump.and_then(|d| d.missing()) {
                 return Some(missing);
             }
+            // `--expression-listen`'s port, taken when it opened (#584)
+            let feed = self
+                .core
+                .subsystems
+                .find::<super::expression_feed::ExpressionSubsystem>();
+            if let Some(failure) = feed.and_then(|f| f.failure()) {
+                return Some(failure);
+            }
         }
         if self.launch.strict_scripts {
             if let Some(failure) = self.core.script.errors().strict_failure() {
@@ -74,6 +82,11 @@ impl PlayerApp {
         }
         // A capture asked for and never written (#1086)
         if let Some(failure) = self.frame_captures.failure() {
+            return Some(failure);
+        }
+        // A recording that stopped (#583)
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(failure) = self.frame_grabs.failure() {
             return Some(failure);
         }
         // A trace that couldn't be written (#1097)
@@ -146,6 +159,8 @@ impl PlayerApp {
             audio_vfs_generation: flint_core::vfs::generation(),
             capture: CaptureConfig::default(),
             frame_captures: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            frame_grabs: Default::default(),
             outcome: Default::default(),
             #[cfg(test)]
             test_gpu: None,

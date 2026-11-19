@@ -1,6 +1,8 @@
 //! The CPU loops over every texel of a texture on its way to the GPU: widening
 //! a decoded image to RGBA8 ([`to_rgba8`]) and box-filtering its mip chain
-//! ([`mip_chain`]).
+//! ([`mip_chain`]); and back, a read-back's rows packed as RGB8 for a PNG
+//! ([`rgb8_from_rows`]).
+
 //!
 //! They live in a crate of their own so the dev profile can build them
 //! optimized (#326). Unoptimized, they were three quarters of what a debug
@@ -42,6 +44,30 @@ pub fn to_rgba8(data: &[u8], format: &str, width: u32, height: u32) -> Vec<u8> {
         "r8" => data.iter().flat_map(|&v| [v, v, v, 255]).collect(),
         _ => vec![255u8; pixel_count * 4],
     }
+}
+
+/// Tightly packed RGB8 from a GPU read-back of 8-bit, four-channel texels:
+/// `rows` of `row_bytes` each (padded to the copy alignment), `width` x
+/// `height` texels, BGRA swizzled when `bgra`, alpha dropped. The player's
+/// recording (#583) writes the window's frames with it: unoptimized, this
+/// loop took longer than the PNG encode.
+pub fn rgb8_from_rows(
+    rows: &[u8],
+    row_bytes: usize,
+    width: usize,
+    height: usize,
+    bgra: bool,
+) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity(width * height * 3);
+    for row in rows.chunks(row_bytes).take(height) {
+        let texels = row[..width * 4].as_chunks::<4>().0;
+        if bgra {
+            rgb.extend(texels.iter().flat_map(|&[b, g, r, _]| [r, g, b]));
+        } else {
+            rgb.extend(texels.iter().flat_map(|&[r, g, b, _]| [r, g, b]));
+        }
+    }
+    rgb
 }
 
 /// Number of mip levels down to 1x1 for a `width` x `height` image.
@@ -185,6 +211,23 @@ fn build_mip_chain(rgba: &[u8], width: u32, height: u32, srgb: bool) -> (Vec<u8>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_padded_read_back_packs_to_rgb() {
+        // Two texels a row, padded to 12 bytes; two rows
+        let rows = [
+            1, 2, 3, 9, 4, 5, 6, 9, 0, 0, 0, 0, //
+            7, 8, 9, 9, 10, 11, 12, 9, 0, 0, 0, 0,
+        ];
+        assert_eq!(
+            rgb8_from_rows(&rows, 12, 2, 2, false),
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        );
+        assert_eq!(
+            rgb8_from_rows(&rows, 12, 2, 2, true),
+            [3, 2, 1, 6, 5, 4, 9, 8, 7, 12, 11, 10]
+        );
+    }
 
     /// The memo (#329) hands back what building would, and two textures
     /// differing in one byte don't share a chain.

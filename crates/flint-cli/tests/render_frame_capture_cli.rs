@@ -218,3 +218,75 @@ fn many_frames_are_refused() {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// #1290: a capture made in another repository (a game's, with a
+/// `flint.toml` of its own) names the engine this binary was built from as
+/// `engine.commit`, and the game's HEAD only as `project.commit`.
+#[test]
+fn a_capture_in_a_games_repository_names_the_engine_it_was_built_from() {
+    let Some(built) = git(&repo(), &["rev-parse", "HEAD"]) else {
+        eprintln!("the engine isn't in a git checkout: skipped");
+        return;
+    };
+    // Outside the engine's checkout, so nothing above it is the engine's
+    let game = std::env::temp_dir().join(format!("flint_1290_game_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&game);
+    std::fs::create_dir_all(&game).unwrap();
+    std::fs::write(game.join("capture.scene.toml"), SCENE).unwrap();
+    std::fs::write(game.join("flint.toml"), "[project]\nid = \"g\"\n").unwrap();
+    git(&game, &["init", "-q"]).expect("git init");
+    git(&game, &["add", "."]).unwrap();
+    git(&game, &["commit", "-q", "-m", "a game"]).unwrap();
+    let game_head = git(&game, &["rev-parse", "HEAD"]).unwrap();
+
+    let capture = game.join("c.flintframe");
+    let run = render(
+        &game,
+        "x.png",
+        &["--frame-capture", capture.to_str().unwrap()],
+    );
+    if no_gpu(&run) {
+        return;
+    }
+    ok(&run);
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(capture.join("manifest.json")).unwrap())
+            .unwrap();
+    let engine = &manifest["engine"];
+    let project = &manifest["project"];
+    assert_ne!(engine["commit"], game_head.as_str(), "{manifest:#}");
+    // The test binary was built from this checkout; HEAD is that commit
+    // unless a commit landed between the build and the run
+    assert_eq!(engine["commit"], built.as_str(), "{engine}");
+    assert!(engine.get("subdir").is_none(), "{engine}");
+    assert_eq!(project["commit"], game_head.as_str(), "{project}");
+    assert_eq!(project["dirty"], false, "{project}");
+
+    // And `flint frame show` says both
+    let show = std::process::Command::new(FLINT)
+        .args(["frame", "show"])
+        .arg(&capture)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&show.stdout);
+    let short = |c: &str| c.chars().take(10).collect::<String>();
+    assert!(text.contains(&format!("at {}", short(&built))), "{text}");
+    assert!(
+        text.contains(&format!("project at {}", short(&game_head))),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&game);
+}

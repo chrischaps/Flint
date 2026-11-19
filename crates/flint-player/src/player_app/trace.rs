@@ -41,11 +41,26 @@ pub const DEFAULT_SECONDS: f64 = 5.0;
 
 /// Scopes a second a thread's ring is sized for: 512 a frame at 64 fps, or
 /// 136 a frame at 240 Hz. A frame with more scopes than that shortens what
-/// the ring reaches back to, and the file's header says where it begins.
+/// the ring reaches back to: the file's header says where every frame is
+/// whole (`covered_from_ms`) and the run's line how much that is (#1288).
+/// A script's engine calls are summed, one record a function a scope, so
+/// it is the scopes a frame and the script functions called that count.
 pub const RECORDS_PER_SECOND: usize = 32_768;
 
 /// Bytes a record takes in a ring (ADR 0128).
 pub const RECORD_BYTES: usize = 40;
+
+/// How many times its first size a ring may grow to (#1288), doubling
+/// whenever a lap of it spans less than the look-back (by [`LAP_MARGIN`]):
+/// 1 310 720 records, 52 MB, for the default 5 s. Float uncapped at 405
+/// fps records about 150 000 scopes a second, which is 4.6 times
+/// [`RECORDS_PER_SECOND`]; a game past even this says so in the run's
+/// line, with the `--trace-seconds` that would hold its window.
+pub const RING_GROWTH: usize = 8;
+
+/// A lap must span this many times the look-back before a ring stops
+/// growing, so a frame rate that wavers still fills the window.
+pub const LAP_MARGIN: f64 = 1.25;
 
 /// Frames a hitch's trace waits for after the hitch, so the file shows
 /// what followed it too (the hitch log's eight).
@@ -302,7 +317,7 @@ pub(crate) struct Header {
     from_ns: Option<u64>,
     to_ns: u64,
     ring_capacity: usize,
-    /// Where git is asked for the engine's commit (desktop only).
+    /// Where git is asked for the project's commit (desktop only).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     project_root: PathBuf,
 }
@@ -320,17 +335,86 @@ pub(crate) struct TraceJob {
     header: Header,
 }
 
+/// Where a save's scopes begin, when a ring lost some of its window
+/// (#1288): the latest of the cut threads' [`ThreadScopes::cut_at_ns`].
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Cut {
+    pub at_ns: u64,
+    /// The threads whose rings wrapped inside the window.
+    pub threads: Vec<String>,
+}
+
 impl TraceJob {
     /// Scopes in the file, every thread's.
     pub(crate) fn scopes(&self) -> usize {
         self.threads.iter().map(|t| t.scopes.len()).sum()
     }
 
-    /// The file's text. `engine` is the checkout's commit and whether it
-    /// was dirty, `written_at` the time, both found off the frame thread.
+    /// Where the scopes begin, if a ring lost part of the window: a frame
+    /// that began after it has every scope; one before it may lack some.
+    pub(crate) fn cut(&self) -> Option<Cut> {
+        let cut: Vec<(&str, u64)> = self
+            .threads
+            .iter()
+            .filter_map(|t| t.cut_at_ns().map(|at| (t.thread.as_str(), at)))
+            .collect();
+        let at_ns = cut.iter().map(|(_, at)| *at).max()?;
+        Some(Cut {
+            at_ns,
+            threads: cut.iter().map(|(t, _)| t.to_string()).collect(),
+        })
+    }
+
+    /// What the run says of the cut: how much of the look-back the scopes
+    /// cover, the frames, and the `--trace-seconds` that would hold it.
+    pub(crate) fn coverage_line(&self) -> Option<String> {
+        let cut = self.cut()?;
+        let covered: Vec<&Span> = self
+            .frames
+            .iter()
+            .filter(|f| f.start_ns >= cut.at_ns)
+            .collect();
+        let held = self.header.from_ns.map_or(0.0, |from| {
+            self.header.to_ns.saturating_sub(from) as f64 / 1e9
+        });
+        let covered_s = self.header.to_ns.saturating_sub(cut.at_ns) as f64 / 1e9;
+        let frames = match (
+            covered.first(),
+            covered.last(),
+            self.frames.first(),
+            self.frames.last(),
+        ) {
+            (Some(a), Some(b), Some(c), Some(d)) => {
+                format!(
+                    "frames {}..{} of {}..{}",
+                    a.frame, b.frame, c.frame, d.frame
+                )
+            }
+            _ => "no whole frame".to_string(),
+        };
+        // A ring's size, grown or not, is in proportion to `seconds`: this
+        // many seconds of look-back would hold `held` of this game's scopes
+        let enough = (held > 0.0 && covered_s > 0.0)
+            .then(|| (self.header.seconds * held / covered_s).ceil());
+        let mut line = format!(
+            "the {} ring{} wrapped: scopes cover the last {covered_s:.2} s of {held:.0} s ({frames})",
+            cut.threads.join(", "),
+            if cut.threads.len() == 1 { "" } else { "s" },
+        );
+        if let Some(enough) = enough {
+            line.push_str(&format!(
+                "; --trace-seconds {enough:.0} would hold {held:.0} s"
+            ));
+        }
+        Some(line)
+    }
+
+    /// The file's text. `found` is the engine the binary was built from and
+    /// the project's checkout (#1290), `written_at` the time, both found off
+    /// the frame thread.
     pub(crate) fn to_json(
         &self,
-        engine: (Option<String>, Option<bool>),
+        found: &crate::provenance::Provenance,
         written_at: Option<String>,
     ) -> String {
         let mut trace = ChromeTrace::new();
@@ -439,7 +523,6 @@ impl TraceJob {
         }
         let features = features.join(",");
         let ring_bytes = (h.ring_capacity * RECORD_BYTES) as i64;
-        let commit = engine.0.unwrap_or_default();
         let written_at = written_at.unwrap_or_default();
         let ms = |ns: u64| ns as f64 / 1e6;
         let mut header = vec![
@@ -455,7 +538,6 @@ impl TraceJob {
             ("driver", Arg::Str(&driver)),
             ("build", Arg::Str(build)),
             ("features", Arg::Str(&features)),
-            ("engine_commit", Arg::Str(&commit)),
             ("seconds", Arg::Num(h.seconds)),
             ("window_to_ms", Arg::Num(ms(h.to_ns))),
             ("scopes", Arg::Int(scopes)),
@@ -473,14 +555,44 @@ impl TraceJob {
                 Arg::Str("names only: scopes, scripts, assets and the scene by name, never their contents"),
             ),
         ];
-        if let Some(dirty) = engine.1 {
+        // The commit the binary was built from; none when the build didn't
+        // know, which readers say as "unknown" (#1290)
+        if let Some(commit) = &found.engine.commit {
+            header.push(("engine_commit", Arg::Str(commit)));
+        }
+        if let Some(dirty) = found.engine.dirty {
             header.push(("engine_dirty", Arg::Bool(dirty)));
+        }
+        if let Some(subdir) = &found.engine_subdir {
+            header.push(("engine_subdir", Arg::Str(subdir)));
+        }
+        // The checkout the run's project is in: a game's own HEAD
+        if let Some(commit) = &found.project.commit {
+            header.push(("project_commit", Arg::Str(commit)));
+        }
+        if let Some(dirty) = found.project.dirty {
+            header.push(("project_dirty", Arg::Bool(dirty)));
         }
         if let Some(from) = h.from_ns {
             header.push(("window_from_ms", Arg::Num(ms(from))));
         }
         if let Some(earliest) = earliest {
             header.push(("scopes_from_ms", Arg::Num(ms(earliest))));
+        }
+        // Where every frame is whole, when a ring lost part of the window
+        // (#1288): `flint profile` and the flame view read from here.
+        // `cut_threads` is written either way, empty for a whole window, so
+        // a reader knows this writer said, and never guesses
+        let cut = self.cut();
+        let cut_threads = cut.as_ref().map_or(String::new(), |c| c.threads.join(", "));
+        // The largest a ring grew to, when one did (#1288)
+        let grown = self.threads.iter().filter_map(|t| t.capacity).max();
+        if let Some(grown) = grown.filter(|g| *g > h.ring_capacity && h.ring_capacity > 0) {
+            header.push(("ring_grown_to", Arg::Int(grown as i64)));
+        }
+        header.push(("cut_threads", Arg::Str(&cut_threads)));
+        if let Some(cut) = &cut {
+            header.push(("covered_from_ms", Arg::Num(ms(cut.at_ns))));
         }
         trace.finish(&header)
     }
@@ -505,19 +617,24 @@ impl TraceJob {
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::disallowed_methods)] // a write path: the trace file the run asked for
 fn write(job: TraceJob) -> Result<String, String> {
-    let engine = super::frame_capture::git_state(&job.header.project_root);
-    let text = job.to_json(engine, Some(super::frame_capture::utc_now()));
+    let found = crate::provenance::Provenance::of(&job.header.project_root);
+    let text = job.to_json(&found, Some(super::frame_capture::utc_now()));
     let shown = flint_core::project::shown(&job.path);
     if let Some(dir) = job.path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| format!("{shown}: {e}"))?;
     }
     std::fs::write(&job.path, &text).map_err(|e| format!("{shown}: {e}"))?;
-    Ok(format!(
+    let mut line = format!(
         "wrote {shown}: {} scopes over {} frames, {:.1} MB",
         job.scopes(),
         job.frames.len(),
         text.len() as f64 / 1e6
-    ))
+    );
+    if let Some(cut) = job.coverage_line() {
+        line.push_str("; ");
+        line.push_str(&cut);
+    }
+    Ok(line)
 }
 
 impl PlayerApp {
@@ -532,6 +649,14 @@ impl PlayerApp {
         // Before any ring is made: a thread's ring is sized at its first record
         if !profile::recording() {
             profile::set_ring_capacity(ring_records(setup.seconds));
+            // ... and grows, to RING_GROWTH times that, when the game
+            // records more than RECORDS_PER_SECOND (#1288)
+            if setup.seconds > 0.0 {
+                profile::set_ring_growth(
+                    setup.seconds * LAP_MARGIN,
+                    ring_records(setup.seconds) * RING_GROWTH,
+                );
+            }
         }
         profile::set_recording(true);
         self.stats.perf.always_on = true;
@@ -710,9 +835,15 @@ impl PlayerApp {
                 .path
                 .file_name()
                 .map_or("trace.json".into(), |n| n.to_string_lossy().into_owned());
-            let text = job.to_json((None, None), None);
+            let text = job.to_json(&crate::provenance::Provenance::built(), None);
             let line = match super::web_page::download_text(&name, &text) {
-                Ok(()) => format!("offered {name} as a download: {} scopes", job.scopes()),
+                Ok(()) => match job.coverage_line() {
+                    Some(cut) => format!(
+                        "offered {name} as a download: {} scopes; {cut}",
+                        job.scopes()
+                    ),
+                    None => format!("offered {name} as a download: {} scopes", job.scopes()),
+                },
                 Err(e) => {
                     tracer.failures.push(e.clone());
                     format!("failed: {e}")
@@ -939,6 +1070,56 @@ mod tests {
         assert!(tracks.phases.len() <= 22, "{}", tracks.phases.len());
     }
 
+    /// The header names the engine the binary was built from and the
+    /// project's checkout apart (#1290), and says nothing of a commit it
+    /// doesn't know rather than an empty one.
+    #[test]
+    fn the_header_names_the_engine_built_and_the_project_apart() {
+        let job = TraceJob {
+            path: PathBuf::new(),
+            threads: Vec::new(),
+            frames: Vec::new(),
+            phases: Vec::new(),
+            gpu: Vec::new(),
+            hitches: Vec::new(),
+            notes: Vec::new(),
+            header: Header::default(),
+        };
+        let header = |found: &crate::provenance::Provenance| {
+            let text = job.to_json(found, None);
+            let doc: serde_json::Value = serde_json::from_str(&text).expect("the trace is JSON");
+            doc["otherData"].clone()
+        };
+        let in_a_game = crate::provenance::Provenance {
+            engine: crate::provenance::Checkout {
+                commit: Some("e".repeat(40)),
+                dirty: Some(false),
+            },
+            engine_subdir: None,
+            project: crate::provenance::Checkout {
+                commit: Some("9".repeat(40)),
+                dirty: Some(true),
+            },
+        };
+        let h = header(&in_a_game);
+        assert_eq!(h["engine_commit"], "e".repeat(40), "{h}");
+        assert_eq!(h["engine_dirty"], false, "{h}");
+        assert_eq!(h["project_commit"], "9".repeat(40), "{h}");
+        assert_eq!(h["project_dirty"], true, "{h}");
+        assert!(h.get("engine_subdir").is_none(), "{h}");
+
+        let subtree = crate::provenance::Provenance {
+            engine_subdir: Some("engine/".into()),
+            ..in_a_game
+        };
+        assert_eq!(header(&subtree)["engine_subdir"], "engine/");
+
+        let unknown = header(&Default::default());
+        for key in ["engine_commit", "engine_dirty", "project_commit"] {
+            assert!(unknown.get(key).is_none(), "{key}: {unknown}");
+        }
+    }
+
     /// What recording costs the player each frame beyond its scopes: the
     /// tracks' frame and ten phase spans. And what a save costs the frame
     /// thread (the copy) and its writer (the JSON), for five seconds of a
@@ -985,7 +1166,7 @@ mod tests {
             header: Header::default(),
         };
         let t0 = Instant::now();
-        let text = job.to_json((None, None), None);
+        let text = job.to_json(&Default::default(), None);
         let json = t0.elapsed();
         let events = job.scopes() + job.frames.len() + job.phases.len();
         println!(
@@ -997,6 +1178,86 @@ mod tests {
             text.len() as f64 / 1e6,
             text.len() as f64 / events as f64
         );
+    }
+
+    /// A save of 5 s whose main ring lost all but its last second: the
+    /// header and the run's line say where the scopes begin (#1288).
+    #[test]
+    fn a_ring_that_wrapped_inside_the_window_is_said() {
+        let s = 1_000_000_000u64;
+        let scope = |start_ns: u64| profile::TakenScope {
+            name: "tick",
+            file: "",
+            line: 0,
+            start_ns,
+            dur_ns: 10_000_000,
+            frame: 0,
+            depth: 0,
+            detail: None,
+        };
+        let frames: Vec<Span> = (0..50u32)
+            .map(|i| Span {
+                start_ns: 5 * s + i as u64 * 100_000_000,
+                end_ns: 5 * s + (i as u64 + 1) * 100_000_000,
+                frame: 100 + i,
+            })
+            .collect();
+        let main = ThreadScopes {
+            thread: "main".into(),
+            // The ring holds only what began at 9 s
+            scopes: (0..10).map(|i| scope(9 * s + i * 100_000_000)).collect(),
+            held: 10,
+            written: 400,
+            capacity: Some(10),
+        };
+        let worker = ThreadScopes {
+            thread: "loader".into(),
+            scopes: vec![scope(6 * s)],
+            held: 1,
+            written: 1,
+            capacity: Some(10),
+        };
+        let mut job = TraceJob {
+            path: PathBuf::new(),
+            threads: vec![main, worker],
+            frames,
+            phases: Vec::new(),
+            gpu: Vec::new(),
+            hitches: Vec::new(),
+            notes: Vec::new(),
+            header: Header {
+                seconds: 5.0,
+                from_ns: Some(5 * s),
+                to_ns: 10 * s,
+                ..Header::default()
+            },
+        };
+        let cut = job.cut().expect("the main ring was cut");
+        assert_eq!(
+            cut.threads,
+            vec!["main".to_string()],
+            "the loader's copy is whole"
+        );
+        assert_eq!(cut.at_ns, 9 * s + 10_000_000, "its oldest record's close");
+        let line = job.coverage_line().unwrap();
+        assert!(
+            line.starts_with("the main ring wrapped: scopes cover the last 0.99 s of 5 s"),
+            "{line}"
+        );
+        assert!(line.contains("frames 141..149 of 100..149"), "{line}");
+        assert!(
+            line.ends_with("; --trace-seconds 26 would hold 5 s"),
+            "{line}"
+        );
+        let text = job.to_json(&Default::default(), None);
+        let header: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(header["otherData"]["covered_from_ms"], 9010.0);
+        assert_eq!(header["otherData"]["cut_threads"], "main");
+
+        // A ring that still held records before the window is whole
+        job.threads[0].held = 20;
+        assert_eq!(job.cut(), None);
+        assert_eq!(job.coverage_line(), None);
     }
 
     #[test]

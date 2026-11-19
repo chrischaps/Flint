@@ -294,6 +294,10 @@ fn ruler(ui: &mut egui::Ui, now: f64, times: &[f64], played: usize) {
 fn socket_section(ui: &mut egui::Ui, socket: &super::expression_feed::SocketCounts) {
     ui.horizontal(|ui| {
         chip(ui, Source::Socket);
+        if !socket.open {
+            ui.label(format!("{} · opens after the first frame", socket.addr));
+            return;
+        }
         let n = socket.connections;
         ui.label(format!(
             "{} · {n} connection{}",
@@ -461,6 +465,7 @@ mod tests {
                 next: Some(8.0),
             }),
             socket: Some(SocketCounts {
+                open: true,
                 addr: "127.0.0.1:7777".parse().unwrap(),
                 connections: 1,
                 malformed: 2,

@@ -607,6 +607,31 @@ owns their vocabulary and how strictly to check it.
   more than 256 states are waiting, the oldest go: each is a whole snapshot,
   so the latest is the one that matters.
 
+  The socket opens once the first frame has been presented, not when the
+  player starts (#584). Starting (the GPU, the window, the shaders, the first
+  draw) takes a second or more (3.4 s for a debug build of a small scene),
+  and states sent in it would all be heard at once, on the first frame, with
+  `expression()` holding only the last. So until frames
+  run a connect is refused: a client that retries until it connects knows
+  every state it sends from then on is heard on the frame it arrives at. A
+  launcher that would rather wait on the log has one line, under the `listen`
+  target, which `--quiet` keeps (with `--log-format json` its `addr`, `frame`
+  and `t` are fields):
+
+  ```text
+  INFO listen: [listen] expression: listening on 127.0.0.1:7777 from frame 2 (game time 0.017 s); a state sent now is heard on the frame it arrives at
+  ```
+
+  A malformed or non-loopback address still fails the run when the player
+  starts. Whether the port is free is known only when the socket opens: a
+  taken one is an error under `listen`, and the player exits with it, so a
+  launcher waiting on the socket sees it go rather than waiting for ever.
+
+  Two states that arrive between the same two frames are heard on the same
+  frame, each through `on_expression` in order, and `expression()` then holds
+  the later one. At 60 Hz, two sent 14 ms apart share a frame about one time
+  in six; on a slower frame, more often.
+
 The feed logs each state it delivers at info under the `expression` target
 (`RUST_LOG=expression=info,script=info` shows them beside the scripts' own
 `log` lines). While the game state pauses scripts, states wait for them, up to
@@ -621,6 +646,39 @@ the last 12 states, newest first, each with what changed from the one before
 playhead, a ruler of every event and the next one's time; for the socket, the
 connections open and the lines dropped as malformed or oversize and the states
 dropped under a flood.
+
+#### Asking the window for its frame
+
+Something driving the game over the socket often wants to see what it caused.
+A line with a `capture` key asks for the next frame the window presents, as a
+PNG of what the person saw, scene and HUD (#583):
+
+```text
+{"capture": "look.png", "id": 7}
+{"capture": true}
+```
+
+The file goes in `--capture-dir` (by default `captures/` at the project's
+root). A name is a plain file name, with `.png` added when it has none: no
+folders and no leading dot, so a client can't write anywhere else; `true`
+names it after the scene and the game time (`stage-t4.250.png`, then
+`-2`...). The frame is copied in its own encoder and read back on later frames
+without waiting, and when the file is written the connection hears one line:
+
+```text
+{"captured": "C:\\game\\captures\\look.png", "id": 7, "width": 1280, "height": 720, "t": 4.25, "frame": 255, "state": {"state": "speaking", "energy": 0.8}}
+```
+
+`state` is the last state the scripts had heard when the frame was drawn, so
+the picture and what it was showing come back together. A line that can't be
+taken (a bad name, a key other than `capture` and `id`, a surface that can't
+be copied) gets `{"capture_error": "<why>", "id": 7}` instead. A capture line
+is never a state: the scripts don't hear it, and a state that also carries a
+`capture` field is refused aloud rather than swallowed. Measured in a debug
+build at 960x540, the reply came about 70 ms after the line, and the frame
+spent about 8 µs on the copy. `examples/listening_lantern.scene.toml` answers
+four states; `--record` writes every frame at a rate instead ([CLI
+reference](../cli-reference/overview.md#player-screenshots-hud-included)).
 
 ### Log API
 

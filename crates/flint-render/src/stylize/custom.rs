@@ -73,6 +73,8 @@ use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
 mod bounded;
 mod template;
+#[cfg(not(target_arch = "wasm32"))]
+mod uniformity;
 pub use template::{template, Template};
 
 mod check;
@@ -92,3 +94,5 @@ pub use pass::*;
 
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod uniformity_tests;

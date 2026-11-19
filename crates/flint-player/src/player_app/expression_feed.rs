@@ -20,7 +20,12 @@
 //!
 //! - **A localhost socket** (`--expression-listen 127.0.0.1:<port>`), taking
 //!   newline-delimited JSON objects over TCP, one state per line. It binds
-//!   loopback only and is off unless the flag is given. Reader threads parse
+//!   loopback only and is off unless the flag is given. It opens once the
+//!   first frame has been presented (#584): until then a connection is
+//!   refused, so a client that has connected knows a state it sends is heard
+//!   on the frame it arrives at, not drained with others on a slow first
+//!   frame. The address is checked when the flag is read, and the opening is
+//!   one `listen` line in the log, which `--quiet` keeps. Reader threads parse
 //!   each line and hand it to the frame through a bounded queue; a frame takes
 //!   at most [`MAX_PER_FRAME`] and never waits on the network. A line that
 //!   isn't a JSON object, or is longer than [`MAX_LINE_BYTES`], is logged and
@@ -199,6 +204,8 @@ impl Source {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SocketCounts {
     pub addr: std::net::SocketAddr,
+    /// Whether it is listening yet: it opens after the first frame (#584).
+    pub open: bool,
     /// Connections open now.
     pub connections: usize,
     /// Lines that weren't a JSON object.
@@ -218,6 +225,12 @@ pub struct Arrival {
     pub source: Source,
     pub state: serde_json::Map<String, Value>,
 }
+
+/// The feed's frame at whose start the socket opens: the second, once the
+/// first frame (adapter, surface, shaders, the first draw) has been presented
+/// (#584).
+#[cfg(not(target_arch = "wasm32"))]
+pub const SOCKET_OPENS_AT_FRAME: u64 = 2;
 
 /// How many states the panel's strip shows, newest first.
 pub const RECENT: usize = 12;
@@ -282,6 +295,7 @@ pub use listener::ExpressionListener;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod listener {
+    use super::super::frame_grab::{self, CaptureAsk, Reply};
     use super::super::loopback::{self, read_capped_line, trim, Line};
     use super::*;
     use std::collections::VecDeque;
@@ -305,6 +319,8 @@ mod listener {
         flooded: AtomicUsize,
         /// Set when the listener is dropped, so readers stop.
         closed: Arc<AtomicBool>,
+        /// Capture lines waiting for a frame (#583), which aren't states
+        asks: Mutex<Vec<CaptureAsk>>,
     }
 
     impl Shared {
@@ -362,6 +378,7 @@ mod listener {
         pub fn counts(&self) -> SocketCounts {
             SocketCounts {
                 addr: self.addr,
+                open: true,
                 connections: self.open.load(Ordering::SeqCst),
                 malformed: self.shared.malformed.load(Ordering::Relaxed),
                 oversize: self.shared.oversize.load(Ordering::Relaxed),
@@ -386,10 +403,18 @@ mod listener {
             }
             taken
         }
+
+        /// The capture lines that have arrived (#583), oldest first.
+        pub fn take_asks(&self) -> Vec<CaptureAsk> {
+            std::mem::take(&mut *self.shared.asks.lock().unwrap_or_else(|e| e.into_inner()))
+        }
     }
 
-    /// Read lines until the peer hangs up or the player goes away.
+    /// Read lines until the peer hangs up or the player goes away. A line
+    /// with a `capture` key asks for the next frame (#583): it is queued
+    /// with this connection's writing half, which its reply goes back on.
     fn read_lines(stream: TcpStream, shared: &Shared, peer: &str) {
+        let reply = Reply::of(&stream);
         let mut reader = BufReader::new(stream);
         let mut line = Vec::new();
         while !shared.closed.load(Ordering::Relaxed) {
@@ -415,6 +440,29 @@ mod listener {
                 continue;
             }
             match parse_line(text) {
+                Ok(line) if frame_grab::is_capture_line(&line) => {
+                    match frame_grab::parse_ask(&line) {
+                        Ok((id, name)) => shared
+                            .asks
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(CaptureAsk {
+                                id,
+                                name,
+                                reply: reply.clone(),
+                            }),
+                        Err(why) => {
+                            tracing::warn!(target: "expression", "refused a capture line from {peer}: {why}");
+                            if let Some(reply) = &reply {
+                                let mut answer = serde_json::json!({ "capture_error": why });
+                                if let Some(id) = line.get("id") {
+                                    answer["id"] = id.clone();
+                                }
+                                reply.send(&answer);
+                            }
+                        }
+                    }
+                }
                 Ok(state) => shared.push(state),
                 Err(why) => {
                     shared.malformed.fetch_add(1, Ordering::Relaxed);
@@ -564,8 +612,18 @@ mod listener {
 #[derive(Default)]
 pub struct ExpressionFeed {
     pub timeline: Option<ExpressionTimeline>,
+    /// The socket, once [`ExpressionFeed::open_socket`] has bound it.
     #[cfg(not(target_arch = "wasm32"))]
     pub listener: Option<ExpressionListener>,
+    /// Where the socket will listen, checked but not yet bound: it opens
+    /// after the first frame (#584), so a connection that succeeds means
+    /// frames are running.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub listen_at: Option<std::net::SocketAddr>,
+    /// Why the bind once frames ran failed, if it did; read it through
+    /// [`ExpressionFeed::failure`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub socket_failure: Option<String>,
 }
 
 impl ExpressionFeed {
@@ -584,12 +642,17 @@ impl ExpressionFeed {
         if let Some(addr) = listen {
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let l = ExpressionListener::bind(addr)?;
+                // Checked now, so a malformed or non-loopback address fails
+                // the run here; bound once frames run (#584). Never bound
+                // and let go to test the port: a client that connects in
+                // that moment has its handshake taken and then reset, losing
+                // what it sends (the one reset in 21 launches looked so).
+                let at = super::loopback::check("--expression-listen", addr)?;
                 tracing::info!(target: "player",
-                    "Expression listening on {} (one JSON object per line)",
-                    l.local_addr()
+                    "Expression socket {at} opens once the first frame is presented \
+                     (one JSON object per line)"
                 );
-                feed.listener = Some(l);
+                feed.listen_at = Some(at);
             }
             #[cfg(target_arch = "wasm32")]
             anyhow::bail!("--expression-listen {addr}: no sockets on the web");
@@ -619,10 +682,66 @@ impl ExpressionFeed {
         out
     }
 
-    /// The socket's counts, when there is one.
+    /// Bind the socket the flag asked for, now that frames are running
+    /// (#584): from here a state that arrives is heard on the next frame.
+    /// `frame` and `now` (game time) are for the one `listen` log line that
+    /// says so, which a launcher can wait for. A bind that fails (the port
+    /// is taken) is an error in the log and [`ExpressionFeed::failure`], and
+    /// the subsystem ends the run, so a launcher waiting on the socket sees
+    /// the player exit instead of waiting for ever. Returns where it
+    /// listens; `None` when there was nothing to open or the bind failed.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_socket(&mut self, frame: u64, now: f64) -> Option<std::net::SocketAddr> {
+        let at = self.listen_at.take()?;
+        match ExpressionListener::bind(&at.to_string()) {
+            Ok(l) => {
+                let addr = l.local_addr();
+                // The player's one log (#716), under `listen`, which --quiet keeps
+                tracing::info!(
+                    target: "listen",
+                    addr = %addr,
+                    frame,
+                    t = now,
+                    "[listen] expression: listening on {addr} from frame {frame} \
+                     (game time {now:.3} s); a state sent now is heard on the frame it arrives at"
+                );
+                self.listener = Some(l);
+                Some(addr)
+            }
+            Err(e) => {
+                tracing::error!(target: "listen", "[listen] expression: {e}; ending the run");
+                self.socket_failure = Some(e.to_string());
+                None
+            }
+        }
+    }
+
+    /// Why the socket never opened, when it didn't: the run's failure.
+    pub fn failure(&self) -> Option<String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.socket_failure.clone();
+        #[cfg(target_arch = "wasm32")]
+        None
+    }
+
+    /// The socket's counts, when there is one: open, or waiting for the
+    /// first frame.
     pub fn socket_counts(&self) -> Option<SocketCounts> {
         #[cfg(not(target_arch = "wasm32"))]
-        return self.listener.as_ref().map(ExpressionListener::counts);
+        return self
+            .listener
+            .as_ref()
+            .map(ExpressionListener::counts)
+            .or_else(|| {
+                self.listen_at.map(|addr| SocketCounts {
+                    addr,
+                    open: false,
+                    connections: 0,
+                    malformed: 0,
+                    oversize: 0,
+                    flooded: 0,
+                })
+            });
         #[cfg(target_arch = "wasm32")]
         None
     }
@@ -659,6 +778,12 @@ impl ExpressionSubsystem {
             record: FeedRecord::default(),
             frames: 0,
         }
+    }
+
+    /// Why the run failed, if the socket couldn't open (#584).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn failure(&self) -> Option<String> {
+        self.feed.failure()
     }
 
     /// What the panel shows at game time `now`.
@@ -718,6 +843,31 @@ pub struct TimelineView {
     pub next: Option<f64>,
 }
 
+impl ExpressionSubsystem {
+    /// The socket's capture lines (#583), with the last state the scripts
+    /// heard, which each reply carries.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn take_capture_asks(
+        &self,
+    ) -> (
+        Vec<super::frame_grab::CaptureAsk>,
+        Option<serde_json::Map<String, Value>>,
+    ) {
+        let asks = self
+            .feed
+            .listener
+            .as_ref()
+            .map(ExpressionListener::take_asks)
+            .unwrap_or_default();
+        let state = if asks.is_empty() {
+            None
+        } else {
+            self.record.latest().map(|a| a.state.clone())
+        };
+        (asks, state)
+    }
+}
+
 impl Subsystem for ExpressionSubsystem {
     fn name(&self) -> &'static str {
         "expression feed"
@@ -733,6 +883,18 @@ impl Subsystem for ExpressionSubsystem {
         }
         self.frames += 1;
         let now = ctx.clock.total_time;
+        // The second frame's start: the first has been presented, so frames
+        // are running and the socket opens (#584)
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.frames == SOCKET_OPENS_AT_FRAME {
+            self.feed.open_socket(self.frames, now);
+            if self.feed.failure().is_some() {
+                // A port taken: the run ends, and says why (`run_failure`)
+                if let Some(quit) = ctx.quit.as_deref_mut() {
+                    *quit = true;
+                }
+            }
+        }
         // The timeline on the game clock, then what the socket's reader
         // threads have parsed
         for (source, state) in self.feed.poll(now) {
@@ -842,5 +1004,37 @@ mod tests {
     #[test]
     fn a_feed_with_neither_source_is_none() {
         assert!(ExpressionFeed::open(None, None).unwrap().is_none());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_socket_is_checked_at_start_and_bound_once_frames_run() {
+        // A malformed or non-loopback address still fails the run at start
+        assert!(ExpressionFeed::open(None, Some("0.0.0.0:0")).is_err());
+        assert!(ExpressionFeed::open(None, Some("localhost:7777")).is_err());
+
+        // A taken port is known when the socket opens, and is the run's
+        // failure (#584)
+        let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy = busy.local_addr().unwrap().to_string();
+        let mut taken = ExpressionFeed::open(None, Some(&busy)).unwrap().unwrap();
+        assert!(taken.failure().is_none());
+        assert!(taken.open_socket(SOCKET_OPENS_AT_FRAME, 0.25).is_none());
+        let why = taken.failure().expect("the bind's failure");
+        assert!(why.contains("--expression-listen"), "{why}");
+
+        let mut feed = ExpressionFeed::open(None, Some("127.0.0.1:0"))
+            .unwrap()
+            .unwrap();
+        assert!(feed.listener.is_none(), "not bound before the first frame");
+        let waiting = feed.socket_counts().unwrap();
+        assert!(!waiting.open, "{waiting:?}");
+
+        let addr = feed.open_socket(SOCKET_OPENS_AT_FRAME, 0.25).unwrap();
+        assert_ne!(addr.port(), 0, "port 0 picked one");
+        let open = feed.socket_counts().unwrap();
+        assert!(open.open && open.addr == addr, "{open:?}");
+        assert!(feed.open_socket(3, 0.5).is_none(), "it opens once");
+        std::net::TcpStream::connect(addr).expect("it accepts now");
     }
 }

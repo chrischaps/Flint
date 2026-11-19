@@ -94,14 +94,33 @@ fn cannot_load(diagnostics: &[Diagnostic]) -> bool {
 #[derive(Default)]
 pub struct Memo {
     /// Each scene directory's styles (#742: its own registry, the
-    /// built-ins and the user styles it sees), loaded and reported once.
-    style_dirs: BTreeMap<PathBuf, flint_render::stylize::StyleRegistry>,
+    /// built-ins and the user styles it sees), loaded once, and what the
+    /// load said until the styles check reports it (once a directory).
+    style_dirs: BTreeMap<PathBuf, (flint_render::stylize::StyleRegistry, Option<Vec<String>>)>,
     /// The asset catalog of each project root: asked before the files for a
     /// model or a texture, as the player asks, and as `diagnose` does.
     catalogs: BTreeMap<PathBuf, Option<HeldAssets>>,
     /// Procgen specs whose params have been checked: each is reported
     /// once a run, however many scenes name it.
     specs_checked: BTreeSet<PathBuf>,
+}
+
+impl Memo {
+    /// The styles a scene in `scene_dir` is drawn with, loaded the first
+    /// time a directory is asked for; what the load said waits for the
+    /// styles check.
+    fn styles_for(&mut self, scene_dir: &Path) -> &flint_render::stylize::StyleRegistry {
+        &self
+            .style_dirs
+            .entry(scene_dir.to_path_buf())
+            .or_insert_with(|| {
+                let scope = flint_core::project::AssetScope::for_dir(scene_dir);
+                let (styles, messages) =
+                    flint_render::stylize::StyleRegistry::new().for_scene(&scope);
+                (styles, Some(messages))
+            })
+            .0
+    }
 }
 
 /// What a scene's check found, and the files it reached: the scripts,
@@ -146,7 +165,17 @@ fn check_all(
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
 
-    let mut found = flint_scene::diagnose_all(scene, &schemas.registry, project);
+    // A user style's `<name>_style` has no schema file: the schema its
+    // `.shader.toml` makes stands in for none or an open one (#556), so
+    // the scene's entities are held to it as to a built-in's
+    let with_styles = (checks.schema || checks.styles)
+        .then(|| with_style_schemas(&schemas.registry, memo.styles_for(scene_dir)))
+        .flatten();
+    let registry = with_styles.as_ref().unwrap_or(&schemas.registry);
+    let mut found = flint_scene::diagnose_all(scene, registry, project);
+    if with_styles.is_some() {
+        say_user_styles_clamp(&mut found, memo.styles_for(scene_dir));
+    }
     if strict {
         diagnostic::promote_strict(&mut found);
     }
@@ -171,7 +200,7 @@ fn check_all(
         return out;
     };
 
-    let world = match load_scene_diagnosed(scene, &schemas.registry) {
+    let world = match load_scene_diagnosed(scene, registry) {
         Ok((world, _, _)) => Some(world),
         // A parent that isn't there, or loops, has been named with its entity
         Err(_) if no_parent => None,
@@ -575,18 +604,14 @@ fn styles(
     // own (#742), so a style an earlier scene of the run loaded from a
     // folder this one can't see is as unknown to it as when it is checked
     // alone (#426)
-    let styles = match memo.style_dirs.get(scene_dir) {
-        Some(styles) => styles.clone(),
-        None => {
-            let scope = flint_core::project::AssetScope::for_dir(scene_dir);
-            let (styles, messages) = flint_render::stylize::StyleRegistry::new().for_scene(&scope);
-            found.extend(messages.iter().map(|m| user_style_diagnostic(m, scene_dir)));
-            memo.style_dirs
-                .insert(scene_dir.to_path_buf(), styles.clone());
-            styles
-        }
-    };
-    user_style_ranges(scene, file, found, &styles);
+    let styles = memo.styles_for(scene_dir).clone();
+    if let Some(messages) = memo
+        .style_dirs
+        .get_mut(scene_dir)
+        .and_then(|(_, m)| m.take())
+    {
+        found.extend(messages.iter().map(|m| user_style_diagnostic(m, scene_dir)));
+    }
     let Some(mut post) = file.post_process.clone() else {
         return;
     };
@@ -619,53 +644,44 @@ fn styles(
     }
 }
 
-/// Each entity's user-style component (`hologram_style`) against the style's
-/// own ranges (#492). A built-in style's component has a schema whose
-/// fields carry them, so `diagnose` says `ascii_style { cell = 400 }` is out
-/// of range; a user style's is declared open, since it loads at run time,
-/// and this says it in the same words, as an error as that one is.
-fn user_style_ranges(
-    scene: &Path,
-    file: &SceneFile,
-    found: &mut Vec<Diagnostic>,
-    styles: &flint_render::stylize::StyleRegistry,
-) {
-    let mut entities: Vec<_> = file.entities.iter().collect();
-    entities.sort_unstable_by_key(|(name, _)| *name);
-    for (name, entity) in entities {
-        for d in styles.iter() {
-            let Some(component) = d.component else {
-                continue;
-            };
-            if !styles.is_user_style(d.name) {
-                continue;
-            }
-            let Some(table) = entity.components.get(component).and_then(|c| c.as_table()) else {
-                continue;
-            };
-            for (field, error) in flint_render::style_mask::out_of_range(d, table) {
-                // `glow=90 is outside ..` under `hologram_style.glow` says the
-                // name twice; a colour's channel (`tint_r=2`) keeps its own
-                let error = match error.strip_prefix(&format!("{field}=")) {
-                    Some(rest) => rest.to_string(),
-                    None => error,
-                };
-                found.push(
-                    Diagnostic::error(codes::OUT_OF_RANGE, error)
-                        .file(scene)
-                        .entity(name.clone())
-                        .component(component)
-                        .field(field)
-                        .hint(format!(
-                            "the user style '{}' draws it clamped into that range; \
-                             `flint render {} --list-styles` lists its ranges",
-                            d.name,
-                            shown(scene)
-                        )),
-                );
-            }
-        }
+/// A user style's settings row clamps each param (#492), so a value past
+/// its range on its component draws as the range's end: the hint says so,
+/// after the range the schema gives.
+fn say_user_styles_clamp(found: &mut [Diagnostic], styles: &flint_render::stylize::StyleRegistry) {
+    for d in found.iter_mut().filter(|d| d.code == codes::OUT_OF_RANGE) {
+        let Some(style) = styles.iter().find(|s| {
+            s.component.is_some()
+                && s.component == d.component.as_deref()
+                && styles.is_user_style(s.name)
+        }) else {
+            continue;
+        };
+        let clamped = format!("the user style '{}' draws it clamped into it", style.name);
+        d.hint = Some(match d.hint.take() {
+            Some(range) => format!("{range}; {clamped}"),
+            None => clamped,
+        });
     }
+}
+
+/// `registry` with the component schema of each style `styles` holds
+/// whose component it declares open or not at all (#556:
+/// `flint_render::stylize::add_component_schemas`), or `None` when there
+/// is none, so the registry the run loaded is used as it is.
+fn with_style_schemas(
+    registry: &flint_schema::SchemaRegistry,
+    styles: &flint_render::stylize::StyleRegistry,
+) -> Option<flint_schema::SchemaRegistry> {
+    let wanted = styles.iter().filter_map(|d| d.component).any(|component| {
+        registry
+            .get_component(component)
+            .is_none_or(|schema| schema.is_open())
+    });
+    wanted.then(|| {
+        let mut registry = registry.clone();
+        flint_render::stylize::add_component_schemas(styles, &mut registry);
+        registry
+    })
 }
 
 /// One message of `stylize::custom::load_dir` as a diagnostic. A message
@@ -675,7 +691,15 @@ fn user_style_ranges(
 fn user_style_diagnostic(message: &str, scene_dir: &Path) -> Diagnostic {
     let warning = message.contains(": warning: ");
     let (from, what) = match message.split_once(": ") {
-        Some((from, what)) => (from.to_string(), what.trim_end().to_string()),
+        // The mark goes before the place is put in front (#573: a warning
+        // with a line and column read "line 12, column 45: warning: ...")
+        Some((from, what)) => (
+            from.to_string(),
+            what.strip_prefix("warning: ")
+                .unwrap_or(what)
+                .trim_end()
+                .to_string(),
+        ),
         None => (
             shown(&scene_dir.join("styles")),
             message.trim_end().to_string(),
@@ -696,7 +720,6 @@ fn user_style_diagnostic(message: &str, scene_dir: &Path) -> Diagnostic {
         ),
         _ => (from, what),
     };
-    let what = what.strip_prefix("warning: ").unwrap_or(&what).to_string();
     let d = if warning {
         Diagnostic::warning(codes::BAD_USER_STYLE, what)
     } else {

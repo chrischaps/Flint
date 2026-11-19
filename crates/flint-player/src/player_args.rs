@@ -212,7 +212,9 @@ pub struct PlayerArgs {
 
     /// Take expression states as newline-delimited JSON objects over TCP at
     /// this loopback address (e.g. 127.0.0.1:7777). Off unless given; only
-    /// 127.0.0.1 or ::1 can listen (Flint#518)
+    /// 127.0.0.1 or ::1 can listen (Flint#518). It opens once the first frame
+    /// is presented, and says so in one `listen` log line: a client that
+    /// connects is heard from the next frame on (Flint#584)
     #[arg(long, value_name = "IP:PORT")]
     pub expression_listen: Option<String>,
 
@@ -300,6 +302,11 @@ pub struct PlayerArgs {
     /// `.flintframe` folders (#1086). Shift+F2 captures one too
     #[command(flatten)]
     pub frame_captures: crate::FrameCaptureArgs,
+
+    /// `--record DIR` and `--record-fps N`: the window's frames as shown,
+    /// written while the game plays without slowing it (#583)
+    #[command(flatten)]
+    pub record: crate::RecordArgs,
 
     /// `--trace FILE` (the engine's scopes, written at exit),
     /// `--trace-seconds SECS` (how far back; 0 the whole session) and
@@ -597,6 +604,7 @@ impl PlayerArgs {
         app.input.touch_controls_mut().set_mode(touch_mode);
         args.hitches.apply(&mut app)?;
         args.frame_captures.apply(&mut app)?;
+        args.record.apply(&mut app)?;
         args.trace.apply(&mut app)?;
         // Skybox, ambient, shading levers, shadows, default lights, camera,
         // user styles and post from the scene file, as every host and

@@ -2,7 +2,10 @@
 //! and `chrome://tracing` open with no tooling of Flint's.
 //!
 //! One `"ph":"X"` (complete) event per scope, with `args: { frame, depth,
-//! detail? }`; one track per thread ring, and any number of a host's own
+//! detail? }`, or `{ frame, depth, calls, worst_us }` for a summed record
+//! (#1288: one event standing for `calls` calls of a function, laid from
+//! the first for their total, a leaf that may overlap its siblings); one
+//! track per thread ring, and any number of a host's own
 //! tracks (the player's frames, phases, GPU passes, hitches), each a `tid`
 //! of process 1 with a `thread_name` and a `thread_sort_index`. Times are
 //! microseconds from the recorder's epoch (`clock`), to the nanosecond.
@@ -134,6 +137,20 @@ impl ChromeTrace {
                     s.start_ns,
                     s.dur_ns,
                     &[frame, depth, ("detail", Arg::Str(t))],
+                ),
+                // A summed record (#1288): `calls` calls laid from the
+                // first, `dur` their total, `worst_us` the longest
+                Some(TakenDetail::Calls { calls, worst_ns }) => self.complete(
+                    tid,
+                    s.name,
+                    s.start_ns,
+                    s.dur_ns,
+                    &[
+                        frame,
+                        depth,
+                        ("calls", Arg::Int(*calls as i64)),
+                        ("worst_us", Arg::Num(*worst_ns as f64 / 1000.0)),
+                    ],
                 ),
             }
         }

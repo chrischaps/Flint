@@ -439,6 +439,24 @@ The span leaves out its last moment, so that a span one cycle long loops cleanly
 
 Nothing moves in the file that didn't move in the render. All the frames share one palette with no dithering, and a pixel the render left alone is written as transparent over the last frame. On 24 frames of the bench, in which 75.5% of the pixels never change, this keeps all of them still, where the `image` crate's encoder, with a new palette every frame, shimmers 81% of them by as much as 22 levels. That shimmer would look just like the boil you're trying to judge. It also comes out smaller: 1.8 MB to its 2.5 MB.
 
+### A span as a contact sheet
+
+A GIF moves only for a reader that plays it. An agent reviewing renders opens a GIF and sees its first frame. Add `--strip` and the same span is written as one PNG, a tile every `--every` seconds (default 1), each labelled with its time:
+
+```bash
+flint render examples/woozy_grove.scene.toml --time 0..8 --strip --every 1 --columns 3 -o grove.png
+flint render examples/woozy_grove.scene.toml --time 2,5,9.5 --strip -o moments.png
+flint render examples/ascii_story.scene.toml --script-time 0..8 --strip --every 2 --label off -o story.png
+```
+
+![The Woozy Grove from 0 to 8 s, a tile a second, three across](../images/render-strip-grove.png)
+
+A strip is for comparing, not for looping, so a span's end is a tile when a step lands on it: `0..8 --every 1` is nine tiles, where the GIF of `0..8` stops before 8. A list's moments are its tiles. Tiles are 640 x 360 unless `--width` and `--height` say otherwise, `--columns` (or `--cols`) sets how many go across (by default, the fewest that keep the sheet no taller than it is wide), and a strip draws at most 100.
+
+Each tile is the frame `--time <t>` draws alone at the tile's size, pixel for pixel. The clocks run as the GIF's do, a `--frame-step` at a time from the span's start, so everything the scene simulates on the way is as it would be. Each tile is then drawn as a first frame, so a style with a history (the ASCII style's, which a GIF's frames follow on from) starts that history fresh at every tile. To check a tile, render its moment alone at that size and compare: on the grove above, `--time 5 --width 640 --height 360` matches its tile exactly.
+
+`--label off` leaves out the title, the times and the borders: the tiles alone with 4 pixels of paper between them, so tile (c, r) of a W x H strip starts at (c x (W + 4), r x (H + 4)) and a script can cut it back out.
+
 ### Long spans
 
 A span of any length renders in about the memory of one frame. The palette is learned from every frame, so the GIF can't be encoded until the last one is in, and until then each frame waits on disk beside the output (`x.gif.frames~`, removed when the GIF is written, or if the render fails) as its difference from the frame before, deflated. Footage that is mostly still costs almost nothing there. The GIF comes out the same, byte for byte, as when all the frames were held at once.

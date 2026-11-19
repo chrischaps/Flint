@@ -353,17 +353,35 @@ pub(super) fn option_constants(source: &StyleSource) -> String {
 
 /// One image's binding and helpers (#413). It is read with the input's
 /// sampler (group 1): a style's images add no sampler to the DX12 heap.
+///
+/// An image with `mips = true` (#558) has its helpers pick a level from
+/// the screen ([`image_mip_helpers`]); one without has the text it had
+/// before #558, word for word, so a style that doesn't ask draws the same.
 pub(super) fn prelude_image(binding: usize, image: &ImageSource) -> String {
     let n = &image.name;
     let what = image
         .file
         .as_deref()
         .map_or_else(|| "the scene's choice".to_string(), |f| f.to_string());
-    format!(
+    let mut text = format!(
         r#"
 // Image `{n}` ({what})
 @group(3) @binding({binding}) var flint_image_texture_{n}: texture_2d<f32>;
+"#
+    );
+    text.push_str(&if image.mips {
+        image_mip_helpers(n)
+    } else {
+        image_helpers(n)
+    });
+    text.push_str(&image_lut(n));
+    text
+}
 
+/// Image `n`'s clamped, size and tiled helpers, reading level 0.
+fn image_helpers(n: &str) -> String {
+    format!(
+        r#"
 // Image `{n}` at uv (0..1 across it), bilinear, clamped at its edges
 fn flint_image_{n}(uv: vec2<f32>) -> vec4<f32> {{
     return textureSampleLevel(flint_image_texture_{n}, flint_sampler, uv, 0.0);
@@ -388,7 +406,88 @@ fn flint_image_tiled_{n}(uv: vec2<f32>) -> vec4<f32> {{
     let d = textureLoad(flint_image_texture_{n}, p1, 0);
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }}
+"#
+    )
+}
 
+/// Image `n`'s helpers over a mip chain (#558): the clamped and tiled reads
+/// take the level the screen asks for (trilinear: two levels mixed), from
+/// the derivatives of `uv`, and `_level` forms take one given. The level
+/// function waives WGSL's derivative uniformity rule for itself, so a helper
+/// called inside a branch still compiles in a browser; where neighbouring
+/// pixels take different sides of the branch its level is a guess, and the
+/// `_level` forms are the way to say it.
+fn image_mip_helpers(n: &str) -> String {
+    format!(
+        r#"
+// The mip level image `{n}` is read at for uv: log2 of how many of its
+// texels one pixel spans (0 when it spans one or fewer), up to its last
+@diagnostic(off, derivative_uniformity)
+fn flint_image_lod_{n}(uv: vec2<f32>) -> f32 {{
+    let st = uv * vec2<f32>(textureDimensions(flint_image_texture_{n}));
+    let span = max(length(dpdx(st)), length(dpdy(st)));
+    let last = f32(textureNumLevels(flint_image_texture_{n}) - 1u);
+    return clamp(log2(max(span, 1.0)), 0.0, last);
+}}
+
+// Image `{n}` at uv (0..1 across it), bilinear, clamped at its edges, at
+// the level the screen asks for
+fn flint_image_{n}(uv: vec2<f32>) -> vec4<f32> {{
+    return textureSampleLevel(flint_image_texture_{n}, flint_sampler, uv, flint_image_lod_{n}(uv));
+}}
+
+// Image `{n}` at uv at mip `level` (0 is the file; a fraction mixes two)
+fn flint_image_level_{n}(uv: vec2<f32>, level: f32) -> vec4<f32> {{
+    return textureSampleLevel(flint_image_texture_{n}, flint_sampler, uv, level);
+}}
+
+// Image `{n}`'s size in texels (its file's, level 0)
+fn flint_image_size_{n}() -> vec2<f32> {{
+    return vec2<f32>(textureDimensions(flint_image_texture_{n}));
+}}
+
+// Image `{n}` repeated at mip `level`, a whole level: bilinear across the
+// seam
+fn flint_image_tiled_at_{n}(uv: vec2<f32>, level: i32) -> vec4<f32> {{
+    let dims = vec2<i32>(textureDimensions(flint_image_texture_{n}, level));
+    let st = uv * vec2<f32>(dims) - 0.5;
+    let base = floor(st);
+    let f = st - base;
+    let p0 = ((vec2<i32>(base) % dims) + dims) % dims;
+    let p1 = (p0 + vec2<i32>(1)) % dims;
+    let a = textureLoad(flint_image_texture_{n}, p0, level);
+    let b = textureLoad(flint_image_texture_{n}, vec2<i32>(p1.x, p0.y), level);
+    let c = textureLoad(flint_image_texture_{n}, vec2<i32>(p0.x, p1.y), level);
+    let d = textureLoad(flint_image_texture_{n}, p1, level);
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}}
+
+// Image `{n}` repeated: uv 1.25 is uv 0.25, at mip `level` (a fraction
+// mixes the two levels about it)
+fn flint_image_tiled_level_{n}(uv: vec2<f32>, level: f32) -> vec4<f32> {{
+    let last = f32(textureNumLevels(flint_image_texture_{n}) - 1u);
+    let l = clamp(level, 0.0, last);
+    let below = floor(l);
+    let a = flint_image_tiled_at_{n}(uv, i32(below));
+    let t = l - below;
+    if (t <= 0.0) {{
+        return a;
+    }}
+    return mix(a, flint_image_tiled_at_{n}(uv, i32(min(below + 1.0, last))), t);
+}}
+
+// Image `{n}` repeated: uv 1.25 is uv 0.25, at the level the screen asks for
+fn flint_image_tiled_{n}(uv: vec2<f32>) -> vec4<f32> {{
+    return flint_image_tiled_level_{n}(uv, flint_image_lod_{n}(uv));
+}}
+"#
+    )
+}
+
+/// Image `n` read as a LUT: always level 0, whether it has mips or not.
+fn image_lut(n: &str) -> String {
+    format!(
+        r#"
 // Image `{n}` read as a 3D LUT laid out as a strip: N slices of N x N side
 // by side (N*N wide, N high), blue choosing the slice left to right, red
 // across each slice and green down it (the layout of Unreal's and most
