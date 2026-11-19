@@ -303,6 +303,11 @@ pub struct PlayerArgs {
     #[command(flatten)]
     pub frame_captures: crate::FrameCaptureArgs,
 
+    /// `--record DIR` and `--record-fps N`: the window's frames as shown,
+    /// written while the game plays without slowing it (#583)
+    #[command(flatten)]
+    pub record: crate::RecordArgs,
+
     /// `--trace FILE` (the engine's scopes, written at exit),
     /// `--trace-seconds SECS` (how far back; 0 the whole session) and
     /// `--trace-on-hitch[=N]`: Chrome trace-event JSON for Perfetto
@@ -599,6 +604,7 @@ impl PlayerArgs {
         app.input.touch_controls_mut().set_mode(touch_mode);
         args.hitches.apply(&mut app)?;
         args.frame_captures.apply(&mut app)?;
+        args.record.apply(&mut app)?;
         args.trace.apply(&mut app)?;
         // Skybox, ambient, shading levers, shadows, default lights, camera,
         // user styles and post from the scene file, as every host and

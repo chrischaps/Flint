@@ -423,6 +423,11 @@ topic = "runtime"
 purpose = "The sieve: collision layers let blue balls fall through glass that holds amber ones; a barrel's mesh collider and a scaled crate hold theirs at their drawn size (#729)"
 
 [[example]]
+scene = "listening_lantern.scene.toml"
+topic = "runtime"
+purpose = "A lantern whose light answers expression states from a timeline or --expression-listen; a capture line asks the window for its frame, --record writes them (#583)"
+
+[[example]]
 scene = "tween_lantern.scene.toml"
 topic = "runtime"
 purpose = "A lantern lit at dusk by tween(entity, \"component.field\", ..): a light's intensity and colour, a glow and a turn, then breathing on tween_done (#734)"

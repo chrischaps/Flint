@@ -38,6 +38,10 @@ mod frame;
 pub(crate) mod frame_capture;
 #[cfg(test)]
 mod frame_capture_tests;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod frame_grab;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod frame_grab_tests;
 mod frame_history;
 #[cfg(test)]
 mod frame_notes_tests;
@@ -356,6 +360,10 @@ pub struct PlayerApp {
     /// `--capture-on-hitch`, the debug key and an input script's `capture`
     /// line, each a `.flintframe` folder (`frame_capture.rs`).
     pub(crate) frame_captures: frame_capture::FrameCaptures,
+    /// The presented frame as a PNG (#583): a capture line on
+    /// `--expression-listen`, and `--record` (`frame_grab.rs`). Never waited on.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) frame_grabs: frame_grab::FrameGrabs,
     /// How the run ends, and why it failed if it did
     outcome: state::Outcome,
     /// A windowless device for the tests that take a scene through a

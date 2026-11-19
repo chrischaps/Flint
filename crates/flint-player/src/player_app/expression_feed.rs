@@ -295,6 +295,7 @@ pub use listener::ExpressionListener;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod listener {
+    use super::super::frame_grab::{self, CaptureAsk, Reply};
     use super::super::loopback::{self, read_capped_line, trim, Line};
     use super::*;
     use std::collections::VecDeque;
@@ -318,6 +319,8 @@ mod listener {
         flooded: AtomicUsize,
         /// Set when the listener is dropped, so readers stop.
         closed: Arc<AtomicBool>,
+        /// Capture lines waiting for a frame (#583), which aren't states
+        asks: Mutex<Vec<CaptureAsk>>,
     }
 
     impl Shared {
@@ -400,10 +403,18 @@ mod listener {
             }
             taken
         }
+
+        /// The capture lines that have arrived (#583), oldest first.
+        pub fn take_asks(&self) -> Vec<CaptureAsk> {
+            std::mem::take(&mut *self.shared.asks.lock().unwrap_or_else(|e| e.into_inner()))
+        }
     }
 
-    /// Read lines until the peer hangs up or the player goes away.
+    /// Read lines until the peer hangs up or the player goes away. A line
+    /// with a `capture` key asks for the next frame (#583): it is queued
+    /// with this connection's writing half, which its reply goes back on.
     fn read_lines(stream: TcpStream, shared: &Shared, peer: &str) {
+        let reply = Reply::of(&stream);
         let mut reader = BufReader::new(stream);
         let mut line = Vec::new();
         while !shared.closed.load(Ordering::Relaxed) {
@@ -429,6 +440,29 @@ mod listener {
                 continue;
             }
             match parse_line(text) {
+                Ok(line) if frame_grab::is_capture_line(&line) => {
+                    match frame_grab::parse_ask(&line) {
+                        Ok((id, name)) => shared
+                            .asks
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(CaptureAsk {
+                                id,
+                                name,
+                                reply: reply.clone(),
+                            }),
+                        Err(why) => {
+                            tracing::warn!(target: "expression", "refused a capture line from {peer}: {why}");
+                            if let Some(reply) = &reply {
+                                let mut answer = serde_json::json!({ "capture_error": why });
+                                if let Some(id) = line.get("id") {
+                                    answer["id"] = id.clone();
+                                }
+                                reply.send(&answer);
+                            }
+                        }
+                    }
+                }
                 Ok(state) => shared.push(state),
                 Err(why) => {
                     shared.malformed.fetch_add(1, Ordering::Relaxed);
@@ -807,6 +841,31 @@ pub struct TimelineView {
     pub len: usize,
     /// When the next event plays; `None` once all have.
     pub next: Option<f64>,
+}
+
+impl ExpressionSubsystem {
+    /// The socket's capture lines (#583), with the last state the scripts
+    /// heard, which each reply carries.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn take_capture_asks(
+        &self,
+    ) -> (
+        Vec<super::frame_grab::CaptureAsk>,
+        Option<serde_json::Map<String, Value>>,
+    ) {
+        let asks = self
+            .feed
+            .listener
+            .as_ref()
+            .map(ExpressionListener::take_asks)
+            .unwrap_or_default();
+        let state = if asks.is_empty() {
+            None
+        } else {
+            self.record.latest().map(|a| a.state.clone())
+        };
+        (asks, state)
+    }
 }
 
 impl Subsystem for ExpressionSubsystem {

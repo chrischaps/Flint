@@ -15,6 +15,8 @@ mod player_app;
 pub mod player_args;
 // The engine a binary was built from, the project a run is in (#1290)
 pub mod provenance;
+// `--record DIR --record-fps N` (#583)
+pub mod record_args;
 // The scope recorder's flags (#1097)
 pub mod trace_args;
 pub mod user_files;
@@ -90,6 +92,7 @@ pub use player_args::{launch, launch_bundle, PlayerArgs, PlayerCli, Prepared};
 #[cfg(not(target_arch = "wasm32"))]
 pub use provenance::git_state;
 pub use provenance::Provenance;
+pub use record_args::RecordArgs;
 pub use trace_args::TraceArgs;
 pub use window_args::WindowArgs;
 

@@ -91,6 +91,7 @@ flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
 flint-query = { workspace = true }
 flint-render = { workspace = true }
+flint-pixels = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-import = { workspace = true }

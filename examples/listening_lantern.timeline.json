@@ -1,0 +1,6 @@
+{"events": [
+  {"state": "listening", "energy": 0.3, "t": 0.5},
+  {"state": "thinking", "energy": 0.5, "t": 2.5},
+  {"state": "speaking", "energy": 0.8, "t": 5.0},
+  {"state": "settled", "energy": 0.4, "t": 8.0}
+]}
