@@ -352,6 +352,14 @@ knob_table! {
         control: log_slider("jitter rate (x)", 0.125, 8.0),
         help: "How fast the fast clock ticks, times each spec's jitter.step: 2 boils twice as fast. A change holds every card until its next tick.",
     },
+    RowRate {
+        field: row_rate: f32 = 1.0,
+        key: "row_rate",
+        preset: living.row_rate,
+        section: Clock,
+        control: log_slider("row rate (x)", 0.125, 8.0),
+        help: "How fast a form's words drift along their lines, times each spec's row_pace: 2 reflows twice as fast. A change goes on from where the words are.",
+    },
     Stagger {
         field: stagger: String = "per_level".to_string(),
         key: "stagger",

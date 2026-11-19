@@ -12,7 +12,7 @@ use super::prop::LivingProp;
 use super::ring::{PoseRing, RingPose};
 use super::{BuiltLineage, Lineage, LineageDone, LivingProps, LivingStats};
 use crate::generator::LivingGenerator;
-use crate::living::{boil_bones, LivingPose, SegmentPose, JITTER_CHANNELS};
+use crate::living::{LivingPose, SegmentPose};
 use crate::registry::GeneratorRegistry;
 use crate::spec::ProcGenSpec;
 
@@ -124,6 +124,7 @@ impl LivingProps {
             prop.beats += dt / f64::from(prop.clock.step);
             // Times 1.0 is exact, so an untuned boil reads the props' clock (#529).
             prop.jitter_time += dt * prop.jitter_rate_in(&species[prop.species]);
+            prop.row_time += dt * prop.row_rate_in(&species[prop.species]);
             let first = prop.window_start();
             if let Some(ring) = &mut prop.ring {
                 ring.slide_to(first);
@@ -358,7 +359,7 @@ impl LivingProps {
                 let _ = built.rig.palette(&built.skeleton, &rest, &mut rest_palette);
                 // Still jitter bones, or the mesh's shared buffer would have
                 // them at its identity, which is a long way from nothing.
-                boil_bones(&[0.0; JITTER_CHANNELS], &mut rest_palette);
+                built.rig.still_bones_into(&mut rest_palette);
                 let rig = built.rig.clone();
                 let max_depth = built.skeleton.max_depth();
                 lineage.built = Some(built);

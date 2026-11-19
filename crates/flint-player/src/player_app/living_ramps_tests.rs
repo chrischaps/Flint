@@ -361,3 +361,54 @@ fn the_jitter_rate_steps_eases_and_clears_and_the_boil_follows_it() {
     assert!(problem.contains("jitter_rate = 9"), "{problem}");
     assert_eq!(rate(&mut app), 0.5);
 }
+
+#[test]
+fn the_row_rate_steps_eases_and_clears_and_the_row_clock_follows_it() {
+    // #576: a script sets how fast a form's words drift, and the props' row
+    // clocks move on at that rate from the frame it's set.
+    let mut app = grove();
+    app.tick_procgen_for_test(1.0 / 60.0);
+    let row_times = |app: &mut PlayerApp| -> Vec<f64> {
+        let props = app.core.procgen_resolver.living_props();
+        props.props().iter().map(|p| p.row_time()).collect()
+    };
+    let rate = |app: &mut PlayerApp| app.living_view(None).row_rate.value;
+    assert_eq!(rate(&mut app), 1.0, "the spec's pace, with nothing said");
+
+    app.tune_living_from_script(map("[living]\nrow_rate = 2.0"))
+        .unwrap();
+    assert_eq!(rate(&mut app), 2.0);
+    let before = row_times(&mut app);
+    app.tick_procgen_for_test(0.1);
+    for (after, before) in row_times(&mut app).iter().zip(&before) {
+        assert!((after - before - 0.2).abs() < 1e-9, "{after} from {before}");
+    }
+
+    app.tune_living_over(map("[living]\nrow_rate = 0.5"), 1.0)
+        .unwrap();
+    let mut last = rate(&mut app);
+    for frame in 0..60 {
+        app.tick_procgen_for_test(1.0 / 60.0);
+        let now = rate(&mut app);
+        assert!(
+            now <= last && last - now < 0.05,
+            "frame {frame}: {last} to {now}"
+        );
+        last = now;
+    }
+    assert_eq!(last, 0.5);
+    assert!(app.living().ramps.is_empty());
+
+    app.tune_living_from_script(map("species = \"sapling\"\nrow_rate = 4.0"))
+        .unwrap();
+    assert_eq!(rate(&mut app), 4.0);
+    app.clear_living_species("sapling", &["row_rate".to_string()])
+        .unwrap();
+    assert_eq!(rate(&mut app), 0.5);
+
+    let problem = app
+        .tune_living_from_script(map("[living]\nrow_rate = 9.0"))
+        .unwrap_err();
+    assert!(problem.contains("row_rate = 9"), "{problem}");
+    assert_eq!(rate(&mut app), 0.5);
+}

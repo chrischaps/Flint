@@ -158,6 +158,7 @@ impl LivingGenerator for TreeGenerator {
             bone_segments,
             first_leaf_vertex,
             leaf_parts,
+            rows: None,
         })
     }
 

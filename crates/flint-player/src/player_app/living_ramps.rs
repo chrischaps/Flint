@@ -37,11 +37,12 @@ pub(crate) enum Eased {
     VarianceSteady,
     Softness,
     JitterRate,
+    RowRate,
 }
 
 impl Eased {
     /// Every one, in the order a species table lists them.
-    pub(crate) const ALL: [Eased; 10] = [
+    pub(crate) const ALL: [Eased; 11] = [
         Eased::Amplitude,
         Eased::Step,
         Eased::Glide,
@@ -52,16 +53,18 @@ impl Eased {
         Eased::VarianceSteady,
         Eased::Softness,
         Eased::JitterRate,
+        Eased::RowRate,
     ];
 
     /// The ones the whole grove's `[living]` holds: its clock is the field's.
-    pub(crate) const GROVE: [Eased; 6] = [
+    pub(crate) const GROVE: [Eased; 7] = [
         Eased::EchoSpread,
         Eased::EchoAlpha,
         Eased::VarianceAmount,
         Eased::VarianceSteady,
         Eased::Softness,
         Eased::JitterRate,
+        Eased::RowRate,
     ];
 
     /// Its key, as `clear_living` names it.
@@ -77,6 +80,7 @@ impl Eased {
             Eased::VarianceSteady => "variance.steady",
             Eased::Softness => "softness",
             Eased::JitterRate => "jitter_rate",
+            Eased::RowRate => "row_rate",
         }
     }
 
@@ -105,6 +109,7 @@ impl Eased {
             Eased::VarianceSteady => variance.and_then(|v| v.steady),
             Eased::Softness => def.softness,
             Eased::JitterRate => def.jitter_rate,
+            Eased::RowRate => def.row_rate,
         }
     }
 
@@ -123,6 +128,7 @@ impl Eased {
             Eased::VarianceSteady => variance.and_then(|v| v.steady.take()),
             Eased::Softness => def.softness.take(),
             Eased::JitterRate => def.jitter_rate.take(),
+            Eased::RowRate => def.row_rate.take(),
         }
     }
 
@@ -141,6 +147,7 @@ impl Eased {
             Eased::VarianceSteady => &mut def.variance.get_or_insert_with(variance).steady,
             Eased::Softness => &mut def.softness,
             Eased::JitterRate => &mut def.jitter_rate,
+            Eased::RowRate => &mut def.row_rate,
         };
         *slot = Some(value);
     }
@@ -158,6 +165,7 @@ impl Eased {
             Eased::VarianceSteady => view.variance_steady.value,
             Eased::Softness => view.softness.value,
             Eased::JitterRate => view.jitter_rate.value,
+            Eased::RowRate => view.row_rate.value,
         }
     }
 }
@@ -167,6 +175,7 @@ fn grove_def(living: &LivingDef) -> LivingSpeciesDef {
     LivingSpeciesDef {
         softness: living.softness,
         jitter_rate: living.jitter_rate,
+        row_rate: living.row_rate,
         echoes: living.echoes,
         variance: living.variance,
         ..Default::default()
@@ -177,6 +186,7 @@ fn grove_living(def: LivingSpeciesDef) -> LivingDef {
     LivingDef {
         softness: def.softness,
         jitter_rate: def.jitter_rate,
+        row_rate: def.row_rate,
         echoes: def.echoes,
         variance: def.variance,
         ..Default::default()
@@ -335,6 +345,7 @@ impl LivingSubsystem {
                 eased.push((None, take_eased(&mut def, &Eased::GROVE)));
                 tune.living.softness = def.softness;
                 tune.living.jitter_rate = def.jitter_rate;
+                tune.living.row_rate = def.row_rate;
                 tune.living.echoes = def.echoes;
                 tune.living.variance = def.variance;
                 // A species no prop grows from keeps its values at once, and

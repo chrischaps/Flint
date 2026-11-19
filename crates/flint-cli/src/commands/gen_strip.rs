@@ -22,9 +22,8 @@ use flint_core::Vec3;
 use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult};
 use flint_procgen::{
-    boil_bones, mesh_to_glb, BranchSegment, EchoCopy, Generator, LivingClock, LivingConfig,
-    LivingPose, LivingRig, LivingSkeleton, PoseStream, ProcGenSpec, Stagger, WarpedTime,
-    JITTER_CHANNELS,
+    mesh_to_glb, BranchSegment, EchoCopy, Generator, LivingClock, LivingConfig, LivingPose,
+    LivingRig, LivingSkeleton, PoseStream, ProcGenSpec, Stagger, WarpedTime,
 };
 use flint_render::{Camera, HeadlessContext, RendererConfig, SceneRenderer};
 use image::{Rgb, RgbImage};
@@ -524,7 +523,7 @@ fn still_palette(
     let mut pose = stream.at(t)?;
     skeleton.show_at(&mut pose, slide, place);
     rig.palette(skeleton, &pose, &mut bones)?;
-    boil_bones(&[0.0; JITTER_CHANNELS], &mut bones);
+    rig.still_bones_into(&mut bones);
     Ok(bones)
 }
 

@@ -142,7 +142,7 @@ At the top is the warped clock, drawn as what it is: one step's worth of hold, t
 
 | Section | Knobs |
 |---------|-------|
-| Clock | `step`, `glide`, `drift` (the field's `amplitude`), `jitter`, `jitter rate` (how fast the boil ticks, times each spec's `jitter.step`; [Leaf jitter](../concepts/procgen.md#leaf-jitter)), `stagger` |
+| Clock | `step`, `glide`, `drift` (the field's `amplitude`), `jitter`, `jitter rate` (how fast the boil ticks, times each spec's `jitter.step`; [Leaf jitter](../concepts/procgen.md#leaf-jitter)), `row rate` (how fast a form's words drift along their lines, times each spec's `row_pace`; [Drifting rows](../concepts/procgen.md#drifting-rows)), `stagger` |
 | Shading boil | On or off, `paint`, `ink`, and on ones, twos or threes. Paint needs Kuwahara on and ink needs contour on, both in F4, and the panel says so |
 | Echoes | `count`, `spread` and `alpha`, with `count = 0` in reach to compare the grove without them |
 | Variance | `amount`, `steady` and `keep size`. **Unheld** sets 1, 0 and off: each pose exactly as it grew |

@@ -113,7 +113,7 @@ impl ScriptModule for LivingModule {
 
         m.func(
             "tune_living",
-            "Turn Living Props knobs over some seconds: the continuous ones (step, glide, amplitude, jitter, echoes.spread, echoes.alpha, variance.amount, variance.steady, softness, jitter_rate) ease there as set_wooze does; the rest switch at once.",
+            "Turn Living Props knobs over some seconds: the continuous ones (step, glide, amplitude, jitter, echoes.spread, echoes.alpha, variance.amount, variance.steady, softness, jitter_rate, row_rate) ease there as set_wooze does; the rest switch at once.",
         )
         .arg("knobs", Map)
         .arg("seconds", Num)

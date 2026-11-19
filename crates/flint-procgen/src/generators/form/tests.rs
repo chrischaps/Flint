@@ -38,6 +38,17 @@ fn digest(spec: &ProcGenSpec) -> u64 {
         v.joint_indices.iter().for_each(|j| mix(*j as u32));
     }
     rig.mesh.indices.iter().for_each(|i| mix(*i));
+    // Drifting words (#576) live in the rig, not the baked mesh.
+    if let Some(rows) = &rig.rows {
+        for line in &rows.lines {
+            mix(line.pace.to_bits());
+            mix(line.period.to_bits());
+        }
+        for word in &rows.words {
+            mix(word.start.to_bits());
+            mix(word.length.to_bits());
+        }
+    }
     for m in &rig.mesh.materials {
         m.base_color.iter().for_each(|c| mix(c.to_bits()));
         mix(m.roughness.to_bits());
@@ -280,6 +291,8 @@ fn rows_base() -> toml::map::Map<String, toml::Value> {
     t.insert("card_size".into(), 0.012.into());
     t.insert("card_aspect".into(), 4.0.into());
     t.insert("cards".into(), 2000.into());
+    // Drifting, so `row_pace_spread` has something to spread (#576).
+    t.insert("row_pace".into(), 0.02.into());
     t
 }
 
@@ -616,4 +629,233 @@ fn generate_bakes_the_lineage_rest() {
         panic!("a plain spec bakes a mesh");
     };
     assert_eq!(mesh, FormGenerator.rig(&plain, 5).unwrap().mesh.rest_mesh());
+}
+
+// ── Drifting rows (#576) ─────────────────────────────────────────────────────
+
+/// The rows spec, its words drifting at `pace` metres a second.
+fn drifting(pace: f64) -> ProcGenSpec {
+    let mut spec = rows_spec("front");
+    let mut t = table(&spec);
+    t.insert("row_pace".into(), pace.into());
+    spec.params = toml::Value::Table(t);
+    spec
+}
+
+/// Where the renderer draws every card's centre with `palette`: its front
+/// corners skinned by its runtime joints, as the GPU does.
+fn drawn_centres(rig: &LivingRig, palette: &[[[f32; 4]; 4]]) -> Vec<Vec3> {
+    let first = rig.first_leaf_vertex;
+    let count = rig.mesh.vertices.len() - first;
+    (0..count / CARD_VERTICES)
+        .map(|k| {
+            (0..4)
+                .map(|c| {
+                    let v = first + k * CARD_VERTICES + c;
+                    let p = rig.mesh.vertices[v].position;
+                    let (joints, weights) = rig.runtime_joints(v);
+                    let mut out = Vec3::ZERO;
+                    for (j, w) in joints.iter().zip(weights) {
+                        let m = &palette[*j as usize];
+                        let moved = Vec3::from_array(std::array::from_fn(|r| {
+                            m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r]
+                        }));
+                        out = out + moved * w;
+                    }
+                    out
+                })
+                .fold(Vec3::ZERO, |s, p| s + p)
+                * 0.25
+        })
+        .collect()
+}
+
+/// The rest pose's palette with the fast bones at `seconds` of row time.
+fn palette_at(spec: &ProcGenSpec, rig: &LivingRig, seconds: f64) -> Vec<[[f32; 4]; 4]> {
+    let skeleton = FormGenerator.structure(spec, LINEAGE).unwrap();
+    let rest = LivingPose {
+        shape_seed: 0,
+        segments: vec![SegmentPose::IDENTITY; skeleton.segments.len()],
+    };
+    let mut palette = Vec::new();
+    rig.palette(&skeleton, &rest, &mut palette).unwrap();
+    rig.fast_bones_into(
+        &[0.0; crate::living::JITTER_CHANNELS],
+        seconds,
+        &mut palette,
+    );
+    palette
+}
+
+#[test]
+fn words_that_stay_put_make_no_drift_bones() {
+    for spec in [drifting(0.0), example()] {
+        let rig = FormGenerator.rig(&spec, LINEAGE).unwrap();
+        assert!(rig.rows.is_none());
+        assert_eq!(rig.palette_len(), rig.bone_segments.len() + BOIL_BONES);
+    }
+    // A pace changes nothing the baked mesh holds: only where words go at run time.
+    let (still, moving) = (
+        FormGenerator.rig(&drifting(0.0), LINEAGE).unwrap(),
+        FormGenerator.rig(&drifting(0.03), LINEAGE).unwrap(),
+    );
+    assert_eq!(still.mesh, moving.mesh);
+    assert!(moving.rows.is_some());
+}
+
+#[test]
+fn at_row_time_zero_every_word_is_drawn_where_it_was_written() {
+    let spec = drifting(0.03);
+    let rig = FormGenerator.rig(&spec, LINEAGE).unwrap();
+    let rows = rig.rows.as_ref().unwrap();
+    assert!(rig.palette_len() <= MAX_SKINNED_BONES);
+    let written: Vec<Vec3> = card_centres(&spec).iter().map(|c| c.0).collect();
+    assert_eq!(rows.card_words.len(), written.len());
+    let palette = palette_at(&spec, &rig, 0.0);
+    assert_eq!(palette.len(), rig.palette_len());
+    for (k, (drawn, written)) in drawn_centres(&rig, &palette)
+        .iter()
+        .zip(&written)
+        .enumerate()
+    {
+        assert!(
+            (*drawn - *written).length() < 1e-4,
+            "card {k} drawn {:?} from where it was written",
+            *drawn - *written
+        );
+    }
+}
+
+#[test]
+fn words_travel_their_lines_at_their_pace_and_come_round_again() {
+    let spec = drifting(0.03);
+    let rig = FormGenerator.rig(&spec, LINEAGE).unwrap();
+    let rows = rig.rows.as_ref().unwrap();
+    let (before, after) = (palette_at(&spec, &rig, 0.0), palette_at(&spec, &rig, 0.5));
+    let (from, to) = (drawn_centres(&rig, &before), drawn_centres(&rig, &after));
+    let mut whole = 0;
+    for (k, &w) in rows.card_words.iter().enumerate() {
+        let w = w as usize;
+        let line = &rows.lines[rows.words[w].line as usize];
+        // A word wholly inside its line both times moves along it by its pace.
+        if rows.shown(w, 0.0).1 == 1.0 && rows.shown(w, 0.5).1 == 1.0 {
+            whole += 1;
+            let moved = (to[k] - from[k]).length();
+            let expected = line.pace.abs() * 0.5;
+            assert!(
+                (moved - expected).abs() < 0.1 * expected + 1e-4,
+                "card {k} moved {moved} m, its line's pace says {expected}"
+            );
+            let (x0, x1) = (rows.shown(w, 0.0).0, rows.shown(w, 0.5).0);
+            assert!((x1 - x0 - line.pace * 0.5).abs() < 1e-4, "{x0} to {x1}");
+        }
+    }
+    assert!(
+        whole > rows.words.len() / 2,
+        "{whole} of {}",
+        rows.words.len()
+    );
+    // The lines' paces are spread, all the one way.
+    let paces: Vec<f32> = rows.lines.iter().map(|l| l.pace).collect();
+    assert!(paces.iter().all(|p| *p > 0.0));
+    let (lo, hi) = paces
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(*p), b.max(*p)));
+    assert!(hi - lo > 0.01, "every line at one pace: {paces:?}");
+    // Whole loops later every word is back where it was.
+    for (w, word) in rows.words.iter().enumerate() {
+        let line = &rows.lines[word.line as usize];
+        let round = f64::from(line.period) / f64::from(line.pace) * 3.0;
+        let (a, b) = (rows.shown(w, 1.25), rows.shown(w, 1.25 + round));
+        assert!(
+            (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3,
+            "{a:?} {b:?}"
+        );
+    }
+}
+
+#[test]
+fn a_word_slides_out_under_one_margin_and_in_under_the_other() {
+    let rig = FormGenerator.rig(&drifting(0.03), LINEAGE).unwrap();
+    let rows = rig.rows.as_ref().unwrap();
+    let w = 0;
+    let line = &rows.lines[rows.words[w].line as usize];
+    let lap = f64::from(line.period) / f64::from(line.pace);
+    let (mut gone, mut partial, mut last_x) = (0, 0, f32::MIN);
+    let mut wrapped = false;
+    for i in 0..2000 {
+        let t = lap * f64::from(i) / 2000.0;
+        let (x, kept) = rows.shown(w, t);
+        assert!((0.0..=1.0).contains(&kept), "t = {t}: kept {kept}");
+        assert!(
+            x.abs() <= line.half + 1e-5,
+            "t = {t}: x {x} past {}",
+            line.half
+        );
+        if kept == 0.0 {
+            gone += 1;
+        } else if kept < 1.0 {
+            partial += 1;
+        }
+        // It moves one way, but for the once in a lap it comes round.
+        if x < last_x - 1e-4 {
+            assert!(
+                !wrapped,
+                "t = {t}: back from {last_x} to {x} twice in a lap"
+            );
+            wrapped = true;
+        }
+        last_x = x;
+    }
+    assert!(gone > 0, "it never wholly left its line");
+    assert!(partial > 0, "it never stood half under a margin");
+    assert!(wrapped, "it never came round");
+}
+
+#[test]
+fn more_words_than_bones_share_them_with_their_neighbours() {
+    let mut spec = drifting(0.03);
+    let mut t = table(&spec);
+    t.insert("card_size".into(), 0.004.into());
+    t.insert("row_spacing".into(), 0.012.into());
+    t.insert("cards".into(), 8000.into());
+    spec.params = toml::Value::Table(t);
+    let rig = FormGenerator.rig(&spec, LINEAGE).unwrap();
+    let rows = rig.rows.as_ref().unwrap();
+    assert!(
+        rows.card_words.len() > rows.words.len(),
+        "{} cards on {} bones",
+        rows.card_words.len(),
+        rows.words.len()
+    );
+    assert!(rig.palette_len() <= MAX_SKINNED_BONES);
+    assert_eq!(palette_at(&spec, &rig, 0.0).len(), rig.palette_len());
+    // A bone's cards all ride one line: in this upright page, one height.
+    let heights: Vec<f32> = card_centres(&spec).iter().map(|c| c.0.y).collect();
+    let mut first_of = vec![None; rows.words.len()];
+    for (k, &w) in rows.card_words.iter().enumerate() {
+        let first = *first_of[w as usize].get_or_insert(heights[k]);
+        assert!(
+            (heights[k] - first).abs() < 0.3 * 0.012,
+            "card {k} at {} on a bone whose first card is at {first}",
+            heights[k]
+        );
+    }
+}
+
+#[test]
+fn the_same_row_time_gives_the_same_bones_to_the_bit() {
+    let spec = drifting(0.03);
+    let at = |seconds: f64| -> Vec<u32> {
+        let rig = FormGenerator.rig(&spec, LINEAGE).unwrap();
+        let palette = palette_at(&spec, &rig, seconds);
+        palette
+            .iter()
+            .flatten()
+            .flatten()
+            .map(|x| x.to_bits())
+            .collect()
+    };
+    assert_eq!(at(3.7), at(3.7));
+    assert_ne!(at(3.7), at(3.8));
 }

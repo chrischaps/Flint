@@ -185,6 +185,7 @@ jitter = 3.0
 stagger = "per_branch"
 softness = 0.3
 jitter_rate = 2.5
+row_rate = 1.5
 echoes = { count = 4, spread = 1.5, alpha = 0.3 }
 variance = { amount = 0.9, steady = 0.1, keep_size = false }
 "#,
@@ -1436,6 +1437,7 @@ mod scopes {
                         Knob::KeepSize => prop.keep_size.layer.label(),
                         Knob::Softness => prop.softness.layer.label(),
                         Knob::JitterRate => prop.jitter_rate.layer.label(),
+                        Knob::RowRate => prop.row_rate.layer.label(),
                     };
                     if !report.contains(&label) {
                         report.push(label);
@@ -1745,6 +1747,11 @@ mod picks {
                 n(prop.jitter_rate.value),
                 prop.jitter_rate.layer.label(),
             ),
+            (
+                Knob::RowRate,
+                n(prop.row_rate.value),
+                prop.row_rate.layer.label(),
+            ),
         ]
     }
 
@@ -1768,6 +1775,7 @@ mod picks {
             Knob::KeepSize => knobs.keep_size.to_string(),
             Knob::Softness => n(knobs.softness),
             Knob::JitterRate => n(knobs.jitter_rate),
+            Knob::RowRate => n(knobs.row_rate),
         };
         Knob::ALL
             .iter()

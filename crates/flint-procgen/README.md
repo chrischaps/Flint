@@ -177,6 +177,8 @@ Only when `card_layout` is `rows`:
 | `paragraph_lines` | number 0–1000 | `6.0` | Rows: lines in a typical paragraph, whose last line stops short and whose next begins indented; 0 is one unbroken block |
 | `row_faces` | `front` \| `back` \| `both` | `"both"` | Rows: which broad faces carry lines. The front is the face turned away from `facing_deg`, so a page curling away from you shows you its front |
 | `row_margin` | number 0–0.9 | `0.10000000149011612` | Rows: the share of the section's half-width kept clear at each side, so lines stop short of the edge and never bristle at the outline |
+| `row_pace` | number -5–5 | `0.0` | Rows: metres a second the words drift along their lines, the way a line reads (below 0 the other way); a word slides out under one margin and back in under the other, as text reflows. 0 holds them where they were written. `[living] row_rate` multiplies it at run time |
+| `row_pace_spread` | number 0–1 | `0.30000001192092896` | Rows: how far each line's pace differs from `row_pace`, as a share either way, drawn once per line by the lineage: 0 moves every line together |
 | `row_spacing` | number >0 to 10 | `0.03999999910593033` | Rows: metres from one line to the next, up the surface |
 | `word_gap` | number 0–10 | `0.012000000104308128` | Rows: metres between words; each gap varies ±30% |
 
@@ -337,7 +339,6 @@ Only when `branch_method` is `space_colonization`:
 | `kill_distance` | number > 0 | `0.5` | How close a branch must come to consume a point, metres; smaller fills the crown more finely |
 | `num_attraction_points` | integer ≥ 0 | `500` | Points scattered through the crown; branches grow until they have consumed them. More gives a denser crown |
 | `step_size` | number > 0 | `0.3` | Length of each growth step, metres |
-
 <!-- catalog:end -->
 
 ## Texture op catalog

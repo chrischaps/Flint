@@ -30,6 +30,20 @@ pub fn jitter_rate_clamped(rate: f32) -> f32 {
     }
 }
 
+/// The fastest a form's words can be asked to drift along their lines, times
+/// its spec's `row_pace` (#576).
+pub const ROW_RATE_MAX: f32 = 8.0;
+
+/// A row rate in the range one can be: 0 (held) to [`ROW_RATE_MAX`]. Not a
+/// number is 1, the spec's pace.
+pub fn row_rate_clamped(rate: f32) -> f32 {
+    if rate.is_nan() {
+        1.0
+    } else {
+        rate.clamp(0.0, ROW_RATE_MAX)
+    }
+}
+
 /// What the shadows of a scene's living props follow, which is its own choice:
 /// a whole tree's shadow boiling can read as life or as noise.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -198,6 +212,9 @@ pub struct LivingDefaults {
     /// The scene's word on how fast the boil ticks (#529), times each spec's
     /// `jitter.step` pace: 2 is twice as fast, 0.5 half.
     pub jitter_rate: Option<f32>,
+    /// The scene's word on how fast a form's words drift along their lines
+    /// (#576), times each spec's `row_pace`: 2 is twice as fast, 0 holds them.
+    pub row_rate: Option<f32>,
     /// `[living.species.<spec>]` (#246): each species' own values, over all of
     /// the above and over the wooze field, zones included. Keyed by spec name.
     pub species: BTreeMap<String, SpeciesOverride>,
@@ -221,6 +238,8 @@ pub struct SpeciesOverride {
     pub softness: Option<f32>,
     /// Its jitter rate (#529), over the scene's.
     pub jitter_rate: Option<f32>,
+    /// Its row rate (#576), over the scene's.
+    pub row_rate: Option<f32>,
 }
 
 impl SpeciesOverride {
@@ -233,6 +252,7 @@ impl SpeciesOverride {
             variance: self.variance.merged(under.variance),
             softness: self.softness.or(under.softness),
             jitter_rate: self.jitter_rate.or(under.jitter_rate),
+            row_rate: self.row_rate.or(under.row_rate),
         }
     }
 
@@ -321,6 +341,7 @@ pub struct ResolvedProp {
     pub keep_size: Resolved<bool>,
     pub softness: Resolved<f32>,
     pub jitter_rate: Resolved<f32>,
+    pub row_rate: Resolved<f32>,
 }
 
 /// Every layer the grove's values are made of, apart from the field, to put back
@@ -331,6 +352,7 @@ pub struct LivingLayers {
     pub(super) staggers: Vec<Option<Stagger>>,
     pub(super) softnesses: Vec<Option<f32>>,
     pub(super) jitter_rates: Vec<Option<f32>>,
+    pub(super) row_rates: Vec<Option<f32>>,
     pub(super) clocks: Vec<(WoozeSample, bool)>,
     pub(super) variances: Vec<VarianceOverride>,
     pub(super) species: Vec<(String, SpeciesOverride)>,
@@ -408,6 +430,16 @@ impl LivingProps {
         )
     }
 
+    /// Set how fast a form's words drift along their lines (#576), times its
+    /// spec's `row_pace`, from 0 (held) to [`ROW_RATE_MAX`]. Like the jitter
+    /// rate, the row clock moves on at the new rate from where it stands, so no
+    /// word jumps on the frame it's set: it only goes on faster or slower. It
+    /// changes no pose and fills no ring. Returns whether any prop has it.
+    pub fn tune_row_rate(&mut self, scope: LivingScope, rate: f32) -> bool {
+        let rate = Some(row_rate_clamped(rate));
+        self.tune_props(scope, rate, |p| &mut p.row_rate_layers, |s| &mut s.row_rate)
+    }
+
     /// Set whichever variance fields `variance` sets, for every lineage in the
     /// global layer or one species' own (#246). What the rings have is re-held
     /// from its full form, a few poses a frame, and what's made from here on
@@ -469,6 +501,21 @@ impl LivingProps {
         (prop.jitter_rate_layers).value(self.species[prop.species].over.jitter_rate)
     }
 
+    /// How fast a prop's words drift against its spec's `row_pace` (#576),
+    /// from its layers: its species' own, then the global layer's, then 1.
+    pub fn row_rate(&self, id: LivingPropId) -> f32 {
+        let prop = &self.props[id.0];
+        (prop.row_rate_layers).value(self.species[prop.species].over.row_rate)
+    }
+
+    /// What the global layer says of the row rate: the first prop's, which a
+    /// scene's `[living] row_rate` and every live change set alike.
+    pub fn global_row_rate(&self) -> Option<f32> {
+        self.props
+            .first()
+            .and_then(|prop| prop.row_rate_layers.global)
+    }
+
     /// What the global layer says of the jitter rate: the first prop's, which a
     /// scene's `[living] jitter_rate` and every live change set alike.
     pub fn global_jitter_rate(&self) -> Option<f32> {
@@ -510,6 +557,9 @@ impl LivingProps {
             jitter_rates: (self.props.iter())
                 .map(|p| p.jitter_rate_layers.global)
                 .collect(),
+            row_rates: (self.props.iter())
+                .map(|p| p.row_rate_layers.global)
+                .collect(),
             clocks: (self.props.iter())
                 .map(|p| (p.wooze_below, p.clock_live))
                 .collect(),
@@ -536,6 +586,9 @@ impl LivingProps {
         }
         for (prop, rate) in self.props.iter_mut().zip(&layers.jitter_rates) {
             prop.jitter_rate_layers.global = *rate;
+        }
+        for (prop, rate) in self.props.iter_mut().zip(&layers.row_rates) {
+            prop.row_rate_layers.global = *rate;
         }
         for (prop, (below, live)) in self.props.iter_mut().zip(&layers.clocks) {
             prop.wooze_below = *below;
@@ -736,6 +789,13 @@ impl LivingProps {
                 from(
                     over.jitter_rate.is_some(),
                     prop.jitter_rate_layers.global.is_some(),
+                ),
+            ),
+            row_rate: resolved(
+                self.row_rate(id),
+                from(
+                    over.row_rate.is_some(),
+                    prop.row_rate_layers.global.is_some(),
                 ),
             ),
         }

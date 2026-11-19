@@ -1,0 +1,75 @@
+# A page whose writing reflows (#576): a thin form made only of its lines of
+# strokes, the words drifting along them, sliding out under one margin and in
+# under the other. Its spec is examples/specs/drifting_page.procgen.toml.
+#
+#   cargo run --bin flint -- render examples/drifting_page.scene.toml --time 0..8 -o page.gif
+#   cargo run --bin flint -- render examples/drifting_page.scene.toml --scripts --time 0..12 -o speaking.gif
+#   cargo run --bin flint-player -- examples/drifting_page.scene.toml
+#
+# With --scripts, scripts/drifting_page.rhai speaks through the rows: phrases
+# that quicken the drift and pauses that all but hold it, set with
+# `tune_living(#{ living: #{ row_rate: r } }, seconds)`. The script sets a rate
+# and the engine owns the motion, so the words never jump when it changes.
+
+[scene]
+name = "Drifting Page"
+version = "1.0"
+description = "A page of strokes whose words drift and reflow along their lines"
+
+[camera]
+position = [0.0, 0.85, 1.75]
+target = [0.0, 0.78, 0.0]
+fov = 34.0
+
+[environment]
+ambient_sky = [0.26, 0.28, 0.36]
+ambient_ground = [0.08, 0.07, 0.07]
+
+[post_process]
+exposure = 1.0
+bloom_enabled = true
+bloom_intensity = 0.04
+bloom_threshold = 1.2
+vignette_enabled = true
+vignette_intensity = 0.4
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.03, 0.04, 0.07, 1.0]
+horizon_color = [0.07, 0.07, 0.09, 1.0]
+haze_color = [0.10, 0.09, 0.10, 0.4]
+cloud_tint = [0.4, 0.4, 0.45, 0.5]
+cloud_coverage = 0.1
+sun_glow = 0.2
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 30, 0]
+[entities.sun.light]
+type = "directional"
+direction = [0.3, 0.55, 0.78]    # toward the light, over the camera's shoulder
+color = [1.0, 0.9, 0.78]
+intensity = 2.2
+
+[entities.ground]
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-20, -0.2, -20]
+max = [20, 0, 20]
+[entities.ground.material]
+color = [0.04, 0.04, 0.05, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.page]
+[entities.page.transform]
+position = [0.0, 0.0, 0.0]
+[entities.page.model]
+asset = "drifting_page"
+[entities.page.living_prop]
+phase_offset = 0.0
+
+[entities.voice]
+[entities.voice.script]
+source = "drifting_page.rhai"

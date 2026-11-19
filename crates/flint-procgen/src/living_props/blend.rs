@@ -9,7 +9,7 @@ use super::ring::PoseRing;
 use super::{LivingPropId, LivingProps, TINT_UNSENT};
 use crate::living::{
     boil_bones, LivingClock, LivingJitter, LivingPose, LivingRig, LivingSkeleton, Segment,
-    WarpedTime, BOIL_BONES, JITTER_CHANNELS,
+    WarpedTime, JITTER_CHANNELS,
 };
 use crate::spec::EchoCopy;
 
@@ -64,6 +64,11 @@ pub(super) struct DrawnBones {
     /// Each part's cycle, by segment id. Holds what the part started it with, for
     /// this buffer alone: an echo reaches each beat at a moment of its own.
     pub(super) parts: Vec<Cycle>,
+    /// The row time its drifting words were drawn at (#576).
+    pub(super) row_time: f64,
+    /// The segment bones it last wrote, kept only when its rig has drifting
+    /// words: they move every frame, and each rides its segment's bone.
+    pub(super) segments: Vec<[[f32; 4]; 4]>,
 }
 
 /// One faint copy of a prop, and what its own bones last held.
@@ -114,6 +119,7 @@ impl LivingProps {
             skeleton,
             rig,
             t,
+            prop.row_time,
             prop.beats,
             &prop.wooze,
             crate::spec::slide_shown(prop.echo_slide, 0.0),
@@ -168,9 +174,8 @@ impl LivingProps {
                         .palette_into(skeleton, pose, &mut frame.posed, &mut frame.shadow_bones)
                         .is_ok()
                 {
-                    frame
-                        .shadow_bones
-                        .extend_from_slice(&[[[0.0; 4]; 4]; BOIL_BONES]);
+                    // Held still: no boil, and every word where it was written.
+                    rig.still_bones_into(&mut frame.shadow_bones);
                     prop.drawn.shadow = Some((from, weight));
                     blend.shadow_changed = true;
                 }
@@ -197,6 +202,7 @@ impl LivingProps {
             return None;
         };
         let t = prop.echo_jitter_time(echo, prop.jitter_now());
+        let rows = prop.echo_row_time(echo, prop.row_time);
         let beats = prop.echo_beats(echo);
         let jitter = prop.jitter.scaled(prop.wooze.jitter);
         let copy = prop.echoes[echo].copy;
@@ -211,6 +217,7 @@ impl LivingProps {
             &built.skeleton,
             &built.rig,
             t,
+            rows,
             beats,
             &prop.wooze,
             slide,
@@ -242,8 +249,8 @@ pub(super) struct MovedBones {
 }
 
 /// One bone buffer's blend, a prop's or an echo's: every part reads its own place
-/// on the warped clock at `beats`, and the jitter reads `t` in seconds. If none of
-/// that has moved, this computes nothing.
+/// on the warped clock at `beats`, the jitter reads `t` in seconds, and drifting
+/// words (#576) `row_time`. If none of that has moved, this computes nothing.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn blend_bones(
     clock: &LivingClock,
@@ -253,6 +260,7 @@ pub(super) fn blend_bones(
     skeleton: &LivingSkeleton,
     rig: &LivingRig,
     t: f64,
+    row_time: f64,
     beats: f64,
     wooze: &WoozeSample,
     slide: f32,
@@ -280,6 +288,8 @@ pub(super) fn blend_bones(
         });
     }
     let turned = turns != drawn.turns;
+    let rows = rig.rows.is_some();
+    let rowed = rows && row_time != drawn.row_time;
     let drifted = frame.times != drawn.times || slide != drawn.slide || place != drawn.place;
 
     frame.bones.clear();
@@ -308,15 +318,28 @@ pub(super) fn blend_bones(
             std::mem::swap(&mut drawn.times, &mut frame.times);
             drawn.slide = slide;
             drawn.place = place;
-            boil_bones(&turns, &mut frame.bones);
+            if rows {
+                drawn.segments.clear();
+                drawn.segments.extend_from_slice(&frame.bones);
+            }
+            rig.fast_bones_into(&turns, row_time, &mut frame.bones);
             drawn.turns = turns;
+            drawn.row_time = row_time;
             moved.first_bone = Some(0);
         } else {
             frame.bones.clear();
             moved.starved = true;
         }
     }
-    if moved.first_bone.is_none() && turned {
+    if moved.first_bone.is_none() && rows && (turned || rowed) && !drawn.segments.is_empty() {
+        // Each word rides its segment's bone, so the whole buffer goes up: a
+        // few segments more than the words alone.
+        frame.bones.extend_from_slice(&drawn.segments);
+        rig.fast_bones_into(&turns, row_time, &mut frame.bones);
+        drawn.turns = turns;
+        drawn.row_time = row_time;
+        moved.first_bone = Some(0);
+    } else if moved.first_bone.is_none() && turned && !rows {
         boil_bones(&turns, &mut frame.bones);
         drawn.turns = turns;
         moved.first_bone = Some(rig.bone_segments.len());

@@ -339,6 +339,11 @@ topic = "living"
 purpose = "A colonized pine and a grammar willow that live by noise poses, beside an oak that regrows (#506)"
 
 [[example]]
+scene = "drifting_page.scene.toml"
+topic = "living"
+purpose = "A page made only of its writing, whose words drift and reflow along their lines; with --scripts a voice quickens and holds them through tune_living's row_rate (#576)"
+
+[[example]]
 scene = "soft_form.scene.toml"
 topic = "living"
 purpose = "A pale living form whose silhouette feathers at rest (#582)"

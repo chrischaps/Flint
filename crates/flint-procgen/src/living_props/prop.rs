@@ -37,6 +37,10 @@ pub struct LivingProp {
     /// ticks from here and never where it is. At a rate of 1 it's the props'
     /// clock to the bit.
     pub(super) jitter_time: f64,
+    /// The seconds its words have drifted along their lines through (#576): 0
+    /// when it's added, moved on by `dt` times its row rate, so a new rate
+    /// changes how fast they go from here and never where they are.
+    pub(super) row_time: f64,
     /// See [`Self::beats`].
     pub(super) beats: f64,
     pub(super) position: [f32; 3],
@@ -83,6 +87,8 @@ pub struct LivingProp {
     pub(super) softness_layers: Layered<Option<f32>>,
     /// Its jitter rate's (#529): 1, and the global layer's word.
     pub(super) jitter_rate_layers: Layered<Option<f32>>,
+    /// Its row rate's (#576): 1, and the global layer's word.
+    pub(super) row_rate_layers: Layered<Option<f32>>,
 }
 
 /// New clocks for a prop, held back until its ring has what they read.
@@ -141,6 +147,12 @@ impl LivingProp {
     /// rate (#529).
     pub fn jitter_time(&self) -> f64 {
         self.jitter_time
+    }
+
+    /// The seconds its words have drifted along their lines through (#576):
+    /// what its drift bones read now.
+    pub fn row_time(&self) -> f64 {
+        self.row_time
     }
 
     /// How far into its step cycle it runs, as a fraction of a step.
@@ -202,6 +214,19 @@ impl LivingProp {
     /// behind at any jitter rate (#529).
     pub(super) fn echo_jitter_time(&self, index: usize, t: f64) -> f64 {
         t + f64::from(self.echoes[index].copy.offset) * self.jitter_step
+    }
+
+    /// The seconds echo `index`'s words read when this prop's read `t`: the
+    /// same many pose steps from now as its poses, by the step it was added on,
+    /// on the row clock, so an echo shows the lines a little before or after.
+    pub(super) fn echo_row_time(&self, index: usize, t: f64) -> f64 {
+        t + f64::from(self.echoes[index].copy.offset) * self.jitter_step
+    }
+
+    /// How fast its words drift against its spec's pace (#576), from its
+    /// layers: its species' own, then the global layer's, then 1.
+    pub(super) fn row_rate_in(&self, species: &super::Species) -> f64 {
+        f64::from((self.row_rate_layers).value(species.over.row_rate))
     }
 
     /// How fast its jitter's clock runs against the props' (#529), from its
