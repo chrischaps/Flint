@@ -212,6 +212,7 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 | `stop_sound(handle_or_name, fade)` | As above, fading out over `fade` seconds |
 | `set_sound_volume(handle, volume)` | Set a playing sound's volume (0.0--1.0) |
 | `set_sound_volume(handle, volume, fade)` | Fade it there over `fade` seconds |
+| `is_sound_playing(handle)` | Whether that sound is still playing, as the frame began: `true` from the frame after `play_sound` until it ends or is stopped |
 | `set_bus_volume(bus, volume)` | Set a [mixer bus](#mixer-buses)'s volume by name (`"music"`, `"voice"`...): it scales every sound on the bus and on the buses under it |
 | `audio_position(entity)` | Seconds into the sound the entity's `audio_source` is playing, wrapped for a loop, on the mixer's clock; `-1.0` before it has started and after it ends. See [Keeping time with the music](#keeping-time-with-the-music) |
 | `audio_output_latency()` | How long after it is mixed a sound is heard, seconds, where the platform says (the browser); `-1.0` where it doesn't (the desktop) |
@@ -248,6 +249,23 @@ fn on_interact() {
 }
 ```
 
+`is_sound_playing(handle)` says whether a sound is still going, so a script can wait for one voice line to finish before it starts the next:
+
+```rust
+let lines = ["guide_hello", "guide_follow_me", "guide_mind_the_gap"];
+let next = 0;
+let speaking = 0;
+
+fn on_update() {
+    if next < lines.len() && !is_sound_playing(speaking) {
+        speaking = play_sound(lines[next], #{ bus: "voice" });
+        next += 1;
+    }
+}
+```
+
+- `is_sound_playing` reads what the mixer said as the frame began. It is `true` from the frame after `play_sound`, until the sound plays out or the frame after `stop_sound`; the frame a sound is started or stopped it still gives the answer from before the call. A loop is playing until it is stopped, even while faded to 0.
+- It is `false` for a sound that never started: a name that finds no file, no sound device, a one-shot placed out of earshot, the web before Begin. It is `false` for a handle that was never given (`0`, `-1`, any other number) and always `false` in a headless capture (`flint render --scripts`), which has no sound. On the web a one-shot's end is reckoned from its length, since the worklet reports only the voices it watches.
 - `stop_sound(handle)` stops one sound. `stop_sound(name)` stops every sound a script started under that name, found the same way `play_sound` finds it (see [Sound names](#sound-names)). Neither touches `audio_source`s or trigger sounds.
 - A stop or volume change with no fade still takes 10 ms, so a cut doesn't click.
 - A handle for a sound that has ended, was stopped, or never started (an unknown name, a one-shot placed out of earshot) does nothing and gives no warning.

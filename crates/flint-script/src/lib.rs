@@ -486,6 +486,15 @@ impl ScriptSystem {
         c.audio_output_latency = output_latency;
     }
 
+    /// The handles (`play_sound*`'s, the audio engine's keys) of the sounds
+    /// playing now, for `is_sound_playing` (#1000). The host sets it every
+    /// frame before scripts run, beside [`set_audio_clock`](Self::set_audio_clock).
+    pub fn set_sounds_playing(&mut self, handles: impl IntoIterator<Item = u64>) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.sounds_playing.clear();
+        c.sounds_playing.extend(handles);
+    }
+
     /// Load the script a `script.source` names for a specific entity (for
     /// chunk loading), searched for from `from_dir`, the chunk's own
     /// directory, by the project's one rule (`AssetKind::Scripts`), and

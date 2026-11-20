@@ -881,6 +881,11 @@ pub struct ScriptCallContext {
     /// for `audio_position` (#658). The host sets it each frame, paused or
     /// not; a source missing from it hasn't started.
     pub audio_positions: std::collections::HashMap<EntityId, f64>,
+    /// The handles of the sounds scripts started that are playing, for
+    /// `is_sound_playing` (#1000). The host sets it each frame before
+    /// scripts run, as it does `audio_positions`; a headless host never
+    /// does, so there every handle is silent.
+    pub sounds_playing: HashSet<u64>,
     /// How long after it is mixed a sound is heard, seconds, where the
     /// platform says (the browser), for `audio_output_latency`.
     pub audio_output_latency: Option<f64>,
@@ -984,6 +989,7 @@ impl ScriptCallContext {
             bad_target_warned: HashSet::new(),
             opts_warned: HashSet::new(),
             audio_positions: std::collections::HashMap::new(),
+            sounds_playing: HashSet::new(),
             audio_output_latency: None,
             test: Default::default(),
         }

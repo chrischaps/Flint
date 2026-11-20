@@ -1471,6 +1471,9 @@ impl super::game_core::FrameHost for PlayerApp {
         // paused or not: loops play on under a pause menu.
         self.audio.sample_positions();
         script.set_audio_clock(self.audio.sync.positions(), self.audio.output_latency());
+        // And which of the sounds scripts started still play (#1000): a
+        // command from last frame's batch is in the engine by now
+        script.set_sounds_playing(self.audio.engine.playing_keys());
         // The music clock and the conducted snapshot are the music
         // subsystem's, set at `Stage::PreScripts`, just before this
     }

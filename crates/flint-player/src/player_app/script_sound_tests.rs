@@ -3,6 +3,7 @@
 //! then stops two more by name, with the engine mixing remotely (the
 //! browser's worklet link, its outbox read here): every call the script
 //! made is a command the mixer gets. No window, no GPU, no sound card.
+//! #1000: and `is_sound_playing` says which of them still play.
 
 use super::scene_entry::SceneEntry;
 use super::PlayerApp;
@@ -48,12 +49,14 @@ fn sent(link: &Link) -> Vec<Command> {
     commands
 }
 
-#[test]
-fn a_scripts_stop_sound_stops_the_sound_it_started() {
+/// A player on `script`'s scene, mixing for the worklet's link in place of
+/// the sound card, each of `sounds` a tone that many seconds long; `run`
+/// gets it once the scene has started, with what the start sent taken.
+fn with_sounds(script: &str, sounds: &[(&str, f32)], run: impl FnOnce(&mut PlayerApp, &Link)) {
     let mut files = MemorySource::new();
     files.insert("game/flint.toml", "");
     files.insert("game/scenes/sounds.scene.toml", SCENE);
-    files.insert("game/scripts/speaker.rhai", SCRIPT);
+    files.insert("game/scripts/speaker.rhai", script);
     vfs::scoped(Arc::new(files), || {
         let path = "game/scenes/sounds.scene.toml";
         let registry = flint_schema::SchemaRegistry::new();
@@ -70,27 +73,33 @@ fn a_scripts_stop_sound_stops_the_sound_it_started() {
         );
         app.core.clock.frame_step = Some(1.0 / 30.0);
 
-        // The worklet's link in place of the sound card.
-        // A second long, so the chime is still playing when it's stopped.
-        let tone: Vec<f32> = (0..44_100).map(|i| (i as f32 * 0.06).sin() * 0.5).collect();
         let mut engine = AudioEngine::silent();
-        engine
-            .load_sound_from_samples("hum", 44_100, &[&tone])
-            .unwrap();
-        engine
-            .load_sound_from_samples("chime", 44_100, &[&tone])
-            .unwrap();
+        for (name, seconds) in sounds {
+            let tone: Vec<f32> = (0..(44_100.0 * seconds) as usize)
+                .map(|i| (i as f32 * 0.06).sin() * 0.5)
+                .collect();
+            engine
+                .load_sound_from_samples(name, 44_100, &[&tone])
+                .unwrap();
+        }
         let link = Link::default();
         engine.start_remote(link.clone());
         app.audio.engine = engine;
         app.enter_scene(SceneEntry::Start)
             .expect("the scene starts");
         sent(&link);
+        run(&mut app, &link);
+    });
+}
 
+#[test]
+fn a_scripts_stop_sound_stops_the_sound_it_started() {
+    // A second long, so the chime is still playing when it's stopped.
+    with_sounds(SCRIPT, &[("hum", 1.0), ("chime", 1.0)], |app, link| {
         let mut frames = Vec::new();
         for _ in 0..8 {
             app.tick();
-            frames.push(sent(&link));
+            frames.push(sent(link));
         }
         let plays: Vec<(u32, bool)> = frames
             .iter()
@@ -139,6 +148,78 @@ fn a_scripts_stop_sound_stops_the_sound_it_started() {
                 |c| matches!(c, Command::VoiceStop { voice, tween } if *voice == chime && (*tween - 0.25).abs() < 1e-6)
             ),
             "with the fade asked for"
+        );
+    });
+}
+
+/// #1000: each frame the script asks `is_sound_playing` of a loop it stops
+/// by its handle on frame 2, a half-second one-shot left to end, a sound
+/// that names no file, a one-shot placed out of earshot and a handle
+/// nobody was given, and logs the answers under the frame's number.
+const ASKING: &str = r#"
+let frame = 0;
+let hum = 0;
+let ding = 0;
+let nope = 0;
+let far = 0;
+fn on_update() {
+    if frame == 0 {
+        hum = play_sound("hum", #{ looping: true });
+        ding = play_sound("ding");
+        nope = play_sound("no_such_sound");
+        far = play_sound_at("ding", 500.0, 0.0, 0.0, 1.0);
+    }
+    if frame == 2 { stop_sound(hum); }
+    test_log(`f${frame}`, [
+        is_sound_playing(hum),
+        is_sound_playing(ding),
+        is_sound_playing(nope),
+        is_sound_playing(far),
+        is_sound_playing(987654321),
+    ]);
+    frame += 1;
+}
+"#;
+
+#[test]
+fn a_script_hears_its_sound_play_until_it_ends_or_is_stopped() {
+    with_sounds(ASKING, &[("hum", 1.0), ("ding", 0.5)], |app, _link| {
+        for _ in 0..4 {
+            app.tick();
+        }
+        // Past the ding's half second, on the wall clock the engine
+        // reckons a remote one-shot's end by
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        app.tick();
+        let logged = app.core.script.test_record().logged;
+        let frame = |n: usize| -> Vec<bool> {
+            logged[&format!("f{n}")]
+                .as_array()
+                .expect("a list")
+                .iter()
+                .map(|v| v.as_bool().expect("a bool"))
+                .collect()
+        };
+        // [hum, ding, nope, far, unknown]
+        assert_eq!(
+            frame(0),
+            [false; 5],
+            "the frame play_sound is called, nothing plays yet"
+        );
+        assert_eq!(
+            frame(1),
+            [true, true, false, false, false],
+            "the frame after: the loop and the ding; never the sound with no file, the one out of earshot or a made-up handle"
+        );
+        assert!(
+            frame(2)[0],
+            "stop_sound is a command: the frame it's called still says playing"
+        );
+        assert!(!frame(3)[0], "and the frame after, stopped");
+        assert_eq!(
+            frame(4),
+            [false; 5],
+            "the ding has played out, and nothing else came back"
         );
     });
 }
