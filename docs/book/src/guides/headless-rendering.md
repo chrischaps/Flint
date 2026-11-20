@@ -603,15 +603,15 @@ A golden image pins a frame, and shimmer isn't in any one frame: it is a glyph t
 name = "ascii-motion-tone"
 scene = "tests/fixtures/scenes/ascii_motion.scene.toml"
 args = ["--no-grid", "--style", "ascii:edges=0"]   # any flint render flags but the sequence's own
-frames = 60
+frames = 30
 orbit = 6.8755                  # or camera_path = "path/to/cam.toml"
 max_reversals = 0.5             # A-B-A reversals a frame, the mean; required
 max_flips = 15.0                # glyph changes a frame, the mean; optional
 ```
 
 ```text
-  PASS  ascii-motion-tone   0.00 reversals/frame (limit 0.50), 9.4 flips/frame (limit 15.0), 60 frames, orbit 6.8755 deg/s, 3152 ms
-  PASS  ascii-motion-edges  0.16 reversals/frame (limit 1.00), 19.1 flips/frame (limit 30.0), 60 frames, orbit 6.8755 deg/s, 1153 ms
+  PASS  ascii-motion-tone   0.00 reversals/frame (limit 0.50), 7.9 flips/frame (limit 15.0), 30 frames, orbit 6.8755 deg/s, 998 ms
+  PASS  ascii-motion-edges  0.18 reversals/frame (limit 1.00), 15.3 flips/frame (limit 30.0), 30 frames, orbit 6.8755 deg/s, 985 ms
 ```
 
 The stylize suite has two, on a frozen copy of `examples/ascii_motion` under the #277 bench's slow orbit: `ascii-motion-tone` (the tone glyphs alone, `edges=0`) and `ascii-motion-edges` (the default look, whose line glyphs keep a history of their own since #477). Each budget sits well under what a broken history measures. These are the numbers at 640 x 360 on an RTX 4070, with DX12 within 0.1:
@@ -623,7 +623,9 @@ The stylize suite has two, on a frozen copy of `examples/ascii_motion` under the
 | `temporal = "off"` | 10.5 | 39.9 | 18.8 | 76.7 |
 | the budget | 0.5 | 15 | 1.0 | 30 |
 
-Each case catches its own regression. With the tone glyphs' hold taken out of `ascii_cells.wgsl`, both cases fail (2.21 and 1.84 reversals a frame). With the edge cells' history taken out of `ascii_edge_cells.wgsl`, `ascii-motion-tone` still passes at 0.00 and `ascii-motion-edges` fails at 10.0. `tests/render_goldens.rs` runs the tone case again with `hysteresis=0` and requires it to fail, so a budget loosened past that regression fails the test.
+The cases draw 30 frames since #961 (they were 60, about 160 s of CI's WARP job): the means a frame don't depend on the count. At 20, 30 and 60 frames the tone case reads 0.00 reversals each time and 2.39, 2.32 and 2.21 with `hysteresis = 0`; the edges case 0.17, 0.18 and 0.12, and 3.11, 3.46 and 3.50. Flips grow a little with the count (tone 6.1, 7.9, 9.4). WARP reads what the RTX reads (at 60 frames: 0.00 and 9.4, 0.09 and 17.5).
+
+Each case catches its own regression. With the tone glyphs' hold taken out of `ascii_cells.wgsl`, both cases fail (2.21 and 1.84 reversals a frame). With the edge cells' history taken out of `ascii_edge_cells.wgsl`, `ascii-motion-tone` still passes at 0.00 and `ascii-motion-edges` fails at 10.0. `tests/render_goldens.rs` runs the tone case again with `hysteresis=0`, at 20 frames, and requires it to fail, so a budget loosened past that regression fails the test.
 
 A sequence case takes no `golden`, `text`, `matches`, `error` or `tolerance`, and its `args` can't repeat what its keys say (`--frames`, `--orbit`, `--camera-path`, `--frame-dt`, `--flip-json`, `--output`...): the manifest is refused with the case's name. Its frames are drawn with `--flip-json <case>.flips.json --last-frame`, so the out dir has the per-frame counts and `<case>.png`, the last frame. Its `report.json` entry has a `sequence` object (`reversals_per_frame`, `flips_per_frame`, the budget, and the per-frame `flips` and `reversals`), and it never drifts or blesses: a budget changes only by editing the manifest, with the measurement that justifies it. Sequences are deterministic, so the counts are the same run to run on one adapter.
 

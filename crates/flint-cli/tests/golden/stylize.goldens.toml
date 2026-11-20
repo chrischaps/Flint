@@ -185,7 +185,7 @@ args = ["--no-grid", "--style", "ascii:scope=entities,normalize=1,exposure=0.5"]
 
 # --- ASCII in motion: the shimmer gate (#478) -------------------------------
 #
-# Sequence cases: no golden, a budget. Each draws 60 frames of the
+# Sequence cases: no golden, a budget. Each draws 30 frames of the
 # ascii_motion clearing on one renderer under the #277 bench's slow orbit
 # and counts, from the style's own grid, the glyphs that flip and the ones
 # that flip back (A-B-A reversals, which is what shimmer is). It fails when
@@ -201,6 +201,19 @@ args = ["--no-grid", "--style", "ascii:scope=entities,normalize=1,exposure=0.5"]
 #   edges, temporal = off  18.8            76.7
 #
 # So a history that stops holding fails both cases on reversals and flips.
+#
+# 30 frames, not 60 (#961): a frame is about 1.3 s on CI's WARP, so the two
+# cases were 160 s of the job. The means a frame don't depend on the count
+# (RTX 4070, Vulkan, 2026-11-20; at 20 / 30 / 60 frames):
+#
+#                      reversals/frame       flips/frame
+#   tone, history on    0.00 0.00 0.00      6.1  7.9  9.4
+#   tone, hysteresis 0  2.39 2.32 2.21     23.6 24.2 24.1
+#   edges, history on   0.17 0.18 0.12     13.1 15.3 17.6
+#   edges, hysteresis 0 3.11 3.46 3.50     38.2 39.8 40.5
+#
+# WARP at 60 (CI, the first run that read them): tone 0.00 / 9.4, edges
+# 0.09 / 17.5, the RTX's numbers.
 # A budget is a deliberate number: raise one only with the reason, and the
 # new measurement, here.
 
@@ -209,7 +222,7 @@ args = ["--no-grid", "--style", "ascii:scope=entities,normalize=1,exposure=0.5"]
 name = "ascii-motion-tone"
 scene = "tests/fixtures/scenes/ascii_motion.scene.toml"
 args = ["--no-grid", "--style", "ascii:edges=0"]
-frames = 60
+frames = 30
 orbit = 6.8755
 max_reversals = 0.5
 max_flips = 15.0
@@ -220,7 +233,7 @@ max_flips = 15.0
 name = "ascii-motion-edges"
 scene = "tests/fixtures/scenes/ascii_motion.scene.toml"
 args = ["--no-grid"]
-frames = 60
+frames = 30
 orbit = 6.8755
 max_reversals = 1.0
 max_flips = 30.0

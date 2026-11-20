@@ -121,9 +121,10 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    `max_flips`. `Case::check` refuses a sequence key without `frames`, a sequence with a golden key, and
    sequence flags in `args`, at manifest load. `CaseReport::sequence` carries the per-frame counts; the
    sheet charts them (`golden_sheet::sequence_chart`), `scripts/goldens-summary.py` gives them a row.
-   Cases `ascii-motion-tone` / `-edges` on `tests/fixtures/scenes/ascii_motion` (60 frames, 640x360:
-   0.0 / 0.16 reversals against budgets 0.5 / 1.0; `hysteresis=0` reads 2.2 / 3.5), held by
-   `tests/render_goldens.rs::a_sequence_case_fails_when_the_history_stops_holding`.
+   Cases `ascii-motion-tone` / `-edges` on `tests/fixtures/scenes/ascii_motion` (30 frames since #961,
+   640x360: 0.0 / 0.18 reversals against budgets 0.5 / 1.0; `hysteresis=0` reads 2.3 / 3.5; the means a
+   frame are flat from 20 to 60 frames, and WARP reads the RTX's), held by
+   `tests/render_goldens.rs::a_sequence_case_fails_when_the_history_stops_holding` (at 20 frames).
    CI runs the goldens and `flint-render --test stylize` on WARP (#314, job `GPU tests (WARP)`)
    with `FLINT_REQUIRE_GPU=1`, which turns a GPU test's skip into a failure
    (`gpu_select::skip_without_gpu`; a new GPU test calls it). flint-render's GPU test binaries
