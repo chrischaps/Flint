@@ -373,6 +373,13 @@ pub fn blend_state(mode: ParticleBlendMode) -> wgpu::BlendState {
 
 /// Order draws for correct blending: order-dependent modes far-to-near
 /// (stable on the caller's deterministic order), additive last.
+///
+/// Emitters on one origin tie exactly, and the caller's order decides
+/// them: `ParticleSync` hands its instances over by `EntityId`, which is
+/// the name's rank for a scene's entities (#688). The `style-veil` golden
+/// has such a tie (`blaze` and the campfire's alpha emitters), and drew one
+/// of two images run to run while ids followed `HashMap` spawn order
+/// (#858; `crates/flint-cli/tests/particle_tie_order.rs`).
 pub fn sort_particle_draws(draws: &mut [ParticleDrawCall]) {
     draws.sort_by(|a, b| {
         let ka = a.blend.is_order_independent();
