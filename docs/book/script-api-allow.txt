@@ -46,4 +46,4 @@ concepts/procgen.md: F asset
 concepts/scripting.md: clamp_speed
 
 # Proposed functions: the roadmap's, not yet in the engine
-roadmap.md: find_path move_along_path wait set_reverb_zone set_reverb_mix spawn_decal save_game load_game debug_line debug_box debug_sphere debug_ray
+roadmap.md: wait set_reverb_zone set_reverb_mix spawn_decal save_game load_game debug_line debug_box debug_sphere debug_ray
