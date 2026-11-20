@@ -172,9 +172,9 @@ pub struct GoldenArgs {
     #[arg(long)]
     pub isolate: bool,
 
-    /// Build every case's pipelines and upload its textures anew, as before
-    /// #911 and #961, instead of keeping them for the next case on the
-    /// device: for checking that the reuse changes no pixel, in one process
+    /// Build every case's pipelines and upload its textures and meshes anew,
+    /// as before #911 and #961, instead of keeping them for the next case on
+    /// the device: for checking that the reuse changes no pixel, in one process
     #[arg(long)]
     pub fresh_pipelines: bool,
 }
@@ -640,10 +640,13 @@ enum Rendered {
 /// which was one a case before.
 fn pipeline_summary(kept: bool) -> String {
     let mut counts = flint_render::pipeline_cache::counts();
-    // The models' and files' textures ride the same cache (#961), counted
-    // apart: an upload, not a compile
+    // The models' and files' textures and the meshes' buffers ride the
+    // same cache (#961), counted apart: uploads, not compiles
     let textures = counts
         .remove(flint_render::KEPT_TEXTURE_LABEL)
+        .unwrap_or_default();
+    let meshes = counts
+        .remove(flint_render::KEPT_GEOMETRY_LABEL)
         .unwrap_or_default();
     let built: u64 = counts.values().map(|c| c.built).sum();
     let reused: u64 = counts.values().map(|c| c.reused).sum();
@@ -654,12 +657,14 @@ fn pipeline_summary(kept: bool) -> String {
     format!(
         "pipelines: {built} built, {reused} reused from an earlier case{}; \
          ASCII glyph pipeline built {}, reused {}; \
-         textures: {} uploaded, {} reused",
+         textures: {} uploaded, {} reused; mesh buffers: {} uploaded, {} reused",
         if kept { "" } else { " (--fresh-pipelines)" },
         glyph.built,
         glyph.reused,
         textures.built,
-        textures.reused
+        textures.reused,
+        meshes.built,
+        meshes.reused
     )
 }
 
@@ -874,8 +879,8 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     flint_import::memoize_imports(!args.isolate);
     flint_render::memoize_mip_chains(!args.isolate);
     // And their pipelines (#911): compiling them again was most of a
-    // case's time. And their textures (#961): on WARP uploading a props
-    // scene's was most of the rest. Only what nothing writes is kept, so
+    // case's time. And their textures and mesh buffers (#961): on WARP
+    // uploading a props scene's was most of the rest. Only what nothing writes is kept, so
     // no case sees another's state
     let keep_pipelines = !args.isolate && !args.fresh_pipelines;
     flint_render::pipeline_cache::set_enabled(keep_pipelines);

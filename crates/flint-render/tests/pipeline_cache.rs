@@ -4,8 +4,9 @@
 //! draws, though the first had ASCII's cell history full of another
 //! camera's frames; and a style whose WGSL changed builds a new pipeline
 //! instead of taking the one kept for the old text. A model's or file's
-//! texture rides the same cache (#961): uploaded once a device, keyed by
-//! its pixels, and never written in place while kept.
+//! texture and a mesh's vertex and index buffers ride the same cache
+//! (#961): uploaded once a device, keyed by their bytes, and never written
+//! in place while kept.
 //!
 //! A binary of its own, since the cache (like the shader folder the second
 //! test points at) is the process's. Each test switches it holding the
@@ -394,4 +395,88 @@ fn a_file_texture_is_uploaded_once_a_device_and_never_written_while_kept() {
 
     pipeline_cache::clear();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #961: an imported mesh's vertex and index buffers ride the cache too
+/// (on WARP the skinned YBot's took 0.57 s a case). A second mesh cache on
+/// the device takes the buffers the first uploaded from the same model,
+/// moved vertices get their own, a procedural mesh is never kept (a host
+/// replaces one at run time), and with the cache off nothing is shared.
+#[test]
+fn a_mesh_is_uploaded_once_a_device_by_its_bytes() {
+    let Some(lease) = shared_gpu::lease_alone() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let device = &lease.gpu.device;
+    let label = flint_render::KEPT_GEOMETRY_LABEL;
+    pipeline_cache::set_enabled(true);
+    pipeline_cache::clear();
+    pipeline_cache::reset_counts();
+
+    let sphere = flint_import::import_gltf(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/models/Sphere.glb"),
+    )
+    .unwrap();
+    let mut moved_sphere = sphere.clone();
+    moved_sphere.meshes[0].positions[0][0] += 0.25;
+    let upload = |model: &flint_import::ImportResult| {
+        let mut cache = flint_render::MeshCache::new();
+        cache.upload_imported(device, "probe", model, [1.0; 4]);
+        let mesh = &cache.get("probe").unwrap()[0];
+        (mesh.vertex_buffer.clone(), mesh.index_buffer.clone())
+    };
+    let (first, second) = (upload(&sphere), upload(&sphere));
+    assert!(
+        std::sync::Arc::ptr_eq(&first.0, &second.0),
+        "vertices uploaded twice"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&first.1, &second.1),
+        "indices uploaded twice"
+    );
+    let kept = count(label);
+    assert_eq!(kept.reused, kept.built, "{kept:?}");
+
+    // Other vertices: a buffer of their own; the same indices: the kept ones
+    let moved = upload(&moved_sphere);
+    assert!(
+        !std::sync::Arc::ptr_eq(&moved.0, &first.0),
+        "took the other mesh's vertices"
+    );
+    assert!(std::sync::Arc::ptr_eq(&moved.1, &first.1));
+
+    // A procedural mesh: never kept, so replacing one never piles up
+    let before = count(label);
+    let procedural = || {
+        let mut cache = flint_render::MeshCache::new();
+        let v = |x: f32| flint_render::Vertex {
+            position: [x, 0.0, 0.0],
+            normal: [0.0, 1.0, 0.0],
+            color: [1.0; 4],
+            uv: [0.0; 2],
+        };
+        cache.upload_procedural(
+            device,
+            "made",
+            &[v(0.0), v(1.0), v(2.0)],
+            &[0, 1, 2],
+            Default::default(),
+        );
+        cache.get("made").unwrap()[0].vertex_buffer.clone()
+    };
+    assert!(!std::sync::Arc::ptr_eq(&procedural(), &procedural()));
+    assert_eq!(
+        count(label),
+        before,
+        "a procedural mesh went through the cache"
+    );
+
+    pipeline_cache::set_enabled(false);
+    let own = upload(&sphere);
+    assert!(
+        !std::sync::Arc::ptr_eq(&own.0, &first.0),
+        "shared with the cache off"
+    );
+    pipeline_cache::clear();
 }

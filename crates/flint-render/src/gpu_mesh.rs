@@ -7,6 +7,40 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+/// The label [`crate::pipeline_cache`] counts kept mesh buffers under.
+pub const KEPT_GEOMETRY_LABEL: &str = "Geometry";
+
+/// A mesh's vertex or index buffer made from `contents`, or, while
+/// [`crate::pipeline_cache`] is on (`flint goldens` in one process), the
+/// one an earlier renderer on this device made from the same bytes (#961).
+/// On WARP the skinned YBot's 3.5 MB took 0.57 s to reach the device, every
+/// case that drew it. Only buffers nothing can write are kept: `VERTEX` or
+/// `INDEX` usage alone, no `COPY_DST`, so a kept one is the bytes it was made
+/// from for every renderer that draws it.
+fn geometry_buffer(
+    device: &wgpu::Device,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> Arc<wgpu::Buffer> {
+    debug_assert!(
+        (wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX).contains(usage),
+        "only geometry nothing writes is kept: {usage:?}"
+    );
+    let make = || {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents,
+            usage,
+        })
+    };
+    if !crate::pipeline_cache::enabled() {
+        return Arc::new(make());
+    }
+    let parts = (usage, contents.len(), flint_pixels::fingerprint(contents));
+    crate::pipeline_cache::shared(device, KEPT_GEOMETRY_LABEL, parts, make)
+}
+
 /// A single GPU-resident mesh primitive with its material data
 pub struct GpuMesh {
     /// Shared with every draw call that renders this mesh: static geometry
@@ -185,22 +219,24 @@ impl MeshCache {
                 let vertex_data = bytemuck::cast_slice(&vertices).to_vec();
                 let index_data = bytemuck::cast_slice(&mesh.indices).to_vec();
 
-                let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{} Vertex Buffer", name)),
-                    contents: &vertex_data,
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+                let vertex_buffer = geometry_buffer(
+                    device,
+                    &format!("{} Vertex Buffer", name),
+                    &vertex_data,
+                    wgpu::BufferUsages::VERTEX,
+                );
 
-                let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{} Index Buffer", name)),
-                    contents: &index_data,
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+                let index_buffer = geometry_buffer(
+                    device,
+                    &format!("{} Index Buffer", name),
+                    &index_data,
+                    wgpu::BufferUsages::INDEX,
+                );
 
                 let (aabb_min, aabb_max) = vertex_bounds(&vertices);
                 GpuMesh {
-                    vertex_buffer: Arc::new(vertex_buffer),
-                    index_buffer: Arc::new(index_buffer),
+                    vertex_buffer,
+                    index_buffer,
                     index_count: mesh.indices.len() as u32,
                     material,
                     aabb_min,
@@ -334,22 +370,24 @@ impl MeshCache {
                 let vertex_data = bytemuck::cast_slice(&vertices).to_vec();
                 let index_data = bytemuck::cast_slice(&mesh.indices).to_vec();
 
-                let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{} Vertex Buffer", name)),
-                    contents: &vertex_data,
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+                let vertex_buffer = geometry_buffer(
+                    device,
+                    &format!("{} Vertex Buffer", name),
+                    &vertex_data,
+                    wgpu::BufferUsages::VERTEX,
+                );
 
-                let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{} Index Buffer", name)),
-                    contents: &index_data,
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+                let index_buffer = geometry_buffer(
+                    device,
+                    &format!("{} Index Buffer", name),
+                    &index_data,
+                    wgpu::BufferUsages::INDEX,
+                );
 
                 let (aabb_min, aabb_max) = vertex_bounds(&vertices);
                 GpuMesh {
-                    vertex_buffer: Arc::new(vertex_buffer),
-                    index_buffer: Arc::new(index_buffer),
+                    vertex_buffer,
+                    index_buffer,
                     index_count: mesh.indices.len() as u32,
                     material,
                     aabb_min,
@@ -479,17 +517,19 @@ impl MeshCache {
 
                 let index_data = bytemuck::cast_slice(&mesh.indices).to_vec();
 
-                let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{} Skinned Vertex Buffer", name)),
-                    contents: bytemuck::cast_slice(&vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+                let vertex_buffer = geometry_buffer(
+                    device,
+                    &format!("{} Skinned Vertex Buffer", name),
+                    bytemuck::cast_slice(&vertices),
+                    wgpu::BufferUsages::VERTEX,
+                );
 
-                let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{} Skinned Index Buffer", name)),
-                    contents: &index_data,
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+                let index_buffer = geometry_buffer(
+                    device,
+                    &format!("{} Skinned Index Buffer", name),
+                    &index_data,
+                    wgpu::BufferUsages::INDEX,
+                );
 
                 let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     layout: bone_bind_group_layout,
@@ -501,8 +541,8 @@ impl MeshCache {
                 });
 
                 GpuSkinnedMesh {
-                    vertex_buffer: Arc::new(vertex_buffer),
-                    index_buffer: Arc::new(index_buffer),
+                    vertex_buffer,
+                    index_buffer,
                     index_count: mesh.indices.len() as u32,
                     material,
                     bone_buffer: bone_buffer.clone(),
@@ -602,6 +642,9 @@ impl MeshCache {
         let vertex_data = bytemuck::cast_slice(vertices).to_vec();
         let index_data = bytemuck::cast_slice(indices).to_vec();
 
+        // Never kept (#961): a host replaces a procedural mesh at run time
+        // (a living prop, a sweep), and a cache keyed by its bytes would
+        // keep every version
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{} Procedural Vertex Buffer", name)),
             contents: &vertex_data,

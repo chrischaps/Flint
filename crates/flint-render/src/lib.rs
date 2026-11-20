@@ -78,7 +78,7 @@ pub use frustum::Frustum;
 pub use glyph_atlas::{
     EdgeGlyphs, GlyphAtlas, GlyphError, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphAtlas, RampMap,
 };
-pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
+pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache, KEPT_GEOMETRY_LABEL};
 pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
 pub use gpu_timer::{
     GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread, TracedGpuFrame, TracedPass,
