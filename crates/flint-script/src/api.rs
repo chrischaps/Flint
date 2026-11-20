@@ -48,6 +48,8 @@ mod particle;
 mod persistence;
 mod physics;
 mod post_process;
+#[cfg(test)]
+mod post_process_tests;
 mod quality;
 pub mod registry;
 mod scene;

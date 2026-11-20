@@ -520,16 +520,18 @@ fn error_at(func: &'static str, pos: Position, message: impl std::fmt::Display) 
     ))
 }
 
-/// A call into a module the host hasn't enabled (#698).
+/// A call into a module the host hasn't enabled (#698). Its text is tagged
+/// [`crate::errors::ONCE_A_SCENE`], so the error store logs it once a
+/// scene rather than at 1, 10, 100... calls (#856): a shared script calling
+/// the module each frame in a scene without it is the expected case.
 fn not_enabled(func: &'static str, gate: crate::module::Gate, pos: Position) -> CallError {
-    Box::new(EvalAltResult::ErrorRuntime(
-        format!(
-            "{func}: the {} module is not enabled here; it is enabled when {}",
-            gate.module, gate.enabled_when
-        )
-        .into(),
-        pos,
-    ))
+    let mut text: rhai::Dynamic = format!(
+        "{func}: the {} module is not enabled here; it is enabled when {}",
+        gate.module, gate.enabled_when
+    )
+    .into();
+    text.set_tag(crate::errors::ONCE_A_SCENE.into());
+    Box::new(EvalAltResult::ErrorRuntime(text, pos))
 }
 
 fn no_world(func: &'static str, pos: Position) -> CallError {

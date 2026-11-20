@@ -920,15 +920,16 @@ blend_source = "tear"     # "own", the default, is the blend alone
 transition = "dissolve"   # cells turn whole at the tear's frayed rim
 ```
 
-The tear alone has no look of its own, so the props that follow it are the only thing it shows. With a whole-frame style following it too (`matrix` with `blend_source = "tear"`), the props turn inside the same holes the style shows in (an ASCII prop in a matrix tear is glyphized from the code rain, as above). A scene sets it in `[post_process]`, and a script with `set_tear`, which holds until set again:
+The tear alone has no look of its own, so the props that follow it are the only thing it shows. With a whole-frame style following it too (`matrix` with `blend_source = "tear"`), the props turn inside the same holes the style shows in (an ASCII prop in a matrix tear is glyphized from the code rain, as above). A scene sets it in `[post_process]`, and a script with `set_post("tear", ...)`, which holds until set again:
 
 ```rust
 fn on_init() {
-    set_tear_shape(2.4, false);   // patch scale 2.4, patches (not the iris)
+    set_post("tear_scale", 2.4);  // patch scale 2.4
+    set_post("tear_iris", false); // patches, not the iris
 }
 
 fn on_update() {
-    set_tear(0.5);                // half the clearing torn
+    set_post("tear", 0.5);        // half the clearing torn
 }
 ```
 

@@ -13,8 +13,21 @@
 //! Load and compile errors are recorded the same way, with
 //! [`LOAD`] and [`COMPILE`] for the callback, so a script that never ran
 //! counts as much as one that fails each frame.
+//!
+//! A call into a script module the scene hasn't enabled (#698) is an error
+//! a shared script makes on purpose in every scene without the feature, so
+//! it is logged once a scene instead (#856, [`ONCE_A_SCENE`]): the first
+//! time, and again the first time after a transition or a reload of its
+//! file. It is counted, shown on the card, summed and failed under
+//! `--strict-scripts` as any other.
 
 use std::fmt;
+
+/// The tag on a run-time error's text that makes it logged once a scene
+/// (#856): what a call into a module that isn't enabled returns. Any other
+/// error is logged at 1, 10, 100... calls. An `i16`, since Rhai's tag is
+/// one on 32-bit targets (wasm) and an `i32` on 64-bit ones.
+pub const ONCE_A_SCENE: i16 = 856;
 
 /// The callback of an error found loading a script: its file wasn't found.
 pub const LOAD: &str = "load";
@@ -63,6 +76,9 @@ pub struct ScriptError {
     /// its file is reloaded or its scene is gone. The error card shows only
     /// these; the run's count keeps every one.
     pub current: bool,
+    /// Logged once a scene rather than at 1, 10, 100... (#856): a call into
+    /// a module the scene hasn't enabled.
+    pub once_a_scene: bool,
 }
 
 impl ScriptError {
@@ -118,6 +134,9 @@ pub struct Failure {
     pub line: Option<usize>,
     pub column: Option<usize>,
     pub message: String,
+    /// Log it once a scene (#856): the error's text carried
+    /// [`ONCE_A_SCENE`].
+    pub once_a_scene: bool,
 }
 
 impl Failure {
@@ -150,6 +169,10 @@ impl Failure {
                 _ => break,
             }
         }
+        let once_a_scene = matches!(
+            at,
+            rhai::EvalAltResult::ErrorRuntime(value, _) if i64::from(value.tag()) == i64::from(ONCE_A_SCENE)
+        );
         let pos = at.position();
         // Rhai ends the text with the position, which is kept apart
         let text = at.to_string();
@@ -166,6 +189,7 @@ impl Failure {
             line: pos.line(),
             column: pos.position(),
             message,
+            once_a_scene,
         }
     }
 
@@ -181,6 +205,7 @@ impl Failure {
             line,
             column,
             message,
+            once_a_scene: false,
         }
     }
 
@@ -194,6 +219,7 @@ impl Failure {
             line: None,
             column: None,
             message: message.to_string(),
+            once_a_scene: false,
         }
     }
 }
@@ -235,6 +261,8 @@ pub struct ScriptErrors {
     frame: u64,
     /// Whether to log (tests of the counting turn it off).
     quiet: bool,
+    /// Lines logged for failures, or that would have been when quiet.
+    logged: u64,
 }
 
 impl ScriptErrors {
@@ -243,7 +271,10 @@ impl ScriptErrors {
     }
 
     /// Count a failure. The first of its kind is logged whole; then at the
-    /// 10th, 100th, 1000th... with the count.
+    /// 10th, 100th, 1000th... with the count. One marked `once_a_scene` is
+    /// logged whole the first time and the first time again after
+    /// [`Self::scene_cleared`] or its file's [`Self::file_reloaded`], and at
+    /// no count (#856).
     pub fn record(&mut self, failure: Failure) {
         self.total += 1;
         let frame = self.frame;
@@ -255,6 +286,7 @@ impl ScriptErrors {
         }) {
             err.count += 1;
             err.last_frame = frame;
+            let new_here = !err.current;
             err.current = true;
             if err.entity_name != failure.entity_name
                 && !err.also_on.contains(&failure.entity_name)
@@ -262,15 +294,29 @@ impl ScriptErrors {
             {
                 err.also_on.push(failure.entity_name);
             }
-            if !self.quiet && is_milestone(err.count) {
-                let first = err.message.lines().next().unwrap_or("");
-                tracing::warn!(
-                    "[script] {}: {}: the same error {} times since frame {}: {first}",
-                    err.location(),
-                    err.context(),
-                    err.count,
-                    err.first_frame
-                );
+            if err.once_a_scene {
+                if new_here {
+                    self.logged += 1;
+                    if !self.quiet {
+                        tracing::warn!(
+                            "[script] {err} (logged once a scene; {} times in all since frame {})",
+                            err.count,
+                            err.first_frame
+                        );
+                    }
+                }
+            } else if is_milestone(err.count) {
+                self.logged += 1;
+                if !self.quiet {
+                    let first = err.message.lines().next().unwrap_or("");
+                    tracing::warn!(
+                        "[script] {}: {}: the same error {} times since frame {}: {first}",
+                        err.location(),
+                        err.context(),
+                        err.count,
+                        err.first_frame
+                    );
+                }
             }
             return;
         }
@@ -287,10 +333,14 @@ impl ScriptErrors {
             first_frame: frame,
             last_frame: frame,
             current: true,
+            once_a_scene: failure.once_a_scene,
         };
+        self.logged += 1;
         if !self.quiet {
             let more = if err.is_load_error() {
                 ""
+            } else if err.once_a_scene {
+                " (logged once a scene)"
             } else {
                 " (logged again at 10, 100, 1000... times)"
             };
@@ -442,6 +492,13 @@ impl ScriptErrors {
     pub fn set_quiet(&mut self, quiet: bool) {
         self.quiet = quiet;
     }
+
+    /// How many lines [`Self::record`] has logged (or would have, quiet):
+    /// what a test of how often an error is said reads (#856).
+    #[doc(hidden)]
+    pub fn lines_logged(&self) -> u64 {
+        self.logged
+    }
 }
 
 /// 10, 100, 1000...
@@ -469,7 +526,58 @@ mod tests {
             line: Some(line),
             column: Some(5),
             message: message.into(),
+            once_a_scene: false,
         }
+    }
+
+    #[test]
+    fn an_error_is_logged_at_one_ten_and_a_hundred() {
+        let mut errors = ScriptErrors::new();
+        errors.set_quiet(true);
+        for _ in 0..600 {
+            errors.next_frame();
+            errors.record(failure("boom", 1));
+        }
+        assert_eq!(errors.lines_logged(), 3, "1, 10, 100");
+        // A transition doesn't change that: it's counted on from 600
+        errors.scene_cleared();
+        for _ in 0..600 {
+            errors.record(failure("boom", 1));
+        }
+        assert_eq!(errors.lines_logged(), 4, "1000");
+    }
+
+    /// A call into a module that isn't enabled (#856): once a scene, and
+    /// once again after its file reloads.
+    #[test]
+    fn a_once_a_scene_error_is_logged_once_until_the_scene_changes() {
+        let mut errors = ScriptErrors::new();
+        errors.set_quiet(true);
+        let gated = Failure {
+            once_a_scene: true,
+            ..failure("tune_living: the living module is not enabled here", 4)
+        };
+        for _ in 0..600 {
+            errors.next_frame();
+            errors.record(gated.clone());
+        }
+        assert_eq!(errors.lines_logged(), 1);
+        assert_eq!(errors.all()[0].count, 600, "every call still counted");
+        assert!(errors.all()[0].once_a_scene);
+
+        errors.scene_cleared();
+        assert!(errors.on_screen().is_empty());
+        for _ in 0..600 {
+            errors.record(gated.clone());
+        }
+        assert_eq!(errors.lines_logged(), 2, "once more in the next scene");
+        assert_eq!(errors.on_screen().len(), 1);
+
+        errors.file_reloaded("scripts/hud.rhai");
+        errors.record(gated.clone());
+        errors.record(gated);
+        assert_eq!(errors.lines_logged(), 3, "and once after a reload");
+        assert_eq!(errors.total(), 1202);
     }
 
     #[test]

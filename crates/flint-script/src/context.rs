@@ -9,6 +9,7 @@ use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_physics::PhysicsSystem;
 use flint_runtime::{GameStateMachine, PersistentStore};
+use flint_schema::post_effects::{self, PostValue};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
@@ -390,14 +391,11 @@ pub enum ScriptCommand {
     SetCamera {
         camera: CameraOverrides,
     },
-    /// `set_vignette`, `set_bloom_intensity`, `set_exposure` and the other
-    /// post-processing overrides: each held, once set, until set again.
+    /// `set_post(param, value)` and the deprecated setters it replaced
+    /// (`set_vignette`, `set_fog_color`, ...; #853): `[post_process]` keys,
+    /// each held, once set, until set again.
     SetPostProcess {
         post: PostProcessOverrides,
-    },
-    /// `set_fog_color`, linear 0..1, held until set again.
-    SetFogColor {
-        color: [f32; 3],
     },
     /// `set_render_mode` (mode, mix: shown only the frames it is called)
     /// and `set_render_mode_params` (held).
@@ -433,52 +431,82 @@ pub enum ScriptCommand {
     },
 }
 
-/// The post-processing overrides scripts set: each `Some` only if its
-/// `set_*` was called since the last drain.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+/// The `[post_process]` values scripts set (`set_post`, #853): each key
+/// only if it was set since the last drain, the last value a key was given
+/// winning. Every key is a [`post_effects`] parameter and every value its
+/// kind, checked when set, so a host writes them over its config with
+/// `config.param_mut(key)` and [`PostParamMut::put`].
+///
+/// [`PostParamMut::put`]: flint_schema::post_effects::PostParamMut::put
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct PostProcessOverrides {
-    pub vignette: Option<f32>,
-    pub bloom: Option<f32>,
-    pub exposure: Option<f32>,
-    pub chromatic_aberration: Option<f32>,
-    pub radial_blur: Option<f32>,
-    pub ssao_intensity: Option<f32>,
-    pub fog_density: Option<f32>,
-    pub desaturation: Option<f32>,
-    pub dof_strength: Option<f32>,
-    pub dof_focus_distance: Option<f32>,
-    pub dof_focus_range: Option<f32>,
-    /// `[post_process] tear`, `tear_scale` and `tear_iris` (#746:
-    /// `set_tear`, `set_tear_shape`).
-    pub tear: Option<f32>,
-    pub tear_scale: Option<f32>,
-    pub tear_iris: Option<bool>,
+    values: std::collections::BTreeMap<&'static str, PostValue>,
 }
 
 impl PostProcessOverrides {
+    /// Set `key` to `value`, refused with why when `key` is no
+    /// `[post_process]` key (the message lists them) or `value` is not its
+    /// kind ("`fog_color` is three numbers: [r, g, b], not 0.5").
+    pub fn set(&mut self, key: &str, value: &toml::Value) -> Result<(), String> {
+        let param = post_effects::param(key).ok_or_else(|| post_effects::unknown_key(key))?;
+        let value = param
+            .value_of(value)
+            .map_err(|why| format!("`{key}` {why}, not {value}"))?;
+        self.values.insert(param.key, value);
+        Ok(())
+    }
+
+    /// Set `key` to `value`, which the caller knows is the key's kind (a
+    /// deprecated setter's body). Panics on a key that is no parameter or a
+    /// value of another kind: a mistake in the engine, not a script's.
+    pub fn put(&mut self, key: &'static str, value: PostValue) {
+        let param = post_effects::param(key).unwrap_or_else(|| panic!("no post key {key}"));
+        assert_eq!(
+            std::mem::discriminant(&param.default),
+            std::mem::discriminant(&value),
+            "{key} is a {}",
+            param.kind.name()
+        );
+        self.values.insert(param.key, value);
+    }
+
+    /// A number key's value, when it was set.
+    pub fn f32(&self, key: &str) -> Option<f32> {
+        match self.values.get(key)? {
+            PostValue::F32(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Set or clear a number key (the rhythm ladder's merge writes over
+    /// what scripts asked of `radial_blur` and two more).
+    pub fn set_f32(&mut self, key: &'static str, value: Option<f32>) {
+        match value {
+            Some(v) => self.put(key, PostValue::F32(v)),
+            None => {
+                self.values.remove(key);
+            }
+        }
+    }
+
+    /// The value `key` was set to.
+    pub fn get(&self, key: &str) -> Option<PostValue> {
+        self.values.get(key).copied()
+    }
+
+    /// Nothing set.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// Each key set and its value, in key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, PostValue)> + '_ {
+        self.values.iter().map(|(k, v)| (*k, *v))
+    }
+
     /// Lay `later` over these: what it sets wins, what it leaves stays.
     pub fn merge(&mut self, later: PostProcessOverrides) {
-        macro_rules! keep {
-            ($($field:ident),*) => {
-                $(if later.$field.is_some() { self.$field = later.$field; })*
-            };
-        }
-        keep!(
-            vignette,
-            bloom,
-            exposure,
-            chromatic_aberration,
-            radial_blur,
-            ssao_intensity,
-            fog_density,
-            desaturation,
-            dof_strength,
-            dof_focus_distance,
-            dof_focus_range,
-            tear,
-            tear_scale,
-            tear_iris
-        );
+        self.values.extend(later.values);
     }
 }
 
@@ -517,7 +545,6 @@ impl CameraOverrides {
 pub struct FrameRequests {
     pub camera: CameraOverrides,
     pub post: PostProcessOverrides,
-    pub fog_color: Option<[f32; 3]>,
     /// Shown only the frames a script asks for it (a reality tear).
     pub render_mode: Option<(u32, f32)>,
     pub mode_params: Option<[f32; 4]>,
@@ -1091,11 +1118,8 @@ impl ScriptCallContext {
         if r.camera != CameraOverrides::default() {
             out.push(ScriptCommand::SetCamera { camera: r.camera });
         }
-        if r.post != PostProcessOverrides::default() {
+        if !r.post.is_empty() {
             out.push(ScriptCommand::SetPostProcess { post: r.post });
-        }
-        if let Some(color) = r.fog_color {
-            out.push(ScriptCommand::SetFogColor { color });
         }
         if r.render_mode.is_some() || r.mode_params.is_some() {
             out.push(ScriptCommand::SetRenderMode {

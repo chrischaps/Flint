@@ -434,10 +434,11 @@ impl Subsystem for LivingSubsystem {
         Self::NAME
     }
 
-    /// Its three script modules (`living_api.rs`, #698): a script can turn
-    /// the knobs, the field and the A/B wherever it runs.
+    /// Its script modules (`living_api.rs`, #698): a script can turn the
+    /// knobs and the field wherever it runs, and the A/B and the commit
+    /// there in a build with the debug HUD (#854).
     fn script_modules(&self) -> &[&'static str] {
-        &["wooze", "living", "debug"]
+        crate::player_app::living_api::ENABLED
     }
 
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {

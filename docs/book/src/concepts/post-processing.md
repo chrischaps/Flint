@@ -607,8 +607,9 @@ The `ocean` component's `tint` (0--1) moves its whole palette toward another bef
 ```rhai
 set_post_style("matrix", true);
 set_post_style_param("matrix", "blend_source", "tear");
-set_tear(0.6);                              // held until set again
-set_tear_shape(3.0, false);                 // scale, iris
+set_post("tear", 0.6);                      // held until set again
+set_post("tear_scale", 3.0);
+set_post("tear_iris", false);
 set_post_style_param("drunk", "blend", 0.4);
 set_field(get_entity("ocean"), "ocean", "tint", 0.7);
 ```

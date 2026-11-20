@@ -193,10 +193,7 @@ pub trait ScriptHost {
         self.unsupported("set_camera_*");
     }
     fn set_post_process(&mut self, post: PostProcessOverrides) {
-        self.unsupported("set_vignette and the post-process overrides");
-    }
-    fn set_fog_color(&mut self, color: [f32; 3]) {
-        self.unsupported("set_fog_color");
+        self.unsupported("set_post");
     }
     fn set_render_mode(&mut self, mode: Option<(u32, f32)>, params: Option<[f32; 4]>) {
         self.unsupported("set_render_mode");
@@ -344,7 +341,6 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
         C::SetLook { name, seconds } => host.set_look(name, seconds),
         C::SetCamera { camera } => host.set_camera(camera),
         C::SetPostProcess { post } => host.set_post_process(post),
-        C::SetFogColor { color } => host.set_fog_color(color),
         C::SetRenderMode { mode, params } => host.set_render_mode(mode, params),
         C::SetLodScales {
             lod_scale,
@@ -413,8 +409,7 @@ pub fn command_name(cmd: &ScriptCommand) -> Option<&'static str> {
         C::Rumble { .. } => "rumble",
         C::SetLook { .. } => "set_look",
         C::SetCamera { .. } => "set_camera_*",
-        C::SetPostProcess { .. } => "set_vignette and the post-process overrides",
-        C::SetFogColor { .. } => "set_fog_color",
+        C::SetPostProcess { .. } => "set_post",
         C::SetRenderMode { .. } => "set_render_mode",
         C::SetLodScales { .. } => "set_lod_scale",
         C::SetQuality { .. } => "set_quality",
@@ -507,7 +502,10 @@ mod tests {
         let mut c = ScriptCallContext::new();
         c.commands.push(ScriptCommand::QuitGame);
         c.requests.camera.fov = Some(50.0);
-        c.requests.post.vignette = Some(0.3);
+        c.requests
+            .post
+            .set("vignette_intensity", &0.3.into())
+            .unwrap();
         c.requests.time_scale = Some(0.25);
         c.requests.lod_scale = Some(0.5);
         let cmds = c.take_commands();

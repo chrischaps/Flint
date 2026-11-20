@@ -1,5 +1,5 @@
 // Showcase Anvil — spark bursts on interaction with persistent counter
-// Demonstrates: emit_burst(), persist_get/set(), set_bloom_intensity()
+// Demonstrates: emit_burst(), persist_get/set(), set_post("bloom_intensity")
 
 let sparks_emitter = -1;
 let bloom_flash_timer = 0.0;
@@ -16,7 +16,7 @@ fn on_update() {
     if bloom_flash_timer > 0.0 {
         bloom_flash_timer -= dt;
         let flash = clamp(bloom_flash_timer / 0.3, 0.0, 1.0);
-        set_bloom_intensity(0.10 + flash * 0.25);
+        set_post("bloom_intensity", 0.10 + flash * 0.25);
     }
 }
 

@@ -454,10 +454,27 @@ twist = 5.0               # Banked turn
 | `control_points[].position` | `[f32; 3]` | 3D position `[x, y, z]` |
 | `control_points[].twist` | f32 | Banking angle in degrees (interpolated with C1 continuity via Catmull-Rom). Default 0 |
 | `control_points[].gap_after` | bool | No geometry from this point to the next: a `spline_mesh` stops and caps itself on both sides. Default false |
+| `control_points[].attrs` | table | The game's own data along the path, from this point to the next: `attrs = { surface = "ice", speed = 0.6 }`. Any TOML values; may not name `gap_after` |
 
 `[spline]` and at least two control points are required, each `position` exactly three numbers, and `spacing` above 0 (default 2). `closed` defaults to true. A file that breaks any of these is named with its line and column, by `flint check` as `bad-spline` and in the warning the loader logs, and the spline is left out; keys the format doesn't read (`name`) are allowed.
 
 The engine samples the control points into a dense array using Catmull-Rom interpolation, stored as the `spline_data` ECS component. Scripts can query this data via `spline_closest_point()` and `spline_sample_at()`.
+
+**Attributes along the path.** A point's `attrs` hold from it to the next point; a point that doesn't name an attribute leaves it unset there (it doesn't carry the last value on). Neighbouring points with equal values make one span, and on a closed spline a span through the last point carries on round into the first. `gap_after = true` is read the same way, as the attribute `gap_after`, `true` over each gap. A script reads them with `spline_point_attr(spline, "surface", t)` (the value, or `()`) and `spline_point_attr_span(spline, "gap_after", t)` (`#{value, start_t, end_t}`, or `()`):
+
+```toml
+[[control_points]]
+position = [0, 0, 0]
+attrs = { surface = "ice" }    # ice from here...
+
+[[control_points]]
+position = [40, 0, 0]
+attrs = { surface = "ice" }    # ...through here, one span...
+gap_after = true               # ...and a jump from here to the next point
+
+[[control_points]]
+position = [80, 4, 0]          # no surface from here
+```
 
 ## UI Layouts (`ui/*.ui.toml`)
 

@@ -656,6 +656,23 @@ impl Run<'_> {
                 return Some(out);
             }
         };
+        // A name the engine knows, written as a literal (#853)
+        for &(func, index, problem) in NAMED_ARGS {
+            let given = call.strs.get(index).and_then(Option::as_deref);
+            if let Some(why) = (call.name == func)
+                .then_some(given)
+                .flatten()
+                .and_then(problem)
+            {
+                out.push(
+                    Diagnostic::error(
+                        codes::BAD_ARGUMENT,
+                        format!("`{func}` argument {}: {why}", index + 1 + skip),
+                    )
+                    .hint(entry.signature()),
+                );
+            }
+        }
         if at.iter().all(|e| e.deprecated.is_some()) {
             let note = entry.deprecated.unwrap_or_default();
             out.push(
@@ -852,6 +869,9 @@ struct CallSite {
     method: bool,
     /// Each argument's literal kind, or `None` where it isn't a literal.
     args: Vec<Option<Lit>>,
+    /// Each argument's text, where it is a plain string literal: what a
+    /// [`NAMED_ARGS`] function's name is checked from.
+    strs: Vec<Option<String>>,
     /// The function it is in; `None` at the top level.
     within: Option<String>,
     line: usize,
@@ -942,6 +962,18 @@ fn visit(nodes: &[ASTNode], within: Option<&str>, seen: &mut Seen) -> bool {
     true
 }
 
+/// Declared functions with an argument naming something the engine knows,
+/// so a literal that names nothing fails the check where it would fail the
+/// call at run time: the function, the argument's index and what is wrong
+/// with a name (#853).
+type NameProblem = fn(&str) -> Option<String>;
+const NAMED_ARGS: &[(&str, usize, NameProblem)] = &[("set_post", 0, |key| {
+    use flint_schema::post_effects;
+    post_effects::param(key)
+        .is_none()
+        .then(|| post_effects::unknown_key(key))
+})];
+
 fn place(pos: rhai::Position) -> (usize, usize) {
     (pos.line().unwrap_or(1), pos.position().unwrap_or(1))
 }
@@ -970,6 +1002,14 @@ fn call(x: &FnCallExpr, pos: rhai::Position, method: bool, within: Option<&str>,
         namespace,
         method,
         args: x.args.iter().map(Lit::of).collect(),
+        strs: x
+            .args
+            .iter()
+            .map(|e| match e {
+                Expr::StringConstant(s, _) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect(),
         within: within.map(str::to_string),
         line,
         col,

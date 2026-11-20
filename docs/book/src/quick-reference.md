@@ -327,8 +327,7 @@ position = [0, 0, 0]
 | `draw_world_text(x, y, z, text, size, opts)` | `()` | Text at a world point, hidden behind nearer geometry: a billboard in points, or painted on a plane (`facing`) in world units |
 | `delta_time()` | `f64` | Seconds since last frame |
 | `play_sound(name)` | --- | Play a sound effect |
-| `set_dof(strength)` / `set_dof_focus(dist, range)` | --- | Drive depth of field from a script |
-| `set_desaturation(amount)` | --- | Drain colour toward ash-grey (0–1) |
+| `set_post(key, value)` | --- | Set a `[post_process]` key until set again: `set_post("dof_strength", 0.6)`, `set_post("desaturate", 0.5)`, `set_post("fog_color", [r, g, b])`; `flint render --list-effects` lists the keys |
 | `set_camera_roll(radians)` | --- | Roll the camera about its view axis |
 | `conducted_lean()` / `conducted_coherence()` | `#{x,y}` / `f64` | Read the running music session (neutral until it runs; a charted scene only, #698) |
 | `play_clip(id, clip)` | --- | Play an animation clip |

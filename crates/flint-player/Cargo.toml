@@ -63,12 +63,14 @@ music = ["dep:flint-music"]
 procgen = ["dep:flint-procgen"]
 # Living props and the wooze field (#211-#252): props that hold and glide,
 # the `[living]` / `[wooze]` tables, shallow wooze, woozy grass, the A/B
-# compare, the `wooze`, `living` and `debug` script modules and the Living
-# Props panel. Needs procgen, which makes the props' poses. Off, a scene with
-# any of it says so once and stands still.
+# compare, the `wooze` and `living` script modules, and with `debug-hud` the
+# `debug` one (the A/B and commit calls, #854) and the Living Props panel.
+# Needs procgen, which makes the props' poses. Off, a scene with any of it
+# says so once and stands still.
 living = ["procgen", "flint-debug-ui?/living"]
-# Summonable debug overlay (Phase 4 F8, ADR 0035). Feature-off builds carry
-# zero debug surface and must still compile.
+# Summonable debug overlay (Phase 4 F8, ADR 0035), and the `debug` script
+# module where living props run (#854). Feature-off builds carry zero debug
+# surface and must still compile.
 debug-hud = ["dep:flint-debug-ui"]
 # The frame profiler (ADR 0109): the frame loop's and the renderer's scopes
 # (and wgpu's own) go to Tracy, and each frame is marked. Off, the scopes

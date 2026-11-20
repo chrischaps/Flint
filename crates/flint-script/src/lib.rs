@@ -1211,13 +1211,13 @@ mod tests {
         let mut system = ScriptSystem::new();
         {
             let mut c = crate::lock_or_recover(&system.engine.ctx);
-            c.requests.post.desaturation = Some(0.85);
+            c.requests.post.set("desaturate", &0.85.into()).unwrap();
         }
         let commands = system.drain_commands();
         assert!(
             matches!(
                 commands.as_slice(),
-                [ScriptCommand::SetPostProcess { post }] if post.desaturation == Some(0.85)
+                [ScriptCommand::SetPostProcess { post }] if post.f32("desaturate") == Some(0.85)
             ),
             "{commands:?}"
         );

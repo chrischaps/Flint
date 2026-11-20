@@ -17,7 +17,8 @@ let period = 12.0;
 
 fn on_init() {
     // Patches a little bigger than the default 3 across the frame's height
-    set_tear_shape(2.4, false);
+    set_post("tear_scale", 2.4);
+    set_post("tear_iris", false);
 }
 
 fn on_update() {
@@ -30,5 +31,5 @@ fn on_update() {
     let rise = ((t - 1.0) / 4.0).max(0.0).min(1.0);
     let fall = ((11.0 - t) / 4.0).max(0.0).min(1.0);
     let s = rise.min(fall);
-    set_tear(s * s * (3.0 - 2.0 * s) * 0.8);
+    set_post("tear", s * s * (3.0 - 2.0 * s) * 0.8);
 }

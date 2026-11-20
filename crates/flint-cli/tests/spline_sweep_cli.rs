@@ -242,3 +242,94 @@ profile = [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]
         "the flat profile was not named:\n{err}"
     );
 }
+
+/// The ring with data along it (#855): ice from the first point to the
+/// third, a gap after the second, speed 1 everywhere but from the third
+/// point to the fourth.
+const ATTR_SPLINE: &str = "\
+[spline]
+closed = true
+
+[[control_points]]
+position = [0, 0, 6]
+attrs = { surface = \"ice\", speed = 1 }
+
+[[control_points]]
+position = [6, 0, 0]
+gap_after = true
+attrs = { surface = \"ice\", speed = 1 }
+
+[[control_points]]
+position = [0, 0, -6]
+attrs = { speed = 0.5 }
+
+[[control_points]]
+position = [-6, 0, 0]
+attrs = { speed = 1 }
+";
+
+/// A script that throws unless the spline's attributes read as written;
+/// `surface` is what it expects at t = 0.1.
+fn probe(surface: &str) -> String {
+    format!(
+        r#"fn on_update() {{
+    let ring = get_entity("ring");
+    if spline_point_attr(ring, "gap_after", 0.3) != true {{ throw "no gap at 0.3"; }}
+    if spline_point_attr(ring, "gap_after", 0.6) != () {{ throw "a gap at 0.6"; }}
+    let g = spline_point_attr_span(ring, "gap_after", 0.3);
+    if g.start_t != 0.25 || g.end_t != 0.5 || g.value != true {{ throw `gap span ${{g}}`; }}
+    if spline_point_attr(ring, "surface", 0.1) != "{surface}" {{ throw "surface at 0.1"; }}
+    if spline_point_attr(ring, "surface", 0.6) != () {{ throw "a surface at 0.6"; }}
+    let s = spline_point_attr_span(ring, "speed", 0.9);
+    if s.value != 1 || s.start_t != 0.75 || s.end_t != 0.5 {{ throw `speed span ${{s}}`; }}
+    if spline_point_attr(ring, "speed", 0.6) != 0.5 {{ throw "speed at 0.6"; }}
+}}
+"#
+    )
+}
+
+/// `flint render --strict-scripts` on the probe; `None` with no GPU.
+fn render_probe(name: &str, surface: &str) -> Option<Output> {
+    let probe_entity = "\n[entities.probe.script]\nsource = \"probe.rhai\"\n";
+    let dir = project(name, ATTR_SPLINE, probe_entity);
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::write(dir.join("scripts/probe.rhai"), probe(surface)).unwrap();
+    let o = flint(
+        &dir,
+        &[
+            "render",
+            "sweep.scene.toml",
+            "--output",
+            "probe.png",
+            "--width",
+            "64",
+            "--height",
+            "48",
+            "--no-grid",
+            "--strict-scripts",
+            "--time",
+            "0.1",
+        ],
+    );
+    if !o.status.success() && stderr(&o).contains("headless render context") {
+        eprintln!("no GPU adapter: skipped");
+        return None;
+    }
+    Some(o)
+}
+
+/// #855: a control point's `attrs`, and `gap_after`, reach a script through
+/// the loader's `spline_data`, as spans that wrap through the first point;
+/// a wrong expectation fails, so the probe is known to have run.
+#[test]
+fn a_script_reads_the_attributes_along_the_spline() {
+    let Some(o) = render_probe("attrs", "ice") else {
+        return;
+    };
+    assert!(o.status.success(), "the probe failed:\n{}", stderr(&o));
+    let Some(o) = render_probe("attrs_wrong", "sand") else {
+        return;
+    };
+    assert!(!o.status.success(), "a wrong expectation passed");
+    assert!(stderr(&o).contains("surface at 0.1"), "{}", stderr(&o));
+}

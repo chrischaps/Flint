@@ -20,11 +20,11 @@ use flint_core::toml_util::toml_f32_slice;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_geometry::components;
-use flint_geometry::spline::SplineSample;
+use flint_geometry::spline::{Span, SplineSample};
 use flint_geometry::spline_file::SplineFile;
 use flint_geometry::sweep::{self, Profile, Stripes, SweepPath, SweepStyle, SweptMesh};
 use flint_import::ImportedMaterial;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 /// A swept mesh's triangles, for a host with physics to make a static
@@ -121,7 +121,7 @@ pub fn load_scene_splines(
             samples.len(),
             if file.closed { "closed" } else { "open" }
         );
-        store_spline_data(world, *id, &samples, file.closed, &gaps);
+        store_spline_data(world, *id, &samples, file.closed, &file.attr_spans());
         splines.insert(
             name.clone(),
             SampledSpline {
@@ -405,13 +405,15 @@ fn set_model_asset(world: &mut FlintWorld, id: EntityId, asset: &str) {
 }
 
 /// Store a path's samples as flat arrays in its entity's `spline_data`,
-/// which the script spline functions read.
+/// which the script spline functions read, and its control points'
+/// attributes as spans: `attrs.<name> = { starts, ends, values }` (#855;
+/// `gap_after` is one of them, `true` over each gap).
 fn store_spline_data(
     world: &mut FlintWorld,
     id: EntityId,
     samples: &[SplineSample],
     closed: bool,
-    gaps: &[(f32, f32)],
+    attrs: &BTreeMap<String, Vec<Span<toml::Value>>>,
 ) {
     let floats = |f: &dyn Fn(&SplineSample) -> f32| {
         toml::Value::Array(
@@ -441,15 +443,25 @@ fn store_spline_data(
         toml::Value::Integer(samples.len() as i64),
     );
     table.insert("closed".into(), toml::Value::Boolean(closed));
-    let gap_list = |f: fn(&(f32, f32)) -> f32| {
-        toml::Value::Array(
-            gaps.iter()
-                .map(|g| toml::Value::Float(f(g) as f64))
-                .collect(),
-        )
-    };
-    table.insert("gap_starts".into(), gap_list(|g| g.0));
-    table.insert("gap_ends".into(), gap_list(|g| g.1));
-    table.insert("gap_count".into(), toml::Value::Integer(gaps.len() as i64));
+    let mut attr_table = toml::map::Map::new();
+    for (name, spans) in attrs {
+        let ends = |f: fn(&Span<toml::Value>) -> f32| {
+            toml::Value::Array(
+                spans
+                    .iter()
+                    .map(|s| toml::Value::Float(f(s) as f64))
+                    .collect(),
+            )
+        };
+        let mut runs = toml::map::Map::new();
+        runs.insert("starts".into(), ends(|s| s.start));
+        runs.insert("ends".into(), ends(|s| s.end));
+        runs.insert(
+            "values".into(),
+            toml::Value::Array(spans.iter().map(|s| s.value.clone()).collect()),
+        );
+        attr_table.insert(name.clone(), toml::Value::Table(runs));
+    }
+    table.insert("attrs".into(), toml::Value::Table(attr_table));
     let _ = world.set_component(id, components::SPLINE_DATA, table.into());
 }

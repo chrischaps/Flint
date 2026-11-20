@@ -6,7 +6,7 @@
 #
 # Each prop's ascii_style has `blend_source = "tear"`: its blend is
 # multiplied by the frame's tear mask at each pixel. scripts/ascii_tear.rhai
-# drives the tear (`set_tear`, the `[post_process] tear` key), which has no
+# drives the tear (`set_post("tear", ...)`, the `[post_process] tear` key), which has no
 # look of its own, so the props are the only thing it shows. The matrix
 # style with the same key (`--style matrix:blend_source=tear`) would rain
 # code through the same holes, and the props would still turn in them.
