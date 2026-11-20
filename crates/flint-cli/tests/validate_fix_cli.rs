@@ -155,3 +155,106 @@ fn fix_keeps_every_table_the_comments_and_the_name() {
     assert!(again.status.success());
     assert_eq!(std::fs::read_to_string(&scene).unwrap(), after);
 }
+
+const BRIGHT_PORCH: &str = r#"[scene]
+name = "Bright porch"
+
+# The porch light, too bright in its template
+[prefabs.porch]
+template = "glare"
+prefix = "porch"
+"#;
+
+const GLARE: &str = r#"[prefab]
+name = "glare"
+
+[entities.bulb]
+archetype = "bulb"
+
+[entities.bulb.light]
+intensity = 50.0
+"#;
+
+const BULB: &str = r#"[archetype.bulb]
+description = "A light on its own"
+components = ["light"]
+"#;
+
+const DIM: &str = r#"
+[[constraint]]
+name = "bulbs_not_blinding"
+query = "entities where archetype == 'bulb'"
+severity = "warning"
+message = "Bulb '{name}' is blinding"
+
+[constraint.kind]
+type = "value_range"
+field = "light.intensity"
+min = 0.0
+max = 10.0
+
+[constraint.auto_fix]
+enabled = true
+strategy = "set_default"
+field = "light.intensity"
+value = 8.0
+"#;
+
+/// #1046: a fix to an entity a prefab instance makes is written into the
+/// instance's overrides, as the viewer saves one (#679), not refused
+#[test]
+fn fix_to_a_prefab_entity_writes_the_instance_overrides() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("validate_fix_cli")
+        .join("prefab");
+    let _ = std::fs::remove_dir_all(&dir);
+    for sub in ["schemas/constraints", "schemas/archetypes", "prefabs"] {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+    }
+    std::fs::write(dir.join("schemas/constraints/dim.toml"), DIM).unwrap();
+    std::fs::write(dir.join("schemas/archetypes/bulb.toml"), BULB).unwrap();
+    std::fs::write(dir.join("prefabs/glare.prefab.toml"), GLARE).unwrap();
+    let scene = dir.join("porch.scene.toml");
+    std::fs::write(&scene, BRIGHT_PORCH).unwrap();
+
+    // A --schemas flag is the whole list (ADR 0114): the engine's set (for
+    // `light`), then the project's archetype and constraint
+    let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+    let run = || {
+        std::process::Command::new(FLINT)
+            .arg("validate")
+            .arg(&scene)
+            .arg("--fix")
+            .arg("--schemas")
+            .arg(&engine)
+            .arg("--schemas")
+            .arg(dir.join("schemas"))
+            .output()
+            .expect("run flint")
+    };
+    let o = run();
+    let out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(o.status.success(), "{out}");
+    assert!(!out.contains("not written"), "{out}");
+
+    let after = std::fs::read_to_string(&scene).unwrap();
+    // The file keeps what it said, and gains the override
+    assert!(after.starts_with(BRIGHT_PORCH), "{after}");
+    let file: flint_scene::SceneFile = toml::from_str(&after).unwrap();
+    assert_eq!(
+        file.prefabs["porch"].overrides["bulb"]["light"]["intensity"],
+        toml::Value::Float(8.0),
+        "{after}"
+    );
+    // The bulb is still the prefab's, not baked into [entities]
+    assert!(!after.contains("[entities"), "{after}");
+
+    // Read back, the fix holds: a second run has nothing to fix
+    let again = run();
+    assert!(again.status.success());
+    assert_eq!(std::fs::read_to_string(&scene).unwrap(), after);
+}
