@@ -1,6 +1,17 @@
 //! Physics world wrapping Rapier 3D
 
 use rapier3d::prelude::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Where every [`PhysicsWorld::static_generation`] comes from: one counter
+/// for the process, so a world made for a new scene never repeats a number
+/// an old one had, and a navigation grid baked from the old (#969) can't
+/// take the new scene for it.
+static NEXT_STATIC_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+fn next_static_generation() -> u64 {
+    NEXT_STATIC_GENERATION.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Wraps Rapier's physics pipeline and body/collider sets
 pub struct PhysicsWorld {
@@ -16,6 +27,9 @@ pub struct PhysicsWorld {
     pub(crate) multibody_joint_set: MultibodyJointSet,
     pub(crate) ccd_solver: CCDSolver,
     pub(crate) query_pipeline: QueryPipeline,
+    /// Changes whenever a collider on a fixed body comes, goes or turns
+    /// sensor: what a navigation grid is baked from (#969)
+    pub(crate) static_generation: u64,
 
     /// Collision events from the last step
     collision_recv: crossbeam::channel::Receiver<CollisionEvent>,
@@ -55,6 +69,7 @@ impl PhysicsWorld {
             multibody_joint_set: MultibodyJointSet::new(),
             ccd_solver: CCDSolver::new(),
             query_pipeline: QueryPipeline::new(),
+            static_generation: next_static_generation(),
             collision_recv,
             contact_force_recv,
             event_handler,
@@ -111,12 +126,44 @@ impl PhysicsWorld {
         collider: Collider,
         parent: RigidBodyHandle,
     ) -> ColliderHandle {
+        if self.is_fixed_body(parent) {
+            self.touch_static();
+        }
         self.collider_set
             .insert_with_parent(collider, parent, &mut self.rigid_body_set)
     }
 
+    /// A number that changes whenever the fixed colliders change (one
+    /// added, removed or made a sensor), and is never the same for two
+    /// worlds.
+    pub fn static_generation(&self) -> u64 {
+        self.static_generation
+    }
+
+    /// The fixed colliders changed.
+    pub(crate) fn touch_static(&mut self) {
+        self.static_generation = next_static_generation();
+    }
+
+    fn is_fixed_body(&self, handle: RigidBodyHandle) -> bool {
+        self.rigid_body_set
+            .get(handle)
+            .is_some_and(|b| b.body_type().is_fixed())
+    }
+
+    /// Whether a collider hangs on a fixed body.
+    pub(crate) fn is_fixed_collider(&self, handle: ColliderHandle) -> bool {
+        self.collider_set
+            .get(handle)
+            .and_then(|c| c.parent())
+            .is_some_and(|b| self.is_fixed_body(b))
+    }
+
     /// Remove a rigid body and its attached colliders
     pub fn remove_rigid_body(&mut self, handle: RigidBodyHandle) {
+        if self.is_fixed_body(handle) {
+            self.touch_static();
+        }
         self.rigid_body_set.remove(
             handle,
             &mut self.island_manager,
@@ -129,6 +176,9 @@ impl PhysicsWorld {
 
     /// Remove a standalone collider
     pub fn remove_collider(&mut self, handle: ColliderHandle) {
+        if self.is_fixed_collider(handle) {
+            self.touch_static();
+        }
         self.collider_set.remove(
             handle,
             &mut self.island_manager,

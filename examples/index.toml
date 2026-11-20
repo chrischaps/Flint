@@ -423,6 +423,11 @@ topic = "runtime"
 purpose = "Physics joints: a hinge pendulum, a sprung slider, a gimballed pod and a wheel"
 
 [[example]]
+scene = "nav_lamplighter.scene.toml"
+topic = "runtime"
+purpose = "Navigation: a lamplighter finds its way round hedges and up a ramp to light four lanterns (find_path, move_along_path, #969)"
+
+[[example]]
 scene = "physics_pile.scene.toml"
 topic = "runtime"
 purpose = "Forty-eight crates tumbling into a tray: a pile that settles the same way to the bit every run (#688)"

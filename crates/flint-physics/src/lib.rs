@@ -9,6 +9,7 @@
 
 pub mod character;
 pub mod layers;
+pub mod nav;
 pub mod sync;
 pub mod world;
 
@@ -16,6 +17,8 @@ pub mod world;
 mod joint_tests;
 #[cfg(test)]
 mod layer_tests;
+#[cfg(test)]
+mod nav_tests;
 #[cfg(test)]
 mod order_tests;
 
@@ -25,6 +28,7 @@ use flint_core::{EntityId, Result, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::{EventBus, GameEvent, InputState};
 pub use layers::{CollisionLayers, LayerError, LayerMask};
+pub use nav::{NavGrid, NavSettings, NavStats};
 use rapier3d::control::{CharacterLength, KinematicCharacterController};
 use rapier3d::prelude::*;
 use std::sync::Arc;
@@ -160,6 +164,13 @@ impl PhysicsSystem {
     }
 
     /// The layers in use, `default` first.
+    /// A number that changes whenever a fixed collider comes, goes or
+    /// turns sensor, and differs between any two worlds: a
+    /// [`NavGrid`] bakes again when it does (#969).
+    pub fn static_generation(&self) -> u64 {
+        self.physics_world.static_generation()
+    }
+
     pub fn layers(&self) -> &CollisionLayers {
         &self.sync.layers
     }

@@ -66,7 +66,7 @@ The workspace has 32 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 1 | `flint-asset` | core | asset-gen, cli, import, player, scene |
 | 1 | `flint-geometry` | core | cli, debug-ui, player, procgen, render, script, viewer |
 | 1 | `flint-music` | core | cli, input-capture, player (optional), rhythm |
-| 1 | `flint-schema` | core | android, cli, constraint, debug-ui, ecs, player, procgen, render, scene, viewer |
+| 1 | `flint-schema` | core | android, cli, constraint, debug-ui, ecs, player, procgen, render, scene, script, viewer |
 | 1 | `flint-wooze` | core | cli, debug-ui, player, procgen, render, viewer |
 | 2 | `flint-ecs` | core, schema | android, animation, audio, cli, constraint, debug-ui, particles, physics, player, query, render, runtime, scene, script, terrain, viewer |
 | 2 | `flint-import` | asset, core | animation, asset-gen, cli, player, procgen, render, viewer |
@@ -85,7 +85,7 @@ The workspace has 32 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 5 | `flint-asset-gen` | ai-core, asset, core, import, procgen | cli |
 | 5 | `flint-procgen-ai` | ai-core, procgen | cli |
 | 5 | `flint-render` | core, ecs, geometry, import, particles, pixels, scene, schema, terrain, wooze | cli, debug-ui, player, viewer |
-| 5 | `flint-script` | animation, core, ecs, geometry, physics, runtime, terrain | cli, player |
+| 5 | `flint-script` | animation, core, ecs, geometry, physics, runtime, schema, terrain | cli, player |
 | 6 | `flint-debug-ui` | core, ecs, geometry, particles, procgen (optional), render, scene, schema, terrain, wooze | cli, player (optional), viewer |
 | 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, geometry, import, input-capture (optional), music (optional), particles, physics, pixels, procgen (optional), query, render, rhythm (optional), runtime, scene, schema, script, terrain, wooze | android, cli |
 | 7 | `flint-viewer` | constraint, core, debug-ui, ecs, geometry, import, particles, procgen, render, scene, schema, wooze | cli |

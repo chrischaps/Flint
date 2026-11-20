@@ -1,0 +1,366 @@
+# ================================================================
+#  THE LAMPLIGHTER'S GARDEN (#969)
+# ================================================================
+#
+#  Navigation: at dusk a lamplighter walks a hedge garden lighting its
+#  four lanterns in turn. No line runs straight from one lantern to the
+#  next: the hedges leave a gap at alternate ends, and the last lantern
+#  stands on a terrace whose only way up is a ramp. Each walk is one
+#  find_path, round the hedges and up the slope, followed with
+#  move_along_path; the way ahead is drawn on the ground.
+#
+#  The grid is baked from the static colliders (ground, hedges, terrace,
+#  ramp, lantern posts) a tile at a time, as the first paths reach them.
+#
+#  Play:      cargo run --bin flint -- play examples/nav_lamplighter.scene.toml
+#  Playtest:  cargo run --bin flint -- playtest examples/nav_lamplighter.scene.toml --exit-after 60
+#             (the script calls test_pass once the fourth lantern is lit)
+# ================================================================
+
+[scene]
+name = "The Lamplighter's Garden"
+version = "1.0"
+description = "A lamplighter finds its way round hedges and up a ramp to light four lanterns (find_path, move_along_path)"
+
+[camera]
+position = [0, 25, -13.5]
+target = [0, 0, 0.6]
+fov = 50.0
+
+[environment]
+ambient_sky = [0.05, 0.06, 0.11]
+ambient_ground = [0.02, 0.016, 0.012]
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.08
+bloom_threshold = 1.1
+exposure = 1.05
+vignette_enabled = true
+vignette_intensity = 0.4
+ssao_enabled = true
+ssao_radius = 0.6
+
+# Dusk: a low cold moon, a little warmth left in the west
+[entities.moon]
+[entities.moon.light]
+type = "directional"
+direction = [0.35, 0.8, -0.45]
+color = [0.5, 0.62, 1.0]
+intensity = 0.55
+
+[entities.afterglow]
+[entities.afterglow.light]
+type = "directional"
+direction = [-0.9, 0.25, 0.2]
+color = [1.0, 0.55, 0.35]
+intensity = 0.3
+
+# --- Ground: 24 m of flagstones, top at y = 0 ---
+[entities.ground]
+[entities.ground.transform]
+position = [0, -0.25, 0]
+[entities.ground.bounds]
+min = [-12, -0.25, -12]
+max = [12, 0.25, 12]
+[entities.ground.material]
+color = [0.15, 0.16, 0.15, 1]
+roughness = 0.95
+[entities.ground.rigidbody]
+body_type = "static"
+[entities.ground.collider]
+shape = "box"
+size = [24, 0.5, 24]
+
+# --- Hedges: the garden's edge, and two rows with a gap at alternate ends ---
+[entities.hedge_south]
+[entities.hedge_south.transform]
+position = [0, 0.8, -12.3]
+[entities.hedge_south.bounds]
+min = [-12.6, -0.8, -0.3]
+max = [12.6, 0.8, 0.3]
+[entities.hedge_south.material]
+color = [0.09, 0.2, 0.11, 1]
+roughness = 0.95
+[entities.hedge_south.rigidbody]
+body_type = "static"
+[entities.hedge_south.collider]
+shape = "box"
+size = [25.2, 1.6, 0.6]
+
+[entities.hedge_north]
+[entities.hedge_north.transform]
+position = [0, 0.8, 12.3]
+[entities.hedge_north.bounds]
+min = [-12.6, -0.8, -0.3]
+max = [12.6, 0.8, 0.3]
+[entities.hedge_north.material]
+color = [0.09, 0.2, 0.11, 1]
+roughness = 0.95
+[entities.hedge_north.rigidbody]
+body_type = "static"
+[entities.hedge_north.collider]
+shape = "box"
+size = [25.2, 1.6, 0.6]
+
+[entities.hedge_west]
+[entities.hedge_west.transform]
+position = [-12.3, 0.8, 0]
+[entities.hedge_west.bounds]
+min = [-0.3, -0.8, -12]
+max = [0.3, 0.8, 12]
+[entities.hedge_west.material]
+color = [0.09, 0.2, 0.11, 1]
+roughness = 0.95
+[entities.hedge_west.rigidbody]
+body_type = "static"
+[entities.hedge_west.collider]
+shape = "box"
+size = [0.6, 1.6, 24]
+
+[entities.hedge_east]
+[entities.hedge_east.transform]
+position = [12.3, 0.8, 0]
+[entities.hedge_east.bounds]
+min = [-0.3, -0.8, -12]
+max = [0.3, 0.8, 12]
+[entities.hedge_east.material]
+color = [0.09, 0.2, 0.11, 1]
+roughness = 0.95
+[entities.hedge_east.rigidbody]
+body_type = "static"
+[entities.hedge_east.collider]
+shape = "box"
+size = [0.6, 1.6, 24]
+
+[entities.hedge_row_a]
+[entities.hedge_row_a.transform]
+position = [-4, 0.8, -4]
+[entities.hedge_row_a.bounds]
+min = [-8, -0.8, -0.3]
+max = [8, 0.8, 0.3]
+[entities.hedge_row_a.material]
+color = [0.09, 0.2, 0.11, 1]
+roughness = 0.95
+[entities.hedge_row_a.rigidbody]
+body_type = "static"
+[entities.hedge_row_a.collider]
+shape = "box"
+size = [16, 1.6, 0.6]
+
+[entities.hedge_row_b]
+[entities.hedge_row_b.transform]
+position = [4, 0.8, 3]
+[entities.hedge_row_b.bounds]
+min = [-8, -0.8, -0.3]
+max = [8, 0.8, 0.3]
+[entities.hedge_row_b.material]
+color = [0.09, 0.2, 0.11, 1]
+roughness = 0.95
+[entities.hedge_row_b.rigidbody]
+body_type = "static"
+[entities.hedge_row_b.collider]
+shape = "box"
+size = [16, 1.6, 0.6]
+
+# --- The terrace, 1.5 m up, and the ramp that is its only way up ---
+[entities.terrace]
+[entities.terrace.transform]
+position = [8.5, 0.75, 8.5]
+[entities.terrace.bounds]
+min = [-2.5, -0.75, -2.5]
+max = [2.5, 0.75, 2.5]
+[entities.terrace.material]
+color = [0.36, 0.33, 0.29, 1]
+roughness = 0.85
+[entities.terrace.rigidbody]
+body_type = "static"
+[entities.terrace.collider]
+shape = "box"
+size = [5, 1.5, 5]
+
+[entities.ramp]
+[entities.ramp.transform]
+position = [3.723, 0.655, 8]
+rotation = [0, 0, 18]
+[entities.ramp.bounds]
+min = [-2.677, -0.1, -1]
+max = [2.677, 0.1, 1]
+[entities.ramp.material]
+color = [0.36, 0.33, 0.29, 1]
+roughness = 0.85
+[entities.ramp.rigidbody]
+body_type = "static"
+[entities.ramp.collider]
+shape = "box"
+size = [5.354, 0.2, 2]
+
+# --- Four lanterns: a post (a collider) and a glass that lights when reached ---
+[entities.lantern_sw]
+[entities.lantern_sw.transform]
+position = [-9, 0.55, -9]
+[entities.lantern_sw.bounds]
+min = [-0.09, -0.55, -0.09]
+max = [0.09, 0.55, 0.09]
+[entities.lantern_sw.material]
+color = [0.08, 0.07, 0.06, 1]
+roughness = 0.6
+[entities.lantern_sw.rigidbody]
+body_type = "static"
+[entities.lantern_sw.collider]
+shape = "box"
+size = [0.18, 1.1, 0.18]
+
+[entities.lantern_sw_glass]
+parent = "lantern_sw"
+[entities.lantern_sw_glass.transform]
+position = [0, 0.68, 0]
+[entities.lantern_sw_glass.bounds]
+min = [-0.17, -0.17, -0.17]
+max = [0.17, 0.17, 0.17]
+[entities.lantern_sw_glass.material]
+color = [0.3, 0.22, 0.13, 1]
+roughness = 0.3
+emissive = [6.0, 3.1, 1.1]
+emissive_scale = 0.03
+
+[entities.lantern_se]
+[entities.lantern_se.transform]
+position = [9, 0.55, -8]
+[entities.lantern_se.bounds]
+min = [-0.09, -0.55, -0.09]
+max = [0.09, 0.55, 0.09]
+[entities.lantern_se.material]
+color = [0.08, 0.07, 0.06, 1]
+roughness = 0.6
+[entities.lantern_se.rigidbody]
+body_type = "static"
+[entities.lantern_se.collider]
+shape = "box"
+size = [0.18, 1.1, 0.18]
+
+[entities.lantern_se_glass]
+parent = "lantern_se"
+[entities.lantern_se_glass.transform]
+position = [0, 0.68, 0]
+[entities.lantern_se_glass.bounds]
+min = [-0.17, -0.17, -0.17]
+max = [0.17, 0.17, 0.17]
+[entities.lantern_se_glass.material]
+color = [0.3, 0.22, 0.13, 1]
+roughness = 0.3
+emissive = [6.0, 3.1, 1.1]
+emissive_scale = 0.03
+
+[entities.lantern_nw]
+[entities.lantern_nw.transform]
+position = [-9, 0.55, 8]
+[entities.lantern_nw.bounds]
+min = [-0.09, -0.55, -0.09]
+max = [0.09, 0.55, 0.09]
+[entities.lantern_nw.material]
+color = [0.08, 0.07, 0.06, 1]
+roughness = 0.6
+[entities.lantern_nw.rigidbody]
+body_type = "static"
+[entities.lantern_nw.collider]
+shape = "box"
+size = [0.18, 1.1, 0.18]
+
+[entities.lantern_nw_glass]
+parent = "lantern_nw"
+[entities.lantern_nw_glass.transform]
+position = [0, 0.68, 0]
+[entities.lantern_nw_glass.bounds]
+min = [-0.17, -0.17, -0.17]
+max = [0.17, 0.17, 0.17]
+[entities.lantern_nw_glass.material]
+color = [0.3, 0.22, 0.13, 1]
+roughness = 0.3
+emissive = [6.0, 3.1, 1.1]
+emissive_scale = 0.03
+
+[entities.lantern_terrace]
+[entities.lantern_terrace.transform]
+position = [9.6, 2.05, 9.6]
+[entities.lantern_terrace.bounds]
+min = [-0.09, -0.55, -0.09]
+max = [0.09, 0.55, 0.09]
+[entities.lantern_terrace.material]
+color = [0.08, 0.07, 0.06, 1]
+roughness = 0.6
+[entities.lantern_terrace.rigidbody]
+body_type = "static"
+[entities.lantern_terrace.collider]
+shape = "box"
+size = [0.18, 1.1, 0.18]
+
+[entities.lantern_terrace_glass]
+parent = "lantern_terrace"
+[entities.lantern_terrace_glass.transform]
+position = [0, 0.68, 0]
+[entities.lantern_terrace_glass.bounds]
+min = [-0.17, -0.17, -0.17]
+max = [0.17, 0.17, 0.17]
+[entities.lantern_terrace_glass.material]
+color = [0.3, 0.22, 0.13, 1]
+roughness = 0.3
+emissive = [6.0, 3.1, 1.1]
+emissive_scale = 0.03
+
+# --- The lamplighter: its middle 0.75 m up, which move_along_path keeps ---
+[entities.lamplighter]
+[entities.lamplighter.transform]
+position = [0, 0.75, -9]
+[entities.lamplighter.bounds]
+min = [-0.22, -0.75, -0.22]
+max = [0.22, 0.55, 0.22]
+[entities.lamplighter.material]
+color = [0.42, 0.3, 0.22, 1.0]
+roughness = 0.8
+[entities.lamplighter.script]
+source = "nav_lamplighter.rhai"
+
+[entities.lamplighter_hat]
+parent = "lamplighter"
+[entities.lamplighter_hat.transform]
+position = [0, 0.6, 0]
+[entities.lamplighter_hat.bounds]
+min = [-0.3, -0.05, -0.3]
+max = [0.3, 0.05, 0.3]
+[entities.lamplighter_hat.material]
+color = [0.1, 0.09, 0.09, 1]
+roughness = 0.7
+
+[entities.lamplighter_pole]
+parent = "lamplighter"
+[entities.lamplighter_pole.transform]
+position = [0, 0.35, 0.4]
+[entities.lamplighter_pole.bounds]
+min = [-0.025, -0.025, -0.3]
+max = [0.025, 0.025, 0.3]
+[entities.lamplighter_pole.material]
+color = [0.12, 0.1, 0.08, 1]
+roughness = 0.7
+
+[entities.lamplighter_flame]
+parent = "lamplighter"
+[entities.lamplighter_flame.transform]
+position = [0, 0.27, 0.7]
+[entities.lamplighter_flame.bounds]
+min = [-0.06, -0.08, -0.06]
+max = [0.06, 0.08, 0.06]
+[entities.lamplighter_flame.material]
+color = [1, 0.8, 0.5, 1]
+roughness = 0.3
+emissive = [5.0, 2.6, 0.9]
+
+[entities.lamplighter_light]
+parent = "lamplighter"
+[entities.lamplighter_light.transform]
+position = [0, 0.3, 0.7]
+[entities.lamplighter_light.light]
+type = "point"
+color = [1.0, 0.66, 0.34]
+intensity = 9.0
+range = 5.0

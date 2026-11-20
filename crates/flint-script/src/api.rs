@@ -38,6 +38,9 @@ mod math;
 mod music;
 #[cfg(test)]
 mod naming_tests;
+mod nav;
+#[cfg(test)]
+mod nav_tests;
 mod ocean;
 mod opts;
 #[cfg(not(target_arch = "wasm32"))]
@@ -85,6 +88,7 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     audio::register(api);
     animation::register(api);
     physics::register(api);
+    nav::register(api);
     camera::register(api);
     post_process::register(api);
     quality::register(api);
