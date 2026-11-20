@@ -305,7 +305,7 @@ $ flint validate scenes/road.scene.toml
 scenes/road.scene.toml: 1 warning (2 allowed by flint.toml)
 ```
 
-With `--format json` (and `flint check --json`) the count is `allowed`. An allowed error no longer fails the scene. A code that is none of the table's is refused when the manifest is read, with the nearest code (`project.diagnostics.allow[0]`: `unknown-feild` is no diagnostic code (did you mean `unknown-field`?)), and so are the codes that mean the file did not load at all (`toml-parse`, `file-unreadable`, `scene-load`, `bad-manifest`, `bad-prefab`), since nothing behind them was checked.
+With `--format json` (and `flint check --json`) the count is `allowed`. An allowed error no longer fails the scene. `flint bundle` reads the list from the `flint.toml` it packs and leaves out the same diagnostics `flint check` does, so a bundle refuses only what the check reports; it counts them too (`check: no problems (1 allowed by flint.toml)`, and `allowed` in `flint --json bundle`). A code that is none of the table's is refused when the manifest is read, with the nearest code (`project.diagnostics.allow[0]`: `unknown-feild` is no diagnostic code (did you mean `unknown-field`?)), and so are the codes that mean the file did not load at all (`toml-parse`, `file-unreadable`, `scene-load`, `bad-manifest`, `bad-prefab`), since nothing behind them was checked.
 
 ### A component only scripts read
 
