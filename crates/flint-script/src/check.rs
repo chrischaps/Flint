@@ -29,6 +29,7 @@
 //! | `unknown-callback` | error | `fn on_colision`: one edit from a callback, never called |
 //! | `callback-arity` | error | a callback with a parameter count the engine doesn't call |
 //! | `missing-module` | error | `import "x"` finds no file; `tried` has the paths |
+//! | `unknown-global` | error | `global::NAME` with no top-level `const NAME`: fails every time it runs |
 //! | `deprecated-function` | warning | a function the API marks deprecated |
 //! | `mixed-numbers` | warning | a per-frame call mixing int and float literals in four or more `num` slots |
 //!
@@ -487,6 +488,7 @@ impl Run<'_> {
         }
         if !file.module {
             found.extend(callbacks(path, source, ast, &seen));
+            found.extend(globals(path, ast));
         }
         found.sort_by_key(|d| (d.line, d.column));
         next
@@ -1028,6 +1030,61 @@ fn per_frame_fns(seen: &Seen) -> BTreeSet<String> {
         }
     }
     out
+}
+
+// -------------------------------------------------------------- globals ---
+
+/// Each `global::NAME` read of a script with no top-level `const NAME`
+/// (#1007). Rhai's `global::` reaches a script's top-level constants and
+/// nothing else, so such a read is `Variable not found` every time it runs:
+/// every frame, from `on_update`. A top-level `let` of the name is the
+/// usual slip, and the hint says so. Not judged in a module, whose
+/// functions' `global::` is the module's own.
+fn globals(path: &Path, ast: &AST) -> Vec<Diagnostic> {
+    use rhai::ASTFlags;
+    let mut consts: Vec<&str> = Vec::new();
+    let mut lets: BTreeSet<&str> = BTreeSet::new();
+    for stmt in ast.statements() {
+        if let Stmt::Var(x, flags, _) = stmt {
+            if flags.contains(ASTFlags::CONSTANT) {
+                consts.push(x.0.name.as_str());
+            } else {
+                lets.insert(x.0.name.as_str());
+            }
+        }
+    }
+    let mut reads: Vec<(String, rhai::Position)> = Vec::new();
+    crate::engine::instance::any_node(ast, |node| {
+        if let ASTNode::Expr(Expr::Variable(v, _, pos)) = node {
+            let (_, name, namespace, _) = &**v;
+            if namespace.path.len() == 1 && namespace.root() == "global" {
+                reads.push((name.to_string(), *pos));
+            }
+        }
+        false
+    });
+    reads
+        .into_iter()
+        .filter(|(name, _)| !consts.contains(&name.as_str()))
+        .map(|(name, pos)| {
+            let hint = if lets.contains(name.as_str()) {
+                Some(format!(
+                    "`{name}` is a top-level `let`, which `global::` doesn't reach: make it `const {name}` if it never changes, or read it by its bare name in a callback"
+                ))
+            } else {
+                diagnostic::did_you_mean(&name, consts.iter().copied())
+                    .or_else(|| Some(format!("declare `const {name} = ...` at the script's top level")))
+            };
+            let (line, col) = place(pos);
+            Diagnostic::error(
+                codes::UNKNOWN_GLOBAL,
+                format!("`global::{name}`: the script has no top-level `const {name}`, so the read fails every time it runs"),
+            )
+            .hint_opt(hint)
+            .file(path)
+            .at(line, col)
+        })
+        .collect()
 }
 
 // ------------------------------------------------------------ callbacks ---

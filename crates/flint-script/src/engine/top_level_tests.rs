@@ -305,3 +305,86 @@ fn a_reload_adds_its_new_global_constants() {
     assert!(engine.errors().is_empty(), "{:?}", engine.errors().all());
     assert_eq!(probe_float(&world, id, "lx"), 4.0);
 }
+
+/// #1007's snippet and the other shapes Float's scripts read constants in
+/// (`birds.rhai`'s pool, `time_of_day.rhai`'s keys copied into a local,
+/// `water_ambience.rhai`'s names indexed in a loop, `weather.rhai`'s tables
+/// handed to a helper), over many frames: every one reaches the constant,
+/// and nothing is reported. Each of these failed every frame between #997
+/// and #1033.
+#[test]
+fn floats_global_shapes_run_frame_after_frame() {
+    let mut engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    world.spawn("wash_a").unwrap();
+    let wash_b = world.spawn("wash_b").unwrap();
+    let id = probed(&mut world, "float");
+    add(
+        &mut engine,
+        id,
+        r#"
+        const MAX_POOL = 9;
+        const KEYS = [0.0, 0.25, 0.5, 1.0];
+        const WASHES = ["wash_a", "wash_b"];
+        const DWELL_MIN = [2.0, 4.0];
+        let parked = 0;
+        fn park() { let n = 0; for i in 0..global::MAX_POOL { n += 1; } n }
+        fn wx(table, i) { table[i] }
+        fn on_update() {
+            parked = park();
+            let keys = global::KEYS;
+            let last = "";
+            for e in 0..global::WASHES.len() { last = global::WASHES[e]; }
+            let went = get_entity(last);
+            set_field(self_entity(), "probe", "lx", (parked + keys.len()).to_float());
+            set_field(self_entity(), "probe", "ty", wx(global::DWELL_MIN, 1) + went.to_float());
+        }
+        "#,
+    );
+    engine.call_inits(&mut world);
+    for _ in 0..60 {
+        engine.call_updates(&mut world);
+    }
+    assert!(engine.errors().is_empty(), "{:?}", engine.errors().all());
+    assert_eq!(probe_float(&world, id, "lx"), 13.0, "9 parked + 4 keys");
+    assert_eq!(probe_float(&world, id, "ty"), 4.0 + wash_b.raw() as f64);
+}
+
+/// What `flint script check` calls `unknown-global` is what the engine
+/// fails on every frame: a `global::` read of a top-level `let`, or of a
+/// name the script never declares. The two agree on which reads fail.
+#[cfg(feature = "check")]
+#[test]
+fn a_global_read_with_no_constant_fails_where_the_checker_says() {
+    let source = r#"
+        const SPEED = 2.0;
+        let pool = 9;
+        fn fill() { global::pool }
+        fn on_update() { let s = global::SPEED; fill(); }
+        "#;
+    let mut engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let id = probed(&mut world, "pool");
+    add(&mut engine, id, source);
+    engine.call_inits(&mut world);
+    engine.call_updates(&mut world);
+    let failed: Vec<&str> = engine
+        .errors()
+        .all()
+        .iter()
+        .map(|e| e.message.as_str())
+        .collect();
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(failed[0].contains("global::pool"), "{failed:?}");
+
+    let checker =
+        crate::check::Checker::new(crate::check::Api::of(&mut crate::ScriptSystem::new()));
+    let found = checker.check_source(std::path::Path::new("pool.rhai"), source, false);
+    let globals: Vec<_> = found
+        .iter()
+        .filter(|d| d.code == flint_core::diagnostic::codes::UNKNOWN_GLOBAL)
+        .collect();
+    assert_eq!(globals.len(), 1, "{found:?}");
+    assert!(globals[0].message.contains("global::pool"), "{found:?}");
+    assert_eq!(globals[0].line, Some(4));
+}

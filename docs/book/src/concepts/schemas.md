@@ -245,6 +245,7 @@ The scripts pass, which `flint check`, `flint validate` and [`flint script check
 | `missing-module` | error | `import "name"` finds no `scripts/lib/name.rhai`; `tried` lists the paths |
 | `deprecated-function` | warning | a call of a function the API marks deprecated; the hint says what to use |
 | `mixed-numbers` | warning | a call in `on_update` or `on_draw_ui` (or a function of the file they call) of a function with four or more number parameters, whose literal arguments mix ints and floats: the slow lookup |
+| `unknown-global` | error | a `global::NAME` read in a script with no top-level `const NAME`: `global::` reaches constants only, so the read fails every time it runs. The hint names a top-level `let` of the name, or the nearest constant |
 
 A component or archetype is known when **any** loaded schema directory declares it: the engine's, the game's, or one named by `--schemas`. Prefab instances are expanded first, so a prefab's entities are checked under the names they load with (`<prefix>_<name>`).
 
