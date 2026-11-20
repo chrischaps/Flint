@@ -196,13 +196,27 @@ impl OceanTint {
         }
     }
 
+    /// The presets `tint_preset` names, in the schema's order.
+    pub const PRESETS: [&'static str; 2] = ["blood", "underside"];
+
+    /// A preset by name at `amount`: `blood` or `underside` (#1035).
+    pub fn preset(name: &str, amount: f32) -> Option<Self> {
+        match name {
+            "blood" => Some(Self::blood(amount)),
+            "underside" => Some(Self::underside(amount)),
+            _ => None,
+        }
+    }
+
     /// The tint from an `ocean` component's `tint*` fields, each falling
-    /// back on the crimson tide's.
-    /// Read the `tint*` fields of an `ocean` component through the typed
-    /// view (ADR 0115): a wrong type reads as the default and is reported
-    /// once.
+    /// back on the preset `tint_preset` names (the crimson tide's when it
+    /// names none), so a script switches between two tints with one
+    /// string (#1035) and a written field still wins over its preset.
+    /// Read through the typed view (ADR 0115): a wrong type or an unknown
+    /// preset reads as the default and is reported once.
     pub fn from_component(view: &flint_ecs::ComponentView<'_>) -> Self {
-        let d = Self::default();
+        let preset = view.choice("tint_preset", &Self::PRESETS, "blood");
+        let d = Self::preset(preset, 0.0).unwrap_or_default();
         let f = |name: &str, dv: f32| view.f32(name, dv);
         let c = |name: &str, dv: [f32; 3]| {
             let c = view.color(name, [dv[0], dv[1], dv[2], 1.0]);
@@ -812,6 +826,82 @@ mod tests {
             .map(|d| d.field.unwrap())
             .collect();
         assert_eq!(fields, ["tint", "tint_below"]);
+    }
+
+    /// #1035: `tint_preset` picks the fields' fallbacks, a written field
+    /// still wins, and an unknown preset is the crimson tide, said once.
+    #[test]
+    fn the_tint_preset_is_what_unwritten_fields_read() {
+        let reports = flint_ecs::ReadReports::new();
+        let view = |v| flint_ecs::ComponentView::of("sea", "ocean", Some(v), &reports);
+        let under: toml::Value = toml::from_str("tint_preset = \"underside\"\ntint = 0.8").unwrap();
+        assert_eq!(
+            OceanTint::from_component(&view(&under)),
+            OceanTint::underside(0.8)
+        );
+        let blood: toml::Value = toml::from_str("tint_preset = \"blood\"\ntint = 0.3").unwrap();
+        assert_eq!(
+            OceanTint::from_component(&view(&blood)),
+            OceanTint::blood(0.3)
+        );
+        let mixed: toml::Value =
+            toml::from_str("tint_preset = \"underside\"\ntint = 1.0\ntint_pools = 0.5").unwrap();
+        let t = OceanTint::from_component(&view(&mixed));
+        assert_eq!(t.pools, 0.5, "a written field wins");
+        assert_eq!(t.deep, OceanTint::underside(1.0).deep);
+        assert!(t.below);
+        assert!(reports.is_empty());
+        for name in OceanTint::PRESETS {
+            assert!(OceanTint::preset(name, 1.0).is_some(), "{name}");
+        }
+
+        let wrong: toml::Value = toml::from_str("tint_preset = \"bloood\"").unwrap();
+        assert_eq!(
+            OceanTint::from_component(&view(&wrong)),
+            OceanTint::blood(0.0)
+        );
+        let said = reports.snapshot();
+        assert_eq!(said.len(), 1);
+        assert_eq!(said[0].field.as_deref(), Some("tint_preset"));
+    }
+
+    /// #1035: the loader writes a schema default into the component, so a
+    /// `tint_*` field with one would beat the preset. Through the engine's
+    /// own schemas, a loaded `tint_preset = "underside"` is the underside,
+    /// and a script's one `set_field` of it switches a loaded sea over.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // reads the engine's schema files from the checkout
+    fn a_loaded_sea_takes_its_preset() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+        let registry = flint_schema::SchemaRegistry::load_from_directory(&dir).unwrap();
+        let scene = |ocean: &str| {
+            format!("[scene]\nname = \"t\"\n\n[entities.sea.ocean]\nseed = 7\n{ocean}\n")
+        };
+        let tint_of = |world: &flint_ecs::FlintWorld| {
+            let id = world.get_id("sea").unwrap();
+            OceanTint::from_component(&world.view(id, "ocean"))
+        };
+
+        let (world, _) = flint_scene::load_scene_string(
+            &scene("tint_preset = \"underside\"\ntint = 0.6"),
+            &registry,
+        )
+        .unwrap();
+        assert_eq!(tint_of(&world), OceanTint::underside(0.6));
+
+        let (mut world, _) = flint_scene::load_scene_string(&scene(""), &registry).unwrap();
+        assert_eq!(
+            tint_of(&world),
+            OceanTint::blood(0.0),
+            "off, the crimson tide"
+        );
+        let id = world.get_id("sea").unwrap();
+        let mut components = world.get_components_mut(id).unwrap();
+        components.set_field("ocean", "tint_preset", toml::Value::from("underside"));
+        components.set_field("ocean", "tint", toml::Value::from(1.0));
+        drop(components);
+        assert_eq!(tint_of(&world), OceanTint::underside(1.0));
+        assert!(world.read_reports().is_empty());
     }
 
     #[test]
