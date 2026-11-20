@@ -329,10 +329,12 @@ pub(super) struct EdgeRegions {
 }
 
 /// The edge cells the glyph pass reads inside output rect `glyph` (each
-/// cell under it, and one more on every side, since thinning asks a
-/// neighbour), and the edge pixels the edge cell pass sums for them. The
-/// cells are `cell` pixels from `origin` over a `size` frame; the edge
-/// cell texture is `grid` and the edge texture `edge_size`.
+/// cell under it, and more on every side: a drawn cell's corner reads
+/// `EDGE_CORNER_REACH` cells away, and the rect already holds
+/// `GLYPH_RECT_CELLS` of them round the entities, #930), and the edge
+/// pixels the edge cell pass sums for them. The cells are `cell` pixels
+/// from `origin` over a `size` frame; the edge cell texture is `grid` and
+/// the edge texture `edge_size`.
 pub(super) fn edge_regions(
     glyph: kit::PixelRect,
     cell: [f32; 2],
@@ -348,11 +350,12 @@ pub(super) fn edge_regions(
         };
     }
     // Texel t holds cell t - 1, the pixels from origin + (t - 1) * cell
+    let more = (EDGE_CORNER_REACH - GLYPH_RECT_CELLS) as i64;
     let texels = |start: u32, len: u32, c: f32, o: f32, n: u32| {
         let first = ((start as f32 - o) / c).floor() as i64; // cell under the first pixel
         let last = (((start + len) as f32 - 1.0 - o) / c).floor() as i64;
-        let t0 = (first + 1 - 1).clamp(0, n as i64) as u32;
-        let t1 = (last + 1 + 1).clamp(-1, n as i64 - 1);
+        let t0 = (first + 1 - more).clamp(0, n as i64) as u32;
+        let t1 = (last + 1 + more).clamp(-1, n as i64 - 1);
         (t0, (t1 + 1).max(t0 as i64) as u32 - t0)
     };
     let (tx, tw) = texels(glyph.x, glyph.width, cell[0], origin[0], grid[0]);

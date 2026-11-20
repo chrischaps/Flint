@@ -112,17 +112,29 @@ impl Gpu {
 
     /// The last frame's RGBA8 pixels, row by row.
     fn pixels(&self) -> Vec<u8> {
-        let row = (SIZE * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        read_pixels(self.device, self.queue, &self.color, SIZE)
+    }
+}
+
+/// A `size`-square RGBA8 texture's pixels, row by row.
+fn read_pixels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    color: &wgpu::Texture,
+    size: u32,
+) -> Vec<u8> {
+    {
+        let row = (size * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: (row * SIZE) as u64,
+            size: (row * size) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
-            self.color.as_image_copy(),
+            color.as_image_copy(),
             wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
                 layout: wgpu::TexelCopyBufferLayout {
@@ -132,24 +144,24 @@ impl Gpu {
                 },
             },
             wgpu::Extent3d {
-                width: SIZE,
-                height: SIZE,
+                width: size,
+                height: size,
                 depth_or_array_layers: 1,
             },
         );
-        self.queue.submit([encoder.finish()]);
+        queue.submit([encoder.finish()]);
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        let _ = flint_render::wait_for_gpu(&self.device);
+        let _ = flint_render::wait_for_gpu(device);
         let data = buffer
             .slice(..)
             .get_mapped_range()
             .expect("mapped buffer range");
-        (0..SIZE as usize)
+        (0..size as usize)
             .flat_map(|y| {
                 let start = y * row as usize;
-                data[start..start + SIZE as usize * 4].to_vec()
+                data[start..start + size as usize * 4].to_vec()
             })
             .collect()
     }
@@ -3164,6 +3176,192 @@ fn per_entity_styles_scissored_to_their_props_draw_the_same_bytes() {
     }
     renderer.set_style_scissor(true);
     assert!(gpu.frame(&mut renderer, &world) == scissored);
+}
+
+/// #930: per-entity ASCII's edge cell pass is scissored to the cells around
+/// its entities (#385), and since #910 the thin and corner passes run over
+/// the whole grid, reading those edge cells up to three cells away and
+/// last frame's cells and slots (#477's history). An ASCII crate moves
+/// through a ring of plain crates, whose silhouettes put real edges a few
+/// cells outside it, for a dozen frames with history on: each frame,
+/// scissored and full, is the same bytes and the same text. Before #930 the
+/// full passes kept the plain crates' lines in the cells round the crate's
+/// region, the scissored ones nothing, and the frame after the crate's
+/// jump started from those different pasts: two pixels of its outline
+/// differed (and none with `temporal = "off"` or `hysteresis = 0`).
+#[test]
+fn a_moving_ascii_crate_draws_the_same_scissored_as_full_frame_after_frame() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::entity_style::set_entity_style;
+    use flint_render::style_mask::IdBounds;
+    // Enough cells that the crate's region is a small part of the grid
+    const BIG: u32 = 256;
+    let target = |format, usage| {
+        gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: BIG,
+                height: BIG,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+    };
+    let color = target(
+        FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    );
+    let color_view = color.create_view(&Default::default());
+    let depth = target(
+        wgpu::TextureFormat::Depth32Float,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+    );
+    let depth_view = depth.create_view(&Default::default());
+
+    // Close enough that the crate's outline is a few cells long
+    let camera = Camera {
+        position: flint_core::Vec3::new(5.0, 5.0, 5.0),
+        ..Camera::default()
+    };
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let place = |world: &mut FlintWorld, name: &str, at: [f64; 3], turn: f64, half: f64| {
+        let id = world
+            .get_id(name)
+            .or_else(|| world.spawn(name).ok())
+            .unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(at));
+        transform.insert("rotation".into(), vec3([0.0, turn, 0.0]));
+        world
+            .set_component(id, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-half; 3]));
+        bounds.insert("max".into(), vec3([half; 3]));
+        world.set_component(id, "bounds", bounds.into()).unwrap();
+        id
+    };
+    // Where the ASCII crate is each frame: sliding a cell or so, a jump of
+    // four cells (past its last region), standing still, sliding back
+    let path: Vec<[f64; 3]> = (0..6)
+        .map(|i| [-1.6 + 0.25 * i as f64, 0.0, 0.3])
+        .chain([[0.9, 0.0, -0.6]; 3])
+        .chain((0..3).map(|i| [0.9 - 0.3 * i as f64, 0.0, -0.6 + 0.3 * i as f64]))
+        .collect();
+
+    let styles = flint_render::stylize::StyleRegistry::new();
+    for cell in [8.0, 4.0] {
+        let mut world = FlintWorld::new();
+        boxed(&mut world, "floor", 30.0, -30.0, None);
+        // The ring: crates a metre or two from the path (four to eight 8 px
+        // cells), turned so their outlines meet in corners
+        for (i, (at, turn, half)) in [
+            ([-2.4, 0.0, -1.0], 20.0, 0.5),
+            ([-0.4, 0.0, 1.6], 55.0, 0.45),
+            ([0.6, 0.0, 1.4], 10.0, 0.4),
+            ([2.2, 0.0, -0.2], 35.0, 0.6),
+            ([0.0, 0.0, -2.0], 70.0, 0.5),
+            ([-1.2, 0.9, -1.8], 0.0, 0.35),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            place(&mut world, &format!("plain{i}"), at, turn, half);
+        }
+        let crate_id = place(&mut world, "glyphs", path[0], 25.0, 0.45);
+        set_entity_style(&mut world, &styles, crate_id, "ascii").unwrap();
+
+        let make = |scissor: bool| {
+            let mut renderer = SceneRenderer::new_headless(
+                gpu.device,
+                gpu.queue,
+                FORMAT,
+                BIG,
+                BIG,
+                RendererConfig::default(),
+            );
+            renderer.set_style_scissor(scissor);
+            // The screen grid's cell, which the edge cells are on (a crate
+            // with a cell of its own keeps tone glyphs): a table presetting
+            // the entities' settings, which doesn't draw the whole frame
+            let mut config = renderer.post_process_config().clone();
+            config.styles.set_option("ascii", "scope", "entities");
+            config.styles.set_param("ascii", "cell", cell);
+            renderer.set_post_process_config(config);
+            renderer.ensure_style_resources(gpu.device);
+            renderer.set_style_text_capture(true);
+            renderer
+        };
+        let (mut scissored, mut full) = (make(true), make(false));
+        let draw = |renderer: &mut SceneRenderer, world: &FlintWorld, frame: usize| {
+            let inputs = flint_render::FrameInputs {
+                time: frame as f64 / 60.0,
+                dt: 1.0 / 60.0,
+                ..Default::default()
+            };
+            renderer.prepare(gpu.device, gpu.queue, world, &inputs);
+            renderer.render_to(gpu.device, gpu.queue, &depth_view, &camera, &color_view);
+            let _ = flint_render::wait_for_gpu(gpu.device);
+            let pixels = read_pixels(gpu.device, gpu.queue, &color, BIG);
+            let text = renderer
+                .style_text(gpu.device, "ascii")
+                .expect("ASCII drew its cells as text");
+            (pixels, text)
+        };
+        let mut edge_glyphs = 0;
+        for (frame, &at) in path.iter().enumerate() {
+            place(&mut world, "glyphs", at, 25.0 + 3.0 * frame as f64, 0.45);
+            let (a, a_text) = draw(&mut scissored, &world, frame);
+            let (b, b_text) = draw(&mut full, &world, frame);
+
+            // The scissor is drawing only around the crate: its bounds
+            // are a small part of the frame
+            let bounds = scissored.style_screen_bounds(&camera);
+            let ids = scissored.style_ids().clone();
+            assert_eq!(ids.len(), 1, "{ids:?}");
+            for (id, name) in ids.iter() {
+                let IdBounds::Uv(r) = bounds.get(id) else {
+                    panic!("{name}: {:?}", bounds.get(id));
+                };
+                assert!(r[2] - r[0] < 0.3 && r[3] - r[1] < 0.3, "{name} fills {r:?}");
+            }
+
+            let rows: Vec<String> = (0..a_text.rows).map(|y| a_text.line(y)).collect();
+            if a_text != b_text {
+                let full_rows: Vec<String> = (0..b_text.rows).map(|y| b_text.line(y)).collect();
+                panic!(
+                    "cell {cell}, frame {frame}: the scissored cells differ from the full ones\n\
+                     scissored:\n{}\nfull:\n{}",
+                    rows.join("\n"),
+                    full_rows.join("\n")
+                );
+            }
+            let differing = a.chunks(4).zip(b.chunks(4)).filter(|(p, q)| p != q).count();
+            assert!(
+                differing == 0,
+                "cell {cell}, frame {frame}: {differing} pixels differ scissored from full"
+            );
+            // Line glyphs drawn on the crate, so the edges are in play
+            edge_glyphs += rows
+                .iter()
+                .flat_map(|r| r.chars())
+                .filter(|c| ('\u{2500}'..='\u{257f}').contains(c))
+                .count();
+        }
+        assert!(
+            edge_glyphs > 3 * path.len(),
+            "cell {cell}: only {edge_glyphs} edge glyphs over {} frames",
+            path.len()
+        );
+    }
 }
 
 /// #538: per-entity watercolor (its wash, blur and paint passes) and a

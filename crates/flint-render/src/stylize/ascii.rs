@@ -956,6 +956,67 @@ mod tests {
         );
     }
 
+    /// #930: every edge cell a drawn cell's glyph reads this frame is one
+    /// the scissored edge cell pass writes. The glyph pass draws an
+    /// entity's cells, those its screen bounds touch; its rect is those
+    /// bounds grown by two of the largest cell (`encode`'s
+    /// `styled_rect`, `GLYPH_RECT_CELLS` of them), and the edge regions are
+    /// the cells under the rect and one more. Whatever the cell size, its
+    /// fraction of a pixel, the frame's leftover origin and where the
+    /// bounds fall, the cells within `EDGE_CORNER_REACH` of a drawn cell
+    /// lie inside them, clamped to the grid.
+    #[test]
+    fn edge_regions_hold_every_cell_a_drawn_cells_corner_reads() {
+        let mut checked = 0;
+        for size in [[256u32, 256u32], [333, 187], [1920, 1080]] {
+            for cell_px in [4.0f32, 6.0, 8.0, 12.0, 13.5, 16.0, 32.0] {
+                let cell = [cell_px, cell_px * 1.5];
+                let origin = grid_origin(size, cell);
+                let grid = cell_grid(size, cell, origin);
+                let largest = cell[0].max(cell[1]);
+                // Bounds from a sliver to a dozen cells, all over the frame,
+                // the frame's edges included
+                for x0 in (0..size[0]).step_by(37) {
+                    for w in [1u32, 3, 9, 41] {
+                        let y0 = (x0 * 7 + w * 13) % size[1];
+                        let bounds = kit::PixelRect {
+                            x: x0,
+                            y: y0,
+                            width: w.min(size[0] - x0),
+                            height: (w * 2).min(size[1] - y0),
+                        };
+                        let pad = (GLYPH_RECT_CELLS as f32 * largest).ceil() as u32;
+                        let glyph = bounds.padded(pad, size[0], size[1]);
+                        let r = edge_regions(glyph, cell, origin, size, grid, size);
+                        // The texels the bounds' pixels lie in (texel t is
+                        // cell t - 1, `CELL_OFFSET`)
+                        let texel =
+                            |p: u32, c: f32, o: f32| ((p as f32 - o) / c).floor() as i64 + 1;
+                        let span = |p0: u32, len: u32, c: f32, o: f32, n: u32| {
+                            let reach = EDGE_CORNER_REACH as i64;
+                            let lo = (texel(p0, c, o) - reach).max(0);
+                            let hi = (texel(p0 + len - 1, c, o) + reach).min(n as i64 - 1);
+                            (lo as u32, hi as u32)
+                        };
+                        let (tx0, tx1) = span(bounds.x, bounds.width, cell[0], origin[0], grid[0]);
+                        let (ty0, ty1) = span(bounds.y, bounds.height, cell[1], origin[1], grid[1]);
+                        let e = r.edge_cells;
+                        assert!(
+                            e.x <= tx0
+                                && e.x + e.width > tx1
+                                && e.y <= ty0
+                                && e.y + e.height > ty1,
+                            "{size:?}, cell {cell:?}, bounds {bounds:?}: the corners read \
+                             texels {tx0}..={tx1} x {ty0}..={ty1}, the edge cell pass writes {e:?}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 1000, "{checked}");
+    }
+
     #[test]
     fn uniforms_match_the_shader_layout() {
         // 160 bytes of scalars (#267's edge strength, #320's palette look), 7
