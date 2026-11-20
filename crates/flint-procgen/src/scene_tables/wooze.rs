@@ -510,6 +510,16 @@ impl fmt::Display for WoozeIssue {
 }
 
 impl WoozeDef {
+    /// The global knobs it sets itself, as a preset's `[wooze]` holds them.
+    pub fn knobs(&self) -> super::WoozeKnobs {
+        super::WoozeKnobs {
+            amplitude: self.amplitude,
+            step: self.step,
+            glide: self.glide,
+            jitter: self.jitter,
+        }
+    }
+
     /// The field this table describes, made of whatever is good in it, and an
     /// issue for each thing that isn't.
     pub fn field(&self) -> (WoozeField, Vec<WoozeIssue>) {

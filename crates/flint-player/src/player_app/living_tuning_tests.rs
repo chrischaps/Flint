@@ -5,7 +5,10 @@ use super::*;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_living::LivingPropRequest;
-use flint_procgen::{ProcGenSpec, Stagger, VarianceConfig};
+use flint_procgen::{
+    EchoConfig, LivingEchoesDef, LivingKnob, LivingVarianceDef, ProcGenSpec, Stagger,
+    VarianceConfig,
+};
 use flint_wooze::warp;
 
 const SPEC: &str = r#"
@@ -1155,12 +1158,17 @@ fn softness_comes_in_every_way_the_other_knobs_do() {
     app.tune_living_from_script(grove).unwrap();
     assert_eq!((soft(&mut app, 0), soft(&mut app, 2)), (0.5, 0.9));
     let view = app.living_view(None);
-    assert_eq!(view.softness.value, 0.5);
+    assert_eq!(view.get(LivingKnob::Softness).value, 0.5);
     assert!(
-        !view.softness.mixed,
+        !view.get(LivingKnob::Softness).mixed,
         "a species' own isn't the grove disagreeing"
     );
-    assert_eq!(app.living_view(Some("thorn")).softness.layers, ["species"]);
+    assert_eq!(
+        app.living_view(Some("thorn"))
+            .get(LivingKnob::Softness)
+            .layers,
+        ["species"]
+    );
     assert_eq!(
         app.living_look().living.species["thorn"].softness,
         Some(0.9),
@@ -1420,22 +1428,7 @@ mod scopes {
             for knob in Knob::ALL {
                 let mut report: Vec<String> = Vec::new();
                 for prop in &props {
-                    let label = match knob {
-                        Knob::Amplitude => prop.amplitude.layer.label(),
-                        Knob::Step => prop.step.layer.label(),
-                        Knob::Glide => prop.glide.layer.label(),
-                        Knob::Jitter => prop.jitter.layer.label(),
-                        Knob::Stagger => prop.stagger.layer.label(),
-                        Knob::EchoCount => prop.echo_count.layer.label(),
-                        Knob::EchoSpread => prop.echo_spread.layer.label(),
-                        Knob::EchoAlpha => prop.echo_alpha.layer.label(),
-                        Knob::VarianceAmount => prop.variance_amount.layer.label(),
-                        Knob::VarianceSteady => prop.variance_steady.layer.label(),
-                        Knob::KeepSize => prop.keep_size.layer.label(),
-                        Knob::Softness => prop.softness.layer.label(),
-                        Knob::JitterRate => prop.jitter_rate.layer.label(),
-                        Knob::RowRate => prop.row_rate.layer.label(),
-                    };
+                    let label = prop.get(knob).layer.label();
                     if !report.contains(&label) {
                         report.push(label);
                     }
@@ -1453,7 +1446,7 @@ mod scopes {
         for knob in Knob::ALL {
             app.clear_living_species("grove_birch", &[knob.key().to_string()])
                 .unwrap();
-            assert!(SPECIES_KEYS.contains(&knob.key()));
+            assert!(flint_procgen::species_keys().contains(&knob.key()));
         }
     }
 
@@ -1524,14 +1517,32 @@ mod scopes {
             );
         }
         let got = app.living_view(Some("thorn"));
-        assert_eq!(got.step.value, want.step.value);
-        assert_eq!(got.glide.value, want.glide.value);
-        assert_eq!(got.glide.value, 0.4, "the grove's glide");
-        assert_eq!(got.amplitude.value, want.amplitude.value);
-        assert_eq!(got.jitter.value, want.jitter.value);
-        assert_eq!(got.echo_count.value, 5, "the grove's count");
-        assert_eq!(got.echo_alpha.value, want.echo_alpha.value);
-        assert_eq!(got.variance_amount.value, want.variance_amount.value);
+        assert_eq!(
+            got.get(LivingKnob::Step).value,
+            want.get(LivingKnob::Step).value
+        );
+        assert_eq!(
+            got.get(LivingKnob::Glide).value,
+            want.get(LivingKnob::Glide).value
+        );
+        assert_eq!(got.get(LivingKnob::Glide).value, 0.4, "the grove's glide");
+        assert_eq!(
+            got.get(LivingKnob::Amplitude).value,
+            want.get(LivingKnob::Amplitude).value
+        );
+        assert_eq!(
+            got.get(LivingKnob::Jitter).value,
+            want.get(LivingKnob::Jitter).value
+        );
+        assert_eq!(got.get(LivingKnob::EchoCount).value, 5, "the grove's count");
+        assert_eq!(
+            got.get(LivingKnob::EchoAlpha).value,
+            want.get(LivingKnob::EchoAlpha).value
+        );
+        assert_eq!(
+            got.get(LivingKnob::VarianceAmount).value,
+            want.get(LivingKnob::VarianceAmount).value
+        );
         assert!(!state_of(&mut app, "thorn").has_own());
     }
 
@@ -1546,12 +1557,12 @@ mod scopes {
         assert!(!app.living_mixed().echo_count);
         move_at(&mut app, "thorn", |k| k.echo_count = 1);
         assert!(!app.living_mixed().echo_count, "the thorns own theirs");
-        assert_eq!(app.living_view(None).echo_count.value, 5);
+        assert_eq!(app.living_view(None).get(LivingKnob::EchoCount).value, 5);
         // Every species owning it, the knob reads what they run on.
         move_at(&mut app, "sapling", |k| k.echo_count = 3);
         let view = app.living_view(None);
-        assert!(view.echo_count.mixed);
-        assert_eq!(view.echo_count.layers, ["species"]);
+        assert!(view.get(LivingKnob::EchoCount).mixed);
+        assert_eq!(view.get(LivingKnob::EchoCount).layers, ["species"]);
     }
 }
 
@@ -1684,71 +1695,9 @@ mod picks {
 
     /// Each value and its layer, as `flint render --report json` gives them.
     fn report_of(prop: &ResolvedProp) -> Vec<(Knob, String, String)> {
-        let n = |v: f32| format!("{v}");
-        vec![
-            (
-                Knob::Amplitude,
-                n(prop.amplitude.value),
-                prop.amplitude.layer.label(),
-            ),
-            (Knob::Step, n(prop.step.value), prop.step.layer.label()),
-            (Knob::Glide, n(prop.glide.value), prop.glide.layer.label()),
-            (
-                Knob::Jitter,
-                n(prop.jitter.value),
-                prop.jitter.layer.label(),
-            ),
-            (
-                Knob::Stagger,
-                super::super::super::living_props::stagger_name(prop.stagger.value).to_string(),
-                prop.stagger.layer.label(),
-            ),
-            (
-                Knob::EchoCount,
-                prop.echo_count.value.to_string(),
-                prop.echo_count.layer.label(),
-            ),
-            (
-                Knob::EchoSpread,
-                n(prop.echo_spread.value),
-                prop.echo_spread.layer.label(),
-            ),
-            (
-                Knob::EchoAlpha,
-                n(prop.echo_alpha.value),
-                prop.echo_alpha.layer.label(),
-            ),
-            (
-                Knob::VarianceAmount,
-                n(prop.variance_amount.value),
-                prop.variance_amount.layer.label(),
-            ),
-            (
-                Knob::VarianceSteady,
-                n(prop.variance_steady.value),
-                prop.variance_steady.layer.label(),
-            ),
-            (
-                Knob::KeepSize,
-                prop.keep_size.value.to_string(),
-                prop.keep_size.layer.label(),
-            ),
-            (
-                Knob::Softness,
-                n(prop.softness.value),
-                prop.softness.layer.label(),
-            ),
-            (
-                Knob::JitterRate,
-                n(prop.jitter_rate.value),
-                prop.jitter_rate.layer.label(),
-            ),
-            (
-                Knob::RowRate,
-                n(prop.row_rate.value),
-                prop.row_rate.layer.label(),
-            ),
-        ]
+        (prop.iter())
+            .map(|(knob, at)| (knob, at.value.to_string(), at.layer.label()))
+            .collect()
     }
 
     /// The same, as the picked tree's window shows them.
@@ -1756,23 +1705,7 @@ mod picks {
         knobs: &LivingKnobs,
         sources: &flint_debug_ui::KnobSources,
     ) -> Vec<(Knob, String, String)> {
-        let n = |v: f32| format!("{v}");
-        let value = |knob: Knob| match knob {
-            Knob::Amplitude => n(knobs.amplitude),
-            Knob::Step => n(knobs.step),
-            Knob::Glide => n(knobs.glide),
-            Knob::Jitter => n(knobs.jitter),
-            Knob::Stagger => knobs.stagger.clone(),
-            Knob::EchoCount => knobs.echo_count.to_string(),
-            Knob::EchoSpread => n(knobs.echo_spread),
-            Knob::EchoAlpha => n(knobs.echo_alpha),
-            Knob::VarianceAmount => n(knobs.variance_amount),
-            Knob::VarianceSteady => n(knobs.variance_steady),
-            Knob::KeepSize => knobs.keep_size.to_string(),
-            Knob::Softness => n(knobs.softness),
-            Knob::JitterRate => n(knobs.jitter_rate),
-            Knob::RowRate => n(knobs.row_rate),
-        };
+        let value = |knob: Knob| knobs.value_of(knob).to_string();
         Knob::ALL
             .iter()
             .map(|knob| {
@@ -2211,4 +2144,49 @@ step = 0.75
         assert!(says.contains(&"[wooze] step".to_string()), "{says:?}");
         assert!(says.contains(&"[living] stagger".to_string()), "{says:?}");
     }
+}
+
+/// #1025's done-when: a knob is a row of `flint_procgen::living_knob_rows!` and
+/// the runtime's resolution of it, and nothing in the player names one. Every
+/// non-test source here goes through `LivingKnob::ALL` (or the panel's
+/// `Knob::ALL`), never a variant.
+#[test]
+#[allow(clippy::disallowed_methods)] // a test reads the crate's own sources
+fn no_player_source_names_a_knob() {
+    fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                sources(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    let tests = |path: &Path| {
+        let name = path.file_name().unwrap().to_string_lossy();
+        name.ends_with("_tests.rs") || name == "tests.rs" || name == "living_test_glue.rs"
+    };
+    let mut named = Vec::new();
+    for path in files.iter().filter(|path| !tests(path)) {
+        let text = std::fs::read_to_string(path).unwrap();
+        for knob in LivingKnob::ALL {
+            for spelled in [format!("LivingKnob::{knob:?}"), format!("Knob::{knob:?}")] {
+                let at = text.match_indices(&spelled).any(|(i, _)| {
+                    // `Knob::Step` but not `Knob::StepRate`, should one come
+                    let next = text[i + spelled.len()..].chars().next();
+                    !next.is_some_and(|c| c.is_alphanumeric() || c == '_')
+                });
+                if at {
+                    named.push(format!("{} names {spelled}", path.display()));
+                }
+            }
+        }
+    }
+    assert!(named.is_empty(), "{named:#?}");
 }

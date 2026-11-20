@@ -11,6 +11,7 @@ description = "Living props at run time: rings of poses on a frame budget, their
 # props its specs, its generators and what its queue left of the frame budget.
 [dependencies]
 web-time = { workspace = true }
+tracing = { workspace = true }
 flint-core = { workspace = true }
 flint-wooze = { workspace = true }
 flint-procgen = { workspace = true }

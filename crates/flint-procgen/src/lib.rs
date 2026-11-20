@@ -18,6 +18,7 @@ pub mod export_glb;
 mod generator;
 pub mod generators;
 pub mod living;
+pub mod living_knobs;
 pub mod mock;
 pub mod model;
 mod output;
@@ -50,6 +51,9 @@ pub use living::{
     boil_bones, CardBoil, LeafBinding, LivingClock, LivingJitter, LivingPose, LivingRig,
     LivingSkeleton, PoseStream, RowDrift, RowLine, RowWord, SegmentPose, WarpedTime, BOIL_BONES,
     JITTER_CHANNELS, JITTER_RATE_MAX, ROW_RATE_MAX, STAGGER_PER_LEVEL,
+};
+pub use living_knobs::{
+    species_def_of, species_keys, wooze_knobs_of, KnobType, KnobValue, LivingKnob,
 };
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{

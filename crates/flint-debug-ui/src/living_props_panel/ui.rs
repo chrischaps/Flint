@@ -5,7 +5,7 @@ use egui::Color32;
 use flint_procgen::WoozePreset;
 
 use super::clock::draw_clock;
-use super::knobs::{Knob, KnobControl, KnobFlags, KnobSection, KnobValue, LivingKnobs};
+use super::knobs::{Knob, KnobControl, KnobFlags, KnobPanel, KnobSection, KnobValue, LivingKnobs};
 use super::state::{side_name, LivingPanelAction, LivingPropRow, PanelScope};
 use super::{LivingPropsDebugPanel, FROZEN, INK, PARTS};
 use crate::widgets::{mixed_slider, section};

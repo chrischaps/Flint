@@ -17,7 +17,8 @@ use egui::Color32;
 use ui::Mark;
 
 pub use knobs::{
-    Knob, KnobControl, KnobDesc, KnobFlags, KnobSection, KnobSources, KnobValue, LivingKnobs,
+    Knob, KnobControl, KnobDesc, KnobFlags, KnobPanel, KnobSection, KnobSources, KnobValue,
+    LivingKnobs, KNOB_TABLE,
 };
 pub use overlay::pick_prop;
 pub use state::{

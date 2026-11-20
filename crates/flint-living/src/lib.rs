@@ -44,6 +44,7 @@
 
 mod ab;
 mod blend;
+mod defs;
 mod layers;
 mod prop;
 mod ring;
@@ -61,6 +62,11 @@ use flint_procgen::living::{mix64, LivingClock, LivingJitter, LivingRig, LivingS
 use flint_procgen::{ProcGenSpec, Stagger, VarianceConfig};
 
 pub use blend::{BlendFrame, PropBlend};
+pub use defs::{
+    apply_preset, defaults_of, echoes_of, jitter_rate_of, row_rate_of, softness_of, species_of,
+    species_problems, variance_of,
+};
+pub use flint_procgen::{KnobValue, LivingKnob};
 pub use layers::{
     jitter_rate_clamped, row_rate_clamped, ClockOverride, EchoOverride, Layer, Layered,
     LivingDefaults, LivingLayer, LivingLayers, LivingScope, LivingShadows, Resolved, ResolvedProp,

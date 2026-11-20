@@ -1895,6 +1895,7 @@ dependencies = [
  "flint-core",
  "flint-procgen",
  "flint-wooze",
+ "tracing",
  "web-time",
 ]
 
