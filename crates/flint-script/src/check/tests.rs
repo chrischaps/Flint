@@ -278,6 +278,46 @@ fn a_deprecated_function_warns() {
     assert_eq!(found[1].code, codes::WRONG_ARITY);
 }
 
+/// #853: a `set_post` key written as a literal is checked against the
+/// `[post_process]` keys, and the setters it replaced warn with its words.
+#[test]
+fn set_post_keys_are_checked_and_the_old_setters_warn() {
+    let c = checker();
+    assert!(codes_of(
+        &c,
+        "fn on_init() { set_post(\"vignette_intensity\", 0.4); }"
+    )
+    .is_empty());
+    // A key in a variable is the call's to check
+    assert!(codes_of(&c, "fn on_init() { let k = \"x\"; set_post(k, 0.4); }").is_empty());
+    let found = c.check_source(
+        Path::new("t.rhai"),
+        "fn on_init() { set_post(\"vignete_intensity\", 0.4); }",
+        false,
+    );
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, codes::BAD_ARGUMENT);
+    assert!(
+        found[0]
+            .message
+            .starts_with("`set_post` argument 1: `vignete_intensity` is no [post_process] key; did you mean `vignette_intensity`?"),
+        "{}",
+        found[0].message
+    );
+    let found = c.check_source(
+        Path::new("t.rhai"),
+        "fn on_init() { set_vignette(0.4); }",
+        false,
+    );
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, codes::DEPRECATED_FUNCTION);
+    assert!(found[0]
+        .hint
+        .as_deref()
+        .unwrap()
+        .contains("set_post(\"vignette_intensity\", v)"));
+}
+
 /// #702: an old name warns with the new one, its opts form passes, and a
 /// wrong count offers only the forms that aren't deprecated.
 #[test]

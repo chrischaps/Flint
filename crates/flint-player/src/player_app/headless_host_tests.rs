@@ -255,13 +255,16 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             },
         },
         C::SetPostProcess {
-            post: PostProcessOverrides {
-                vignette: Some(0.4),
-                ..Default::default()
+            post: {
+                let mut post = PostProcessOverrides::default();
+                post.set("vignette_intensity", &0.4.into()).unwrap();
+                post.set(
+                    "fog_color",
+                    &toml::Value::try_from([0.5, 0.5, 0.6]).unwrap(),
+                )
+                .unwrap();
+                post
             },
-        },
-        C::SetFogColor {
-            color: [0.5, 0.5, 0.6],
         },
         C::SetRenderMode {
             mode: Some((1, 1.0)),

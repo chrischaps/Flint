@@ -7,7 +7,7 @@
 //   18-23 s  drunk: the frame rolls and sees double
 //   23-30 s  underwater: a swell buries the eye and lets it go
 //
-// The tear (`set_tear`) and every style param hold until set again, so the
+// The tear (`set_post("tear", ...)`) and every style param hold until set again, so the
 // script sets what each act needs every frame and puts it back after.
 
 let period = 30.0;
@@ -47,8 +47,9 @@ fn on_update() {
 
     // One tear at a time: patches for the code and the blood, an iris
     // for the wire world
-    set_tear_shape(3.0, t >= 12.0 && t < 18.0);
-    set_tear(matrix.max(blood).max(tron));
+    set_post("tear_scale", 3.0);
+    set_post("tear_iris", t >= 12.0 && t < 18.0);
+    set_post("tear", matrix.max(blood).max(tron));
 
     set_post_style("matrix", matrix > 0.0);
     set_post_style("blood", blood > 0.0);

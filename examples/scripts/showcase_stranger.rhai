@@ -49,10 +49,10 @@ fn on_update() {
         }
 
         // Chromatic aberration pulse when near
-        set_chromatic_aberration(closeness * 0.15);
+        set_post("chromatic_aberration", closeness * 0.15);
     } else {
         set_anim_speed(me, base_speed);
-        set_chromatic_aberration(0.0);
+        set_post("chromatic_aberration", 0.0);
     }
 }
 

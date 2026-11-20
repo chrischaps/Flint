@@ -249,22 +249,28 @@ impl Subsystem for RhythmSubsystem {
             // so a recovered ladder restores the authored look
             Stage::Procgen => {
                 let post = &mut ctx.requests.post;
+                let mut blur = post.f32("radial_blur");
+                let mut aberration = post.f32("chromatic_aberration");
+                let mut desaturate = post.f32("desaturate");
                 if let Some(session) = &self.session {
                     session::merge_ladder_postprocess(
-                        &mut post.radial_blur,
-                        &mut post.chromatic_aberration,
-                        &mut post.desaturation,
+                        &mut blur,
+                        &mut aberration,
+                        &mut desaturate,
                         &session.visual_frame(),
                         self.post_base,
                     );
                 } else if let Some(base) = self.post_restore.take() {
                     session::restore_ladder_postprocess(
-                        &mut post.radial_blur,
-                        &mut post.chromatic_aberration,
-                        &mut post.desaturation,
+                        &mut blur,
+                        &mut aberration,
+                        &mut desaturate,
                         base,
                     );
                 }
+                post.set_f32("radial_blur", blur);
+                post.set_f32("chromatic_aberration", aberration);
+                post.set_f32("desaturate", desaturate);
             }
             _ => {}
         }

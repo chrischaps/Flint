@@ -119,10 +119,11 @@ const PARTICLE_COMMANDS: &[&str] = &[
 ];
 
 /// What the scripts have asked of the picture so far.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ScriptLook {
+    /// The `[post_process]` keys scripts set (`set_post`, #853), fog
+    /// colour among them.
     pub post: PostProcessOverrides,
-    pub fog_color: Option<[f32; 3]>,
     /// The render mode of the last step: shown only while asked for.
     pub render_mode: Option<(u32, f32)>,
     pub mode_params: Option<[f32; 4]>,
@@ -486,7 +487,7 @@ impl HeadlessGame {
     /// Post-processing and fog as the scripts have left them, and the last
     /// step's render mode.
     pub fn look(&self) -> ScriptLook {
-        self.look
+        self.look.clone()
     }
 
     /// What the scripts asked for that a headless capture doesn't do, once each.
@@ -629,9 +630,6 @@ impl FrameHost for CaptureFrame<'_> {
         // (a render mode lasts the step that asks)
         let requests = &mut game.core.script_requests;
         game.look.post.merge(std::mem::take(&mut requests.post));
-        if let Some(color) = requests.fog_color.take() {
-            game.look.fog_color = Some(color);
-        }
         game.look.render_mode = requests.render_mode.take();
         if let Some(params) = requests.mode_params.take() {
             game.look.mode_params = Some(params);
@@ -735,53 +733,7 @@ pub fn apply_look(
     look: &ScriptLook,
     shim: &mut flint_render::render_mode::RenderModeShim,
 ) {
-    let post = &look.post;
-    if let Some(v) = post.vignette {
-        config.vignette_enabled = v > 0.001;
-        config.vignette_intensity = v;
-    }
-    if let Some(b) = post.bloom {
-        config.bloom_intensity = b;
-    }
-    if let Some(e) = post.exposure {
-        config.exposure = e;
-    }
-    if let Some(ca) = post.chromatic_aberration {
-        config.chromatic_aberration = ca;
-    }
-    if let Some(rb) = post.radial_blur {
-        config.radial_blur = rb;
-    }
-    if let Some(si) = post.ssao_intensity {
-        config.ssao_intensity = si;
-    }
-    if let Some(fd) = post.fog_density {
-        config.fog_density = fd;
-    }
-    if let Some(d) = post.desaturation {
-        config.desaturate = d;
-    }
-    if let Some(s) = post.dof_strength {
-        config.dof_strength = s;
-    }
-    if let Some(fd) = post.dof_focus_distance {
-        config.dof_focus_distance = fd;
-    }
-    if let Some(tear) = post.tear {
-        config.tear = tear;
-    }
-    if let Some(scale) = post.tear_scale {
-        config.tear_scale = scale;
-    }
-    if let Some(iris) = post.tear_iris {
-        config.tear_iris = iris;
-    }
-    if let Some(fr) = post.dof_focus_range {
-        config.dof_focus_range = fr;
-    }
-    if let Some(fc) = look.fog_color {
-        config.fog_color = fc;
-    }
+    stamp_post(config, &look.post);
     // The deprecated render mode: transient, unlike the sticky overrides
     // above (#746)
     let mode = look
@@ -792,6 +744,17 @@ pub fn apply_look(
             params: look.mode_params.unwrap_or_default(),
         });
     shim.stamp(config, mode);
+}
+
+/// Write each `[post_process]` key scripts set over `config` (#853): the
+/// player's frame and a headless capture both stamp through this. Every key
+/// was checked against the effect descriptors when it was set, which the
+/// config's fields are made from, so each lands.
+pub fn stamp_post(config: &mut PostProcessConfig, post: &PostProcessOverrides) {
+    for (key, value) in post.iter() {
+        let landed = config.param_mut(key).is_some_and(|slot| slot.put(value));
+        debug_assert!(landed, "set_post checked {key}={value}");
+    }
 }
 
 // Every command is sampled, the living module's among them.

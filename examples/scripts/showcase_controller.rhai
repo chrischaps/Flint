@@ -3,7 +3,7 @@
 // moves focus with the keys, a pad, the mouse and touch, and says what the
 // player chose in on_ui. Escape opens and closes it (examples/input_showcase.toml).
 // Demonstrates: load_ui(), on_ui(), scripts/lib/menu.rhai, register_state(),
-// set_radial_blur(), set_audio_lowpass(), quit_game().
+// set_post("radial_blur"), set_audio_lowpass(), quit_game().
 
 import "menu" as menu;
 load_ui("examples/ui/pause.ui.toml");
@@ -18,7 +18,7 @@ fn on_init() {
 fn on_draw_ui() {
     if is_action_just_pressed("pause") { menu::toggle_pause("pause_menu"); }
     let paused = menu::is_open("pause_menu");
-    set_radial_blur(if paused { 0.3 } else { 0.0 });
+    set_post("radial_blur", if paused { 0.3 } else { 0.0 });
     set_audio_lowpass(if paused { 800.0 } else { 20000.0 });
 }
 

@@ -60,8 +60,8 @@ fn on_update() {
     if phase == "exiting" {
         transition_timer += dt;
         let progress = clamp(transition_timer / 1.5, 0.0, 1.0);
-        set_vignette(0.35 + progress * 1.5);
-        set_exposure(1.1 - progress * 0.8);
+        set_post("vignette_intensity", 0.35 + progress * 1.5);
+        set_post("exposure", 1.1 - progress * 0.8);
         set_audio_lowpass(20000.0 - progress * 18000.0);
         if transition_timer >= 1.5 {
             complete_transition();
@@ -77,13 +77,13 @@ fn on_update() {
         }
         transition_timer += dt;
         let progress = clamp(transition_timer / 2.0, 0.0, 1.0);
-        set_vignette(1.85 - progress * 1.5);
-        set_exposure(0.3 + progress * 0.8);
+        set_post("vignette_intensity", 1.85 - progress * 1.5);
+        set_post("exposure", 0.3 + progress * 0.8);
         set_audio_lowpass(2000.0 + progress * 18000.0);
         if transition_timer >= 2.0 {
             complete_transition();
-            set_vignette(0.35);
-            set_exposure(1.1);
+            set_post("vignette_intensity", 0.35);
+            set_post("exposure", 1.1);
             set_audio_lowpass(20000.0);
         }
     }

@@ -143,6 +143,20 @@ impl PostParamMut<'_> {
         }
         Ok(())
     }
+
+    /// Set the field to `value`, exactly, when it is the field's kind
+    /// (what a script's `set_post` checked when it was called, #853).
+    /// `false`, and the field untouched, when it is another kind.
+    pub fn put(self, value: PostValue) -> bool {
+        match (self, value) {
+            (PostParamMut::Bool(b), PostValue::Bool(v)) => *b = v,
+            (PostParamMut::F32(f), PostValue::F32(v)) => *f = v,
+            (PostParamMut::U32(u), PostValue::U32(v)) => *u = v,
+            (PostParamMut::Rgb(rgb), PostValue::Rgb(v)) => *rgb = v,
+            _ => return false,
+        }
+        true
+    }
 }
 
 /// One `[post_process]` key.
@@ -167,6 +181,21 @@ pub struct PostParam {
 }
 
 impl PostParam {
+    /// `value` as this key's kind, or why it isn't one ("is a number"),
+    /// by [`PostParamMut::set`]'s rules: an integer is a number, a whole
+    /// number 0 or more is a count.
+    pub fn value_of(&self, value: &toml::Value) -> Result<PostValue, String> {
+        let mut out = self.default;
+        let slot = match &mut out {
+            PostValue::Bool(b) => PostParamMut::Bool(b),
+            PostValue::F32(f) => PostParamMut::F32(f),
+            PostValue::U32(u) => PostParamMut::U32(u),
+            PostValue::Rgb(rgb) => PostParamMut::Rgb(rgb),
+        };
+        slot.set(value)?;
+        Ok(out)
+    }
+
     /// Why `value` won't draw as the effect is tuned, when a number of it
     /// lies outside `min..=max`: "bloom_intensity=3 is outside its range
     /// 0..1", as a style parameter says it (#355). `None` inside, and for a
@@ -241,6 +270,32 @@ pub fn param(key: &str) -> Option<&'static PostParam> {
 /// The effect `name`.
 pub fn effect(name: &str) -> Option<&'static EffectDescriptor> {
     EFFECTS.iter().find(|e| e.name == name)
+}
+
+/// Why `key` is no parameter, and what it might have been: the effect's
+/// own keys when it names an effect (`vignette`), else the closest key, then
+/// every key. What a script's `set_post` and `flint script check` say
+/// (#853).
+pub fn unknown_key(key: &str) -> String {
+    let first = match effect(key) {
+        Some(e) => format!(
+            "`{key}` is an effect, not a [post_process] key: its keys are {}",
+            e.params
+                .iter()
+                .map(|p| p.key)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        None => match flint_core::diagnostic::closest(key, params().map(|p| p.key)) {
+            Some(near) => format!("`{key}` is no [post_process] key; did you mean `{near}`?"),
+            None => format!("`{key}` is no [post_process] key"),
+        },
+    };
+    let stop = if first.ends_with('?') { "" } else { "." };
+    format!(
+        "{first}{stop} The keys: {} (`flint render --list-effects` says what each does)",
+        params().map(|p| p.key).collect::<Vec<_>>().join(", ")
+    )
 }
 
 /// The range warnings of a raw `[post_process]` table: one a key whose
@@ -709,5 +764,35 @@ mod tests {
         assert!(PostParamMut::Bool(&mut b)
             .set(&toml::Value::Integer(1))
             .is_err());
+    }
+
+    #[test]
+    fn a_value_is_read_as_its_key_kind_and_put_only_into_that_kind() {
+        let samples = param("ssao_samples").unwrap();
+        assert_eq!(
+            samples.value_of(&toml::Value::Float(16.0)),
+            Ok(PostValue::U32(16))
+        );
+        assert!(samples.value_of(&toml::Value::Float(1.5)).is_err());
+        let mut f = 0.0f32;
+        assert!(PostParamMut::F32(&mut f).put(PostValue::F32(0.25)));
+        assert_eq!(f, 0.25);
+        assert!(!PostParamMut::F32(&mut f).put(PostValue::Bool(true)));
+        assert_eq!(f, 0.25, "untouched");
+    }
+
+    #[test]
+    fn an_unknown_key_says_what_it_might_have_been_and_lists_every_key() {
+        let e = unknown_key("fog_desnity");
+        assert!(
+            e.starts_with("`fog_desnity` is no [post_process] key; did you mean `fog_density`?")
+        );
+        for p in params() {
+            assert!(e.contains(p.key), "{}", p.key);
+        }
+        assert!(unknown_key("bloom").starts_with(
+            "`bloom` is an effect, not a [post_process] key: its keys are bloom_enabled, \
+             bloom_intensity, bloom_threshold, bloom_soft_threshold."
+        ));
     }
 }

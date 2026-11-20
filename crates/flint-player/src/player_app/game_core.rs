@@ -1179,10 +1179,6 @@ impl ScriptHost for CoreCommands<'_> {
         self.core.script_requests.post.merge(post);
     }
 
-    fn set_fog_color(&mut self, color: [f32; 3]) {
-        self.core.script_requests.fog_color = Some(color);
-    }
-
     fn set_render_mode(&mut self, mode: Option<(u32, f32)>, params: Option<[f32; 4]>) {
         let r = &mut self.core.script_requests;
         r.render_mode = mode.or(r.render_mode);
