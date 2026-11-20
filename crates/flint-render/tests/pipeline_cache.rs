@@ -3,7 +3,10 @@
 //! state, so its first frame is the bytes a renderer built from nothing
 //! draws, though the first had ASCII's cell history full of another
 //! camera's frames; and a style whose WGSL changed builds a new pipeline
-//! instead of taking the one kept for the old text.
+//! instead of taking the one kept for the old text. A model's or file's
+//! texture and a mesh's vertex and index buffers ride the same cache
+//! (#961): uploaded once a device, keyed by their bytes, and never written
+//! in place while kept.
 //!
 //! A binary of its own, since the cache (like the shader folder the second
 //! test points at) is the process's. Each test switches it holding the
@@ -320,4 +323,160 @@ fn a_changed_shader_builds_a_new_pipeline_not_the_kept_one() {
     pipeline_cache::set_enabled(false);
     dev_shader::set_dir(None);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// #961: on WARP each golden case uploaded its scene's textures again, up
+/// to 8 s a case. With the cache on, a second renderer's cache takes the
+/// texture the first one uploaded from the same file; one whose file now
+/// holds other pixels gets a texture of its own; a kept texture refuses
+/// `update_rgba`, whose write would reach every renderer drawing it; and
+/// with the cache off nothing is kept and the write goes through.
+#[test]
+#[allow(clippy::disallowed_methods)] // a test writes its own files to the disk
+fn a_file_texture_is_uploaded_once_a_device_and_never_written_while_kept() {
+    let Some(lease) = shared_gpu::lease_alone() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let (device, queue) = (&lease.gpu.device, &lease.gpu.queue);
+    let dir =
+        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("texture_keep_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("probe.png");
+    let paint = |shade: u8| {
+        image::RgbaImage::from_fn(32, 32, |x, y| {
+            image::Rgba([shade, x as u8 * 8, y as u8 * 8, 255])
+        })
+        .save(&file)
+        .unwrap();
+    };
+    let label = flint_render::KEPT_TEXTURE_LABEL;
+    pipeline_cache::set_enabled(true);
+    pipeline_cache::clear();
+    pipeline_cache::reset_counts();
+
+    paint(40);
+    let load = || {
+        let mut cache = flint_render::TextureCache::new(device, queue);
+        cache
+            .load_file_mipmapped(device, queue, "probe", &file)
+            .unwrap();
+        cache
+    };
+    let (first, second) = (load(), load());
+    let texture = |c: &flint_render::TextureCache| c.get("probe").unwrap().texture.clone();
+    assert_eq!(
+        texture(&first),
+        texture(&second),
+        "the second cache uploaded its own"
+    );
+    assert_eq!((count(label).built, count(label).reused), (1, 1));
+    let pixels = vec![0u8; 32 * 32 * 4];
+    let refused = second.update_rgba(queue, "probe", &pixels).unwrap_err();
+    assert!(refused.contains("shared"), "{refused}");
+
+    // Other pixels behind the same name and path: a texture of its own
+    paint(200);
+    let third = load();
+    assert_ne!(
+        texture(&third),
+        texture(&first),
+        "took the old file's texture"
+    );
+    assert_eq!(count(label).built, 2);
+
+    // Off: nothing kept, so the write is the cache's own to make
+    pipeline_cache::set_enabled(false);
+    let own = load();
+    assert_ne!(texture(&own), texture(&third));
+    own.update_rgba(queue, "probe", &pixels).unwrap();
+    assert_eq!(count(label).built, 2, "counted with the cache off");
+
+    pipeline_cache::clear();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #961: an imported mesh's vertex and index buffers ride the cache too
+/// (on WARP the skinned YBot's took 0.57 s a case). A second mesh cache on
+/// the device takes the buffers the first uploaded from the same model,
+/// moved vertices get their own, a procedural mesh is never kept (a host
+/// replaces one at run time), and with the cache off nothing is shared.
+#[test]
+fn a_mesh_is_uploaded_once_a_device_by_its_bytes() {
+    let Some(lease) = shared_gpu::lease_alone() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let device = &lease.gpu.device;
+    let label = flint_render::KEPT_GEOMETRY_LABEL;
+    pipeline_cache::set_enabled(true);
+    pipeline_cache::clear();
+    pipeline_cache::reset_counts();
+
+    let sphere = flint_import::import_gltf(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/models/Sphere.glb"),
+    )
+    .unwrap();
+    let mut moved_sphere = sphere.clone();
+    moved_sphere.meshes[0].positions[0][0] += 0.25;
+    let upload = |model: &flint_import::ImportResult| {
+        let mut cache = flint_render::MeshCache::new();
+        cache.upload_imported(device, "probe", model, [1.0; 4]);
+        let mesh = &cache.get("probe").unwrap()[0];
+        (mesh.vertex_buffer.clone(), mesh.index_buffer.clone())
+    };
+    let (first, second) = (upload(&sphere), upload(&sphere));
+    assert!(
+        std::sync::Arc::ptr_eq(&first.0, &second.0),
+        "vertices uploaded twice"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&first.1, &second.1),
+        "indices uploaded twice"
+    );
+    let kept = count(label);
+    assert_eq!(kept.reused, kept.built, "{kept:?}");
+
+    // Other vertices: a buffer of their own; the same indices: the kept ones
+    let moved = upload(&moved_sphere);
+    assert!(
+        !std::sync::Arc::ptr_eq(&moved.0, &first.0),
+        "took the other mesh's vertices"
+    );
+    assert!(std::sync::Arc::ptr_eq(&moved.1, &first.1));
+
+    // A procedural mesh: never kept, so replacing one never piles up
+    let before = count(label);
+    let procedural = || {
+        let mut cache = flint_render::MeshCache::new();
+        let v = |x: f32| flint_render::Vertex {
+            position: [x, 0.0, 0.0],
+            normal: [0.0, 1.0, 0.0],
+            color: [1.0; 4],
+            uv: [0.0; 2],
+        };
+        cache.upload_procedural(
+            device,
+            "made",
+            &[v(0.0), v(1.0), v(2.0)],
+            &[0, 1, 2],
+            Default::default(),
+        );
+        cache.get("made").unwrap()[0].vertex_buffer.clone()
+    };
+    assert!(!std::sync::Arc::ptr_eq(&procedural(), &procedural()));
+    assert_eq!(
+        count(label),
+        before,
+        "a procedural mesh went through the cache"
+    );
+
+    pipeline_cache::set_enabled(false);
+    let own = upload(&sphere);
+    assert!(
+        !std::sync::Arc::ptr_eq(&own.0, &first.0),
+        "shared with the cache off"
+    );
+    pipeline_cache::clear();
 }

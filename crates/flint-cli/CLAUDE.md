@@ -100,10 +100,10 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    printed, on a failure; `FLINT_GOLDENS_OUT=<dir>` names a folder kept either way (CI's WARP job sets
    `target/tmp/stylize-goldens`, which its summary and artifact read). Cases run in one process on one GPU device with glTF
    decodes and mip chains memoized (`render::RenderHost`, `flint_import::memoize_imports`,
-   `flint_render::memoize_mip_chains`; ~2.5x in debug) and pipelines kept (#911,
+   `flint_render::memoize_mip_chains`; ~2.5x in debug) and pipelines and textures kept (#911, #961,
    `flint_render::pipeline_cache`, cleared by `RenderHost::drop_device`; the summary's `pipelines:` line
-   counts built and reused and ASCII's glyph pipeline, built once a run; `--fresh-pipelines` builds every
-   case's anew, for an A/B in one process; full suite on the RTX, debug: Vulkan 69 to 27 s, DX12/DXC 320
+   counts built and reused, ASCII's glyph pipeline, built once a run, and textures and mesh buffers
+   uploaded and reused; `--fresh-pipelines` builds and uploads every case's anew, for an A/B in one process; full suite on the RTX, debug: Vulkan 69 to 27 s, DX12/DXC 320
    to 45 s); a panicking case reruns in its own process (and drops the kept pipelines with the device),
    `--isolate` spawns every case. A case never sees an earlier one's state: each builds its own
    renderer and draws with its own scene's style registry (#742), so a user style an earlier case
@@ -121,9 +121,10 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    `max_flips`. `Case::check` refuses a sequence key without `frames`, a sequence with a golden key, and
    sequence flags in `args`, at manifest load. `CaseReport::sequence` carries the per-frame counts; the
    sheet charts them (`golden_sheet::sequence_chart`), `scripts/goldens-summary.py` gives them a row.
-   Cases `ascii-motion-tone` / `-edges` on `tests/fixtures/scenes/ascii_motion` (60 frames, 640x360:
-   0.0 / 0.16 reversals against budgets 0.5 / 1.0; `hysteresis=0` reads 2.2 / 3.5), held by
-   `tests/render_goldens.rs::a_sequence_case_fails_when_the_history_stops_holding`.
+   Cases `ascii-motion-tone` / `-edges` on `tests/fixtures/scenes/ascii_motion` (30 frames since #961,
+   640x360: 0.0 / 0.18 reversals against budgets 0.5 / 1.0; `hysteresis=0` reads 2.3 / 3.5; the means a
+   frame are flat from 20 to 60 frames, and WARP reads the RTX's), held by
+   `tests/render_goldens.rs::a_sequence_case_fails_when_the_history_stops_holding` (at 20 frames).
    CI runs the goldens and `flint-render --test stylize` on WARP (#314, job `GPU tests (WARP)`)
    with `FLINT_REQUIRE_GPU=1`, which turns a GPU test's skip into a failure
    (`gpu_select::skip_without_gpu`; a new GPU test calls it). flint-render's GPU test binaries

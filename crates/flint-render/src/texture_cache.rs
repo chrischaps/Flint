@@ -2,11 +2,50 @@
 
 use flint_core::vfs;
 use flint_import::ImportedTexture;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use wgpu::util::DeviceExt;
 
 pub use flint_pixels::{memoize_mip_chains, mip_chain};
+
+/// The label [`crate::pipeline_cache`] counts kept textures under (#961):
+/// `flint goldens` reports them apart from its pipelines.
+pub const KEPT_TEXTURE_LABEL: &str = "Texture";
+
+/// `device.create_texture_with_data`, or, while
+/// [`crate::pipeline_cache`] is on (`flint goldens` in one process), the
+/// texture an earlier renderer on this device made from the same pixels
+/// (#961). Every case of a golden run builds a renderer of its own, and
+/// each uploaded its scene's model and file textures again: on WARP that
+/// upload was up to 8 s a case (the selection scene's 133 MB of mip
+/// chains), more than the case's frame. The key is everything the texture
+/// is made of: its size, levels, format, usage and a fingerprint of the
+/// bytes, so two names with one image share it and a changed file is a
+/// new texture. Only a texture nothing writes may come from here; the
+/// cache marks it so [`TextureCache::update_rgba`] refuses it.
+fn texture_with_data(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    desc: &wgpu::TextureDescriptor,
+    data: &[u8],
+) -> (wgpu::Texture, bool) {
+    let make = || {
+        device.create_texture_with_data(queue, desc, wgpu::util::TextureDataOrder::LayerMajor, data)
+    };
+    if !crate::pipeline_cache::enabled() {
+        return (make(), false);
+    }
+    let parts = (
+        desc.size,
+        desc.mip_level_count,
+        desc.format,
+        desc.usage,
+        data.len(),
+        flint_pixels::fingerprint(data),
+    );
+    let kept = crate::pipeline_cache::shared(device, KEPT_TEXTURE_LABEL, parts, make);
+    ((*kept).clone(), true)
+}
 
 /// Open and decode an image file through the file layer: `image::open`, but
 /// the bytes come from [`vfs::read`] so a memory source works too. The format
@@ -45,6 +84,9 @@ pub fn is_data_map_name(name: &str) -> bool {
 /// Cache of GPU textures, keyed by name, with built-in defaults
 pub struct TextureCache {
     textures: HashMap<String, GpuTexture>,
+    /// The names whose texture is shared with other renderers on the device
+    /// ([`texture_with_data`]): never written in place.
+    kept: HashSet<String>,
     /// 1x1 white texture (default base color)
     pub default_white: GpuTexture,
     /// 1x1 flat normal map (0.5, 0.5, 1.0) = straight up
@@ -65,6 +107,7 @@ impl TextureCache {
 
         Self {
             textures: HashMap::new(),
+            kept: HashSet::new(),
             default_white,
             default_normal,
             default_metallic_roughness,
@@ -152,7 +195,8 @@ impl TextureCache {
         let (data, mip_level_count) =
             mip_chain(&rgba_data, imported.width, imported.height, !linear);
 
-        let texture = device.create_texture_with_data(
+        let (texture, kept) = texture_with_data(
+            device,
             queue,
             &wgpu::TextureDescriptor {
                 label: Some(name),
@@ -168,9 +212,11 @@ impl TextureCache {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             },
-            wgpu::util::TextureDataOrder::LayerMajor,
             &data,
         );
+        if kept {
+            self.kept.insert(name.to_string());
+        }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -259,7 +305,8 @@ impl TextureCache {
         };
 
         flint_core::scope!("upload_texture", data.len());
-        let texture = device.create_texture_with_data(
+        let (texture, kept) = texture_with_data(
+            device,
             queue,
             &wgpu::TextureDescriptor {
                 label: Some(name),
@@ -275,9 +322,11 @@ impl TextureCache {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             },
-            wgpu::util::TextureDataOrder::LayerMajor,
             &data,
         );
+        if kept {
+            self.kept.insert(name.to_string());
+        }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -407,6 +456,13 @@ impl TextureCache {
             .textures
             .get(name)
             .ok_or_else(|| format!("Texture '{}' not found in cache", name))?;
+        // A texture another renderer draws with too (#961) is never written:
+        // the write would reach that renderer's frames
+        if self.kept.contains(name) {
+            return Err(format!(
+                "Texture '{name}' is shared with other renderers on this device                  (the pipeline cache is on), so it can't be written in place"
+            ));
+        }
 
         let expected = (tex.width * tex.height * 4) as usize;
         if data.len() != expected {
@@ -464,10 +520,12 @@ impl TextureCache {
     /// Remove a texture from the cache by name.
     pub fn remove_texture(&mut self, name: &str) {
         self.textures.remove(name);
+        self.kept.remove(name);
     }
 
     /// Clear all user-loaded textures (preserves built-in defaults)
     pub fn clear_user_textures(&mut self) {
         self.textures.clear();
+        self.kept.clear();
     }
 }

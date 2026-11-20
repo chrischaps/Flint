@@ -78,7 +78,7 @@ pub use frustum::Frustum;
 pub use glyph_atlas::{
     EdgeGlyphs, GlyphAtlas, GlyphError, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphAtlas, RampMap,
 };
-pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
+pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache, KEPT_GEOMETRY_LABEL};
 pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
 pub use gpu_timer::{
     GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread, TracedGpuFrame, TracedPass,
@@ -114,7 +114,7 @@ pub use split_view::SplitView;
 
 pub use style_mask::{StyleIds, STYLE_MASK_FORMAT};
 pub use surface_frame::{AcquireFrame, SurfaceError};
-pub use texture_cache::{memoize_mip_chains, open_image, TextureCache};
+pub use texture_cache::{memoize_mip_chains, open_image, TextureCache, KEPT_TEXTURE_LABEL};
 pub use trusted_shader::TrustedShader;
 pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
 pub use wooze_pipeline::{ShallowWoozeDraw, WAVELENGTH_MIN};

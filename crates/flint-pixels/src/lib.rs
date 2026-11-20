@@ -119,8 +119,9 @@ pub fn memoize_mip_chains(on: bool) {
 }
 
 /// A 64-bit FNV-1a over the pixels, eight bytes a step: the memo's key
-/// with the size and colour space, cheap next to the chain it saves.
-fn fingerprint(bytes: &[u8]) -> u64 {
+/// with the size and colour space, cheap next to the chain it saves. Also
+/// the key flint-render keeps a texture on the device by (#961).
+pub fn fingerprint(bytes: &[u8]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     let (words, rest) = bytes.as_chunks::<8>();
     for w in words {

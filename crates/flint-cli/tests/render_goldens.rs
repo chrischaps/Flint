@@ -223,7 +223,9 @@ fn style_flag_rejects_what_it_cannot_do() {
 /// stylize suite's own `ascii-motion-tone` case, its budget as checked in,
 /// run again with `hysteresis = 0`, must fail on its budget: so a budget
 /// loosened past what that regression measures (2.2 reversals a frame
-/// against 0.5) fails this test.
+/// against 0.5) fails this test. It draws 20 frames, not the case's 30:
+/// the mean a frame is the same at any count (2.39 at 20, 2.21 at 60), and
+/// on CI's WARP each frame is about 1.3 s beside the suite's own (#961).
 #[test]
 fn a_sequence_case_fails_when_the_history_stops_holding() {
     let manifest_path =
@@ -240,6 +242,7 @@ fn a_sequence_case_fails_when_the_history_stops_holding() {
         .unwrap()
         .clone();
     case.insert("name".into(), "ascii-motion-tone-no-hold".into());
+    case.insert("frames".into(), 20.into());
     let args = case.get_mut("args").unwrap().as_array_mut().unwrap();
     args.extend(["--style".into(), "ascii:hysteresis=0".into()]);
     let mut suite = manifest["suite"].as_table().unwrap().clone();
