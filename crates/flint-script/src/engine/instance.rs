@@ -193,105 +193,99 @@ pub(crate) fn callable(ast: &AST, reads: &[ImmutableString], scope: &Scope) -> A
 }
 
 /// The names `ast` reads as `global::NAME`, anywhere: its functions, the
-/// closures in them, its top level. Each once, in the order first read.
+/// closures in them, its top level, a method call's arguments (#998). Each
+/// once, in the order first read.
 pub(crate) fn global_reads(ast: &AST) -> Vec<ImmutableString> {
     let mut names: Vec<ImmutableString> = Vec::new();
-    ast.walk(&mut |path: &[ASTNode]| {
-        if let Some(ASTNode::Expr(Expr::Variable(v, ..))) = path.last() {
+    any_node(ast, |node| {
+        if let ASTNode::Expr(Expr::Variable(v, ..)) = node {
             let (_, name, namespace, _) = &**v;
             if namespace.path.len() == 1 && namespace.root() == "global" && !names.contains(name) {
                 names.push(name.clone());
             }
         }
-        true
+        false
     });
     names
 }
 
 /// Whether `ast` may call `complete_transition()` (#362): a call to it, or
-/// the name in a string (`call("complete_transition")`), anywhere in the
-/// script, function bodies and closures included; or an `import`, since a
-/// module is resolved only when the script runs and could make the call.
-///
-/// Written when Rhai's `internals` (its AST walk) was on for `flint script
-/// check` alone; every build has it since #692, so this could become a
-/// walk. It reads the AST's `Debug` form, which names every call,
-/// string and statement, and stops at the first match. Once a load or
-/// reload, never a frame. `engine::tests` holds it to the shapes above, so
-/// a Rhai upgrade that changes the form fails there, not in a game.
+/// the name in a string (`call("complete_transition")`, `Fn(..)`), anywhere
+/// in the script, function bodies and closures included; or an `import`,
+/// since a module is resolved only when the script runs and could make the
+/// call. A walk of the AST ([`any_node`]), stopping at the first match; once
+/// a load or reload, never a frame. `engine::tests` holds it to the shapes
+/// above.
 pub(crate) fn may_complete_transition(ast: &AST) -> bool {
-    use std::fmt::Write;
-    let mut find = Finder::new(&["complete_transition", "Import("]);
-    // An `Err` here is the finder stopping the walk at a match
-    let _ = write!(find, "{ast:?}");
-    find.found
+    const NAME: &str = "complete_transition";
+    any_node(ast, |node| match node {
+        ASTNode::Stmt(Stmt::FnCall(call, _))
+        | ASTNode::Expr(Expr::FnCall(call, _) | Expr::MethodCall(call, _)) => call.name == NAME,
+        ASTNode::Expr(Expr::StringConstant(s, _)) => s.as_str() == NAME,
+        // What the optimizer folded: `Fn("complete_transition")`, a constant
+        // array holding the name
+        ASTNode::Expr(Expr::DynamicConstant(value, _)) => names(value, NAME),
+        ASTNode::Stmt(Stmt::Import(..)) => true,
+        _ => false,
+    })
+}
+
+/// Whether `value`, a constant the optimizer folded, is `name` as a string
+/// or a function pointer, or holds it in an array or a map.
+fn names(value: &rhai::Dynamic, name: &str) -> bool {
+    if let Some(s) = value.read_lock::<ImmutableString>() {
+        return s.as_str() == name;
+    }
+    if let Some(f) = value.read_lock::<rhai::FnPtr>() {
+        return f.fn_name() == name;
+    }
+    if let Some(items) = value.read_lock::<rhai::Array>() {
+        return items.iter().any(|v| names(v, name));
+    }
+    if let Some(map) = value.read_lock::<rhai::Map>() {
+        return map.values().any(|v| names(v, name));
+    }
+    false
 }
 
 /// Whether `ast` spells `name` as a string literal anywhere
 /// (`is_action_pressed("jump")`), function bodies and closures included; a
-/// comment, a variable or a function of that name doesn't. Rhai's walk
-/// skips a method call's arguments (`check.rs` says so too), so those are
-/// walked here by hand. Once a load.
+/// comment, a variable or a function of that name doesn't. Once a load.
 pub(crate) fn names_string(ast: &AST, name: &str) -> bool {
-    fn is_it(nodes: &[ASTNode], name: &str) -> bool {
-        matches!(nodes.last(), Some(ASTNode::Expr(Expr::StringConstant(s, _))) if s.as_str() == name)
+    any_node(
+        ast,
+        |node| matches!(node, ASTNode::Expr(Expr::StringConstant(s, _)) if s.as_str() == name),
+    )
+}
+
+/// Whether `is_it` holds for any node of `ast`: its top level, its
+/// functions' bodies and its closures' (Rhai keeps a closure as a function
+/// of the AST too). Rhai's walk skips a method call's arguments (`check.rs`
+/// says so too), so those are walked here by hand, nested ones included.
+/// Stops at the first.
+pub(crate) fn any_node(ast: &AST, mut is_it: impl FnMut(&ASTNode) -> bool) -> bool {
+    fn hit(node: &ASTNode, is_it: &mut dyn FnMut(&ASTNode) -> bool) -> bool {
+        if is_it(node) {
+            return true;
+        }
+        let ASTNode::Expr(Expr::MethodCall(call, _)) = node else {
+            return false;
+        };
+        call.args.iter().any(|arg| {
+            let mut found = false;
+            arg.walk(&mut Vec::new(), &mut |inner: &[ASTNode]| {
+                found = inner.last().is_some_and(|n| hit(n, is_it));
+                !found
+            });
+            found
+        })
     }
     let mut found = false;
     ast.walk(&mut |nodes: &[ASTNode]| {
-        found = is_it(nodes, name);
-        if let Some(ASTNode::Expr(Expr::MethodCall(call, _))) = nodes.last() {
-            for arg in call.args.iter() {
-                arg.walk(&mut Vec::new(), &mut |inner: &[ASTNode]| {
-                    found |= is_it(inner, name);
-                    !found
-                });
-            }
-        }
+        found = nodes.last().is_some_and(|n| hit(n, &mut is_it));
         !found
     });
     found
-}
-
-/// A `fmt::Write` that looks for any of its needles across the pieces it
-/// is handed, and refuses the rest once one is found.
-pub(crate) struct Finder<'a> {
-    needles: &'a [&'a str],
-    /// The end of what came before, long enough to hold a needle split
-    /// across two pieces.
-    tail: String,
-    pub(crate) found: bool,
-}
-
-impl<'a> Finder<'a> {
-    pub(crate) fn new(needles: &'a [&'a str]) -> Self {
-        Self {
-            needles,
-            tail: String::new(),
-            found: false,
-        }
-    }
-}
-
-impl std::fmt::Write for Finder<'_> {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        if self.found {
-            return Err(std::fmt::Error);
-        }
-        self.tail.push_str(s);
-        if self.needles.iter().any(|n| self.tail.contains(n)) {
-            self.found = true;
-            return Err(std::fmt::Error);
-        }
-        let keep = self.needles.iter().map(|n| n.len()).max().unwrap_or(1) - 1;
-        if self.tail.len() > keep {
-            let mut cut = self.tail.len() - keep;
-            while !self.tail.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            self.tail.drain(..cut);
-        }
-        Ok(())
-    }
 }
 
 /// What is wrong with a script's `fn`s as callbacks (#700), found the one
