@@ -28,12 +28,10 @@ pub struct RenderContext {
     pub config: wgpu::SurfaceConfiguration,
     pub size: winit::dpi::PhysicalSize<u32>,
     pub depth_texture: wgpu::Texture,
+    /// The renderer keeps bind groups over it for as long as it is the same
+    /// view (#379, #960): a texture made again, here or by a host, is a new
+    /// view and gets new groups.
     pub depth_view: wgpu::TextureView,
-    /// `depth_texture`'s [`new_depth_id`](crate::bind_cache::new_depth_id),
-    /// taken again whenever it is made again, so the renderer can keep bind
-    /// groups over `depth_view` (#379). A host that replaces the texture
-    /// itself takes a new one too.
-    pub depth_id: u64,
     // Retained for surface recreation on Android resume
     instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
@@ -198,7 +196,6 @@ impl RenderContext {
             size,
             depth_texture,
             depth_view,
-            depth_id: crate::bind_cache::new_depth_id(),
             instance,
             adapter,
             surface_copyable,
@@ -349,7 +346,6 @@ impl RenderContext {
         self.size = size;
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
-        self.depth_id = crate::bind_cache::new_depth_id();
 
         Ok(())
     }
@@ -370,7 +366,6 @@ impl RenderContext {
             let (depth_texture, depth_view) = create_depth_texture(&self.device, &self.config);
             self.depth_texture = depth_texture;
             self.depth_view = depth_view;
-            self.depth_id = crate::bind_cache::new_depth_id();
         }
     }
 
@@ -391,10 +386,10 @@ impl RenderContext {
         resolve_present_mode(self.config.present_mode, &self.supported_present_modes)
     }
 
-    /// The depth view with its id, for
+    /// The depth view, for
     /// [`SceneRenderer::encode_to`](crate::SceneRenderer::encode_to).
     pub fn depth_target(&self) -> crate::bind_cache::DepthTarget<'_> {
-        crate::bind_cache::DepthTarget::new(&self.depth_view, self.depth_id)
+        crate::bind_cache::DepthTarget::new(&self.depth_view)
     }
 
     /// Get aspect ratio

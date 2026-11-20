@@ -342,4 +342,4 @@
 {"ph":"M","name":"thread_name","pid":1,"tid":7,"args":{"name":"notes"}},
 {"ph":"M","name":"thread_sort_index","pid":1,"tid":7,"args":{"sort_index":7}},
 {"ph":"i","s":"t","name":"model load","pid":1,"tid":7,"ts":1078610.0,"args":{"detail":"models/whale.glb","depth":0,"ms":30.0}}
-],"otherData":{"format":"flint-trace","version":1,"written_by":"tests/fixtures/traces/make_traces.py","reason":"hitch at t=0.420 s, 104.2 ms: script stall.rhai:on_update 100.1 ms","scene":"examples/hitch_metronome.scene.toml","build":"debug","adapter":"a hand-written trace","scopes":182,"frames":16,"threads":2}}
+],"otherData":{"format":"flint-trace","version":1,"written_by":"tests/fixtures/traces/make_traces.py","reason":"hitch at t=0.420 s, 104.2 ms: script stall.rhai:on_update 100.1 ms","scene":"flint-examples/hitch_metronome.scene.toml","build":"debug","adapter":"a hand-written trace","scopes":182,"frames":16,"threads":2}}

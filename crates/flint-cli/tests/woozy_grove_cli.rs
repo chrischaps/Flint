@@ -1,6 +1,9 @@
 //! Woozy Grove (#217) is the place every Living Props ticket after it gets judged, so
 //! it has to keep loading. These run the real binary on the scene as committed, with no
-//! GPU: the frame rate and the look still need someone to walk it.
+//! GPU: the frame rate and the look still need someone to walk it. Since the examples
+//! moved to their own repository (#984) the scene is the frozen copy under
+//! `tests/fixtures/scenes/woozy_grove/`, with its four species; flint-examples' CI
+//! keeps the example itself valid.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -13,7 +16,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn scene_path() -> PathBuf {
-    repo_root().join("examples/woozy_grove.scene.toml")
+    repo_root().join("tests/fixtures/scenes/woozy_grove/woozy_grove.scene.toml")
 }
 
 fn scene() -> toml::Value {
@@ -86,7 +89,7 @@ fn every_species_is_a_living_spec_with_no_lods() {
         .collect();
     for name in species {
         let path = repo_root()
-            .join("examples/specs")
+            .join("tests/fixtures/scenes/woozy_grove/specs")
             .join(format!("{name}.procgen.toml"));
         let spec: toml::Value =
             toml::from_str(&std::fs::read_to_string(&path).expect("read the spec")).unwrap();

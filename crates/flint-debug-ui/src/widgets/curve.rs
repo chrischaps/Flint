@@ -358,7 +358,7 @@ impl<'a> GradientEditor<'a> {
             bar,
             3.0,
             Stroke::new(1.0f32, ui.visuals().weak_text_color()),
-            egui::StrokeKind::Middle,
+            egui::StrokeKind::Outside,
         );
 
         // Handles

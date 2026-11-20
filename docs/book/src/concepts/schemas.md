@@ -79,7 +79,7 @@ A component schema with a name and **no fields** is open: the component is known
 
 ## Scene-level tables
 
-A scene file has tables that belong to no entity: `[camera]`, `[environment]`, `[post_process]`, `[living]`, `[wooze]`. Each is declared the way a component is, as a `[table.<name>]` in a file under the schema directory's `scene/`, and takes the same fields, types and constraints:
+A scene file has tables that belong to no entity: `[camera]`, `[environment]`, `[post_process]`, `[living]`, `[wooze]`, `[panels]`. Each is declared the way a component is, as a `[table.<name>]` in a file under the schema directory's `scene/`, and takes the same fields, types and constraints:
 
 ```toml
 # schemas/scene/camera.toml
@@ -494,7 +494,7 @@ The engine's own set, `schemas/archetypes/`:
 
 ### The Examples Layer
 
-The scenes under `examples/` are written in a room-builder vocabulary that is not part of the engine's set. It is a schema directory of its own, `schemas/examples/`:
+The scenes in [flint-examples](https://github.com/chrischaps/flint-examples) are written in a room-builder vocabulary that is not part of the engine's set. It is a schema directory of its own, `schemas/examples/`:
 
 | Archetype | Components | Description |
 |-----------|------------|-------------|

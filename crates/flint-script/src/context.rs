@@ -766,6 +766,13 @@ pub struct ScriptCallContext {
     /// Depth-tested world text queued this frame (`draw_world_text`,
     /// ADR 0104). The host lays it out and draws it before the HUD.
     pub world_texts: Vec<flint_core::world_text::WorldText>,
+    /// The screen field scripts filled this frame (`field_disc`,
+    /// `field_ring`, `field_cone`; #859). The host hands it to the
+    /// renderer, where a style with `blend_source = "field"` follows it.
+    pub style_field: flint_core::style_field::StyleField,
+    /// Whether a frame asking for more field shapes than the field holds
+    /// has been said (once a run).
+    pub style_field_warned: bool,
     /// `push_clip` / `pop_clip` stack; each entry is already intersected
     /// with its parent. Cleared when the frame's draw commands are drained.
     pub clip_stack: Vec<[f32; 4]>,
@@ -935,6 +942,8 @@ impl ScriptCallContext {
             commands: Vec::new(),
             draw_commands: Vec::new(),
             world_lines: Vec::new(),
+            style_field: Default::default(),
+            style_field_warned: false,
             world_texts: Vec::new(),
             clip_stack: Vec::new(),
             over_ui_depth: 0,

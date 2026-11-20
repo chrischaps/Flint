@@ -337,4 +337,4 @@
 {"ph":"M","name":"thread_sort_index","pid":1,"tid":6,"args":{"sort_index":6}},
 {"ph":"M","name":"thread_name","pid":1,"tid":7,"args":{"name":"notes"}},
 {"ph":"M","name":"thread_sort_index","pid":1,"tid":7,"args":{"sort_index":7}}
-],"otherData":{"format":"flint-trace","version":1,"written_by":"tests/fixtures/traces/make_traces.py","reason":"exit","scene":"examples/hitch_metronome.scene.toml","build":"debug","adapter":"a hand-written trace","scopes":180,"frames":16,"threads":2}}
+],"otherData":{"format":"flint-trace","version":1,"written_by":"tests/fixtures/traces/make_traces.py","reason":"exit","scene":"flint-examples/hitch_metronome.scene.toml","build":"debug","adapter":"a hand-written trace","scopes":180,"frames":16,"threads":2}}

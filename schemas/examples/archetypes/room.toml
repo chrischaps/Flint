@@ -1,6 +1,10 @@
 [archetype.room]
-description = "A room or enclosed space (transform-only parent container)"
-components = ["transform"]
+description = "A room or enclosed space: the box of its bounds, drawn as an outline"
+# No `bounds` default: a room's size is its own, so each writes its `bounds`
+# and the `rooms_have_bounds` constraint fails one that doesn't. A level's
+# root that only holds its walls, floors and lamps is a plain transform, not a
+# room (#804, #974)
+components = ["transform", "bounds"]
 
 # The box it draws as when it has `bounds` and nothing else to draw (#751)
 [archetype.room.visual]

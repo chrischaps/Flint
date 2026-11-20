@@ -21,12 +21,7 @@ the files `git ls-files` lists, as they are on disk:
 4. **The tree is under `TREE_BYTES`**, and each area under its budget in
    `AREAS`. A breach means the budget in ADR 0122 is to be argued with,
    not raised in passing.
-5. **Borrowed files are unchanged.** The frozen fixtures load some example
-   files where they lie (`tests/fixtures/borrowed.toml`), so a change to
-   one would move goldens. Each has its SHA-256 pinned, every path a
-   fixture names under `examples/` must be pinned, and every pin must
-   still have a borrower.
-6. **A book PNG has no alpha channel** (#1276), but those `ALPHA_EXCEPTIONS`
+5. **A book PNG has no alpha channel** (#1276), but those `ALPHA_EXCEPTIONS`
    names. A render or screenshot is saved RGBA with every pixel opaque;
    `tools/assets/pack_book_images.py` drops the channel, same pixels.
 
@@ -53,16 +48,16 @@ TEXTURE_BYTES = 3 * MB
 FILE_BYTES = 8 * MB
 # Over FILE_BYTES on purpose, each with why. Add one only with a reason a
 # reviewer would accept; ADR 0122 lists them.
-FILE_EXCEPTIONS = {
-    "examples/models/MetalRoughSpheres.glb": "Khronos' PBR reference: 11 MB of sphere geometry, no texture to shrink",
-}
+FILE_EXCEPTIONS: dict[str, str] = {}
 # Copies kept on purpose, each group with why (ADR 0122 lists them).
-DUPLICATE_EXCEPTIONS = {
+DUPLICATE_EXCEPTIONS: dict[frozenset, str] = {
+    # The bartender and patrons of the showcase game (#984): a game in the
+    # checkout searches its own project, and the frozen fixtures load their
+    # own copy so a change to the game never moves a golden. 2.4 MB.
     frozenset({
-        "examples/models/palm_two_sided.glb",
-        "tools/play-site/sunprint/models/palm_two_sided.glb",
-    }): "10 KB; Sun Prints is a web game whose bundle packs only its own folder, "
-        "so it can't name the example's file by a path outside it",
+        "showcase_game/models/YBotWithIdle.glb",
+        "tests/fixtures/scenes/models/YBotWithIdle.glb",
+    }): "showcase_game plays it inside its own project; the fixtures stay frozen apart from the game",
 }
 # The frozen frame captures (#1087): one scene with and without a lantern,
 # and a pass the lantern never reached (two cascades, bloom) is the same bytes
@@ -76,27 +71,17 @@ for _image in (
         f"tests/fixtures/frames/one_crate.flintframe/targets/{_image}",
         f"tests/fixtures/frames/two_crates.flintframe/targets/{_image}",
     })] = "a frame capture holds its own images; the pass was untouched, so its image is too"
-# The showcase game's sounds (#760): its scripts build their names at run
-# time ("audio/footstep_stone_" + idx), and a game in the checkout searches
-# only its own project, so it can't borrow examples/audio by a path. 1.8 MB.
-for _sound in (
-    "ambient_tavern.ogg", "door_locked.wav", "door_open.ogg", "fire_crackle.ogg",
-    "footstep_stone_1.ogg", "footstep_stone_2.ogg", "footstep_stone_3.ogg",
-    "footstep_stone_4.ogg", "glasses_clink.ogg", "npc_greeting.wav",
-):
-    DUPLICATE_EXCEPTIONS[frozenset({f"examples/audio/{_sound}", f"showcase_game/audio/{_sound}"})] = (
-        "showcase_game plays it by a name its scripts build, inside its own project"
-    )
-# The budgets (ADR 0122): what the tree measured when they were set
-# (2026-11-14, #759: 168.8 MB) with a tenth or so to grow into.
-TREE_BYTES = 185 * MB
+# The budgets (ADR 0122): what the tree measured when they were set, with a
+# tenth or so to grow into. 2026-11-14 (#759): 168.8 MB under 185. Reset
+# 2026-11-20 when the examples left for flint-examples (#984, ADR 0131):
+# 158.0 MB.
+TREE_BYTES = 175 * MB
 # What a game's engine/ carries, by part. The first area whose prefix
 # matches a path takes it; "engine" is everything else.
 AREAS = [
-    ("examples", ("examples/",), 52 * MB),  # 45.3
     ("book", ("docs/",), 78 * MB),  # 70.2
-    ("tests", ("tests/", "crates/flint-cli/tests/golden/"), 27 * MB),  # 23.4
-    ("showcase_game", ("showcase_game/",), 16 * MB),  # 13.8
+    ("tests", ("tests/", "crates/flint-cli/tests/golden/"), 50 * MB),  # 45.7 (#984: the 19.2 MB the fixtures borrowed)
+    ("showcase_game", ("showcase_game/",), 18 * MB),  # 16.2 (#984: its own YBot)
     ("engine", ("",), 20 * MB),  # 16.1: crates, schemas, styles, scripts, tools
 ]
 
@@ -110,13 +95,6 @@ IMAGES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tga", ".hdr"}
 NOT_TEXTURES = ("docs/", "crates/flint-cli/tests/golden/")
 # Book PNGs whose transparency the page needs, each with why (#1276).
 ALPHA_EXCEPTIONS: dict[str, str] = {}
-
-BORROWED = Path("tests/fixtures/borrowed.toml")
-# Where a fixture can name an example file: the frozen scenes and their
-# styles, and the golden suite's flags.
-BORROWERS = ("tests/fixtures/", "crates/flint-cli/tests/golden/stylize.goldens.toml")
-NAMED = re.compile(r"(?:\.\./)+(examples/[A-Za-z0-9_./-]+)")
-
 
 def tracked() -> tuple[list[Path], set[str]]:
     """The tracked files on disk, and every tracked path (a sparse checkout
@@ -253,55 +231,13 @@ def check(files: list[Path], names: set[str], report: bool) -> list[str]:
     return problems
 
 
-def check_borrowed(files: list[Path], names: set[str]) -> list[str]:
-    problems: list[str] = []
-    if not BORROWED.is_file():
-        return problems  # a sparse checkout without tests/ (a game's engine/)
-    pins = tomllib.loads(BORROWED.read_text(encoding="utf-8")).get("borrow", [])
-    pinned = {}
-    for pin in pins:
-        path, want = pin["path"], pin["sha256"]
-        pinned[path] = pin
-        f = Path(path)
-        if path in names and not f.is_file():
-            continue  # tracked, not written out (a sparse checkout)
-        if not f.is_file():
-            problems.append(f"{BORROWED.as_posix()}: {path} is gone, and a fixture loads it")
-        elif hashlib.sha256(f.read_bytes()).hexdigest() != want:
-            problems.append(
-                f"{path} changed, but the frozen fixtures load it ({BORROWED.as_posix()}), so goldens would move. "
-                f"To change the example, copy the old bytes (git show HEAD:{path}) into "
-                f"tests/fixtures/scenes/, point the fixture there and drop the pin; "
-                f"to change the fixture too, re-bless and update the pin's sha256"
-            )
-    named: dict[str, set[str]] = defaultdict(set)
-    for f in files:
-        p = f.as_posix()
-        if p.startswith(BORROWERS) and f.suffix.lower() not in BINARY and p != BORROWED.as_posix():
-            for m in NAMED.finditer(f.read_text(encoding="utf-8", errors="replace")):
-                named[m.group(1)].add(p)
-    for path, by in sorted(named.items()):
-        if Path(path).suffix.lower() in BINARY and path not in pinned:
-            problems.append(f"{', '.join(sorted(by))} names {path}, which {BORROWED.as_posix()} doesn't pin")
-    for path, pin in pinned.items():
-        users = set(named.get(path, ()))
-        for user in pin.get("by", []):
-            if Path(path).name in Path(user).read_text(encoding="utf-8", errors="replace"):
-                users.add(user)
-            else:
-                problems.append(f"{BORROWED.as_posix()}: {path}'s `by` names {user}, which doesn't mention it")
-        if not users:
-            problems.append(f"{BORROWED.as_posix()}: nothing borrows {path} any more: drop its pin")
-    return problems
-
-
 def main() -> int:
     # The engine's root, wherever it is run from: in a game that is engine/,
     # and `git ls-files` there lists the engine's files only
     os.chdir(Path(__file__).resolve().parent.parent)
     report = "--report" in sys.argv
     files, names = tracked()
-    problems = check(files, names, report) + check_borrowed(files, names)
+    problems = check(files, names, report)
     for p in problems:
         print(f"size-check: {p}", file=sys.stderr)
     if problems:

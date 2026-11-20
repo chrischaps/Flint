@@ -514,9 +514,9 @@ layer = 4
     }
 
     #[test]
-    #[allow(clippy::disallowed_methods)] // a test walking the checkout's examples
-    fn the_examples_have_nothing_unread() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    #[allow(clippy::disallowed_methods)] // a test walking the checkout's fixtures
+    fn the_fixtures_have_nothing_unread() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/scenes/terrain");
         let mut seen = 0;
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
@@ -526,7 +526,10 @@ layer = 4
                 seen += 1;
             }
         }
-        assert!(seen > 0, "no .terrain.toml in examples/");
+        assert!(
+            seen > 0,
+            "no .terrain.toml in tests/fixtures/scenes/terrain/"
+        );
     }
 
     #[test]

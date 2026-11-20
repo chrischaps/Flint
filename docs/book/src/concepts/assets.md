@@ -67,7 +67,7 @@ At each of those directories `D`, the file tried is `D/<folder>/<name><extension
 | `animations` | `animations/` | `.anim.toml` | every clip is loaded; `animator.clip = "door_swing"` names one by the `name` inside its file | |
 | `sprite-animations` | `animations/` | `.sprite.toml` | every file is loaded; a `sprite_animator` names a clip inside one | |
 | `sequences` | `animations/` | `.sequence.toml` | every file is loaded; `animator.sequence = "intro"`, `play_sequence` | |
-| `audio` | `D` itself, then `audio/` | a file name as written (`.ogg`, `.wav`, `.mp3`, `.flac`); a name with no extension tries those four | `audio_source.file = "audio/fire.ogg"`; every file in `audio/` is preloaded for `play_sound` | |
+| `audio` | `D` itself, then `audio/` | a file name as written (`.ogg`, `.wav`, `.mp3`, `.flac`); a name with no extension tries those four | `audio_source.file = "audio/fire.ogg"`; every file in `audio/` is preloaded for `play_sound`, and any other name `play_sound` gives is found by this search on its first play | |
 | `scripts` | `scripts/` | a file name as written (`.rhai`) | `script.source = "hud.rhai"` or `"ui/menu.rhai"`; `import "ui_kit"` is the script `lib/ui_kit.rhai` | |
 | `specs` | `specs/`, then `models/`, each with its subfolders | `.procgen.toml`; found by the `[meta] name` inside, not the file's name | every spec the scene can see is indexed; `model.asset = "oak_tree"`, `material.texture = "stone_wall"` ask for one | |
 | `prefabs` | `prefabs/` | `.prefab.toml` | `[prefabs.player] template = "kart"` | |
@@ -252,6 +252,8 @@ flint asset list --type mesh
 # Check asset references in a scene
 flint asset resolve levels/tavern.scene.toml --strategy strict
 ```
+
+`resolve` reads every field the scene's schemas declare as `asset`. A reference counts as found when the catalog holds its name or the engine's search finds its file. [Which references it reads](ai-generation.md#which-references-it-reads) has the list.
 
 ## glTF/GLB Import
 

@@ -7,7 +7,7 @@ the frame with its own camera and, if it names one, its own look.
 
 ![A live wide shot beside a rotoscoped close-up of the same dancer](../images/comic-panels.png)
 
-*`examples/comic_panels.scene.toml`: the clearing as it is on the left, and on
+*[`flint-examples/comic_panels.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/comic_panels.scene.toml): the clearing as it is on the left, and on
 the right the same moment, framed from the dancer and traced in pencil.*
 
 ```toml
@@ -107,7 +107,7 @@ into one panel, and a new name adds one. A layout the engine can't read (a
 stays as it was. Each panel's views are kept by name while the scene lasts, so
 cutting back to a layout makes nothing new and draws at once.
 
-`examples/scripts/comic_panels.rhai` cuts from one panel to two, then to three
+[`flint-examples/scripts/comic_panels.rhai`](https://github.com/chrischaps/flint-examples/blob/main/scripts/comic_panels.rhai) cuts from one panel to two, then to three
 with an overhead inset, and back to one, every ten seconds of game time. A
 `flint-player --frame-step` capture of it is byte-identical run to run.
 
@@ -116,8 +116,8 @@ with an overhead inset, and back to one, every ten seconds of game time. A
 `flint render` draws panels too, so a page can be checked without a window:
 
 ```bash
-flint render examples/comic_panels.scene.toml --anim-time 1.2 --no-grid -o page.png
-flint render examples/comic_panels.scene.toml --scripts --time 1,3.5,6.5,9 --no-grid -o beat.png
+flint render flint-examples/comic_panels.scene.toml --anim-time 1.2 --no-grid -o page.png
+flint render flint-examples/comic_panels.scene.toml --scripts --time 1,3.5,6.5,9 --no-grid -o beat.png
 ```
 
 `flint render` draws no HUD, so captions show only in the player.

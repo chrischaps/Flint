@@ -116,9 +116,9 @@ pub struct StyleFrame<'a> {
     /// the scene's, so smaller than `width` x `height` at the display stage
     /// under a render scale. The style mask is this size too.
     pub depth_size: [u32; 2],
-    /// Who vouches for `depth`, so bind groups over it may be kept
-    /// ([`StyleFrame::depth_bind`], #379).
-    pub depth_key: crate::bind_cache::DepthKey,
+    /// Whose `depth` is, so bind groups over it may be kept
+    /// ([`StyleFrame::depth_bind`], #379, #960).
+    pub depth_key: crate::bind_cache::DepthKey<'a>,
     pub camera: StyleCamera,
     /// The entity style mask (#263): one style id a pixel
     /// ([`STYLE_MASK_FORMAT`](crate::style_mask::STYLE_MASK_FORMAT),
@@ -158,7 +158,8 @@ pub struct StyleFrame<'a> {
     /// terrain, grass, the ocean, particles), at the depth's size, read by
     /// UV with `textureLoad`. `Some` whenever a style that
     /// [`uses_albedo`](StyleDescriptor::uses_albedo) is on; key bind groups
-    /// over it with [`albedo_key`](Self::albedo_key).
+    /// over it with [`bind_over`](Self::bind_over) and
+    /// [`albedo_or`](Self::albedo_or).
     pub albedo: Option<Arc<StyleTexture>>,
     /// The chain's linear, clamped sampler.
     pub linear_sampler: &'a wgpu::Sampler,
@@ -308,6 +309,20 @@ impl StyleFrame<'_> {
         self.binds.get(name, self.keyed(variant), make)
     }
 
+    /// [`bind`](Self::bind) over `over`, what the group binds that may be
+    /// made again while the chain lives (the shared edges, the albedo, an
+    /// image): kept while those are the same objects, made again in the old
+    /// group's place when one isn't (#960).
+    pub fn bind_over(
+        &self,
+        name: &'static str,
+        variant: u64,
+        over: &[crate::bind_cache::Bound<'_>],
+        make: impl FnOnce() -> wgpu::BindGroup,
+    ) -> Arc<wgpu::BindGroup> {
+        self.binds.get_bound(name, self.keyed(variant), over, make)
+    }
+
     /// `variant` told apart by the style's install (#742): a user style
     /// reloaded under its old names never binds the old install's groups.
     /// A built-in's (generation 0) is `variant` itself.
@@ -325,16 +340,40 @@ impl StyleFrame<'_> {
     }
 
     /// A bind group over [`depth`](Self::depth): kept while the chain owns
-    /// the depth or the caller's depth id holds, made for this frame alone
-    /// when nothing vouches for it (#379).
+    /// the depth, or while the caller hands the same depth view (#379,
+    /// #960).
     pub fn depth_bind(
         &self,
         name: &'static str,
         variant: u64,
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
+        self.depth_bind_over(name, variant, &[], make)
+    }
+
+    /// [`depth_bind`](Self::depth_bind) over `over` as well, as
+    /// [`bind_over`](Self::bind_over).
+    pub fn depth_bind_over(
+        &self,
+        name: &'static str,
+        variant: u64,
+        over: &[crate::bind_cache::Bound<'_>],
+        make: impl FnOnce() -> wgpu::BindGroup,
+    ) -> Arc<wgpu::BindGroup> {
         self.binds
-            .get_over(self.depth_key, name, self.keyed(variant), make)
+            .get_over(self.depth_key, name, self.keyed(variant), over, make)
+    }
+
+    /// The shared edges' view, or `none` while there are none, as a
+    /// [`Bound`](crate::bind_cache::Bound) for [`bind_over`](Self::bind_over).
+    pub fn edges_or<'v>(&'v self, none: &'v wgpu::TextureView) -> crate::bind_cache::Bound<'v> {
+        crate::bind_cache::Bound::View(self.edges.as_ref().map_or(none, |e| &e.view))
+    }
+
+    /// The style albedo's view, or `none` while there is none, as
+    /// [`edges_or`](Self::edges_or) is the edges'.
+    pub fn albedo_or<'v>(&'v self, none: &'v wgpu::TextureView) -> crate::bind_cache::Bound<'v> {
+        crate::bind_cache::Bound::View(self.albedo.as_ref().map_or(none, |a| &a.view))
     }
 
     /// True the first time it's asked about `name` while the chain lives:
@@ -396,7 +435,8 @@ impl StyleFrame<'_> {
         layout: &wgpu::BindGroupLayout,
     ) -> Option<Arc<wgpu::BindGroup>> {
         let edges = self.edges.as_ref()?;
-        Some(self.bind(name, self.edges_key(), || {
+        let over = [crate::bind_cache::Bound::View(&edges.view)];
+        Some(self.bind_over(name, 0, &over, || {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(name),
                 layout,
@@ -406,24 +446,6 @@ impl StyleFrame<'_> {
                 }],
             })
         }))
-    }
-
-    /// A key for bind groups over [`albedo`](Self::albedo): its size, as
-    /// [`edges_key`](Self::edges_key) is the edges'. 0 while there is none.
-    pub fn albedo_key(&self) -> u64 {
-        self.albedo
-            .as_ref()
-            .map_or(0, |a| (u64::from(a.width) << 32) | u64::from(a.height))
-    }
-
-    /// A key for bind groups over [`edges`](Self::edges): its size, which
-    /// is what a render-scale step changes (the edge target is made again
-    /// at the depth's new size while the chain's bind groups stay). 0
-    /// while there are none.
-    pub fn edges_key(&self) -> u64 {
-        self.edges
-            .as_ref()
-            .map_or(0, |e| (u64::from(e.width) << 32) | u64::from(e.height))
     }
 
     /// The style mask id of style `name` this frame, if an entity asks

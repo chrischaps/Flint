@@ -1,8 +1,9 @@
 //! Per-entity styles' state, owned by [`StyleMaskState`] (ADR 0118, #736):
 //! which styles entities ask for and the id each styled entity has in the
 //! mask (#263), how far each is drawn into its style (#278) and which
-//! follow the tear (#397), whether the last mask drew a veil (#290), the
-//! scissor switch (#385), and the mask and albedo passes (#869).
+//! follow the tear (#397) or the screen field (#859), the frame's field,
+//! whether the last mask drew a veil (#290), the scissor switch (#385), and
+//! the mask and albedo passes (#869).
 //!
 //! What the passes draw is gathered here too, by `SceneRenderer`'s
 //! `encode_style_mask` and `encode_style_albedo`: each is a selector over
@@ -12,10 +13,11 @@ use super::{Blend, Draw, DrawItem, SceneRenderer, SteppedPass};
 use crate::camera::Camera;
 use crate::postprocess::PostProcessConfig;
 use crate::style_albedo::StyleAlbedoPass;
-use crate::style_mask::{StyleIds, StyleMaskPass};
+use crate::style_mask::{BlendSource, StyleIds, StyleMaskPass};
+use flint_core::style_field::StyleField;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Who is styled and how, and the passes that draw them into the mask
 /// and the albedo.
@@ -32,8 +34,12 @@ pub(crate) struct StyleMaskState {
     pub(crate) scissor: bool,
     /// The blend of each styled entity drawn at less than 1 (#278).
     pub(crate) blend_by_entity: HashMap<EntityId, f32>,
-    /// The styled entities whose blend follows the reality tear (#397).
-    pub(crate) torn_entities: HashSet<EntityId>,
+    /// The styled entities whose blend follows the reality tear (#397) or
+    /// the screen field (#859); one at its own blend isn't listed.
+    pub(crate) blend_sources: HashMap<EntityId, BlendSource>,
+    /// The frame's screen field (#859), from `FrameInputs::style_field`:
+    /// empty unless the host filled one this frame.
+    pub(crate) field: StyleField,
     /// Whether the last style mask drew a veil over its entities (#290):
     /// something unstyled in front, so the mask's blend is below 1 there
     /// even with every entity fully styled (#396 cross-fades by it).
@@ -57,7 +63,8 @@ impl StyleMaskState {
             by_entity: HashMap::new(),
             scissor: crate::stylize::scissor_enabled(),
             blend_by_entity: HashMap::new(),
-            torn_entities: HashSet::new(),
+            blend_sources: HashMap::new(),
+            field: StyleField::default(),
             veiled: false,
         }
     }
@@ -77,7 +84,7 @@ impl StyleMaskState {
             &mut self.ids,
             &mut self.by_entity,
             &mut self.blend_by_entity,
-            &mut self.torn_entities,
+            &mut self.blend_sources,
         );
     }
 
@@ -86,15 +93,20 @@ impl StyleMaskState {
         self.ids.set(Vec::new());
         self.by_entity.clear();
         self.blend_by_entity.clear();
-        self.torn_entities.clear();
+        self.blend_sources.clear();
     }
 
     /// Whether some pixel of the last style mask may hold a blend below 1
     /// (#396). See [`SceneRenderer::style_mask_fades`].
     pub(crate) fn fades(&self, config: &PostProcessConfig) -> bool {
+        let tear = crate::postprocess::tear_active(config);
         !self.blend_by_entity.is_empty()
             || self.veiled
-            || (!self.torn_entities.is_empty() && crate::postprocess::tear_active(config))
+            || self.blend_sources.values().any(|s| match s {
+                BlendSource::Own => false,
+                BlendSource::Tear => tear,
+                BlendSource::Field => !self.field.is_empty(),
+            })
     }
 
     /// The mask's per-draw uniform bytes and how many styled draws the last
@@ -123,7 +135,7 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
-        depth_key: crate::bind_cache::DepthKey,
+        depth_key: crate::bind_cache::DepthKey<'_>,
     ) {
         flint_core::scope!("encode_style_mask");
         self.style_mask.veiled = false;
@@ -157,13 +169,13 @@ impl SceneRenderer {
         // and resolved, so a feature thinner than a pixel keeps the pixels
         // the scene's samples gave it (#306).
         let msaa_depth = match self.msaa.depth_at(resources.width, resources.height) {
-            Some((view, id)) if self.pipelines.samples() == crate::style_mask::MSAA_SAMPLES => {
+            Some(view) if self.pipelines.samples() == crate::style_mask::MSAA_SAMPLES => {
                 pass.ensure_msaa(
                     device,
                     &self.layouts.transform_bind_group_layout,
                     &skinned.bone_bind_group_layout,
                 );
-                Some(crate::style_mask::MsaaDepth { view, id })
+                Some(crate::style_mask::MsaaDepth { view })
             }
             _ => None,
         };
@@ -294,6 +306,7 @@ impl SceneRenderer {
                 &draws,
                 &veil,
                 tear,
+                &self.style_mask.field,
             );
         }
         self.style_mask.veiled = veiled;
@@ -327,7 +340,7 @@ impl SceneRenderer {
         );
         // The scene's own samples while it drew 4x at this size
         let (scene_depth, samples) = match self.msaa.depth_at(resources.width, resources.height) {
-            Some((view, _)) if self.pipelines.samples() > 1 => (view, self.pipelines.samples()),
+            Some(view) if self.pipelines.samples() > 1 => (view, self.pipelines.samples()),
             _ => (depth_view, 1),
         };
         // A replay stepping the albedo (#1204): its meshes past the limit
@@ -542,7 +555,7 @@ fn mask_draw<'a>(
         bones,
         id,
         blend: state.blend_by_entity.get(entity).copied().unwrap_or(1.0),
-        torn: state.torn_entities.contains(entity),
+        source: state.blend_sources.get(entity).copied().unwrap_or_default(),
         woozy: item.wooze().is_some(),
     })
 }

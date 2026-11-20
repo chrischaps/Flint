@@ -7,9 +7,9 @@
 #
 # Two groups, between the marker lines the script reads:
 #
-#   every-crate   wgpu and egui seams, held in every crate that draws: denied
-#                 (`[lints.clippy]`) in flint-render, flint-player,
-#                 flint-viewer, flint-cli and flint-debug-ui. The tool crates
+#   every-crate   wgpu and egui seams, held in every crate that draws
+#                 (flint-render, flint-player, flint-viewer, flint-cli,
+#                 flint-debug-ui) and every other crate too. The tool crates
 #                 (TOOL_CRATES in scripts/clippy-conf.sh: the CLI, the viewer,
 #                 asset-gen, procgen-ai, arch-analyzer) get a copy of this
 #                 group alone as their own clippy.toml.
@@ -17,8 +17,11 @@
 #                 read the disk past flint_core::vfs (#97), which a bundle
 #                 (`flint-player --bundle`, the web) and a test's
 #                 `vfs::scoped` stand in for natively too, and read a TOML
-#                 number with `as_float` (#685). Warned in every runtime crate
-#                 (`[workspace.lints]`), denied in the ones above.
+#                 number with `as_float` (#685).
+#
+# Both are denied in every workspace crate (`[workspace.lints.clippy]` in the
+# root Cargo.toml, #979), so `cargo clippy` fails on a broken rule, native-only
+# code included; scripts/ci.sh refuses a member without `[lints] workspace = true`.
 #
 # A third group can't be checked natively: on native `web_time::Instant` IS
 # `std::time::Instant`, so a ban on `Instant::now` would flag every correct

@@ -65,11 +65,11 @@ action = "pause"                   # default
 anchor = "top_right"               # default
 ```
 
-`examples/input_touch.toml` is this block for the first-person demos:
+[`flint-examples/input_touch.toml`](https://github.com/chrischaps/flint-examples/blob/main/input_touch.toml) is this block for the first-person demos:
 
 ```bash
-cargo run --bin flint-player -- examples/phase4_runtime.scene.toml \
-  --input-config examples/input_touch.toml --touch-controls always
+cargo run --bin flint-player -- flint-examples/phase4_runtime.scene.toml \
+  --input-config flint-examples/input_touch.toml --touch-controls always
 ```
 
 ### Sticks

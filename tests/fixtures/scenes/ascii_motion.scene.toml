@@ -1,4 +1,4 @@
-# ASCII Motion, frozen (#478): examples/ascii_motion.scene.toml as it was on
+# ASCII Motion, frozen (#478): flint-examples/ascii_motion.scene.toml as it was on
 # 2026-11-13, for the goldens' sequence cases (`ascii-motion-*` in
 # crates/flint-cli/tests/golden/stylize.goldens.toml), which orbit it headless
 # and hold its glyph reversals a frame to a budget. The example's orbit
@@ -81,7 +81,7 @@ metallic = 0.0
 [entities.meadow.transform]
 position = [-48, 0, -48]
 [entities.meadow.grass_ground]
-mask = "../../../examples/mesh_meadow/mask.png"
+mask = "./mesh_meadow/mask.png"
 width = 96.0
 depth = 96.0
 scale_by_mask = true
@@ -107,7 +107,7 @@ position = [0.4, 0.22, 3.0]
 rotation = [0, 15, 0]
 scale = [0.01, 0.01, 0.01]
 [entities.bench.model]
-asset = "../../../examples/models/wooden_bench.glb"
+asset = "./models/wooden_bench.glb"
 
 [entities.ybot]
 archetype = "character"
@@ -115,7 +115,7 @@ archetype = "character"
 position = [-0.9, 0, 4.4]
 rotation = [0, 25, 0]
 [entities.ybot.model]
-asset = "../../../examples/models/YBotWithIdle.glb"
+asset = "./models/YBotWithIdle.glb"
 [entities.ybot.skeleton]
 skin = "Armature"
 
@@ -125,7 +125,7 @@ archetype = "furniture"
 position = [2.4, 0.48, 5.4]
 scale = [0.5, 0.5, 0.5]
 [entities.barrel.model]
-asset = "../../../examples/models/barrel.glb"
+asset = "./models/barrel.glb"
 
 [entities.crate]
 archetype = "furniture"
@@ -146,4 +146,4 @@ parent = "crate"
 position = [0.0, 0.8, 0.0]
 scale = [0.035, 0.035, 0.035]
 [entities.lantern.model]
-asset = "../../../examples/models/Lantern.glb"
+asset = "./models/Lantern.glb"

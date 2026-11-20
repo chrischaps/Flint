@@ -93,8 +93,11 @@ naga = { version = "30.0.2", features = ["wgsl-in"] }
 boon = "0.6"
 # Reads the WAV `music render` writes, for the music-suite test (#745).
 hound = { workspace = true }
+# The engine a script's sound plays on, with no device: the check's test that
+# a sound passes exactly when the engine finds it (#975).
+flint-audio = { workspace = true }
 
 # Built-in shader modules and frame acquisition go through flint-render's
-# seams; the list is the workspace clippy.toml (#944).
-[lints.clippy]
-disallowed_methods = "deny"
+# seams; the list is this crate's clippy.toml (#944, #761), denied workspace-wide (#979).
+[lints]
+workspace = true

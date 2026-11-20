@@ -13,7 +13,7 @@
 
 use super::{scene, Subject};
 use flint_core::diagnostic::{codes, Diagnostic};
-use flint_core::project::{AssetKind, Project};
+use flint_core::project::{AssetKind, AssetScope, Project};
 use flint_core::vfs::{self, normalize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -279,6 +279,49 @@ pub(super) fn rhai_refs(source: &str) -> Vec<String> {
     out
 }
 
+/// Whether a string a script holds names a sound file: what `play_sound`
+/// and `play_sound_at` take.
+fn is_sound_file(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    AssetKind::Audio
+        .info()
+        .extensions
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
+
+/// A script's sound that none of `scopes` (each scene that may run the
+/// script) finds as the player looks for it (#975): the player's preload
+/// keys only the files of the `audio/` folders a scene sees, and a name it
+/// didn't cache is looked for, on its first play, by this same search.
+/// `None` when one of them finds it.
+fn missing_sound(name: &str, scopes: &[AssetScope]) -> Option<Diagnostic> {
+    let mut tried: Vec<PathBuf> = Vec::new();
+    for scope in scopes {
+        let resolution = scope.explain(AssetKind::Audio, name);
+        if resolution.found.is_some() {
+            return None;
+        }
+        for path in resolution.tried {
+            if !tried.contains(&path) {
+                tried.push(path);
+            }
+        }
+    }
+    Some(
+        Diagnostic::error(
+            codes::MISSING_FILE,
+            format!("a string in this script names the sound `{name}`, which no scene finds"),
+        )
+        .tried(tried)
+        .hint(
+            "a sound a script plays is found as an `audio_source.file` is: a path from the \
+             scene's folder or one above it, up to the project root, or a file in an `audio/` \
+             there; `flint asset where audio <name> --scene <scene>` shows the search",
+        ),
+    )
+}
+
 pub(super) fn parent_of(path: &str) -> String {
     path.rsplit_once('/')
         .map(|(dir, _)| dir.to_string())
@@ -290,13 +333,28 @@ pub(super) fn parent_of(path: &str) -> String {
 /// file, and every path tried. A file that should be TOML and isn't is a
 /// `toml-parse`, except a scene, whose own pass has said so.
 pub(super) fn check(subject: &Subject, files: &BTreeSet<String>) -> Vec<Diagnostic> {
-    let scene_dirs: Vec<String> = files
+    let scenes: BTreeSet<&String> = files
         .iter()
+        .chain(&subject.scenes)
         .filter(|p| p.ends_with(".scene.toml"))
+        .collect();
+    let scene_dirs: Vec<String> = scenes
+        .iter()
         .map(|p| parent_of(p))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    // A script's sound is found by the player's search from the scene
+    // that runs it (#975), the one an `audio_source.file` takes: each
+    // scene's project and folder, once per folder.
+    let sound_scopes: Vec<AssetScope> = {
+        let mut seen = BTreeSet::new();
+        scenes
+            .iter()
+            .filter(|scene| seen.insert(parent_of(scene)))
+            .map(|scene| AssetScope::for_scene(&subject.path(scene)))
+            .collect()
+    };
     let is_file = |key: &str| vfs::is_file(subject.path(key));
     // A bare model name may be a glTF, or a procgen spec the player builds:
     // among the files in hand (a bundle's are all there is), or where the
@@ -392,6 +450,17 @@ pub(super) fn check(subject: &Subject, files: &BTreeSet<String>) -> Vec<Diagnost
                 continue;
             }
             let name = &reference.name;
+            if path.ends_with(".rhai") && is_sound_file(name) {
+                let scopes = match sound_scopes.as_slice() {
+                    // No scene in hand: as if one stood beside the script
+                    [] => vec![AssetScope::for_scene(&shown.with_extension("scene.toml"))],
+                    scopes => scopes.to_vec(),
+                };
+                if let Some(d) = missing_sound(name, &scopes) {
+                    found.push(d.file(&shown));
+                }
+                continue;
+            }
             let tried = candidates(name, &from_dirs);
             if tried.iter().any(|c| is_file(c)) || (name.ends_with(".glb") && model_ok(name, path))
             {
@@ -611,9 +680,9 @@ mod tests {
         let mut source = MemorySource::new();
         let json = r#"{"images": [{"uri": "../textures/tavern/plank.jpg"},
             {"uri": "../textures/tavern/iron.jpg"}]}"#;
-        source.insert("examples/models/bar.glb", glb(json));
-        source.insert("examples/textures/tavern/plank.jpg", "jpg");
-        let keys: BTreeSet<String> = ["examples/models/bar.glb".to_string()].into();
+        source.insert("levels/models/bar.glb", glb(json));
+        source.insert("levels/textures/tavern/plank.jpg", "jpg");
+        let keys: BTreeSet<String> = ["levels/models/bar.glb".to_string()].into();
         let subject = Subject::packed(keys.iter().cloned().collect(), Schemas::Listed(Vec::new()));
         let found = vfs::scoped(Arc::new(source), || check(&subject, &keys));
         assert_eq!(found.len(), 1, "{found:?}");
@@ -624,7 +693,7 @@ mod tests {
             .iter()
             .map(|p| flint_core::project::shown(p))
             .collect();
-        assert_eq!(tried, ["examples/textures/tavern/iron.jpg"]);
+        assert_eq!(tried, ["levels/textures/tavern/iron.jpg"]);
     }
 
     /// #382: a music suite names its stems, from the project root.
@@ -632,17 +701,17 @@ mod tests {
     fn a_music_suite_must_have_its_stems() {
         let found = missing(&[
             (
-                "examples/music/clock.suite.toml",
-                "[suite]\nid = \"c\"\n[buses.pad]\nfile = \"examples/music/stems/pad.flac\"\n\
-                 [buses.bell]\nfile = \"examples/music/stems/bell.flac\"\n",
+                "levels/music/clock.suite.toml",
+                "[suite]\nid = \"c\"\n[buses.pad]\nfile = \"levels/music/stems/pad.flac\"\n\
+                 [buses.bell]\nfile = \"levels/music/stems/bell.flac\"\n",
             ),
-            ("examples/music/stems/pad.flac", ""),
+            ("levels/music/stems/pad.flac", ""),
         ]);
         assert_eq!(
             found,
             [pair(
-                "examples/music/clock.suite.toml",
-                "examples/music/stems/bell.flac"
+                "levels/music/clock.suite.toml",
+                "levels/music/stems/bell.flac"
             )]
         );
     }
@@ -697,5 +766,88 @@ mod tests {
         );
         let unique: BTreeSet<&String> = tried.iter().collect();
         assert_eq!(unique.len(), tried.len(), "each path once");
+    }
+
+    /// A short real WAV, for the engine to decode.
+    fn wav() -> Vec<u8> {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 44_100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        let mut writer = hound::WavWriter::new(&mut bytes, spec).unwrap();
+        for i in 0..2_000 {
+            writer.write_sample(((i % 50) * 400) as i16).unwrap();
+        }
+        writer.finalize().unwrap();
+        bytes.into_inner()
+    }
+
+    /// #975: `flint check` and the player agree on whether a script's sound
+    /// plays. Each case is asked of both: the check over the game's files,
+    /// and the audio engine with the scene's search set as the player sets
+    /// it, playing the name as the script wrote it. A path from the scene
+    /// to a file outside `audio/` used to pass the check and be silent; a
+    /// sound in a folder only the check looked in (beside the script, in
+    /// `models/`) passed too and never played.
+    #[test]
+    fn a_scripts_sound_passes_the_check_exactly_when_the_player_plays_it() {
+        // (the name the script plays, the file there is, whether it plays)
+        let cases = [
+            ("audio/bell.wav", Some("audio/bell.wav"), true),
+            ("../sfx/door.wav", Some("sfx/door.wav"), true),
+            ("levels/../sfx/door.wav", Some("sfx/door.wav"), true),
+            ("click.wav", Some("scripts/click.wav"), false),
+            ("thud.wav", Some("models/thud.wav"), false),
+            ("gone.wav", None, false),
+        ];
+        let script: String = cases
+            .iter()
+            .map(|(name, ..)| format!("play_sound(\"{name}\");\n"))
+            .collect();
+        let mut source = MemorySource::new();
+        source.insert("flint.toml", "[project]\nid = \"sounds\"\n");
+        source.insert(
+            "levels/a.scene.toml",
+            "[entities.speaker.script]\nsource = \"speaker.rhai\"\n",
+        );
+        source.insert("scripts/speaker.rhai", script);
+        let mut keys: BTreeSet<String> = ["levels/a.scene.toml", "scripts/speaker.rhai"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        for (_, file, _) in &cases {
+            if let Some(file) = file {
+                source.insert(*file, wav());
+                keys.insert(file.to_string());
+            }
+        }
+        let subject = Subject::packed(keys.iter().cloned().collect(), Schemas::Listed(Vec::new()));
+        let subject = Subject {
+            scenes: Vec::new(),
+            ..subject
+        };
+
+        vfs::scoped(Arc::new(source), || {
+            let refused: Vec<String> = check(&subject, &keys)
+                .into_iter()
+                .map(|d| d.message.split('`').nth(1).unwrap_or_default().to_string())
+                .collect();
+            let mut engine = flint_audio::engine::AudioEngine::silent();
+            engine.start_remote(flint_audio::remote::Link::default());
+            engine.set_sound_search(Some(AssetScope::for_scene(Path::new(
+                "levels/a.scene.toml",
+            ))));
+            for (name, _, plays) in cases {
+                let played = engine
+                    .play_non_spatial(name, 1.0, 1.0, false, flint_audio::Bus::SFX)
+                    .is_ok();
+                let passed = !refused.iter().any(|r| r == name);
+                assert_eq!(played, plays, "the engine on `{name}`");
+                assert_eq!(passed, plays, "the check on `{name}`");
+            }
+        });
     }
 }

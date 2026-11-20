@@ -30,25 +30,28 @@ bash scripts/ci.sh        # what a PR must pass: formatting (--full adds clippy 
 
 ## Running the Examples
 
-`examples/` holds the curated scenes, each listed in `examples/index.toml` with a topic and a one-line purpose:
+The curated scenes are their own repository, [flint-examples](https://github.com/chrischaps/flint-examples), each listed in its [`index.toml`](https://github.com/chrischaps/flint-examples/blob/main/index.toml) with a topic and a one-line purpose. Clone it into the checkout ([Getting the Examples](getting-started/installation.md#getting-the-examples)):
 
 ```bash
-cargo run --bin flint -- examples                  # every example, by topic
-cargo run --bin flint -- examples --topic stylize   # one topic
-cargo run --bin flint -- examples --check           # what CI runs: indexed and valid
+git clone https://github.com/chrischaps/flint-examples
+cargo run --bin flint -- examples --dir flint-examples                  # every example, by topic
+cargo run --bin flint -- examples --dir flint-examples --topic stylize   # one topic
+cargo run --bin flint -- examples --dir flint-examples --check           # what its CI runs: indexed and valid
 ```
 
-A new example needs an entry in the index. The examples are free to change: the render goldens load frozen copies under `tests/fixtures/scenes/`, never `examples/`, so improving one never means re-blessing a golden. A scene only a test needs goes in `tests/fixtures/scenes/`, with the assets it loads.
+A new example needs an entry in the index, and is a pull request to flint-examples. The examples are free to change: the render goldens load frozen copies under `tests/fixtures/scenes/`, never an example, so improving one never means re-blessing a golden. A scene only a test needs goes in `tests/fixtures/scenes/`, with every file it loads.
+
+An engine feature that comes with an example bench is two pull requests: the engine's first, with its tests on fixtures, then flint-examples', which takes the merged engine (`git subtree pull --prefix=engine flint-engine main --squash`) and adds the bench. Until the second lands, the engine PR can name the bench only as a link to its branch.
 
 ```bash
 # Scene viewer with hot-reload
-cargo run --bin flint -- edit examples/phase4_runtime.scene.toml --watch
+cargo run --bin flint -- edit flint-examples/phase4_runtime.scene.toml --watch
 
 # First-person walkable scene
-cargo run --bin flint -- play examples/phase4_runtime.scene.toml
+cargo run --bin flint -- play flint-examples/phase4_runtime.scene.toml
 
 # Headless snapshot (the primary validation tool for agents)
-cargo run --release --bin flint -- render examples/showcase_tavern.scene.toml -o tavern.png
+cargo run --release --bin flint -- render flint-examples/showcase_tavern.scene.toml -o tavern.png
 ```
 
 Release builds are strongly recommended for `render`, `play`, and the full test suite; debug builds of `flint-cli` need the 8 MB main-thread stack that `.cargo/config.toml` links on Windows.

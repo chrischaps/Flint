@@ -339,6 +339,8 @@ position = [0, 0, 0]
 | `raycast(ox,oy,oz, dx,dy,dz, dist)` | `Map`/`()` | Cast a ray, get hit info |
 | `raycast_meshes(ox,oy,oz, dx,dy,dz, dist)` / `screen_to_mesh(x, y)` | `Map`/`()` | The same against the meshes drawn as ray targets, no physics needed: a wall in the camera's way, the roof under the cursor ([ADR 0105](https://github.com/chrischaps/Flint/blob/main/docs/adr/0105-rays-against-drawn-meshes.md)) |
 | `move_character(id, dx, dy, dz)` | `#{x,y,z,grounded}` | Collision-corrected movement |
+| `find_path(fx,fy,fz, tx,ty,tz[, opts])` | `[#{x,y,z}, ...]`/`[]` | The way over the floors the static colliders make, round walls, up ramps; opts: `radius`, `height`, `step`, `max_slope`, `cell`, `max_nodes` ([Navigation](concepts/physics-and-runtime.md#navigation)) |
+| `move_along_path(id, path, speed)` | `#{x,y,z,dir_x,dir_z,next,remaining,arrived}` | Walk an entity along a path this frame, keeping its height above it |
 | `spawn_entity(name)` | `i64` | Create a new entity |
 | `load_scene(path)` | --- | Transition to a new scene |
 | `quit_game()` | --- | End the run as closing the window does (exit code 0; on the web, back to the page's doorway) |

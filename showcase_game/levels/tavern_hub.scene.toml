@@ -577,7 +577,7 @@ parent = "main_hall"
 position = [6.2, 0, 0]
 rotation = [0, -90, 0]
 [entities.bartender.model]
-asset = "../../examples/models/YBotWithIdle.glb"
+asset = "YBotWithIdle"
 [entities.bartender.skeleton]
 skin = "Armature"
 [entities.bartender.animator]
@@ -601,7 +601,7 @@ parent = "main_hall"
 position = [-1.2, 0, 4.0]
 rotation = [0, 200, 0]
 [entities.patron_1.model]
-asset = "../../examples/models/YBotWithIdle.glb"
+asset = "YBotWithIdle"
 [entities.patron_1.skeleton]
 skin = "Armature"
 [entities.patron_1.animator]
@@ -625,7 +625,7 @@ parent = "main_hall"
 position = [-2.8, 0, 5.0]
 rotation = [0, 20, 0]
 [entities.patron_2.model]
-asset = "../../examples/models/YBotWithIdle.glb"
+asset = "YBotWithIdle"
 [entities.patron_2.skeleton]
 skin = "Armature"
 [entities.patron_2.animator]

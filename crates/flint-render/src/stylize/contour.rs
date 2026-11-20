@@ -210,8 +210,9 @@ impl StylePass for Contour {
         frame
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
-        // Keyed by the edges' size, which a render-scale step changes
-        let depth = frame.depth_bind("Contour Depth BG", frame.edges_key(), || {
+        // Kept over the edges themselves (#960)
+        let over = [frame.edges_or(&self.no_edges_view)];
+        let depth = frame.depth_bind_over("Contour Depth BG", 0, &over, || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Contour Depth BG"),
                 layout: &self.depth_bgl,

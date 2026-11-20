@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn only_terrain_specs_take_this_route() {
-        assert!(is_terrain_spec("examples/rolling_meadow.terrain.toml"));
+        assert!(is_terrain_spec("levels/rolling_meadow.terrain.toml"));
         assert!(is_terrain_spec("X.TERRAIN.TOML"));
         assert!(!is_terrain_spec("specs/oak_tree.procgen.toml"));
         assert!(!is_terrain_spec("terrain.toml"));

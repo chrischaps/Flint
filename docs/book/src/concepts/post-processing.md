@@ -123,7 +123,7 @@ A texel's value is at the middle of its cell, and the fog blends the four round 
 
 Fog reaches **everything drawn, at any distance** ([ADR 0078](https://github.com/chrischaps/Flint/blob/main/docs/adr/0078-fog-reaches-everything-drawn.md)). The sky and skybox never write depth and the scene clears it to exactly 1.0, so the composite treats a pixel as sky only when its depth is 1.0; any geometry inside the camera's far plane is fogged. Set `far` to what the scene draws, not larger. SSAO, volumetric lighting and depth of field use the same sky test. Before [ADR 0078](https://github.com/chrischaps/Flint/blob/main/docs/adr/0078-fog-reaches-everything-drawn.md) the cut was depth ≥ 0.9999, which with a 1 m near plane is about 2.9 km at `far` = 4 km and never more than 10 km, so a ground running to the horizon ended in an unfogged band.
 
-**Translucent draws are fogged at their own depth** ([ADR 0125](https://github.com/chrischaps/Flint/blob/main/docs/adr/0125-translucent-draws-fogged-at-their-own-depth.md)). Blended meshes, living props' echoes and particles write no depth, so the depth buffer holds what lies behind them. Fogging their pixels by that depth fogged a near echo as the far floor behind it (gone into the fog) below the floor's edge and as unfogged sky above it, with a hard line across the echo at the horizon. While the fog or the ground fog is on and a translucent draw is in view, the frame keeps a copy of the picture as it stood before the first translucent draw, and draws every translucent draw once more into a *fog veil*: its weight, its depth and how much of what's behind it hides. The composite then fogs each pixel the veil reaches as two layers: what still shows of the picture behind, at the scene's depth as before, and the translucent draws' own light, at theirs, each taking the fog's colour by its share of the pixel. A draw that only adds light (additive, an echo's `lighten`) is fogged at its depth and hides nothing. Several translucent layers in one pixel are fogged as one, at their weighted depth, the nearest counting most. A frame with no fog or no translucent draw in view is drawn as it was, with nothing extra. Bench: `examples/fog_veil.scene.toml` (`flint render examples/fog_veil.scene.toml --time 2`).
+**Translucent draws are fogged at their own depth** ([ADR 0125](https://github.com/chrischaps/Flint/blob/main/docs/adr/0125-translucent-draws-fogged-at-their-own-depth.md)). Blended meshes, living props' echoes and particles write no depth, so the depth buffer holds what lies behind them. Fogging their pixels by that depth fogged a near echo as the far floor behind it (gone into the fog) below the floor's edge and as unfogged sky above it, with a hard line across the echo at the horizon. While the fog or the ground fog is on and a translucent draw is in view, the frame keeps a copy of the picture as it stood before the first translucent draw, and draws every translucent draw once more into a *fog veil*: its weight, its depth and how much of what's behind it hides. The composite then fogs each pixel the veil reaches as two layers: what still shows of the picture behind, at the scene's depth as before, and the translucent draws' own light, at theirs, each taking the fog's colour by its share of the pixel. A draw that only adds light (additive, an echo's `lighten`) is fogged at its depth and hides nothing. Several translucent layers in one pixel are fogged as one, at their weighted depth, the nearest counting most. A frame with no fog or no translucent draw in view is drawn as it was, with nothing extra. Bench: [`flint-examples/fog_veil.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/fog_veil.scene.toml) (`flint render flint-examples/fog_veil.scene.toml --time 2`).
 
 ## Volumetric Lighting (God Rays)
 
@@ -251,7 +251,7 @@ fade = 26.0
 
 Being a style, it also takes `blend` and `order` and turns up in F4's Styles editor, `--style contour:width=2` and `flint render --list-styles`. `--set contour.<key>=<value>` sets a key without turning the ink on.
 
-Scenes written before #599 used `contour_enabled`, `contour_width`, `contour_threshold`, `contour_strength`, `contour_luma`, `contour_color`, `contour_fade` and `contour_boil` in `[post_process]`. They still load, each moving into the table as Kuwahara's old keys do, and without `contour_enabled = true` they leave the ink off, as they always did. `examples/shading_boil.scene.toml` renders the same bytes in either spelling.
+Scenes written before #599 used `contour_enabled`, `contour_width`, `contour_threshold`, `contour_strength`, `contour_luma`, `contour_color`, `contour_fade` and `contour_boil` in `[post_process]`. They still load, each moving into the table as Kuwahara's old keys do, and without `contour_enabled = true` they leave the ink off, as they always did. [`flint-examples/shading_boil.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/shading_boil.scene.toml) renders the same bytes in either spelling.
 
 Its pipeline is built the first time it is enabled, so scenes that never use it pay nothing. It costs about 0.07 ms at 1080p on an RTX 5070 Laptop GPU, or 0.14 ms boiling.
 
@@ -261,7 +261,7 @@ In a scene with a [`[wooze]` table](procgen.md#the-wooze-field), paint and ink c
 
 ![One drawing](../images/shading-boil-a.png)
 
-*`examples/shading_boil.scene.toml`, in which nothing moves.*
+*[`flint-examples/shading_boil.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/shading_boil.scene.toml), in which nothing moves.*
 
 ![The next drawing](../images/shading-boil-b.png)
 
@@ -289,7 +289,7 @@ Each style's `boil` is its own amount; how long each drawing is held is one `[po
 
 The shading boil's drawings are held on the wooze field's beat. To hold the motion under the lines too, so poses and positions change on the same ticks as a style's `boil`, see [Motion on twos](stylize-passes.md#motion-on-twos) and `[post_process] motion_hold`.
 
-A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's half second is therefore 12 frames a second, and on ones a drawing lasts 1/12 s. Leave `boil_on` at its default with that preset and a drawing lasts 1/6 s, which reads as a throb. `examples/shading_boil.scene.toml` gets the same 1/12 s from a quarter-second step on twos. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
+A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's half second is therefore 12 frames a second, and on ones a drawing lasts 1/12 s. Leave `boil_on` at its default with that preset and a drawing lasts 1/6 s, which reads as a throb. [`flint-examples/shading_boil.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/shading_boil.scene.toml) gets the same 1/12 s from a quarter-second step on twos. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
 
 The field's `jitter` sets how hard it boils: both styles' `boil` values are multiplied by it, so a preset or zone with `jitter = 0` holds still, and `amplitude` has no say, so a zone can hold its trees still and go on boiling their lines. The field is sampled once a frame where the camera is, since the passes are full-screen. A zone boils when you're in it, and not when you're looking at it from outside.
 
@@ -298,7 +298,7 @@ With either `boil` at 0, or no `[wooze]` table, that pass renders byte for byte 
 To check the cadence, capture one film frame per frame. In a scene where nothing else moves, consecutive pairs are byte for byte the same on twos, and each pair differs from the next:
 
 ```bash
-flint-player examples/shading_boil.scene.toml \
+flint-player flint-examples/shading_boil.scene.toml \
   --frame-step 0.0416666666666667 --screenshot out/f.png --screenshot-every 0.0416666666666667 --exit-after 2
 ```
 
@@ -359,7 +359,7 @@ dither_style = 2
 dither_intensity = 0.004
 ```
 
-`examples/dark_stage.scene.toml` is the bench: a near-black stage under one soft pool of light. `flint render examples/dark_stage.scene.toml --sweep post.dither_style=0,1,2` draws the three side by side (raise the intensity to see each pattern; at one step, styles 1 and 2 show none).
+[`flint-examples/dark_stage.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/dark_stage.scene.toml) is the bench: a near-black stage under one soft pool of light. `flint render flint-examples/dark_stage.scene.toml --sweep post.dither_style=0,1,2` draws the three side by side (raise the intensity to see each pattern; at one step, styles 1 and 2 show none).
 
 ## MSAA
 
@@ -403,7 +403,7 @@ exposure = 1.0
 
 All fields are optional --- omitted values use their defaults. The full key list with defaults is in [File Formats](../formats/overview.md), and `flint render --list-effects` prints it from the engine itself (below).
 
-A key that is no field is ignored, so its field keeps its default, and the load warns with the file and the closest known name (#354). The scene still loads, and `flint validate` shows the same line:
+A key that is no field is ignored, so its field keeps its default, and the load warns with the file and the closest known name (#354). It stays ignored under a look: the scene's `look = "..."`, a script's `set_look`, F4's Look and a comic panel lay the scene's keys over the look without it, so that warning is the only message about it (#896). The scene still loads, and `flint validate` shows the same line:
 
 ```text
 WARN levels/demo.scene.toml: [post_process] has no field 'bloom_intensty', did you mean 'bloom_intensity'? (ignored)
@@ -426,7 +426,7 @@ bloom  (Bloom): Bright areas bleed light
   bloom_soft_threshold     f32  0.5                0..1           How softly blooming starts below the threshold: 0 is a hard cut
 ```
 
-A value outside its key's range still draws, as a style value past its range does (#355), and says so: the load, `flint validate` and `flint check` warn with `post-range` and name the range. A look's value, or a `--sweep post.<key>` value, past its range is refused instead, as a style value there is:
+A value outside its key's range still draws, as a style value past its range does (#355), and says so: the load, `flint validate` and `flint check` warn with `post-range` and name the range. A look's value, or a `--sweep post.<key>` value, past its range is refused instead, as a style value there is (a scene's value laid over a look is still the scene's: it draws, and only the load warns):
 
 ```text
 warning[post-range] [post_process] bloom_intensity: bloom_intensity=3 is outside its range 0..1
@@ -578,7 +578,7 @@ They run first of the display chain, where the composite drew them, so a prop's 
 
 `drunk` and `underwater` draw their own `blend`, since their sway grows with it; the other three mix by the framework's. The sea's half of the old blood and underwater modes is the `ocean` component's [`tint`](#the-oceans-tint).
 
-Demo: `examples/reality_tears.scene.toml`, a sea at dusk its script walks through all five.
+Demo: [`flint-examples/reality_tears.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/reality_tears.scene.toml), a sea at dusk its script walks through all five.
 
 ### The tear
 

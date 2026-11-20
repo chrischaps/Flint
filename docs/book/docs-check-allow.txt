@@ -13,5 +13,10 @@
 concepts/assets.md: glow
 concepts/stylize-passes.md: greyscale darkroom
 
+# What `flint export web` / `flint bundle` write inside a flint-examples
+# clone (#984), cited as the paths they land at
+CLAUDE.md: dist/web
+guides/publishing-to-the-web.md: dist/web dist/ascii_entities.flintpack
+
 # A command a plan names before it exists (#714)
 crates/flint-player/CLAUDE.md: playtest

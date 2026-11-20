@@ -262,7 +262,12 @@ fn every_command_answers_with_one_json_document() {
     assert_eq!(ok(&dir, &["script", "check"])["valid"], true);
 
     run("examples");
-    assert!(ok(&dir, &["examples", "--dir", &r("examples")]).is_array());
+    std::fs::write(
+        dir.join("index.toml"),
+        "[[example]]\nscene = \"scenes/main.scene.toml\"\ntopic = \"start\"\npurpose = \"the scaffold\"\n",
+    )
+    .unwrap();
+    assert!(ok(&dir, &["examples"]).is_array());
 
     // Exit 1 when a FLINT_* switch here holds a bad value, so only the
     // document is held (#715)
@@ -411,13 +416,17 @@ fn every_command_answers_with_one_json_document() {
     );
     ok(
         &dir,
-        &["gen", &r("examples/fonts/brush.glyphs.toml"), "--dry-run"],
+        &[
+            "gen",
+            &r("tests/fixtures/scenes/fonts/halftone.glyphs.toml"),
+            "--dry-run",
+        ],
     );
     let terrain = ok(
         &dir,
         &[
             "gen",
-            &r("examples/rolling_meadow.terrain.toml"),
+            &r("tests/fixtures/scenes/terrain/rolling_meadow.terrain.toml"),
             "--dry-run",
         ],
     );
@@ -617,7 +626,7 @@ fn every_command_answers_with_one_json_document() {
             &dir,
             &[
                 "edit",
-                &r("examples/models/Box.glb"),
+                &r("tests/fixtures/scenes/models/Box.glb"),
                 "--render",
                 "renders/box.png",
                 "--width",

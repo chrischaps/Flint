@@ -666,7 +666,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "draw_rect_outline",
-        "Outline a rectangle, thickness in points.",
+        "Outline a rectangle, the stroke outside its edge, thickness in points.",
     )
     .arg("x", Num)
     .arg("y", Num)
@@ -684,7 +684,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "draw_rect_outline",
-        "Outline a rectangle; opts: color, thickness (points, 1), rounding (a radius), layer.",
+        "Outline a rectangle, the stroke outside its edge; opts: color, thickness (points, 1), rounding (a radius), layer.",
     )
     .arg("x", Num)
     .arg("y", Num)

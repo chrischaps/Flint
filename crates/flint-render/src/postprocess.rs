@@ -1971,8 +1971,8 @@ impl PostProcessPipeline {
 
     /// Run the SSAO generation and blur passes.
     /// Reads the depth buffer and writes blurred AO to `resources.ssao_blur_view`.
-    /// `depth_key`: who vouches for `depth_view`, so the bind group over it
-    /// can be kept ([`DepthKey`](crate::bind_cache::DepthKey), #379).
+    /// `depth_key`: whose `depth_view` is, so the bind group over it can be
+    /// kept ([`DepthKey`](crate::bind_cache::DepthKey), #379, #960).
     #[allow(clippy::too_many_arguments)]
     pub fn run_ssao(
         &self,
@@ -1982,7 +1982,7 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         config: &PostProcessConfig,
         depth_view: &wgpu::TextureView,
-        depth_key: crate::bind_cache::DepthKey,
+        depth_key: crate::bind_cache::DepthKey<'_>,
         camera: &Camera,
     ) {
         // Write SSAO uniforms
@@ -2014,22 +2014,24 @@ impl PostProcessPipeline {
                 }],
             })
         });
-        let depth_bg = resources.binds.get_over(depth_key, "ssao depth", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("SSAO Depth BG"),
-                layout: &self.ssao_depth_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
-                    },
-                ],
-            })
-        });
+        let depth_bg = resources
+            .binds
+            .get_over(depth_key, "ssao depth", 0, &[], || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("SSAO Depth BG"),
+                    layout: &self.ssao_depth_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(depth_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
+                        },
+                    ],
+                })
+            });
         let noise_bg = resources.binds.get("ssao noise", 0, || {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SSAO Noise BG"),
@@ -2107,8 +2109,8 @@ impl PostProcessPipeline {
 
     /// Run the volumetric ray-march and bilateral blur passes.
     /// Reads the depth buffer and shadow maps, writes blurred god rays to
-    /// `resources.volumetric_blur_view`. `shadow_id` is the shadow pass's
-    /// [`gpu_id`](crate::bind_cache::gpu_id), `depth_key` as in
+    /// `resources.volumetric_blur_view`. The bind group over `shadow` is
+    /// kept over its objects themselves (#960), `depth_key` as in
     /// [`run_ssao`](Self::run_ssao).
     #[allow(clippy::too_many_arguments)]
     pub fn run_volumetric(
@@ -2119,7 +2121,7 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         config: &PostProcessConfig,
         depth_view: &wgpu::TextureView,
-        depth_key: crate::bind_cache::DepthKey,
+        depth_key: crate::bind_cache::DepthKey<'_>,
         camera: &Camera,
         shadow: VolumetricShadow<'_>,
     ) {
@@ -2156,7 +2158,7 @@ impl PostProcessPipeline {
         });
         let depth_bg = resources
             .binds
-            .get_over(depth_key, "volumetric depth", 0, || {
+            .get_over(depth_key, "volumetric depth", 0, &[], || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Volumetric Depth BG"),
                     layout: &self.volumetric_depth_bgl,
@@ -2172,30 +2174,41 @@ impl PostProcessPipeline {
                     ],
                 })
             });
-        let shadow_bg = resources.binds.get("volumetric shadow", shadow.id, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Volumetric Shadow BG"),
-                layout: &self.volumetric_shadow_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: shadow.lights.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(shadow.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(shadow.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: shadow.uniforms.as_entire_binding(),
-                    },
-                ],
-            })
-        });
+        // Over the shadow pass's map and buffers and the lights' buffer, by
+        // identity: a shadow pass made again (a resolution change) is a new
+        // map, and the group follows it (#960)
+        let over = [
+            crate::bind_cache::Bound::Buffer(shadow.lights),
+            crate::bind_cache::Bound::View(shadow.view),
+            crate::bind_cache::Bound::Sampler(shadow.sampler),
+            crate::bind_cache::Bound::Buffer(shadow.uniforms),
+        ];
+        let shadow_bg = resources
+            .binds
+            .get_bound("volumetric shadow", 0, &over, || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Volumetric Shadow BG"),
+                    layout: &self.volumetric_shadow_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: shadow.lights.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(shadow.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(shadow.sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: shadow.uniforms.as_entire_binding(),
+                        },
+                    ],
+                })
+            });
 
         // Ray-march pass → writes to resources.volumetric_view (half-res)
         fullscreen_pass(
@@ -2233,7 +2246,7 @@ impl PostProcessPipeline {
         let blur_texture_bg =
             resources
                 .binds
-                .get_over(depth_key, "volumetric blur texture", 0, || {
+                .get_over(depth_key, "volumetric blur texture", 0, &[], || {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("Volumetric Blur Texture BG"),
                         layout: &self.volumetric_blur_texture_bgl,
@@ -2280,7 +2293,7 @@ impl PostProcessPipeline {
         config: &PostProcessConfig,
         target_view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
-        depth_key: crate::bind_cache::DepthKey,
+        depth_key: crate::bind_cache::DepthKey<'_>,
         camera: &Camera,
         time: f32,
         ground_fog: Option<&crate::ground_fog::GroundFogGpu>,
@@ -2304,67 +2317,70 @@ impl PostProcessPipeline {
             &self.volumetric_black_view
         };
 
-        // The variant: which views it binds, and whose fog map
+        // The variant: which of the chain's views it binds. The fog map is
+        // a scene's, so the group is kept over the map itself (#960): a
+        // scene's new map takes the old one's group's place
         let variant = u64::from(ssao_on)
             | u64::from(volumetric_on) << 1
             | u64::from(fog_veil.is_some()) << 2
-            | ground_fog.map_or(0, |g| g.id) << 3;
-        let ssao_depth_bg =
-            resources
-                .binds
-                .get_over(depth_key, "composite ssao+depth", variant, || {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Composite SSAO+Depth+Volumetric BG"),
-                        layout: &self.composite_ssao_bgl,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(ssao_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(depth_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::TextureView(volumetric_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 5,
-                                resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 6,
-                                resource: wgpu::BindingResource::TextureView(
-                                    ground_fog.map_or(&self.ground_fog_empty_view, |g| &g.view),
-                                ),
-                            },
-                            // The fog veil's (#513), or 1x1 stand-ins the
-                            // plain composite never reads
-                            wgpu::BindGroupEntry {
-                                binding: 7,
-                                resource: wgpu::BindingResource::TextureView(
-                                    fog_veil
-                                        .map_or(&self.volumetric_black_view, |v| &v.behind_view),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 8,
-                                resource: wgpu::BindingResource::TextureView(
-                                    fog_veil.map_or(&self.volumetric_black_view, |v| &v.veil_view),
-                                ),
-                            },
-                        ],
-                    })
-                });
+            | u64::from(ground_fog.is_some()) << 3;
+        let fog_map = ground_fog.map_or(&self.ground_fog_empty_view, |g| &g.view);
+        let ssao_depth_bg = resources.binds.get_over(
+            depth_key,
+            "composite ssao+depth",
+            variant,
+            &[crate::bind_cache::Bound::View(fog_map)],
+            || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Composite SSAO+Depth+Volumetric BG"),
+                    layout: &self.composite_ssao_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(ssao_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(depth_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(volumetric_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 6,
+                            resource: wgpu::BindingResource::TextureView(fog_map),
+                        },
+                        // The fog veil's (#513), or 1x1 stand-ins the
+                        // plain composite never reads
+                        wgpu::BindGroupEntry {
+                            binding: 7,
+                            resource: wgpu::BindingResource::TextureView(
+                                fog_veil.map_or(&self.volumetric_black_view, |v| &v.behind_view),
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 8,
+                            resource: wgpu::BindingResource::TextureView(
+                                fog_veil.map_or(&self.volumetric_black_view, |v| &v.veil_view),
+                            ),
+                        },
+                    ],
+                })
+            },
+        );
         let effects_on = config.enabled;
         let ground_fog = ground_fog.filter(|_| effects_on && config.ground_fog_density > 0.0);
         let falloff = config.ground_fog_falloff.max(1e-3);
@@ -2595,8 +2611,6 @@ fn composite_pipeline(
 
 /// What the volumetric pass reads of the shadow pass and the lights.
 pub struct VolumetricShadow<'a> {
-    /// The shadow pass's [`gpu_id`](crate::bind_cache::gpu_id).
-    pub id: u64,
     pub view: &'a wgpu::TextureView,
     pub sampler: &'a wgpu::Sampler,
     pub uniforms: &'a wgpu::Buffer,

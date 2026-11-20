@@ -319,7 +319,7 @@ packs the engine's. Book: guides/publishing-to-the-web.md.
 
 | Run | Result |
 |---|---|
-| `flint export web examples/`, no `--player` | trunk built the player in 5 m 54 s (cold `web-release`); `demo.flintpack` 228 files 106.12 MB, `demo.audio.flintpack` 14 files 1.84 MB |
+| `flint export web` of the examples, no `--player` | trunk built the player in 5 m 54 s (cold `web-release`); `demo.flintpack` 228 files 106.12 MB, `demo.audio.flintpack` 14 files 1.84 MB |
 | `/` | the address became `/?game=demo`; the gate read "Flint demos"; the tavern loaded (49 entities), its scripts started, the late audio bundle arrived |
 | `/?scene=pencil_sketch.scene.toml` | `&game=demo` added; Pencil Sketch (11 entities) drawn from the same bundle |
 | `build.py` (Float `3e0b75f`, FlintKart `bd910be`) through export | float 16.03 MB in 3 bundles, kart 91.88 MB in 2 plus its film and poster; `games.json` holds the keys and values the old script wrote |
@@ -649,7 +649,7 @@ buffer, on the main thread. `?perf=1` now counts what it mixes: a
 really mixes, and the one-shots it skipped or stole; the `audio` line
 gains the mean time to mix one buffer.
 
-**Where the time goes.** `examples/mix_bench.rs` builds Float's mixer on
+**Where the time goes.** `crates/flint-audio/examples/mix_bench.rs` builds Float's mixer on
 kira's mock backend and times one 2048-frame buffer natively. Pausing the
 six loops Float keeps at volume 0 (four songs, rain, storm) saved only
 7%: a paused-or-not plain voice costs about 0.013 ms. A kira **spatial
@@ -760,7 +760,7 @@ The ASCII style (#265, per entity since #266, temporal since #277) adds
 two things to a frame: the entity style mask (`Style mask`, a redraw of
 the styled entities' ids after the scene pass) and the glyph style itself
 (`ASCII`, a cell pass and a glyph pass at the display stage). Measured on
-`examples/ascii_entities.scene.toml` (six styled props, meadow, SSAO, bloom),
+`flint-examples/ascii_entities.scene.toml` (six styled props, meadow, SSAO, bloom),
 RTX 4070 laptop, release build, 1920x1080 output, `flint render
 --gpu-time 240`, best of five processes since other jobs shared the GPU:
 
@@ -821,10 +821,12 @@ cell, glyph) and two `writeBuffer`s a frame, and at scale 1 one bind
 group a frame: the mask's draw group over the caller's depth view, which
 wgpu 23 can't key (the same reason the base chain makes two there). Under
 a render scale the chain owns its depth and all of them are kept. Since
-#379 the player passes its depth view with an id
-(`RenderContext::depth_target()`, a fresh `new_depth_id()` whenever the
-context makes the texture again) and those groups are kept at scale 1
-too (measured below the tables, "Bind groups over the caller's depth").
+#379 the player passed its depth view with an id (a fresh
+`new_depth_id()` whenever the context made the texture again) and those
+groups were kept at scale 1 too (measured below the tables, "Bind groups
+over the caller's depth"). Since #960 (wgpu 30) the renderer keys them on
+the view itself, which compares by identity, so every host's depth view is
+kept, a bare `&TextureView` included, and the id is gone.
 
 **Re-read with `tools/web-perf/run.mjs` (#381, 2026-11-12).** The table
 above is now one command over a `flint export web` folder of the same three
@@ -913,7 +915,7 @@ untouched, which is what a phone pays for.
 
 **In the browser (#538).** Measured with `tools/web-perf/run.mjs` on a
 `flint export web` folder of #270's ASCII variants plus
-`examples/watercolor.scene.toml` (watercolor is scissored since #538 too),
+`flint-examples/watercolor.scene.toml` (watercolor is scissored since #538 too),
 each page twice: as written, and with the page's `?scissor=0`, which draws
 the full passes as `FLINT_STYLE_SCISSOR=0` does natively. Chrome 157, RTX
 4070 laptop, 1920x1080 device pixels, two 10 s windows a page, three runs
@@ -1252,6 +1254,14 @@ arrives, and the mesh's buffers are shared through `Arc`.
 because its steps share one uniform buffer (`PostProcessPipeline::run_bloom`);
 it makes 24 of the 36 bind groups left. Firefox no longer shows the cost,
 but it's the next to go. Safari wasn't run.
+
+**Half rate at the start (#962).** Firefox on hardware vsync runs every page
+at 33 to 38 fps for its first 15 to 18 s, then at 60. A page with no Flint
+at all does the same, and wgpu 23, wgpu 30 and main measured alike. That
+was #949's "Sun Prints hitches to 33 ms". `layout.frame_rate=60` removes
+it, so compare builds with `run.mjs --prefs layout.frame_rate=60`; the
+numbers are in `tools/web-perf/README.md`. What remains is a freeze of about
+2 s just after Begin, most often on main (#1349).
 
 ## Full screen (#135)
 
@@ -1964,7 +1974,7 @@ The showcase film is not part of the wasm or any bundle, so the 4 MB gzip
 line above doesn't count it. It is a click-to-play film on the Flint page,
 loaded on its own (`preload="none"` with its poster), and these are its
 sizes, recorded so the next cut can be held to them. The storyboard
-(`docs/design/showcase-film.md`, "The 16:9 cut") has the whole table.
+(`flint-examples/tools/showcase/storyboard.md`, "The 16:9 cut") has the whole table.
 
 | File | Size | |
 |---|---|---|

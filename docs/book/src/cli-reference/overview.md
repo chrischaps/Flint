@@ -21,7 +21,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint frame show <capture>` | A frame capture's summary (scene, adapter, size, GPU time by pass, draws and triangles, memory), and `--passes`, `--draws [--pass P] [--entity E] [--sort tris] [--culled]`, `--targets`, `--hitch`; `flint frame diff <a> <b> [--out dir]` says what changed between two; `flint frame image <capture> <pass> -o x.png` copies a pass's image out to look at; `flint frame open <capture>` is the frame debugger's window ([The Frame Debugger](../guides/frame-debugger.md)); `flint frame replay <capture>` draws it again, a draw at a time or with an entity or pass left out. All but `replay` read only the capture folder; `--json` ([The `frame` Command](#the-frame-command)) |
 | `flint profile explain <trace> [frame]` | Why a frame was slow, as a sentence first: each scope of a `--trace` file against its median over the trace's normal frames, the deepest scope that carries the excess named in the first line, then what ran only in that frame. `flint profile top <trace>` lists the scopes by total, self time, worst call or calls (`--thread`, `--frames a..b`); `flint profile frame <trace> <n\|worst\|hitch>` prints that frame's scope tree; `flint profile diff <a> <b>` compares two traces scope by scope and marks the deltas the frames' own spread explains. Reads only the file; `--json` ([The `profile` Command](#the-profile-command)) |
 | `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
-| `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
+| `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from [`flint-examples/index.toml`](https://github.com/chrischaps/flint-examples/blob/main/index.toml) or fails validation |
 | `flint asset import` | Import a file into the asset store |
 | `flint asset list` | List assets in the catalog |
 | `flint asset info` | Show details for a specific asset |
@@ -102,7 +102,7 @@ No engine schema is copied into the game. See [Your First Project](../getting-st
 
 ```bash
 flint check                          # the project in the working directory
-flint check examples/                # every scene under a folder
+flint check flint-examples/          # every scene under a folder
 flint check scenes/dock.scene.toml   # one scene, and the files it names
 flint check . --json                 # one JSON document on stdout
 ```
@@ -318,7 +318,7 @@ A manifest carries an integer `version` (ADR 0126). `flint frame` reads its own 
 ## The `profile` Command
 
 ```bash
-flint-player examples/hitch_metronome.scene.toml --trace-on-hitch   # make one (traces/)
+flint-player flint-examples/hitch_metronome.scene.toml --trace-on-hitch   # make one (traces/)
 flint profile explain traces/hitch_metronome-hitch-t3.000.json      # why the worst frame was slow
 flint profile explain out.json hitch                 # the hitch it was saved for, else the worst
 flint profile frame out.json 412 --min-ms 0.2        # that frame's scope tree
@@ -332,7 +332,7 @@ flint profile diff before.json after.json            # what moved, and what the 
 
 ```text
 frame 525 took 107.28 ms (median 4.57): stall.rhai:on_update 100.09 ms against its median 0.032, +100.06 of the frame's +102.71 ms excess
-  inside tick > run_scripts > script::update > script::on_update > script::call (examples/scripts/stall.rhai) on main
+  inside tick > run_scripts > script::update > script::on_update > script::call (flint-examples/scripts/stall.rhai) on main
   the hitch detector: script stall.rhai:on_update 100.1 ms (judged 108.33 ms against 4.17)
 ```
 
@@ -353,7 +353,7 @@ main: 103.90 ms in its outermost scopes
     run_scripts                                       100.47  96.6%    0.056      1
       script::update                                  100.41  96.5%    0.006      1
         script::on_update                             100.18  96.3%    0.011      1
-          script::call (examples/scripts/stall.rhai)  100.07  96.2%    0.008      1
+          script::call (flint-examples/scripts/stall.rhai)  100.07  96.2%    0.008      1
             stall.rhai:on_update                      100.06  96.2%   100.06      1
     (16 more under the threshold)                       0.34   0.3%
 ```
@@ -387,7 +387,7 @@ Each scope's time a frame in two traces (every frame but each trace's first and 
 Launch a scene as an interactive first-person experience with physics:
 
 ```bash
-flint play examples/phase4_runtime.scene.toml
+flint play flint-examples/phase4_runtime.scene.toml
 flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 # in a game whose flint.toml names `scene = "scenes/main.scene.toml"`: no argument
 flint play
@@ -534,12 +534,12 @@ adapter, no window) also exits 1 now, from `flint play` too.
 | `--trace-on-hitch[=N]` | Write a trace eight frames after each of the run's first N hitches past the start (default 1), beside `--trace`'s file or in `traces/` at the project's root |
 | `--strict-scripts` | Exit 1 when any script failed, to load, to compile or while running (#693). Without it script errors are still counted and `--exit-after` prints them, a line each with its count ([When a script fails while running](../concepts/scripting.md#when-a-script-fails-while-running)) |
 
-A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `examples/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
+A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of [`flint-examples/seeded_stars.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/seeded_stars.scene.toml), which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
 
 ```bash
-flint-player examples/seeded_stars.scene.toml --frame-step 0.0166667 \
+flint-player flint-examples/seeded_stars.scene.toml --frame-step 0.0166667 \
   --screenshot out/stars.png --screenshot-at 2.5 --exit-after 2.6            # the same PNG every run
-flint-player examples/seeded_stars.scene.toml --frame-step 0.0166667 --seed 2 \
+flint-player flint-examples/seeded_stars.scene.toml --frame-step 0.0166667 --seed 2 \
   --screenshot out/stars_2.png --screenshot-at 2.5 --exit-after 2.6          # another sky, also every run
 ```
 
@@ -640,8 +640,8 @@ components' values, on the first frame at or after each `--dump-world-at`
 time:
 
 ```bash
-flint-player examples/phase4_runtime.scene.toml --frame-step 0.0166667 \
-  --input-script examples/walk_to_door.txt --exit-after 5 \
+flint-player flint-examples/phase4_runtime.scene.toml --frame-step 0.0166667 \
+  --input-script flint-examples/walk_to_door.txt --exit-after 5 \
   --dump-world out/world.json --dump-world-at 0.5,2.5,5 \
   --dump-query "entities where archetype == 'player'"
 ```
@@ -651,7 +651,7 @@ snapshot is written, and leaves (the second snapshot, shortened):
 
 ```json
 {
-  "scene": "examples/phase4_runtime.scene.toml",
+  "scene": "flint-examples/phase4_runtime.scene.toml",
   "query": "entities where archetype == 'player'",
   "snapshots": [
     {
@@ -701,7 +701,7 @@ they print for a file, so a command line moves between the two by swapping
 `--scene` for `--attach`:
 
 ```bash
-flint play examples/phase4_runtime.scene.toml --inspect-listen 127.0.0.1:7878
+flint play flint-examples/phase4_runtime.scene.toml --inspect-listen 127.0.0.1:7878
 
 # in another terminal, while it runs
 flint query "entities where door.locked == true" --attach 7878
@@ -710,7 +710,7 @@ flint query "entities where archetype == 'character'" --attach 7878 --data
 ```
 
 Each answer says on stderr when in the run it was read
-(`live: examples/phase4_runtime.scene.toml at t=12.483s (frame 749)`);
+(`live: flint-examples/phase4_runtime.scene.toml at t=12.483s (frame 749)`);
 stdout is the answer alone. The socket speaks one line of JSON each way, so a
 program can ask without `flint`: send `{"query": "entities", "data": true}`,
 `{"entity": "player"}`, or a bare query line, and read back
@@ -805,7 +805,7 @@ This loads the engine's built-in components (transform, material, rigidbody, etc
 The player is also available as a standalone binary for distribution:
 
 ```bash
-cargo run --bin flint-player -- examples/phase4_runtime.scene.toml
+cargo run --bin flint-player -- flint-examples/phase4_runtime.scene.toml
 
 # From a game repo with an engine subtree: its flint.toml names the schemas
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
@@ -822,7 +822,7 @@ that two runs write byte for byte. Exit 1 on any failure. The whole story is
 [Playtesting](../guides/playtesting.md).
 
 ```bash
-flint playtest examples/phase4_runtime.scene.toml     --input-script examples/playtests/phase4_runtime.playtest.txt --exit-after 8
+flint playtest flint-examples/phase4_runtime.scene.toml     --input-script flint-examples/playtests/phase4_runtime.playtest.txt --exit-after 8
 flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --json
 ```
 
@@ -850,7 +850,7 @@ keys and what a take is: [Filming a Showcase](../guides/filming-a-showcase.md).
 ```bash
 flint capture showcase_game/trailer.shots.toml
 flint capture showcase_game/trailer.shots.toml --verify --encode mp4
-flint capture tools/showcase/film.toml --shot 02_type --scale 0.5 --dry-run --json
+flint capture flint-examples/tools/showcase/film.toml --shot 02_type --scale 0.5 --dry-run --json
 ```
 
 ### Capture Flags
@@ -875,7 +875,7 @@ Words after `--` are added to every take's `flint play` command line.
 Render a scene to a PNG image without opening a window:
 
 ```bash
-flint render examples/showcase_tavern.scene.toml --output hero.png
+flint render flint-examples/showcase_tavern.scene.toml --output hero.png
 flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
 ```
 
@@ -1032,10 +1032,10 @@ out keeps that part of it.
 `--width` x `--height`, for every kind of file:
 
 ```bash
-flint edit examples/specs/grove_oak.procgen.toml --render oak.png --yaw 60   # the mesh, auto-framed
-flint edit examples/specs/tavern_plank.procgen.toml --render plank.png       # albedo, normal, roughness side by side
-flint edit examples/rolling_meadow.terrain.toml --render meadow.png          # the terrain from above
-flint edit examples/stylize_props.scene.toml --render props.png --no-grid    # the scene viewer's frame
+flint edit flint-examples/specs/grove_oak.procgen.toml --render oak.png --yaw 60   # the mesh, auto-framed
+flint edit flint-examples/specs/tavern_plank.procgen.toml --render plank.png       # albedo, normal, roughness side by side
+flint edit flint-examples/rolling_meadow.terrain.toml --render meadow.png          # the terrain from above
+flint edit flint-examples/stylize_props.scene.toml --render props.png --no-grid    # the scene viewer's frame
 ```
 
 A texture generator's or a texture pipeline's still is its output maps side by
@@ -1282,7 +1282,7 @@ Before anything is generated, the spec's params are checked against its generato
 
 `flint gen` also previews a glyph set: `flint gen fonts/terminal.glyphs.toml -o sheet.png` writes the atlas, each ramp's ink and a specimen as one sheet, and `-o out/` writes the pieces as well. See [Glyph Atlas](../concepts/glyph-atlas.md#looking-at-a-set).
 
-It also bakes a terrain spec, with no window: `flint gen examples/rolling_meadow.terrain.toml -o terrain/meadow.png` writes the 16-bit heightmap there and `terrain/meadow_splat.png` beside it, the bytes the terrain editor's Ctrl+E export writes; `-o terrain/` names them after the spec's `[meta] name`. A terrain spec takes `-o`, `--seed`, `--strict` (a key nothing reads is then an error, not a warning) and `--dry-run`, and refuses the procgen-only flags. See [Terrain](../concepts/terrain.md#generating-terrain-from-a-spec).
+It also bakes a terrain spec, with no window: `flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png` writes the 16-bit heightmap there and `terrain/meadow_splat.png` beside it, the bytes the terrain editor's Ctrl+E export writes; `-o terrain/` names them after the spec's `[meta] name`. A terrain spec takes `-o`, `--seed`, `--strict` (a key nothing reads is then an error, not a warning) and `--dry-run`, and refuses the procgen-only flags. See [Terrain](../concepts/terrain.md#generating-terrain-from-a-spec).
 
 | Flag | Default | Description |
 |------|---------|-------------|

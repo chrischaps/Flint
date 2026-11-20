@@ -56,7 +56,10 @@ struct Cache {
 
 #[derive(Hash, PartialEq, Eq)]
 struct Key {
-    device: usize,
+    /// The device itself (#960): wgpu 30 compares and hashes a device by
+    /// identity, so the key is exact for the devices of one `Instance`. A
+    /// clone keeps it alive no longer than its pipelines already do.
+    device: wgpu::Device,
     ty: TypeId,
     label: String,
     parts: String,
@@ -89,8 +92,10 @@ pub fn enabled() -> bool {
 }
 
 /// Forget every kept object (the counts stay). A host calls it when it
-/// lets its device go: what was kept holds that device alive, and a new
-/// device must never be handed the old one's pipelines.
+/// lets its device go: what was kept holds that device alive. It is also
+/// what keeps a device of a new `Instance` from the old one's pipelines:
+/// wgpu-core numbers devices per instance (`Global`), so the first device of
+/// a second instance has the same id as the first one's and compares equal.
 pub fn clear() {
     if let Some(cache) = cache().as_mut() {
         cache.kept.clear();
@@ -111,13 +116,6 @@ pub fn reset_counts() {
     if let Some(cache) = cache().as_mut() {
         cache.counts.clear();
     }
-}
-
-/// The device's address: wgpu 23 gives a device no identity of its own.
-/// A device that moves only misses; one made where a dropped one was is
-/// why a host calls [`clear`] when it lets its device go.
-fn device_id(device: &wgpu::Device) -> usize {
-    device as *const wgpu::Device as usize
 }
 
 /// Count one `label` built where nothing could be kept.
@@ -170,7 +168,7 @@ pub fn shared_some<T: Send + Sync + 'static>(
         return made;
     }
     let key = Key {
-        device: device_id(device),
+        device: device.clone(),
         ty: TypeId::of::<T>(),
         label: label.to_string(),
         parts: format!("{parts:?}"),

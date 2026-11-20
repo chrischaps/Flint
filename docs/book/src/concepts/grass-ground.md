@@ -40,7 +40,7 @@ scale_by_mask = true
 
 A scene has one grass field. A `grass_ground` replaces a terrain's grass, with a warning. The **Grass Debug** panel (`F3`) works on it as on a terrain, and commits its changes back to the `grass_ground` component. `flint render` and the scene viewer (`flint edit`, which reloads it on each change under `--watch`) draw it too.
 
-Try it with `flint play examples/mesh_meadow.scene.toml`.
+Try it with `flint play flint-examples/mesh_meadow.scene.toml`.
 
 ## From Rust
 

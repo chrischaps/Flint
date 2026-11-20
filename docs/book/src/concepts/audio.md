@@ -259,6 +259,8 @@ fn on_interact() {
 
 A sound is cached under its file's path from the folder that holds its `audio/`, extension included: `audio/door_open.ogg`. The preload reads every `audio/` the scene can see ([beside the scene, beside each directory above it up to the project root, then the engine's](assets.md#where-the-engine-looks-for-a-file)), and a nearer file hides a farther one of the same file name. That full name always works. A name that isn't cached as written tries `audio/<name>`, then `audio/<name>.ogg`, `.wav`, `.flac` and `.mp3`, in that order, so `"door_open"`, `"door_open.ogg"` and `"audio/door_open.ogg"` all play the same file. A sound cached under exactly the name given wins over the search (one an extension loaded as `"blip"` is `"blip"`), and two files that share a stem want the full path, since the search takes the first extension it finds.
 
+A name nothing cached is looked for, the first time it is played, the way an `audio_source.file` is: a path from the scene's folder or from any folder above it up to the project root, then each `audio/` on the way, then the engine's ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)). So `play_sound("../sfx/door.ogg")` plays a file outside every `audio/`, and so does any sound with `preload_audio = false`. The file is kept under the name as written. A small one is decoded and plays at once; a large one (a song) misses that first play and is decoded over the next frames, so preload what must sound the first time. `flint check` holds a script's sound strings to this same search, so a sound the check passes is one the player finds, and one it reports (`missing-file`, with the paths tried) plays nothing. A file beside the script, or in some other asset folder, is in neither.
+
 A name that finds nothing plays nothing. The warning names the nearest cached sound, by file stem first:
 
 ```text
@@ -269,7 +271,7 @@ Extensions' `ctx.audio.play` resolves names the same way.
 
 A placed sound is at full volume within `min_distance` and silent past `max_distance`. Between them it is `-60·r^rolloff` dB, where `r` is how far the listener is along the way from one to the other. The default `rolloff` of 2 holds a sound up most of the way and drops it near `max_distance`, which suits a small room. A sound heard across open ground wants a rolloff below 1: it falls away soon after `min_distance` and then tails off slowly, close to a real sound's inverse-distance fade. For example, `rolloff: 0.6` between 32 m and 1250 m stays within 1.5 dB of `(32/d)^1.2` out to 300 m.
 
-Sound names match files in the `audio/` directory. All `.ogg`, `.wav`, `.mp3`, and `.flac` files are automatically loaded at startup.
+Sound names match files in the `audio/` directory. All `.ogg`, `.wav`, `.mp3`, and `.flac` files there are loaded at startup; a path to a file elsewhere is loaded on its first play (see [Sound names](#sound-names)).
 
 ## Keeping time with the music
 
@@ -301,7 +303,7 @@ Where the number comes from:
 
 `audio_output_latency()` is the time from mixing to hearing: the browser's `baseLatency + outputLatency`. Show `audio_position(e) - audio_output_latency()` to light what is heard rather than what is being mixed. kira's desktop stream doesn't say what its device adds, so there it is `-1.0` and a game keeps its own estimate.
 
-`examples/audio_clock.scene.toml` lights four pads from a looping click track: Space stalls the frame for 500 ms and E pauses, and the pads stay on the clicks while the summed `delta_time()` shown above them falls behind.
+[`flint-examples/audio_clock.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/audio_clock.scene.toml) lights four pads from a looping click track: Space stalls the frame for 500 ms and E pauses, and the pads stay on the clicks while the summed `delta_time()` shown above them falls behind.
 
 ## From Rust: Player Extensions
 

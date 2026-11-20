@@ -34,7 +34,7 @@ flint entity create --archetype room --name "kitchen" --scene $SCENE
 flint entity create --archetype room --name "storage" --scene $SCENE
 ```
 
-Now edit the TOML directly to set positions and dimensions. Each room needs a transform and bounds:
+Now edit the TOML directly to set positions and dimensions. Each room needs a transform and bounds: a room is the box of its `bounds` (corners `min` and `max` from its transform), drawn as a blue outline, and the examples' `rooms_have_bounds` constraint fails `flint check` on a room with none. A level's root that only holds walls and lamps is a plain transform with no archetype, not a room.
 
 ```toml
 [entities.main_hall]
@@ -44,7 +44,8 @@ archetype = "room"
 position = [0.0, 0.0, 0.0]
 
 [entities.main_hall.bounds]
-size = [15.0, 4.0, 12.0]
+min = [-7.5, 0.0, -6.0]
+max = [7.5, 4.0, 6.0]
 ```
 
 ## 4. Add Physics Colliders
@@ -265,24 +266,24 @@ flint play levels/tavern.scene.toml
 
 ## 12. The Finished Result
 
-The `examples/phase4_runtime.scene.toml` in the Flint repository is a complete implementation of this tavern, with:
+The [`flint-examples/phase4_runtime.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/phase4_runtime.scene.toml) in the Flint repository is a complete implementation of this tavern, with:
 
 ![The Rusty Flint Tavern, as a bare `flint render` frames it from its [camera]](../images/rusty-flint-tavern.png)
 
 - A half-timbered hall: fieldstone below the chair rail, lime plaster above, a beamed ceiling, a great hearth with a particle fire, and a bar with shelves of bottles
-- Every model and texture made from code: `examples/tools/tavern_build.py` writes the glTF models, `examples/specs/tavern_*.procgen.toml` the textures (`python examples/tools/tavern_build.py --textures` rebuilds them all)
-- The room is one prefab, `examples/prefabs/rusty_flint.prefab.toml`, which `examples/showcase_tavern.scene.toml` places too
+- Every model and texture made from code: [`flint-examples/tools/tavern_build.py`](https://github.com/chrischaps/flint-examples/blob/main/tools/tavern_build.py) writes the glTF models, `flint-examples/specs/tavern_*.procgen.toml` the textures (`python flint-examples/tools/tavern_build.py --textures` rebuilds them all)
+- The room is one prefab, [`flint-examples/prefabs/rusty_flint.prefab.toml`](https://github.com/chrischaps/flint-examples/blob/main/prefabs/rusty_flint.prefab.toml), which [`flint-examples/showcase_tavern.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/showcase_tavern.scene.toml) places too
 - Moonlight through leaded west windows: the scene's one shadow-casting light, with god rays (`volumetric_*`) and dust in them; every flame is a point light with its own flicker script
 - Four NPCs: bartender, two patrons, and a mysterious stranger with scripted behaviors
 - Spatial audio: fire crackle, ambient tavern noise, door sounds, glass clinks
 - Property animations: a chandelier swaying on its chain, door swings
 - Interactable doors and NPCs with HUD prompts
 - Footstep sounds synced to player movement
-- A `[camera]` inside the room, so `flint render examples/phase4_runtime.scene.toml` with no camera flags shows the interior
+- A `[camera]` inside the room, so `flint render flint-examples/phase4_runtime.scene.toml` with no camera flags shows the interior
 
 ```bash
 # Try the finished demo
-cargo run --bin flint -- play examples/phase4_runtime.scene.toml
+cargo run --bin flint -- play flint-examples/phase4_runtime.scene.toml
 ```
 
 ## Further Reading

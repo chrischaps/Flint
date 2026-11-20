@@ -46,7 +46,6 @@ struct PanelView {
     color_view: wgpu::TextureView,
     depth: wgpu::Texture,
     depth_view: wgpu::TextureView,
-    depth_id: u64,
     picture_bind: wgpu::BindGroup,
     slot: ViewSlot,
 }
@@ -249,7 +248,7 @@ impl SceneRenderer {
             });
             let frame_config = own.map(|c| std::mem::replace(&mut self.postprocess_config, c));
             self.swap_view(&mut view.slot);
-            let depth = crate::bind_cache::DepthTarget::new(&view.depth_view, view.depth_id);
+            let depth = crate::bind_cache::DepthTarget::new(&view.depth_view);
             // A described frame names each panel's view (#1084)
             if let Some(log) = &mut self.frame_log {
                 log.panels.push(spec.name.clone());
@@ -377,7 +376,6 @@ impl SceneRenderer {
             color_view,
             depth,
             depth_view,
-            depth_id: crate::bind_cache::new_depth_id(),
             picture_bind,
             slot,
         }

@@ -88,6 +88,9 @@ pub(super) struct AsciiUniforms {
     /// (x0, y0, x1, y1): outside it the passes read no mask
     /// ([`StyleFrame::mask_rect`], the whole frame when that is `None`).
     pub(super) mask_rect: [f32; 4],
+    /// Each of `snap_grids`' band in the snap owner state (#929,
+    /// [`OwnerBand::packed`]); zeros for a grid without one.
+    pub(super) snap_bands: [[i32; 4]; MAX_SNAP_GRIDS],
 }
 
 /// One per-entity variant's settings (#266), a row of the variant table's
@@ -148,6 +151,9 @@ pub(super) struct VariantUniform {
     /// (x0, y0, x1, y1): its draws' screen bounds and the mask's rounding
     /// ([`StyleFrame::variant_rect`]), the whole frame when they have none.
     pub(super) bounds: [f32; 4],
+    /// With [`SNAP`], its grid's band in the snap owner state (#929,
+    /// [`OwnerBand::packed`]); zeros for none.
+    pub(super) owner: [i32; 4],
 }
 
 /// The rect [`rect_corners`] made, back.

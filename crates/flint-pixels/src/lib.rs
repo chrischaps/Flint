@@ -7,7 +7,7 @@
 //! They live in a crate of their own so the dev profile can build them
 //! optimized (#326). Unoptimized, they were three quarters of what a debug
 //! `flint render` spent loading a scene with two large models: 13.6 s of
-//! 18.6 s for `examples/style_mask.scene.toml`'s eight 2K and 4K textures,
+//! 18.6 s for `flint-examples/style_mask.scene.toml`'s eight 2K and 4K textures,
 //! against 4 s for decoding the files. Optimized, the eight cost 1.6 s.
 //! `flint-render`, which calls them, is the crate agents edit most, so it
 //! stays unoptimized and quick to rebuild; this one has no dependencies and
@@ -119,8 +119,9 @@ pub fn memoize_mip_chains(on: bool) {
 }
 
 /// A 64-bit FNV-1a over the pixels, eight bytes a step: the memo's key
-/// with the size and colour space, cheap next to the chain it saves.
-fn fingerprint(bytes: &[u8]) -> u64 {
+/// with the size and colour space, cheap next to the chain it saves. Also
+/// the key flint-render keeps a texture on the device by (#961).
+pub fn fingerprint(bytes: &[u8]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     let (words, rest) = bytes.as_chunks::<8>();
     for w in words {

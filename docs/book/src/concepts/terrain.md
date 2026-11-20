@@ -95,13 +95,13 @@ Splat maps can be painted manually in any image editor that supports RGBA channe
 
 ## Generating Terrain From a Spec
 
-A `.terrain.toml` spec describes both maps as a recipe: `[geometry]` (size, height and resolution), a list of `[[height_layers]]` run in order (`op = "noise"`, `"flatten"` or `"erosion"`), and `[[splat_rules]]` that paint each layer by height, slope and noise. `examples/rolling_meadow.terrain.toml` is one. Shape it by eye in the terrain editor (`flint edit x.terrain.toml`), or bake it from the command line:
+A `.terrain.toml` spec describes both maps as a recipe: `[geometry]` (size, height and resolution), a list of `[[height_layers]]` run in order (`op = "noise"`, `"flatten"` or `"erosion"`), and `[[splat_rules]]` that paint each layer by height, slope and noise. [`flint-examples/rolling_meadow.terrain.toml`](https://github.com/chrischaps/flint-examples/blob/main/rolling_meadow.terrain.toml) is one. Shape it by eye in the terrain editor (`flint edit x.terrain.toml`), or bake it from the command line:
 
 ```bash
-flint gen examples/rolling_meadow.terrain.toml -o terrain/meadow.png   # heightmap + terrain/meadow_splat.png
-flint gen examples/rolling_meadow.terrain.toml -o terrain/             # terrain/rolling_meadow.png + _splat.png
-flint gen examples/rolling_meadow.terrain.toml --seed 12 --dry-run     # what it would write
-flint gen examples/rolling_meadow.terrain.toml -o terrain/ --json      # seed, coverage, each file's SHA-256
+flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png   # heightmap + terrain/meadow_splat.png
+flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/             # terrain/rolling_meadow.png + _splat.png
+flint gen flint-examples/rolling_meadow.terrain.toml --seed 12 --dry-run     # what it would write
+flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/ --json      # seed, coverage, each file's SHA-256
 ```
 
 The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the same resolution; point the `terrain` component's `heightmap` and `splat_map` at them. Both are the bytes the editor's Ctrl+E export writes, and the same spec and seed bake the same bytes every run. The summary says how much of the ground each layer covers, named by its texture's `label`.

@@ -7,7 +7,7 @@
 //! flint script api --json           # one JSON document, for agents and the book
 //! flint script api --book           # write the book's generated reference and tables
 //! flint script api --check-book     # exit 1 if they're stale or a chapter calls a ghost (CI)
-//! flint script check examples/      # every script of a folder: file:line:col and a hint
+//! flint script check flint-examples/      # every script of a folder: file:line:col and a hint
 //! flint script check level.scene.toml --json
 //! flint script check . --api game-api.json --allow game_only_fn
 //! ```

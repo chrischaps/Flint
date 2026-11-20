@@ -106,8 +106,9 @@ enum Commands {
     /// traces' deltas
     Profile(Box<profile::ProfileArgs>),
 
-    /// The curated example scenes, from examples/index.toml: list them by
-    /// topic, or --check that every one is indexed and validates
+    /// The curated example scenes, from the project root's index.toml (a
+    /// flint-examples checkout's): list them by topic, or --check that every
+    /// one is indexed and validates
     Examples(Box<examples::ExamplesArgs>),
 
     /// Every FLINT_* environment switch: what it accepts, what unset

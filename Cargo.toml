@@ -85,11 +85,13 @@ authors = ["Chris"]
 [workspace.lints.clippy]
 # The root clippy.toml's list (#761): the vfs reads and `as_float` in every
 # crate the player links, the wgpu and egui seams in the crates that draw.
-# Warned here so plain `cargo clippy` names a broken rule; flint-render,
-# flint-player, flint-viewer, flint-cli and flint-debug-ui deny it in their
-# own `[lints.clippy]`, and the wasm check (scripts/wasm-check.sh) denies it
-# for everything flint-player links. A crate opts in with `[lints] workspace = true`.
-disallowed_methods = "warn"
+# Denied in every crate (#979), so `cargo clippy` and CI's clippy job fail on a
+# read past the vfs anywhere, native-only code included, not just in the wasm
+# check (scripts/wasm-check.sh). Every member takes it with
+# `[lints] workspace = true` and none has a `[lints.clippy]` of its own
+# (scripts/ci.sh holds both). A call that means it says why:
+# `#[allow(clippy::disallowed_methods)] // <reason>`.
+disallowed_methods = "deny"
 
 [workspace.dependencies]
 # Core dependencies
@@ -256,7 +258,7 @@ debug = false
 
 # A debug build optimizes what loads a texture (#326), so that `flint render`
 # of a scene with a big model takes seconds, not a minute. A debug render of
-# examples/style_mask.scene.toml (a 32 MB bench with three 4K textures, a
+# flint-examples/style_mask.scene.toml (a 32 MB bench with three 4K textures, a
 # 9.5 MB lantern) spent 18.6 of its 21 s loading models: 11.5 s box-filtering
 # mip chains, 2.1 s widening RGB to RGBA, 4 s decoding PNG and JPEG, 0.8 s
 # hashing the files. The first two moved out of flint-render into
@@ -300,7 +302,7 @@ opt-level = 3
 # HUD pass 108 to 121 ms (its monospace text at five sizes, each glyph drawn
 # once), and the hitch tools then reported their own overlay as the game's
 # hitch. Optimized it is 12 ms (8 to 44 on the metronome), and the graph
-# alone 3.6 ms, against 18 to 55 (examples/looks.scene.toml, RTX 5070 Laptop). A game's own text at a size it
+# alone 3.6 ms, against 18 to 55 (flint-examples/looks.scene.toml, RTX 5070 Laptop). A game's own text at a size it
 # hasn't drawn yet goes the same way. Like the decoders above it changes no
 # pixel (the HUD text goldens pass unchanged): no float maths is reordered.
 [profile.dev.package.epaint]
