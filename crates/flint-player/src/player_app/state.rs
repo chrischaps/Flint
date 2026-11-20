@@ -385,6 +385,10 @@ pub(super) struct Hud {
     /// Depth-tested world lines the scripts drew this frame (ADR 0083),
     /// handed to the renderer with the frame's inputs (#739).
     pub(super) world_lines: Vec<flint_core::world_line::WorldLine>,
+    /// The screen field the scripts filled this frame (#859), handed to
+    /// the renderer with the frame's inputs: what a style with
+    /// `blend_source = "field"` follows.
+    pub(super) style_field: flint_core::style_field::StyleField,
     pub(super) world_text_pipeline: Option<world_text::WorldTextPipeline>,
     pub(super) textures: HashMap<String, egui::TextureHandle>,
     /// Family names registered from `<project>/fonts/` (file stems + manifest
@@ -422,6 +426,7 @@ impl Default for Hud {
             draw_commands: Vec::new(),
             world_texts: Vec::new(),
             world_lines: Vec::new(),
+            style_field: Default::default(),
             world_text_pipeline: None,
             textures: HashMap::new(),
             fonts: HashSet::new(),

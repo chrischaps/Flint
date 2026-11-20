@@ -56,6 +56,7 @@ mod spline;
 mod sprite;
 mod state;
 mod style;
+mod style_field;
 mod terrain;
 mod test;
 mod time;
@@ -98,6 +99,7 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     camera_2d::register(api);
     touch::register(api);
     style::register(api);
+    style_field::register(api);
     panels::register(api);
     particle::register(api);
     spline::register(api);

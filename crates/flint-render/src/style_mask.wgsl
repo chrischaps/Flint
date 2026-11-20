@@ -15,7 +15,10 @@
 // An entity whose style has `blend_source = "tear"` (#397) is drawn at its
 // blend times the reality tear's mask at the pixel (tear_mask.wgsl, which
 // Rust prepends to this file, as it does to the composite's), so its
-// style shows only where reality tears.
+// style shows only where reality tears. One with `blend_source = "field"`
+// (#859) is drawn at its blend times the screen field the game filled this
+// frame (`field_at`: discs, rings and cones, flint_core::style_field), so
+// it shows only under a shockwave's ring or a flashlight's cone.
 
 // A woozy draw (#215, #737) is masked by the woozy module: wooze_noise.wgsl,
 // then this file with the FLINT_WOOZE line on, then style_mask_wooze.wgsl's
@@ -34,8 +37,9 @@ struct MaskDraw {
     // How far behind the scene's depth a fragment may be, in depth slopes
     slope_tolerance: f32,
     blend: u32,
-    // 1: the blend follows the tear (#397); 0: the entity's own
-    torn: u32,
+    // What the blend follows: 0 the entity's own, 1 the tear (#397), 2 the
+    // screen field (#859)
+    source: u32,
     // The frame's tear (#746): amount, scale, iris, post time
     // (`postprocess::tear_params`), then the mask target's size in pixels
     tear: vec4<f32>,
@@ -43,15 +47,68 @@ struct MaskDraw {
     _pad: vec2<f32>,
 };
 
+// The screen field (#859): `count` shapes, each `a` = (x, y, p0, p1) and
+// `b` = (p2, soft, kind, strength). A disc (kind 0): p0 its radius. A ring
+// (1): p0 its radius, p1 half its width. A cone (2): p0 its length, p1 its
+// direction (radians clockwise from up), p2 its half spread. Positions are
+// screen uv, lengths fractions of the screen's height.
+struct FieldShape {
+    a: vec4<f32>,
+    b: vec4<f32>,
+};
+
+struct Field {
+    count: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    shapes: array<FieldShape, 16>,
+};
+
+// 1 at or inside a shape's edge, falling smoothly to 0 `soft` past it
+// (flint_core::style_field's `edge`)
+fn field_edge(outside: f32, soft: f32) -> f32 {
+    let t = clamp(outside / max(soft, 1e-5), 0.0, 1.0);
+    return 1.0 - t * t * (3.0 - 2.0 * t);
+}
+
+// The field's value at `uv` on a screen `aspect` wide: its strongest
+// shape's. `FieldShape::value_at` in Rust is the same function.
+fn field_at(uv: vec2<f32>, aspect: f32) -> f32 {
+    var value = 0.0;
+    let count = min(field.count, 16u);
+    for (var i = 0u; i < count; i++) {
+        let s = field.shapes[i];
+        let q = (uv - s.a.xy) * vec2<f32>(aspect, 1.0);
+        let d = length(q);
+        let kind = u32(s.b.z);
+        var outside = d - s.a.z;
+        if kind == 1u {
+            outside = abs(d - s.a.z) - s.a.w;
+        } else if kind == 2u {
+            // Past the beam's side by the arc's length, or past its end
+            let turn = atan2(q.x, -q.y) - s.a.w;
+            let off = abs(turn - 6.2831853 * floor((turn + 3.14159265) / 6.2831853));
+            outside = max((off - s.b.x) * d, d - s.a.z);
+        }
+        value = max(value, field_edge(outside, s.b.y) * clamp(s.b.w, 0.0, 1.0));
+    }
+    return value;
+}
+
 // The blend to write at pixel `frag_xy`: the draw's, scaled by what the
-// veil leaves (`covered`) and, for a torn draw, by the tear there. The
-// mask's pixel centres give the same uv as the display's at any render
-// scale, so the tear lands where a style following it shows.
+// veil leaves (`covered`) and, for a torn draw, by the tear there, or for
+// one following the field, by the field there. The mask's pixel centres
+// give the same uv as the display's at any render scale, so the tear and
+// the field land where a style following them shows.
 fn written_blend(frag_xy: vec2<f32>, covered: f32) -> u32 {
     var blend = f32(draw.blend) * (1.0 - covered);
-    if draw.torn != 0u {
-        let uv = frag_xy / draw.size;
-        blend *= tear_mask_at(uv, draw.size.x / draw.size.y, draw.tear);
+    let uv = frag_xy / draw.size;
+    let aspect = draw.size.x / draw.size.y;
+    if draw.source == 1u {
+        blend *= tear_mask_at(uv, aspect, draw.tear);
+    } else if draw.source == 2u {
+        blend *= field_at(uv, aspect);
     }
     return u32(round(blend));
 }
@@ -63,6 +120,8 @@ fn written_blend(frag_xy: vec2<f32>, covered: f32) -> u32 {
 // in front of the scene cover, 0..1. That share of the pixel is theirs, not
 // the styled entity's, so the entity's blend is scaled down by it.
 @group(1) @binding(2) var veil: texture_2d<f32>;
+// The frame's screen field (#859), read by a draw whose blend follows it
+@group(1) @binding(4) var<uniform> field: Field;
 // Only the skinned entry point reads it; the static layout leaves it out
 @group(2) @binding(0) var<storage, read> bone_matrices: array<mat4x4<f32>>;
 

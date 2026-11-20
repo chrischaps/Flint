@@ -114,8 +114,8 @@ fn joined(notes: Vec<String>) -> Option<String> {
 
 /// Set one setting of `id`'s style: a parameter (a number, clamped to the
 /// style's range), an option (a string), `enabled` (a bool), `blend` (a
-/// number, clamped to 0..1; #278), `blend_source` (`"own"` or `"tear"`,
-/// #397), or a colour (`tint`: a 3-array or a `"#rrggbb"` string, stored
+/// number, clamped to 0..1; #278), `blend_source` (`"own"`, `"tear"`,
+/// #397, or `"field"`, #859), or a colour (`tint`: a 3-array or a `"#rrggbb"` string, stored
 /// as the array, each channel clamped; #315). Returns the style, and what
 /// a clamp changed ([`ParamSet::clamped`]) for the host to warn about.
 pub fn set_style_param(
@@ -167,7 +167,7 @@ pub fn set_style_param(
                     BLEND_SOURCES.join(", ")
                 ))
             }
-            None => return wrong("\"own\" or \"tear\""),
+            None => return wrong("\"own\", \"tear\" or \"field\""),
         }
     } else if let Some(p) = d.params.iter().find(|p| p.name == param) {
         match number(&value) {
@@ -412,7 +412,8 @@ pub fn drawn_style(
 /// `[post_process.styles.<name>]` table, else the style's default. A
 /// parameter is a float, an option a string, a colour (`tint`) a 3-array,
 /// `blend` the root's 0..1 (1 for a whole-frame style), `blend_source`
-/// the root's `"own"` or `"tear"` (#397) and `enabled` true.
+/// the root's `"own"`, `"tear"` (#397) or `"field"` (#859) and `enabled`
+/// true.
 /// `None` when the entity is drawn in no style, the style isn't registered,
 /// or it has no such setting.
 pub fn style_setting(
@@ -435,10 +436,11 @@ pub fn style_setting(
         return Some(toml::Value::Float(blend as f64));
     }
     if param == BLEND_SOURCE_FIELD {
-        let tear = drawn
+        let source = drawn
             .root
-            .is_some_and(|r| style_mask::follows_tear(world, styles, r));
-        return Some(BLEND_SOURCES[usize::from(tear)].into());
+            .map(|r| style_mask::blend_source(world, styles, r))
+            .unwrap_or_default();
+        return Some(source.name().into());
     }
     if d.params.iter().any(|p| p.name == param) {
         return Some(toml::Value::Float(v.param(d, config, param) as f64));
@@ -751,7 +753,7 @@ mod tests {
                 &mut ids,
                 &mut out,
                 &mut blends,
-                &mut std::collections::HashSet::new(),
+                &mut HashMap::new(),
             );
             (ids, out, blends)
         };

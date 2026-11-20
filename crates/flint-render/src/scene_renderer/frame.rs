@@ -93,6 +93,11 @@ pub struct FrameInputs<'a> {
     /// left out of every pass, and one pass stopped after its Nth draw.
     /// Debug only: `None`, every frame a game draws, changes nothing.
     pub draw_controls: Option<&'a DrawControls>,
+    /// The screen field the game filled this frame (#859): what a style
+    /// with `blend_source = "field"` follows. Empty: no field, and such a
+    /// style is off as at blend 0. Past `MAX_FIELD_SHAPES` the rest are
+    /// dropped.
+    pub style_field: &'a [flint_core::style_field::FieldShape],
 }
 
 /// What a frame debugger's replay leaves out of a frame (#1089,
@@ -191,6 +196,7 @@ impl Default for FrameInputs<'_> {
             contact_velocities: &[],
             ocean_tint: None,
             draw_controls: None,
+            style_field: &[],
         }
     }
 }
@@ -319,6 +325,12 @@ impl SceneRenderer {
         self.world_lines.extend_from_slice(inputs.world_lines);
         self.world_line_px_per_point = inputs.pixels_per_point;
         self.draws.set_controls(inputs.draw_controls);
+        // The field (#859) before the world is read, so the ids that follow
+        // it fade or show by this frame's
+        self.style_mask.field.set(inputs.style_field);
+        self.style_mask
+            .ids
+            .set_field(!self.style_mask.field.is_empty());
     }
 
     /// The boil the last [`prepare`](Self::prepare) took (or a split view's
@@ -416,6 +428,9 @@ impl SceneRenderer {
         self.style_mask
             .ids
             .set_tear(crate::postprocess::tear_active(&self.postprocess_config));
+        self.style_mask
+            .ids
+            .set_field(!self.style_mask.field.is_empty());
         self.ensure_style_resources(device);
         // FXAA likewise (#297): a host that only sets the config (the
         // viewer's hot reload and scene/default toggle, a script's post

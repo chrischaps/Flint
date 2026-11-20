@@ -568,6 +568,14 @@ impl ScriptSystem {
         self.engine.drain_world_lines()
     }
 
+    /// Take the screen field (`field_disc` / `field_ring` / `field_cone`,
+    /// #859) scripts filled this frame, for the renderer's
+    /// `FrameInputs::style_field`. Take it once a frame, after the last
+    /// callback that can draw it (`on_draw_ui`).
+    pub fn drain_style_field(&mut self) -> flint_core::style_field::StyleField {
+        self.engine.drain_style_field()
+    }
+
     /// Drain the depth-tested world text (`draw_world_text`, ADR 0104)
     /// scripts queued this frame, for the host to lay out and draw
     pub fn drain_world_texts(&mut self) -> Vec<flint_core::world_text::WorldText> {
