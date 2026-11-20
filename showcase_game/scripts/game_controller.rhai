@@ -59,7 +59,7 @@ fn on_draw_ui() {
         let sh = screen_height();
 
         // Frosted dark overlay
-        set_radial_blur(0.3);
+        set_post("radial_blur", 0.3);
         set_audio_lowpass(800.0);
 
         // Dim background
@@ -100,7 +100,7 @@ fn on_draw_ui() {
         draw_line(sw - m, sh - m, sw - m - cl, sh - m, cr, cg, cb, ca, 2.0);
         draw_line(sw - m, sh - m, sw - m, sh - m - cl, cr, cg, cb, ca, 2.0);
     } else {
-        set_radial_blur(0.0);
+        set_post("radial_blur", 0.0);
         set_audio_lowpass(20000.0);
     }
 }

@@ -45,9 +45,9 @@ fn on_update() {
         set_post_style_param("kuwahara", "anisotropy", 1.0 + 0.6 * depth);
     }
     // The fixed passes follow the dream: warmer light, a deeper vignette
-    set_exposure(1.25 + 0.25 * depth);
-    set_vignette(0.25 + 0.3 * depth);
-    set_bloom_intensity(0.05 + 0.1 * depth);
+    set_post("exposure", 1.25 + 0.25 * depth);
+    set_post("vignette_intensity", 0.25 + 0.3 * depth);
+    set_post("bloom_intensity", 0.05 + 0.1 * depth);
 }
 
 fn on_event(name, data) {

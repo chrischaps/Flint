@@ -234,13 +234,11 @@ impl Default for SceneSettings {
 
 /// What scripts asked of this frame's post-processing, drained from their
 /// requests each frame and stamped over the renderer's config before it
-/// draws (`set_bloom`, `set_render_mode`, ...).
+/// draws (`set_post`, `set_render_mode`).
 #[derive(Default)]
 pub(super) struct PostOverrides {
-    /// The plain values: vignette, bloom, exposure, chromatic aberration,
-    /// radial blur, SSAO, fog density, desaturation and depth of field.
+    /// The `[post_process]` keys scripts set (`set_post`, #853).
     pub(super) script: flint_script::PostProcessOverrides,
-    pub(super) fog_color: Option<[f32; 3]>,
     /// The deprecated `set_render_mode` (#746): this frame's mode and mix,
     /// and the params, held from the last `set_render_mode_params`.
     pub(super) render_mode: Option<(u32, f32)>,
@@ -263,7 +261,6 @@ impl PostOverrides {
     /// in by now), replacing last frame's whole.
     pub(super) fn take_from(&mut self, requests: &mut flint_script::FrameRequests) {
         self.script = std::mem::take(&mut requests.post);
-        self.fog_color = requests.fog_color.take();
         self.render_mode = requests.render_mode.take();
         self.mode_params = requests.mode_params.take();
         if let Some(params) = self.mode_params {
@@ -274,22 +271,7 @@ impl PostOverrides {
     /// Whether anything is to be stamped this frame: a value asked for, or
     /// a tear to end.
     pub(super) fn any(&self) -> bool {
-        let s = &self.script;
-        s.vignette.is_some()
-            || s.bloom.is_some()
-            || s.exposure.is_some()
-            || s.chromatic_aberration.is_some()
-            || s.radial_blur.is_some()
-            || s.ssao_intensity.is_some()
-            || s.fog_density.is_some()
-            || s.desaturation.is_some()
-            || s.dof_strength.is_some()
-            || s.dof_focus_distance.is_some()
-            || s.dof_focus_range.is_some()
-            || s.tear.is_some()
-            || s.tear_scale.is_some()
-            || s.tear_iris.is_some()
-            || self.fog_color.is_some()
+        !self.script.is_empty()
             || self.render_mode.is_some()
             || self.mode_params.is_some()
             || self.mode_shim.active()
@@ -299,53 +281,7 @@ impl PostOverrides {
     /// unlike the sticky values: when no script asks for one this frame, a
     /// tear that was on is switched off.
     pub(super) fn stamp(&mut self, config: &mut flint_render::PostProcessConfig) {
-        let s = &self.script;
-        if let Some(v) = s.vignette {
-            config.vignette_enabled = v > 0.001;
-            config.vignette_intensity = v;
-        }
-        if let Some(b) = s.bloom {
-            config.bloom_intensity = b;
-        }
-        if let Some(e) = s.exposure {
-            config.exposure = e;
-        }
-        if let Some(ca) = s.chromatic_aberration {
-            config.chromatic_aberration = ca;
-        }
-        if let Some(rb) = s.radial_blur {
-            config.radial_blur = rb;
-        }
-        if let Some(si) = s.ssao_intensity {
-            config.ssao_intensity = si;
-        }
-        if let Some(fd) = s.fog_density {
-            config.fog_density = fd;
-        }
-        if let Some(d) = s.desaturation {
-            config.desaturate = d;
-        }
-        if let Some(strength) = s.dof_strength {
-            config.dof_strength = strength;
-        }
-        if let Some(fd) = s.dof_focus_distance {
-            config.dof_focus_distance = fd;
-        }
-        if let Some(tear) = s.tear {
-            config.tear = tear;
-        }
-        if let Some(scale) = s.tear_scale {
-            config.tear_scale = scale;
-        }
-        if let Some(iris) = s.tear_iris {
-            config.tear_iris = iris;
-        }
-        if let Some(fr) = s.dof_focus_range {
-            config.dof_focus_range = fr;
-        }
-        if let Some(fc) = self.fog_color {
-            config.fog_color = fc;
-        }
+        super::headless_game::stamp_post(config, &self.script);
         // The deprecated render mode (#746): transient, unlike the sticky
         // overrides above
         let mode = self

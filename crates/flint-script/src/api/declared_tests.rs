@@ -145,7 +145,10 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
         assert_eq!(c.requests.render_mode, Some((1, 1.0)));
         assert_eq!(c.requests.camera.fov, Some(60.0));
         assert_eq!(c.requests.time_scale, Some(2.0));
-        assert_eq!(c.requests.fog_color, Some([1.0, 0.0, 0.0]));
+        assert_eq!(
+            c.requests.post.get("fog_color"),
+            Some(flint_schema::post_effects::PostValue::Rgb([1.0, 0.0, 0.0]))
+        );
         assert_eq!(c.commands.len(), 2, "the sound and the velocity");
     }
     let eid = flint_core::EntityId::from_raw(id as u64);
