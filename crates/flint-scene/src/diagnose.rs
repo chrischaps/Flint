@@ -31,7 +31,7 @@ use flint_core::project::{self, AssetKind, Project};
 use flint_core::vfs;
 use flint_schema::{references, validate_component, validate_table, ReferenceKind, SchemaRegistry};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The component that declares an asset to be made (`flint asset resolve`
 /// reads it): its `name` is an asset the scene may name before any file is
@@ -141,6 +141,114 @@ pub fn declared_assets(scene: &SceneFile) -> HashSet<&str> {
         .values()
         .filter_map(|entity| entity.components.get(ASSET_DEF)?.get("name")?.as_str())
         .collect()
+}
+
+/// Where a scene's asset reference leads ([`asset_references`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Located {
+    /// The file the engine loads for it.
+    File(PathBuf),
+    /// No file, but the project's asset catalog holds a model or texture
+    /// of that name, which the player loads from there.
+    Catalog,
+    /// Nothing yet, but an `asset_def` of the scene declares it: an asset
+    /// `flint asset resolve` is to make.
+    Declared,
+    /// Nothing: every path tried, as `flint check`'s hint says them.
+    Missing { tried: String },
+}
+
+/// One `asset` field's value, written in a scene.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetReference {
+    /// The entity it is written on (a prefab's as `<prefix>_<name>`), or
+    /// `None` for a scene-level table.
+    pub entity: Option<String>,
+    /// The component it is a field of, or the scene table (`environment`).
+    pub table: String,
+    /// The field's dotted path inside it: `texture`, `layers[1].mask`.
+    pub field: String,
+    /// The name written.
+    pub name: String,
+    /// The kinds the field's schema says it may name.
+    pub kinds: Vec<AssetKind>,
+    pub located: Located,
+}
+
+/// Every asset a scene names (#968): each value of a field the loaded
+/// schemas type `asset`, through arrays and tables with fields, in every
+/// component of every entity (prefab instances expanded, as the loader
+/// expands them) and in every scene-level table, each looked up as
+/// [`diagnose`] looks it up. The list comes from `registry`, so a new
+/// `asset` field is in it with no change here; a component or table no
+/// schema declares, an empty name and an asset turned off by its `unless`
+/// sibling are not. Entities in name order, then the tables in name order.
+///
+/// Only what the scene writes is read: an archetype's defaults are not.
+/// What `flint asset resolve` reports.
+pub fn asset_references(
+    scene_file: &Path,
+    registry: &SchemaRegistry,
+    project: &Project,
+) -> flint_core::Result<Vec<AssetReference>> {
+    let content = vfs::read_to_string(scene_file)?;
+    let mut scene = SceneFile::parse(&content).map_err(|e| {
+        flint_core::FlintError::ParseError(format!("{}: {e}", scene_file.display()))
+    })?;
+    prefab::expand_prefabs_in(&mut scene, scene_file, project)?;
+    let scene_dir = scene_file
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut lookup = Lookup {
+        scene: &scene,
+        project,
+        scene_dir,
+        to_be_made: declared_assets(&scene),
+        assets: HashMap::new(),
+        held: None,
+    };
+
+    let tables = scene.scene_tables();
+    let mut written: Vec<(
+        Option<&str>,
+        &str,
+        &flint_schema::ComponentSchema,
+        &toml::Value,
+    )> = Vec::new();
+    for (name, entity) in &scene.entities {
+        let mut components: Vec<(&String, &toml::Value)> = entity.components.iter().collect();
+        components.sort_unstable_by_key(|(component, _)| *component);
+        for (component, data) in components {
+            if let Some(schema) = registry.get_component(component) {
+                written.push((Some(name), component, schema, data));
+            }
+        }
+    }
+    for (name, data) in &tables {
+        if let Some(schema) = registry.get_table(name) {
+            written.push((None, name, schema, data));
+        }
+    }
+
+    let mut found = Vec::new();
+    for (entity, table, schema, data) in written {
+        for reference in references(schema, data) {
+            let ReferenceKind::Asset(kinds) = reference.kind else {
+                continue;
+            };
+            let located = lookup.locate(&kinds, &reference.name);
+            found.push(AssetReference {
+                entity: entity.map(str::to_string),
+                table: table.to_string(),
+                field: reference.field,
+                name: reference.name,
+                kinds,
+                located,
+            });
+        }
+    }
+    Ok(found)
 }
 
 /// [`diagnose_scene_in`] without the references: the entities' archetypes
@@ -377,7 +485,8 @@ struct Lookup<'a> {
     /// The `name` of every `asset_def` in the scene: assets it declares
     /// and `flint asset resolve` makes, so no file need be there yet.
     to_be_made: HashSet<&'a str>,
-    assets: HashMap<(Vec<AssetKind>, String), Option<String>>,
+    /// Each (kinds, name) searched for: the file found, or every path tried.
+    assets: HashMap<(Vec<AssetKind>, String), Result<PathBuf, String>>,
     /// The project's asset catalog and store, read the first time a model
     /// or texture is not found as a file (`None` inside: there is none).
     held: Option<Option<HeldAssets>>,
@@ -445,36 +554,52 @@ impl Lookup<'_> {
     /// as the player asks) the project's asset catalog holds it; otherwise
     /// every path tried, as the hint.
     fn missing_asset(&mut self, kinds: &[AssetKind], name: &str) -> Option<String> {
-        if self.to_be_made.contains(name) {
-            return None;
+        match self.locate(kinds, name) {
+            Located::Missing { tried } => Some(tried),
+            _ => None,
         }
+    }
+
+    /// Where `name` is found for a field of `kinds`, asked as the loader
+    /// asks: a file the project's search finds for one of the kinds (a
+    /// particle effect or a sequence by the name its file states), then,
+    /// for a model or a texture, the project's asset catalog, then an
+    /// `asset_def` of the scene that declares it.
+    fn locate(&mut self, kinds: &[AssetKind], name: &str) -> Located {
         let (project, scene_dir) = (self.project, self.scene_dir);
-        let tried = self
+        let searched = self
             .assets
             .entry((kinds.to_vec(), name.to_string()))
             .or_insert_with(|| {
                 let mut tried = Vec::new();
                 for kind in kinds {
-                    // What the loader registers under the name: a particle
-                    // effect or a sequence by the name its file states
                     let resolution = project.explain_registered(*kind, name, scene_dir);
-                    if resolution.found.is_some() {
-                        return None;
+                    if let Some(found) = resolution.found {
+                        return Ok(found);
                     }
                     tried.extend(resolution.tried.iter().map(|path| project::shown(path)));
                 }
-                Some(format!("tried {}", tried.join(", ")))
+                Err(format!("tried {}", tried.join(", ")))
             })
-            .clone()?;
+            .clone();
+        let tried = match searched {
+            Ok(path) => return Located::File(path),
+            Err(tried) => tried,
+        };
         let catalogued = kinds.iter().any(|kind| CATALOGUED.contains(kind));
         if catalogued && self.catalog().is_some_and(|held| held.holds(name)) {
-            return None;
+            return Located::Catalog;
         }
-        Some(if catalogued {
-            format!("{tried}; the asset catalog ({CATALOG_DIR}/) holds no such name either")
-        } else {
-            tried
-        })
+        if self.to_be_made.contains(name) {
+            return Located::Declared;
+        }
+        Located::Missing {
+            tried: if catalogued {
+                format!("{tried}; the asset catalog ({CATALOG_DIR}/) holds no such name either")
+            } else {
+                tried
+            },
+        }
     }
 
     /// The project's catalog and store, read once.
