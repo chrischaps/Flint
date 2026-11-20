@@ -1,0 +1,30 @@
+# Fields a scene declares (#1014): named numbers by place, such as how windy,
+# foggy or slow each part of a level is, which scripts read with
+# field_sample("weather", "wind", get_position(me)).
+#
+# A scene-level table: no entity carries it. Each field is a table of its own
+# under [field], so its name is the scene's to choose and this schema is open
+# (it declares no fields). What a field and its zones take is checked by
+# flint_core::field::SceneFields, in the same words the wooze field uses for its
+# zones: `flint check` and `flint validate` say it as bad-field, and the player
+# warns and plays on without the part that's wrong.
+#
+#   [field.weather]
+#   keys = { wind = { min = 0, default = 1 }, fog = { min = 0, max = 1, default = 0 } }
+#
+#   [[field.weather.zone]]
+#   name = "storm"
+#   shape = "sphere"          # or "box" with size = [x, y, z]
+#   center = [20, 0, 0]
+#   radius = 8
+#   falloff = 4               # metres past the edge to fade out over; 0 is a hard edge
+#   wind = 6                  # any of the field's keys; one left out passes through
+#
+# A key is a table of min, max and default (all optional; the default is 0, or
+# the end of the range nearest it), or a bare number, its default. Zones lie over
+# the defaults in the order they're written. Scripts move all of it at run time
+# with field_set, field_set_zone and field_remove_zone, each with an optional
+# seconds to ease over.
+
+[table.field]
+description = "A scene's declared fields: [field.<name>] with its keys (each a number with an optional min, max and default) and [[field.<name>.zone]] entries that change some of them by place."

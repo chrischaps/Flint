@@ -158,6 +158,9 @@ pub mod codes {
     /// A `[living.species.<spec>]` table is wrong, or no living prop grows
     /// from that spec.
     pub const BAD_SPECIES: &str = "bad-species";
+    /// A field the scene declares (`[field.<name>]`, #1014) has a key or
+    /// zone that is wrong, named by the field and the key or zone.
+    pub const BAD_FIELD: &str = "bad-field";
     /// An input config a scene or the manifest names does not parse.
     pub const BAD_INPUT_CONFIG: &str = "bad-input-config";
     /// A procgen spec a scene's model or texture is made from does not parse.
@@ -369,6 +372,11 @@ pub mod codes {
             BAD_SPECIES,
             Severity::Error,
             "a [living.species] table is wrong, or names a spec no living prop grows from",
+        ),
+        (
+            BAD_FIELD,
+            Severity::Error,
+            "a [field.<name>] table the scene declares has a key or zone that is wrong",
         ),
         (
             BAD_INPUT_CONFIG,
@@ -982,7 +990,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 53);
+        assert_eq!(seen.len(), 54);
     }
 
     /// A problem in a scene-level table names the table as its header is

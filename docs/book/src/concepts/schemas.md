@@ -225,6 +225,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `bad-look` | error | the look a scene names is not found, or does not fit under the scene's keys |
 | `bad-wooze` | error | the scene's `[wooze]` table, or the preset it names, is wrong |
 | `bad-species` | error | a `[living.species.<spec>]` table is wrong, or no living prop grows from that spec |
+| `bad-field` | error | a field the scene declares (`[field.<name>]`) has a key or zone that is wrong, named by the field and the key (`weather.keys.wind`) or zone (`weather.zone.storm`) as the field; the player warns and plays without the part that's wrong ([Scripting](scripting.md#fields-a-scene-declares)) |
 | `constraint` | the constraint's | a [constraint](constraints.md) the scene breaks (`info` reads as a warning) |
 | `bad-constraint` | error | a constraint file does not read, or a constraint's query does not parse or does not select entities |
 | `bad-manifest` | error | `flint.toml` does not read |

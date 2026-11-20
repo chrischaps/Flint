@@ -35,6 +35,7 @@
 //! | user styles load and compile | `flint bundle` | `bad-user-style` |
 //! | `[post_process.styles]`, the look | `flint validate`, `flint bundle` | `bad-style-setting` `bad-look` |
 //! | `[wooze]`, `[living.species]` | `flint validate` | `bad-wooze` `bad-species` |
+//! | `[field.<name>]`, each declared field's keys and zones | new (#1014, [`scene`]) | `bad-field` |
 //! | constraints, and that each can be evaluated | `flint validate`; the second is new | `constraint` `bad-constraint` |
 //! | the manifest reads, its schema directories exist, its scene is there | new | `bad-manifest` `bad-schemas` `missing-asset` |
 //! | the scripts compile, and their calls, callbacks and imports fit the script API | `flint script check` (#694, [`scripts`]) | `script-syntax` `unknown-function` `wrong-arity` `bad-argument` `unknown-callback` `callback-arity` `missing-module` `deprecated-function` `mixed-numbers` |

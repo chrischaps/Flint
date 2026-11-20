@@ -436,6 +436,75 @@ fn a_bad_type_in_a_ui_document_names_its_file_and_element() {
     assert_eq!(o.status.code(), Some(0), "{}{}", stdout(&o), stderr(&o));
 }
 
+/// #1014's second box: a field a scene declares is held to its own rules, a
+/// wrong key or zone named by field and key or zone, and a fixed one passes.
+#[test]
+fn a_declared_fields_bad_key_and_zone_are_named() {
+    const FIELD: &str = r#"
+[field.weather]
+keys = { wind = { min = 0, default = 1 }, fog = { min = 0, max = 1, default = 0 } }
+
+[[field.weather.zone]]
+name = "storm"
+shape = "sphere"
+center = [10, 0, 0]
+radius = 3
+wind = 6
+rain = 2
+
+[field.slow]
+keys = { scale = { min = 0, max = 1, default = 2 } }
+"#;
+    let scene = CLEAN_SCENE.replacen("[entities.", &format!("{FIELD}\n[entities."), 1);
+    let dir = project(
+        "declared_field",
+        &[
+            ("scenes/dock.scene.toml", &scene),
+            (
+                "scripts/sign.rhai",
+                "fn on_init() { play_sound(\"audio/creak.ogg\"); }\n",
+            ),
+            ("audio/creak.ogg", ""),
+            ("models/boat.glb", ""),
+        ],
+    );
+    let o = flint(&dir, &["check", "--json"]);
+    assert_eq!(o.status.code(), Some(1));
+    let doc = json(&o);
+    let named: Vec<(String, String)> = doc["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "bad-field")
+        .map(|d| {
+            assert_eq!(d["table"], "field", "{d:#}");
+            let field = d["field"].as_str().unwrap().to_string();
+            (field, d["message"].as_str().unwrap().to_string())
+        })
+        .collect();
+    assert_eq!(
+        named,
+        [
+            (
+                "slow.keys.scale".to_string(),
+                "its default is out of range: scale = 2 must be from 0 to 1".to_string()
+            ),
+            (
+                "weather.zone.storm".to_string(),
+                "'rain' isn't a zone key; it takes name, shape, center, radius, size, falloff, fog, wind"
+                    .to_string()
+            ),
+        ]
+    );
+
+    let fixed = scene
+        .replace("rain = 2\n", "")
+        .replace("default = 2", "default = 1");
+    std::fs::write(dir.join("scenes/dock.scene.toml"), fixed).unwrap();
+    let o = flint(&dir, &["check"]);
+    assert_eq!(o.status.code(), Some(0), "{}{}", stdout(&o), stderr(&o));
+}
+
 /// One scene: the scene and the files it names (its script's literals),
 /// and not the other scenes of the project.
 #[test]

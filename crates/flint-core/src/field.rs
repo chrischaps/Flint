@@ -6,10 +6,15 @@
 //!
 //! What the numbers are is the field's [`FieldKeys`]: their names, how each
 //! is checked, and any presets. The wooze field (`flint_wooze::WoozeField`) is
-//! this with four keys, `amplitude`, `step`, `glide` and `jitter`; a game's
-//! fog, wind or time scale over a level would be another key set on the same
-//! mechanics. The key set is fixed when a field is made (`N`, at compile
-//! time), which is what keeps a sample free of allocation.
+//! this with four keys, `amplitude`, `step`, `glide` and `jitter`. Its key set
+//! is fixed when the field is made (`N`, at compile time), so a sample is an
+//! array on the stack.
+//!
+//! A field a scene declares (#1014: `[field.weather] keys = { wind = .. }`)
+//! is a [`SceneField`], whose keys are read from the file. It has the same
+//! zones, ramps and messages, its values held in a list rather than an
+//! array, and a script samples it one key at a time
+//! ([`SceneField::sample_index`]), which allocates nothing either.
 //!
 //! A table that makes or changes a zone takes [`SHAPE_KEYS`] and the field's
 //! own key names; a table of global values takes the key names and, when the
@@ -18,6 +23,10 @@
 use std::fmt;
 
 use crate::toml_util::{toml_f32, toml_vec3};
+
+mod scene;
+
+pub use scene::{FieldIssue, SceneField, SceneFields, SceneKey, SceneZone, FIELD_KEYS, KEY_KEYS};
 
 /// The keys every zone table takes before the field's own.
 pub const SHAPE_KEYS: [&str; 6] = ["name", "shape", "center", "radius", "size", "falloff"];
@@ -57,22 +66,6 @@ impl<const N: usize> FieldKeys<N> {
         })?;
         (self.check)(i, value)
     }
-
-    fn read(&self, i: usize, value: &toml::Value) -> Result<f32, String> {
-        let number = toml_f32(value)
-            .ok_or_else(|| format!("{} = {value} must be a number", self.names[i]))?;
-        (self.check)(i, number)
-    }
-
-    fn is_zone_key(&self, key: &str) -> bool {
-        SHAPE_KEYS.contains(&key) || self.names.contains(&key)
-    }
-
-    fn zone_keys(&self) -> String {
-        let mut all: Vec<&str> = SHAPE_KEYS.to_vec();
-        all.extend(self.names);
-        all.join(", ")
-    }
 }
 
 impl<const N: usize> fmt::Debug for FieldKeys<N> {
@@ -82,6 +75,39 @@ impl<const N: usize> fmt::Debug for FieldKeys<N> {
             .field("names", &self.names)
             .finish_non_exhaustive()
     }
+}
+
+/// What the zone readers need of a key set, compile-time or a scene's: its
+/// keys' names and each key's check. One set of
+/// readers serves both, so a zone is read and refused in the same words
+/// whichever field it is in.
+trait KeySet {
+    fn len(&self) -> usize;
+    fn name(&self, i: usize) -> &str;
+    fn check(&self, i: usize, value: f32) -> Result<f32, String>;
+
+    fn names(&self) -> Vec<&str> {
+        (0..self.len()).map(|i| self.name(i)).collect()
+    }
+}
+
+impl<const N: usize> KeySet for FieldKeys<N> {
+    fn len(&self) -> usize {
+        N
+    }
+    fn name(&self, i: usize) -> &str {
+        self.names[i]
+    }
+    fn check(&self, i: usize, value: f32) -> Result<f32, String> {
+        (self.check)(i, value)
+    }
+}
+
+/// Key `i`'s value from TOML: a number its check takes.
+fn read_value(keys: &(impl KeySet + ?Sized), i: usize, value: &toml::Value) -> Result<f32, String> {
+    let number =
+        toml_f32(value).ok_or_else(|| format!("{} = {value} must be a number", keys.name(i)))?;
+    keys.check(i, number)
 }
 
 /// A value on its way from one number to another, so that a sample is a pure
@@ -107,26 +133,17 @@ enum Shape {
     },
 }
 
-/// One part of the world where some of the field's numbers differ.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Zone<const N: usize> {
-    name: String,
+/// Where a zone is: its shape, its centre and how far past its edge it
+/// fades.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Place {
     shape: Shape,
     center: [f32; 3],
     /// Metres past the edge over which the zone fades out. 0 is a hard edge.
     falloff: f32,
-    /// The values it sets; one left `None` passes through what's below.
-    knobs: [Option<Ramp>; N],
-    /// How much of itself it applies, so it can fade in and out whole.
-    strength: Ramp,
 }
 
-impl<const N: usize> Zone<N> {
-    /// Its name, which is how a script finds it. Unnamed ones get `zone <n>`.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
+impl Place {
     /// How far inside it `position` is: 1 inside, 0 past the falloff.
     fn weight(&self, position: [f32; 3]) -> f32 {
         let d = |axis: usize| position[axis] - self.center[axis];
@@ -146,6 +163,139 @@ impl<const N: usize> Zone<N> {
             x * x * (3.0 - 2.0 * x)
         }
     }
+}
+
+/// A zone's values, one slot a key, `None` passing through what's below:
+/// an array for a compile-time key set, a list for a scene's.
+pub trait Slots:
+    Clone + PartialEq + fmt::Debug + AsRef<[Option<Ramp>]> + AsMut<[Option<Ramp>]>
+{
+}
+
+impl<T> Slots for T where
+    T: Clone + PartialEq + fmt::Debug + AsRef<[Option<Ramp>]> + AsMut<[Option<Ramp>]>
+{
+}
+
+/// One part of the world where some of a field's numbers differ, its values
+/// held in `S` ([`Zone`] for a [`ParamField`], [`SceneZone`] for a
+/// [`SceneField`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZoneOf<S> {
+    name: String,
+    place: Place,
+    /// The values it sets; one left `None` passes through what's below.
+    knobs: S,
+    /// How much of itself it applies, so it can fade in and out whole.
+    strength: Ramp,
+}
+
+/// A zone of a [`ParamField<N>`].
+pub type Zone<const N: usize> = ZoneOf<[Option<Ramp>; N]>;
+
+impl<S: Slots> ZoneOf<S> {
+    /// Its name, which is how a script finds it. Unnamed ones get `zone <n>`.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// How much of itself it gives at `position` and `time`, 0 to 1.
+    fn share(&self, position: [f32; 3], time: f64) -> f32 {
+        self.place.weight(position) * self.strength.at(time)
+    }
+}
+
+/// The zone-list work every field shares: adding, changing and removing a
+/// zone by its table, and dropping the ones that have faded out. `empty` is
+/// a zone's values with nothing set.
+struct ZoneList<'a, K: ?Sized, S> {
+    keys: &'a K,
+    base: &'a [Ramp],
+    zones: &'a mut Vec<ZoneOf<S>>,
+    empty: S,
+}
+
+impl<K: KeySet + ?Sized, S: Slots> ZoneList<'_, K, S> {
+    fn add(self, table: &toml::Table) -> Result<(), String> {
+        let name = match table.get("name") {
+            None => format!("zone {}", self.zones.len() + 1),
+            Some(toml::Value::String(name)) if !name.is_empty() => name.clone(),
+            Some(other) => return Err(format!("name = {other} must be a name")),
+        };
+        if self.zones.iter().any(|zone| zone.name == name) {
+            return Err("its name is already taken by another zone".to_string());
+        }
+        let zone = read_zone(
+            self.keys, name, table, None, self.empty, self.base, 0.0, 0.0,
+        )?;
+        self.zones.push(zone);
+        Ok(())
+    }
+
+    fn set(self, name: &str, table: &toml::Table, time: f64, seconds: f64) -> Result<(), String> {
+        if name.is_empty() {
+            return Err("a zone needs a name".to_string());
+        }
+        settle(self.zones, time);
+        let found = self.zones.iter().position(|zone| zone.name == name);
+        let old = found.map(|i| &self.zones[i]);
+        // A new zone is all there and fades in whole, so only an edit ramps values.
+        let knob_seconds = if old.is_some() { seconds } else { 0.0 };
+        let mut zone = read_zone(
+            self.keys,
+            name.to_string(),
+            table,
+            old,
+            self.empty,
+            self.base,
+            time,
+            knob_seconds,
+        )?;
+        match found {
+            Some(i) => {
+                zone.strength.head_for(1.0, time, seconds);
+                self.zones[i] = zone;
+            }
+            None => {
+                zone.strength = Ramp::constant(0.0);
+                zone.strength.head_for(1.0, time, seconds);
+                self.zones.push(zone);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Fade the named zone out over `seconds` and drop it. Returns whether there
+/// was one.
+fn remove_zone<S: Slots>(zones: &mut Vec<ZoneOf<S>>, name: &str, time: f64, seconds: f64) -> bool {
+    settle(zones, time);
+    let Some(i) = zones.iter().position(|zone| zone.name == name) else {
+        return false;
+    };
+    if seconds > 0.0 {
+        zones[i].strength.head_for(0.0, time, seconds);
+    } else {
+        zones.remove(i);
+    }
+    true
+}
+
+/// Drop the zones that have finished fading out.
+fn settle<S: Slots>(zones: &mut Vec<ZoneOf<S>>, time: f64) {
+    zones.retain(|zone| *zone.strength.target() > 0.0 || !zone.strength.arrived(time));
+}
+
+/// The zones that reach `position` at `time`, in the order they apply, each
+/// with how much of itself it gives there, 0 to 1.
+fn zones_in<S: Slots>(zones: &[ZoneOf<S>], position: [f32; 3], time: f64) -> Vec<(&str, f32)> {
+    zones
+        .iter()
+        .filter_map(|zone| {
+            let weight = zone.share(position, time);
+            (weight > 0.0).then_some((zone.name.as_str(), weight))
+        })
+        .collect()
 }
 
 /// The whole field: global values and zones, over the key set `keys`.
@@ -200,19 +350,13 @@ impl<const N: usize> ParamField<N> {
     pub fn sample(&self, position: [f32; 3], time: f64) -> [f32; N] {
         let mut value = self.base.map(|ramp| ramp.at(time));
         for zone in &self.zones {
-            let weight = zone.weight(position) * zone.strength.at(time);
+            let weight = zone.share(position, time);
             if weight <= 0.0 {
                 continue;
             }
             for (out, knob) in value.iter_mut().zip(&zone.knobs) {
                 if let Some(knob) = knob {
-                    // Exact inside, so a zone's value is that value to the bit.
-                    let target = knob.at(time);
-                    *out = if weight >= 1.0 {
-                        target
-                    } else {
-                        *out + (target - *out) * weight
-                    };
+                    *out = lay(*out, knob.at(time), weight);
                 }
             }
         }
@@ -232,7 +376,7 @@ impl<const N: usize> ParamField<N> {
     pub fn zones_at(&self, position: [f32; 3], time: f64) -> [Option<&str>; N] {
         let mut said = [None; N];
         for zone in &self.zones {
-            if zone.weight(position) * zone.strength.at(time) <= 0.0 {
+            if zone.share(position, time) <= 0.0 {
                 continue;
             }
             for (said, knob) in said.iter_mut().zip(&zone.knobs) {
@@ -247,13 +391,7 @@ impl<const N: usize> ParamField<N> {
     /// The zones that reach `position` at `time`, in the order they apply,
     /// each with how much of itself it gives there, 0 to 1.
     pub fn zones_in(&self, position: [f32; 3], time: f64) -> Vec<(&str, f32)> {
-        self.zones
-            .iter()
-            .filter_map(|zone| {
-                let weight = zone.weight(position) * zone.strength.at(time);
-                (weight > 0.0).then_some((zone.name.as_str(), weight))
-            })
-            .collect()
+        zones_in(&self.zones, position, time)
     }
 
     /// Change global values from a table of any of the key names (and
@@ -284,7 +422,7 @@ impl<const N: usize> ParamField<N> {
                     keys.names.join(", ")
                 ));
             };
-            targets[i] = Some(keys.read(i, value)?);
+            targets[i] = Some(read_value(keys, i, value)?);
         }
         if let (Some(value), Some(preset)) = (table.get("preset"), keys.preset) {
             let name = value
@@ -305,17 +443,7 @@ impl<const N: usize> ParamField<N> {
     /// Add a zone from its table, or an error saying what's wrong with it. An
     /// unnamed one takes a name from its place in the list.
     pub fn add_zone(&mut self, table: &toml::Table) -> Result<(), String> {
-        let name = match table.get("name") {
-            None => format!("zone {}", self.zones.len() + 1),
-            Some(toml::Value::String(name)) if !name.is_empty() => name.clone(),
-            Some(other) => return Err(format!("name = {other} must be a name")),
-        };
-        if self.zones.iter().any(|zone| zone.name == name) {
-            return Err("its name is already taken by another zone".to_string());
-        }
-        let zone = read_zone(self.keys, name, table, None, &self.base, 0.0, 0.0)?;
-        self.zones.push(zone);
-        Ok(())
+        self.list().add(table)
     }
 
     /// Change the named zone from a table, or add it if there's none yet,
@@ -329,76 +457,58 @@ impl<const N: usize> ParamField<N> {
         time: f64,
         seconds: f64,
     ) -> Result<(), String> {
-        if name.is_empty() {
-            return Err("a zone needs a name".to_string());
-        }
-        self.settle(time);
-        let found = self.zones.iter().position(|zone| zone.name == name);
-        let old = found.map(|i| &self.zones[i]);
-        // A new zone is all there and fades in whole, so only an edit ramps values.
-        let knob_seconds = if old.is_some() { seconds } else { 0.0 };
-        let mut zone = read_zone(
-            self.keys,
-            name.to_string(),
-            table,
-            old,
-            &self.base,
-            time,
-            knob_seconds,
-        )?;
-        match found {
-            Some(i) => {
-                zone.strength.head_for(1.0, time, seconds);
-                self.zones[i] = zone;
-            }
-            None => {
-                zone.strength = Ramp::constant(0.0);
-                zone.strength.head_for(1.0, time, seconds);
-                self.zones.push(zone);
-            }
-        }
-        Ok(())
+        self.list().set(name, table, time, seconds)
     }
 
     /// Fade the named zone out over `seconds` and drop it. Returns whether
     /// there was one.
     pub fn remove_zone(&mut self, name: &str, time: f64, seconds: f64) -> bool {
-        self.settle(time);
-        let Some(i) = self.zones.iter().position(|zone| zone.name == name) else {
-            return false;
-        };
-        if seconds > 0.0 {
-            self.zones[i].strength.head_for(0.0, time, seconds);
-        } else {
-            self.zones.remove(i);
-        }
-        true
+        remove_zone(&mut self.zones, name, time, seconds)
     }
 
-    /// Drop the zones that have finished fading out.
-    fn settle(&mut self, time: f64) {
-        self.zones
-            .retain(|zone| *zone.strength.target() > 0.0 || !zone.strength.arrived(time));
+    fn list(&mut self) -> ZoneList<'_, FieldKeys<N>, [Option<Ramp>; N]> {
+        ZoneList {
+            keys: self.keys,
+            base: &self.base,
+            zones: &mut self.zones,
+            empty: [None; N],
+        }
+    }
+}
+
+/// `below` with a zone's `target` laid over it at `weight`: exactly the
+/// target inside, so a zone's value is that value to the bit.
+fn lay(below: f32, target: f32, weight: f32) -> f32 {
+    if weight >= 1.0 {
+        target
+    } else {
+        below + (target - below) * weight
     }
 }
 
 /// A zone from its table, with `old` filling in anything left out. A value
 /// that's new starts from the global value, so a zone's new value eases in
 /// from what that place was, save where zones overlap.
-fn read_zone<const N: usize>(
-    keys: &FieldKeys<N>,
+#[allow(clippy::too_many_arguments)]
+fn read_zone<K: KeySet + ?Sized, S: Slots>(
+    keys: &K,
     name: String,
     table: &toml::Table,
-    old: Option<&Zone<N>>,
-    base: &[Ramp; N],
+    old: Option<&ZoneOf<S>>,
+    empty: S,
+    base: &[Ramp],
     time: f64,
     seconds: f64,
-) -> Result<Zone<N>, String> {
+) -> Result<ZoneOf<S>, String> {
     for key in table.keys() {
-        if !keys.is_zone_key(key) {
+        let known =
+            SHAPE_KEYS.contains(&key.as_str()) || (0..keys.len()).any(|i| keys.name(i) == key);
+        if !known {
+            let mut all: Vec<&str> = SHAPE_KEYS.to_vec();
+            all.extend(keys.names());
             return Err(format!(
                 "'{key}' isn't a zone key; it takes {}",
-                keys.zone_keys()
+                all.join(", ")
             ));
         }
     }
@@ -408,38 +518,40 @@ fn read_zone<const N: usize>(
             read_point(value).ok_or_else(|| format!("center = {value} must be [x, y, z]"))?
         }
         None => old
-            .map(|z| z.center)
+            .map(|z| z.place.center)
             .ok_or("it needs a center: [x, y, z]")?,
     };
     let falloff = match table.get("falloff") {
         Some(value) => toml_f32(value)
             .filter(|f| f.is_finite() && *f >= 0.0)
             .ok_or_else(|| format!("falloff = {value} must be 0 metres or more"))?,
-        None => old.map_or(0.0, |z| z.falloff),
+        None => old.map_or(0.0, |z| z.place.falloff),
     };
-    let shape = read_shape(table, old.map(|z| z.shape))?;
+    let shape = read_shape(table, old.map(|z| z.place.shape))?;
 
-    let mut knobs = old.map_or([None; N], |z| z.knobs);
-    for (i, slot) in knobs.iter_mut().enumerate() {
-        if let Some(value) = table.get(keys.names[i]) {
-            let target = keys.read(i, value)?;
+    let mut knobs = old.map_or(empty, |z| z.knobs.clone());
+    for (i, slot) in knobs.as_mut().iter_mut().enumerate() {
+        if let Some(value) = table.get(keys.name(i)) {
+            let target = read_value(keys, i, value)?;
             let mut ramp = slot.unwrap_or_else(|| Ramp::constant(base[i].at(time)));
             ramp.head_for(target, time, seconds);
             *slot = Some(ramp);
         }
     }
-    if knobs.iter().all(Option::is_none) {
+    if knobs.as_ref().iter().all(Option::is_none) {
         return Err(format!(
             "it changes nothing: it needs at least one of {}",
-            keys.names.join(", ")
+            keys.names().join(", ")
         ));
     }
 
-    Ok(Zone {
+    Ok(ZoneOf {
         name,
-        shape,
-        center,
-        falloff,
+        place: Place {
+            shape,
+            center,
+            falloff,
+        },
         knobs,
         strength: old.map_or(Ramp::constant(1.0), |z| z.strength),
     })
