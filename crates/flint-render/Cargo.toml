@@ -84,6 +84,6 @@ libloading = "0.8"
 mach-dxcompiler-rs = { version = "=0.1.947", optional = true }
 
 # Built-in shader modules and frame acquisition go through flint-render's
-# seams; the list is the workspace clippy.toml (#944).
-[lints.clippy]
-disallowed_methods = "deny"
+# seams; the list is the workspace clippy.toml (#944), denied workspace-wide (#979).
+[lints]
+workspace = true

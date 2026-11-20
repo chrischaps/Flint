@@ -42,6 +42,28 @@ bash scripts/adr-check.sh
 echo "ci: scripts/clippy-conf.sh --check"
 bash scripts/clippy-conf.sh --check
 
+# The root clippy.toml's rules are denied in every member (#979): each takes the
+# workspace's lints, and none overrides them with a `[lints.*]` of its own, so a
+# new crate can't leave a read past the vfs at a warning or unchecked.
+echo "ci: every member takes [lints] workspace = true"
+members=$(awk '/^members *= *\[/{on=1; next} on && /^\]/{exit} on' Cargo.toml | tr -d '\r' | sed -n 's/^ *"\([^"]*\)".*/\1/p')
+bad_lints=""
+for m in $members; do
+    manifest="$m/Cargo.toml"
+    if ! tr -d '\r' < "$manifest" | awk '/^\[lints\]/{l=1; next} /^\[/{l=0} l && /^workspace *= *true/{ok=1} END{exit !ok}'; then
+        bad_lints="$bad_lints  $manifest: no \`[lints] workspace = true\`"$'\n'
+    fi
+    if tr -d '\r' < "$manifest" | grep -qE '^\[lints\.'; then
+        bad_lints="$bad_lints  $manifest: a \`[lints.*]\` table of its own"$'\n'
+    fi
+done
+if [ -n "$bad_lints" ]; then
+    echo "ci: every workspace member takes the workspace's lints (root Cargo.toml, #979):" >&2
+    printf '%s' "$bad_lints" >&2
+    echo "ci: add \`[lints]\` / \`workspace = true\` to the manifest; a call that means it carries #[allow(clippy::disallowed_methods)] // <reason>" >&2
+    exit 1
+fi
+
 # Every FLINT_* switch is read through its row in flint_core::env (#715), so
 # `flint env` and the book list it and a bad value warns. The table's test
 # (crates/flint-core/tests/env_table.rs) also holds every "FLINT_..." name to it.
