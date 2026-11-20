@@ -35,7 +35,7 @@ INDEX = "## Where the detail lives"
 
 # What every session needs, measured at #992: the claims section (vendored,
 # kept byte for byte) 3.5 KB, the crate map 2.8 KB, this index 1.8 KB and
-# the overview 0.4 KB make 8.6 KB; build commands, the edit -> validate ->
+# the overview 0.4 KB make 8.5 KB; build commands, the edit -> validate ->
 # play loop, the cross-cutting rules and gotchas fill the rest. #755's target.
 BUDGET = 15_000
 
