@@ -12,8 +12,8 @@ pub struct SplineControlPoint {
     pub position: Vec3,
     /// Twist (banking) in degrees around the forward axis.
     pub twist: f32,
-    /// When true, road geometry and physics are omitted from this CP to the next,
-    /// creating a gap/jump. Consecutive `gap_after` CPs merge into longer gaps.
+    /// When true, swept geometry (and its collider) is omitted from this CP
+    /// to the next. Consecutive `gap_after` CPs merge into longer gaps.
     pub gap_after: bool,
 }
 
@@ -270,55 +270,76 @@ pub fn sample_open_spline(points: &[SplineControlPoint], spacing: f32) -> Vec<Sp
     samples
 }
 
-// ─── Gap helpers ─────────────────────────────────────────
+// ─── Spans: what holds from one control point to the next ─────────
 
-/// Compute parametric t-ranges where `gap_after` is true.
+/// A stretch of a spline over which one value holds: `start` inclusive,
+/// `end` exclusive, in parametric `t`. A span whose `start` is after its
+/// `end` wraps through 1 (a closed spline's run over its first point).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Span<V> {
+    pub start: f32,
+    pub end: f32,
+    pub value: V,
+}
+
+/// The runs of `values`, one per control point: what holds from that point
+/// to the next (`None`: nothing does). Neighbours with equal values merge
+/// into one span.
 ///
-/// For a closed spline with N control points, CP k spans t = k/N to (k+1)/N.
-/// For an open spline with N control points, CP k spans t = k/(N-1) to (k+1)/(N-1).
-/// Consecutive `gap_after` CPs merge into a single range.
-/// Closed splines handle wrap-around (last CP → first CP).
-pub fn compute_gap_ranges(points: &[SplineControlPoint], closed: bool) -> Vec<(f32, f32)> {
-    let n = points.len();
+/// For a closed spline with N control points, point k's stretch is
+/// t = k/N to (k+1)/N, and a run through the last point carries on round
+/// into the first. For an open spline, k/(N-1) to (k+1)/(N-1): its last
+/// point begins no stretch, so its value holds nowhere.
+pub fn segment_spans<V: PartialEq + Clone>(values: &[Option<V>], closed: bool) -> Vec<Span<V>> {
+    let n = values.len();
     if n < 2 {
         return Vec::new();
     }
-
     let num_segs = if closed { n } else { n - 1 };
-    let mut ranges: Vec<(f32, f32)> = Vec::new();
+    let mut spans: Vec<Span<V>> = Vec::new();
 
     let mut i = 0;
-    while i < n {
-        if points[i].gap_after {
-            let start_t = i as f32 / num_segs as f32;
-            // Merge consecutive gap_after CPs
-            let mut end_idx = i + 1;
-            while end_idx < n && points[end_idx].gap_after {
-                end_idx += 1;
-            }
-            // For closed splines, the gap extends to (end_idx)/num_segs
-            // For open splines, same but clamped to 1.0
-            let end_t = (end_idx as f32 / num_segs as f32).min(1.0);
-            ranges.push((start_t, end_t));
-            i = end_idx;
-        } else {
+    while i < num_segs {
+        let Some(value) = &values[i] else {
             i += 1;
+            continue;
+        };
+        let mut end = i + 1;
+        while end < num_segs && values[end].as_ref() == Some(value) {
+            end += 1;
+        }
+        spans.push(Span {
+            start: i as f32 / num_segs as f32,
+            end: (end as f32 / num_segs as f32).min(1.0),
+            value: value.clone(),
+        });
+        i = end;
+    }
+
+    // A closed spline's run that ends at 1 and one that starts at 0, of the
+    // same value, are one run through the first point
+    if closed && spans.len() >= 2 {
+        let last = spans.len() - 1;
+        if (spans[last].end - 1.0).abs() < 1e-6
+            && spans[0].start.abs() < 1e-6
+            && spans[last].value == spans[0].value
+        {
+            spans[0].start = spans[last].start;
+            spans.pop();
         }
     }
 
-    // Handle wrap-around for closed splines: if the last range ends at 1.0
-    // and the first range starts at 0.0, merge them
-    if closed && ranges.len() >= 2 {
-        let last = ranges.len() - 1;
-        if (ranges[last].1 - 1.0).abs() < 1e-6 && ranges[0].0.abs() < 1e-6 {
-            let merged_start = ranges[last].0;
-            let merged_end = ranges[0].1;
-            ranges[0] = (merged_start, merged_end); // wrap-around range: start > end
-            ranges.pop();
-        }
-    }
+    spans
+}
 
-    ranges
+/// Compute parametric t-ranges where `gap_after` is true: the
+/// [`segment_spans`] of the points' `gap_after`.
+pub fn compute_gap_ranges(points: &[SplineControlPoint], closed: bool) -> Vec<(f32, f32)> {
+    let gaps: Vec<Option<()>> = points.iter().map(|p| p.gap_after.then_some(())).collect();
+    segment_spans(&gaps, closed)
+        .into_iter()
+        .map(|s| (s.start, s.end))
+        .collect()
 }
 
 /// Check if parametric t falls within any gap range.
@@ -568,5 +589,86 @@ mod tests {
         assert!((ranges[0].1 - 1.0).abs() < 0.01);
         assert!(is_in_gap(0.8, &ranges));
         assert!(!is_in_gap(0.1, &ranges));
+    }
+
+    #[test]
+    fn spans_merge_equal_neighbours_and_wrap_only_when_equal() {
+        let v = |s: &[Option<i32>]| s.to_vec();
+        // Closed, five points: 1 1 2 _ 1 -> the last 1 runs round into the first two
+        let spans = segment_spans(&v(&[Some(1), Some(1), Some(2), None, Some(1)]), true);
+        let got: Vec<_> = spans.iter().map(|s| (s.start, s.end, s.value)).collect();
+        assert_eq!(got, vec![(0.8, 0.4, 1), (0.4, 0.6, 2)]);
+        // A different value at the end doesn't merge round
+        let spans = segment_spans(&v(&[Some(1), None, None, Some(3)]), true);
+        let got: Vec<_> = spans.iter().map(|s| (s.start, s.end, s.value)).collect();
+        assert_eq!(got, vec![(0.0, 0.25, 1), (0.75, 1.0, 3)]);
+        // Open: the last point begins no stretch
+        let spans = segment_spans(&v(&[Some(1), Some(2), Some(2)]), false);
+        let got: Vec<_> = spans.iter().map(|s| (s.start, s.end, s.value)).collect();
+        assert_eq!(got, vec![(0.0, 0.5, 1), (0.5, 1.0, 2)]);
+        assert!(segment_spans(&v(&[None, None, Some(9)]), false).is_empty());
+        assert!(segment_spans(&v(&[Some(1)]), true).is_empty());
+    }
+
+    /// `compute_gap_ranges` as it was before #855 rewrote it over
+    /// [`segment_spans`], verbatim: the oracle the new one must agree with.
+    fn gap_ranges_before_855(points: &[SplineControlPoint], closed: bool) -> Vec<(f32, f32)> {
+        let n = points.len();
+        if n < 2 {
+            return Vec::new();
+        }
+        let num_segs = if closed { n } else { n - 1 };
+        let mut ranges: Vec<(f32, f32)> = Vec::new();
+        let mut i = 0;
+        while i < n {
+            if points[i].gap_after {
+                let start_t = i as f32 / num_segs as f32;
+                let mut end_idx = i + 1;
+                while end_idx < n && points[end_idx].gap_after {
+                    end_idx += 1;
+                }
+                let end_t = (end_idx as f32 / num_segs as f32).min(1.0);
+                ranges.push((start_t, end_t));
+                i = end_idx;
+            } else {
+                i += 1;
+            }
+        }
+        if closed && ranges.len() >= 2 {
+            let last = ranges.len() - 1;
+            if (ranges[last].1 - 1.0).abs() < 1e-6 && ranges[0].0.abs() < 1e-6 {
+                let merged_start = ranges[last].0;
+                let merged_end = ranges[0].1;
+                ranges[0] = (merged_start, merged_end);
+                ranges.pop();
+            }
+        }
+        ranges
+    }
+
+    #[test]
+    fn every_gap_pattern_gives_the_ranges_it_gave_before() {
+        for n in 2..=9usize {
+            for closed in [true, false] {
+                for mask in 0u32..(1 << n) {
+                    let pts: Vec<_> = (0..n)
+                        .map(|i| SplineControlPoint {
+                            position: Vec3::new(i as f32, 0.0, 0.0),
+                            twist: 0.0,
+                            gap_after: mask & (1 << i) != 0,
+                        })
+                        .collect();
+                    let old = gap_ranges_before_855(&pts, closed);
+                    // The old one also gave an open spline's last point an
+                    // empty range (1, 1), which no t is in
+                    let old: Vec<_> = old.into_iter().filter(|r| r.0 != r.1).collect();
+                    assert_eq!(
+                        compute_gap_ranges(&pts, closed),
+                        old,
+                        "n {n}, closed {closed}, gaps {mask:b}"
+                    );
+                }
+            }
+        }
     }
 }
