@@ -155,6 +155,30 @@ pub fn overlay(
     base: Option<&PostProcessDef>,
     over: &toml::Table,
 ) -> Result<PostProcessDef, String> {
+    lay(base, over, Keys::Look)
+}
+
+/// Whose keys [`lay`] puts down.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Keys {
+    /// A look file's (or a sweep's): each mistake is refused, so a typo
+    /// in a look can't vanish into a default.
+    Look,
+    /// A scene's authored `[post_process]`, laid back over a look
+    /// ([`resolve`]). The loader has already read these and warned about
+    /// each mistake (`warning[unknown-field]`, `post-range`, a style
+    /// table's), so they are laid as the loader drew them: an unknown key
+    /// is left out, a value past its range and a style table's warning
+    /// stand. Refusing them here made every look fail in play on a key
+    /// the scene had been warned about and drawn without (#896).
+    Scene,
+}
+
+fn lay(
+    base: Option<&PostProcessDef>,
+    over: &toml::Table,
+    keys: Keys,
+) -> Result<PostProcessDef, String> {
     let mut table = match base {
         Some(def) => toml::Table::try_from(def)
             .map_err(|e| format!("serializing the scene's [post_process]: {e}"))?,
@@ -166,24 +190,40 @@ pub fn overlay(
     flint_scene::fold_legacy_style_keys(&mut table);
     let mut over = over.clone();
     flint_scene::fold_legacy_style_keys(&mut over);
-    if let Some((key, near)) = PostProcessDef::unknown_fields(&over).into_iter().next() {
-        return Err(format!(
-            "[post_process] has no field '{key}'{}",
-            did_you_mean(near)
-        ));
-    }
-    // A built-in effect's value past what it is tuned for is refused, as a
-    // style value in a look is (#355, #741); a scene's only warns
-    if let Some(first) = flint_schema::post_effects::range_warnings(&over)
-        .into_iter()
-        .next()
-    {
-        return Err(format!("[post_process] {first}"));
+    let unknown = PostProcessDef::unknown_fields(&over);
+    match keys {
+        Keys::Scene => {
+            for (key, _) in unknown {
+                over.remove(&key);
+            }
+        }
+        Keys::Look => {
+            if let Some((key, near)) = unknown.into_iter().next() {
+                return Err(format!(
+                    "[post_process] has no field '{key}'{}",
+                    did_you_mean(near)
+                ));
+            }
+            // A built-in effect's value past what it is tuned for is
+            // refused, as a style value in a look is (#355, #741); a
+            // scene's only warns
+            if let Some(first) = flint_schema::post_effects::range_warnings(&over)
+                .into_iter()
+                .next()
+            {
+                return Err(format!("[post_process] {first}"));
+            }
+        }
     }
     merge(&mut table, &over);
     let def: PostProcessDef = toml::Value::Table(table)
         .try_into()
         .map_err(|e| format!("[post_process]: {e}"))?;
+    if keys == Keys::Scene {
+        // The look under these keys was checked whole when it was read
+        // (`found.apply(None)`); what the scene adds the loader judged
+        return Ok(def);
+    }
     // A built-in style's table is checked as a scene's is. A look carries
     // no registry: a table naming a game's or a user style is read, and
     // warned about, against the registry of the scene it is laid on (#742)
@@ -265,11 +305,13 @@ fn resolve_with(
     });
     let look = look.filter(|name| !name.trim().is_empty());
     let mut out = match (look, &authored) {
-        (None, Some(keys)) => overlay(None, keys)?,
+        (None, Some(keys)) => lay(None, keys, Keys::Scene)?,
         (None, None) => def.clone(),
         (Some(name), Some(keys)) => {
             let found = find(name)?;
-            overlay(Some(&found.apply(None)?), keys)?
+            // `find` read the look whole (`Look::parse`), refusing its own
+            // mistakes and naming it; only the scene's keys go on leniently
+            lay(Some(&found.apply(None)?), keys, Keys::Scene)?
         }
         (Some(name), None) => {
             let found = find(name)?;
@@ -598,6 +640,69 @@ mod tests {
         assert!(none.styles.is_empty(), "no look: the scene's keys alone");
         assert_eq!(none.exposure, 1.2);
         assert_eq!(none.look, None);
+    }
+
+    /// Done when #896: Float's scenes carried `enabled = true` and
+    /// `vignette = 0.18`, neither a field. The loader warns and ignores
+    /// them; laying the scene's keys back over a look (what `set_look` and
+    /// F4's Look picker do in play) left them out too, rather than failing
+    /// every look on the first.
+    #[test]
+    fn a_scenes_unknown_key_doesnt_stop_a_look() {
+        let scene = authored("enabled = true\nvignette = 0.18\nexposure = 1.3");
+        for look in [Some("graphite"), Some("ink_wash"), None] {
+            let out =
+                resolve(&scene, look, "x.scene.toml").unwrap_or_else(|e| panic!("{look:?}: {e}"));
+            assert_eq!(out.exposure, 1.3, "{look:?}: the scene's own key stays");
+            assert_eq!(out.look.as_deref(), look);
+            assert_eq!(
+                out.authored, scene.authored,
+                "the authored record is kept whole, so the next look starts from the scene"
+            );
+        }
+        let graphite = resolve(&scene, Some("graphite"), "x.scene.toml").unwrap();
+        assert!(graphite.styles.contains_key("pencil"), "the look is drawn");
+        // The scene's look, as the player and `flint render` read it
+        let named = authored("look = \"graphite\"\nenabled = true");
+        assert_eq!(
+            resolve_scene(&named, "x.scene.toml").look.as_deref(),
+            Some("graphite")
+        );
+    }
+
+    /// A scene's value past its tuned range only warns at load (#741), so
+    /// it doesn't stop a look either; it is drawn as the scene asked.
+    #[test]
+    fn a_scenes_out_of_range_value_doesnt_stop_a_look() {
+        let scene = authored("bloom_intensity = 3.0");
+        let out = resolve(&scene, Some("graphite"), "x.scene.toml").unwrap();
+        assert_eq!(out.bloom_intensity, 3.0);
+    }
+
+    /// The other half of #896: a look file's own mistake is still refused,
+    /// naming the look, whether a scene's keys go over it or not.
+    #[test]
+    fn a_look_files_misspelt_key_is_still_refused_naming_the_look() {
+        let source: MemorySource = [
+            (
+                "game/styles/dusk.look.toml",
+                b"[post_process]\nexposure = 0.6\nbloom_intensty = 0.2\n".to_vec(),
+            ),
+            ("game/a.scene.toml", b"[scene]\nname = \"a\"\n".to_vec()),
+        ]
+        .into_iter()
+        .collect();
+        vfs::scoped(Arc::new(source), || {
+            let path = "game/a.scene.toml";
+            for scene in [authored("enabled = true\nexposure = 1.3"), authored("")] {
+                let err = resolve(&scene, Some("dusk"), path).unwrap_err();
+                assert!(err.contains("look 'dusk'"), "names the look: {err}");
+                assert!(err.contains("'bloom_intensty'"), "names the key: {err}");
+                assert!(err.contains("did you mean 'bloom_intensity'"), "{err}");
+            }
+        });
+        let ranged = Look::parse("t", "[post_process]\nbloom_intensity = 3.0", "test").unwrap_err();
+        assert!(ranged.contains("look 't'"), "{ranged}");
     }
 
     #[test]
