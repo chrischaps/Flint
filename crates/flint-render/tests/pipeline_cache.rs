@@ -415,7 +415,7 @@ fn a_mesh_is_uploaded_once_a_device_by_its_bytes() {
     pipeline_cache::reset_counts();
 
     let sphere = flint_import::import_gltf(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/models/Sphere.glb"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/scenes/models/Sphere.glb"),
     )
     .unwrap();
     let mut moved_sphere = sphere.clone();

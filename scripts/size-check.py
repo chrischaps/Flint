@@ -82,7 +82,7 @@ AREAS = [
     ("book", ("docs/",), 78 * MB),  # 70.2
     ("tests", ("tests/", "crates/flint-cli/tests/golden/"), 50 * MB),  # 45.7 (#984: the 19.2 MB the fixtures borrowed)
     ("showcase_game", ("showcase_game/",), 18 * MB),  # 16.2 (#984: its own YBot)
-    ("engine", ("",), 20 * MB),  # 16.1: crates, schemas, styles, scripts, tools
+    ("engine", ("",), 23 * MB),  # 16.1; 20.5 at #1303, all source: crates, schemas, styles, scripts, tools
 ]
 
 BINARY = {
