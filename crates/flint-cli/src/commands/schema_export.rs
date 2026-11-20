@@ -8,8 +8,8 @@
 //! layer over it.
 
 use flint_schema::{
-    ArchetypeSchema, ComponentSchema, FieldSchema, FieldType, SchemaOrigin, SchemaRegistry,
-    OLD_TYPE_NAMES, TYPE_NAMES,
+    ArchetypeSchema, ComponentSchema, FieldSchema, FieldType, PanelRole, PanelSpec, SchemaOrigin,
+    SchemaRegistry, OLD_TYPE_NAMES, TYPE_NAMES,
 };
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -126,7 +126,70 @@ fn fielded_json(kind: &str, schema: &ComponentSchema, origin: Option<&SchemaOrig
             .collect::<Vec<_>>());
     }
     out["fields"] = fields;
+    if let Some(panel) = &schema.panel {
+        out["panel"] = panel_json(panel);
+    }
     out
+}
+
+/// A component's F3 panel (#744, #1020): its `title` and its `rows` in the
+/// panel's order, each with `field`, `role` and `label`, and the keys that
+/// say more than the defaults: `labels`, `press` (a trigger's), `step`,
+/// `min`, `max`, `slider` and `presets` (a tune row's editor), `format`,
+/// `scale`, `unset`, `from` and `commit`.
+pub fn panel_json(panel: &PanelSpec) -> Value {
+    let rows: Vec<Value> = panel
+        .rows
+        .iter()
+        .map(|row| {
+            let mut out = Map::new();
+            out.insert("field".into(), json!(row.field));
+            out.insert("role".into(), json!(row.role.name()));
+            out.insert("label".into(), json!(row.label));
+            if !row.labels.is_empty() {
+                out.insert("labels".into(), json!(row.labels));
+            }
+            let tune = row.role == PanelRole::Tune;
+            if row.role == PanelRole::Trigger {
+                out.insert("press".into(), to_json(&row.press));
+            }
+            if tune {
+                for (key, value) in [("step", row.step), ("min", row.min), ("max", row.max)] {
+                    if let Some(value) = value {
+                        out.insert(key.into(), json!(value));
+                    }
+                }
+                if row.slider {
+                    out.insert("slider".into(), json!(true));
+                }
+                if !row.presets.is_empty() {
+                    let presets: Vec<Value> = row
+                        .presets
+                        .iter()
+                        .map(|(name, n)| json!([name, n]))
+                        .collect();
+                    out.insert("presets".into(), json!(presets));
+                }
+            }
+            if let Some(format) = &row.format {
+                out.insert("format".into(), json!(format));
+            }
+            if row.scale != 1.0 {
+                out.insert("scale".into(), json!(row.scale));
+            }
+            if let Some(unset) = row.unset {
+                out.insert("unset".into(), json!(unset));
+            }
+            if let Some(from) = &row.from {
+                out.insert("from".into(), json!(from));
+            }
+            if tune && !row.commit {
+                out.insert("commit".into(), json!(false));
+            }
+            Value::Object(out)
+        })
+        .collect();
+    json!({ "title": panel.title, "rows": rows })
 }
 
 /// One archetype: its components, and the defaults it gives them.

@@ -106,6 +106,8 @@ A field's `panel` is a role, or a table with a `role` and the keys below. The pa
 
 `[component.<name>.panel]` holds only `title`, and is optional: a component is on a panel as soon as one field says so. A mistake (a role that is none, a key a field's panel doesn't hold, a `format` with no placeholder) is a `bad-panel` warning from `flint validate` and `flint check` naming the file and the field; that row is left off, and the rest of the schema loads as it did. An engine from before #744 ignores a field's `panel` key, so a game can write its panel lines before it updates its engine (the `[component.<name>.panel]` table it would refuse).
 
+`flint schema <component>` shows what the panel holds without opening F3: a `Panel "<title>":` line under the header naming each role's fields, and `--format json` the whole of it as `panel` ([Schemas as data](../concepts/schemas.md#schemas-as-data)).
+
 The panel is a live view of the component. Each frame it writes what you changed and reads the component back, so a field the script moves (the time of day while it advances) is what the slider shows, and a trigger is one write that the script clears. Reset puts back the tune fields the scene loaded with, and Commit to File writes them into the scene file. When several entities carry the component, each gets a panel, titled with its name.
 
 ### Rendering & Effects (F4)

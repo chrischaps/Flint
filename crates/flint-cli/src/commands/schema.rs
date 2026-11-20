@@ -294,6 +294,10 @@ fn one_text(name: &str, registry: &SchemaRegistry) -> String {
                 layers = Some(Layers { origin, files });
             }
         }
+        if let Some(panel) = &component.panel {
+            out.push_str(&panel_text(panel));
+            out.push('\n');
+        }
         out.push_str("\nFields:\n");
         if component.is_open() {
             out.push_str(&format!(
@@ -347,6 +351,40 @@ fn one_text(name: &str, registry: &SchemaRegistry) -> String {
         ));
     }
     out
+}
+
+/// A component's F3 panel on one line (#1020): its title, then each role's
+/// fields in the panel's order, a label beside a field when the panel calls
+/// it something other than its name, and a trigger's buttons when it has
+/// several (formats, ranges and the rest are in `--format json`'s `panel`):
+/// `Panel "Dead calm": status phase, calm, next_in_s · trigger trigger_calm "Calm now"`.
+fn panel_text(panel: &flint_schema::PanelSpec) -> String {
+    use flint_schema::PanelRole;
+    let groups: Vec<String> = PanelRole::ALL
+        .iter()
+        .filter_map(|(name, role)| {
+            let rows: Vec<String> = panel
+                .rows_with(*role)
+                .map(|row| {
+                    let mut text = row.field.clone();
+                    if *role == PanelRole::Trigger && !row.labels.is_empty() {
+                        let buttons: Vec<&str> = row
+                            .labels
+                            .iter()
+                            .map(String::as_str)
+                            .filter(|l| !l.is_empty())
+                            .collect();
+                        text.push_str(&format!(" [{}]", buttons.join(", ")));
+                    } else if row.label != flint_schema::panel::words_of(&row.field) {
+                        text.push_str(&format!(" \"{}\"", row.label));
+                    }
+                    text
+                })
+                .collect();
+            (!rows.is_empty()).then(|| format!("{name} {}", rows.join(", ")))
+        })
+        .collect();
+    format!("Panel \"{}\": {}", panel.title, groups.join(" · "))
 }
 
 /// `fields` by name, each with its description and range below it. A table
