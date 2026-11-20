@@ -325,7 +325,7 @@ play_sound("whoosh.ogg", 0.8);
 play_sound("whoosh", 0.8);
 ```
 
-A name cached as written always wins, so a sound an extension loaded as `"blip"` stays `"blip"`, and two files that share a stem (`whoosh.ogg`, `whoosh.wav`) want the full path. A one-shot naming a sound that is not there plays nothing and logs a warning that names the nearest cached sound:
+A name cached as written always wins, so a sound an extension loaded as `"blip"` stays `"blip"`, and two files that share a stem (`whoosh.ogg`, `whoosh.wav`) want the full path. A name nothing cached is looked for on its first play as an `audio_source.file` is, from the scene's folder up to the project root, so `play_sound("../sfx/door.ogg")` plays a file outside `audio/`; `flint check` holds sound strings to that search ([Sound names](audio.md#sound-names)). A one-shot naming a sound that is not there plays nothing and logs a warning that names the nearest cached sound:
 
 ```text
 WARN script: play_sound error: AudioError("Sound not cached: whosh (nearest: \"audio/whoosh.ogg\")")
