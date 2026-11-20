@@ -372,6 +372,8 @@ pub struct FrameInputsState {
     /// Each `ocean_contact` hull's velocity given this frame, by name.
     pub contact_velocities: BTreeMap<String, [f32; 3]>,
     pub ocean_tint: Option<OceanTintState>,
+    /// The screen field the game filled (#859), each shape tagged by kind.
+    pub style_field: Vec<flint_core::style_field::FieldShape>,
 }
 
 impl FrameInputsState {
@@ -429,6 +431,7 @@ impl FrameInputsState {
                 keep_light: t.keep_light,
                 below: t.below,
             }),
+            style_field: inputs.style_field.to_vec(),
         }
     }
 }
@@ -489,6 +492,7 @@ impl OwnedFrameInputs {
                     below: t.below,
                 }),
             draw_controls: None,
+            style_field: &s.style_field,
         }
     }
 }

@@ -212,6 +212,11 @@ topic = "stylize"
 purpose = "A reality tear passes over a clearing and only the props inside it turn to text (blend_source = \"tear\", #397)"
 
 [[example]]
+scene = "ascii_shockwave.scene.toml"
+topic = "stylize"
+purpose = "Shockwave rings spread from impacts and turn the props they cross to text, then back; a click sends one, the right button is a flashlight (blend_source = \"field\", #859)"
+
+[[example]]
 scene = "reality_tears.scene.toml"
 topic = "stylize"
 purpose = "The five reality styles (matrix, blood, drunk, tron, underwater) over a sea at dusk, torn in by the frame's tear and tuned by name (#746)"

@@ -4762,3 +4762,127 @@ fn local_strokes_ride_on_the_prop_and_world_strokes_stay_behind() {
         "local strokes should ride on the cube: {local_d} pixels changed against world's {world_d}"
     );
 }
+
+/// #859: a styled box whose blend follows the screen field is drawn into
+/// the mask at its blend times the field at each pixel, as
+/// `FieldShape::value_at` works it out on the CPU: a disc, a ring and a
+/// cone, each with a hard edge, are the style where the field is 1 and
+/// the box at blend 0 where it is 0, pixel for pixel. Pixels within a
+/// pixel of an edge are left out (the rasteriser and the CPU may round
+/// them either way).
+#[test]
+fn a_box_following_the_field_is_styled_exactly_where_the_field_is() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_core::style_field::{FieldShape, StyleField};
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut world = FlintWorld::new();
+    let e = world.spawn("wall").unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-6.0; 3]));
+    bounds.insert("max".into(), vec3([6.0; 3]));
+    world.set_component(e, "bounds", bounds.into()).unwrap();
+    let set_mask = |world: &mut FlintWorld, source: &str| {
+        let mut t = toml::Table::new();
+        t.insert("style".into(), "ascii".into());
+        t.insert("blend_source".into(), source.into());
+        world.set_component(e, "style_mask", t.into()).unwrap();
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    renderer.set_debug_mode(flint_render::DebugMode::StyleMask);
+    let with_field = |renderer: &mut SceneRenderer, world: &FlintWorld, shapes: &[FieldShape]| {
+        gpu.frame_with(
+            renderer,
+            world,
+            &flint_render::FrameInputs {
+                style_field: shapes,
+                ..Default::default()
+            },
+        )
+    };
+
+    // The box at its own blend: the style everywhere it is
+    set_mask(&mut world, "own");
+    let full = gpu.frame(&mut renderer, &world);
+    // Following the field, under a field that misses it: blend 0 everywhere
+    set_mask(&mut world, "field");
+    let elsewhere = [FieldShape::Disc {
+        center: [-5.0, -5.0],
+        radius: 0.1,
+        soft: 0.0,
+        strength: 1.0,
+    }];
+    let none = with_field(&mut renderer, &world, &elsewhere);
+    let covered = (0..SIZE as usize * SIZE as usize)
+        .filter(|&i| full[i * 4..][..4] != none[i * 4..][..4])
+        .count();
+    assert!(
+        covered > (SIZE * SIZE) as usize / 2,
+        "the box should fill most of the frame: {covered} pixels"
+    );
+
+    let shapes = [
+        FieldShape::Disc {
+            center: [0.3, 0.3],
+            radius: 0.12,
+            soft: 0.0,
+            strength: 1.0,
+        },
+        FieldShape::Ring {
+            center: [0.5, 0.5],
+            radius: 0.38,
+            width: 0.08,
+            soft: 0.0,
+            strength: 1.0,
+        },
+        FieldShape::Cone {
+            apex: [0.7, 1.0],
+            direction: -0.2,
+            spread: 0.18,
+            length: 0.6,
+            soft: 0.0,
+            strength: 1.0,
+        },
+    ];
+    let mut field = StyleField::default();
+    field.set(&shapes);
+    let drawn = with_field(&mut renderer, &world, &shapes);
+    let px = 1.0 / SIZE as f32;
+    let (mut on, mut off) = (0, 0);
+    for y in 0..SIZE as usize {
+        for x in 0..SIZE as usize {
+            let uv = [(x as f32 + 0.5) * px, (y as f32 + 0.5) * px];
+            let value = field.value_at(uv, 1.0);
+            let near_edge = [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]]
+                .iter()
+                .any(|d| field.value_at([uv[0] + d[0] * px, uv[1] + d[1] * px], 1.0) != value);
+            if near_edge {
+                continue;
+            }
+            let got = pixel(&drawn, x, y);
+            if value == 1.0 {
+                assert_eq!(got, pixel(&full, x, y), "({x}, {y}) is in the field");
+                on += 1;
+            } else {
+                assert_eq!(value, 0.0);
+                assert_eq!(got, pixel(&none, x, y), "({x}, {y}) is out of it");
+                off += 1;
+            }
+        }
+    }
+    eprintln!("{on} pixels in the field, {off} out");
+    assert!(on > 200 && off > 200, "{on} in, {off} out");
+
+    // No field at all: the box is at blend 0 there too, and its style off
+    let empty = gpu.frame(&mut renderer, &world);
+    assert_eq!(empty, none, "no field draws as a field that misses it");
+}

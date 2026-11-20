@@ -414,6 +414,13 @@ impl ScriptEngine {
         std::mem::take(&mut c.world_lines)
     }
 
+    /// Take the screen field scripts filled this frame (#859); the next
+    /// frame starts with none.
+    pub fn drain_style_field(&self) -> flint_core::style_field::StyleField {
+        let mut c = crate::lock_or_recover(&self.ctx);
+        std::mem::take(&mut c.style_field)
+    }
+
     /// Drain the depth-tested world text scripts queued this frame
     pub fn drain_world_texts(&self) -> Vec<flint_core::world_text::WorldText> {
         let mut c = crate::lock_or_recover(&self.ctx);
@@ -439,6 +446,7 @@ impl ScriptEngine {
         let mut c = crate::lock_or_recover(&self.ctx);
         c.commands.clear();
         c.draw_commands.clear();
+        c.style_field.clear();
         c.clip_stack.clear();
         c.ui_system.clear();
     }

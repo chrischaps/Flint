@@ -898,6 +898,7 @@ impl PlayerApp {
                 .particles_render_enabled
                 .then_some(&self.core.particles.sync),
             world_lines: &self.hud.world_lines,
+            style_field: self.hud.style_field.shapes(),
             grass_benders: &benders,
             contact_velocities: &contact_velocities,
             // The deprecated render mode's sea (#746): a frame behind its
@@ -1514,6 +1515,8 @@ impl super::game_core::FrameHost for PlayerApp {
         // Depth-tested world lines (ADR 0083) render with this frame's
         // scene, handed over with its inputs
         self.hud.world_lines = self.core.script.drain_world_lines();
+        // The style field (#859), on_update's shapes and on_draw_ui's
+        self.hud.style_field = self.core.script.drain_style_field();
         // The Ocean Debug panel's parity probe draws with them (#749)
         #[cfg(feature = "debug-hud")]
         self.add_ocean_probe_lines();
