@@ -100,10 +100,10 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    printed, on a failure; `FLINT_GOLDENS_OUT=<dir>` names a folder kept either way (CI's WARP job sets
    `target/tmp/stylize-goldens`, which its summary and artifact read). Cases run in one process on one GPU device with glTF
    decodes and mip chains memoized (`render::RenderHost`, `flint_import::memoize_imports`,
-   `flint_render::memoize_mip_chains`; ~2.5x in debug) and pipelines kept (#911,
+   `flint_render::memoize_mip_chains`; ~2.5x in debug) and pipelines and textures kept (#911, #961,
    `flint_render::pipeline_cache`, cleared by `RenderHost::drop_device`; the summary's `pipelines:` line
-   counts built and reused and ASCII's glyph pipeline, built once a run; `--fresh-pipelines` builds every
-   case's anew, for an A/B in one process; full suite on the RTX, debug: Vulkan 69 to 27 s, DX12/DXC 320
+   counts built and reused, ASCII's glyph pipeline, built once a run, and textures uploaded and reused;
+   `--fresh-pipelines` builds and uploads every case's anew, for an A/B in one process; full suite on the RTX, debug: Vulkan 69 to 27 s, DX12/DXC 320
    to 45 s); a panicking case reruns in its own process (and drops the kept pipelines with the device),
    `--isolate` spawns every case. A case never sees an earlier one's state: each builds its own
    renderer and draws with its own scene's style registry (#742), so a user style an earlier case

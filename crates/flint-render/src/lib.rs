@@ -114,7 +114,7 @@ pub use split_view::SplitView;
 
 pub use style_mask::{StyleIds, STYLE_MASK_FORMAT};
 pub use surface_frame::{AcquireFrame, SurfaceError};
-pub use texture_cache::{memoize_mip_chains, open_image, TextureCache};
+pub use texture_cache::{memoize_mip_chains, open_image, TextureCache, KEPT_TEXTURE_LABEL};
 pub use trusted_shader::TrustedShader;
 pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
 pub use wooze_pipeline::{ShallowWoozeDraw, WAVELENGTH_MIN};
