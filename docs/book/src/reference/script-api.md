@@ -636,7 +636,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 
 ## debug
 
-*Enabled when the scene has living props, a \[living\] or \[wooze\] table, a `shallow_wooze` entity or woozy grass.* Anywhere else a call is a script error saying the module is not enabled.
+*Enabled when the player is built with its debug-hud feature (on by default) and the scene has living props, a \[living\] or \[wooze\] table, a `shallow_wooze` entity or woozy grass.* Anywhere else a call is a script error saying the module is not enabled.
 
 | Function | Returns | Description |
 |---|---|---|
