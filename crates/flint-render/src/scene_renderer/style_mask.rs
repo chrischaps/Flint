@@ -127,8 +127,9 @@ impl StyleMaskState {
 impl SceneRenderer {
     /// Record the style mask pass over this frame's visible draws of
     /// styled entities: terrain chunks, opaque static, procedural and
-    /// skinned draws, then transparents over them (#310). The mask is
-    /// cleared even with none, so a style never reads a stale frame.
+    /// skinned draws and billboards (#1011), then transparents over them
+    /// (#310). The mask is cleared even with none, so a style never reads
+    /// a stale frame.
     pub(super) fn encode_style_mask(
         &mut self,
         device: &wgpu::Device,
@@ -216,6 +217,21 @@ impl SceneRenderer {
                     device,
                     &self.layouts.transform_bind_group_layout,
                     &skinned.bone_bind_group_layout,
+                );
+            }
+        }
+        // A styled billboard (#1011): the sprite's layouts and quad are the
+        // billboard pipeline's, which drew it
+        if let (Some(pass), Some(bp)) = (
+            &mut self.style_mask.passes.mask,
+            self.pipelines.billboard.as_deref(),
+        ) {
+            if draws.iter().any(|d| d.is_billboard()) {
+                pass.ensure_billboard(
+                    device,
+                    &bp.billboard_bind_group_layout,
+                    &bp.texture_bind_group_layout,
+                    &bp.quad_index_buffer,
                 );
             }
         }
@@ -448,11 +464,12 @@ impl SceneRenderer {
                 else {
                     continue;
                 };
-                let name = match (d.bones.is_some(), self.masks_woozy(&d)) {
-                    (false, false) => "style mask",
-                    (true, false) => "style mask skinned",
-                    (false, true) => "style mask woozy",
-                    (true, true) => "style mask woozy skinned",
+                let name = match (d.is_billboard(), d.bones().is_some(), self.masks_woozy(&d)) {
+                    (true, _, _) => "style mask billboard",
+                    (false, false, false) => "style mask",
+                    (false, true, false) => "style mask skinned",
+                    (false, false, true) => "style mask woozy",
+                    (false, true, true) => "style mask woozy skinned",
                 };
                 if self.draws.within(item, SteppedPass::StyleMask) {
                     pass.draws.push(self.logged_draw(item, None, name));
@@ -472,7 +489,8 @@ impl SceneRenderer {
     /// on its first woozy draw), so the two put each vertex alike.
     fn masks_woozy(&self, d: &crate::style_mask::MaskDraw<'_>) -> bool {
         d.woozy
-            && if d.bones.is_some() {
+            && !d.is_billboard()
+            && if d.bones().is_some() {
                 self.pipelines.wooze_skinned.is_some()
             } else {
                 self.pipelines.wooze_standard.is_some()
@@ -509,50 +527,58 @@ impl SceneRenderer {
 /// keeps them behind the opaques in front of them and nothing else, and
 /// where one shows, it is the nearest styled surface and its id replaces
 /// what's behind. A styled glass is a lens, drawing what's seen through it
-/// in its style. Whether the camera draws it is the caller's to ask.
+/// in its style. A styled billboard is opaque too (#1011): its quad, cut
+/// out by its alpha at 0.5 as the main pass cut it. Whether the camera
+/// draws it is the caller's to ask.
 fn mask_draw<'a>(
     item: &'a DrawItem,
     state: &StyleMaskState,
     terrain: &'a [crate::terrain_pipeline::TerrainDrawCall],
     frustum: Option<&crate::frustum::Frustum>,
 ) -> Option<crate::style_mask::MaskDraw<'a>> {
+    use crate::style_mask::MaskShape;
     let entity = item.entity.as_ref()?;
     let id = state.by_entity.get(entity).copied()?;
-    let (vertex_buffer, index_buffer, index_count, transform_bind_group, bones) = match &item.draw {
+    let shape = match &item.draw {
         Draw::Terrain(n) => {
             let d = terrain.get(*n as usize)?;
             if frustum.is_some_and(|f| !f.aabb_visible(d.aabb_min, d.aabb_max)) {
                 return None;
             }
-            let (v, i, t) = (&d.vertex_buffer, &d.index_buffer, &d.transform_bind_group);
-            (v, i, d.index_count, t, None)
+            MaskShape::Mesh {
+                vertex_buffer: &d.vertex_buffer,
+                index_buffer: &d.index_buffer,
+                index_count: d.index_count,
+                transform_bind_group: &d.transform_bind_group,
+                bones: None,
+            }
         }
-        Draw::Static(d) if !d.is_wireframe => (
-            &*d.vertex_buffer,
-            &*d.index_buffer,
-            d.index_count,
-            &*d.transform_bind_group,
-            None,
-        ),
-        Draw::Skinned(d) => (
-            &*d.vertex_buffer,
-            &*d.index_buffer,
-            d.index_count,
-            &*d.transform_bind_group,
-            Some(&*d.bone_bind_group),
-        ),
+        Draw::Static(d) if !d.is_wireframe => MaskShape::Mesh {
+            vertex_buffer: &d.vertex_buffer,
+            index_buffer: &d.index_buffer,
+            index_count: d.index_count,
+            transform_bind_group: &d.transform_bind_group,
+            bones: None,
+        },
+        Draw::Skinned(d) => MaskShape::Mesh {
+            vertex_buffer: &d.vertex_buffer,
+            index_buffer: &d.index_buffer,
+            index_count: d.index_count,
+            transform_bind_group: &d.transform_bind_group,
+            bones: Some(&d.bone_bind_group),
+        },
         Draw::Static(_) => return None,
-        // A styled billboard isn't masked yet (#1011)
-        Draw::Billboard(_) => return None,
+        // A styled billboard (#1011): its quad, cut out by its alpha as the
+        // scene drew it, with the sprite's own bind groups
+        Draw::Billboard(d) => MaskShape::Billboard {
+            billboard_bind_group: &d.billboard_bind_group,
+            texture_bind_group: &d.texture_bind_group,
+        },
         // A styled entity's echoes and particles stay unmasked
         Draw::Echo(_) | Draw::Particles(_) => return None,
     };
     Some(crate::style_mask::MaskDraw {
-        vertex_buffer,
-        index_buffer,
-        index_count,
-        transform_bind_group,
-        bones,
+        shape,
         id,
         blend: state.blend_by_entity.get(entity).copied().unwrap_or(1.0),
         source: state.blend_sources.get(entity).copied().unwrap_or_default(),
@@ -561,8 +587,11 @@ fn mask_draw<'a>(
 }
 
 /// The albedo's selector: opaque meshes with a plain vertex stage; terrain
-/// and billboards read as no mesh. Whether the camera draws it is the
-/// caller's to ask.
+/// and billboards read as no mesh. A billboard is never lit (its fragment
+/// stage returns the texture's colour), so where it draws the picture is
+/// already its albedo, which is what a reader falls back on there: a
+/// styled billboard needs no albedo draw (#1011). Whether the camera draws
+/// it is the caller's to ask.
 fn albedo_mesh(item: &DrawItem) -> Option<crate::style_albedo::AlbedoMesh<'_>> {
     if item.blend != Blend::Opaque || item.wooze().is_some() {
         return None;

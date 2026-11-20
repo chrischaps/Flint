@@ -40,6 +40,23 @@ pub struct BillboardDrawCall {
     pub sprite_buffer: wgpu::Buffer,
     pub billboard_bind_group: wgpu::BindGroup,
     pub texture_bind_group: wgpu::BindGroup,
+    /// A world box the quad lies in whichever way the camera turns it
+    /// ([`sprite_bounds`]), for a styled billboard's style scissor (#1011).
+    pub world_aabb: ([f32; 3], [f32; 3]),
+}
+
+/// A world box that holds a billboard's quad under any camera: the quad's
+/// corners are `world_pos + right * x * width + up * (y - anchor_y) * height`
+/// with `x` in -0.5..0.5, `y` in 0..1 and `right`, `up` unit and at right
+/// angles, so every corner is within the corner reach of `world_pos`.
+pub fn sprite_bounds(sprite: &SpriteInstance) -> ([f32; 3], [f32; 3]) {
+    let reach_y = sprite.anchor_y.abs().max((1.0 - sprite.anchor_y).abs()) * sprite.height.abs();
+    let reach = (0.5 * sprite.width).hypot(reach_y);
+    let p = sprite.world_pos;
+    (
+        [p[0] - reach, p[1] - reach, p[2] - reach],
+        [p[0] + reach, p[1] + reach, p[2] + reach],
+    )
 }
 
 /// The billboard rendering pipeline
