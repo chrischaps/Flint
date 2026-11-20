@@ -395,7 +395,7 @@ fn one_mistake_in_living_or_wooze_is_one_diagnostic_with_its_field() {
             "living",
             "unknown-field",
             "shadowz",
-            "error[unknown-field] [living] shadowz: `living` has no field `shadowz`\n      \
+            "error[unknown-field] 5:1 [living] shadowz: `living` has no field `shadowz`\n      \
              hint: did you mean `shadows`?; the scene does not load until the table fits\n",
         ),
         (
@@ -403,14 +403,14 @@ fn one_mistake_in_living_or_wooze_is_one_diagnostic_with_its_field() {
             "living",
             "bad-type",
             "softness",
-            "error[bad-type] [living] softness:",
+            "error[bad-type] 5:1 [living] softness:",
         ),
         (
             "wooze.scene.toml",
             "wooze",
             "unknown-field",
             "gilde",
-            "error[unknown-field] [wooze] gilde: `wooze` has no field `gilde`",
+            "error[unknown-field] 5:1 [wooze] gilde: `wooze` has no field `gilde`",
         ),
     ] {
         let o = flint(&dir, &["validate", scene]);
@@ -430,6 +430,65 @@ fn one_mistake_in_living_or_wooze_is_one_diagnostic_with_its_field() {
             (&"error".into(), &code.into(), &table.into(), &field.into()),
             "{d:#?}"
         );
+        // #1061: at the key that is wrong
+        assert_eq!((&d["line"], &d["column"]), (&5.into(), &1.into()), "{d:#?}");
+    }
+}
+
+/// #1061: a wrong TOML type in a typed table (`[camera]`, `[environment]`,
+/// `[post_process]`) refuses the load, as it did, and is one `bad-type`
+/// naming its field and line, from `flint validate` and `flint check` alike:
+/// no `toml-parse` beside it. Each such table is named, where the parse
+/// stopped at the first.
+#[test]
+fn a_wrong_type_in_a_typed_table_is_bad_type_by_field() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("validate_diagnostics_cli")
+        .join("typed_1061");
+    let _ = std::fs::remove_dir_all(&dir);
+    let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+    let manifest = format!(
+        "[project]\nschemas = [\"{}\"]\n",
+        engine.display().to_string().replace('\\', "/")
+    );
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("flint.toml"), manifest).unwrap();
+    std::fs::write(
+        dir.join("wide.scene.toml"),
+        "[scene]\nname = \"Wide\"\n\n[camera]\nposition = [0, 2, 8]\nfov = \"wide\"\n\n\
+         [environment]\ndiffuse_wrap = \"soft\"\n\n[entities.rock]\n",
+    )
+    .unwrap();
+
+    let o = flint(&dir, &["validate", "wide.scene.toml"]);
+    let out = stdout(&o);
+    assert_eq!(o.status.code(), Some(1), "the scene does not load: {out}");
+    assert!(out.starts_with("wide.scene.toml: 2 errors\n"), "{out}");
+    for said in [
+        "  error[bad-type] 6:1 [camera] fov: expected f32, got string\n      \
+         hint: the scene does not load until the table fits\n",
+        "  error[bad-type] 9:1 [environment] diffuse_wrap: expected f32, got string\n",
+    ] {
+        assert!(out.contains(said), "missing:\n{said}\nin:\n{out}");
+    }
+    assert!(!out.contains("toml-parse"), "{out}");
+
+    for args in [
+        &["validate", "wide.scene.toml", "--format", "json"][..],
+        &["check", "wide.scene.toml", "--json"][..],
+    ] {
+        let o = flint(&dir, args);
+        let doc: serde_json::Value = serde_json::from_str(&stdout(&o)).expect("one JSON document");
+        let found = doc["diagnostics"].as_array().unwrap();
+        assert_eq!(found.len(), 2, "{args:?}: {found:#?}");
+        let fov = &found[0];
+        assert_eq!(
+            (&fov["code"], &fov["table"], &fov["field"]),
+            (&"bad-type".into(), &"camera".into(), &"fov".into()),
+            "{args:?}: {fov:#?}"
+        );
+        assert_eq!((&fov["line"], &fov["column"]), (&6.into(), &1.into()));
+        assert_eq!(found[1]["table"], "environment", "{args:?}");
     }
 }
 

@@ -76,9 +76,15 @@ pub fn diagnose_all(
             return vec![Diagnostic::error(codes::FILE_UNREADABLE, e.to_string()).file(scene_file)]
         }
     };
-    let mut scene: SceneFile = match SceneFile::parse(&content) {
-        Ok(scene) => scene,
-        Err(e) => return vec![parse_diagnostic(scene_file, &e)],
+    // A typed table that doesn't fit its type refuses the parse; the rest
+    // of the scene is still checked, and so is the table, by its schema
+    // (#1061)
+    let (mut scene, refused) = match SceneFile::parse(&content) {
+        Ok(scene) => (scene, Vec::new()),
+        Err(e) => match SceneFile::parse_refusing(&content) {
+            Some(parsed) => parsed,
+            None => return vec![parse_diagnostic(scene_file, &e)],
+        },
     };
     let mut found = Vec::new();
     if let Err(e) = prefab::expand_prefabs_in(&mut scene, scene_file, project) {
@@ -95,10 +101,45 @@ pub fn diagnose_all(
     if !expanded {
         found.retain(|d| d.code != codes::UNKNOWN_ENTITY);
     }
+    for (table, said) in refused {
+        refuse_table(&mut found, scene_file, table, &said);
+    }
     if project.strict {
         diagnostic::promote_strict(&mut found);
     }
+    crate::place_table_diagnostics(&content, &mut found);
     found
+}
+
+/// What the hint of a table that refuses the load ends with.
+pub const REFUSES_THE_LOAD: &str = "the scene does not load until the table fits";
+
+/// A typed table that doesn't fit its type (#1061): the scene pass has held
+/// it to its `[table.<name>]` schema, and its errors there (`bad-type`
+/// naming the field) are why the load is refused, so they say so in their
+/// hint; serde's message stands, as `toml-parse` on the table, only when the
+/// pass found no error in it. One mistake is one diagnostic, by its field,
+/// as #807 made it for `[living]`.
+fn refuse_table(found: &mut Vec<Diagnostic>, file: &Path, table: &str, said: &str) {
+    let mut named = false;
+    for d in found
+        .iter_mut()
+        .filter(|d| d.is_error() && d.entity.is_none() && d.table.as_deref() == Some(table))
+    {
+        named = true;
+        d.hint = Some(match d.hint.take() {
+            Some(hint) => format!("{hint}; {REFUSES_THE_LOAD}"),
+            None => REFUSES_THE_LOAD.to_string(),
+        });
+    }
+    if !named {
+        found.push(
+            Diagnostic::error(codes::TOML_PARSE, said)
+                .file(file)
+                .table(table)
+                .hint(REFUSES_THE_LOAD),
+        );
+    }
 }
 
 /// A file that is not TOML, or not a scene, as a diagnostic naming it.
@@ -959,9 +1000,9 @@ slots = 4
         assert_eq!(
             said,
             [
-                "scenes/a.scene.toml: warning[unknown-table] [enviroment]: no scene table named \
-                 `enviroment`, so nothing reads it (did you mean `environment`?)",
-                "scenes/a.scene.toml: warning[unknown-table] [inventory]: no scene table named \
+                "scenes/a.scene.toml: warning[unknown-table] 5:2 [enviroment]: no scene table \
+                 named `enviroment`, so nothing reads it (did you mean `environment`?)",
+                "scenes/a.scene.toml: warning[unknown-table] 8:2 [inventory]: no scene table named \
                  `inventory`, so nothing reads it (a table a game adds is declared in its \
                  schema layer, as `[table.inventory]` in scene/inventory.toml; `flint schema \
                  --list` names the ones loaded)",
@@ -1005,21 +1046,49 @@ position = [0, 0, 0]
         assert_eq!(
             said,
             [
-                "warning[unknown-field] [environment] fog.colour: `environment.fog` has no \
+                // Each at its key (#1061): inside an inline table too, and a
+                // missing field at its table's header
+                "warning[unknown-field] 8:25 [environment] fog.colour: `environment.fog` has no \
                  field `colour`",
-                "error[out-of-range] [environment] fog.density: -1 is below the minimum 0",
-                "warning[unknown-field] [environment] shadws: `environment` has no field \
+                "error[out-of-range] 8:9 [environment] fog.density: -1 is below the minimum 0",
+                "warning[unknown-field] 6:1 [environment] shadws: `environment` has no field \
                  `shadws`",
-                "error[missing-asset] [environment] skybox: file 'skies/none.hdr' not found",
-                "error[missing-field] [weather] kind: required field `kind` is missing",
-                "error[bad-type] [weather] rain: expected f32, got string",
-                "error[bad-type] [weather] wind: a vec3 is 3 numbers, got 2",
-                "error[unknown-entity] [weather] watcher: no entity named `nobody`",
+                "error[missing-asset] 7:1 [environment] skybox: file 'skies/none.hdr' not found",
+                "error[missing-field] 10:2 [weather] kind: required field `kind` is missing",
+                "error[bad-type] 11:1 [weather] rain: expected f32, got string",
+                "error[bad-type] 12:1 [weather] wind: a vec3 is 3 numbers, got 2",
+                "error[unknown-entity] 13:1 [weather] watcher: no entity named `nobody`",
             ]
         );
         assert_eq!(found[2].hint.as_deref(), Some("did you mean `shadows`?"));
         assert!(found.iter().all(|d| d.component.is_none()
             && d.file.as_deref() == Some(Path::new("scenes/a.scene.toml"))));
+    }
+
+    /// #1061: a typed table that doesn't fit its type refuses the parse,
+    /// and the pass still runs. A table with a schema is named by field
+    /// (`bad-type`, with why the load is refused); one with none to name it
+    /// keeps serde's message, as `toml-parse` on the table, placed at its
+    /// header. The entities are checked as ever.
+    #[test]
+    fn a_wrong_type_in_a_typed_table_is_named_and_the_rest_checked() {
+        let found = found_in(
+            "[scene]\nname = \"s\"\n\n[environment]\nshadows = \"no\"\n\n\
+             [camera]\nfov = \"wide\"\n\n[entities.rock.lihgt]\n",
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "error[bad-type] 5:1 [environment] shadows: expected bool, got string",
+                "error[unknown-component] entity 'rock' component 'lihgt': no component named \
+                 `lihgt`, so nothing checks it",
+                "error[toml-parse] 7:2 [camera]: invalid type: string \"wide\", expected f32",
+            ],
+            "{found:#?}"
+        );
+        assert_eq!(found[0].hint.as_deref(), Some(REFUSES_THE_LOAD));
+        assert_eq!(found[2].hint.as_deref(), Some(REFUSES_THE_LOAD));
     }
 
     /// #741: a built-in effect key past the range its effect is tuned for
@@ -1043,10 +1112,10 @@ position = [0, 0, 0]
         assert_eq!(
             said,
             [
-                "warning[post-range] [post_process] bloom_intensity: bloom_intensity=3 is \
+                "warning[post-range] 6:1 [post_process] bloom_intensity: bloom_intensity=3 is \
                  outside its range 0..1",
-                "warning[post-range] [post_process] fog_color: fog_color=[0.5, 0.5, 2.0] is \
-                 outside its range 0..1",
+                "warning[post-range] 7:1 [post_process] fog_color: fog_color=[0.5, 0.5, 2.0] \
+                 is outside its range 0..1",
             ]
         );
         assert!(found.iter().all(|d| !d.is_error()));

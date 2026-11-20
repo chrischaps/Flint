@@ -179,8 +179,20 @@ fn check_all(
     if strict {
         diagnostic::promote_strict(&mut found);
     }
+    // `diagnose` read and parsed it a moment ago. A typed table that
+    // doesn't fit its type (#1061) refuses the load: the pass named it by
+    // field, and the rest of the scene is checked without it
+    let parsed = vfs::read_to_string(scene).ok().and_then(|text| {
+        let (file, refused) = match SceneFile::parse(&text) {
+            Ok(file) => (file, Vec::new()),
+            Err(_) => SceneFile::parse_refusing(&text)?,
+        };
+        let refused: Vec<&str> = refused.into_iter().map(|(table, _)| table).collect();
+        Some((text, file, refused))
+    });
+    let refused: &[&str] = parsed.as_ref().map_or(&[], |(_, _, refused)| refused);
     if !checks.schema {
-        found.retain(stops_a_load);
+        found.retain(|d| stops_a_load(d) || refuses_a_table(d, refused));
     }
     // This pass's own asset check asks the catalog and the specs first
     if checks.files {
@@ -188,19 +200,18 @@ fn check_all(
     }
     let unreadable = cannot_load(&found);
     let no_parent = found.iter().any(dangling_parent);
+    let refused = !refused.is_empty();
     out.diagnostics.extend(found);
     if unreadable {
         return out;
     }
-    // `diagnose` read and parsed it a moment ago
-    let Ok(text) = vfs::read_to_string(scene) else {
-        return out;
-    };
-    let Ok(file) = toml::from_str::<SceneFile>(&text) else {
+    let Some((text, file, _)) = parsed else {
         return out;
     };
 
     let world = match load_scene_diagnosed(scene, registry) {
+        // Said by field already
+        _ if refused => None,
         Ok((world, _, _)) => Some(world),
         // A parent that isn't there, or loops, has been named with its entity
         Err(_) if no_parent => None,
@@ -260,7 +271,14 @@ fn check_all(
             out.diagnostics.extend(constraints(scene, world, schemas));
         }
     }
+    flint_scene::place_table_diagnostics(&text, &mut out.diagnostics);
     out
+}
+
+/// One of the pass's errors in a typed table that refuses the load (#1061):
+/// what stops the load, so it is said in every kind of check.
+fn refuses_a_table(d: &Diagnostic, refused: &[&str]) -> bool {
+    d.is_error() && d.entity.is_none() && d.table.as_deref().is_some_and(|t| refused.contains(&t))
 }
 
 /// The params of every procgen spec a model or texture of the scene is made
@@ -740,7 +758,7 @@ fn user_style_diagnostic(message: &str, scene_dir: &Path) -> Diagnostic {
 /// load's hint; serde's `said` is added only when the pass found nothing,
 /// so one mistake is one diagnostic.
 fn refuses_the_load(found: &mut Vec<Diagnostic>, scene: &Path, table: &str, said: &str) {
-    const HINT: &str = "the scene does not load until the table fits";
+    const HINT: &str = flint_scene::REFUSES_THE_LOAD;
     let mut named = false;
     for d in found
         .iter_mut()
