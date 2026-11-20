@@ -69,7 +69,7 @@ mod wooze_pipeline;
 pub(crate) mod world_line_pipeline;
 
 pub use atlas::{AtlasRegistry, TextureAtlas};
-pub use bind_cache::{new_depth_id, DepthKey, DepthTarget};
+pub use bind_cache::{DepthKey, DepthTarget};
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
 pub use context::{resolve_present_mode, RenderContext, RenderError};

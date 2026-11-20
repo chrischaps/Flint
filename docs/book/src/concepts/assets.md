@@ -253,6 +253,8 @@ flint asset list --type mesh
 flint asset resolve levels/tavern.scene.toml --strategy strict
 ```
 
+`resolve` reads every field the scene's schemas declare as `asset`. A reference counts as found when the catalog holds its name or the engine's search finds its file. [Which references it reads](ai-generation.md#which-references-it-reads) has the list.
+
 ## glTF/GLB Import
 
 The `flint-import` crate provides full glTF/GLB support, extracting:

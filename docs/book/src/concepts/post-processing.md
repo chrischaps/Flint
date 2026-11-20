@@ -403,7 +403,7 @@ exposure = 1.0
 
 All fields are optional --- omitted values use their defaults. The full key list with defaults is in [File Formats](../formats/overview.md), and `flint render --list-effects` prints it from the engine itself (below).
 
-A key that is no field is ignored, so its field keeps its default, and the load warns with the file and the closest known name (#354). The scene still loads, and `flint validate` shows the same line:
+A key that is no field is ignored, so its field keeps its default, and the load warns with the file and the closest known name (#354). It stays ignored under a look: the scene's `look = "..."`, a script's `set_look`, F4's Look and a comic panel lay the scene's keys over the look without it, so that warning is the only message about it (#896). The scene still loads, and `flint validate` shows the same line:
 
 ```text
 WARN levels/demo.scene.toml: [post_process] has no field 'bloom_intensty', did you mean 'bloom_intensity'? (ignored)
@@ -426,7 +426,7 @@ bloom  (Bloom): Bright areas bleed light
   bloom_soft_threshold     f32  0.5                0..1           How softly blooming starts below the threshold: 0 is a hard cut
 ```
 
-A value outside its key's range still draws, as a style value past its range does (#355), and says so: the load, `flint validate` and `flint check` warn with `post-range` and name the range. A look's value, or a `--sweep post.<key>` value, past its range is refused instead, as a style value there is:
+A value outside its key's range still draws, as a style value past its range does (#355), and says so: the load, `flint validate` and `flint check` warn with `post-range` and name the range. A look's value, or a `--sweep post.<key>` value, past its range is refused instead, as a style value there is (a scene's value laid over a look is still the scene's: it draws, and only the load warns):
 
 ```text
 warning[post-range] [post_process] bloom_intensity: bloom_intensity=3 is outside its range 0..1

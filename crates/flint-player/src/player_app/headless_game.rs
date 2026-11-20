@@ -158,6 +158,8 @@ pub struct HeadlessGame {
     /// The last step's HUD (#731): what `on_draw_ui` drew and the UI
     /// documents, for a capture to paint ([`HeadlessHud`](super::headless_hud::HeadlessHud)).
     hud: Vec<flint_script::context::DrawItem>,
+    /// The last step's screen field (#859), for the capture's frame inputs.
+    style_field: flint_core::style_field::StyleField,
     #[cfg(feature = "debug-hud")]
     panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
 }
@@ -189,6 +191,7 @@ impl HeadlessGame {
             key_note: Default::default(),
             pixels_per_point: 1.0,
             hud: Vec::new(),
+            style_field: Default::default(),
             #[cfg(feature = "debug-hud")]
             panels: Vec::new(),
         }
@@ -444,10 +447,13 @@ impl HeadlessGame {
     /// player's subsystems give theirs: the shading boil's drawing where
     /// the field's clock stands for a viewer at `camera` (#214), shallow
     /// wooze's drift in a capture of a moment (#215), and woozy grass's
-    /// clock and comb (#252). What the game has none of is left as it is.
+    /// clock and comb (#252), and the screen field the last step's scripts
+    /// filled (#859). What the game has none of is left as it is.
     pub fn frame_inputs<'s>(&'s self, camera: &Camera, boil_on: u32, inputs: &mut FrameInputs<'s>) {
         let frame = FrameCtx { camera, boil_on };
         self.core.subsystems.frame_inputs(&frame, inputs);
+        // The screen field the last step's scripts filled (#859)
+        inputs.style_field = self.style_field.shapes();
     }
 
     /// The physical pixels per logical point scripts are told the capture
@@ -608,6 +614,8 @@ impl FrameHost for CaptureFrame<'_> {
         let (w, h) = game.screen;
         hud.extend(game.core.script.generate_ui_draw_commands(w, h));
         game.hud = hud;
+        // The style field (#859): the step's, as the player hands it over
+        game.style_field = game.core.script.drain_style_field();
         if !game.core.script.drain_world_lines().is_empty() {
             game.note("draw_world_line: world lines aren't drawn in a headless capture");
         }

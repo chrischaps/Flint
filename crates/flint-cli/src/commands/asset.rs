@@ -14,7 +14,6 @@ use flint_asset_gen::{
     register_generated_asset_in, write_asset_sidecar_with_root, Calls, FlintConfig, JobStore,
     StyleGuide,
 };
-use flint_core::components as comp;
 use flint_import::import_gltf;
 use serde_json::json;
 use std::collections::HashMap;
@@ -79,6 +78,13 @@ pub enum AssetCommands {
         /// checked before each call is sent
         #[arg(long, value_name = "USD", value_parser = super::ai_costs::parse_usd)]
         max_cost: Option<f64>,
+
+        /// Schema directory, repeatable; the list of every `asset` field
+        /// read comes from these. Without it: the project's flint.toml
+        /// `schemas`, else schemas/ in the working directory, beside the
+        /// scene and one level up
+        #[arg(long)]
+        schemas: Vec<String>,
     },
 
     /// Generate an asset using AI
@@ -250,12 +256,14 @@ pub fn run(cmd: AssetCommands) -> Result<()> {
             style,
             output_dir,
             max_cost,
+            schemas,
         } => run_resolve(
             &scene,
             &strategy,
             style.as_deref(),
             output_dir.as_deref(),
             max_cost,
+            &schemas,
         ),
         AssetCommands::Generate {
             asset_type,
@@ -960,6 +968,7 @@ fn run_resolve(
     style_name: Option<&str>,
     output_dir: Option<&str>,
     max_cost: Option<f64>,
+    schemas: &[String],
 ) -> Result<()> {
     // Check for batch strategies (ai_generate, human_task, ai_then_human)
     let batch_strategy = match strategy_str {
@@ -968,6 +977,25 @@ fn run_resolve(
         "ai_then_human" => Some(flint_asset_gen::batch::BatchStrategy::AiThenHuman),
         _ => None,
     };
+    let strategy = match strategy_str {
+        "strict" => Some(ResolutionStrategy::Strict),
+        "placeholder" => Some(ResolutionStrategy::Placeholder),
+        _ if batch_strategy.is_some() => None,
+        _ => anyhow::bail!(
+            "Unknown strategy: {} (use 'strict', 'placeholder', 'ai_generate', 'human_task', 'ai_then_human')",
+            strategy_str
+        ),
+    };
+
+    // The scene's project's catalog, not the working directory's (#179),
+    // and every `asset` field its schemas declare (#968).
+    let project = Project::for_path(Path::new(scene_path))?;
+    let catalog = AssetCatalog::load_from_directory(project.catalog_dir())?;
+    let references = scene_asset_references(scene_path, schemas, &project, &catalog)?;
+    let found = references.iter().filter(|r| r.found.is_some()).count();
+    for reference in &references {
+        say!("{}", reference.line());
+    }
 
     if let Some(batch_strat) = batch_strategy {
         let config = FlintConfig::load().unwrap_or_else(|_| FlintConfig {
@@ -980,15 +1008,39 @@ fn run_resolve(
             None => None,
         };
 
-        let project = Project::for_path(Path::new(scene_path))?;
         let generated = project.generated_dir().display().to_string();
         let out = output_dir.unwrap_or(&generated);
         // One meter for the whole scene: the scene's project's ledger and
         // prices, and the run's ceiling.
         let calls = project_calls(&project, max_cost)?;
 
-        let result = flint_asset_gen::batch::resolve_scene(
-            scene_path,
+        // What a provider makes is a model, a texture or a sound; a missing
+        // script or heightmap is reported, and left unresolved
+        let mut needs = flint_asset_gen::batch::SceneNeeds::default();
+        let mut no_provider = Vec::new();
+        for reference in references.iter().filter(|r| r.found.is_none()) {
+            match generated_kind(&reference.kinds) {
+                Some(kind) => needs.missing.push(flint_asset_gen::batch::MissingAsset {
+                    entity_name: reference.place(),
+                    field: reference.field(),
+                    asset_name: reference.name.clone(),
+                    kind,
+                }),
+                None => no_provider.push(reference),
+            }
+        }
+        needs.total = found + needs.missing.len();
+        for reference in &no_provider {
+            say!(
+                "  No provider makes {} {}: left missing",
+                kinds_label(&reference.kinds),
+                reference.field_of()
+            );
+        }
+
+        let result = flint_asset_gen::batch::resolve_missing(
+            &project,
+            &needs,
             batch_strat,
             style.as_ref(),
             &config,
@@ -1002,12 +1054,13 @@ fn run_resolve(
             json!({
                 "scene": scene_path,
                 "strategy": strategy_str,
-                "references": result.total_refs,
+                "references": references.len(),
                 "found": result.already_found,
                 "generated": result.generated,
                 "tasks_created": result.tasks_created,
                 "failed": result.failed,
                 "over_budget": result.over_budget,
+                "no_provider": no_provider.iter().map(|r| r.json()).collect::<Vec<_>>(),
                 "cost_usd": result.spent_usd,
                 "max_cost": max_cost,
             })
@@ -1015,64 +1068,24 @@ fn run_resolve(
         // A reference neither generated nor handed to a person is a failure
         let unresolved =
             result.total_refs - result.already_found - result.generated - result.tasks_created;
-        if result.failed > 0 || unresolved > 0 {
+        if result.failed > 0 || unresolved > 0 || !no_provider.is_empty() {
             return Err(output::failed());
         }
         return Ok(());
     }
 
-    // Existing catalog-based resolution
-    let strategy = match strategy_str {
-        "strict" => ResolutionStrategy::Strict,
-        "placeholder" => ResolutionStrategy::Placeholder,
-        _ => anyhow::bail!(
-            "Unknown strategy: {} (use 'strict', 'placeholder', 'ai_generate', 'human_task', 'ai_then_human')",
-            strategy_str
-        ),
-    };
-
-    // The scene's project's catalog, not the working directory's (#179).
-    let catalog =
-        AssetCatalog::load_from_directory(Project::for_path(Path::new(scene_path))?.catalog_dir())?;
-    let resolver = AssetResolver::new(strategy);
-
-    // Load and scan scene for asset references
-    let content = std::fs::read_to_string(scene_path)?;
-    let scene: toml::Value = toml::from_str(&content)?;
-
-    let mut found = 0usize;
-    let mut missing = 0usize;
-    let mut missing_refs = Vec::new();
-
-    for reference in collect_scene_asset_references(&scene) {
-        let asset_ref = flint_asset::AssetRef::ByName(reference.name.clone());
-        let result = resolver.resolve(&asset_ref, &catalog);
-        if result.is_found() {
-            found += 1;
-        } else {
-            missing += 1;
-            missing_refs.push(json!({
-                "entity": reference.entity,
-                "field": reference.field,
-                "name": reference.name,
-            }));
-            say!(
-                "  Missing: {}.{} -> \"{}\"",
-                reference.entity,
-                reference.field,
-                reference.name
-            );
-        }
-    }
-
-    say!("\nResolution: {} found, {} missing", found, missing);
-    let failed = missing > 0 && strategy == ResolutionStrategy::Strict;
+    let strategy = strategy.expect("a catalog strategy");
+    let missing: Vec<&SceneAssetReference> =
+        references.iter().filter(|r| r.found.is_none()).collect();
+    say!("\nResolution: {} found, {} missing", found, missing.len());
+    let failed = !missing.is_empty() && strategy == ResolutionStrategy::Strict;
     output::when_json(|| {
         json!({
             "scene": scene_path,
             "strategy": strategy_str,
             "found": found,
-            "missing": missing_refs,
+            "missing": missing.iter().map(|r| r.json()).collect::<Vec<_>>(),
+            "references": references.iter().map(|r| r.json()).collect::<Vec<_>>(),
             "valid": !failed,
         })
     });
@@ -1083,73 +1096,150 @@ fn run_resolve(
     Ok(())
 }
 
+/// One asset a scene names, and where it was found (#968).
 #[derive(Debug, Clone)]
 struct SceneAssetReference {
-    entity: String,
-    field: String,
+    /// The entity it is written on, or `None` for a scene table.
+    entity: Option<String>,
+    /// The component, or the scene table.
+    table: String,
+    /// The field's path inside it.
+    path: String,
     name: String,
+    kinds: Vec<flint_core::project::AssetKind>,
+    /// `catalog`, or the file the engine loads; `None` when nothing holds it.
+    found: Option<String>,
+    /// Why nothing holds it: every path tried, or that an `asset_def`
+    /// declares it and it is not made yet.
+    why_missing: Option<String>,
 }
 
-fn collect_scene_asset_references(scene: &toml::Value) -> Vec<SceneAssetReference> {
-    let mut refs = Vec::new();
+impl SceneAssetReference {
+    /// `model.asset`, or `environment.skybox` for a scene table.
+    fn field(&self) -> String {
+        format!("{}.{}", self.table, self.path)
+    }
 
-    let Some(entities) = scene.get("entities").and_then(|e| e.as_table()) else {
-        return refs;
-    };
-
-    for (entity_name, entity_data) in entities {
-        let Some(table) = entity_data.as_table() else {
-            continue;
-        };
-
-        // Legacy top-level references
-        for field in ["mesh", "texture", "material", "audio", "script"] {
-            push_ref_if_string(table, entity_name, field, field, &mut refs);
-        }
-
-        // Current component references
-        if let Some(model) = table.get(comp::MODEL).and_then(|v| v.as_table()) {
-            push_ref_if_string(model, entity_name, "asset", "model.asset", &mut refs);
-        }
-
-        if let Some(material) = table.get(comp::MATERIAL).and_then(|v| v.as_table()) {
-            push_ref_if_string(
-                material,
-                entity_name,
-                "texture",
-                "material.texture",
-                &mut refs,
-            );
-        }
-
-        if let Some(sprite) = table.get(comp::SPRITE).and_then(|v| v.as_table()) {
-            push_ref_if_string(sprite, entity_name, "texture", "sprite.texture", &mut refs);
-        }
-
-        if let Some(audio) = table.get(comp::AUDIO_SOURCE).and_then(|v| v.as_table()) {
-            push_ref_if_string(audio, entity_name, "file", "audio_source.file", &mut refs);
+    /// The entity, or `[environment]` for a scene table.
+    fn place(&self) -> String {
+        match &self.entity {
+            Some(entity) => entity.clone(),
+            None => format!("[{}]", self.table),
         }
     }
 
-    refs
-}
-
-fn push_ref_if_string(
-    table: &toml::map::Map<String, toml::Value>,
-    entity_name: &str,
-    key: &str,
-    field_name: &str,
-    refs: &mut Vec<SceneAssetReference>,
-) {
-    if let Some(name) = table.get(key).and_then(|v| v.as_str()) {
-        if !name.is_empty() {
-            refs.push(SceneAssetReference {
-                entity: entity_name.to_string(),
-                field: field_name.to_string(),
-                name: name.to_string(),
-            });
+    /// `crate.model.asset`, or `[environment].skybox`.
+    fn field_of(&self) -> String {
+        match &self.entity {
+            Some(entity) => format!("{entity}.{}", self.field()),
+            None => format!("[{}].{}", self.table, self.path),
         }
     }
+
+    fn line(&self) -> String {
+        match (&self.found, &self.why_missing) {
+            (Some(found), _) => format!(
+                "  Found: {} -> \"{}\" ({found})",
+                self.field_of(),
+                self.name
+            ),
+            (None, why) => format!(
+                "  Missing: {} -> \"{}\"{}",
+                self.field_of(),
+                self.name,
+                why.as_deref()
+                    .map(|why| format!(" ({why})"))
+                    .unwrap_or_default()
+            ),
+        }
+    }
+
+    fn json(&self) -> serde_json::Value {
+        json!({
+            "entity": self.entity,
+            "table": self.table,
+            "field": self.field(),
+            "name": self.name,
+            "kinds": self.kinds.iter().map(|k| k.label()).collect::<Vec<_>>(),
+            "found": self.found,
+            "missing": self.why_missing,
+        })
+    }
+}
+
+/// Every asset the scene at `scene_path` names, from its schemas (#968):
+/// each field the loaded schemas type `asset`, through arrays and tables,
+/// in every entity (prefabs expanded) and scene table, as
+/// [`flint_scene::asset_references`] walks them. Each is found in the
+/// project's asset catalog by name, else as the engine finds it (a file,
+/// or a model or texture in the catalog and store).
+fn scene_asset_references(
+    scene_path: &str,
+    schemas: &[String],
+    project: &Project,
+    catalog: &AssetCatalog,
+) -> Result<Vec<SceneAssetReference>> {
+    let (registry, _) = super::common_args::load_schemas(Some(scene_path), schemas)?;
+    // With no schema nothing is known to name an asset, and a report of
+    // nothing found would read as a scene with nothing to make
+    if registry.component_names().is_empty() {
+        anyhow::bail!(
+            "no component schemas were found for {scene_path}, so no field is known to name \
+             an asset; pass --schemas <dir> (the engine's is `schemas/`, a game's \
+             `engine/schemas`) or list them in flint.toml's [project] schemas"
+        );
+    }
+    let resolver = AssetResolver::new(ResolutionStrategy::Strict);
+    let walked = flint_scene::asset_references(Path::new(scene_path), &registry, project)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(walked
+        .into_iter()
+        .map(|r| {
+            let catalogued = resolver
+                .resolve(&flint_asset::AssetRef::ByName(r.name.clone()), catalog)
+                .is_found();
+            let (found, why_missing) = match r.located {
+                _ if catalogued => (Some("catalog".to_string()), None),
+                flint_scene::Located::File(path) => (Some(flint_core::project::shown(&path)), None),
+                flint_scene::Located::Catalog => (Some("catalog".to_string()), None),
+                flint_scene::Located::Declared => (
+                    None,
+                    Some("an asset_def declares it; not made yet".to_string()),
+                ),
+                flint_scene::Located::Missing { tried } => (None, Some(tried)),
+            };
+            SceneAssetReference {
+                entity: r.entity,
+                table: r.table,
+                path: r.field,
+                name: r.name,
+                kinds: r.kinds,
+                found,
+                why_missing,
+            }
+        })
+        .collect())
+}
+
+/// What a provider can make for a field of `kinds`: a model, a texture or
+/// a sound, the first the field takes.
+fn generated_kind(
+    kinds: &[flint_core::project::AssetKind],
+) -> Option<flint_asset_gen::provider::AssetKind> {
+    use flint_asset_gen::provider::AssetKind as Made;
+    use flint_core::project::AssetKind as Kind;
+    kinds.iter().find_map(|kind| match kind {
+        Kind::Models => Some(Made::Model),
+        Kind::Textures | Kind::ParticleTextures | Kind::Sprites => Some(Made::Texture),
+        Kind::Audio => Some(Made::Audio),
+        _ => None,
+    })
+}
+
+/// `files`, or `models or specs`.
+fn kinds_label(kinds: &[flint_core::project::AssetKind]) -> String {
+    let labels: Vec<&str> = kinds.iter().map(|k| k.label()).collect();
+    labels.join(" or ")
 }
 
 fn guess_asset_type(ext: &str) -> AssetType {

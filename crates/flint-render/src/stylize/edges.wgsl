@@ -14,7 +14,7 @@
 //     buffer value is affine across the screen, so its second difference
 //     is 0 (a step's is as big as the step);
 //   - normals: rebuilt from the depth's world positions, one-sided so each
-//     stays on its own surface (#484), for creases where two faces meet at
+//     stays on its own surface (#484, #952), for creases where two faces meet at
 //     one depth (a box's corners), counted only where the 5x5 patch is one
 //     surface (across a depth step rebuilt normals are nonsense and mark a
 //     band 4-5 px wide on both sides).
@@ -60,20 +60,47 @@ fn bend(a: f32, c: f32, b: f32) -> f32 {
     return abs(a + b - 2.0 * c) / (abs(a - c) + abs(b - c) + 1e-7);
 }
 
-// The surface normal at patch index `at`, from one neighbour on each axis:
-// the one nearer the centre's view distance (#484). A central difference
-// spans a step whenever one sits beside the pixel, and the normal it makes
-// belongs to neither surface. Where the step is too shallow for the depth
-// Sobel (a pillar's foot, with the ground just behind it), those normals
-// marked a crease band 4 px wide. A one-sided tangent stays on the pixel's
-// own surface, so a normal changes only where the surface does and the
-// Sobel marks the two pixels astride it. On one surface either side gives
-// the same plane, and a fold's own pixel takes one face's normal.
-fn normal_at(pos: ptr<function, array<vec3<f32>, 25>>, rel: ptr<function, array<f32, 25>>, at: i32) -> vec3<f32> {
+// How far the pixel `at` lies off the line through its two neighbours on
+// one side (`s` the index step to them, signed): 0 when all three are on
+// one plane, since a plane's depth is affine across the screen
+fn off_side(d: ptr<function, array<f32, 25>>, at: i32, s: i32) -> f32 {
+    return abs(2.0 * (*d)[at + s] - (*d)[at + 2 * s] - (*d)[at]);
+}
+
+// Whether a tangent along one axis takes the pixel's - side (else its +
+// side): the side whose two neighbours lie on the pixel's own plane.
+// `k` is the pixel's place on the axis in the 5x5 patch (1..3), `s` the
+// index step along it. The middle pixel can test both sides; one off the
+// middle has two neighbours on its inner side only, and takes that side
+// when the pixel lies on their line (to a tenth of how far the centred
+// second difference is off it), else the other.
+fn minus_side(d: ptr<function, array<f32, 25>>, at: i32, k: i32, s: i32) -> bool {
+    if k == 2 {
+        return off_side(d, at, -s) < off_side(d, at, s);
+    }
+    let mid = abs((*d)[at - s] + (*d)[at + s] - 2.0 * (*d)[at]);
+    let inner = select(-s, s, k == 1);
+    let off = off_side(d, at, inner);
+    let on_inner = off <= 0.1 * (off + mid) + 4e-7;
+    return on_inner == (k == 3);
+}
+
+// The surface normal at patch index `at`, from one neighbour on each axis,
+// on the pixel's own plane. A central difference spans a step whenever one
+// sits beside the pixel, and the normal it makes belongs to neither
+// surface: where the step is too shallow for the depth Sobel (a pillar's
+// side, with the ground just behind it), those normals marked a crease
+// band 4 px wide. #484 took the neighbour nearer the centre's view
+// distance, which finds the side of a step but not of a fold, where the
+// distance runs on unbroken: the steeper face's last pixel took the
+// tangent across the fold, and a pillar's foot seen square on was a band
+// 3 px tall (#952). Asking which side's neighbours are on the pixel's
+// plane answers both, so a normal changes only where the surface does and
+// the Sobel marks the two pixels astride it.
+fn normal_at(pos: ptr<function, array<vec3<f32>, 25>>, depth: ptr<function, array<f32, 25>>, at: i32) -> vec3<f32> {
     let p = (*pos)[at];
-    let r = (*rel)[at];
-    let left = abs((*rel)[at - 1] - r) < abs((*rel)[at + 1] - r);
-    let up = abs((*rel)[at - 5] - r) < abs((*rel)[at + 5] - r);
+    let left = minus_side(depth, at, at % 5, 1);
+    let up = minus_side(depth, at, at / 5, 5);
     // Each tangent points the same way (+x, +y in the patch) whichever
     // side it was taken from, so the cross keeps the central form's sign
     let tx = select((*pos)[at + 1] - p, p - (*pos)[at - 1], left);
@@ -145,7 +172,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let at = (j + 1) * 5 + (i + 1);
             let k = j * 3 + i;
             let dist = rel[at];
-            let n = normal_at(&pos, &rel, at);
+            let n = normal_at(&pos, &depth, at);
             dgx += kx[k] * dist;
             dgy += ky[k] * dist;
             ngx += kx[k] * n;

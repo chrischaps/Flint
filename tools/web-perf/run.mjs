@@ -7,7 +7,7 @@
 // usage: node tools/web-perf/run.mjs <site-dir|url> <bundle> <scene[+query],...> --out <dir>
 //          [--dpr 1,2] [--size 1920x1080] [--seconds 25] [--reads 2]
 //          [--query '&fps=native'] [--passes 'Style mask,ASCII'] [--begin auto|click]
-//          [--port 9381] [--browser chrome|firefox] [--chrome <path>] [--firefox <path>]
+//          [--port 9381] [--browser chrome|firefox] [--chrome <path>] [--firefox <path>] [--prefs k=v,...] [--trace]
 //
 // <site-dir> is served on 127.0.0.1 for the run; a URL is used as it is.
 // <bundle> is relative to the page (`games/<id>/<id>.flintpack` in a
@@ -22,6 +22,7 @@ import { createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, statSync,
 import { tmpdir } from 'node:os';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { parsePerfLine, range } from './perfline.mjs';
+import { TRACE_JS, summarizeTrace, traceLine } from './trace.mjs';
 
 // ---- arguments -------------------------------------------------------------
 
@@ -29,12 +30,13 @@ const argv = process.argv.slice(2);
 const flags = {};
 const positional = [];
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i].startsWith('--')) flags[argv[i].slice(2)] = argv[++i];
+  if (argv[i] === '--trace') flags.trace = true; // the one flag with no value
+  else if (argv[i].startsWith('--')) flags[argv[i].slice(2)] = argv[++i];
   else positional.push(argv[i]);
 }
 const [site, bundle, sceneList] = positional;
 if (!site || !bundle || !sceneList || !flags.out) {
-  console.error('usage: node tools/web-perf/run.mjs <site-dir|url> <bundle> <scene,...> --out <dir> [--dpr 1,2] [--size 1920x1080] [--seconds 25] [--reads 2] [--query ...] [--passes ...] [--begin auto|click] [--port 9381] [--browser chrome|firefox] [--chrome <path>] [--firefox <path>]');
+  console.error('usage: node tools/web-perf/run.mjs <site-dir|url> <bundle> <scene,...> --out <dir> [--dpr 1,2] [--size 1920x1080] [--seconds 25] [--reads 2] [--query ...] [--passes ...] [--begin auto|click] [--port 9381] [--browser chrome|firefox] [--chrome <path>] [--firefox <path>] [--prefs k=v,...] [--trace]');
   process.exit(2);
 }
 const outDir = resolve(flags.out);
@@ -44,6 +46,13 @@ const warmSecs = Number(flags.seconds ?? 25);
 const reads = Math.max(1, Number(flags.reads ?? 2));
 const extra = flags.query ?? '';
 const begin = flags.begin ?? 'auto';
+const trace = 'trace' in flags;
+const extraPrefs = Object.fromEntries(
+  (flags.prefs ?? '').split(',').filter(Boolean).map((kv) => {
+    const [k, v = ''] = kv.split('=');
+    return [k.trim(), v === 'true' ? true : v === 'false' ? false : /^-?\d+$/.test(v) ? Number(v) : v];
+  }),
+);
 const cdpPort = Number(flags.port ?? 9381);
 const scenes = sceneList.split(',').filter(Boolean);
 const chromePath =
@@ -228,6 +237,8 @@ async function openFirefox(dpr, css) {
     'media.autoplay.default': 0,
     'media.autoplay.blocking_policy': 0,
     'network.proxy.type': 0,
+    // --prefs 'k=v,k=v': more, or these overridden, for one run (#962)
+    ...extraPrefs,
   };
   const lines = Object.entries(prefs).map(([k, v]) => `user_pref(${JSON.stringify(k)}, ${JSON.stringify(v)});`);
   writeFileSync(join(profile, 'user.js'), lines.join('\n') + '\n');
@@ -359,6 +370,11 @@ async function playPage({ navigate, evaluate, screenshot }, scene, dpr, css) {
       timestampQuery: !!(await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' }))?.features.has('timestamp-query'),
     }))()`)) ?? '{}',
   );
+  // --trace: every frame the browser gives the page, from here on (#962). The
+  // readout's p99 says a window had slow frames; the trace says when, and
+  // whether they came one at a time (the frame's own work) or as a spell at
+  // half rate (the browser or the machine missing vsync)
+  if (trace) await evaluate(TRACE_JS);
   await sleep(warmSecs * 1000);
   for (let r = 0; r < reads; r++) {
     if (r > 0) await sleep(10000); // the readout's window is 10 s: each read is its own
@@ -383,6 +399,13 @@ async function playPage({ navigate, evaluate, screenshot }, scene, dpr, css) {
     log(`${label}: ${result.warning}`);
   }
   result.calls = JSON.parse((await evaluate(`JSON.stringify(window.flintGpuCalls ?? null)`)) ?? 'null');
+  if (trace) {
+    const t = JSON.parse((await evaluate(`JSON.stringify(window.__flintTrace ?? null)`)) ?? 'null');
+    if (t) {
+      result.trace = summarizeTrace(t);
+      log(`${label} trace: ${traceLine(result.trace)}`);
+    }
+  }
   const shot = await screenshot();
   if (typeof shot === 'string') writeFileSync(join(outDir, `${label}.png`), Buffer.from(shot, 'base64'));
   else log(`${label}: no screenshot (${shot.why})`);
@@ -415,7 +438,7 @@ const passNames = flags.passes
   : [...new Set(pages.flatMap((p) => p.reads.flatMap((r) => Object.keys(r.parsed.gpu?.passes ?? {}))))];
 const over = (p, f) => p.reads.map((r) => f(r.parsed)).filter((v) => v !== undefined);
 const sizeOf = (p, f) => [...new Set(over(p, f).map((s) => s.join('x')))].join(', ');
-const head = ['page', 'canvas', 'scene', ...passNames.map((n) => `${n} ms`), 'GPU frame ms', 'GPU timed', 'bind groups a frame', 'passes a frame', 'frame p50 ms'];
+const head = ['page', 'canvas', 'scene', ...passNames.map((n) => `${n} ms`), 'GPU frame ms', 'GPU timed', 'bind groups a frame', 'passes a frame', 'frame p50 ms', ...(trace ? ['slow frames (spells, longest s)'] : [])];
 // how the readout says its GPU times were taken (#380): under vsync an idle GPU
 // clocks down and its passes read high
 const timed = (p) => {
@@ -438,6 +461,7 @@ const rows = pages.map((p) =>
         range(over(p, (x) => x.webgpu?.bindGroups), 1),
         range(over(p, (x) => x.webgpu?.passes), 1),
         range(over(p, (x) => x.frame?.p50), 1),
+        ...(trace ? [p.trace ? `${p.trace.slow} (${p.trace.spells.length}, ${Math.max(0, ...p.trace.spells.map((s) => s.lasts))})` : ''] : []),
       ],
 );
 const first = pages.find((p) => p.env)?.env;

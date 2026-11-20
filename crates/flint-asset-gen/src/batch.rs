@@ -1,7 +1,9 @@
 //! Batch scene resolution
 //!
-//! Scans a scene TOML for asset references and resolves missing ones
-//! using various strategies: AI generation, human tasks, or a combination.
+//! Resolves the assets a scene names and nothing holds yet, using various
+//! strategies: AI generation, human tasks, or a combination. Which ones are
+//! missing is the caller's walk of the scene against its schemas
+//! (`flint asset resolve`, #968), not a list kept here.
 
 use crate::calls::Calls;
 use crate::config::FlintConfig;
@@ -9,7 +11,7 @@ use crate::human_task::generate_task_file;
 use crate::provider::{AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams};
 use crate::registration::register_generated_asset_in;
 use crate::style::StyleGuide;
-use flint_asset::{Project, ProjectStore};
+use flint_asset::Project;
 use flint_core::{FlintError, Result};
 use std::path::Path;
 
@@ -24,13 +26,22 @@ pub enum BatchStrategy {
     AiThenHuman,
 }
 
-/// A missing asset reference found during scene scanning
+/// One asset a scene names that nothing holds yet
 #[derive(Debug, Clone)]
 pub struct MissingAsset {
     pub entity_name: String,
     pub field: String,
     pub asset_name: String,
     pub kind: AssetKind,
+}
+
+/// What a scene needs: how many references its walk found
+/// (`flint asset resolve` takes them from `flint_scene::asset_references`,
+/// #968), and the ones of them nothing holds yet.
+#[derive(Debug, Clone, Default)]
+pub struct SceneNeeds {
+    pub total: usize,
+    pub missing: Vec<MissingAsset>,
 }
 
 /// Result of a batch resolution operation
@@ -47,128 +58,26 @@ pub struct BatchResult {
     pub spent_usd: f64,
 }
 
-/// Scan a scene TOML for asset references and find missing ones
-pub fn scan_scene_assets(scene_path: &str) -> Result<(usize, Vec<MissingAsset>)> {
-    let content = std::fs::read_to_string(scene_path)?;
-    let scene: toml::Value = toml::from_str(&content)
-        .map_err(|e| FlintError::GenerationError(format!("Failed to parse scene: {}", e)))?;
-
-    // The scene's own project, not the working directory's (#179).
-    let project = Project::for_path(Path::new(scene_path))?;
-    let catalog =
-        flint_asset::AssetCatalog::load_from_directory(project.catalog_dir()).unwrap_or_default();
-
-    let mut total = 0;
-    let mut missing = Vec::new();
-
-    if let Some(entities) = scene.get("entities").and_then(|e| e.as_table()) {
-        for (entity_name, entity_data) in entities {
-            if let Some(table) = entity_data.as_table() {
-                // Check top-level asset fields
-                check_asset_field(
-                    table,
-                    entity_name,
-                    "mesh",
-                    AssetKind::Model,
-                    &catalog,
-                    &mut total,
-                    &mut missing,
-                );
-
-                // Check nested component fields
-                if let Some(model) = table.get("model").and_then(|v| v.as_table()) {
-                    if let Some(asset_name) = model.get("asset").and_then(|v| v.as_str()) {
-                        total += 1;
-                        if catalog.get(asset_name).is_none() {
-                            missing.push(MissingAsset {
-                                entity_name: entity_name.clone(),
-                                field: "model.asset".to_string(),
-                                asset_name: asset_name.to_string(),
-                                kind: AssetKind::Model,
-                            });
-                        }
-                    }
-                }
-
-                if let Some(material) = table.get("material").and_then(|v| v.as_table()) {
-                    if let Some(tex) = material.get("texture").and_then(|v| v.as_str()) {
-                        total += 1;
-                        if catalog.get(tex).is_none() {
-                            missing.push(MissingAsset {
-                                entity_name: entity_name.clone(),
-                                field: "material.texture".to_string(),
-                                asset_name: tex.to_string(),
-                                kind: AssetKind::Texture,
-                            });
-                        }
-                    }
-                }
-
-                if let Some(audio) = table.get("audio_source").and_then(|v| v.as_table()) {
-                    if let Some(file) = audio.get("file").and_then(|v| v.as_str()) {
-                        total += 1;
-                        if catalog.get(file).is_none() {
-                            missing.push(MissingAsset {
-                                entity_name: entity_name.clone(),
-                                field: "audio_source.file".to_string(),
-                                asset_name: file.to_string(),
-                                kind: AssetKind::Audio,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok((total, missing))
-}
-
-fn check_asset_field(
-    table: &toml::map::Map<String, toml::Value>,
-    entity_name: &str,
-    field: &str,
-    kind: AssetKind,
-    catalog: &flint_asset::AssetCatalog,
-    total: &mut usize,
-    missing: &mut Vec<MissingAsset>,
-) {
-    if let Some(value) = table.get(field) {
-        if let Some(name) = value.as_str() {
-            *total += 1;
-            if catalog.get(name).is_none() {
-                missing.push(MissingAsset {
-                    entity_name: entity_name.to_string(),
-                    field: field.to_string(),
-                    asset_name: name.to_string(),
-                    kind,
-                });
-            }
-        }
-    }
-}
-
-/// Resolve missing assets in a scene using the specified strategy. The
-/// progress goes to stderr; the [`BatchResult`] is the answer.
+/// Resolve a scene's missing assets using the specified strategy: each of
+/// `needs.missing` is generated or made a task in `project`. The progress
+/// goes to stderr; the [`BatchResult`] is the answer.
 ///
 /// Every provider call goes through `calls`, so one meter sees the whole
 /// scene: an asset whose call would take the run past the meter's ceiling
 /// is refused before anything is sent (counted in `over_budget`, and handed
 /// to a person under [`BatchStrategy::AiThenHuman`]), and the next, cheaper
 /// one may still fit.
-pub fn resolve_scene(
-    scene_path: &str,
+pub fn resolve_missing(
+    project: &Project,
+    needs: &SceneNeeds,
     strategy: BatchStrategy,
     style: Option<&StyleGuide>,
     config: &FlintConfig,
     output_dir: &str,
     calls: &Calls,
 ) -> Result<BatchResult> {
-    let (total, missing_assets) = scan_scene_assets(scene_path)?;
+    let (total, missing_assets) = (needs.total, &needs.missing);
     let found = total - missing_assets.len();
-    let project = Project::for_path(Path::new(scene_path))?;
-
-    eprintln!("Scanning scene for asset references...");
     eprintln!(
         "Found {} references, {} missing:",
         total,
@@ -181,14 +90,14 @@ pub fn resolve_scene(
     let mut over_budget = 0;
     let spent_before = calls.meter.spent();
 
-    for asset in &missing_assets {
+    for asset in missing_assets {
         // Printed whole after the outcome, so a notice from the meter during
         // the call never lands inside the line.
         let head = format!("  {} ({})  -> ", asset.asset_name, asset.kind);
 
         match strategy {
             BatchStrategy::AiGenerate => {
-                match generate_asset(&project, asset, style, config, output_dir, calls) {
+                match generate_asset(project, asset, style, config, output_dir, calls) {
                     Ok(secs) => {
                         eprintln!(
                             "{head}Generated via {} ({:.1}s)",
@@ -218,7 +127,7 @@ pub fn resolve_scene(
                 }
             },
             BatchStrategy::AiThenHuman => {
-                match generate_asset(&project, asset, style, config, output_dir, calls) {
+                match generate_asset(project, asset, style, config, output_dir, calls) {
                     Ok(secs) => {
                         eprintln!("{head}Generated ({:.1}s)", secs);
                         generated += 1;
@@ -350,7 +259,6 @@ fn create_human_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     fn temp_dir() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("flint_batch_test_{}", uuid::Uuid::new_v4()));
@@ -358,56 +266,35 @@ mod tests {
         dir
     }
 
-    fn write_test_scene(dir: &std::path::Path) -> std::path::PathBuf {
-        let scene = r#"
-[scene]
-name = "test"
-
-[entities.chair]
-archetype = "prop"
-
-[entities.chair.model]
-asset = "tavern_chair"
-
-[entities.wall]
-archetype = "wall"
-
-[entities.wall.material]
-texture = "brick_wall"
-
-[entities.ambient]
-archetype = "audio"
-
-[entities.ambient.audio_source]
-file = "tavern_ambient"
-"#;
-        let path = dir.join("test.scene.toml");
-        let mut f = std::fs::File::create(&path).unwrap();
-        f.write_all(scene.as_bytes()).unwrap();
-        path
+    /// The three a tavern names and nothing holds: a model, a texture and
+    /// a sound, as `flint asset resolve` hands them over.
+    fn tavern_missing() -> Vec<MissingAsset> {
+        let missing = |entity: &str, field: &str, name: &str, kind| MissingAsset {
+            entity_name: entity.to_string(),
+            field: field.to_string(),
+            asset_name: name.to_string(),
+            kind,
+        };
+        vec![
+            missing("chair", "model.asset", "tavern_chair", AssetKind::Model),
+            missing("wall", "material.texture", "brick_wall", AssetKind::Texture),
+            missing(
+                "ambient",
+                "audio_source.file",
+                "tavern_ambient",
+                AssetKind::Audio,
+            ),
+        ]
     }
 
-    #[test]
-    fn test_scan_scene_assets() {
-        let dir = temp_dir();
-        let scene_path = write_test_scene(&dir);
-
-        let (total, missing) = scan_scene_assets(scene_path.to_str().unwrap()).unwrap();
-        assert_eq!(total, 3);
-        assert_eq!(missing.len(), 3); // None in catalog
-
-        let kinds: Vec<AssetKind> = missing.iter().map(|m| m.kind).collect();
-        assert!(kinds.contains(&AssetKind::Model));
-        assert!(kinds.contains(&AssetKind::Texture));
-        assert!(kinds.contains(&AssetKind::Audio));
-
-        std::fs::remove_dir_all(&dir).ok();
+    fn project_in(dir: &std::path::Path) -> Project {
+        std::fs::write(dir.join("flint.toml"), "[project]\nid = \"tavern\"\n").unwrap();
+        Project::for_path(dir).unwrap()
     }
 
     #[test]
     fn test_resolve_scene_human_task() {
         let dir = temp_dir();
-        let scene_path = write_test_scene(&dir);
         let tasks_dir = dir.join("tasks");
 
         let config = FlintConfig {
@@ -415,8 +302,12 @@ file = "tavern_ambient"
             generation: Default::default(),
         };
 
-        let result = resolve_scene(
-            scene_path.to_str().unwrap(),
+        let result = resolve_missing(
+            &project_in(&dir),
+            &SceneNeeds {
+                total: 3,
+                missing: tavern_missing(),
+            },
             BatchStrategy::HumanTask,
             None,
             &config,
@@ -440,7 +331,6 @@ file = "tavern_ambient"
     #[test]
     fn test_resolve_scene_ai_then_human_fallback() {
         let dir = temp_dir();
-        let scene_path = write_test_scene(&dir);
         let out_dir = dir.join("output");
 
         // Config with no API keys — AI will fail, should fall back to tasks
@@ -449,8 +339,12 @@ file = "tavern_ambient"
             generation: Default::default(),
         };
 
-        let result = resolve_scene(
-            scene_path.to_str().unwrap(),
+        let result = resolve_missing(
+            &project_in(&dir),
+            &SceneNeeds {
+                total: 3,
+                missing: tavern_missing(),
+            },
             BatchStrategy::AiThenHuman,
             None,
             &config,
@@ -474,15 +368,15 @@ file = "tavern_ambient"
         use flint_ai_core::{HttpResponse, ScriptedTransport};
 
         let dir = temp_dir();
-        std::fs::write(dir.join("flint.toml"), "[project]\nid = \"budget\"\n").unwrap();
-        let mut scene = String::from("[scene]\nname = \"walls\"\n");
-        for wall in ["wall_a", "wall_b", "wall_c"] {
-            scene.push_str(&format!(
-                "\n[entities.{wall}]\n\n[entities.{wall}.material]\ntexture = \"{wall}_tex\"\n"
-            ));
-        }
-        let scene_path = dir.join("walls.scene.toml");
-        std::fs::write(&scene_path, scene).unwrap();
+        let walls: Vec<MissingAsset> = ["wall_a", "wall_b", "wall_c"]
+            .into_iter()
+            .map(|wall| MissingAsset {
+                entity_name: wall.to_string(),
+                field: "material.texture".to_string(),
+                asset_name: format!("{wall}_tex"),
+                kind: AssetKind::Texture,
+            })
+            .collect();
 
         // Each 1024 x 1024 texture is 2 megapixels, $0.05; $0.12 pays for two.
         let mut answers = Vec::new();
@@ -494,8 +388,12 @@ file = "tavern_ambient"
         }
         let script = ScriptedTransport::new(answers);
         let (calls, meter) = calls_over(&script, Some(0.12));
-        let result = resolve_scene(
-            scene_path.to_str().unwrap(),
+        let result = resolve_missing(
+            &project_in(&dir),
+            &SceneNeeds {
+                total: 3,
+                missing: walls,
+            },
             BatchStrategy::AiGenerate,
             None,
             &test_config("flux", "http://fal.test/fal-ai/flux/dev"),

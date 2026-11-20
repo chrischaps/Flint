@@ -383,7 +383,7 @@ Luminance alone loses a silhouette wherever an object is about as bright as what
 
 Edges come from geometry, never from colour, so a wood texture makes none but a table's outline and its creases do (the ASCII spike's finding, #261). Three passes, before the glyph pass:
 
-1. **Edge pixels**, at the depth's resolution. The silhouettes and creases are the [shared edges](#shared-edges)' (#743; ASCII found its own until then), scaled by the style's `edge_depth` and `edge_normal`: a 3x3 Sobel over the relative view distance finds silhouettes; one over normals rebuilt from the depth finds creases, counted only where the 5x5 patch is one surface. Each normal is rebuilt from the neighbour on each axis nearer its own depth, never across a step beside it, so a crease marks the two pixels astride it rather than a band (#484: where the ground came close behind a pillar's foot, a 4-pixel band filled its cells past `edge_max` and the outline went). ASCII's own pass adds the outlines: where an ASCII-styled entity (an `ascii_style`, or a `style_mask { style = "ascii" }`, [the entity style mask](#the-entity-style-mask)) meets anything else, including another styled entity with different settings, the pixel is an **outline**. Silhouettes and outlines keep their near side only, so each is drawn once.
+1. **Edge pixels**, at the depth's resolution. The silhouettes and creases are the [shared edges](#shared-edges)' (#743; ASCII found its own until then), scaled by the style's `edge_depth` and `edge_normal`: a 3x3 Sobel over the relative view distance finds silhouettes; one over normals rebuilt from the depth finds creases, counted only where the 5x5 patch is one surface. Each normal is rebuilt from one neighbour on each axis, on the side whose two neighbours lie on the pixel's own plane (a plane's depth is affine across the screen), never across a step or a fold beside it, so a crease marks the two pixels astride it rather than a band (#484: where the ground came close behind a pillar's foot, a 4-pixel band filled its cells past `edge_max` and the outline went; #952: choosing the neighbour nearer in view distance found a step's side but not a fold's, and a pillar's foot seen square on was 3 pixels tall). ASCII's own pass adds the outlines: where an ASCII-styled entity (an `ascii_style`, or a `style_mask { style = "ascii" }`, [the entity style mask](#the-entity-style-mask)) meets anything else, including another styled entity with different settings, the pixel is an **outline**. Silhouettes and outlines keep their near side only, so each is drawn once.
 2. **Cells**, one fragment a glyph cell. It reads every edge pixel in its cell, not a sparse lattice, so a one-pixel outline can't slip between samples, and sums their structure tensors: the dominant orientation picks the glyph. The cell draws a line when it holds at least `edge_threshold` cell widths of edge and at most `edge_max` (an outline needs only the threshold).
 3. **The glyph pass** draws the cell's line glyph in the one cell the line passes within half a cell of, measured across it: down the cell's centre column for a line nearer horizontal, along its centre row for one nearer vertical (#352). The cell pass finds where that is from the edge pixels' centroid, each pixel weighted by how much its gradient agrees with the cell's line, so a corner's other arm doesn't pull it. That is the cell a Bresenham line lights, so a line along a cell border, a coarse diagonal or a silhouette at render scale 0.5 draws one chain of cells, not two. A band of edge pixels wider than one (two-pixel stairs at scale 0.5) can straddle the border; the two halves count as one line when they run within 10° of each other and lie within three quarters of a cell, and the pair's centroid decides. Two real edges a cell apart, or converging at an angle like a box's silhouette and the crease below it, each keep their own. Per entity, a silhouette along a cell border can fall to the cell just outside the entity, whose pixels pass the picture through, and its glyph would be drawn nowhere (#493). So a cell counts as drawn when the pixel at its centre is the whole frame's (while the whole frame is drawn) or belongs to a variant on the screen grid that is on. Of two cells that both hold the line, the drawn one takes it. A line whose pixels all lie in an outside cell moves into the drawn cell it leans toward, under a cell from where it was. Whole-frame ASCII draws every cell, so nothing moves there.
 
@@ -948,7 +948,67 @@ flint render examples/ascii_tear.scene.toml --set post.tear=0.5 --set post.tear_
 
 `examples/ascii_tear.scene.toml` is a 12-second loop: the tear opens over the clearing, nearly swallows it, and closes. The goldens `ascii-tear` and `ascii-tear-matrix` pin it under modes 6 and 1 on `tests/fixtures/scenes/stylize_props_tear.scene.toml`.
 
-A screen field a game fills itself (a shockwave ring, a flashlight cone, the wooze field) as a blend source is not built yet (#859).
+### A blend that follows a screen field
+
+`blend_source = "field"` (#859) is the same idea with a field the game draws itself: at each pixel the entity's blend is its `blend` times the **style field** there, a screen field scripts fill each frame out of soft shapes. A shockwave ring spreading from an impact turns the props its front crosses to text and lets them go once it has passed; a flashlight cone shows what each prop really is wherever it points.
+
+```toml
+[entities.barrel.ascii_style]
+blend_source = "field"    # the blend times the style field at each pixel
+transition = "dissolve"
+```
+
+The field is immediate mode, like the [draw calls](scripting.md): what a frame draws is that frame's field, from `on_update` or `on_draw_ui`, and a frame that draws none has none. Places and lengths are logical points, the draw space (`screen_width()`, `screen_height()`); each shape is full inside, falls to 0 `soft` points past its edge, and takes an optional `strength` (0..1) last. The field at a pixel is its strongest shape's there.
+
+<!-- script-api:begin module:style_field -->
+<!-- Generated by `flint script api --book` from the engine's declarations (crates/flint-script/src/api/, or the ScriptModule of a feature that owns its module): edit the doc there, not here. CI's headless job runs --check-book. -->
+
+| Function | Returns | Description |
+|---|---|---|
+| `field_disc(x: num, y: num, radius: num, soft: num)` | — | Fill a disc of the style field this frame: a style following the field shows inside it. |
+| `field_disc(x: num, y: num, radius: num, soft: num, strength: num)` | — | Fill a disc of the style field this frame: a style following the field shows inside it. |
+| `field_ring(x: num, y: num, radius: num, width: num, soft: num)` | — | Fill a ring of the style field this frame, width points across: a shockwave's front that turns what it crosses. |
+| `field_ring(x: num, y: num, radius: num, width: num, soft: num, strength: num)` | — | Fill a ring of the style field this frame, width points across: a shockwave's front that turns what it crosses. |
+| `field_cone(x: num, y: num, direction: num, spread: num, length: num, soft: num)` | — | Fill a cone of the style field this frame from (x, y), pointing direction degrees clockwise from up and spread degrees either side: a flashlight's beam. |
+| `field_cone(x: num, y: num, direction: num, spread: num, length: num, soft: num, strength: num)` | — | Fill a cone of the style field this frame from (x, y), pointing direction degrees clockwise from up and spread degrees either side: a flashlight's beam. |
+
+<!-- script-api:end -->
+
+```rust
+let waves = [];
+
+fn on_draw_ui() {
+    if is_mouse_just_pressed(0) {
+        waves.push(#{ x: mouse_x(), y: mouse_y(), born: total_time() });
+    }
+    let kept = [];
+    for wave in waves {
+        let s = (total_time() - wave.born) / 3.0;    // three seconds a wave
+        if s < 1.0 {
+            let radius = screen_width() * 1.2 * s;
+            field_ring(wave.x, wave.y, radius, 120.0, 40.0, 1.0 - s);
+            kept.push(wave);
+        }
+    }
+    waves = kept;
+}
+```
+
+```bash
+flint render examples/ascii_shockwave.scene.toml --scripts --time 1.4
+flint render examples/ascii_shockwave.scene.toml --scripts --time 0..12 -o waves.gif
+```
+
+![Four moments of the shockwave clearing: calm before the first impact; the first ring's front over the bot and the bench, which are green glyphs there; later rings over each barrel; and the bot's head and arms turning as a ring passes behind it, its own shading again where the front has gone by](../images/ascii-shockwave.png)
+
+*`flint render examples/ascii_shockwave.scene.toml --scripts --time 0.4,1.2,5.4,9.5 --strip --width 640 --height 360`, quantized to 128 colours.*
+
+- **Shapes, not a texture.** A field is up to 16 shapes (`flint_core::style_field`: `Disc`, `Ring`, `Cone`), in screen uv with every length a fraction of the screen's height, so a disc is round at any aspect and the field means the same at any resolution or render scale. The mask pass works each one out at its own pixels (`field_at` in `style_mask.wgsl`, beside the tear's `tear_mask_at`), from one 528-byte uniform written only on a frame a draw follows a field that moved: no texture, no pass. `FieldShape::value_at` is the same function on the CPU, and a GPU test holds the mask to it pixel for pixel. Past 16 shapes the rest are left out, said once.
+- **No field, no cost.** A frame with no shape is a frame with no field: an entity following it counts as blend 0, its id faded, so with nothing else styled neither the style's pass nor the mask is drawn, as with no tear.
+- **Hosts.** The field reaches the renderer as `FrameInputs::style_field`: the player takes it after `on_draw_ui` (`ScriptSystem::drain_style_field`), and `flint render --scripts` from the capture's last step. A frame capture keeps it in `inputs.json`, so `flint frame replay` draws it again. The viewer runs no scripts and fills none.
+- **Not yet.** Only an entity's blend follows the field: a whole-frame style's table takes `"own"` or `"tear"`. A field a shader fills (a user style's target) and the wooze field as a source are later work.
+
+`examples/ascii_shockwave.scene.toml` drops something into the clearing every four seconds and sends a ring from where it lands (`world_to_screen`); a click sends one from the cursor, and the right button holds a flashlight from the bottom of the screen.
 
 ## Palette
 
@@ -1454,6 +1514,7 @@ What a style gets from `StyleFrame`:
 | `edges`, `edges_bind(...)` | the [shared geometry edges](#shared-edges), while a style that `needs` them is on |
 | `target(name, format)` | a texture of the style's own at the stage's size, kept until the next resize |
 | `sampled(...)`, `sampled_input(...)`, `uniform(...)`, `bind(...)`, `depth_bind(...)` | bind groups kept with the post chain |
+| `bind_over(...)`, `depth_bind_over(...)`, `edges_or(...)`, `albedo_or(...)` | the same, kept over textures that can be made again while the chain lives (the edges, the albedo, an image): made again in the old group's place when one is another texture (#960) |
 | `first_write(name)` | true once per chain, for uniforms that only change on resize |
 | `time` | game seconds, for animated styles |
 
@@ -1803,7 +1864,7 @@ The texture is `Rgba16Float` at the depth's size (the scene's, so under `--rende
 | channel | holds |
 |---|---|
 | `r` | silhouette strength: a 3x3 Sobel of the view distance relative to the centre pixel's (so a far edge counts as much as a near one), kept on the near side only and only where the depth really steps, over `edge_depth`. A floor seen edge-on changes its distance from row to row as fast as a silhouette, but its depth-buffer value is affine across the screen, so its second difference is 0; a step's is as big as the step. Pencil inked that floor as a black band along the horizon before #743 (#404's `grazing` was the cure, off by default) |
-| `g` | crease strength: the Sobel of normals rebuilt from the depth, each from its nearer neighbour on each axis so it stays on its own surface (ASCII's rule since #484), counted only where the 5x5 patch is one surface (across a depth step rebuilt normals mark a band on both sides), over `edge_normal` |
+| `g` | crease strength: the Sobel of normals rebuilt from the depth, each from the neighbour on each axis whose side lies on the pixel's own plane, so it stays on its own surface across a step or a fold (#484, #952), counted only where the 5x5 patch is one surface (across a depth step rebuilt normals mark a band on both sides), over `edge_normal` |
 | `ba` | the unit direction across the edge in screen space (x right, y down): the silhouette's where `r >= 1`, else the crease's, picked from both axes of the normal Sobel |
 
 A strength of 1 is an edge at the scene's thresholds. The two pixels at each border are always 0, where the patch clamps and makes a degenerate normal.
@@ -1907,7 +1968,7 @@ flint render examples/style_veil.scene.toml --particle-time 2 --output veil.png
 
 ### The style albedo
 
-A display-stage style sees the finished picture, which is each surface's colour times its light. A style that wants the light alone (pencil's `tone = "light"`, #869) asks for the **style albedo**: `.uses_albedo(MaskUse::When(f))` (or `Always`) on its descriptor. While such a style is on, the renderer redraws the frame's opaque static, procedural and skinned draws once more after the scene pass, with their cached transform and material bind groups and the scene's own vertex stages, through a fragment stage (`fs_albedo` in `pbr_surface.wgsl`, the surface both mesh shaders share) that builds only the base colour (vertex colour and tint, base texture, the glowing share of a vertex-emissive surface taken out) and no light. It writes an `Rgba8Unorm` target at the depth's size: linear rgb, and alpha 1 where a mesh was drawn. The pass tests against the depth the scene drew, read-only with `LessEqual`, so each mesh lands on its own depth. Under `--msaa 4` it draws against the scene's samples and resolves, so its silhouettes are the picture's (the rgb then comes back times the coverage in alpha). A style reads it as `StyleFrame::albedo` by UV with `textureLoad`, and keys its bind groups by `frame.albedo_key()`.
+A display-stage style sees the finished picture, which is each surface's colour times its light. A style that wants the light alone (pencil's `tone = "light"`, #869) asks for the **style albedo**: `.uses_albedo(MaskUse::When(f))` (or `Always`) on its descriptor. While such a style is on, the renderer redraws the frame's opaque static, procedural and skinned draws once more after the scene pass, with their cached transform and material bind groups and the scene's own vertex stages, through a fragment stage (`fs_albedo` in `pbr_surface.wgsl`, the surface both mesh shaders share) that builds only the base colour (vertex colour and tint, base texture, the glowing share of a vertex-emissive surface taken out) and no light. It writes an `Rgba8Unorm` target at the depth's size: linear rgb, and alpha 1 where a mesh was drawn. The pass tests against the depth the scene drew, read-only with `LessEqual`, so each mesh lands on its own depth. Under `--msaa 4` it draws against the scene's samples and resolves, so its silhouettes are the picture's (the rgb then comes back times the coverage in alpha). A style reads it as `StyleFrame::albedo` by UV with `textureLoad`, and keeps its bind groups over it with `frame.bind_over(name, variant, &[frame.albedo_or(&blank)], make)`: the group is kept while the albedo is the same texture, and made again in its place when the albedo is made again (wgpu 30 compares views by identity, #960).
 
 What it leaves out keeps alpha 0, and a reader falls back on the picture there: terrain, grass, the ocean, billboards, particles, transparents, and draws with shallow wooze (#215), whose vertices move in a stage of their own. On an RTX 4070 at 1080p the pass costs 0.028–0.035 ms (p50 of `--gpu-time 240`, three alternating runs each on `stylize_props_plain` and `examples/ascii_dark_props`), and the pencil pass drew about 0.04 ms less, since it had less floor to hatch.
 

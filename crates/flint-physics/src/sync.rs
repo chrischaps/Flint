@@ -818,9 +818,13 @@ impl PhysicsSync {
             }
             let wants_sensor = col.bool("is_sensor", false);
 
+            let fixed = physics.is_fixed_collider(*col_handle);
             if let Some(collider) = physics.collider_set.get_mut(*col_handle) {
                 if collider.is_sensor() != wants_sensor {
                     collider.set_sensor(wants_sensor);
+                    if fixed {
+                        physics.touch_static();
+                    }
                 }
             }
         }

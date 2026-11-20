@@ -119,10 +119,10 @@ The `flint asset resolve` command can resolve an entire scene's asset needs at o
 
 | Strategy | Behavior |
 |----------|----------|
-| `strict` | All assets must already exist in the catalog. Missing assets are errors. |
-| `placeholder` | Missing assets get placeholder geometry. |
-| `ai_generate` | Missing assets are generated via AI providers and stored in the catalog. |
-| `human_task` | Missing assets produce task files for manual creation. |
+| `strict` | Every reference must be found. A missing one is an error (exit 1). |
+| `placeholder` | Missing references are listed. The run still passes. |
+| `ai_generate` | Missing models, textures and sounds are generated via AI providers and stored in the catalog. |
+| `human_task` | Missing models, textures and sounds get task files for manual creation. |
 | `ai_then_human` | Generate with AI first, then produce review tasks for human approval. |
 
 ```bash
@@ -132,6 +132,16 @@ flint asset resolve my_scene.scene.toml --strategy ai_generate --style medieval_
 # Create task files for a human artist
 flint asset resolve my_scene.scene.toml --strategy human_task --output-dir tasks/
 ```
+
+### Which references it reads
+
+`resolve` takes its list from the scene's schemas (#968), not from a list of its own. A reference is the value of any field the loaded schemas declare as `type = "asset"`. Use `flint schema <component>` to see a component's fields. Arrays and tables with fields are searched too. The search covers every component of every entity, including the entities a prefab instance expands to (named `<prefix>_<name>`), and every scene table, such as `[environment] skybox`. When a game adds an `asset` field to its own schema layer, `resolve` reads that field with no change to the engine. The schemas are found the way every command finds them: `--schemas` (repeatable), else the project's `flint.toml` `schemas`, else `schemas/` beside the scene. Three things are left out: an empty value, a component or table that no schema declares, and a field whose `unless` sibling is `true` (`model.runtime`). Only what the scene writes is read. An archetype's defaults are not.
+
+The engine's schemas declare these fields as `asset`: `model.asset`, `material.texture`, `sprite.texture`, `audio_source.file`, `script.source`, `collider.model`, `animator.sequence`, `particle_effect.effect`, `particle_emitter.texture`, `terrain.heightmap`, `terrain.splat_map`, `terrain.layer0_texture` to `layer3_texture`, `grass_ground.mask`, `spline.file`, `spline_mesh.texture`, `spline_mesh.normal_texture` and `[environment] skybox`.
+
+A reference counts as found when the project's [asset catalog](assets.md#asset-catalog) holds that name, or when the engine would load it: a file the project's [asset search](assets.md#where-the-engine-looks-for-a-file) finds for one of the field's kinds, or a model or texture in the catalog and store. This is the lookup `flint check` uses. A name that an `asset_def` declares and no file holds yet is missing, marked as not made yet: making it is what `resolve` is for. Each reference prints on its own line, `Found: boat.model.asset -> "boat" (models/boat.glb)` or `Missing: ...` with the paths tried. Under `--json`, the `references` list gives each one's `entity` (`null` for a scene table), `table`, `field`, `name`, `kinds`, `found` and `missing`.
+
+A provider makes only models, textures and sounds. A batch strategy reports any other missing reference (a script, a heightmap, a skybox) as `No provider makes ...` and lists it in the JSON's `no_provider`, and the run exits 1.
 
 ## Costs and Budgets
 
