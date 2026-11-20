@@ -88,7 +88,7 @@ min = 0.0
 max = 200.0
 label = "Haze start (m)"
 
-# Strings and images (#413; demo/styles/darkroom.* uses them):
+# Strings and images (#413; darkroom.shader.toml beside this uses them):
 #
 # [options.finish]              # params.finish: a u32 index into choices,
 # default = "matte"             # with FLINT_FINISH_MATTE / FLINT_FINISH_GLOSS

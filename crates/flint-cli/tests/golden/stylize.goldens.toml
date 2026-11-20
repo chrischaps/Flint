@@ -806,6 +806,18 @@ name = "user-style-contour-map"
 scene = "tests/fixtures/scenes/user_styles.scene.toml"
 args = ["--no-grid", "--style", "contour_map"]
 
+# Darkroom: a user style that reads images (#413), the one case that does.
+# Its LUT (`[options.grade]`, read by `flint_lut_grade`) is the default
+# warm print; its paper is an image option picked from the folder's
+# discovered choices, kraft, tiled with mips; gloss is a choice option.
+# From #759 to #984 the fixtures' copy borrowed its images by a `../` path
+# an image option refuses, so `--style darkroom` was an unknown style and
+# no case noticed (#1056)
+[[case]]
+name = "user-style-darkroom"
+scene = "tests/fixtures/scenes/user_styles.scene.toml"
+args = ["--no-grid", "--style", "darkroom:paper=papers/kraft.png,finish=gloss"]
+
 # A style whose WGSL fails (tests/golden/fixtures/styles/broken.*) must draw
 # its input unchanged and say where it failed. The passthrough runs the
 # prelude's round trip (to display on the way in, to linear on the way
