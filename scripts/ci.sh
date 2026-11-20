@@ -5,14 +5,15 @@
 #                          (scripts/adr-check.sh), every clippy.toml is the
 #                          root list's copy (scripts/clippy-conf.sh --check, #761),
 #                          no FLINT_* read past flint_core::env (#715),
-#                          the tree's shape (#760) and its size budget
-#                          (scripts/size-check.py, ADR 0122):
-#                          seconds, no build. `scripts/issue.sh
+#                          the tree's shape (#760), its size budget
+#                          (scripts/size-check.py, ADR 0122) and the book's
+#                          crate table (tools/arch-analyzer --check-book):
+#                          seconds, and one small build (the analyzer: 23 s and
+#                          126 MB cold, once a worktree). `scripts/issue.sh
 #                          land` runs this (verify= in scripts/issue.conf), and
 #                          so does CI's rustfmt job.
 #   scripts/ci.sh --full   also what CI's clippy and wasm jobs run: native
-#                          `cargo clippy --all-targets`, the book's crate table
-#                          (tools/arch-analyzer --check-book), the book against
+#                          `cargo clippy --all-targets`, the book against
 #                          the script API (`flint script api --check-book`, CI's
 #                          headless job), the book's environment page (`flint env
 #                          --check-book`, the same job), the book's flags, styles and images
@@ -75,11 +76,15 @@ py=python3
 "$py" --version >/dev/null 2>&1 || py=python
 "$py" scripts/size-check.py
 
+# The book's crate table (#764), from every Cargo.toml: a dependency added
+# without `cargo run -p flint-arch-analyzer -- --book` kept CI's crate table
+# job red on main from #853 to #969, failing every PR in between
+echo "ci: flint-arch-analyzer --check-book"
+cargo run --locked -q -p flint-arch-analyzer -- --check-book
+
 if [ "${1:-}" = "--full" ]; then
     echo "ci: cargo clippy --all-targets"
     cargo clippy --all-targets --keep-going
-    echo "ci: flint-arch-analyzer --check-book"
-    cargo run --locked -q -p flint-arch-analyzer -- --check-book
     echo "ci: flint script api --check-book"
     cargo run --locked -q -p flint-cli --bin flint -- script api --check-book
     echo "ci: flint env --check-book"

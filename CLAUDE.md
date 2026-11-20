@@ -26,8 +26,10 @@ cargo clippy                   # Lint
 cargo fmt --all                # Format (rustfmt.toml pins the edition; `rustfmt <file>` for one file)
 bash scripts/ci.sh             # What a PR must pass: formatting, a record for every cited ADR
                                #   (scripts/adr-check.sh), every clippy.toml made from the root's
-                               #   (scripts/clippy-conf.sh --check) and the tree's size budget
-                               #   (scripts/size-check.py, ADR 0122), in seconds. `issue.sh land` runs it.
+                               #   (scripts/clippy-conf.sh --check), the tree's size budget
+                               #   (scripts/size-check.py, ADR 0122) and the book's crate table
+                               #   (flint-arch-analyzer --check-book: one small build, 23 s cold),
+                               #   in seconds. `issue.sh land` runs it.
 bash scripts/ci.sh --full      #   ...plus what CI's clippy and wasm jobs run (two builds)
 ```
 
