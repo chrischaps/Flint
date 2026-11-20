@@ -7,8 +7,9 @@
 #                          no FLINT_* read past flint_core::env (#715),
 #                          the tree's shape (#760), no examples folder or
 #                          path to one (scripts/examples-check.sh, #984),
-#                          its size budget (scripts/size-check.py, ADR 0122)
-#                          and the book's crate table (tools/arch-analyzer
+#                          its size budget (scripts/size-check.py, ADR 0122),
+#                          the root CLAUDE.md's (scripts/claude-md-check.py,
+#                          #992) and the book's crate table (tools/arch-analyzer
 #                          --check-book): seconds, and one small build (the
 #                          analyzer: 23 s and 126 MB cold, once a worktree). `scripts/issue.sh
 #                          land` runs this (verify= in scripts/issue.conf), and
@@ -101,6 +102,11 @@ echo "ci: scripts/size-check.py"
 py=python3
 "$py" --version >/dev/null 2>&1 || py=python
 "$py" scripts/size-check.py
+
+# Every session reads the root CLAUDE.md whole (#992): it went from 18 KB
+# after #755 to 35 KB in two weeks with nothing holding it
+echo "ci: scripts/claude-md-check.py"
+"$py" scripts/claude-md-check.py
 
 # The book's crate table (#764), from every Cargo.toml: a dependency added
 # without `cargo run -p flint-arch-analyzer -- --book` kept CI's crate table
