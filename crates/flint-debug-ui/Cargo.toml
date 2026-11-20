@@ -29,6 +29,6 @@ toml = { workspace = true }
 tracing = { workspace = true }
 
 # egui frames go through run_headless_frame in tests; the list is the
-# workspace clippy.toml (#944).
-[lints.clippy]
-disallowed_methods = "deny"
+# workspace clippy.toml (#944), denied workspace-wide (#979).
+[lints]
+workspace = true

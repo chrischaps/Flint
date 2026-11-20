@@ -79,6 +79,10 @@ pub(super) struct Ascii {
     /// Per-entity variant cells (#313): their pass and its two entries.
     pub(super) variant_cells_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     pub(super) variant_cells: Mutex<[Option<Owned>; 2]>,
+    /// Which snapping variant holds each cell (#929): its pass and state,
+    /// a band of rows a snapping grid.
+    pub(super) snap_owner_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    pub(super) snap_owners: Mutex<Option<Owned>>,
     /// The dissolve's order and rank state (#398), a band of rows per
     /// dissolving variant.
     pub(super) dissolve_order_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
@@ -322,6 +326,7 @@ pub(super) fn variant_uniform(
         _pad_dissolve: [0; 2],
         // The caller's (#507)
         bounds: [0.0; 4],
+        owner: [0; 4],
     }
 }
 

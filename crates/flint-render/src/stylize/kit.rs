@@ -152,8 +152,32 @@ pub fn fullscreen_pipeline_targets<P: KitPipeline>(
     fullscreen_pipeline_entry_targets(device, label, module, "fs_main", layouts, formats, None)
 }
 
-/// The full-screen pipelines' one maker: entry point `fragment`, a target
-/// per format, each with `blend`.
+/// [`fullscreen_pipeline`] with the vertex entry point `vertex`, for a
+/// pass whose vertex stage hands the fragment more than the position: the
+/// instance index of [`fullscreen_pass_instances_in`], say (#929). It
+/// still draws the full-screen triangle (vertices 0..3).
+pub fn fullscreen_pipeline_vertex<P: KitPipeline>(
+    device: &wgpu::Device,
+    label: &str,
+    module: &impl ShaderText,
+    vertex: &str,
+    layouts: &[&wgpu::BindGroupLayout],
+    format: wgpu::TextureFormat,
+) -> P {
+    fullscreen_pipeline_stages(
+        device,
+        label,
+        module,
+        vertex,
+        "fs_main",
+        layouts,
+        &[format],
+        None,
+    )
+}
+
+/// The full-screen pipelines' maker with `vs_main`: entry point
+/// `fragment`, a target per format, each with `blend`.
 fn fullscreen_pipeline_entry_targets<P: KitPipeline>(
     device: &wgpu::Device,
     label: &str,
@@ -163,11 +187,34 @@ fn fullscreen_pipeline_entry_targets<P: KitPipeline>(
     formats: &[wgpu::TextureFormat],
     blend: Option<wgpu::BlendState>,
 ) -> P {
+    fullscreen_pipeline_stages(
+        device, label, module, "vs_main", fragment, layouts, formats, blend,
+    )
+}
+
+/// The full-screen pipelines' one maker.
+#[allow(clippy::too_many_arguments)]
+fn fullscreen_pipeline_stages<P: KitPipeline>(
+    device: &wgpu::Device,
+    label: &str,
+    module: &impl ShaderText,
+    vertex: &str,
+    fragment: &str,
+    layouts: &[&wgpu::BindGroupLayout],
+    formats: &[wgpu::TextureFormat],
+    blend: Option<wgpu::BlendState>,
+) -> P {
     // Everything but the layouts' entries, which the style's scope stands
-    // for (`pipeline_cache::in_scope`): one create makes the same ones
+    // for (`pipeline_cache::in_scope`): one create makes the same ones. The
+    // vertex entry is named only when it isn't `vs_main`
+    let stages = if vertex == "vs_main" {
+        fragment.to_string()
+    } else {
+        format!("{vertex}>{fragment}")
+    };
     let key = module.text().map(|text| {
         format!(
-            "{label}|{}|{fragment}|{formats:?}|{blend:?}|{} layouts",
+            "{label}|{}|{stages}|{formats:?}|{blend:?}|{} layouts",
             crate::pipeline_cache::text_key(text),
             layouts.len()
         )
@@ -177,6 +224,7 @@ fn fullscreen_pipeline_entry_targets<P: KitPipeline>(
             device,
             label,
             module.module(),
+            vertex,
             fragment,
             layouts,
             formats,
@@ -185,10 +233,12 @@ fn fullscreen_pipeline_entry_targets<P: KitPipeline>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_fullscreen(
     device: &wgpu::Device,
     label: &str,
     module: &wgpu::ShaderModule,
+    vertex: &str,
     fragment: &str,
     layouts: &[&wgpu::BindGroupLayout],
     formats: &[wgpu::TextureFormat],
@@ -214,7 +264,7 @@ fn build_fullscreen(
         layout: Some(&layout),
         vertex: wgpu::VertexState {
             module,
-            entry_point: Some("vs_main"),
+            entry_point: Some(vertex),
             buffers: &[],
             compilation_options: Default::default(),
         },
@@ -438,6 +488,48 @@ pub fn fullscreen_pass_targets_in(
                 pass.draw(0..3, 0..1);
             }
         }
+    }
+}
+
+/// One target, cleared to black first, drawn only inside each of `draws`'
+/// rects (empty ones skipped) with its instance index: a pass whose
+/// pipeline ([`fullscreen_pipeline_vertex`]) hands the instance to the
+/// fragment, so each rect is told what it holds (#929: a snapping grid's
+/// band, by its first variant's slot).
+pub fn fullscreen_pass_instances_in(
+    encoder: &mut wgpu::CommandEncoder,
+    label: &str,
+    target: &wgpu::TextureView,
+    pipeline: &wgpu::RenderPipeline,
+    groups: &[&wgpu::BindGroup],
+    draws: &[(PixelRect, u32)],
+) {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target,
+            resolve_target: None,
+            depth_slice: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    if draws.iter().all(|(r, _)| r.is_empty()) {
+        return;
+    }
+    pass.set_pipeline(pipeline);
+    for (i, group) in groups.iter().enumerate() {
+        pass.set_bind_group(i as u32, *group, &[]);
+    }
+    for (r, instance) in draws.iter().filter(|(r, _)| !r.is_empty()) {
+        pass.set_scissor_rect(r.x, r.y, r.width, r.height);
+        pass.draw(0..3, *instance..*instance + 1);
     }
 }
 

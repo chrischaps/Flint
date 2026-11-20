@@ -16,6 +16,7 @@ impl Ascii {
         stats: &Owned,
         variant_cells: [&Owned; 2],
         dissolve_ranks: &Owned,
+        snap_owners: &Owned,
     ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
         let make = |mask: &wgpu::TextureView| {
@@ -55,6 +56,10 @@ impl Ascii {
                         binding: 7,
                         resource: wgpu::BindingResource::TextureView(&edge_slots.view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: wgpu::BindingResource::TextureView(&snap_owners.view),
+                    },
                 ],
             })
         };
@@ -69,6 +74,7 @@ impl Ascii {
             stats.generation,
             variant_cells[0].generation,
             dissolve_ranks.generation,
+            snap_owners.generation,
             input.id * 2 + mask.is_some() as u64,
         ]);
         frame.bind("ASCII Entity BG", key, || {
@@ -893,6 +899,8 @@ impl StylePass for Ascii {
         };
         let bands = assign_bands(&mut variants, size, min_footprint);
         let snapping = snap_grids(&variants);
+        // Each snapping grid's band of cells (#929)
+        let owner_bands = assign_owner_bands(&mut variants, size);
         // Each dissolving variant's band of cells (#398)
         let dissolving = assign_dissolve(&mut variants, size);
         report_left_out(frame, &variants, &slots, &snapping, dissolving.len());
@@ -1074,6 +1082,7 @@ impl StylePass for Ascii {
             dissolve: [[0; 4]; MAX_DISSOLVE],
             ramp_tone: [[EQUAL_BANDS; 4]; MAX_RAMP / 4],
             mask_rect: rect_corners(mask_rect, size),
+            snap_bands: [[0; 4]; MAX_SNAP_GRIDS],
         };
         let mut uniforms = uniforms;
         // Every font the frame draws in, stacked; the whole frame's is at
@@ -1095,6 +1104,7 @@ impl StylePass for Ascii {
             uniforms.band_rows[i] = [b.row, b.rows, b.cols, b.footprint.to_bits()];
         }
         uniforms.snap_grids[..snapping.len()].copy_from_slice(&snapping);
+        uniforms.snap_bands = snap_bands(&snapping, &owner_bands);
         uniforms.dissolve[..dissolving.len()].copy_from_slice(&dissolving);
         frame
             .queue
@@ -1199,6 +1209,30 @@ impl StylePass for Ascii {
             );
         }
 
+        // Snap owners (#929): which snapping variant holds each cell of each
+        // snapping grid, once a cell rather than in each of its pixels
+        let mut snap_owner_slot = self.snap_owners.lock().unwrap_or_else(|e| e.into_inner());
+        let owner_size = owner_texture_size(&owner_bands, snap_owner_slot.as_ref().map(|o| o.size));
+        let snap_owners = Owned::ensure(
+            &mut snap_owner_slot,
+            frame.device,
+            "ASCII Snap Owners",
+            SNAP_OWNER_FORMAT,
+            owner_size,
+            &self.cells_bgl,
+        );
+        if !owner_bands.is_empty() {
+            let draws: Vec<_> = owner_bands.iter().map(|b| (b.rect(), b.slot)).collect();
+            kit::fullscreen_pass_instances_in(
+                encoder,
+                "ASCII Snap Owners",
+                &snap_owners.view,
+                &self.snap_owner_pipeline,
+                &[&uniform, &self.picture_bind(frame, input, true)],
+                &draws,
+            );
+        }
+
         // The dissolve (#398): each dissolving variant's cells' order, then
         // each one's rank among the variant's cells near it
         let mut dissolve_slot = self.dissolve.lock().unwrap_or_else(|e| e.into_inner());
@@ -1264,6 +1298,7 @@ impl StylePass for Ascii {
             stats,
             variant_cells,
             dissolve_ranks,
+            snap_owners,
         );
         let groups = [&*uniform, &*cells, &font.bind, &*entity];
         let input_bind = frame.sampled_input("ASCII Input BG", &self.input_bgl, input);

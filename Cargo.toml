@@ -85,11 +85,13 @@ authors = ["Chris"]
 [workspace.lints.clippy]
 # The root clippy.toml's list (#761): the vfs reads and `as_float` in every
 # crate the player links, the wgpu and egui seams in the crates that draw.
-# Warned here so plain `cargo clippy` names a broken rule; flint-render,
-# flint-player, flint-viewer, flint-cli and flint-debug-ui deny it in their
-# own `[lints.clippy]`, and the wasm check (scripts/wasm-check.sh) denies it
-# for everything flint-player links. A crate opts in with `[lints] workspace = true`.
-disallowed_methods = "warn"
+# Denied in every crate (#979), so `cargo clippy` and CI's clippy job fail on a
+# read past the vfs anywhere, native-only code included, not just in the wasm
+# check (scripts/wasm-check.sh). Every member takes it with
+# `[lints] workspace = true` and none has a `[lints.clippy]` of its own
+# (scripts/ci.sh holds both). A call that means it says why:
+# `#[allow(clippy::disallowed_methods)] // <reason>`.
+disallowed_methods = "deny"
 
 [workspace.dependencies]
 # Core dependencies

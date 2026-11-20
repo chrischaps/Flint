@@ -145,10 +145,14 @@
 //! grid is the variant's when at least `cell_share` of its 16 lattice
 //! samples are; then every pixel of it draws as the variant, the scene's
 //! pixels in it included, and the variant's own pixels in a cell it
-//! doesn't hold draw as the whole frame (or pass through). The glyph pass
-//! asks it per pixel of each cell, over the grids of the snapping variants
-//! (up to [`MAX_SNAP_GRIDS`]; a variant on a grid past them still drops
-//! its own minority cells, but fills no others). The pixel `outline` is
+//! doesn't hold draw as the whole frame (or pass through). The snap owner
+//! pass (#929, `ascii_snap_owner.wgsl`) decides it once a cell of each
+//! snapping grid, in a band of rows over the grid's variants' bounds
+//! ([`OwnerBand`]), and the glyph pass reads a texel a grid: the pixel's
+//! own grid, then each of the snapping variants' grids (up to
+//! [`MAX_SNAP_GRIDS`]; a variant on a grid past them still drops its own
+//! minority cells, but fills no others; one whose grid gets no band, past
+//! [`MAX_BAND_TEXELS`] rows, keeps its pixel silhouette). The pixel `outline` is
 //! off on a snapped variant: its edge is the cells'. A variant that cuts
 //! to the pixel keeps its own pixels inside a snapped neighbour's cell.
 //!
@@ -511,6 +515,9 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             },
             // Each edge cell's glyph, decided once per cell (#910), likewise
             texture_entry(7, wgpu::TextureSampleType::Uint),
+            // Which snapping variant holds each cell, decided once per cell
+            // (#929), likewise
+            texture_entry(8, wgpu::TextureSampleType::Uint),
         ],
     });
     // The tone statistics' inputs (#289): the picture and the mask
@@ -616,6 +623,17 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         &kit::shader(device, "ASCII Variant Cells Shader", VARIANT_CELLS_SHADER),
         &[&table_bgl, &stats_in_bgl],
         &[VARIANT_CELL_FORMAT; 2],
+    );
+    // Which snapping variant holds each cell (#929): the mask in, as the
+    // variant cells read it, a band a snapping grid, each drawn with its
+    // first variant's slot as the instance
+    let snap_owner_pipeline = kit::fullscreen_pipeline_vertex(
+        device,
+        "ASCII Snap Owner Pipeline",
+        &kit::shader(device, "ASCII Snap Owner Shader", SNAP_OWNER_SHADER),
+        "vs_owner",
+        &[&table_bgl, &stats_in_bgl],
+        SNAP_OWNER_FORMAT,
     );
     // The dissolve's order and rank (#398): the mask in, then the orders
     let dissolve_order_pipeline = kit::fullscreen_pipeline(
@@ -764,6 +782,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         cells_pipeline,
         variant_cells_pipeline,
         variant_cells: Mutex::new([None, None]),
+        snap_owner_pipeline,
+        snap_owners: Mutex::new(None),
         dissolve_order_pipeline,
         dissolve_rank_pipeline,
         dissolve: Mutex::new([None, None]),
@@ -893,6 +913,11 @@ const VARIANT_CELLS_SHADER: kit::Wgsl = kit::wgsl!(
     "ascii_common.wgsl",
     "ascii_variant_cells.wgsl"
 );
+const SNAP_OWNER_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
+    "ascii_common.wgsl",
+    "ascii_snap_owner.wgsl"
+);
 const STATS_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
     "ascii_common.wgsl",
@@ -966,11 +991,13 @@ mod tests {
         // look, then #335's glyph cell and edge start), and the variant cell
         // bands' two vec4 each (#313), reprojection's two mat4 and its
         // vec4<u32> (#344), #351's edge colour, then #398's dissolve bands
-        // (a vec4 header and MAX_DISSOLVE vec4s), then #507's mask rect. A
-        // row is 176 bytes since #507's bounds, after #398's dissolve row
+        // (a vec4 header and MAX_DISSOLVE vec4s), then #507's mask rect, then
+        // #929's snap owner band a snap grid. A row is 192 bytes since
+        // #929's owner band, after #507's bounds and #398's dissolve row
         // padded to 16
-        assert_eq!(std::mem::size_of::<VariantUniform>(), 176);
+        assert_eq!(std::mem::size_of::<VariantUniform>(), 192);
         assert_eq!(std::mem::offset_of!(VariantUniform, glyph), 128);
+        assert_eq!(std::mem::offset_of!(VariantUniform, owner), 176);
         assert_eq!(
             std::mem::size_of::<AsciiUniforms>(),
             160 + 7 * 16
@@ -986,6 +1013,7 @@ mod tests {
                 + MAX_DISSOLVE * 16
                 + MAX_RAMP * 4
                 + 16
+                + MAX_SNAP_GRIDS * 16
         );
         assert_eq!(
             std::mem::offset_of!(AsciiUniforms, inv_view_proj) % 16,
@@ -993,10 +1021,15 @@ mod tests {
             "a mat4x4 is 16-aligned in WGSL"
         );
         // #351's edge colour, #398's dissolve bands, #281's ramp tones, then
-        // #507's mask rect, last
+        // #507's mask rect, then #929's snap owner bands, last
         assert_eq!(
             std::mem::offset_of!(AsciiUniforms, edge_color),
-            std::mem::size_of::<AsciiUniforms>() - 32 - MAX_DISSOLVE * 16 - MAX_RAMP * 4 - 16
+            std::mem::size_of::<AsciiUniforms>()
+                - 32
+                - MAX_DISSOLVE * 16
+                - MAX_RAMP * 4
+                - 16
+                - MAX_SNAP_GRIDS * 16
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
@@ -1419,6 +1452,7 @@ mod tests {
             ("ascii_stats.wgsl", STATS_SHADER),
             ("ascii_stats_resolve.wgsl", STATS_RESOLVE_SHADER),
             ("ascii_variant_cells.wgsl", VARIANT_CELLS_SHADER),
+            ("ascii_snap_owner.wgsl", SNAP_OWNER_SHADER),
             ("ascii_dissolve_order.wgsl", DISSOLVE_ORDER_SHADER),
             ("ascii_dissolve_rank.wgsl", DISSOLVE_RANK_SHADER),
         ] {
@@ -1444,7 +1478,7 @@ mod tests {
         // And the snapping grids and flag (#338)
         assert!(include_str!("ascii_common.wgsl")
             .contains(&format!("const MAX_SNAP_GRIDS: u32 = {MAX_SNAP_GRIDS}u;")));
-        assert!(include_str!("ascii.wgsl").contains(&format!("const SNAP: u32 = {SNAP}u;")));
+        assert!(include_str!("ascii_common.wgsl").contains(&format!("const SNAP: u32 = {SNAP}u;")));
     }
 
     #[test]
@@ -1469,6 +1503,89 @@ mod tests {
             .chain((0..MAX_SNAP_GRIDS + 3).map(|i| variant_row(8.0, [i as f32, 0.0], 1.0, SNAP)))
             .collect();
         assert_eq!(snap_grids(&many).len(), MAX_SNAP_GRIDS);
+    }
+
+    fn snapping_row(cell: f32, origin: [f32; 2], bounds: [f32; 4]) -> VariantUniform {
+        VariantUniform {
+            bounds,
+            ..variant_row(cell, origin, 1.0, SNAP)
+        }
+    }
+
+    #[test]
+    fn each_snapping_grid_gets_a_band_over_its_variants_bounds() {
+        let size = [1280, 720];
+        let mut rows = vec![
+            VariantUniform::zeroed(),
+            snapping_row(8.0, [0.0, 0.0], [100.0, 40.0, 140.0, 80.0]),
+            // Not snapping, and passing through: no band
+            VariantUniform {
+                bounds: [0.0, 0.0, 1280.0, 720.0],
+                ..variant_row(8.0, [0.0, 0.0], 1.0, 0)
+            },
+            VariantUniform {
+                bounds: [0.0, 0.0, 1280.0, 720.0],
+                ..variant_row(8.0, [0.0, 0.0], 1.0, SNAP | PASS_THROUGH)
+            },
+            // Row 1's grid: its band grows over both
+            snapping_row(8.0, [0.0, 0.0], [300.0, 10.0, 310.0, 20.0]),
+            // Its own grid (an object grid), and off screen
+            snapping_row(10.0, [3.0, 5.0], [600.0, 600.0, 640.0, 700.0]),
+            snapping_row(10.0, [7.0, 7.0], [1300.0, 0.0, 1400.0, 100.0]),
+        ];
+        let bands = assign_owner_bands(&mut rows, size);
+        assert_eq!(bands.len(), 2);
+        // Cells 12..17 and 37..38 across, 1..10 down, one more each side
+        assert_eq!(bands[0].slot, 1);
+        assert_eq!(bands[0].first, [11, 0]);
+        assert_eq!([bands[0].cols, bands[0].rows], [29, 12]);
+        assert_eq!(bands[0].row, 0);
+        assert_eq!(rows[1].owner, bands[0].packed());
+        assert_eq!(rows[4].owner, bands[0].packed());
+        assert_eq!(rows[2].owner, [0; 4]);
+        assert_eq!(rows[3].owner, [0; 4]);
+        // Stacked under the first
+        assert_eq!(bands[1].slot, 5);
+        assert_eq!(bands[1].row, 12);
+        assert_eq!(bands[1].first, [58, 58]);
+        assert_eq!(rows[5].owner, [58, 58, 13, (bands[1].cols | bands[1].rows << 16) as i32]);
+        assert_eq!(rows[6].owner, [0; 4]);
+        // Every pixel of a variant's bounds lands in its band, as the
+        // shader finds its cell
+        for (row, band) in [(1, 0), (4, 0), (5, 1)] {
+            let r = rows[row];
+            let b = bands[band];
+            let [x0, y0, x1, y1] = r.bounds;
+            for p in [[x0 + 0.5, y0 + 0.5], [x1 - 0.5, y1 - 0.5]] {
+                let c = [0, 1].map(|i| ((p[i] - r.origin[i]) / r.cell[i]).floor() as i32 - b.first[i]);
+                assert!(c[0] >= 1 && (c[0] as u32) < b.cols - 1, "{row}: {c:?}");
+                assert!(c[1] >= 1 && (c[1] as u32) < b.rows - 1, "{row}: {c:?}");
+            }
+        }
+        // The uniform's bands follow `snap_grids`
+        let snapping = snap_grids(&rows);
+        let held = snap_bands(&snapping, &bands);
+        assert_eq!(held[0], bands[0].packed());
+        assert_eq!(held[1], bands[1].packed());
+        // The third grid is off screen: no band
+        assert_eq!(held[2], [0; 4]);
+        assert_eq!(owner_texture_size(&bands, None), [29.max(bands[1].cols), 12 + bands[1].rows]);
+        assert_eq!(owner_texture_size(&[], Some([40, 30])), [40, 30]);
+    }
+
+    #[test]
+    fn a_snapping_grid_past_the_owner_states_rows_gets_no_band() {
+        // Whole-frame grids of 1-pixel cells: 723 rows each (720 and one
+        // more each side), so the twelfth passes 8192 rows
+        let size = [1000, 720];
+        let mut rows: Vec<_> = std::iter::once(VariantUniform::zeroed())
+            .chain((0..12).map(|i| snapping_row(1.0, [i as f32 * 0.01, 0.0], [0.0, 0.0, 1000.0, 720.0])))
+            .collect();
+        let bands = assign_owner_bands(&mut rows, size);
+        assert_eq!(bands.len(), 11);
+        assert!(bands.iter().all(|b| b.rows == 723));
+        assert_eq!(rows[12].owner, [0; 4]);
+        assert!(rows[11].owner[2] > 0);
     }
 
     #[test]
