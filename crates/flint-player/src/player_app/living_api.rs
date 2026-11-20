@@ -67,9 +67,24 @@ fn queue(call: &mut Call<'_>, command: LivingCommand) {
         .push(ScriptCommand::Module(ModuleCommand::new(function, command)));
 }
 
-/// When the living subsystem runs, and so its three modules are enabled.
+/// When the living subsystem runs, and so `living` and `wooze` are enabled.
 const WITH_LIVING: &str = "the scene has living props, a [living] or [wooze] table, \
                            a shallow_wooze entity or woozy grass";
+
+/// When `debug` is enabled (#854): where the living subsystem runs, in a
+/// player built with the debug HUD. The A/B and the commit are the Living
+/// Props panel's tools, so a shipped build without the panel has neither.
+const WITH_DEBUG_HUD: &str = "the player is built with its debug-hud feature (on by \
+                              default) and the scene has living props, a [living] or \
+                              [wooze] table, a shallow_wooze entity or woozy grass";
+
+/// The modules the living subsystem enables where it runs: `debug` only in
+/// a build with the `debug-hud` feature (#854), so a shipped build's
+/// `compare_living` is told the module is not enabled and how to enable it.
+#[cfg(feature = "debug-hud")]
+pub(crate) const ENABLED: &[&str] = &["wooze", "living", "debug"];
+#[cfg(not(feature = "debug-hud"))]
+pub(crate) const ENABLED: &[&str] = &["wooze", "living"];
 
 /// The `living` module: Living Props' knobs, the F3 panel's by another
 /// door, for every prop at once or one species (#246), and the clock
@@ -82,7 +97,9 @@ pub(crate) struct WoozeModule;
 
 /// The `debug` module: the look-development calls that are the Living
 /// Props panel's actions: the A/B comparison (F5/F6/F7) and the commit to
-/// the scene file. Tools for tuning a scene, not for a shipped game.
+/// the scene file. Tools for tuning a scene, not for a shipped game: it is
+/// declared in every build, so a call is always the "not enabled" error
+/// rather than an unknown function, and enabled only with `debug-hud`.
 pub(crate) struct DebugModule;
 
 pub(crate) static LIVING: LivingModule = LivingModule;
@@ -449,7 +466,7 @@ impl ScriptModule for DebugModule {
     }
 
     fn enabled_when(&self) -> &'static str {
-        WITH_LIVING
+        WITH_DEBUG_HUD
     }
 
     fn declare(&self, m: &mut Module<'_>) {
