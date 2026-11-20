@@ -202,6 +202,10 @@ The last row is the limit. Over a ground about as bright as the colour, egui 0.3
 
 The engine's own colours were retuned this way: the `.style.toml` default `glow_color` is `[1, 1, 1, 0.73]` (it was 0.5), and `flint init`'s HUD hints and crosshair moved by the table.
 
+#### HUD outlines
+
+`draw_rect_outline` strokes outside its rect, as it did on egui 0.30, and so do a UI document's `rect` outlines and `border_width` ([#989](https://github.com/chrischaps/Flint/issues/989)): a 4 px outline on a 100 × 40 box at (10, 10) covers (6, 6) to (114, 54), the same pixels as a wgpu 23 build. From the port (#945) until #989 the stroke was centred on the edge, half of it inside the box. A HUD tuned before the port needs nothing. One tuned in between that should keep its look: move each outline in by half its thickness and make it one thickness smaller.
+
 ### wgpu 23 to 30
 
 For a game's own style, renderer or window code. Most are renames the compiler names:

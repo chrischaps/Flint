@@ -299,8 +299,8 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `draw_rect_ex4(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num, tl: num, tr: num, br: num, bl: num, layer: int)` | — | **Deprecated:** use `draw_rect`(x, y, w, h, `#{color, rounding: [tl, tr, br, bl], layer}`). Fill a rectangle with its own rounding at each corner (top left, top right, bottom right, bottom left). |
 | `draw_rect_gradient(x: num, y: num, w: num, h: num, opts: map)` | — | Fill a rectangle from one colour to another; opts: from, to (colours, white), vertical (top to bottom, true; false is left to right), layer. |
 | `draw_rect_gradient(x: num, y: num, w: num, h: num, r1: num, g1: num, b1: num, a1: num, r2: num, g2: num, b2: num, a2: num, vertical: bool, layer: int)` | — | **Deprecated:** use `draw_rect_gradient`(x, y, w, h, `#{from, to, vertical, layer}`). Fill a rectangle from one colour to another, top to bottom when vertical, else left to right. |
-| `draw_rect_outline(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num, thickness: num)` | — | Outline a rectangle, thickness in points. |
-| `draw_rect_outline(x: num, y: num, w: num, h: num, opts: map)` | — | Outline a rectangle; opts: color, thickness (points, 1), rounding (a radius), layer. |
+| `draw_rect_outline(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num, thickness: num)` | — | Outline a rectangle, the stroke outside its edge, thickness in points. |
+| `draw_rect_outline(x: num, y: num, w: num, h: num, opts: map)` | — | Outline a rectangle, the stroke outside its edge; opts: color, thickness (points, 1), rounding (a radius), layer. |
 | `draw_rect_outline_ex(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num, thickness: num, rounding: num, layer: int)` | — | **Deprecated:** use `draw_rect_outline`(x, y, w, h, `#{color, thickness, rounding, layer}`). Outline a rectangle with rounded corners, on a layer. |
 | `draw_circle(x: num, y: num, radius: num, r: num, g: num, b: num, a: num)` | — | Fill a circle. |
 | `draw_circle(x: num, y: num, radius: num, opts: map)` | — | Fill a circle; opts: color, layer. |

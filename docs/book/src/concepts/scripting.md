@@ -1751,8 +1751,8 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `draw_text(x: num, y: num, text: str, size: num, opts: map)` | — | Draw text at a point; opts: color, font, align, stroke \[r, g, b, a, width\], spacing, layer, shadow \[dx, dy, r, g, b, a\], glow \[r, g, b, a, radius\]. |
 | `draw_rect(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num)` | — | Fill a rectangle. |
 | `draw_rect(x: num, y: num, w: num, h: num, opts: map)` | — | Fill a rectangle; opts: color, rounding (a radius, or \[tl, tr, br, bl\]), layer. |
-| `draw_rect_outline(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num, thickness: num)` | — | Outline a rectangle, thickness in points. |
-| `draw_rect_outline(x: num, y: num, w: num, h: num, opts: map)` | — | Outline a rectangle; opts: color, thickness (points, 1), rounding (a radius), layer. |
+| `draw_rect_outline(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num, thickness: num)` | — | Outline a rectangle, the stroke outside its edge, thickness in points. |
+| `draw_rect_outline(x: num, y: num, w: num, h: num, opts: map)` | — | Outline a rectangle, the stroke outside its edge; opts: color, thickness (points, 1), rounding (a radius), layer. |
 | `draw_rect_gradient(x: num, y: num, w: num, h: num, opts: map)` | — | Fill a rectangle from one colour to another; opts: from, to (colours, white), vertical (top to bottom, true; false is left to right), layer. |
 | `draw_circle(x: num, y: num, radius: num, r: num, g: num, b: num, a: num)` | — | Fill a circle. |
 | `draw_circle(x: num, y: num, radius: num, opts: map)` | — | Fill a circle; opts: color, layer. |
