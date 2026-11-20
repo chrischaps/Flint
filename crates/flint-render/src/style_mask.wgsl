@@ -113,7 +113,12 @@ fn written_blend(frag_xy: vec2<f32>, covered: f32) -> u32 {
     return u32(round(blend));
 }
 
+// The lines between FLINT_MESH { and } are a mesh's alone: the billboard
+// module (style_mask_billboard.wgsl, #1011) leaves them out and binds its
+// own groups 0 and 2 in their place.
+//FLINT_MESH {
 @group(0) @binding(0) var<uniform> transform: TransformUniforms;
+//FLINT_MESH }
 @group(1) @binding(0) var<uniform> draw: MaskDraw;
 @group(1) @binding(1) var scene_depth: texture_depth_2d;
 // The style veil (#290): how much of each pixel transparents and particles
@@ -122,8 +127,10 @@ fn written_blend(frag_xy: vec2<f32>, covered: f32) -> u32 {
 @group(1) @binding(2) var veil: texture_2d<f32>;
 // The frame's screen field (#859), read by a draw whose blend follows it
 @group(1) @binding(4) var<uniform> field: Field;
+//FLINT_MESH {
 // Only the skinned entry point reads it; the static layout leaves it out
 @group(2) @binding(0) var<storage, read> bone_matrices: array<mat4x4<f32>>;
+//FLINT_MESH }
 
 struct StaticVertex {
     @location(0) position: vec3<f32>,
@@ -141,6 +148,7 @@ struct SkinnedVertex {
     @location(5) joint_weights: vec4<f32>,
 };
 
+//FLINT_MESH {
 @vertex
 fn vs_static(in: StaticVertex) -> @builtin(position) vec4<f32> {
     let world_pos = transform.model * vec4<f32>(in.position, 1.0);
@@ -158,6 +166,7 @@ fn vs_skinned(in: SkinnedVertex) -> @builtin(position) vec4<f32> {
     let world_pos = transform.model * (skin * vec4<f32>(in.position, 1.0));
     return transform.view_proj * world_pos;
 }
+//FLINT_MESH }
 
 @fragment
 fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec2<u32> {

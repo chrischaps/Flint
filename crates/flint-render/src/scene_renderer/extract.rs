@@ -1073,6 +1073,8 @@ impl SceneRenderer {
             _pad1: 0.0,
         };
 
+        let world_aabb = crate::billboard_pipeline::sprite_bounds(&sprite_instance);
+
         // Billboard uniforms will be filled during render (need camera)
         let billboard_uniforms = BillboardUniforms {
             view_proj: [[0.0; 4]; 4],
@@ -1145,6 +1147,7 @@ impl SceneRenderer {
                 sprite_buffer,
                 billboard_bind_group,
                 texture_bind_group,
+                world_aabb,
             }),
         ));
     }

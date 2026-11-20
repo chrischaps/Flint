@@ -1,0 +1,102 @@
+# Style Mask, billboards: a wisp drawn in glyphs (#1011).
+#
+# A billboard is a sprite turned to face the camera, cut out where its
+# texture's alpha is under 0.5. The middle wisp asks for ASCII, so the mask
+# draws its quad as the main pass does, cut out by the same alpha, and only
+# the wisp's own shape turns to glyphs (before #1011 the mask walked no
+# billboard and it stayed a plain sprite). The wisp in front of it is
+# unstyled: it writes depth, so it cuts through the styled one's mask
+# exactly as it cuts through a mesh's (#737). The stone behind is in pencil,
+# so the mask holds two ids, and the glyph wisp covers part of it.
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/style_mask_billboard.scene.toml --no-grid -o wisp.png
+#   cargo run --bin flint -- render tests/fixtures/scenes/style_mask_billboard.scene.toml --no-grid -o mask.png --debug-mode style
+
+[scene]
+name = "Style Mask Billboard"
+version = "1.0"
+description = "A billboard wisp in glyphs between a pencil stone and a plain wisp (#1011)"
+
+[camera]
+position = [0.0, 1.0, 3.2]
+target = [0.0, 0.9, -1.0]
+fov = 50.0
+
+[post_process]
+exposure = 1.15
+vignette_enabled = true
+vignette_intensity = 0.3
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+background = 0.2
+brightness = 0.25
+contrast = 1.3
+
+[post_process.styles.pencil]
+scope = "entities"
+
+[entities.key]
+[entities.key.transform]
+position = [0, 20, 0]
+[entities.key.light]
+type = "directional"
+direction = [-0.4, 0.8, 0.5]
+color = [1.0, 0.9, 0.78]
+intensity = 2.0
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.01, 0.015, 0.04, 1.0]
+horizon_color = [0.06, 0.05, 0.08, 1.0]
+cloud_coverage = 0.1
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-20, -0.1, -20]
+max = [20, 0, 20]
+[entities.ground.material]
+color = [0.12, 0.09, 0.07, 1.0]
+roughness = 0.95
+
+# --- In pencil, behind ---
+
+[entities.stone]
+archetype = "furniture"
+[entities.stone.transform]
+position = [0.3, 0, -1.0]
+[entities.stone.bounds]
+min = [-1.2, 0.0, -0.2]
+max = [1.2, 2.0, 0.2]
+[entities.stone.material]
+color = [0.58, 0.56, 0.52, 1.0]
+roughness = 0.9
+[entities.stone.pencil_style]
+
+# --- In glyphs: the styled billboard ---
+
+[entities.wisp_glyph]
+[entities.wisp_glyph.transform]
+position = [-0.25, 0.3, 0.0]
+[entities.wisp_glyph.sprite]
+texture = "./textures/wisp_sprite.png"
+width = 1.1
+height = 1.65
+[entities.wisp_glyph.ascii_style]
+color = "tint"
+tint = [0.55, 0.85, 1.0]
+ramp = "classic"
+
+# --- Smooth, in front: cuts through the glyph wisp's mask ---
+
+[entities.wisp_plain]
+[entities.wisp_plain.transform]
+position = [0.12, 0.2, 0.7]
+[entities.wisp_plain.sprite]
+texture = "./textures/wisp_sprite.png"
+width = 0.7
+height = 1.05

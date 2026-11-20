@@ -440,6 +440,27 @@ name = "style-veil-billboard"
 scene = "tests/fixtures/scenes/style_veil_billboard.scene.toml"
 args = ["--no-grid"]
 
+# A styled billboard is masked (#1011): the middle wisp asks for ASCII, so
+# the mask draws its quad cut out by the same alpha the scene cut it by,
+# and only the wisp's shape turns to glyphs, over a pencil stone. The plain
+# wisp in front cuts through it by its depth. Before, the mask walked no
+# billboard and the wisp stayed a sprite. The mask, at 1x and 4x, then the
+# picture
+[[case]]
+name = "style-mask-billboard"
+scene = "tests/fixtures/scenes/style_mask_billboard.scene.toml"
+args = ["--no-grid", "--debug-mode", "style"]
+
+[[case]]
+name = "style-mask-billboard-msaa4"
+scene = "tests/fixtures/scenes/style_mask_billboard.scene.toml"
+args = ["--no-grid", "--debug-mode", "style", "--msaa", "4"]
+
+[[case]]
+name = "style-billboard-ascii"
+scene = "tests/fixtures/scenes/style_mask_billboard.scene.toml"
+args = ["--no-grid"]
+
 # A woozy mesh's mask (#737): shallow wooze moves a slab's and a skinned
 # figure's vertices, and the mask moves them the same way, so each id
 # fills what the scene drew (at rest pose it had holes and spill); the

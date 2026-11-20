@@ -3940,6 +3940,92 @@ fn the_mask_buffer_fits_the_scene_and_masks_every_styled_draw() {
     assert_eq!(missed, 0, "{missed} box pixels were not masked");
 }
 
+/// #1011: a styled billboard is masked, every pixel its quad covers and
+/// no other, single-sample and under MSAA (the mask walked no billboard
+/// draw, so its style never drew). An untextured sprite is the white quad,
+/// whole; the alpha cut-out is the `style-mask-billboard` golden's.
+#[test]
+fn a_styled_billboard_is_masked_where_it_draws() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    renderer.set_debug_mode(flint_render::DebugMode::StyleMask);
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut world = FlintWorld::new();
+    let e = world.spawn("sprite").unwrap();
+    let mut transform = toml::Table::new();
+    transform.insert("position".into(), vec3([0.0, 0.0, 0.0]));
+    world
+        .set_component(e, "transform", transform.into())
+        .unwrap();
+    let mut sprite = toml::Table::new();
+    sprite.insert("width".into(), 9.0.into());
+    sprite.insert("height".into(), 7.0.into());
+    sprite.insert("anchor_y".into(), 0.5.into());
+    world.set_component(e, "sprite", sprite.into()).unwrap();
+    let style = |on: bool| {
+        let mut t = toml::Table::new();
+        t.insert("style".into(), "probe".into());
+        t.insert("enabled".into(), on.into());
+        toml::Value::Table(t)
+    };
+    let px = |f: &[u8], i: usize| [f[i * 4], f[i * 4 + 1], f[i * 4 + 2]];
+    let n = (SIZE * SIZE) as usize;
+    for samples in [1, 4] {
+        renderer.set_msaa(gpu.device, samples);
+        world.set_component(e, "style_mask", style(false)).unwrap();
+        let unstyled = gpu.frame(&mut renderer, &world);
+        world.set_component(e, "style_mask", style(true)).unwrap();
+        let styled = gpu.frame(&mut renderer, &world);
+        let (_, draws) = renderer.style_mask_draws().expect("no mask pass");
+        assert_eq!(draws, 1, "{samples}x: the billboard is the mask's one draw");
+        let empty = gpu.frame(&mut renderer, &FlintWorld::new());
+        // The sprite's pixels: the white quad, far from the background.
+        // The faint glow its depth gives the frame around it (a level or
+        // two) is no part of it, and no mask touches it
+        let diff = |a: [u8; 3], b: [u8; 3]| (0..3).map(|k| a[k].abs_diff(b[k]) as u32).sum::<u32>();
+        let covered: Vec<usize> = (0..n)
+            .filter(|&i| diff(px(&unstyled, i), px(&empty, i)) > 24)
+            .collect();
+        let missed = covered
+            .iter()
+            .filter(|&&i| px(&styled, i) == px(&unstyled, i))
+            .count();
+        // Off it: a pixel the sprite leaves exactly as it was, painted in
+        // a mask id's colour (blue, id 1). Under MSAA an edge pixel the quad
+        // covers in part is masked when any sample is, and is neither
+        let id_blue = |p: [u8; 3]| p[2] > p[0].saturating_add(60);
+        let spilled = (0..n)
+            .filter(|&i| px(&unstyled, i) == px(&empty, i) && id_blue(px(&styled, i)))
+            .count();
+        eprintln!(
+            "{samples}x: {} sprite pixels, {missed} unmasked, {spilled} masked off it",
+            covered.len()
+        );
+        assert!(
+            covered.len() > n / 8,
+            "{samples}x: the sprite covers too little"
+        );
+        assert_eq!(
+            missed, 0,
+            "{samples}x: {missed} sprite pixels were not masked"
+        );
+        assert_eq!(
+            spilled, 0,
+            "{samples}x: {spilled} pixels masked off the sprite"
+        );
+    }
+}
+
 /// #324: the palette style draws every pixel in its table's colours, the
 /// colour `Palette::quantize` gives for what was there (flat, and with
 /// chroma and dither), and `pixel` makes blocks of one colour. Its nearest

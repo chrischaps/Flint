@@ -1373,7 +1373,8 @@ impl SceneRenderer {
     /// Each style id's screen bounds this frame (#385): the projected world
     /// bounds of exactly the draws the mask draws for it (terrain chunks in
     /// view, opaque and transparent models and boxes, skinned meshes as
-    /// posed), so a styled pixel is always inside its id's rect.
+    /// posed, billboards' quads), so a styled pixel is always inside its
+    /// id's rect.
     pub(super) fn style_bounds(&self, view_proj: &[[f32; 4]; 4]) -> crate::style_mask::StyleBounds {
         use crate::style_mask::IdBounds;
         let mut bounds = crate::style_mask::StyleBounds::known();
@@ -1401,10 +1402,10 @@ impl SceneRenderer {
                 },
                 Draw::Static(d) if !d.is_wireframe => d.world_aabb.or(d.style_aabb),
                 Draw::Skinned(d) => d.world_aabb,
-                // Not in the mask (a styled billboard is #1011)
-                Draw::Static(_) | Draw::Echo(_) | Draw::Billboard(_) | Draw::Particles(_) => {
-                    continue
-                }
+                // Its quad under any turn of the camera (#1011)
+                Draw::Billboard(d) => Some(d.world_aabb),
+                // Not in the mask
+                Draw::Static(_) | Draw::Echo(_) | Draw::Particles(_) => continue,
             };
             bounds.add(id, of(aabb));
         }
