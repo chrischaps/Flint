@@ -1543,6 +1543,41 @@ count = 4
             unread.is_empty(),
             "the schema declares keys the emitter doesn't read: {unread:?}"
         );
+        // ...and every key the emitter reads is declared, so a scene that
+        // writes one loads without an `unknown-field` (#1051)
+        let undeclared: Vec<_> = known.iter().filter(|k| !fields.contains_key(**k)).collect();
+        assert!(
+            undeclared.is_empty(),
+            "the emitter reads keys the schema doesn't declare: {undeclared:?}"
+        );
+        // A field's `default` is written into a component that leaves it
+        // out, so each must be what the reader takes with the key absent:
+        // the table of every default resolves as the empty table does
+        // (that a default never outvotes a modern key is
+        // `tests/inline_component.rs`, through the real load)
+        let defaults: toml::Table = fields
+            .iter()
+            .filter_map(|(k, f)| Some((k.clone(), f.get("default")?.clone())))
+            .collect();
+        let resolve = |t: &toml::Table| {
+            EmitterDef::from_component(t)
+                .unwrap()
+                .resolve(ResolveContext::inline())
+                .unwrap()
+        };
+        assert_eq!(resolve(&defaults), resolve(&toml::Table::new()));
+        for key in [
+            "rotation_min",
+            "rotation_max",
+            "angular_velocity_min",
+            "angular_velocity_max",
+            "shape_radius",
+        ] {
+            assert!(
+                !defaults.contains_key(key),
+                "{key} has a default, and the reader falls back on another key without it"
+            );
+        }
     }
 
     #[test]

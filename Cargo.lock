@@ -1920,6 +1920,8 @@ dependencies = [
  "flint-core",
  "flint-ecs",
  "flint-runtime",
+ "flint-scene",
+ "flint-schema",
  "serde",
  "toml",
  "tracing",

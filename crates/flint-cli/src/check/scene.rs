@@ -765,11 +765,11 @@ fn refuses_the_load(found: &mut Vec<Diagnostic>, scene: &Path, table: &str, said
 
 /// Every inline `particle_emitter` held to the emitter's own reader, as the
 /// player reads it (#690): a key it doesn't read and a value it can't use
-/// are `bad-emitter` errors at their key. The schema lists fewer keys than
-/// the emitter reads and fewer forms (a curve, a `[min, max]` range, a shape
-/// table have no schema type), so what the schema pass says of this
-/// component's keys and forms (`unknown-field`, `bad-type`,
-/// `bad-enum-value`) is left to the reader, and so is anything at a key the
+/// are `bad-emitter` errors at their key. The schema declares every key the
+/// emitter reads (#1051), its many-form ones (a curve, a `[min, max]`
+/// range, a shape table) as `any`, which only the reader can judge, so what
+/// the schema pass says of this component's keys and forms (`unknown-field`,
+/// `bad-type`, `bad-enum-value`) is left to the reader, and so is anything at a key the
 /// reader found wrong: one mistake is said once, in the emitter's words.
 /// The schema's ranges and the texture's asset check stay.
 fn particle_emitters(scene: &Path, world: &FlintWorld, found: &mut Vec<Diagnostic>) {
