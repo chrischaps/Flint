@@ -132,6 +132,9 @@ the tickets' blocked-by links. The steps get no sub-issues.
   `extend = true` adds its fields to the earlier layer's definition; without
   it a later layer still replaces the component whole, so no layer written
   before changed meaning. Chosen over implicit merging for that reason.
+  Archetypes followed (#1054): `[archetype.x]` with `extend = true` appends
+  its components and merges its defaults key by key into the earlier
+  layer's.
 
 ## Decisions
 

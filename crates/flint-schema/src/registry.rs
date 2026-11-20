@@ -1,6 +1,8 @@
 //! Schema registry for loading and managing schemas
 
-use crate::archetype::{ArchetypeSchema, ArchetypeSchemaFile};
+use crate::archetype::{
+    ArchetypeSchema, ArchetypeSchemaDefinition, ArchetypeSchemaFile, ARCHETYPE_KEYS,
+};
 use crate::component::{
     ComponentSchema, ComponentSchemaDefinition, ComponentSchemaFile, FieldSchema, TableSchema,
     TableSchemaFile,
@@ -84,6 +86,78 @@ impl SchemaOrigin {
     }
 }
 
+/// Where an archetype came from (#1054): the file that declared it, each
+/// file that added to it with `extend = true`, the file that listed each of
+/// its components, and the file that gave each of its defaults. What
+/// `flint schema <archetype>` prints beside each component and default. An
+/// archetype loaded from a string or registered in code has no file, and
+/// none is recorded for it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ArchetypeOrigin {
+    /// The file that declared it whole.
+    pub declared_in: Option<PathBuf>,
+    /// Each file that added to it, in load order.
+    pub extended_by: Vec<PathBuf>,
+    /// The file that first listed each component.
+    pub components: HashMap<String, PathBuf>,
+    /// The file that last gave each default, by component, then field.
+    pub defaults: HashMap<String, HashMap<String, PathBuf>>,
+}
+
+impl ArchetypeOrigin {
+    /// Declared whole by `file`, as `schema` is.
+    fn declared(file: Option<&Path>, schema: &ArchetypeSchema) -> Self {
+        let Some(file) = file else {
+            return Self::default();
+        };
+        let mut origin = Self {
+            declared_in: Some(file.to_path_buf()),
+            ..Self::default()
+        };
+        for component in &schema.components {
+            origin
+                .components
+                .insert(component.clone(), file.to_path_buf());
+        }
+        for (component, table) in &schema.defaults {
+            origin.set_defaults(component, table, Some(file));
+        }
+        origin
+    }
+
+    /// `table`'s keys, as the defaults of `component` given by `file`.
+    fn set_defaults(&mut self, component: &str, table: &toml::Value, file: Option<&Path>) {
+        let fields = self.defaults.entry(component.to_string()).or_default();
+        for key in table.as_table().into_iter().flatten().map(|(k, _)| k) {
+            match file {
+                Some(file) => fields.insert(key.clone(), file.to_path_buf()),
+                None => fields.remove(key),
+            };
+        }
+    }
+
+    /// The file that listed `component`.
+    pub fn component_file(&self, component: &str) -> Option<&Path> {
+        self.components.get(component).map(PathBuf::as_path)
+    }
+
+    /// The file that gave `component`'s default for `field`.
+    pub fn default_file(&self, component: &str, field: &str) -> Option<&Path> {
+        self.defaults
+            .get(component)?
+            .get(field)
+            .map(PathBuf::as_path)
+    }
+}
+
+/// An `[archetype.x]` with `extend = true`, waiting for the rest of its
+/// schema directory to load, as a component's [`Extension`] does.
+struct ArchetypeExtension {
+    name: String,
+    def: ArchetypeSchemaDefinition,
+    file: Option<PathBuf>,
+}
+
 /// What a component's F3 panel is built from: its `[component.x.panel]`
 /// table and each field's `panel` key, in the order the fields were written
 /// (an extension's after the earlier layer's). Kept so an extension can
@@ -156,6 +230,8 @@ pub struct SchemaRegistry {
     component_origins: HashMap<String, SchemaOrigin>,
     /// The same of each scene table.
     table_origins: HashMap<String, SchemaOrigin>,
+    /// The file of each archetype, its components and defaults (#1054).
+    archetype_origins: HashMap<String, ArchetypeOrigin>,
     /// What each component's panel is built from, for an extension.
     panel_inputs: HashMap<String, PanelInputs>,
     /// What [`crate::lint`] found in each component and scene-table file
@@ -228,12 +304,12 @@ impl SchemaRegistry {
         }
         self.apply_extensions(SchemaKind::Component, extensions)?;
 
-        // Archetypes
+        // Archetypes, then their extensions (#1054)
+        let mut extensions = Vec::new();
         for file_path in toml_files(&path.join("archetypes"))? {
-            self.load_archetype_file(&file_path)?;
+            extensions.extend(self.read_archetype_file(&file_path)?);
         }
-
-        Ok(())
+        self.apply_archetype_extensions(extensions)
     }
 
     /// Load the scene-table schemas of a TOML file (`[table.<name>]`).
@@ -466,18 +542,151 @@ impl SchemaRegistry {
         self.table_origins.get(name)
     }
 
+    /// Where archetype `name`, each of its components and each of its
+    /// defaults was declared (#1054).
+    pub fn archetype_origin(&self, name: &str) -> Option<&ArchetypeOrigin> {
+        self.archetype_origins.get(name)
+    }
+
     /// Load an archetype schema from a TOML file
     pub fn load_archetype_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        let path = path.as_ref();
+        let extensions = self.read_archetype_file(path.as_ref())?;
+        self.apply_archetype_extensions(extensions)
+    }
+
+    fn read_archetype_file(&mut self, path: &Path) -> Result<Vec<ArchetypeExtension>> {
         let content = vfs::read_to_string(path)?;
         let file: ArchetypeSchemaFile =
             toml::from_str(&content).map_err(|e| parse_error(path, e))?;
+        Ok(self.insert_archetypes(file, Some(path)))
+    }
 
+    /// Each archetype of `file` replaces the one of its name; those that
+    /// say `extend = true` are returned, to be applied by
+    /// [`apply_archetype_extensions`](Self::apply_archetype_extensions). A
+    /// key the loader ignores is linted here: archetype files have no lint
+    /// pass of their own.
+    fn insert_archetypes(
+        &mut self,
+        file: ArchetypeSchemaFile,
+        path: Option<&Path>,
+    ) -> Vec<ArchetypeExtension> {
+        let mut names: Vec<&String> = file.archetype.keys().collect();
+        names.sort();
+        for name in names {
+            self.lint_archetype(name, &file.archetype[name], path);
+        }
+        let mut extensions = Vec::new();
         for (name, def) in file.archetype {
+            if def.extend {
+                extensions.push(ArchetypeExtension {
+                    name,
+                    def,
+                    file: path.map(Path::to_path_buf),
+                });
+                continue;
+            }
             let schema = def.to_archetype_schema(name.clone());
+            self.archetype_origins
+                .insert(name.clone(), ArchetypeOrigin::declared(path, &schema));
             self.archetypes.insert(name, schema);
         }
+        extensions
+    }
 
+    /// `ignored-schema-key` for an archetype's stray keys, and for an
+    /// extension's `description`, which stays the declaring layer's.
+    fn lint_archetype(&mut self, name: &str, def: &ArchetypeSchemaDefinition, path: Option<&Path>) {
+        use flint_core::diagnostic::codes;
+        let mut found = Vec::new();
+        if def.extend && def.description.is_some() {
+            found.push(
+                Diagnostic::warning(
+                    codes::IGNORED_SCHEMA_KEY,
+                    format!(
+                        "`description` is ignored: `[archetype.{name}]` says `extend = true`, \
+                         so it adds to the `{name}` an earlier layer declared, which keeps that \
+                         layer's description"
+                    ),
+                )
+                .field("description"),
+            );
+        }
+        for key in def.stray.keys() {
+            found.push(
+                Diagnostic::warning(
+                    codes::IGNORED_SCHEMA_KEY,
+                    format!(
+                        "`{key}` is ignored: `[archetype.{name}]` holds `description`, \
+                         `components`, `defaults`, `visual` and `extend`"
+                    ),
+                )
+                .hint_opt(flint_core::diagnostic::did_you_mean(
+                    key,
+                    ARCHETYPE_KEYS.iter().copied(),
+                ))
+                .field(key.clone()),
+            );
+        }
+        for d in &mut found {
+            d.file = path.map(Path::to_path_buf);
+        }
+        self.lints.extend(found);
+    }
+
+    /// Add each extension's components and defaults to the archetype it
+    /// names (#1054). A component already listed is not listed twice; each
+    /// `defaults.<component>` table merges into the earlier one key by key,
+    /// a key named again taking the extension's value; a `visual` replaces
+    /// the earlier one. An extension of a name no earlier schema declares
+    /// is an error naming the file, as a component's is (#794).
+    fn apply_archetype_extensions(&mut self, extensions: Vec<ArchetypeExtension>) -> Result<()> {
+        for ArchetypeExtension { name, def, file } in extensions {
+            let Some(schema) = self.archetypes.get_mut(&name) else {
+                let source = source_of(file.as_deref());
+                let mut message = format!(
+                    "{source}: archetype '{name}' says `extend = true`, and no earlier schema \
+                     declares an archetype of that name to add its components to"
+                );
+                let known = self.archetypes.keys().map(String::as_str);
+                match flint_core::diagnostic::did_you_mean(&name, known) {
+                    Some(near) => message.push_str(&format!(": {near}")),
+                    None => message.push_str(&format!(
+                        " (to declare it whole here, leave `extend` out of [archetype.{name}])"
+                    )),
+                }
+                return Err(FlintError::ParseError(message));
+            };
+            let origin = self.archetype_origins.entry(name.clone()).or_default();
+            if let Some(file) = &file {
+                origin.extended_by.push(file.clone());
+            }
+            for component in def.components {
+                if schema.has_component(&component) {
+                    continue;
+                }
+                if let Some(file) = &file {
+                    origin.components.insert(component.clone(), file.clone());
+                }
+                schema.components.push(component);
+            }
+            let mut given: Vec<_> = def.defaults.into_iter().collect();
+            given.sort_by(|a, b| a.0.cmp(&b.0));
+            for (component, table) in given {
+                origin.set_defaults(&component, &table, file.as_deref());
+                match (schema.defaults.get_mut(&component), table) {
+                    (Some(toml::Value::Table(earlier)), toml::Value::Table(added)) => {
+                        earlier.extend(added);
+                    }
+                    (_, table) => {
+                        schema.defaults.insert(component, table);
+                    }
+                }
+            }
+            if def.visual.is_some() {
+                schema.visual = def.visual;
+            }
+        }
         Ok(())
     }
 
@@ -493,13 +702,8 @@ impl SchemaRegistry {
     /// Load an archetype schema from a TOML string
     pub fn load_archetype_string(&mut self, content: &str) -> Result<()> {
         let file: ArchetypeSchemaFile = toml::from_str(content)?;
-
-        for (name, def) in file.archetype {
-            let schema = def.to_archetype_schema(name.clone());
-            self.archetypes.insert(name, schema);
-        }
-
-        Ok(())
+        let extensions = self.insert_archetypes(file, None);
+        self.apply_archetype_extensions(extensions)
     }
 
     /// Register a component schema directly
@@ -512,6 +716,7 @@ impl SchemaRegistry {
 
     /// Register an archetype schema directly
     pub fn register_archetype(&mut self, schema: ArchetypeSchema) {
+        self.archetype_origins.remove(&schema.name);
         self.archetypes.insert(schema.name.clone(), schema);
     }
 
@@ -551,7 +756,7 @@ impl SchemaRegistry {
 
     /// What is wrong with the component and scene-table schema files themselves
     /// ([`crate::lint`]): an old type spelling, an unknown type, a key the
-    /// loader ignores. Every file loaded, the engine's included, in load
+    /// loader ignores (an archetype file's too, #1054). Every file loaded, the engine's included, in load
     /// order; each names its file.
     pub fn lints(&self) -> &[Diagnostic] {
         &self.lints
@@ -1083,6 +1288,210 @@ size = { type = "vec3", default = [1, 1, 1] }
             );
             assert!(registry.get_component("post_process").is_none());
         });
+    }
+
+    const ENGINE_LANTERN: &str = "[archetype.lantern]\n\
+        description = \"The engine's lantern\"\n\
+        components = [\"transform\", \"light\"]\n\n\
+        [archetype.lantern.defaults.light]\n\
+        type = \"point\"\nintensity = 2.0\nrange = 8.0\n\n\
+        [archetype.lantern.visual]\ncolor = [1.0, 0.8, 0.3]\n";
+
+    const FLICKER: &str = "[archetype.lantern]\nextend = true\n\
+        components = [\"light\", \"flicker\"]\n\n\
+        [archetype.lantern.defaults.light]\nintensity = 1.5\n\n\
+        [archetype.lantern.defaults.flicker]\nrate = 6.0\n";
+
+    fn archetypes_over_engine(game_files: &[(&str, &str)]) -> Result<SchemaRegistry> {
+        let mut files = MemorySource::new();
+        files.insert("engine/schemas/archetypes/lantern.toml", ENGINE_LANTERN);
+        for (path, text) in game_files {
+            files.insert(*path, *text);
+        }
+        vfs::scoped(Arc::new(files), || {
+            SchemaRegistry::load_from_directories(&["engine/schemas", "schemas"])
+        })
+    }
+
+    fn default_of<'a>(
+        archetype: &'a ArchetypeSchema,
+        component: &str,
+        key: &str,
+    ) -> Option<&'a toml::Value> {
+        archetype.get_default(component, key)
+    }
+
+    /// #1054: a game's file of a few lines adds a component and its
+    /// defaults to an engine archetype, keeping the engine's, and says
+    /// where each came from.
+    #[test]
+    fn a_later_layer_extends_an_archetype_with_a_component() {
+        let registry =
+            archetypes_over_engine(&[("schemas/archetypes/lantern.toml", FLICKER)]).unwrap();
+        let lantern = registry.get_archetype("lantern").unwrap();
+        assert_eq!(
+            lantern.components,
+            ["transform", "light", "flicker"],
+            "the engine's components in its order, the game's after, none twice"
+        );
+        assert_eq!(
+            default_of(lantern, "flicker", "rate"),
+            Some(&toml::Value::Float(6.0))
+        );
+        // The light's defaults merge key by key: the game's intensity, the
+        // engine's type and range
+        assert_eq!(
+            default_of(lantern, "light", "intensity"),
+            Some(&toml::Value::Float(1.5))
+        );
+        assert_eq!(
+            default_of(lantern, "light", "type"),
+            Some(&toml::Value::String("point".into()))
+        );
+        assert_eq!(
+            default_of(lantern, "light", "range"),
+            Some(&toml::Value::Float(8.0))
+        );
+        assert_eq!(lantern.description.as_deref(), Some("The engine's lantern"));
+        assert_eq!(
+            lantern.visual.unwrap().color,
+            [1.0, 0.8, 0.3, 1.0],
+            "no visual given: the engine's stays"
+        );
+
+        let origin = registry.archetype_origin("lantern").unwrap();
+        let engine = Some("engine/schemas/archetypes/lantern.toml".to_string());
+        let game = Some("schemas/archetypes/lantern.toml".to_string());
+        assert_eq!(shown(origin.declared_in.as_deref()), engine);
+        assert_eq!(
+            origin
+                .extended_by
+                .iter()
+                .map(|p| flint_core::project::shown(p))
+                .collect::<Vec<_>>(),
+            ["schemas/archetypes/lantern.toml"]
+        );
+        assert_eq!(shown(origin.component_file("transform")), engine);
+        assert_eq!(
+            shown(origin.component_file("light")),
+            engine,
+            "listed again, still the engine's"
+        );
+        assert_eq!(shown(origin.component_file("flicker")), game);
+        assert_eq!(shown(origin.default_file("light", "intensity")), game);
+        assert_eq!(shown(origin.default_file("light", "range")), engine);
+        assert_eq!(shown(origin.default_file("flicker", "rate")), game);
+        assert!(registry.lints().is_empty(), "{:?}", registry.lints());
+    }
+
+    /// Without `extend`, a later layer still replaces an archetype whole:
+    /// what every overriding archetype file written before #1054 means.
+    #[test]
+    fn without_extend_a_later_layer_replaces_the_archetype_whole() {
+        let registry = archetypes_over_engine(&[(
+            "schemas/archetypes/lantern.toml",
+            &FLICKER.replace("extend = true\n", ""),
+        )])
+        .unwrap();
+        let lantern = registry.get_archetype("lantern").unwrap();
+        assert_eq!(lantern.components, ["light", "flicker"]);
+        assert_eq!(default_of(lantern, "light", "type"), None);
+        assert_eq!(lantern.description, None);
+        assert!(lantern.visual.is_none());
+        let origin = registry.archetype_origin("lantern").unwrap();
+        assert_eq!(
+            shown(origin.declared_in.as_deref()).as_deref(),
+            Some("schemas/archetypes/lantern.toml")
+        );
+        assert!(origin.extended_by.is_empty());
+    }
+
+    /// An extension's `visual` replaces the earlier one; a default that
+    /// isn't a table replaces the earlier one whole.
+    #[test]
+    fn an_archetype_extension_replaces_the_visual_it_gives() {
+        let registry = archetypes_over_engine(&[(
+            "schemas/archetypes/lantern.toml",
+            "[archetype.lantern]\nextend = true\n\n\
+             [archetype.lantern.visual]\ncolor = [0.2, 0.4, 1.0]\nwireframe = true\n",
+        )])
+        .unwrap();
+        let lantern = registry.get_archetype("lantern").unwrap();
+        let visual = lantern.visual.unwrap();
+        assert_eq!(visual.color, [0.2, 0.4, 1.0, 1.0]);
+        assert!(visual.wireframe);
+        assert_eq!(lantern.components, ["transform", "light"]);
+    }
+
+    /// A directory's archetype extensions apply after all of its files.
+    #[test]
+    fn an_archetype_extension_waits_for_the_rest_of_its_directory() {
+        let mut files = MemorySource::new();
+        files.insert("schemas/archetypes/a_flicker.toml", FLICKER);
+        files.insert("schemas/archetypes/lantern.toml", ENGINE_LANTERN);
+        vfs::scoped(Arc::new(files), || {
+            let registry = SchemaRegistry::load_from_directory("schemas").unwrap();
+            assert_eq!(
+                registry.get_archetype("lantern").unwrap().components,
+                ["transform", "light", "flicker"]
+            );
+        });
+    }
+
+    /// An extension of an archetype no earlier layer declares is an error
+    /// naming the file and the nearest name.
+    #[test]
+    fn extending_an_archetype_nobody_declared_is_an_error() {
+        let err = archetypes_over_engine(&[(
+            "schemas/archetypes/lantern.toml",
+            &FLICKER.replace("lantern", "lanturn"),
+        )])
+        .unwrap_err()
+        .to_string()
+        .replace('\\', "/");
+        assert_eq!(
+            err,
+            "Parse error: schemas/archetypes/lantern.toml: archetype 'lanturn' says \
+             `extend = true`, and no earlier schema declares an archetype of that name to add \
+             its components to: did you mean `lantern`?"
+        );
+    }
+
+    /// An extension's `description` is ignored and said to be; a misspelt
+    /// `extend`, which would replace the archetype whole, is named.
+    #[test]
+    fn an_archetypes_ignored_keys_are_linted() {
+        let registry = archetypes_over_engine(&[(
+            "schemas/archetypes/lantern.toml",
+            &FLICKER.replace("extend = true\n", "extend = true\ndescription = \"Mine\"\n"),
+        )])
+        .unwrap();
+        assert_eq!(
+            registry
+                .get_archetype("lantern")
+                .unwrap()
+                .description
+                .as_deref(),
+            Some("The engine's lantern")
+        );
+        let lints: Vec<String> = registry.lints().iter().map(|d| d.to_string()).collect();
+        assert_eq!(lints.len(), 1, "{lints:?}");
+        assert!(
+            lints[0]
+                .contains("`description` is ignored: `[archetype.lantern]` says `extend = true`"),
+            "{lints:?}"
+        );
+
+        let registry = archetypes_over_engine(&[(
+            "schemas/archetypes/lantern.toml",
+            &FLICKER.replace("extend", "extned"),
+        )])
+        .unwrap();
+        let lints: Vec<String> = registry.lints().iter().map(|d| d.one_line()).collect();
+        assert_eq!(lints.len(), 1, "{lints:?}");
+        assert!(lints[0].contains("`extned` is ignored"), "{lints:?}");
+        assert!(lints[0].contains("did you mean `extend`?"), "{lints:?}");
+        assert!(lints[0].contains("lantern.toml"), "{lints:?}");
     }
 
     /// An extension's `description` is not the component's, and the lint

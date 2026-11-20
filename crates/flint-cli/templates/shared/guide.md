@@ -85,7 +85,7 @@ max_hp = { type = "i32", default = 100, min = 1 }
 current_hp = { type = "i32", default = 100, min = 0 }
 ```
 
-An archetype (a named bundle of components with defaults) is a file in `schemas/archetypes`. A game schema with the same name as an engine one replaces it, so pick new names unless you mean to.
+An archetype (a named bundle of components with defaults) is a file in `schemas/archetypes`. A game schema with the same name as an engine one replaces it whole, so pick new names unless you mean to, or say `extend = true` to add to it (below).
 
 To add a field to an engine component instead (a `wetness` the game's scripts read on every `material`), declare only that field and say `extend = true`:
 
@@ -98,6 +98,17 @@ wetness = { type = "f32", default = 0.0 }
 ```
 
 The engine's own fields stay as the engine declares them, and `flint schema material` shows which file each field came from.
+
+An engine archetype extends the same way: the components listed are added to its own, and each default merges into the engine's key by key.
+
+```toml
+[archetype.player]
+extend = true
+components = ["stamina"]
+
+[archetype.player.defaults.stamina]
+max = 120.0
+```
 
 ## Scripts
 

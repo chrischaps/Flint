@@ -107,7 +107,24 @@ pub struct ArchetypeSchemaDefinition {
     pub defaults: HashMap<String, toml::Value>,
     #[serde(default)]
     pub visual: Option<ArchetypeVisual>,
+    /// `extend = true` (#1054): these components and defaults are added to
+    /// the archetype an earlier schema layer declared, rather than replacing
+    /// it whole. A component it lists is appended unless already listed;
+    /// each `[archetype.x.defaults.<component>]` merges into the earlier
+    /// one key by key; a `visual` replaces the earlier one. Without it a
+    /// later layer's archetype of the same name replaces the earlier one.
+    #[serde(default)]
+    pub extend: bool,
+    /// Any other key, which the loader ignores and the registry lints
+    /// (`ignored-schema-key`): a misspelt `extned = true` would otherwise
+    /// replace the archetype whole without a word.
+    #[serde(flatten)]
+    pub stray: std::collections::BTreeMap<String, toml::Value>,
 }
+
+/// The keys an `[archetype.<name>]` table may hold; any other is ignored by
+/// the loader and reported in [`SchemaRegistry::lints`](crate::SchemaRegistry::lints).
+pub const ARCHETYPE_KEYS: &[&str] = &["description", "components", "defaults", "visual", "extend"];
 
 impl ArchetypeSchemaDefinition {
     pub fn to_archetype_schema(self, name: String) -> ArchetypeSchema {
