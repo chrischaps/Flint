@@ -37,7 +37,8 @@ const KEPT: &[(&str, &str, &str)] = &[
 ];
 // `styles/darkroom.shader.toml` was kept here from #1056 until #984: it
 // borrowed its images from the examples by a `../` path, which an image
-// option refuses. The fixtures hold their own copies now, and it loads.
+// option refuses. The fixtures hold their own copies now, and it loads;
+// the golden `user-style-darkroom` draws it, so CI notices if it stops.
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

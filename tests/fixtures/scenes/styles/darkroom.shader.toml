@@ -3,11 +3,16 @@
 # picked by the scene; save either PNG while the game runs and the next
 # frames draw it.
 #
-#   flint render demo/user_styles.scene.toml --style darkroom
-#   flint render demo/user_styles.scene.toml --style darkroom:grade=luts/cyanotype.png,paper=papers/washi.png
-#   flint render demo/user_styles.scene.toml --sweep darkroom.grade=luts/neutral.png,luts/warm_print.png,luts/bleach.png,luts/cyanotype.png
+# The fixtures' copy, drawn by the golden `user-style-darkroom` (#1056).
+# It holds one LUT (luts/warm_print.png) and the three papers, which the
+# pencil and watercolor fixtures read too; flint-examples/styles/ has all
+# four LUTs.
+#
+#   flint render tests/fixtures/scenes/user_styles.scene.toml --style darkroom
+#   flint render tests/fixtures/scenes/user_styles.scene.toml --style darkroom:paper=papers/washi.png,finish=gloss
 #
 # The LUTs and papers come from tools/darkroom_images.py.
+
 version = 1
 name = "darkroom"
 label = "Darkroom print"
@@ -19,13 +24,13 @@ shader = "darkroom.wgsl"
 # image in its default's folder (luts/), found when the style loads.
 [options.grade]
 kind = "image"
-default = "./luts/warm_print.png"
+default = "luts/warm_print.png"
 label = "Grade (LUT)"
 help = "A 3D LUT as a strip: N slices of N x N, blue left to right"
 
 [options.paper]
 kind = "image"
-default = "./papers/cotton.png"
+default = "papers/cotton.png"
 label = "Paper"
 help = "A tileable paper the print sits on"
 

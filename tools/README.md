@@ -29,7 +29,7 @@ CLAUDE.md asks.
 | `arch-viewer/` | A browser graph of `arch-data.json`: crates by tier, their modules and public items. Run the analyzer, then serve this folder (`python -m http.server -d tools/arch-viewer`) | | a browser |
 | **Pictures for the book and the demos** | | | |
 | `living-strip/living_strip.py` | The book's strip and slit-scan pictures of a wooze look (#219) | `flint-player --frame-step` | numpy, Pillow, flint-player |
-| `darkroom_images.py` | The darkroom style's LUT strips and papers in `demo/styles/` (#413); deterministic | | numpy, Pillow |
+| `darkroom_images.py` | The darkroom style's LUT strips and papers in `flint-examples/styles/` (#413); deterministic | | numpy, Pillow |
 | `style-images/make_images.py` | The demo paper and stroke images (#390); deterministic | | numpy, Pillow |
 | `ascii_flips.py` | Counts ASCII glyph flips and A-B-A reversals (shimmer) across captured frames (#277) | reads `flint-player` captures | numpy, Pillow |
 | **Assets** | | | |
