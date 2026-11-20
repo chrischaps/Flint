@@ -2343,7 +2343,12 @@ fn softness_layers_from_the_spec_up_and_changes_no_pose() {
     tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
     let before = resolver.living_props().stats();
     let props = resolver.living_props_mut();
-    let read = |props: &LivingProps, i: usize| props.resolved(LivingPropId(i), None).softness;
+    let read = |props: &LivingProps, i: usize| {
+        props
+            .resolved(LivingPropId(i), None)
+            .get(LivingKnob::Softness)
+            .clone()
+    };
     assert_eq!(read(props, 0).value, 0.25, "the scene's beats the spec's");
     assert_eq!(read(props, 0).layer, LivingLayer::Global);
     assert_eq!(props.global_softness(), Some(0.25));
@@ -2392,25 +2397,40 @@ fn a_species_value_beats_the_field_and_its_zones_and_no_other_species_sees_it() 
 
     let sapling = at(0);
     assert_eq!(sapling.species, "sapling");
-    assert_eq!(sapling.step.value, 1.0);
-    assert_eq!(sapling.step.layer, LivingLayer::Zone("slow".into()));
-    assert_eq!(sapling.glide.layer, LivingLayer::Global);
-    assert_eq!(sapling.echo_count.value, 1);
-    assert_eq!(sapling.echo_count.layer, LivingLayer::Spec);
-    assert_eq!(sapling.stagger.value, Stagger::PerLevel);
-    assert_eq!(sapling.variance_amount.value, 0.5);
+    assert_eq!(sapling.get(LivingKnob::Step).value, 1.0);
+    assert_eq!(
+        sapling.get(LivingKnob::Step).layer,
+        LivingLayer::Zone("slow".into())
+    );
+    assert_eq!(sapling.get(LivingKnob::Glide).layer, LivingLayer::Global);
+    assert_eq!(sapling.get(LivingKnob::EchoCount).value, 1);
+    assert_eq!(sapling.get(LivingKnob::EchoCount).layer, LivingLayer::Spec);
+    assert_eq!(sapling.get(LivingKnob::Stagger).value, Stagger::PerLevel);
+    assert_eq!(sapling.get(LivingKnob::VarianceAmount).value, 0.5);
 
     let thorn = at(2);
-    assert_eq!(thorn.step.value, 0.25, "the species beats the zone");
-    assert_eq!(thorn.step.layer, LivingLayer::Species);
-    assert_eq!(thorn.glide.value, 0.5, "and leaves the rest to the field");
+    assert_eq!(
+        thorn.get(LivingKnob::Step).value,
+        0.25,
+        "the species beats the zone"
+    );
+    assert_eq!(thorn.get(LivingKnob::Step).layer, LivingLayer::Species);
+    assert_eq!(
+        thorn.get(LivingKnob::Glide).value,
+        0.5,
+        "and leaves the rest to the field"
+    );
     assert_eq!(props.prop(LivingPropId(2)).clock().step, 0.25);
-    assert_eq!((thorn.echo_count.value, thorn.echo_spread.value), (3, 0.5));
-    assert_eq!(thorn.echo_count.layer, LivingLayer::Species);
-    assert_eq!(thorn.echo_spread.layer, LivingLayer::Spec);
-    assert_eq!(thorn.stagger.value, Stagger::None);
-    assert_eq!(thorn.variance_amount.value, 0.9);
-    assert_eq!(thorn.variance_steady.layer, LivingLayer::Spec);
+    assert_eq!(thorn.get(LivingKnob::EchoCount).value, 3);
+    assert_eq!(thorn.get(LivingKnob::EchoSpread).value, 0.5);
+    assert_eq!(thorn.get(LivingKnob::EchoCount).layer, LivingLayer::Species);
+    assert_eq!(thorn.get(LivingKnob::EchoSpread).layer, LivingLayer::Spec);
+    assert_eq!(thorn.get(LivingKnob::Stagger).value, Stagger::None);
+    assert_eq!(thorn.get(LivingKnob::VarianceAmount).value, 0.9);
+    assert_eq!(
+        thorn.get(LivingKnob::VarianceSteady).layer,
+        LivingLayer::Spec
+    );
     assert_eq!(props.prop(LivingPropId(3)).echo_count(), 3);
     assert_eq!(
         props.variances(),
@@ -2455,21 +2475,33 @@ fn a_global_knob_moved_live_leaves_explicit_species_values_standing() {
 
     let props = resolver.living_props();
     let sapling = props.resolved(LivingPropId(0), Some((&field, 0.0)));
-    assert_eq!((sapling.step.value, sapling.glide.value), (2.0, 0.9));
-    assert_eq!(sapling.echo_count.value, 6);
-    assert_eq!(sapling.echo_count.layer, LivingLayer::Global);
-    assert_eq!(sapling.stagger.value, Stagger::PerBranch);
-    assert_eq!(sapling.variance_amount.value, 0.2);
+    assert_eq!(sapling.get(LivingKnob::Step).value, 2.0);
+    assert_eq!(sapling.get(LivingKnob::Glide).value, 0.9);
+    assert_eq!(sapling.get(LivingKnob::EchoCount).value, 6);
+    assert_eq!(
+        sapling.get(LivingKnob::EchoCount).layer,
+        LivingLayer::Global
+    );
+    assert_eq!(sapling.get(LivingKnob::Stagger).value, Stagger::PerBranch);
+    assert_eq!(sapling.get(LivingKnob::VarianceAmount).value, 0.2);
 
     let thorn = props.resolved(LivingPropId(2), Some((&field, 0.0)));
-    assert_eq!(thorn.step.value, 0.25, "the species' step stood");
-    assert_eq!(thorn.glide.value, 0.9, "what it doesn't set follows");
-    assert_eq!(thorn.echo_count.value, 3);
-    assert_eq!(thorn.echo_spread.value, 1.0);
-    assert_eq!(thorn.echo_spread.layer, LivingLayer::Global);
-    assert_eq!(thorn.stagger.value, Stagger::None);
-    assert_eq!(thorn.variance_amount.value, 0.9);
-    assert_eq!(thorn.variance_steady.value, 0.1);
+    assert_eq!(
+        thorn.get(LivingKnob::Step).value,
+        0.25,
+        "the species' step stood"
+    );
+    assert_eq!(
+        thorn.get(LivingKnob::Glide).value,
+        0.9,
+        "what it doesn't set follows"
+    );
+    assert_eq!(thorn.get(LivingKnob::EchoCount).value, 3);
+    assert_eq!(thorn.get(LivingKnob::EchoSpread).value, 1.0);
+    assert_eq!(thorn.get(LivingKnob::EchoSpread).layer, LivingLayer::Global);
+    assert_eq!(thorn.get(LivingKnob::Stagger).value, Stagger::None);
+    assert_eq!(thorn.get(LivingKnob::VarianceAmount).value, 0.9);
+    assert_eq!(thorn.get(LivingKnob::VarianceSteady).value, 0.1);
 
     // Cleared, the species takes what the grove has.
     let props = resolver.living_props_mut();
@@ -2478,10 +2510,10 @@ fn a_global_knob_moved_live_leaves_explicit_species_values_standing() {
     let thorn = resolver
         .living_props()
         .resolved(LivingPropId(2), Some((&field, 0.0)));
-    assert_eq!(thorn.step.value, 2.0);
-    assert_eq!(thorn.echo_count.value, 6);
-    assert_eq!(thorn.stagger.value, Stagger::PerBranch);
-    assert_eq!(thorn.variance_amount.value, 0.2);
+    assert_eq!(thorn.get(LivingKnob::Step).value, 2.0);
+    assert_eq!(thorn.get(LivingKnob::EchoCount).value, 6);
+    assert_eq!(thorn.get(LivingKnob::Stagger).value, Stagger::PerBranch);
+    assert_eq!(thorn.get(LivingKnob::VarianceAmount).value, 0.2);
 }
 
 #[test]
@@ -2536,14 +2568,14 @@ fn with_no_species_values_every_layer_is_what_it_was() {
     for i in 0..4 {
         let at = props.resolved(LivingPropId(i), None);
         for layer in [
-            &at.amplitude.layer,
-            &at.step.layer,
-            &at.glide.layer,
-            &at.jitter.layer,
-            &at.stagger.layer,
-            &at.echo_count.layer,
-            &at.variance_amount.layer,
-            &at.keep_size.layer,
+            &at.get(LivingKnob::Amplitude).layer,
+            &at.get(LivingKnob::Step).layer,
+            &at.get(LivingKnob::Glide).layer,
+            &at.get(LivingKnob::Jitter).layer,
+            &at.get(LivingKnob::Stagger).layer,
+            &at.get(LivingKnob::EchoCount).layer,
+            &at.get(LivingKnob::VarianceAmount).layer,
+            &at.get(LivingKnob::KeepSize).layer,
         ] {
             assert_eq!(*layer, LivingLayer::Spec);
         }
@@ -2563,15 +2595,19 @@ fn an_entity_stagger_is_its_own_layer_under_the_global_one() {
     let id = resolver.add_living_prop(asked).unwrap().0;
     resolver.make_living_now();
     let props = resolver.living_props_mut();
-    assert_eq!(props.resolved(id, None).stagger.layer, LivingLayer::Entity);
-    props.set_stagger(Stagger::PerBranch);
-    assert_eq!(props.resolved(id, None).stagger.layer, LivingLayer::Global);
-    props.tune_stagger(LivingScope::Species("sapling"), Stagger::PerLevel);
-    let stagger = props.resolved(id, None).stagger;
     assert_eq!(
-        (stagger.value, stagger.layer),
-        (Stagger::PerLevel, LivingLayer::Species)
+        props.resolved(id, None).get(LivingKnob::Stagger).layer,
+        LivingLayer::Entity
     );
+    props.set_stagger(Stagger::PerBranch);
+    assert_eq!(
+        props.resolved(id, None).get(LivingKnob::Stagger).layer,
+        LivingLayer::Global
+    );
+    props.tune_stagger(LivingScope::Species("sapling"), Stagger::PerLevel);
+    let stagger = props.resolved(id, None).get(LivingKnob::Stagger).clone();
+    assert_eq!(stagger.value, Stagger::PerLevel);
+    assert_eq!(stagger.layer, LivingLayer::Species);
 }
 
 #[test]
@@ -2586,7 +2622,10 @@ fn a_clock_given_back_live_keeps_the_species_step_over_it() {
     props.set_wooze_of(id, back);
     assert_eq!(props.prop(id).clock().step, 0.25);
     assert_eq!(props.prop(id).wooze_below(), back);
-    assert_eq!(props.resolved(id, None).glide.layer, LivingLayer::Global);
+    assert_eq!(
+        props.resolved(id, None).get(LivingKnob::Glide).layer,
+        LivingLayer::Global
+    );
     props.set_wooze_of(LivingPropId(0), back);
     assert_eq!(props.prop(LivingPropId(0)).clock().step, 0.7);
 }
@@ -2795,7 +2834,12 @@ fn a_jitter_rate_layers_like_softness_and_makes_no_pose() {
     let field = field("", &[]);
     tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
     let props = resolver.living_props_mut();
-    let read = |props: &LivingProps, i: usize| props.resolved(LivingPropId(i), None).jitter_rate;
+    let read = |props: &LivingProps, i: usize| {
+        props
+            .resolved(LivingPropId(i), None)
+            .get(LivingKnob::JitterRate)
+            .clone()
+    };
     assert_eq!(read(props, 0).value, 1.5, "the scene's");
     assert_eq!(read(props, 0).layer, LivingLayer::Global);
     assert_eq!(props.global_jitter_rate(), Some(1.5));
@@ -3099,7 +3143,12 @@ fn a_row_rate_layers_like_the_jitter_rate() {
     let field = field("", &[]);
     tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
     let props = resolver.living_props_mut();
-    let read = |props: &LivingProps, i: usize| props.resolved(LivingPropId(i), None).row_rate;
+    let read = |props: &LivingProps, i: usize| {
+        props
+            .resolved(LivingPropId(i), None)
+            .get(LivingKnob::RowRate)
+            .clone()
+    };
     assert_eq!(read(props, 0).value, 1.5, "the scene's");
     assert_eq!(read(props, 0).layer, LivingLayer::Global);
     assert_eq!(props.global_row_rate(), Some(1.5));

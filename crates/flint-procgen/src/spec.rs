@@ -703,6 +703,24 @@ pub enum Stagger {
     PerBranch,
 }
 
+impl Stagger {
+    /// The name a spec or a scene knows it by.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Stagger::None => "none",
+            Stagger::PerLevel => "per_level",
+            Stagger::PerBranch => "per_branch",
+        }
+    }
+
+    /// A stagger by the name a spec or a scene knows it by.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Stagger::None, Stagger::PerLevel, Stagger::PerBranch]
+            .into_iter()
+            .find(|stagger| stagger.name() == name)
+    }
+}
+
 /// `[living] variance` (#229): how much of the difference between poses is
 /// left, and where on the tree.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]

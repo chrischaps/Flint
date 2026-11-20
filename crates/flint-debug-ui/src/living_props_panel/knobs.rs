@@ -1,11 +1,17 @@
-//! Every knob a species can set, described once (#753): its key, where it sits
-//! in a preset, its default, the panel's section and control for it, and what
-//! it does. The [`Knob`] enum, the [`LivingKnobs`] and [`KnobFlags`] fields,
-//! the preset conversions and the panel's sliders all come from [`knob_table!`]'s
-//! one list, so adding a knob is one row there. The boil's knobs aren't in it:
-//! a species can't set them, and they're [`LivingKnobs`]' own fields.
+//! Every knob a species can set, described once (#753, #1025). The list is
+//! flint-procgen's [`living_knob_rows!`](flint_procgen::living_knob_rows): a
+//! row is a knob's key, where it sits in a preset, its default, the panel's
+//! section and control for it, and what it does. [`Knob`] is that crate's
+//! [`LivingKnob`](flint_procgen::LivingKnob), so the panel, the runtime and the
+//! player name one enum; the [`LivingKnobs`] and [`KnobFlags`] fields, the
+//! [`KnobDesc`] rows and the panel's sliders come from the same rows here, so
+//! adding a knob is one row there. The boil's knobs aren't in it: a species
+//! can't set them, and they're [`LivingKnobs`]' own fields.
 
-use flint_procgen::{BoilDef, LivingEchoesDef, LivingVarianceDef, WoozePreset};
+use flint_procgen::{BoilDef, KnobType, WoozePreset};
+
+/// One of the knobs a species can set (#247), in the order the panel shows them.
+pub use flint_procgen::LivingKnob as Knob;
 
 /// How parts fall out of phase, as a spec or a scene names it.
 pub(super) const STAGGERS: &[(&str, &str)] = &[
@@ -109,56 +115,10 @@ impl AsKnobValue for String {
     }
 }
 
-/// Where a knob sits in a [`WoozePreset`]: the `[wooze]` knobs, a `[living]`
-/// field, or one of `[living] echoes` / `variance`.
-macro_rules! preset_get {
-    ($p:expr, wooze . $f:ident) => {
-        $p.wooze.$f.clone()
-    };
-    ($p:expr, living . $f:ident) => {
-        $p.living.$f.clone()
-    };
-    ($p:expr, echoes . $f:ident) => {
-        $p.living.echoes.as_ref().and_then(|d| d.$f.clone())
-    };
-    ($p:expr, variance . $f:ident) => {
-        $p.living.variance.as_ref().and_then(|d| d.$f.clone())
-    };
-}
-
-macro_rules! preset_set {
-    ($p:expr, wooze . $f:ident, $v:expr) => {
-        $p.wooze.$f = Some($v)
-    };
-    ($p:expr, living . $f:ident, $v:expr) => {
-        $p.living.$f = Some($v)
-    };
-    ($p:expr, echoes . $f:ident, $v:expr) => {
-        $p.living
-            .echoes
-            .get_or_insert_with(LivingEchoesDef::default)
-            .$f = Some($v)
-    };
-    ($p:expr, variance . $f:ident, $v:expr) => {
-        $p.living
-            .variance
-            .get_or_insert_with(LivingVarianceDef::default)
-            .$f = Some($v)
-    };
-}
-
-/// Whether a preset path is one of the wooze field's four clock knobs.
-macro_rules! is_clock {
-    (wooze) => {
-        true
-    };
-    ($other:ident) => {
-        false
-    };
-}
-
-/// The one list of knobs. A row is a [`Knob`] variant and everything about
-/// it; everything else here is made from the list.
+/// The one list of knobs is flint-procgen's ([`flint_procgen::living_knob_rows!`]):
+/// a row is a [`Knob`] and everything about it. This makes the panel's side of
+/// each row: its [`KnobDesc`], its [`LivingKnobs`] and [`KnobFlags`] fields,
+/// and their preset conversions.
 macro_rules! knob_table {
     ($(
         $knob:ident {
@@ -170,53 +130,14 @@ macro_rules! knob_table {
             help: $help:literal $(,)?
         }
     ),* $(,)?) => {
-        /// One of the knobs a species can set (#247). The boil's aren't among them.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        pub enum Knob {
-            $($knob,)*
-        }
-
-        impl Knob {
-            /// Every knob, in the order the panel shows them.
-            pub const ALL: [Knob; Knob::COUNT] = [$(Knob::$knob,)*];
-            /// How many there are.
-            pub const COUNT: usize = [$($key,)*].len();
-            /// Each knob's row, in [`Self::ALL`]'s order.
-            pub const TABLE: [KnobDesc; Knob::COUNT] = [$(KnobDesc {
-                knob: Knob::$knob,
-                key: $key,
-                section: KnobSection::$section,
-                control: $control,
-                help: $help,
-            },)*];
-
-            /// Its row.
-            pub fn desc(self) -> &'static KnobDesc {
-                &Self::TABLE[self.index()]
-            }
-
-            /// Its key in `[living.species.<spec>]`, in `clear_living` and in `flint
-            /// render --report json`'s `values`.
-            pub fn key(self) -> &'static str {
-                self.desc().key
-            }
-
-            /// Whether it's one of the wooze field's four: the clock's.
-            pub fn is_clock(self) -> bool {
-                match self {
-                    $(Knob::$knob => is_clock!($group),)*
-                }
-            }
-
-            /// The knobs drawn in `section`, in the table's order.
-            pub fn in_section(section: KnobSection) -> impl Iterator<Item = Knob> {
-                Self::ALL.into_iter().filter(move |knob| knob.desc().section == section)
-            }
-
-            pub(super) fn index(self) -> usize {
-                self as usize
-            }
-        }
+        /// Each knob's row, in [`Knob::ALL`]'s order.
+        pub static KNOB_TABLE: [KnobDesc; Knob::COUNT] = [$(KnobDesc {
+            knob: Knob::$knob,
+            key: Knob::$knob.key(),
+            section: KnobSection::$section,
+            control: $control,
+            help: $help,
+        },)*];
 
         /// Every knob, as the panel shows it.
         #[derive(Debug, Clone, PartialEq)]
@@ -249,13 +170,6 @@ macro_rules! knob_table {
                     $(Knob::$knob => self.$field = on,)*
                 }
             }
-
-            /// The knobs `preset` sets.
-            pub fn set_by(preset: &WoozePreset) -> Self {
-                Self {
-                    $($field: preset_get!(preset, $group . $path).is_some(),)*
-                }
-            }
         }
 
         impl LivingKnobs {
@@ -263,7 +177,10 @@ macro_rules! knob_table {
             pub fn from_preset(preset: &WoozePreset) -> Self {
                 let boil = preset.boil.unwrap_or_default();
                 Self {
-                    $($field: preset_get!(preset, $group . $path).unwrap_or_else(|| $default),)*
+                    $($field: Knob::$knob
+                        .in_preset(preset)
+                        .and_then(|value| <$ty as KnobType>::from_knob(&value))
+                        .unwrap_or_else(|| $default),)*
                     boil_on: boil.enabled.unwrap_or(true),
                     boil_paint: boil.kuwahara.unwrap_or(0.0),
                     boil_ink: boil.contour.unwrap_or(0.0),
@@ -271,34 +188,11 @@ macro_rules! knob_table {
                 }
             }
 
-            /// Every knob, as a preset.
-            pub fn to_preset(&self) -> WoozePreset {
-                let mut preset = WoozePreset::default();
-                $(preset_set!(preset, $group . $path, self.$field.clone());)*
-                preset.boil = Some(self.boil());
-                preset
-            }
-
-            /// Only the knobs that moved from `before`, as a preset whose unset
-            /// fields leave a knob alone: the one a hand turned, and nothing it
-            /// happened to carry along. A knob in `touched` counts as moved
-            /// whatever its number, since a `mixed` knob shows one prop's value
-            /// and setting every prop to it is still a change.
-            pub fn moved(&self, before: &LivingKnobs, touched: &KnobFlags) -> WoozePreset {
-                let mut preset = WoozePreset::default();
-                $(if touched.$field || self.$field != before.$field {
-                    preset_set!(preset, $group . $path, self.$field.clone());
-                })*
-                let boil = self.boil();
-                let was = before.boil();
-                let boil = BoilDef {
-                    enabled: boil.enabled.filter(|_| boil.enabled != was.enabled),
-                    kuwahara: boil.kuwahara.filter(|_| boil.kuwahara != was.kuwahara),
-                    contour: boil.contour.filter(|_| boil.contour != was.contour),
-                    on: boil.on.filter(|_| boil.on != was.on),
-                };
-                preset.boil = (boil != BoilDef::default()).then_some(boil);
-                preset
+            /// One knob's value as a preset holds it.
+            pub fn value_of(&self, knob: Knob) -> flint_procgen::KnobValue {
+                match knob {
+                    $(Knob::$knob => self.$field.clone().into_knob(),)*
+                }
             }
 
             /// One knob's value, to draw and turn.
@@ -311,120 +205,74 @@ macro_rules! knob_table {
     };
 }
 
-knob_table! {
-    Step {
-        field: step: f32 = 0.5,
-        key: "step",
-        preset: wooze.step,
-        section: Clock,
-        control: log_slider("step (s)", 0.05, 4.0),
-        help: "Seconds from one pose to the next: how long a step of the warped clock lasts.",
-    },
-    Glide {
-        field: glide: f32 = 0.3,
-        key: "glide",
-        preset: wooze.glide,
-        section: Clock,
-        control: slider("glide", 0.0, 1.0),
-        help: "How much of each step is spent easing to the next pose; the rest holds.",
-    },
-    Amplitude {
-        field: amplitude: f32 = 1.0,
-        key: "amplitude",
-        preset: wooze.amplitude,
-        section: Clock,
-        control: slider("drift", 0.0, 1.0),
-        help: "How much of each pose's slow drift from the rest shape shows.",
-    },
-    Jitter {
-        field: jitter: f32 = 1.0,
-        key: "jitter",
-        preset: wooze.jitter,
-        section: Clock,
-        control: slider("jitter", 0.0, 4.0),
-        help: "How far the leaf cards turn and their tints flicker, on the fast clock.",
-    },
-    JitterRate {
-        field: jitter_rate: f32 = 1.0,
-        key: "jitter_rate",
-        preset: living.jitter_rate,
-        section: Clock,
-        control: log_slider("jitter rate (x)", 0.125, 8.0),
-        help: "How fast the fast clock ticks, times each spec's jitter.step: 2 boils twice as fast. A change holds every card until its next tick.",
-    },
-    RowRate {
-        field: row_rate: f32 = 1.0,
-        key: "row_rate",
-        preset: living.row_rate,
-        section: Clock,
-        control: log_slider("row rate (x)", 0.125, 8.0),
-        help: "How fast a form's words drift along their lines, times each spec's row_pace: 2 reflows twice as fast. A change goes on from where the words are.",
-    },
-    Stagger {
-        field: stagger: String = "per_level".to_string(),
-        key: "stagger",
-        preset: living.stagger,
-        section: Clock,
-        control: KnobControl::Choice { label: "stagger", choices: STAGGERS },
-        help: "How a prop's parts fall out of phase with each other.",
-    },
-    EchoCount {
-        field: echo_count: u32 = 6,
-        key: "echoes.count",
-        preset: echoes.count,
-        section: Echoes,
-        control: slider("count", 0.0, 16.0),
-        help: "How many faint copies of each prop trail and lead it in time.",
-    },
-    EchoSpread {
-        // To where an echo has faded out: flint_procgen::MAX_ECHO_SPREAD.
-        field: echo_spread: f32 = 0.9,
-        key: "echoes.spread",
-        preset: echoes.spread,
-        section: Echoes,
-        control: slider("spread (steps)", 0.0, 1.818),
-        help: "How far the farthest echo is from now, in steps of the clock.",
-    },
-    EchoAlpha {
-        field: echo_alpha: f32 = 0.2,
-        key: "echoes.alpha",
-        preset: echoes.alpha,
-        section: Echoes,
-        control: slider("alpha", 0.0, 1.0),
-        help: "How opaque an echo is at now; it fades with its distance in time.",
-    },
-    VarianceAmount {
-        field: variance_amount: f32 = 0.35,
-        key: "variance.amount",
-        preset: variance.amount,
-        section: Variance,
-        control: slider("amount", 0.0, 1.0),
-        help: "How much of each pose's difference from the rest shape is left.",
-    },
-    VarianceSteady {
-        field: variance_steady: f32 = 0.8,
-        key: "variance.steady",
-        preset: variance.steady,
-        section: Variance,
-        control: slider("steady", 0.0, 1.0),
-        help: "How much of that is held back toward the trunk, so the tips move most.",
-    },
-    KeepSize {
-        field: keep_size: bool = true,
-        key: "variance.keep_size",
-        preset: variance.keep_size,
-        section: Variance,
-        control: KnobControl::Check { label: "keep size" },
-        help: "Whether every pose keeps the rest shape's size.",
-    },
-    Softness {
-        field: softness: f32 = 0.0,
-        key: "softness",
-        preset: living.softness,
-        section: Silhouette,
-        control: slider("softness", 0.0, 1.0),
-        help: "How far the body's outline feathers into what's behind it; 0 is a hard edge.",
-    },
+flint_procgen::living_knob_rows!(knob_table);
+
+/// The panel's side of a [`Knob`]: its row, and the knobs of a section.
+pub trait KnobPanel: Sized {
+    /// Its row.
+    fn desc(self) -> &'static KnobDesc;
+    /// The knobs drawn in `section`, in the table's order.
+    fn in_section(section: KnobSection) -> impl Iterator<Item = Self>;
+}
+
+impl KnobPanel for Knob {
+    fn desc(self) -> &'static KnobDesc {
+        &KNOB_TABLE[self.index()]
+    }
+
+    fn in_section(section: KnobSection) -> impl Iterator<Item = Knob> {
+        Knob::ALL
+            .into_iter()
+            .filter(move |knob| knob.desc().section == section)
+    }
+}
+
+impl KnobFlags {
+    /// The knobs `preset` sets.
+    pub fn set_by(preset: &WoozePreset) -> Self {
+        let mut flags = Self::default();
+        for knob in Knob::ALL {
+            flags.set_flag(knob, knob.in_preset(preset).is_some());
+        }
+        flags
+    }
+}
+
+impl LivingKnobs {
+    /// Every knob, as a preset.
+    pub fn to_preset(&self) -> WoozePreset {
+        let mut preset = WoozePreset::default();
+        for knob in Knob::ALL {
+            knob.set_in_preset(&mut preset, &self.value_of(knob));
+        }
+        preset.boil = Some(self.boil());
+        preset
+    }
+
+    /// Only the knobs that moved from `before`, as a preset whose unset
+    /// fields leave a knob alone: the one a hand turned, and nothing it
+    /// happened to carry along. A knob in `touched` counts as moved
+    /// whatever its number, since a `mixed` knob shows one prop's value
+    /// and setting every prop to it is still a change.
+    pub fn moved(&self, before: &LivingKnobs, touched: &KnobFlags) -> WoozePreset {
+        let mut preset = WoozePreset::default();
+        for knob in Knob::ALL {
+            let value = self.value_of(knob);
+            if touched.get(knob) || value != before.value_of(knob) {
+                knob.set_in_preset(&mut preset, &value);
+            }
+        }
+        let boil = self.boil();
+        let was = before.boil();
+        let boil = BoilDef {
+            enabled: boil.enabled.filter(|_| boil.enabled != was.enabled),
+            kuwahara: boil.kuwahara.filter(|_| boil.kuwahara != was.kuwahara),
+            contour: boil.contour.filter(|_| boil.contour != was.contour),
+            on: boil.on.filter(|_| boil.on != was.on),
+        };
+        preset.boil = (boil != BoilDef::default()).then_some(boil);
+        preset
+    }
 }
 
 impl Default for LivingKnobs {
