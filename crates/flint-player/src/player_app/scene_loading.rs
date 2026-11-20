@@ -303,6 +303,17 @@ pub(super) fn load_audio_from_world(
     preload_all: bool,
     queue: bool,
 ) {
+    // A sound a script plays by a name nothing here caches is looked for
+    // by the same search on its first play (#975), which is the search
+    // `flint check` holds a script's sound to. Set again when a late bundle
+    // lands, which forgets the names it found nothing for.
+    audio
+        .engine
+        .set_sound_search(Some(flint_core::project::AssetScope::new(
+            project.clone(),
+            scene_dir_of(scene_path),
+        )));
+
     let mut load = |name: &str, path: &Path, need: Need| {
         if audio.engine.has_sound(name) {
             return;
@@ -321,7 +332,6 @@ pub(super) fn load_audio_from_world(
         }
     };
     let scene_dir = scene_dir_of(scene_path);
-
     // Load audio files referenced by audio_source components: a `file` is a
     // path from the scene's directory or from any directory up to the
     // project root (`audio/hit.ogg`), by the project's one search.

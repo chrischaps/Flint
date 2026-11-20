@@ -25,11 +25,12 @@ pub use crate::handle::{SoundHandle, SpatialTrack};
 use crate::pan::{volume_and_pan, Ears, Falloff};
 use crate::remote::Link;
 use backend::{Held, MixerBackend, On, Silent, Voice};
+use flint_core::project::{AssetKind, AssetScope};
 use flint_core::{vfs, Result, Vec3};
 use kira::sound::static_sound::StaticSoundData;
 use kira::{AudioManager, Easing, Tween};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use web_time::Instant;
@@ -246,6 +247,11 @@ pub struct AudioEngine {
     old_mix: bool,
     /// Where [`clock_now`](Self::clock_now) counts from, mixing here.
     epoch: Instant,
+    /// The scene's search for a sound played by a name nobody cached
+    /// (#975); `None` until a host sets one.
+    sound_search: Option<AssetScope>,
+    /// Names that search found nothing for, since it was set.
+    searched_missing: HashSet<String>,
 }
 
 impl Default for AudioEngine {
@@ -311,6 +317,39 @@ impl AudioEngine {
             stolen_oneshots: 0,
             old_mix: false,
             epoch: Instant::now(),
+            sound_search: None,
+            searched_missing: HashSet::new(),
+        }
+    }
+
+    /// Where a sound nobody cached is looked for when it is first played
+    /// (#975): the scene's project and directory, searched as an
+    /// `audio_source.file` is (`AssetKind::Audio`: a path from the scene or
+    /// from any directory above it, then each `audio/`, then the engine's).
+    /// So `play_sound("../sfx/door.ogg")` plays whatever `flint check`
+    /// accepted, not only the files the scene's preload cached. The host
+    /// sets it at each scene load and when files arrive (a late bundle);
+    /// either forgets the names a search found nothing for.
+    pub fn set_sound_search(&mut self, scope: Option<AssetScope>) {
+        self.sound_search = scope;
+        self.searched_missing.clear();
+    }
+
+    /// The file the project's search finds for a sound nobody cached under
+    /// `name`, if a search is set and finds one. A miss is remembered until
+    /// the next [`set_sound_search`](Self::set_sound_search), so a script
+    /// asking for it every frame walks the folders once.
+    fn search_for_sound(&mut self, name: &str) -> Option<PathBuf> {
+        let scope = self.sound_search.as_ref()?;
+        if self.searched_missing.contains(name) {
+            return None;
+        }
+        match scope.resolve(AssetKind::Audio, name) {
+            Ok(path) => Some(path),
+            Err(_) => {
+                self.searched_missing.insert(name.to_string());
+                None
+            }
         }
     }
 
@@ -753,10 +792,23 @@ impl AudioEngine {
     }
 
     /// Make sure a sound about to play is decoded: a small queued one is
-    /// decoded now, a big one jumps the queue and this play is skipped.
+    /// decoded now, a big one jumps the queue and this play is skipped. A
+    /// sound neither cached nor queued is looked for by the project's
+    /// search (#975), queued under the name as given, and then treated the
+    /// same way.
     fn ensure_decoded(&mut self, name: &str) -> Result<()> {
         if self.has_sound(name) {
             return Ok(());
+        }
+        if !self.decodes.contains(name) {
+            if let Some(path) = self.search_for_sound(name) {
+                tracing::info!(
+                    target: "load",
+                    "Sound '{name}' was not preloaded: found by the project's search, {}",
+                    flint_core::project::shown(&path)
+                );
+                self.queue_sound(name, &path, Need::Asked)?;
+            }
         }
         match self.decodes.size_of(name) {
             Some(size) if size <= DECODE_NOW_BYTES => {
@@ -1518,6 +1570,48 @@ mod tests {
             while engine.decode_queued(Duration::from_millis(1)) > 0 {}
             assert!(engine.has_sound("audio/sea.wav"));
             assert_eq!(engine.sound_cache["audio/sea.wav"].frames.len(), 200_000);
+        });
+    }
+
+    /// #975: a name nobody cached is looked for by the scene's search on its
+    /// first play and kept under that name; a small sound plays at once, a
+    /// big one skips the play and goes to the front of the queue, and a
+    /// name the search can't find is asked of the folders only once until
+    /// the search is set again.
+    #[test]
+    fn a_sound_nobody_cached_is_found_by_the_scenes_search_when_first_played() {
+        use crate::decode::tests::wav;
+        let mut files = vfs::MemorySource::new();
+        files.insert("game/flint.toml", "[project]\nid = \"g\"\n");
+        files.insert("game/sfx/door.wav", wav(1_000));
+        files.insert("game/sfx/song.wav", wav(400_000));
+        vfs::scoped(Arc::new(files), || {
+            let mut engine = AudioEngine::silent();
+            engine.start_remote(Link::default());
+            let play = |e: &mut AudioEngine, name| {
+                e.play_non_spatial(name, 1.0, 1.0, false, Bus::SFX)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            };
+            // No search set: as before, only what was cached plays
+            let before = play(&mut engine, "../sfx/door.wav").unwrap_err();
+            assert!(before.contains("not cached"), "{before}");
+
+            let scene = Path::new("game/levels/a.scene.toml");
+            engine.set_sound_search(Some(AssetScope::for_scene(scene)));
+            play(&mut engine, "../sfx/door.wav").unwrap();
+            assert!(engine.has_sound("../sfx/door.wav"), "kept as written");
+
+            let big = play(&mut engine, "../sfx/song.wav").unwrap_err();
+            assert!(big.contains("still decoding"), "{big}");
+            assert!(engine.is_queued("../sfx/song.wav"));
+
+            assert!(play(&mut engine, "gone.wav").is_err());
+            assert!(engine.searched_missing.contains("gone.wav"));
+            assert!(play(&mut engine, "gone.wav").is_err());
+            assert_eq!(engine.searched_missing.len(), 1);
+            engine.set_sound_search(Some(AssetScope::for_scene(scene)));
+            assert!(engine.searched_missing.is_empty(), "a new search forgets");
         });
     }
 

@@ -1748,6 +1748,7 @@ dependencies = [
  "flint-animation",
  "flint-asset",
  "flint-asset-gen",
+ "flint-audio",
  "flint-constraint",
  "flint-core",
  "flint-debug-ui",
