@@ -56,6 +56,8 @@ the URL of a site already up. A scene may carry its own query after `+`:
 | `--chrome <path>` | the usual install, or `CHROME` | |
 | `--browser chrome\|firefox` | `chrome` | `firefox` drives headed Firefox over WebDriver BiDi on `--port` (it has no CDP), on a fresh profile whose `layout.css.devPixelsPerPx` is the DPR, as Chrome's `--force-device-scale-factor` is (#430) |
 | `--firefox <path>` | the usual install, or `FIREFOX` | |
+| `--prefs k=v,k=v` | | more Firefox prefs for the run's profile, or its own overridden (`true`, `false` and integers are typed). `layout.frame_rate=60` is the one to compare builds with (below) |
+| `--trace` | off | from the moment the gate lifts, keeps the time of every frame the browser gives the page (a `requestAnimationFrame` loop beside the player's, `trace.mjs`), and writes it to each page's JSON as `trace`: the frames each second (`fps`), how many seconds ran at 45 fps or less (`slowSeconds`), and the spells of slow frames, each with when it began and how long it lasted. The table gains a column. It's how to tell a frame's own work running long from the browser missing vsync (#962) |
 
 Each page's JSON keeps the readout's text and its copyable line at every read
 (`reads[].text`, `reads[].line`), the line parsed into numbers
@@ -73,4 +75,59 @@ no frames to a window that is off screen or covered, so the window opens at
 0,0 with the throttling flags off (and `CalculateNativeWinOcclusion` disabled):
 leave it be while it runs. Other jobs on the GPU move the numbers; run twice
 and look at a pass the change doesn't touch (SSAO, Bloom) to spot a contended
-run. Tests for the line parser: `node --test tools/web-perf/perfline.test.mjs`.
+run. Tests for the line parser and the trace: `node --test tools/web-perf/perfline.test.mjs tools/web-perf/trace.test.mjs`.
+
+## Firefox runs at half rate before it runs at 60 (#962)
+
+**In Firefox, compare builds with `--prefs layout.frame_rate=60`.** Without
+it, Firefox paces frames from the display's hardware vsync. On this machine
+(RTX 4070 laptop, Firefox 159, Windows 11) every page then spends its first
+14 to 18 s after the gate at 33 to 38 fps (mostly 33 ms frames with a 17
+here and there), and only then holds 60. A second page in the same Firefox
+ran at 60 for 3 s, then at half rate for the other 41 s. The readout's p99
+reads 31 to 33 ms in any window that covers a spell like that. With
+`layout.frame_rate=60`, Firefox's own 60 Hz timer drives the refresh, and
+every page held 60 from the start, apart from #1349's freeze (below). Chrome
+doesn't do this. Whether a Firefox a person opens does it too is unmeasured:
+every run here was a fresh profile driven over BiDi.
+
+This was #949's "Sun Prints hitches to 33 ms on wgpu 30". On 2026-11-20 I
+ran six alternated rounds with `--seconds 15 --reads 4 --trace`. They
+covered the last wgpu 23 build (15a256d9), the wgpu 30 bump (09fa0efe), main
+(3969a3b7), and a page with no Flint at all: a WebGPU clear, or only a
+`requestAnimationFrame` loop. The time at 45 fps or less was:
+
+| page | seconds at 45 fps or less, six rounds | p99 over 25 ms in the 15-35 s windows #949 read |
+|---|---|---|
+| Sun Prints, wgpu 23 | 16 17 17 17 17 18 | 6 of 6 |
+| Sun Prints, wgpu 30 | 17 17 17 18 18 18 | 6 of 6 |
+| Sun Prints, main | 15 16 18 18 18 18 | 6 of 6 |
+| no Flint, a WebGPU clear | 14 17 17 18 18 18 | (no readout) |
+
+With `layout.frame_rate=60` (three rounds more), Sun Prints read p99 17.1 to
+17.5 ms in 22 of 24 windows across both builds. The other two, 33.3 and
+49.6 ms, came from one wgpu 23 run. Turning
+`layout.lower_priority_refresh_driver_during_load` or
+`gfx.webrender.compositor` off changed nothing.
+
+**What each kind of slow looks like**, so a run can tell them apart:
+
+- **Firefox's hardware vsync.** The frame's p50 or p90 sits at 30 to 33 ms,
+  with 340 to 550 frames in 10 s. CPU a frame doesn't move (1.0 to 1.4 ms
+  here, as at 60), and the page with no Flint does the same. `--trace`'s
+  `fps` reads 33 to 38 a second.
+- **A busy machine.** Several frames' CPU phases stretch together
+  (`input`, `scripts`, `render`, `hud`, all at once), as in #949's run. The
+  frames stay on vsync until the CPU a frame nears the interval. In these
+  rounds, 27 compiler processes and 56% machine CPU moved Sun Prints' CPU a
+  frame from 1.1 to 1.4 to 1.6 ms, and the half-rate spell lasted 16 s, as
+  on an idle machine. Log the load beside a run (process counts and free
+  memory) before blaming it.
+- **The frame's own work.** One phase grows, and a slow spell in the
+  trace lines up with it. Compare against a control page from the same run.
+
+`--trace` also shows what the readout leaves out. In 7 of 25 Firefox runs of
+Sun Prints, Firefox gave the page no frame for 1.7 to 2.0 s about 0.1 s
+after the gate lifted: 5 of 7 runs on main, 1 of 9 on each of the other two
+builds. The player counts a hitch that early as startup, apart from the
+readout's count, which reads 0. #1349 follows it up.
