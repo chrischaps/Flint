@@ -4,7 +4,7 @@
 //! game's fixtures may pin them (`# expect-error:` headers), so renaming a
 //! code is a fixture change. This is the general layer's contract: a tempo
 //! map, sections on bar lines, and any number of buses, each named by the
-//! manifest. A rhythm game's own rules (the fixed six buses, `[reintegration]`,
+//! manifest. A rhythm game's own rules (its fixed buses, its own tables,
 //! pulse windows, charts) are `flint_rhythm::validate_manifest` and
 //! `flint_rhythm::validate_chart`, which run this pass first.
 

@@ -71,14 +71,14 @@ Before #744 the engine also shipped five panels for one game's components (Float
 A script-driven controller usually wants the same three things on a debug panel: a status line saying what it is doing, a button or two to make it do something now, and a few dials. Say so beside its fields, in the component's schema, and every entity carrying the component gets an F3 panel:
 
 ```toml
-[component.raft_visitor.panel]
-title = "Visitor"                          # optional; the default is "Raft visitor"
+[component.harbour_lantern.panel]
+title = "Lantern"                          # optional; the default is "Harbour lantern"
 
-[component.raft_visitor.fields]
-phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Away", "Approaching", "Holding", "Departing"] } }
-day = { type = "f32", default = 0.0, panel = { role = "status", format = "day {:.0}" } }
-trigger_visit = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Visit now" } }
-hold_duration_s = { type = "f32", default = 150.0, min = 1.0, panel = "tune" }
+[component.harbour_lantern.fields]
+phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Dark", "Kindling", "Lit", "Guttering"] } }
+night = { type = "f32", default = 0.0, panel = { role = "status", format = "night {:.0}" } }
+trigger_light = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Light now" } }
+burn_duration_s = { type = "f32", default = 150.0, min = 1.0, panel = "tune" }
 ```
 
 A field's `panel` is a role, or a table with a `role` and the keys below. The panel's rows are in the order the fields are written.
@@ -91,7 +91,7 @@ A field's `panel` is a role, or a table with a `role` and the keys below. The pa
 
 | Key | For | Means |
 |-----|-----|-------|
-| `label` | any | What the row is called (default: the field's name, so `hold_duration_s` reads "Hold duration s"). The field's `description` shows on hover |
+| `label` | any | What the row is called (default: the field's name, so `burn_duration_s` reads "Burn duration s"). The field's `description` shows on hover |
 | `labels` | a number | Names for its values 0, 1, 2...: what the status line says, the choices a tune row offers, a trigger's buttons. An empty name is no button |
 | `format` | status | How the value reads: `{}` is the value (its label's name if it has labels), `{:.N}` the number to N places, `{:clock}` hours as `HH:MM` |
 | `scale` | status | The status line shows the value times this (`100` for a percentage) |

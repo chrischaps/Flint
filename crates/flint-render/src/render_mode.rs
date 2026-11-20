@@ -6,10 +6,10 @@
 //! | mode | what it is now |
 //! |---|---|
 //! | 1 Matrix | the `matrix` style, `blend_source = "tear"`, `rate` = z |
-//! | 2 blood | the `blood` style following the tear, and the ocean's tint ([`OceanTint::blood`]) |
+//! | 2 blood | the `blood` style following the tear, and the ocean's tint ([`blood_tint`]) |
 //! | 3 drunk | the `drunk` style at `blend` = mix |
 //! | 4 Tron | the `tron` style following the tear |
-//! | 5 underwater | the `underwater` style (`depth`, `churn`, `daylight`, `glow` = x, y, z, w; `blend` = mix) and the ocean's [`OceanTint::underside`] |
+//! | 5 underwater | the `underwater` style (`depth`, `churn`, `daylight`, `glow` = x, y, z, w; `blend` = mix) and the ocean's [`underside_tint`] |
 //! | 6 tear | the tear alone |
 //!
 //! Modes 1-4 and 6 set `[post_process] tear` to the mix, `tear_scale` to x
@@ -85,10 +85,49 @@ impl RenderMode {
     pub fn ocean_tint(&self) -> Option<OceanTint> {
         let mix = self.mix.clamp(0.0, 1.0);
         match self.mode {
-            2 => Some(OceanTint::blood(mix)),
-            5 => Some(OceanTint::underside(mix)),
+            2 => Some(blood_tint(mix)),
+            5 => Some(underside_tint(mix)),
             _ => None,
         }
+    }
+}
+
+/// Mode 2's sea: pools that spread with `amount`, night-dark, viscous (two
+/// wobbling bands). The shim's own setting of the ocean's tint, kept here
+/// so the general `OceanTint` names no game's look (#1041); it goes with
+/// the shim.
+pub fn blood_tint(amount: f32) -> OceanTint {
+    OceanTint {
+        amount,
+        deep: [0.10, 0.005, 0.01],
+        shallow: [0.45, 0.04, 0.05],
+        sss: [0.85, 0.05, 0.03],
+        foam: [0.95, 0.78, 0.76],
+        sky: [1.1, 0.3, 0.32],
+        ramp_steps: 2.0,
+        band_wobble: 0.15,
+        pools: 0.08,
+        keep_light: true,
+        below: false,
+    }
+}
+
+/// Mode 5's sea, the surface seen from under it: murk blues and flat
+/// white foam panes on the underside only, two bands. The shim's, as
+/// [`blood_tint`] is.
+pub fn underside_tint(amount: f32) -> OceanTint {
+    OceanTint {
+        amount,
+        deep: [0.02, 0.12, 0.26],
+        shallow: [0.07, 0.30, 0.46],
+        sss: [0.10, 0.45, 0.55],
+        foam: [0.94, 0.98, 1.0],
+        sky: [1.0, 1.0, 1.0],
+        ramp_steps: 2.0,
+        band_wobble: 0.0,
+        pools: 0.0,
+        keep_light: false,
+        below: true,
     }
 }
 
@@ -213,11 +252,11 @@ mod tests {
         );
         assert_eq!(
             mode(2, 0.4, [0.0; 4]).unwrap().ocean_tint(),
-            Some(OceanTint::blood(0.4))
+            Some(blood_tint(0.4))
         );
         assert_eq!(
             mode(5, 1.0, [0.0; 4]).unwrap().ocean_tint(),
-            Some(OceanTint::underside(1.0))
+            Some(underside_tint(1.0))
         );
         assert_eq!(mode(1, 1.0, [0.0; 4]).unwrap().ocean_tint(), None);
     }

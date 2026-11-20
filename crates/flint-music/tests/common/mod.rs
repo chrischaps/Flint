@@ -72,27 +72,27 @@ pub fn sine_sound(freq: f64, amp: f32, duration: i64) -> StaticSoundData {
 /// table — frequencies far apart so Goertzel attribution is unambiguous.
 /// File paths in the manifest are labels only (never opened).
 ///
-/// `plain` plays every bus steadily; `theme_gated` silences `home_theme`
-/// outside the given `[start, len)` suite-sample spans (position evidence
-/// for the seam tests). Ungated buses produce bit-identical frames in both
+/// `plain` plays every bus steadily; `bell_gated` silences `bell` outside
+/// the given `[start, len)` suite-sample spans (position evidence for the
+/// timeline jump tests). Ungated buses produce bit-identical frames in both
 /// modes.
 pub struct SineStems {
     duration: i64,
-    theme_gates: Option<Vec<(i64, i64)>>,
+    bell_gates: Option<Vec<(i64, i64)>>,
 }
 
 impl SineStems {
     pub fn plain(duration: i64) -> Self {
         Self {
             duration,
-            theme_gates: None,
+            bell_gates: None,
         }
     }
 
-    pub fn theme_gated(duration: i64, gates: Vec<(i64, i64)>) -> Self {
+    pub fn bell_gated(duration: i64, gates: Vec<(i64, i64)>) -> Self {
         Self {
             duration,
-            theme_gates: Some(gates),
+            bell_gates: Some(gates),
         }
     }
 }
@@ -103,13 +103,13 @@ impl StemResolver for SineStems {
             return Ok(None);
         }
         let (freq, amp) = match bus {
-            "foundation" => (220.0, 0.20f32),
-            "home_theme" => (880.0, 0.25),
-            "texture" => (8_000.0, 0.10),
+            "pad" => (220.0, 0.20f32),
+            "bell" => (880.0, 0.25),
+            "rain" => (8_000.0, 0.10),
             other => panic!("playable bus without a tone: {other}"),
         };
-        let gates = if bus == "home_theme" {
-            self.theme_gates.as_deref()
+        let gates = if bus == "bell" {
+            self.bell_gates.as_deref()
         } else {
             None
         };

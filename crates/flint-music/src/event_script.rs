@@ -12,7 +12,7 @@
 //!
 //! [[events]]
 //! at = "bar:9"
-//! bus = "home_theme"
+//! bus = "bell"
 //! action = "set_gain"   # set_gain | set_lpf | set_detune | marker
 //! db = -60.0            # set_gain: db; set_lpf: hz; set_detune: semitones;
 //! ramp_ms = 10.0        # marker: label
@@ -160,14 +160,14 @@ schema_version = 0
 
 [[events]]
 at = "bar:9"
-bus = "home_theme"
+bus = "bell"
 action = "set_gain"
 db = -60.0
 ramp_ms = 10.0
 
 [[events]]
 at = "bar:13:2.5"
-bus = "home_theme"
+bus = "bell"
 action = "set_gain"
 db = 0
 
@@ -180,7 +180,7 @@ hz = 400.0
 [[events]]
 at = "sample:48000"
 action = "marker"
-label = "checkpoint"
+label = "chorus"
 "#,
         )
         .unwrap();
@@ -194,7 +194,7 @@ label = "checkpoint"
         ));
         assert_eq!(s.events[2].at, EventTime::Beat(16.5));
         assert_eq!(s.events[3].at, EventTime::Sample(48_000));
-        assert!(matches!(&s.events[3].action, BusAction::Marker(l) if l == "checkpoint"));
+        assert!(matches!(&s.events[3].action, BusAction::Marker(l) if l == "chorus"));
     }
 
     #[test]

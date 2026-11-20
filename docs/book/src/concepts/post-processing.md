@@ -600,7 +600,19 @@ flint render scene.toml --style tron:blend_source=tear --set post.tear=0.45 --se
 
 ### The ocean's tint
 
-The `ocean` component's `tint` (0--1) moves its whole palette toward another before any use, so bands, subsurface, foam and reflections agree, and after a script's palette lands, so it can't race one: `tint_deep_color`, `tint_shallow_color`, `tint_sss_color`, `tint_foam_color`, `tint_sky` (what the sky's reflection is multiplied by), `tint_ramp_steps`, `tint_band_wobble`, `tint_pools` (world-anchored pools that spread with the tint; 0 tints evenly), `tint_keep_light` (scaled by the palette's own brightness, so a night sea stays dark) and `tint_below` (only the surface seen from below). The defaults are the crimson tide, off at 0. `flint schema ocean` lists them.
+The `ocean` component's `tint` (0--1) moves its whole palette toward another before any use, so bands, subsurface, foam and reflections agree, and after a script's palette lands, so it can't race one: `tint_deep_color`, `tint_shallow_color`, `tint_sss_color`, `tint_foam_color`, `tint_sky` (what the sky's reflection is multiplied by), `tint_ramp_steps`, `tint_band_wobble`, `tint_pools` (world-anchored pools that spread with the tint; 0 tints evenly), `tint_keep_light` (scaled by the palette's own brightness, so a night sea stays dark) and `tint_below` (only the surface seen from below). A tint names the colours it moves toward: a colour it leaves out is the sea's own (`deep_color`, `shallow_color`, `sss_color`, `foam_color`), and every other setting defaults to changing nothing (`tint_sky` white, no bands of its own, no wobble, no pools, light not kept), so `tint = 0.5` alone draws the sea it was. `flint schema ocean` lists them.
+
+```toml
+[entities.sea.ocean]
+tint = 0.6                                   # a storm greying the sea, in pools
+tint_deep_color = [0.05, 0.07, 0.09, 1.0]
+tint_shallow_color = [0.22, 0.27, 0.30, 1.0]
+tint_sky = [0.6, 0.65, 0.7, 1.0]
+tint_pools = 0.05
+tint_keep_light = true
+```
+
+Before #1041 the defaults were one game's palette (a crimson tide in pools), so a scene that set `tint` alone drew a sea of blood; it now draws its own sea, and names the palette it wants.
 
 ### From scripts
 
@@ -623,10 +635,10 @@ Unlike the old render mode, these hold until changed, as every other post overri
 | Mode | Is now |
 |------|--------|
 | 1 Matrix | `matrix` with `blend_source = "tear"`, `tear` = mix, `tear_scale` = x, `tear_iris` = y >= 0.5, `rate` = z (0 reads as 6) |
-| 2 Blood | `blood` following the tear, and the ocean's tint at the mix (`OceanTint::blood`) |
+| 2 Blood | `blood` following the tear, and the ocean's tint at the mix (`render_mode::blood_tint`, the shim's own palette) |
 | 3 Drunk | `drunk` at `blend` = mix |
 | 4 Tron | `tron` following the tear |
-| 5 Underwater | `underwater` at `blend` = mix, `depth`, `churn`, `daylight`, `glow` = x, y, z, w, and the ocean's tint on its underside (`OceanTint::underside`) |
+| 5 Underwater | `underwater` at `blend` = mix, `depth`, `churn`, `daylight`, `glow` = x, y, z, w, and the ocean's tint on its underside (`render_mode::underside_tint`) |
 | 6 Tear | the tear alone |
 
 The golden `render-mode-shim-matrix` holds `--render-mode 1` to the style and the tear pixel for pixel.

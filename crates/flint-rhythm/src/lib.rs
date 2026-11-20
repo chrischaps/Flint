@@ -44,7 +44,7 @@ pub use haptics::{HapticEvent, HapticsConfig, HapticsDriver, TickGrid};
 pub use input_stream::{InputEvent, LeanSample, PulseEvent};
 pub use judgment::{Judge, JudgmentConfig, JudgmentRecord};
 pub use ladder::{Ladder, LadderConfig, LadderDriver, LadderParams};
-pub use reintegration::{ReintegrationEvent, Reintegrator, SeqPhase, SeqTick};
+pub use reintegration::{Reintegration, ReintegrationEvent, Reintegrator, SeqPhase, SeqTick};
 pub use replay::{read_session, synthesize, SessionHeader, SessionWriter, SyntheticProfile};
 pub use validate::{validate_chart, validate_manifest};
 

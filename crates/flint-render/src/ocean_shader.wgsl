@@ -456,8 +456,8 @@ fn fs_main(in: VertexOutput,
     // The whole palette is remapped through locals BEFORE any use, so every
     // downstream term (bands, SSS, foam, reflections) agrees. Remapping here
     // — after a script's palette (a time of day) landed in the uniforms —
-    // means the tint can never race it. Float's blood tide and the ceiling
-    // over a buried eye are two settings of it (OceanTint::blood, ::underside).
+    // means the tint can never race it. Pools of dye and the ceiling seen
+    // from under the water are two settings of it (tint_pools, tint_below).
     var deep_rgb = body.deep_color.rgb;
     var shallow_rgb = body.shallow_color.rgb;
     var sss_rgb = ocean.sss_color.rgb;

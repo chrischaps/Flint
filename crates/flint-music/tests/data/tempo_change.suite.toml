@@ -3,6 +3,9 @@
 # Stems are synthesized by the test's StemResolver; the file names here are
 # labels, never opened. Lives in tests/data (crate-local), NOT fixtures/ —
 # the pinned fixtures are the validator contract and stay untouched.
+# A suite that only plays music: any buses, named as it likes, two of them
+# silent. The rhythm layer's six-bus copy, with its seam table, is
+# crates/flint-rhythm/tests/data/tempo_change.suite.toml (#1041).
 schema_version = 0
 
 [suite]
@@ -25,32 +28,22 @@ time_signature = [3, 4]
 [[sections]]
 name = "before"
 start_sample = 0
-pulse_window_ms = 100
 
 [[sections]]
 name = "after"
 start_sample = 960000
-pulse_window_ms = 100
 
-[reintegration]
-re_entry_sections = ["before", "after"]
-lead_bus = "home_theme"
-reassembly_bars = 2
+[buses.pad]
+file = "synth/pad-220hz.flac"
 
-[buses.foundation]
-file = "synth/foundation-220hz.flac"
-
-[buses.harmony]
+[buses.strings]
 silent = true
 
-[buses.world_voice]
+[buses.bell]
+file = "synth/bell-880hz.flac"
+
+[buses.choir]
 silent = true
 
-[buses.home_theme]
-file = "synth/home-theme-880hz.flac"
-
-[buses.child_motif]
-silent = true
-
-[buses.texture]
-file = "synth/texture-8000hz.flac"
+[buses.rain]
+file = "synth/rain-8000hz.flac"

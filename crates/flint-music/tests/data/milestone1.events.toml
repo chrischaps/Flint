@@ -3,10 +3,10 @@
 # low-pass engagement on another bus. Bars here are 1-based (console numbers).
 schema_version = 0
 
-# Drop home_theme to silence at bar 9 (before the tempo change)...
+# Drop the bell to silence at bar 9 (before the tempo change)...
 [[events]]
 at = "bar:9"
-bus = "home_theme"
+bus = "bell"
 action = "set_gain"
 db = -80.0
 ramp_ms = 10.0
@@ -14,15 +14,15 @@ ramp_ms = 10.0
 # ...and restore it at bar 13 (after the change: two 3/4 bars past the anchor).
 [[events]]
 at = "bar:13"
-bus = "home_theme"
+bus = "bell"
 action = "set_gain"
 db = 0.0
 ramp_ms = 10.0
 
-# Close the texture low-pass right at the anchor bar.
+# Close the rain's low-pass right at the anchor bar.
 [[events]]
 at = "bar:11"
-bus = "texture"
+bus = "rain"
 action = "set_lpf"
 hz = 400.0
 ramp_ms = 100.0

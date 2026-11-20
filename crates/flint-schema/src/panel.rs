@@ -5,14 +5,14 @@
 //! controller without a line of Rust:
 //!
 //! ```toml
-//! [component.raft_visitor.panel]
-//! title = "Visitor"                      # optional; default "Raft visitor"
+//! [component.harbour_lantern.panel]
+//! title = "Lantern"                      # optional; default "Harbour lantern"
 //!
-//! [component.raft_visitor.fields]
-//! phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Away", "Approaching", "Holding", "Departing"] } }
-//! day = { type = "f32", default = 0.0, panel = { role = "status", format = "day {:.0}" } }
-//! trigger_visit = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Visit now" } }
-//! hold_duration_s = { type = "f32", default = 150.0, panel = "tune" }
+//! [component.harbour_lantern.fields]
+//! phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Dark", "Kindling", "Lit", "Guttering"] } }
+//! night = { type = "f32", default = 0.0, panel = { role = "status", format = "night {:.0}" } }
+//! trigger_light = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Light now" } }
+//! burn_duration_s = { type = "f32", default = 150.0, panel = "tune" }
 //! ```
 //!
 //! The roles ([`PanelRole`]):
@@ -233,7 +233,7 @@ pub struct PanelProblem {
     pub hint: Option<String>,
 }
 
-/// `raft_visitor` -> "Raft visitor".
+/// `harbour_lantern` -> "Harbour lantern".
 pub fn words_of(name: &str) -> String {
     let spaced = name.replace('_', " ");
     let mut chars = spaced.chars();
@@ -621,33 +621,36 @@ mod tests {
         registry
     }
 
-    const VISITOR: &str = r#"
-[component.raft_visitor.panel]
-title = "Visitor"
+    const LANTERN: &str = r#"
+[component.harbour_lantern.panel]
+title = "Lantern"
 
-[component.raft_visitor.fields]
-phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Away", "Approaching", "Holding", "Departing"] } }
-day = { type = "f32", default = 0.0, panel = { role = "status", format = "day {:.0}" } }
-trigger_visit = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Visit now" } }
-hold_duration_s = { type = "f32", default = 150.0, min = 1.0, panel = "tune" }
+[component.harbour_lantern.fields]
+phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Dark", "Kindling", "Lit", "Guttering"] } }
+night = { type = "f32", default = 0.0, panel = { role = "status", format = "night {:.0}" } }
+trigger_light = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Light now" } }
+burn_duration_s = { type = "f32", default = 150.0, min = 1.0, panel = "tune" }
 debug_log = { type = "bool", default = false }
 "#;
 
     #[test]
     fn the_rows_keep_the_order_they_are_written_in() {
-        let registry = registry(VISITOR);
+        let registry = registry(LANTERN);
         let panel = registry
-            .get_component("raft_visitor")
+            .get_component("harbour_lantern")
             .unwrap()
             .panel
             .as_ref()
             .unwrap();
-        assert_eq!(panel.title, "Visitor");
+        assert_eq!(panel.title, "Lantern");
         let fields: Vec<&str> = panel.rows.iter().map(|r| r.field.as_str()).collect();
-        assert_eq!(fields, ["phase", "day", "trigger_visit", "hold_duration_s"]);
+        assert_eq!(
+            fields,
+            ["phase", "night", "trigger_light", "burn_duration_s"]
+        );
         let tune = &panel.rows[3];
         assert_eq!(tune.role, PanelRole::Tune);
-        assert_eq!(tune.label, "Hold duration s");
+        assert_eq!(tune.label, "Burn duration s");
         assert_eq!(tune.min, Some(1.0), "the field's own min is the range");
         assert_eq!(panel.rows[2].press, toml::Value::Float(1.0));
         assert!(registry.lints().is_empty(), "{:?}", registry.lints());
@@ -661,28 +664,28 @@ debug_log = { type = "bool", default = false }
 
     #[test]
     fn the_status_line_names_formats_and_leaves_out_unset() {
-        let panel = registry(VISITOR)
-            .get_component("raft_visitor")
+        let panel = registry(LANTERN)
+            .get_component("harbour_lantern")
             .unwrap()
             .panel
             .clone()
             .unwrap();
         let phase = &panel.rows[0];
-        let day = &panel.rows[1];
+        let night = &panel.rows[1];
         assert_eq!(
             phase.status_text(Some(&toml::Value::Float(2.2))).as_deref(),
-            Some("Holding")
+            Some("Lit")
         );
         assert_eq!(
             phase.status_text(Some(&toml::Value::Float(9.0))).as_deref(),
-            Some("Departing")
+            Some("Guttering")
         );
         assert_eq!(
-            day.status_text(Some(&toml::Value::Integer(3))).as_deref(),
-            Some("day 3")
+            night.status_text(Some(&toml::Value::Integer(3))).as_deref(),
+            Some("night 3")
         );
 
-        let mut next = day.clone();
+        let mut next = night.clone();
         next.format = Some("next in {:.0} s".into());
         next.unset = Some(-1.0);
         assert_eq!(next.status_text(Some(&toml::Value::Float(-1.0))), None);
@@ -691,7 +694,7 @@ debug_log = { type = "bool", default = false }
             Some("next in 42 s")
         );
 
-        let mut sea = day.clone();
+        let mut sea = night.clone();
         sea.format = Some("sea {:.0}%".into());
         sea.scale = 100.0;
         assert_eq!(
@@ -699,7 +702,7 @@ debug_log = { type = "bool", default = false }
             Some("sea 25%")
         );
 
-        let mut time = day.clone();
+        let mut time = night.clone();
         time.format = Some("{:clock}".into());
         assert_eq!(
             time.status_text(Some(&toml::Value::Float(14.55)))
@@ -761,27 +764,27 @@ calm = { type = "f32", panel = { role = "status", format = "calm {:.x}" } }
     fn a_trigger_with_labels_and_a_tune_with_unset_and_presets() {
         let registry = registry(
             r#"
-[component.reality.fields]
-trigger_mode = { type = "f32", default = -1.0, panel = { role = "trigger", labels = ["", "Matrix", "Blood"] } }
+[component.weather.fields]
+trigger_front = { type = "f32", default = -1.0, panel = { role = "trigger", labels = ["", "Rain", "Storm"] } }
 mix = { type = "f32", default = 0.0, panel = "status" }
 mix_override = { type = "f32", default = -1.0, panel = { role = "tune", unset = -1.0, from = "mix", min = 0.0, max = 1.0, slider = true, label = "Pin mix" } }
 time_hours = { type = "f32", panel = { role = "tune", presets = [["Dawn", 6.0], ["Noon", 12.5]] } }
 "#,
         );
         let panel = registry
-            .get_component("reality")
+            .get_component("weather")
             .unwrap()
             .panel
             .clone()
             .unwrap();
         assert!(registry.lints().is_empty(), "{:?}", registry.lints());
-        assert_eq!(panel.title, "Reality");
+        assert_eq!(panel.title, "Weather");
         assert_eq!(
             panel.rows[0].label_of(0.0),
             None,
             "an empty name is no button"
         );
-        assert_eq!(panel.rows[0].label_of(2.0), Some("Blood"));
+        assert_eq!(panel.rows[0].label_of(2.0), Some("Storm"));
         let pin = &panel.rows[2];
         assert_eq!(
             (pin.unset, pin.from.as_deref(), pin.slider),
