@@ -34,7 +34,7 @@ flint entity create --archetype room --name "kitchen" --scene $SCENE
 flint entity create --archetype room --name "storage" --scene $SCENE
 ```
 
-Now edit the TOML directly to set positions and dimensions. Each room needs a transform and bounds:
+Now edit the TOML directly to set positions and dimensions. Each room needs a transform and bounds: a room is the box of its `bounds` (corners `min` and `max` from its transform), drawn as a blue outline, and the examples' `rooms_have_bounds` constraint fails `flint check` on a room with none. A level's root that only holds walls and lamps is a plain transform with no archetype, not a room.
 
 ```toml
 [entities.main_hall]
@@ -44,7 +44,8 @@ archetype = "room"
 position = [0.0, 0.0, 0.0]
 
 [entities.main_hall.bounds]
-size = [15.0, 4.0, 12.0]
+min = [-7.5, 0.0, -6.0]
+max = [7.5, 4.0, 6.0]
 ```
 
 ## 4. Add Physics Colliders
