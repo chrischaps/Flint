@@ -9,7 +9,8 @@
 //! table ([`OpDescriptor::default_params`]), parsing with type, choice and
 //! range errors ([`OpParams`]), and the crate README's op catalog
 //! ([`op_reference_markdown`]). The registry is [`super::pipeline::OPS`];
-//! adding an op is its struct, `impl TextureOp` and descriptor in `ops.rs`
+//! adding an op is its struct, `impl TextureOp` and descriptor in its family's
+//! module under `ops/`
 //! plus one line there.
 //!
 //! A build function reads each parameter through [`OpParams`] by key, and a
