@@ -600,7 +600,17 @@ flint render scene.toml --style tron:blend_source=tear --set post.tear=0.45 --se
 
 ### The ocean's tint
 
-The `ocean` component's `tint` (0--1) moves its whole palette toward another before any use, so bands, subsurface, foam and reflections agree, and after a script's palette lands, so it can't race one: `tint_deep_color`, `tint_shallow_color`, `tint_sss_color`, `tint_foam_color`, `tint_sky` (what the sky's reflection is multiplied by), `tint_ramp_steps`, `tint_band_wobble`, `tint_pools` (world-anchored pools that spread with the tint; 0 tints evenly), `tint_keep_light` (scaled by the palette's own brightness, so a night sea stays dark) and `tint_below` (only the surface seen from below). The defaults are the crimson tide, off at 0. `flint schema ocean` lists them.
+The `ocean` component's `tint` (0--1) moves its whole palette toward another before any use, so bands, subsurface, foam and reflections agree, and after a script's palette lands, so it can't race one: `tint_deep_color`, `tint_shallow_color`, `tint_sss_color`, `tint_foam_color`, `tint_sky` (what the sky's reflection is multiplied by), `tint_ramp_steps`, `tint_band_wobble`, `tint_pools` (world-anchored pools that spread with the tint; 0 tints evenly), `tint_keep_light` (scaled by the palette's own brightness, so a night sea stays dark) and `tint_below` (only the surface seen from below). `flint schema ocean` lists them.
+
+`tint_preset` names what those fields are when unwritten: `blood` (the default, the crimson tide: night-dark pools that spread with the tint) or `underside` (the surface seen from under it: murk blues and flat foam panes, below only). A written field still wins over its preset. So a game that shows both looks switches between them with one field and drives `tint` alone, and its scripts need no colours (#1035):
+
+```rhai
+let sea = get_entity("ocean");
+set_field(sea, "ocean", "tint_preset", "underside");   // the eye went under
+set_field(sea, "ocean", "tint", 1.0);
+```
+
+The `tint_*` fields carry no schema default for this reason: a scene load writes a field's default into the component, where it would beat the preset. Give the fields one writer: a second script writing `tint` races the first, since scripts run in no set order. Float's `seat_camera.rhai` owns them, drawing the underside while the eye is under and the blood tear's tint (which `reality.rhai` publishes) otherwise.
 
 ### From scripts
 

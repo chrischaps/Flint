@@ -3,8 +3,8 @@
 //! eye meets the near plane, banded murk, a Snell window, light shafts and
 //! bioluminescent specks below it, a white foam lip on it. A game sets
 //! `depth` (the signed eye depth) each frame from its sea; the ocean's
-//! `tint` with `OceanTint::underside`'s settings turns the surface above
-//! into the ceiling it is from below. Its `blend` is how far under the look
+//! `tint` with `tint_preset = "underside"` (`OceanTint::underside`, #1035)
+//! turns the surface above into the ceiling it is from below. Its `blend` is how far under the look
 //! is (the style draws its own blend, since the sway grows with it). A
 //! reality style ([`super::reality`]).
 //!
