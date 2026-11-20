@@ -20,7 +20,7 @@ use flint_script::context::ScriptCommand;
 #[derive(Default)]
 pub(crate) struct LivingSubsystem {
     /// Room to blend the props each frame
-    pub(crate) blend: flint_procgen::BlendFrame,
+    pub(crate) blend: flint_living::BlendFrame,
     /// The field made from it, sampled on a clock of its own that stops
     /// when a game state pauses `living`. No table: no field, no samples.
     pub(crate) wooze: Option<flint_wooze::WoozeField>,
@@ -127,7 +127,7 @@ impl LivingSubsystem {
             .world
             .entities_with_component(flint_wooze::components::SHALLOW_WOOZE)
             .is_empty();
-        let used = !ctx.resolver.living_props().is_empty()
+        let used = !ctx.living.is_empty()
             || ctx.scene.living.is_some()
             || wooze.is_some()
             || shallow
@@ -189,7 +189,7 @@ impl LivingSubsystem {
         if self.wooze.is_some() {
             self.wooze_time += living_dt;
             let world = &*ctx.world;
-            ctx.resolver.living_props_mut().track_positions(|entity| {
+            ctx.living.track_positions(|entity| {
                 world.get_world_position(entity).map(|p| [p.x, p.y, p.z])
             });
         }
@@ -200,8 +200,8 @@ impl LivingSubsystem {
         }
         let wooze = self.wooze.as_ref().map(|field| (field, self.wooze_time));
         let lineages = match self.capture {
-            Some(_) => ctx.resolver.step_living_now(living_dt, wooze),
-            None => ctx.resolver.process_living_in(living_dt, wooze),
+            Some(_) => ctx.living.step_now(ctx.resolver, living_dt, wooze),
+            None => ctx.living.process(ctx.resolver, living_dt, wooze),
         };
         let shallow = self.capture.is_none_or(|c| c.shallow);
         // Hand-made meshes read the same field on the same dt (#215); the
@@ -242,7 +242,7 @@ impl LivingSubsystem {
             return;
         }
         if let (Some(renderer), Some((device, queue))) = (ctx.renderer.as_deref_mut(), ctx.gpu) {
-            living_props::upload_blends(ctx.resolver, &mut self.blend, renderer, device, queue);
+            living_props::upload_blends(ctx.living, &mut self.blend, renderer, device, queue);
         }
         // The other side of an A/B (#238), on the same dt, after the scene's own.
         self.tick_hidden_side(ctx, living_dt);
@@ -262,7 +262,7 @@ impl LivingSubsystem {
     /// The `--exit-after` lines: whether the rings stayed full and within
     /// budget. Silent with no props.
     fn report(&self, ctx: &ReportCtx, out: &mut ExitReport) {
-        let props = ctx.resolver.living_props();
+        let props = &*ctx.living;
         if props.is_empty() {
             return;
         }
@@ -537,7 +537,7 @@ impl Subsystem for LivingSubsystem {
         super::living_ab::draw_other_side(
             super::living_ab::OtherSide {
                 ab,
-                resolver: ctx.resolver,
+                living: ctx.living,
                 blend: &mut self.blend,
                 world: ctx.world,
                 camera: ctx.camera,
@@ -569,7 +569,7 @@ impl Subsystem for LivingSubsystem {
         if let Some(split) = self.tune.compare_at_start.take() {
             ctx.launch.compare_at_start = Some(split);
         }
-        ctx.resolver.clear_living_props();
+        ctx.living.clear_props();
     }
 
     fn exit_report(&self, ctx: &ReportCtx, report: &mut ExitReport) {

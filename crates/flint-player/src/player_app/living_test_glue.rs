@@ -97,7 +97,7 @@ impl PlayerApp {
         })
     }
 
-    pub(crate) fn hidden_side_stats(&mut self) -> Option<flint_procgen::LivingStats> {
+    pub(crate) fn hidden_side_stats(&mut self) -> Option<flint_living::LivingStats> {
         self.with_living(|living, ctx| {
             let _ = &ctx;
             living.hidden_side_stats()

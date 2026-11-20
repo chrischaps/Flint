@@ -7,11 +7,11 @@ use flint_wooze::{Cycle, WoozeSample};
 use super::layers::LivingShadows;
 use super::ring::PoseRing;
 use super::{LivingPropId, LivingProps, TINT_UNSENT};
-use crate::living::{
+use flint_procgen::living::{
     boil_bones, LivingClock, LivingJitter, LivingPose, LivingRig, LivingSkeleton, Segment,
     WarpedTime, JITTER_CHANNELS,
 };
-use crate::spec::EchoCopy;
+use flint_procgen::EchoCopy;
 
 /// Room for one prop's blend at a time, kept across props and frames so that
 /// blending a grove allocates nothing.
@@ -122,7 +122,7 @@ impl LivingProps {
             prop.row_time,
             prop.beats,
             &prop.wooze,
-            crate::spec::slide_shown(prop.echo_slide, 0.0),
+            flint_procgen::slide_shown(prop.echo_slide, 0.0),
             [0.0; 2],
             &mut prop.drawn.bones,
             frame,
@@ -163,7 +163,7 @@ impl LivingProps {
                     ring.get(wanted).map(|p| &**p)
                 });
                 if found {
-                    let slide = crate::spec::slide_shown(prop.echo_slide, 0.0);
+                    let slide = flint_procgen::slide_shown(prop.echo_slide, 0.0);
                     for segment in &mut pose.segments {
                         *segment = segment.pulled(shown);
                         segment.slide = segment.slide.map(|x| x * slide);

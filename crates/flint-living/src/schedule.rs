@@ -11,10 +11,10 @@ use super::layers::LivingShadows;
 use super::prop::LivingProp;
 use super::ring::{PoseRing, RingPose};
 use super::{BuiltLineage, Lineage, LineageDone, LivingProps, LivingStats};
-use crate::generator::LivingGenerator;
-use crate::living::{LivingPose, SegmentPose};
-use crate::registry::GeneratorRegistry;
-use crate::spec::ProcGenSpec;
+use flint_procgen::living::{LivingPose, SegmentPose};
+use flint_procgen::GeneratorRegistry;
+use flint_procgen::LivingGenerator;
+use flint_procgen::ProcGenSpec;
 
 /// The re-hold pass that reaches poses nothing is reading yet, which take turns
 /// with making new ones. See [`LivingProp::rehold_span`].

@@ -967,7 +967,7 @@ Headless `flint render` does not run the resolver. For snapshots of procgen-back
 - **Generators**: `tree`, `texture` (patterns, node graph, map derivation) and `creature` (body parts, limb chains, skeleton builder), registered through `GeneratorRegistry`.
 - **Spec, seed and RNG**: `ProcGenSpec`, `Seed`, `SeededRng`.
 - **Output**: `MeshData`, `ImageData`, `SkinnedMeshData`, GLB export with LOD chains and skins.
-- **Runtime**: `ProcGenResolver` (discovery, cache, frame-budgeted queue, `LivingProps`), used by the player.
+- **Runtime**: `ProcGenResolver` (discovery, cache, frame-budgeted queue), used by the player, and beside it `flint_living::LivingProps` (the living props' rings, clocks and knobs, on what the queue left of the frame budget).
 - **Validation**: `validate_output` with style-guide constraints.
 
 `flint-procgen-ai` sits on top for tool-time spec creation and refinement from prompts; it is not linked into the player.

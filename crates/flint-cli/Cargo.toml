@@ -48,6 +48,9 @@ flint-script = { workspace = true, features = ["metadata", "check"] }
 flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
 flint-procgen = { workspace = true }
+# `flint render --report json`'s living props (#1024): the only part of the
+# CLI that names the scheduler; `flint gen` uses flint-procgen alone.
+flint-living = { workspace = true }
 flint-procgen-ai = { workspace = true }
 flint-ai-core = { workspace = true }
 flint-viewer = { workspace = true }

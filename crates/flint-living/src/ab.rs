@@ -11,7 +11,7 @@ impl LivingProps {
     /// (#238): the knobs of one can then turn without the other's. Its lineages,
     /// rings and poses are these, and shared, since a pose is an `Arc`. Its pose
     /// cache starts empty: the two take turns with one, through
-    /// [`ProcGenResolver::process_living_beside`](crate::ProcGenResolver::process_living_beside),
+    /// [`process_beside`](LivingProps::process_beside),
     /// since a pose doesn't depend on any knob and either side can use the other's.
     pub fn fork(&self) -> Self {
         Self {

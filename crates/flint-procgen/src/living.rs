@@ -150,6 +150,13 @@ impl WarpedTime {
 /// value.
 pub const STAGGER_PER_LEVEL: f64 = 0.15;
 
+/// The fastest a boil can be asked to tick, times its spec's pace (#529).
+pub const JITTER_RATE_MAX: f32 = 8.0;
+
+/// The fastest a form's words can be asked to drift along their lines, times
+/// its spec's `row_pace` (#576).
+pub const ROW_RATE_MAX: f32 = 8.0;
+
 /// The clock a living prop drifts on: hold, then glide to the next pose over
 /// the last `glide` of each `step`, with its parts out of phase.
 ///
@@ -1175,7 +1182,7 @@ impl LivingRig {
 
 /// Every bit of `h` spread across all of them (MurmurHash3's finalizer),
 /// stable across runs and platforms.
-pub(crate) fn mix64(h: u64) -> u64 {
+pub fn mix64(h: u64) -> u64 {
     let mut h = h ^ (h >> 33);
     h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
     h ^= h >> 33;

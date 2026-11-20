@@ -559,16 +559,23 @@ impl AssetSink for GpuSink<'_> {
 /// placeholder for each other name. Runs before the model loader, which then
 /// skips every name this uploaded.
 pub fn resolve_scene(
-    scene_path: &str,
-    world: &mut FlintWorld,
-    resolver: &mut ProcGenResolver,
+    core: &mut super::game_core::GameCore,
     mode: ProcGenMode,
     mut sink: GpuSink<'_>,
 ) {
+    let super::game_core::GameCore {
+        scene_path,
+        world,
+        procgen_resolver: resolver,
+        #[cfg(feature = "living")]
+        living_props,
+        ..
+    } = core;
+    let scene_path = scene_path.as_str();
     let started = web_time::Instant::now();
     discover_specs(resolver, &sink.config.project, scene_path);
     #[cfg(feature = "living")]
-    super::living_props::resolve(world, sink.config, resolver, &mut sink, mode);
+    super::living_props::resolve(world, sink.config, resolver, living_props, &mut sink, mode);
     let requests = collect_requests(world, sink.config, resolver, &sink);
     if requests.is_empty() {
         return;

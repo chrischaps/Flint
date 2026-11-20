@@ -18,7 +18,6 @@ pub mod export_glb;
 mod generator;
 pub mod generators;
 pub mod living;
-pub mod living_props;
 pub mod mock;
 pub mod model;
 mod output;
@@ -45,16 +44,12 @@ pub use generators::register_built_in_generators;
 pub use generators::sweep::SweepGenerator;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
+// The living props' runtime (their rings, clocks, knobs and blending) is
+// flint-living's (#1024); this crate keeps what a generator makes for them.
 pub use living::{
     boil_bones, CardBoil, LeafBinding, LivingClock, LivingJitter, LivingPose, LivingRig,
     LivingSkeleton, PoseStream, RowDrift, RowLine, RowWord, SegmentPose, WarpedTime, BOIL_BONES,
-    JITTER_CHANNELS, STAGGER_PER_LEVEL,
-};
-pub use living_props::{
-    jitter_rate_clamped, row_rate_clamped, BlendFrame, ClockOverride, EchoOverride, LineageDone,
-    LivingDefaults, LivingLayer, LivingLayers, LivingProp, LivingPropId, LivingPropRequest,
-    LivingProps, LivingScope, LivingShadows, LivingStats, PropBlend, Resolved, ResolvedProp,
-    SpeciesOverride, VarianceOverride, JITTER_RATE_MAX, POSE_CACHE_BYTES, ROW_RATE_MAX,
+    JITTER_CHANNELS, JITTER_RATE_MAX, ROW_RATE_MAX, STAGGER_PER_LEVEL,
 };
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{
@@ -76,6 +71,8 @@ pub use spec::{
     JitterConfig, LivingConfig, LodLevel, NoiseConfig, PoseSource, ProcGenSpec, SeedConfig,
     SeedMode, SpecMeta, Stagger, VarianceConfig,
 };
+// What flint-living's echoes read of a spec's (#1024)
+pub use spec::{slide_shown, MAX_ECHOES, MAX_ECHO_SPREAD};
 pub use types::{
     BoundingBox, BranchSegment, ChannelSemantics, ImageData, MaterialData, MeshData, SubMesh,
     Vertex,

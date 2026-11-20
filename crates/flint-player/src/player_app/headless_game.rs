@@ -28,9 +28,9 @@ use std::collections::BTreeSet;
 use flint_core::project::Project;
 use flint_core::quality::QualitySettings;
 use flint_ecs::FlintWorld;
-use flint_particles::ParticleSystem;
 #[cfg(feature = "living")]
-use flint_procgen::LivingProps;
+use flint_living::LivingProps;
+use flint_particles::ParticleSystem;
 use flint_render::{Camera, FrameInputs, PostProcessConfig, SceneRenderer};
 use flint_runtime::{InputState, RuntimeSystem};
 use flint_script::context::ScriptCommand;
@@ -257,14 +257,12 @@ impl HeadlessGame {
     ) {
         let core = &mut self.core;
         #[cfg(feature = "living")]
-        core.procgen_resolver
-            .set_living_defaults(super::living_props::defaults_of(living));
+        core.living_props
+            .set_defaults(super::living_props::defaults_of(living));
         #[cfg(not(feature = "living"))]
         let _ = living;
         super::procgen_assets::resolve_scene(
-            &core.scene_path,
-            &mut core.world,
-            &mut core.procgen_resolver,
+            core,
             super::procgen_assets::ProcGenMode::Immediate,
             sink,
         );
@@ -273,14 +271,14 @@ impl HeadlessGame {
     /// The living props, if the scene grew any.
     #[cfg(feature = "living")]
     pub fn living_props(&self) -> Option<&LivingProps> {
-        let props = self.core.procgen_resolver.living_props();
+        let props = &self.core.living_props;
         (!props.is_empty()).then_some(props)
     }
 
     /// The living props, to lay a preset over.
     #[cfg(feature = "living")]
     pub fn living_props_mut(&mut self) -> &mut LivingProps {
-        self.core.procgen_resolver.living_props_mut()
+        &mut self.core.living_props
     }
 
     /// Start the living subsystem, the player's, if the scene has living
@@ -292,11 +290,14 @@ impl HeadlessGame {
     #[cfg(feature = "living")]
     pub fn start_living(&mut self, field: Option<WoozeField>, moment: bool) {
         let core = &mut self.core;
-        if core.procgen_resolver.living_props().is_empty() && field.is_none() {
+        if core.living_props.is_empty() && field.is_none() {
             return;
         }
-        core.procgen_resolver
-            .step_living_now(0.0, field.as_ref().map(|field| (field, 0.0)));
+        (core.living_props).step_now(
+            &core.procgen_resolver,
+            0.0,
+            field.as_ref().map(|field| (field, 0.0)),
+        );
         let mut living = LivingSubsystem::for_capture(field, moment);
         // For on_init's reads of the field (#505), as the player's scene start
         living.publish_reading(&mut core.script, 0.0);
@@ -474,7 +475,7 @@ impl HeadlessGame {
         let core = &mut self.core;
         if let Some(living) = core.subsystems.find_mut::<LivingSubsystem>() {
             super::living_props::upload_blends(
-                &mut core.procgen_resolver,
+                &mut core.living_props,
                 &mut living.blend,
                 renderer,
                 device,

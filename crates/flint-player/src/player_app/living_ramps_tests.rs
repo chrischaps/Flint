@@ -4,7 +4,8 @@
 use crate::player_app::PlayerApp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_procgen::{LivingPropRequest, ProcGenSpec};
+use flint_living::LivingPropRequest;
+use flint_procgen::ProcGenSpec;
 use flint_wooze::{WoozeField, WoozeSample};
 
 const SPEC: &str = r#"
@@ -37,23 +38,27 @@ fn grove() -> PlayerApp {
         None,
         None,
     );
-    let resolver = &mut app.core.procgen_resolver;
+    let core = &mut app.core;
+    let resolver = &mut core.procgen_resolver;
     resolver.index_spec(ProcGenSpec::parse(SPEC).unwrap());
     for i in 0..3u64 {
-        resolver
-            .add_living_prop(LivingPropRequest {
-                entity: EntityId::from_raw(i + 1),
-                entity_name: format!("sapling_{i}"),
-                position: [i as f32, 0.0, 0.0],
-                spec_name: "sapling".to_string(),
-                lineage_seed: None,
-                pose_ring: None,
-                phase_offset: Some(0.25),
-                stagger: None,
-            })
+        (core.living_props)
+            .add_prop(
+                resolver,
+                LivingPropRequest {
+                    entity: EntityId::from_raw(i + 1),
+                    entity_name: format!("sapling_{i}"),
+                    position: [i as f32, 0.0, 0.0],
+                    spec_name: "sapling".to_string(),
+                    lineage_seed: None,
+                    pose_ring: None,
+                    phase_offset: Some(0.25),
+                    stagger: None,
+                },
+            )
             .unwrap();
     }
-    resolver.make_living_now();
+    core.living_props.make_now(resolver);
     app.living().wooze = Some(WoozeField::new(WoozeSample::NEUTRAL));
     app
 }
@@ -69,7 +74,7 @@ fn spread(app: &mut PlayerApp) -> f32 {
 /// Each prop's echoes as its ring shows them, so a knob that has "arrived" in
 /// the layers but not on the props would fail.
 fn prop_spreads(app: &mut PlayerApp) -> Vec<f32> {
-    let props = app.core.procgen_resolver.living_props();
+    let props = &app.core.living_props;
     props
         .props()
         .iter()
@@ -257,7 +262,7 @@ fn a_species_eases_its_own_clock_and_a_freeze_holds_it() {
         app.tick_procgen_for_test(1.0 / 60.0);
     }
     assert_eq!(step(&mut app), 1.5);
-    let props = app.core.procgen_resolver.living_props();
+    let props = &app.core.living_props;
     assert!(props.props().iter().all(|p| p.clock().step == 1.5));
 }
 
@@ -315,7 +320,7 @@ fn the_jitter_rate_steps_eases_and_clears_and_the_boil_follows_it() {
     let mut app = grove();
     app.tick_procgen_for_test(1.0 / 60.0);
     let jitter_times = |app: &mut PlayerApp| -> Vec<f64> {
-        let props = app.core.procgen_resolver.living_props();
+        let props = &app.core.living_props;
         props.props().iter().map(|p| p.jitter_time()).collect()
     };
     let rate = |app: &mut PlayerApp| app.living_view(None).jitter_rate.value;
@@ -369,7 +374,7 @@ fn the_row_rate_steps_eases_and_clears_and_the_row_clock_follows_it() {
     let mut app = grove();
     app.tick_procgen_for_test(1.0 / 60.0);
     let row_times = |app: &mut PlayerApp| -> Vec<f64> {
-        let props = app.core.procgen_resolver.living_props();
+        let props = &app.core.living_props;
         props.props().iter().map(|p| p.row_time()).collect()
     };
     let rate = |app: &mut PlayerApp| app.living_view(None).row_rate.value;
