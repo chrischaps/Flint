@@ -398,6 +398,12 @@ matches = ["--no-grid", "--style", "ascii:off"]
 # The veil (#290): a glyph stone behind a campfire and a glyph crate behind
 # glass. The fire stays fire and the glass fades the crate's glyphs by its
 # coverage; before #290 both were glyphized as the entity behind them
+#
+# The fire's alpha emitters and the blaze share an origin, so they tie on
+# view distance and draw in entity order, which is name order since #688.
+# Before it the ids followed HashMap spawn order and this case drew one of
+# two images run to run (#858: 7 and 3 of ten runs; one hash in ten since).
+# tests/particle_tie_order.rs holds the tie and its order
 [[case]]
 name = "style-veil"
 scene = "tests/fixtures/scenes/style_veil.scene.toml"
