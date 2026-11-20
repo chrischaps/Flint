@@ -4,7 +4,7 @@
 //! several ways. The bodies are the ones in the `draw` and `entity`
 //! modules; only the registration differs.
 //!
-//! Used by `examples/api_overhead.rs` and, for the player A/B, by a build
+//! Used by `crates/flint-script/examples/api_overhead.rs` and, for the player A/B, by a build
 //! that calls [`declare_draw`] after `PlayerApp::new`
 //! (docs/design/script-api-overhead.md). Not part of the API: nothing in
 //! the engine calls it.

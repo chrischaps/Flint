@@ -419,14 +419,18 @@ fn scene_entities() -> Vec<(String, String, toml::Table)> {
         .flatten()
         .map(|e| e.path())
         .filter(|d| d.join("flint.toml").is_file());
-    for dir in ["examples", "tests", "crates"]
+    for dir in ["tests", "crates"]
         .map(|d| root.join(d))
         .into_iter()
         .chain(games)
     {
         walk(&dir, &root, &mut out);
     }
-    assert!(out.len() > 500, "the repository's scenes were not found");
+    assert!(
+        out.len() > 300,
+        "the repository's scenes were not found: {} entities",
+        out.len()
+    );
     out
 }
 

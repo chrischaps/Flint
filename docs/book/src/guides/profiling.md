@@ -23,7 +23,7 @@ Each line is a **scope**, a stretch of the frame between two timestamps the GPU 
 - `Shadows`: every cascade.
 - `Scene`: the sky, the opaque and transparent draws, and the water.
 - `Kuwahara`, `Contour`, `SSAO`, `Volumetric` and `Bloom`: the post-process chain, one scope per effect that is on, so a slow frame names its pass.
-- Each stylize pass under its label, after `Composite` for the display-stage ones: `ASCII` (#265, about 0.15 ms at 1080p on an RTX 4070), `Invert`. The ASCII spike (#261) times its `ASCII mask` and `ASCII` while `--ascii=<mode>` is set. One scope covers all of a style's passes, so turn a part off to see its share. In ASCII the [edge passes](../concepts/stylize-passes.md#edges) are most of it: in a 4K close-up of `examples/ascii_entities`, the scope read 1.6 ms with `edges` on and 0.36--0.45 ms with `edges=0` (#313; their cost is #347).
+- Each stylize pass under its label, after `Composite` for the display-stage ones: `ASCII` (#265, about 0.15 ms at 1080p on an RTX 4070), `Invert`. The ASCII spike (#261) times its `ASCII mask` and `ASCII` while `--ascii=<mode>` is set. One scope covers all of a style's passes, so turn a part off to see its share. In ASCII the [edge passes](../concepts/stylize-passes.md#edges) are most of it: in a 4K close-up of `flint-examples/ascii_entities.scene.toml`, the scope read 1.6 ms with `edges` on and 0.36--0.45 ms with `edges=0` (#313; their cost is #347).
 
 The ASCII numbers from #313 (RTX 4070 laptop, Vulkan, `flint render --gpu-time 240`, the least of 5 processes per binary with main and the branch taking turns, `edges=0`). The close-up is `--target=-0.2,0.8,4.2 --distance 2.6 --yaw 20 --pitch 10`, so the styled props fill most of the frame:
 
@@ -40,7 +40,7 @@ The ASCII numbers from #313 (RTX 4070 laptop, Vulkan, `flint render --gpu-time 2
 
 The last row is the noise. At footprint 1 neither binary runs the pre-pass, yet they read 8% apart, so only the two 4K footprint-2 close-ups (−16% and −20%, in separate runs) are a measured win. The rest are within noise. Other sessions shared the GPU: take the least of several processes, and check a pass the change doesn't touch.
 
-Whole-frame ASCII over styled props, from #507 (the same GPU, `examples/ascii_entities` at 1080p, `--style ascii:scope=screen,edges=0 --gpu-time 240`, the least of 3 processes per binary, main and the branch taking turns; runs agreed to 1 µs). The four scenes are the demo with no prop styled, every prop's `enabled = false` (only the mask is read), the barrel without `normalize`, and the demo as it is:
+Whole-frame ASCII over styled props, from #507 (the same GPU, `flint-examples/ascii_entities.scene.toml` at 1080p, `--style ascii:scope=screen,edges=0 --gpu-time 240`, the least of 3 processes per binary, main and the branch taking turns; runs agreed to 1 µs). The four scenes are the demo with no prop styled, every prop's `enabled = false` (only the mask is read), the barrel without `normalize`, and the demo as it is:
 
 | Case | Before | After |
 |---|---|---|
@@ -75,7 +75,7 @@ GPU time over 240 frames at 1920x1080 (scene 1920x1080) on NVIDIA GeForce RTX 40
   frame          1.585   1.602   2.869   3.628
 ```
 
-(`examples/ascii_entities`, release build.) In five processes the p50s agreed to 0.005 ms a pass and 0.024 ms for the frame. The smoothed figure the command used to print, recomputed from the same frames, spread over 0.165--0.219 ms for ASCII and 1.80--1.99 ms for the frame, since it leant on wherever the last slow frames fell. Here Scene, SSAO and ASCII run slow in more than one frame in ten, which is why their p90 is twice their p50.
+(`flint-examples/ascii_entities.scene.toml`, release build.) In five processes the p50s agreed to 0.005 ms a pass and 0.024 ms for the frame. The smoothed figure the command used to print, recomputed from the same frames, spread over 0.165--0.219 ms for ASCII and 1.80--1.99 ms for the frame, since it leant on wherever the last slow frames fell. Here Scene, SSAO and ASCII run slow in more than one frame in ten, which is why their p90 is twice their p50.
 
 The first tenth of the frames (at most 30) are dropped while pipelines and the GPU's clocks settle. Percentiles are nearest-rank: p90 is the time nine frames in ten came in under. The `frame` row is the spread of each frame's total, not a sum of the rows above it. The first line names the adapter and backend, so a `WGPU_BACKEND=dx12` run says so.
 
@@ -98,7 +98,7 @@ With `--exit-after` and `--stats`, the player prints the average GPU frame time 
 `--gpu-time` says what each part cost. `--frame-dump <file.json>` says what each part did (#1084): which passes ran in the frame `flint render` drew, in the order they were recorded, and why the others didn't; what each read and wrote; and every draw, by the entity it draws.
 
 ```bash
-flint render examples/stylize_props.scene.toml --frame-dump frame.json
+flint render flint-examples/stylize_props.scene.toml --frame-dump frame.json
 ```
 
 ```text
@@ -137,7 +137,7 @@ With `--time`, the frame described is the span's last. `--report json` names the
 `--frame-capture <dir>` writes the frame's description and every target each pass wrote, as that pass left it (#1085, [ADR 0126](https://github.com/chrischaps/Flint/blob/main/docs/adr/0126-what-a-frame-capture-holds-and-how-it-replays.md)): the shadow cascades, the HDR scene before post, SSAO, each bloom step, the style mask, each style's output and its own targets.
 
 ```bash
-flint render examples/stylize_props.scene.toml --frame-capture props.flintframe
+flint render flint-examples/stylize_props.scene.toml --frame-capture props.flintframe
 ```
 
 ```text
@@ -174,7 +174,7 @@ The frames worth a look happen mid-play, so the player writes the same capture (
 
 ```bash
 flint-player levels/tavern_hub.scene.toml --frame-step 0.0167 --capture-frame-at 2 --exit-after 3
-flint-player examples/hitch_metronome.scene.toml --capture-on-hitch --exit-after 7
+flint-player flint-examples/hitch_metronome.scene.toml --capture-on-hitch --exit-after 7
 ```
 
 ```text
@@ -303,7 +303,7 @@ Groups name parts of the frame, not draws, so they cost a few dozen calls a fram
 
 ### RenderDoc
 
-1. In RenderDoc's **Launch Application** tab, set **Executable Path** to the player (`target/release/flint-player.exe`, or `target/debug/`). Set **Working Directory** to the game's folder and **Command-line Arguments** to the scene, e.g. `examples/phase4_runtime.scene.toml`. A game binary that embeds `PlayerApp` is launched the same way.
+1. In RenderDoc's **Launch Application** tab, set **Executable Path** to the player (`target/release/flint-player.exe`, or `target/debug/`). Set **Working Directory** to the game's folder and **Command-line Arguments** to the scene, e.g. [`flint-examples/phase4_runtime.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/phase4_runtime.scene.toml). A game binary that embeds `PlayerApp` is launched the same way.
 2. Under **Environment Variables**, add `WGPU_BACKEND=vulkan` or `WGPU_BACKEND=dx12`. Both backends work, but Vulkan's captures are what RenderDoc reads best. Without it, wgpu picks the backend.
 3. **Launch**, play to the moment you want, and press **F12** or **Print Screen** in the game window. The capture shows up in RenderDoc's list. Open it and the **Event Browser** holds the groups above.
 
@@ -374,9 +374,9 @@ A text detail (`flint_core::scope!("load_level", path)`, a `&str`, a `String` or
 A hitch is over by the time anyone notices it, and Tracy has to be attached before it happens. The recorder always holds the last few seconds instead, so the slow frame can be saved after the fact, scopes and all:
 
 ```bash
-flint-player examples/hitch_metronome.scene.toml --trace out.json --exit-after 10   # the last 5 s, at exit
-flint-player examples/hitch_metronome.scene.toml --trace-on-hitch                   # 8 frames after the first hitch
-flint-player examples/hitch_metronome.scene.toml --trace-seconds 10                 # record; Shift+F3 saves
+flint-player flint-examples/hitch_metronome.scene.toml --trace out.json --exit-after 10   # the last 5 s, at exit
+flint-player flint-examples/hitch_metronome.scene.toml --trace-on-hitch                   # 8 frames after the first hitch
+flint-player flint-examples/hitch_metronome.scene.toml --trace-seconds 10                 # record; Shift+F3 saves
 ```
 
 `flint play` takes the same flags. Each needs a build with the recorder: every debug build has one, and a release build has one with the `trace` feature (`cargo run --release -p flint-player --features trace -- ...`). A build without it refuses the flags with a line saying so.
@@ -440,7 +440,7 @@ flint profile explain traces/hitch_metronome-hitch-t3.000.json
 
 ```text
 frame 525 took 107.28 ms (median 4.57): stall.rhai:on_update 100.09 ms against its median 0.032, +100.06 of the frame's +102.71 ms excess
-  inside tick > run_scripts > script::update > script::on_update > script::call (examples/scripts/stall.rhai) on main
+  inside tick > run_scripts > script::update > script::on_update > script::call (flint-examples/scripts/stall.rhai) on main
   the hitch detector: script stall.rhai:on_update 100.1 ms (judged 108.33 ms against 4.17)
 ```
 
@@ -560,7 +560,7 @@ A note with no time (none of the engine's today) can't be weighed, so it is name
 
 F2 shows the history as it happens. The overlay opens with a graph of the last four seconds above the rendering stats:
 
-![The F2 overlay on examples/hitch_metronome at 240 Hz: two 100 ms script stalls as orange blocks with marks over them, the late frames between them unmarked, and the counters and legend under the graph](../images/f2-frame-graph.png)
+![The F2 overlay on flint-examples/hitch_metronome.scene.toml at 240 Hz: two 100 ms script stalls as orange blocks with marks over them, the late frames between them unmarked, and the counters and legend under the graph](../images/f2-frame-graph.png)
 
 Each pixel column is a slice of time, and its bar is the worst frame in that slice: one frame a column at 60 Hz, the worst of four at 240 Hz. A frame longer than a slice takes as many columns as it lasted, so a 100 ms stall is a block six columns wide, not a one-pixel line. A bar is as tall as its frame stood on screen. That is the time the hitch detector judges: whole refreshes under vsync pacing, so the 6, 6, 6, 45 ms bursts draw as an even row of single refreshes.
 
@@ -583,10 +583,10 @@ Press F2 again for the graph alone, in a corner, small enough to leave on while 
 
 ![The compact form: the graph and its counters, with no rendering stats](../images/f2-frame-graph-compact.png)
 
-A third press closes it. `flint-player --stats` opens the full overlay from the first frame, and `--stats=graph` the compact one, so a capture shows either. `examples/hitch_metronome.scene.toml` is a scene to try it on: a metronome whose `stall.rhai` holds the frame for 100 ms every three seconds.
+A third press closes it. `flint-player --stats` opens the full overlay from the first frame, and `--stats=graph` the compact one, so a capture shows either. [`flint-examples/hitch_metronome.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/hitch_metronome.scene.toml) is a scene to try it on: a metronome whose `stall.rhai` holds the frame for 100 ms every three seconds.
 
 ```bash
-flint-player examples/hitch_metronome.scene.toml --stats=graph
+flint-player flint-examples/hitch_metronome.scene.toml --stats=graph
 ```
 
 The overlay draws every bar into one mesh, which it keeps and refills from frame to frame, and it reads the history only while it is open. Closed, it costs nothing: a test counts no allocations for a frame with F2 closed, and none once it is warm with F2 open. Open, it is part of the `hud` phase it measures. These are means over 10 s, from `--perf` on the metronome scene with `FLINT_VSYNC=0`, on an RTX 5070 laptop:
@@ -735,7 +735,7 @@ samply records through perf events, which need `kernel.perf_event_paranoid` at 1
 
 ```sh
 cargo build --profile profiling -p flint-player
-samply record ./target/profiling/flint-player examples/hitch_metronome.scene.toml --exit-after 12 --hitch-log hitches.jsonl
+samply record ./target/profiling/flint-player flint-examples/hitch_metronome.scene.toml --exit-after 12 --hitch-log hitches.jsonl
 ```
 
 `perf record --call-graph dwarf` and [Hotspot](https://github.com/KDAB/hotspot) read the same build.
@@ -745,7 +745,7 @@ samply record ./target/profiling/flint-player examples/hitch_metronome.scene.tom
 The hitch log's `wall_time` counts from when the player began recording frames, as it starts up, before its window opens and the scene loads. A sampler's timeline counts from when the sampler began recording. The offset between the two changes from run to run. In the run below it was 5.06 s, which took in the collector's own start, the launch and the load. Once you place one hitch, the offset holds for the whole run:
 
 1. Run with `--hitch-log` under the sampler, as above.
-2. Find a hitch whose shape the sampler shows. A `player` hitch is a stretch of solid CPU on the main thread, as long as its `ms`. In `examples/hitch_metronome.scene.toml`, `stall.rhai` holds the frame for 100 ms of solid Rhai every 3 s of game time.
+2. Find a hitch whose shape the sampler shows. A `player` hitch is a stretch of solid CPU on the main thread, as long as its `ms`. In [`flint-examples/hitch_metronome.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/hitch_metronome.scene.toml), `stall.rhai` holds the frame for 100 ms of solid Rhai every 3 s of game time.
 3. Match the gaps. The log's three script hitches came at `wall_time` 6.122, 9.715 and 13.188 s, 3.59 and 3.47 s apart. The sampler's 100 ms stretches inside `flint_script` came at 11.18, 14.78 and 18.25 s, the same gaps apart. The offset is 11.18 − 6.122 = 5.06 s.
 4. Select from `wall_time` plus the offset, for `ms`: that is the frame. Here that's 11.18 to 11.28 s, the range in the screenshot.
 

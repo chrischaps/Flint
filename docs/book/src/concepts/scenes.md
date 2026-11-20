@@ -132,9 +132,9 @@ curve without turning: `{ xz = s }` slides its far end sideways by `s`
 metres per metre while its near and far edges stay square to the road, so
 neighbouring strips meet edge to edge however wide they are. Turning
 (yawing) each strip instead swings its far corners through its
-neighbours. `examples/shear_road.scene.toml` is a scanline road of 22 such
+neighbours. [`flint-examples/shear_road.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/shear_road.scene.toml) is a scanline road of 22 such
 tiles, each one entity with `{ xz, yz }` for the bend and the hill, and
-`examples/shear_road_yawed.scene.toml` is the same road laid with yaw:
+[`flint-examples/shear_road_yawed.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/shear_road_yawed.scene.toml) is the same road laid with yaw:
 
 ![A sunset road of sheared tiles, curving right then left, edges and lane line continuous](../images/shear-road.png)
 
@@ -218,7 +218,7 @@ The CLI commands (`entity create`, `entity delete`) modify the scene file, and t
 
 ## Example: The Showcase Scene
 
-The demo scene `examples/showcase.scene.toml` demonstrates the full format:
+The demo scene [`flint-examples/showcase.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/showcase.scene.toml) demonstrates the full format:
 
 ```toml
 [scene]
@@ -400,9 +400,9 @@ collider = false
 - `profile_closed = false` makes it an **open** surface: no closing edge and no caps. It faces to the left of the order the points are listed in, so a road listed from left to right faces up, and a U listed that way faces into its channel.
 - `smooth = true` shades it round, each point's normal the average of its two edges', with texture u running once around the profile. Flat (the default) gives each edge its own normal, and u runs 0..1 across each face, read upward on a wall so the walls on both sides of a road show their texture standing up.
 
-![examples/sweep_garden.scene.toml: one banked loop with a box path, striped kerbs, a brass tube and an open gutter, climbing to a gap](../images/sweep-garden.png)
+![flint-examples/sweep_garden.scene.toml: one banked loop with a box path, striped kerbs, a brass tube and an open gutter, climbing to a gap](../images/sweep-garden.png)
 
-One spline can feed multiple mesh entities (road surface, walls, guardrails) with different cross-sections and colours. The mesh's look is the component's own fields (`color`, `stripe_color`, `metallic`, `roughness`, `texture`, `normal_texture`), and it comes with a triangle-mesh collider unless `collider = false`. `chunk_size` splits a long sweep into child entities; the texture and the stripes run on across them. `flint schema spline_mesh` lists every field with its fallback; `spline` is required, and `width` and `height` unless there is a `profile`. The mesh is built in world space, so leave the entity's transform at the origin. `examples/sweep_garden.scene.toml` sweeps six shapes along one loop.
+One spline can feed multiple mesh entities (road surface, walls, guardrails) with different cross-sections and colours. The mesh's look is the component's own fields (`color`, `stripe_color`, `metallic`, `roughness`, `texture`, `normal_texture`), and it comes with a triangle-mesh collider unless `collider = false`. `chunk_size` splits a long sweep into child entities; the texture and the stripes run on across them. `flint schema spline_mesh` lists every field with its fallback; `spline` is required, and `width` and `height` unless there is a `profile`. The mesh is built in world space, so leave the entity's transform at the origin. [`flint-examples/sweep_garden.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/sweep_garden.scene.toml) sweeps six shapes along one loop.
 
 A spline file with a mistake is named with its line and column, by `flint check` (`bad-spline`) and in the warning a render or the player logs:
 

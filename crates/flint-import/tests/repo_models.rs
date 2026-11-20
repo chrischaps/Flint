@@ -1,6 +1,6 @@
 //! Every model checked into the repo imports.
 //!
-//! #779's `demo/` -> `examples/` rename rewrote the `asset.generator` string
+//! #779's rename of `demo/` rewrote the `asset.generator` string
 //! inside all 18 tavern GLBs, four bytes longer, without the JSON chunk's
 //! length. Every loader refused them ("unknown chunk type") and the tavern
 //! drew as fog (found under #294). A text search-and-replace can't see a
@@ -10,8 +10,9 @@
 use std::path::{Path, PathBuf};
 
 const DIRS: &[&str] = &[
-    "examples/models",
-    // The frozen fixtures borrow examples/models (#759); this is their own
+    // The frozen fixtures' models (their own since #984), then the ones
+    // only the fixtures use
+    "tests/fixtures/scenes/models",
     "tests/fixtures/models",
 ];
 

@@ -172,7 +172,7 @@ fn every_spec_in_the_tree_validates() {
     let mut specs = Vec::new();
     walk(&root, &mut specs);
     specs.sort();
-    assert!(specs.len() >= 50, "found only {} specs", specs.len());
+    assert!(specs.len() >= 40, "found only {} specs", specs.len());
 
     let registry = GeneratorRegistry::with_built_ins();
     let mut problems = Vec::new();

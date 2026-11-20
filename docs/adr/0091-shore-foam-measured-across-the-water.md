@@ -56,7 +56,7 @@ stays 848 bytes.
   doesn't foam the water beside it.
 - At a vertical wall the band no longer rises and falls with the wave height;
   the surge and the noise still lap it. Beaches behave as before.
-- `examples/shoreline.scene.toml` (then `demo/`) sets `shore_foam_reach =
+- `flint-examples/shoreline.scene.toml` (then `demo/`) sets `shore_foam_reach =
   1.8`: the quay is 1 m up, the piers 1.6 m.
 - Since then: [ADR 0099](0099-water-body-scales-shore-band.md) scales the
   band, and the search's radius with it, per water body.
@@ -77,5 +77,5 @@ stays 848 bytes.
 - Vault: "The Capitol - shoreline foam across the water (GH-132) - 2026-10-18"
 - Code now: `crates/flint-render/src/ocean_shader.wgsl` (the search),
   `crates/flint-render/src/ocean_pipeline.rs` (`shore_foam_reach`),
-  `schemas/components/ocean.toml`, `examples/shoreline.scene.toml`
+  `schemas/components/ocean.toml`, `flint-examples/shoreline.scene.toml`
 - Book: [Ocean](../book/src/concepts/ocean.md), "Shoreline foam"

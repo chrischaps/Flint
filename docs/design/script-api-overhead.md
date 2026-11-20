@@ -15,7 +15,7 @@ wanted, in a call Rhai can't cache (below).
 
 ## The demo
 
-`examples/seeded_stars.scene.toml` is the heaviest script-drawn example: its
+`flint-examples/seeded_stars.scene.toml` is the heaviest script-drawn example: its
 `on_draw_ui` makes 146 draw calls a frame (72 stars at two 7-argument
 `draw_circle`s each, a `draw_rect` backdrop and a `draw_text_opts`). By a read of their scripts
 the other examples draw a few dozen at most. Every argument it passes is a

@@ -256,7 +256,7 @@ debug = false
 
 # A debug build optimizes what loads a texture (#326), so that `flint render`
 # of a scene with a big model takes seconds, not a minute. A debug render of
-# examples/style_mask.scene.toml (a 32 MB bench with three 4K textures, a
+# flint-examples/style_mask.scene.toml (a 32 MB bench with three 4K textures, a
 # 9.5 MB lantern) spent 18.6 of its 21 s loading models: 11.5 s box-filtering
 # mip chains, 2.1 s widening RGB to RGBA, 4 s decoding PNG and JPEG, 0.8 s
 # hashing the files. The first two moved out of flint-render into
@@ -300,7 +300,7 @@ opt-level = 3
 # HUD pass 108 to 121 ms (its monospace text at five sizes, each glyph drawn
 # once), and the hitch tools then reported their own overlay as the game's
 # hitch. Optimized it is 12 ms (8 to 44 on the metronome), and the graph
-# alone 3.6 ms, against 18 to 55 (examples/looks.scene.toml, RTX 5070 Laptop). A game's own text at a size it
+# alone 3.6 ms, against 18 to 55 (flint-examples/looks.scene.toml, RTX 5070 Laptop). A game's own text at a size it
 # hasn't drawn yet goes the same way. Like the decoders above it changes no
 # pixel (the HUD text goldens pass unchanged): no float maths is reordered.
 [profile.dev.package.epaint]

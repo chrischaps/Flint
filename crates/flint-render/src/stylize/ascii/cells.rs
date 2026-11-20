@@ -18,7 +18,7 @@ pub const MAX_BANDS: usize = 8;
 /// texels its cell shares, so they come from the texture cache, and the
 /// pre-pass (a whole screen of cells a band) cost more than it saved: at
 /// 4K on an RTX 4070, ASCII went 0.285 -> 0.326 ms on
-/// `examples/ascii_entities`. At 2 the lattice spreads over four cells' worth
+/// `flint-examples/ascii_entities`. At 2 the lattice spreads over four cells' worth
 /// of picture and the pre-pass wins (0.485 -> 0.405 ms close up).
 pub(super) const MIN_BAND_FOOTPRINT: f32 = 2.0;
 
@@ -34,7 +34,7 @@ pub(super) const MAX_BAND_TEXELS: u32 = 8192;
 
 /// The highest slot a band's texel can name: it packs the slot in 8 bits
 /// (`slot | count << 8 | more << 16`, ascii_variant_cells.wgsl). A row past
-/// it samples for itself (#507: `examples/ascii_crowd`'s 500 pillars put
+/// it samples for itself (#507: `flint-examples/ascii_crowd`'s 500 pillars put
 /// slots past 255 on the banded grids).
 pub(super) const MAX_BAND_SLOT: usize = 255;
 

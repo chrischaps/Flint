@@ -1,9 +1,11 @@
-//! `flint playtest` (#714), end to end through the binary: the Phase 4
-//! tavern's checked-in playtest passes and reports the same bytes twice,
-//! and each way a run fails (a script's run-time error, a failed
-//! assertion, `test_fail`, an `expect` that doesn't hold, a timeout, a
-//! load warning under `--strict`) exits 1 and says where. No GPU: a
-//! playtest opens no window, renderer or sound device.
+//! `flint playtest` (#714), end to end through the binary: a walk with
+//! every kind of check passes and reports the same bytes twice, and each
+//! way a run fails (a script's run-time error, a failed assertion,
+//! `test_fail`, an `expect` that doesn't hold, a timeout, a load warning
+//! under `--strict`) exits 1 and says where. No GPU: a playtest opens no
+//! window, renderer or sound device. The Phase 4 tavern's own playtest,
+//! which this file ran until the examples moved out (#984), runs in
+//! flint-examples' CI.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -11,7 +13,7 @@ use std::process::{Command, Output};
 
 const FLINT: &str = env!("CARGO_BIN_EXE_flint");
 
-/// The repository's root, where the examples' paths start.
+/// The repository's root, where the schemas are.
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -34,38 +36,57 @@ fn document(out: &Output) -> Value {
     })
 }
 
-const TAVERN: [&str; 6] = [
-    "playtest",
-    "examples/phase4_runtime.scene.toml",
-    "--input-script",
-    "examples/playtests/phase4_runtime.playtest.txt",
-    "--exit-after",
-    "8",
-];
+/// The crate walks right while D (`move_right`) is held; past x = 3 it
+/// opens the door once: an event, a `test_log` and a `test_assert`.
+const WALKER: &str = "fn on_update() {\n\
+    \x20   let c = get_entity(\"crate\");\n\
+    \x20   let p = get_position(c);\n\
+    \x20   if is_action_pressed(\"move_right\") {\n\
+    \x20       set_position(c, p.x + 2.0 * delta_time(), p.y, p.z);\n\
+    \x20   }\n\
+    \x20   if p.x > 3.0 && persist_get(\"opened\") != true {\n\
+    \x20       persist_set(\"opened\", true);\n\
+    \x20       fire_event(\"door_opened\");\n\
+    \x20       test_log(\"greeted\", true);\n\
+    \x20       test_assert(p.x > 3.0, \"past the door\");\n\
+    \x20   }\n\
+    }\n";
 
-/// The issue's first box: a demo scene's checked-in playtest, run here.
-/// The player walks to the bar, talks to the bartender, walks the hall
-/// and opens the front door; every line of the input script holds.
+/// Before anything moves, the walk, the door's event through a `wait`, and
+/// what the script said through `test_log` and the store.
+const WALK: &str = "0.0 expect crate transform.position.x < 1\n\
+    0.0 expect no entities where counter.value > 0\n\
+    0.2 down KeyD\n\
+    0.2 wait crate transform.position.x > 3 within 3\n\
+    0.2 up KeyD\n\
+    0.2 wait event door_opened within 1\n\
+    0.3 expect log greeted == true\n\
+    0.3 expect persist opened == true\n";
+
+/// The issue's first box: a scene's checked-in playtest, run here. The
+/// crate walks to the door and opens it; every line of the input script
+/// holds.
 #[test]
-fn the_tavern_playtest_passes() {
-    let mut args = vec!["--json"];
-    args.extend(TAVERN);
-    let out = flint(&repo(), &args);
-    let d = document(&out);
+fn a_walk_with_every_kind_of_check_passes() {
+    let dir = project("walk", WALKER, WALK);
+    let (out, d) = playtest(&dir, &["--exit-after", "4"]);
     assert!(out.status.success(), "{d:#}");
     assert_eq!(d["passed"], true);
     assert_eq!(d["ended"], "exit_after");
     let checks = d["checks"].as_array().unwrap();
-    assert_eq!(checks.len(), 10, "{d:#}");
+    assert_eq!(checks.len(), 6, "{d:#}");
     assert!(checks.iter().all(|c| c["passed"] == true), "{d:#}");
     // The door's event, through a `wait`
     assert!(checks
         .iter()
         .any(|c| c["text"] == "event door_opened" && c["verb"] == "wait"));
-    // The bartender's script said so, through test_log and test_assert
-    assert_eq!(d["log"]["bartender_greeted"], true);
+    // The script said so, through test_log and test_assert
+    assert_eq!(d["log"]["greeted"], true);
     let a = &d["assertions"][0];
-    assert_eq!(a["file"], "examples/scripts/npc_bartender.rhai");
+    assert!(
+        a["file"].as_str().unwrap().ends_with("scripts/game.rhai"),
+        "{a}"
+    );
     assert_eq!(
         (a["passed"].as_u64(), a["failed"].as_u64()),
         (Some(1), Some(0))
@@ -77,21 +98,13 @@ fn the_tavern_playtest_passes() {
 /// The issue's third box: two runs, byte-identical reports
 #[test]
 fn two_runs_write_the_same_bytes() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("playtest_cli_twice");
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = project("twice", WALKER, WALK);
     let mut reports = Vec::new();
     for n in 0..2 {
         let report = dir.join(format!("run{n}.json"));
-        let mut args: Vec<String> = TAVERN.iter().map(|s| s.to_string()).collect();
-        args.push("--report".into());
-        args.push(report.to_string_lossy().into_owned());
-        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let out = flint(&repo(), &refs);
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stdout)
-        );
+        let report_arg = report.to_string_lossy().into_owned();
+        let (out, d) = playtest(&dir, &["--exit-after", "4", "--report", &report_arg]);
+        assert!(out.status.success(), "{d:#}");
         reports.push(std::fs::read(&report).unwrap());
     }
     assert!(!reports[0].is_empty());
@@ -103,7 +116,7 @@ fn two_runs_write_the_same_bytes() {
     );
 }
 
-/// A scene with one scripted entity, its script and an input script, in a
+// A scene with one scripted entity, its script and an input script, in a
 /// folder of its own.
 fn project(name: &str, script: &str, input: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))

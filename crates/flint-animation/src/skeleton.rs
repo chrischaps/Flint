@@ -389,7 +389,7 @@ mod tests {
     fn mixamo_armature_node_is_part_of_the_pose() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../examples/models/YBotWithIdle.glb"
+            "/../../tests/fixtures/scenes/models/YBotWithIdle.glb"
         );
         let import = flint_import::import_gltf(path).expect("YBotWithIdle.glb imports");
         let mut skel = Skeleton::from_imported(&import.skeletons[0]);

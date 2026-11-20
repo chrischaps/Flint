@@ -4,8 +4,8 @@
 //! failure.
 //!
 //! ```bash
-//! flint playtest examples/phase4_runtime.scene.toml \
-//!     --input-script examples/playtests/phase4_runtime.input --exit-after 6
+//! flint playtest flint-examples/phase4_runtime.scene.toml \
+//!     --input-script flint-examples/playtests/phase4_runtime.input --exit-after 6
 //! flint playtest scenes/level1.scene.toml --timeout 30 --report out.json
 //! flint playtest scenes/level1.scene.toml --strict --dump player --json
 //! ```

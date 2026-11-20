@@ -1,6 +1,7 @@
 //! The structured UI from a script (#731): the showcase's own pause menu
-//! (`examples/scripts/showcase_controller.rhai`, `examples/ui/pause.ui.toml`
-//! and the engine's `scripts/lib/menu.rhai`, read from the checkout) opened,
+//! (flint-examples' `scripts/showcase_controller.rhai` and
+//! `ui/pause.ui.toml`, frozen in `tests/fixtures/scripts/` since #984, and
+//! the engine's `scripts/lib/menu.rhai`, read from the checkout) opened,
 //! driven with keys and a tap, and heard in `on_ui`.
 
 use super::*;
@@ -49,12 +50,14 @@ fn focused(engine: &ScriptEngine) -> Option<String> {
 #[test]
 fn the_showcase_pause_menu_works_from_keys_and_touch() {
     let mut files = MemorySource::new();
+    // At the paths the frozen copies name them by, from the project root
     for rel in [
-        "examples/ui/pause.ui.toml",
-        "examples/ui/pause.style.toml",
-        "examples/scripts/showcase_controller.rhai",
+        "ui/pause.ui.toml",
+        "ui/pause.style.toml",
+        "scripts/showcase_controller.rhai",
     ] {
-        files.insert(rel, repo_file(rel));
+        let frozen = rel.trim_start_matches("scripts/");
+        files.insert(rel, repo_file(&format!("tests/fixtures/scripts/{frozen}")));
     }
     files.insert("scripts/lib/menu.rhai", repo_file("scripts/lib/menu.rhai"));
     vfs::scoped(Arc::new(files), || {
@@ -62,8 +65,7 @@ fn the_showcase_pause_menu_works_from_keys_and_touch() {
         engine.set_module_base("scripts/lib".into());
         let mut world = FlintWorld::new();
         let id = scripted(&mut world, "game_controller", "showcase_controller.rhai");
-        let source =
-            vfs::read_to_string(Path::new("examples/scripts/showcase_controller.rhai")).unwrap();
+        let source = vfs::read_to_string(Path::new("scripts/showcase_controller.rhai")).unwrap();
         let ast = engine.compile(&source).unwrap();
         engine.add_script(id, ast, "showcase_controller.rhai".into());
 

@@ -5,7 +5,9 @@
 #                          (scripts/adr-check.sh), every clippy.toml is the
 #                          root list's copy (scripts/clippy-conf.sh --check, #761),
 #                          no FLINT_* read past flint_core::env (#715),
-#                          the tree's shape (#760) and its size budget
+#                          the tree's shape (#760), no examples folder or
+#                          path to one (scripts/examples-check.sh, #984)
+#                          and its size budget
 #                          (scripts/size-check.py, ADR 0122):
 #                          seconds, no build. `scripts/issue.sh
 #                          land` runs this (verify= in scripts/issue.conf), and
@@ -54,7 +56,7 @@ fi
 
 # The tree (#760): a symlink checks out as a text file on Windows without the
 # symlink privilege, and the root is for manifests and docs (a render, spec
-# or texture there is a stray: specs/, examples/ and tests/fixtures/ hold them)
+# or texture there is a stray: specs/ and tests/fixtures/ hold them)
 echo "ci: no symlinks, a root of manifests and docs"
 links=$(git ls-files -s | awk '$1 == "120000" { print $4 }')
 if [ -n "$links" ]; then
@@ -68,6 +70,9 @@ if [ -n "$strays" ]; then
     echo "$strays" >&2
     exit 1
 fi
+
+echo "ci: scripts/examples-check.sh"
+bash scripts/examples-check.sh
 
 echo "ci: scripts/size-check.py"
 # python3 where it runs (Windows' may be a stub); standard library only

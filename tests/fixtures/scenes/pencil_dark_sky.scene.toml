@@ -1,4 +1,4 @@
-# Pencil under a dark sky (#890): what examples/skeletal_test draws, frozen
+# Pencil under a dark sky (#890): what flint-examples/skeletal_test.scene.toml draws, frozen
 # for the goldens. The ground is dark slate and nothing sets a sky, so the
 # renderer's default clear is dark; under pencil's tone = "light" that sky
 # must come out as blank paper, under tone = "picture" it is hatched.
@@ -48,4 +48,4 @@ position = [0, 0, 0]
 scale = [2.0, 2.0, 2.0]
 
 [entities.ybot.model]
-asset = "../../../examples/models/YBotWithIdle.glb"
+asset = "./models/YBotWithIdle.glb"

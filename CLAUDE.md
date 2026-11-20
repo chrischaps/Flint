@@ -15,10 +15,10 @@ cargo build -p flint-cli --no-default-features  # Headless CLI: no sound card, g
                                #   so no ALSA/libudev headers on Linux (#221; features audio/gamepad/dialogs;
                                #   `bash scripts/headless-check.sh [--build]` keeps device crates out of its tree)
 cargo run --bin flint -- <cmd> # Run CLI
-cargo run --bin flint -- play examples/phase4_runtime.scene.toml  # Play a scene
-cargo run --bin flint-player -- examples/phase4_runtime.scene.toml  # Standalone player (schemas: the root flint.toml)
-cargo run --bin flint -- export web examples/  # any game as a folder a static server plays (#106):
-                               #   examples/dist/web = player + games/<id>/ bundles + games.json;
+cargo run --bin flint -- play flint-examples/phase4_runtime.scene.toml  # Play a scene
+cargo run --bin flint-player -- flint-examples/phase4_runtime.scene.toml  # Standalone player (schemas: the root flint.toml)
+cargo run --bin flint -- export web flint-examples/  # any game as a folder a static server plays (#106):
+                               #   flint-examples/dist/web = player + games/<id>/ bundles + games.json;
                                #   --out, --player <trunk dist> (else trunk builds it), --meta k=v, --clean
 cargo test                     # Run all tests
 cargo test -p flint-core       # Test a single crate
@@ -65,14 +65,14 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen specs/oak_tree.procgen.toml -o tree.glb
    flint gen specs/stone_wall.procgen.toml -o wall.png
    flint gen specs/oak_tree.procgen.toml --dry-run
-   flint gen examples/rolling_meadow.terrain.toml -o terrain/   # heightmap + splat PNGs, no window
+   flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/   # heightmap + splat PNGs, no window
    ```
    More, and the goldens: `crates/flint-cli/CLAUDE.md`.
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
    ```bash
-   flint play examples/phase4_runtime.scene.toml
-   flint play examples/phase4_runtime.scene.toml --width 1920 --height 1080
+   flint play flint-examples/phase4_runtime.scene.toml
+   flint play flint-examples/phase4_runtime.scene.toml --width 1920 --height 1080
    ```
    More: `crates/flint-player/CLAUDE.md`.
 
@@ -142,7 +142,7 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear |
 | `crates/flint-audio/CLAUDE.md` | audio clock, decoding, device features |
 | `crates/flint-{physics,animation,particles,terrain}/CLAUDE.md` | joints, IK, particles, terrain |
-| `tools/showcase/CLAUDE.md` | film rig |
+| `flint-examples/tools/showcase/CLAUDE.md` | film rig (in the examples' repository, #984) |
 | `docs/CLAUDE.md` | book build and publish |
 
 A bullet below that names a feature in a line or two has its full text in one of these.
@@ -198,10 +198,10 @@ Build, preview and publish commands: `docs/CLAUDE.md`.
 - `schemas/` -- Engine component, archetype and scene-table TOML definitions; `schemas/examples/` -- the room-builder layer the examples are written in, not part of the engine's set
 - `flint.toml` -- the checkout as a project: `schemas = ["schemas", "schemas/examples"]`, read by everything run from this tree (a game with the engine as a subtree never reads it)
 - `styles/` -- AI style guides (`*.styleguide.toml`, #420; `*.style.toml` is a UI class file) and looks (`*.look.toml`)
-- `examples/` -- Curated example scenes and their assets (was `demo/`, #763); `examples/index.toml` gives each a topic and purpose, `flint examples` lists them, `flint examples --check` (CI) holds the index to the folder and validates each. Improve them freely: nothing pins their pixels
-- `tests/fixtures/scenes/` -- Frozen copies of the scenes the goldens and CLI tests load. No golden may load a scene from `examples/` (`no_golden_case_loads_an_example`); a change here is a change to a test. The binaries they share with the examples they borrow by path (`../../../examples/models/YBot.glb`), each pinned by SHA-256 in `tests/fixtures/borrowed.toml` (#759), so changing a borrowed example file fails `scripts/ci.sh` until the fixture keeps the old bytes
+- **The examples are another repository** (#984, ADR 0131): [flint-examples](https://github.com/chrischaps/flint-examples), the curated scenes at its root with the engine as a squashed subtree at `engine/`, like a game, and its own CI (`flint examples --check`). Clone it into this checkout, where `.gitignore` keeps it out (`git clone https://github.com/chrischaps/flint-examples`), and every `flint-examples/<path>` in this tree is a path: `flint play flint-examples/phase4_runtime.scene.toml` from the root. Nothing here may name the old in-tree folder (`scripts/examples-check.sh`, in `scripts/ci.sh`), and docs-check holds every `flint-examples/<path>` to a file there. Its schemas are its subtree's, so to run one against this tree's: `--schemas schemas --schemas schemas/examples`. An engine feature with an example bench is two PRs: the engine's (its test in `tests/fixtures/scenes/`), then flint-examples' (a `git subtree pull` and the bench)
+- `tests/fixtures/scenes/` -- Frozen copies of the scenes the goldens and CLI tests load, with every file they read (#984 took back the 26 binaries they had borrowed from the examples). No golden may load an example (`no_golden_case_loads_an_example`); a change here is a change to a test
 - **Every byte here is in every game** (ADR 0122, #759): a subtree is the whole tree. `scripts/size-check.py` (in `scripts/ci.sh`) fails a PR on a binary tracked twice, a texture over 2048 texels a side or 3 MB (`tools/assets/cap_textures.py` shrinks one with the renderer's own mip filter; colour maps as JPEG), a file over 8 MB, a book PNG with an alpha channel (`tools/assets/pack_book_images.py` drops it, same pixels; #1276), or the tree or one of its parts over budget; `--report` prints the sizes
-- `showcase_game/` -- The Overgrown Ruins, the example game: a project with its own `flint.toml`, assets and sounds (its bartender's model it names as `../../examples/models/YBotWithIdle.glb`), the engine beside it (`../schemas`) rather than under it. A top-level directory with a `flint.toml` is a game kept in the checkout; tests find one by its manifest, so engine code never names it (#760), and `crates/flint-cli/tests/checkout_games_cli.rs` fails when one names a file it doesn't have
+- `showcase_game/` -- The Overgrown Ruins, the example game: a project with its own `flint.toml`, assets and sounds (its bartender's model is its own copy, #984), the engine beside it (`../schemas`) rather than under it. A top-level directory with a `flint.toml` is a game kept in the checkout; tests find one by its manifest, so engine code never names it (#760), and `crates/flint-cli/tests/checkout_games_cli.rs` fails when one names a file it doesn't have
 - The root holds only manifests and docs, and nothing is a symlink (a Windows checkout without the privilege gets a text file): `scripts/ci.sh` refuses either. A default `flint render` writes `render.png` to the working directory, which `.gitignore` covers, as it does coverage runs' `*.profraw`
 - `crates/flint-cli/templates/` -- What `flint init` writes (#707): the game-project scaffold, compiled into the binary; `tests/init_cli.rs` builds and runs each
 - `docs/book/` -- mdBook source; `docs/build.ps1` / `docs/publish.sh` -- build, preview and publish it

@@ -818,6 +818,6 @@ assert_eq!(registry.generate_from_spec(&spec)?.into_image_set().unwrap(), maps);
 | `src/export_glb.rs`, `src/skinning.rs` | GLB export with LOD chains and skins |
 | `src/resolver.rs`, `src/cache.rs`, `src/queue.rs` | The player's spec resolver, memory cache and frame-budgeted queue |
 | `src/validate.rs` | Output validation against style-guide constraints |
-| `examples/` | Galleries (`lsystem_gallery`, `colonization_gallery`, ...) and `param_catalog` |
+| `crates/flint-procgen/examples/` | Galleries (`lsystem_gallery`, `colonization_gallery`, ...) and `param_catalog` |
 
 `flint-procgen-ai` builds on this crate to write and refine specs from a prompt; the player never links it.

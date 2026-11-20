@@ -27,7 +27,7 @@ pub const CUT_ANGLE_DEG: f32 = 30.0;
 /// be a cut. The view's size is `tan(fov / 2)` for a perspective camera and
 /// the half-height for an orthographic one, so 1.25 is a 50 to 40 degree
 /// punch-in (or an ortho height from 10 to 8). Every zoom carries some of
-/// the old frame over (#474, `examples/ascii_cuts.scene.toml`: 1,288 of
+/// the old frame over (#474, `flint-examples/ascii_cuts.scene.toml`: 1,288 of
 /// 14,400 cells at 1.1x, 2,974 at 2x) with no knee, and a reset moves the
 /// flips onto the cut frame rather than saving any, so the line is intent:
 /// under it a step is more likely an effect (a sprint's FOV kick), over it

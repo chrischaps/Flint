@@ -301,7 +301,7 @@ Where the number comes from:
 
 `audio_output_latency()` is the time from mixing to hearing: the browser's `baseLatency + outputLatency`. Show `audio_position(e) - audio_output_latency()` to light what is heard rather than what is being mixed. kira's desktop stream doesn't say what its device adds, so there it is `-1.0` and a game keeps its own estimate.
 
-`examples/audio_clock.scene.toml` lights four pads from a looping click track: Space stalls the frame for 500 ms and E pauses, and the pads stay on the clicks while the summed `delta_time()` shown above them falls behind.
+[`flint-examples/audio_clock.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/audio_clock.scene.toml) lights four pads from a looping click track: Space stalls the frame for 500 ms and E pauses, and the pads stay on the clicks while the summed `delta_time()` shown above them falls behind.
 
 ## From Rust: Player Extensions
 

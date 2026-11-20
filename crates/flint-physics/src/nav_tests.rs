@@ -447,7 +447,7 @@ fn nav_cost() {
         );
     };
 
-    // The garden of examples/nav_lamplighter.scene.toml
+    // The garden of flint-examples/nav_lamplighter.scene.toml
     let mut world = FlintWorld::new();
     spawn(
         &mut world,

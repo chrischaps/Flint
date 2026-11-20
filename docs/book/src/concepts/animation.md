@@ -8,7 +8,7 @@ Property animations are the simplest form --- animate any transform property (po
 
 ### Animation Clips
 
-Clips are `.anim.toml` files in an `animations/` directory the scene can see ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)); the demos' are in `examples/animations/`:
+Clips are `.anim.toml` files in an `animations/` directory the scene can see ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)); the demos' are in [`flint-examples/animations/`](https://github.com/chrischaps/flint-examples/tree/main/animations):
 
 ```toml
 # animations/door_swing.anim.toml

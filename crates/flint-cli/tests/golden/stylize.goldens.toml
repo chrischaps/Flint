@@ -500,19 +500,19 @@ args = ["--no-grid", "--style", "pencil:boil=4,scope=screen", "--style-time", "1
 [[case]]
 name = "pencil-paper-image"
 scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
-args = ["--no-grid", "--style", "pencil:paper_image=../../../examples/papers/cold_press.png,grain=0.8"]
+args = ["--no-grid", "--style", "pencil:paper_image=./papers/cold_press.png,grain=0.8"]
 
 [[case]]
 name = "pencil-stroke-image"
 scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
-args = ["--no-grid", "--style", "pencil:paper_image=../../../examples/papers/cold_press.png,stroke_image=../../../examples/strokes/graphite.png,stroke_rows=4,thickness=1.5"]
+args = ["--no-grid", "--style", "pencil:paper_image=./papers/cold_press.png,stroke_image=./strokes/graphite.png,stroke_rows=4,thickness=1.5"]
 
 # The strip on surfaces (#389 x #390): world strokes draw it too, the row
 # twice the stroke width in metres
 [[case]]
 name = "pencil-world-stroke-image"
 scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
-args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=../../../examples/strokes/graphite.png,stroke_rows=4,thickness=1.5"]
+args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=./strokes/graphite.png,stroke_rows=4,thickness=1.5"]
 
 # A paper each (#547): four props on four paper images in one frame (cold
 # press, cotton with the graphite strip, kraft, washi), a fifth on the
@@ -711,7 +711,7 @@ tolerance = { level = 8, share = 0.005, mean = 0.3 }
 [[case]]
 name = "watercolor-paper-image"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
-args = ["--no-grid", "--style", "watercolor:paper_image=../../../examples/papers/cold_press.png,grain_scale=1.5,grain=0.6"]
+args = ["--no-grid", "--style", "watercolor:paper_image=./papers/cold_press.png,grain_scale=1.5,grain=0.6"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
 # Over Kuwahara: the two chain (HDR brush pools, then display-stage paint)

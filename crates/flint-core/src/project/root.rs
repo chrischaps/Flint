@@ -185,9 +185,9 @@ mod tests {
             (
                 &[
                     "flint/crates/flint-core/Cargo.toml",
-                    "flint/examples/a.scene.toml",
+                    "flint/levels/a.scene.toml",
                 ][..],
-                "flint/examples/a.scene.toml",
+                "flint/levels/a.scene.toml",
                 Found::Engine,
             ),
             // No marker: the guess itself

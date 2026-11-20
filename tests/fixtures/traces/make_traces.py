@@ -168,7 +168,7 @@ def trace(stalls, encode_ms):
         "reason": "hitch at t=0.420 s, 104.2 ms: script stall.rhai:on_update 100.1 ms"
         if stalls
         else "exit",
-        "scene": "examples/hitch_metronome.scene.toml",
+        "scene": "flint-examples/hitch_metronome.scene.toml",
         "build": "debug",
         "adapter": "a hand-written trace",
         "scopes": sum(1 for line in w.lines if '"depth"' in line),

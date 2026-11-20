@@ -676,7 +676,7 @@ be copied) gets `{"capture_error": "<why>", "id": 7}` instead. A capture line
 is never a state: the scripts don't hear it, and a state that also carries a
 `capture` field is refused aloud rather than swallowed. Measured in a debug
 build at 960x540, the reply came about 70 ms after the line, and the frame
-spent about 8 µs on the copy. `examples/listening_lantern.scene.toml` answers
+spent about 8 µs on the copy. [`flint-examples/listening_lantern.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/listening_lantern.scene.toml) answers
 four states; `--record` writes every frame at a rate instead ([CLI
 reference](../cli-reference/overview.md#player-screenshots-hud-included)).
 
@@ -984,7 +984,7 @@ fn on_event(name, data) {
 
 #### Tweens
 
-A tween starts where the setting is now: the entity's own value, else the scene's `[post_process.styles.<name>]` table, else the style's default (`blend`: 1). It begins to move the frame after the call and is stepped on game time, so it pauses with the scripts and a `--frame-step` capture is the same every run. The target is clamped to the setting's range, as `set_style_param` would, and a target past it is warned about once, when the tween starts. On its last step it writes the target exactly and fires `style_tween_done`; a script that wants a loop starts the next tween from `on_event` (`examples/scripts/ascii_story.rhai` makes the bench breathe that way).
+A tween starts where the setting is now: the entity's own value, else the scene's `[post_process.styles.<name>]` table, else the style's default (`blend`: 1). It begins to move the frame after the call and is stepped on game time, so it pauses with the scripts and a `--frame-step` capture is the same every run. The target is clamped to the setting's range, as `set_style_param` would, and a target past it is warned about once, when the tween starts. On its last step it writes the target exactly and fires `style_tween_done`; a script that wants a loop starts the next tween from `on_event` ([`flint-examples/scripts/ascii_story.rhai`](https://github.com/chrischaps/flint-examples/blob/main/scripts/ascii_story.rhai) makes the bench breathe that way).
 
 - A new tween of the same setting replaces the old one, from wherever it had got to.
 - A `set_style_param` of that setting stops it: the script took over.
@@ -995,7 +995,7 @@ A tween starts where the setting is now: the entity's own value, else the scene'
 
 `blend` is the cheapest setting to tween: it rides in the style mask beside the entity's id, so it never makes a variant. A tween of `cell` or `glow` makes a new variant row every frame it moves.
 
-`examples/ascii_story.scene.toml` tells a looping story with these calls: the barrel comes apart into letters, the bench follows in amber blocks, and both are given back. `examples/ascii_reveal.scene.toml` does it with `blend` instead (#278): both props are styled once at blend 0, then only the blend moves, so the barrel dissolves into glyphs and the bench fades into them.
+[`flint-examples/ascii_story.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/ascii_story.scene.toml) tells a looping story with these calls: the barrel comes apart into letters, the bench follows in amber blocks, and both are given back. [`flint-examples/ascii_reveal.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/ascii_reveal.scene.toml) does it with `blend` instead (#278): both props are styled once at blend 0, then only the blend moves, so the barrel dissolves into glyphs and the bench fades into them.
 
 #### Whole-frame styles
 
@@ -1037,7 +1037,7 @@ fn on_update() {
 }
 ```
 
-`examples/dream_story.scene.toml` tells it as a looping story: the clearing is awake, softens into Kuwahara as its blend climbs, breathes there, and wakes.
+[`flint-examples/dream_story.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/dream_story.scene.toml) tells it as a looping story: the clearing is awake, softens into Kuwahara as its blend climbs, breathes there, and wakes.
 
 A `reveal` is how a script tears the live frame open into a look ([Revealing a whole-frame style](stylize-passes.md#revealing-a-whole-frame-style)). With the scene's table at `reveal = 0` (on, but none of it shows), one call does it:
 
@@ -1050,7 +1050,7 @@ fn on_event(name, data) {
 }
 ```
 
-`examples/reveal_tear.scene.toml` tears into pencil and pulls the live frame back with a wipe, on a loop.
+[`flint-examples/reveal_tear.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/reveal_tear.scene.toml) tears into pencil and pulls the live frame back with a wipe, on a loop.
 
 ### Tween API
 
@@ -1074,7 +1074,7 @@ One call eases any number a component holds (#734): a light's `intensity` or `co
 - A style setting has its own call, `tween_style_param` ([Style API](#style-api)): it knows each style's range and starts from the scene's style table when the entity has no value of its own
 
 ```rust
-// examples/scripts/tween_lantern.rhai: dusk to lamplight, then breathing
+// flint-examples/scripts/tween_lantern.rhai: dusk to lamplight, then breathing
 fn on_init() {
     let flame = get_entity("flame");
     tween(flame, "light.intensity", 14.0, 3.0, "ease_in_out");
@@ -1091,7 +1091,7 @@ fn on_event(name, data) {
 }
 ```
 
-`examples/tween_lantern.scene.toml` lights its lantern that way: `flint render examples/tween_lantern.scene.toml --scripts --time 3` shows it lit.
+[`flint-examples/tween_lantern.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/tween_lantern.scene.toml) lights its lantern that way: `flint render flint-examples/tween_lantern.scene.toml --scripts --time 3` shows it lit.
 
 ### Post-Processing API
 
@@ -1288,7 +1288,7 @@ tune_living(#{ species: "grove_thorn", step: 0.125, glide: 0.0, echoes: #{ count
 clear_living("grove_thorn", ["echoes"]);   // their echoes back to the grove's
 ```
 
-Unlike `set_wooze`, these work in a scene with no `[wooze]` table: turning a clock knob gives it a field, starting from where its props stand. What can't be used is logged, naming the key, and the rest still happens. New echoes wait until the rings have every pose they'd read, and a new variance re-holds the poses in use first. Bench: `examples/living_sweep.scene.toml`, whose script moves every knob across its range.
+Unlike `set_wooze`, these work in a scene with no `[wooze]` table: turning a clock knob gives it a field, starting from where its props stand. What can't be used is logged, naming the key, and the rest still happens. New echoes wait until the rings have every pose they'd read, and a new variance re-holds the poses in use first. Bench: [`flint-examples/living_sweep.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/living_sweep.scene.toml), whose script moves every knob across its range.
 
 ### Conducted Parameters API
 
@@ -1895,13 +1895,13 @@ draw_text(40.0, 40.0, "128", 96.0, #{
 
 Array entries may mix ints and floats. Back to front: shadow, glow, stroke, text.
 
-A stroke up to 2 points wide is the text again at eight compass offsets, which reads as an outline. A wider one, and any glow, is drawn as one picture (#626): the glyphs are copied out of the font atlas at the screen's pixel size, the stroke is everything within `width` of them, so it's round at any width, and the glow is a blur of glyphs and stroke together. A translucent stroke is one even band, with nothing darker where copies would have overlapped. Each distinct label (text, font, size, spacing, stroke, glow) makes its picture once and keeps it while it's drawn every frame; a label whose text changes every frame, a counter, makes one a frame. In a release build that's about 0.6 ms for a 60 point numeral with a 10 point stroke, and 3 ms for ten 60 point digits with a stroke and a glow at 2 pixels a point (most of it the stroke's distances), so keep a busy counter's stroke thin or its glow off if the frame is tight. For neon lettering, a bright face with a 1--2 point stroke of its hue and a glow of the same hue reads best (`examples/hud_glow.scene.toml`).
+A stroke up to 2 points wide is the text again at eight compass offsets, which reads as an outline. A wider one, and any glow, is drawn as one picture (#626): the glyphs are copied out of the font atlas at the screen's pixel size, the stroke is everything within `width` of them, so it's round at any width, and the glow is a blur of glyphs and stroke together. A translucent stroke is one even band, with nothing darker where copies would have overlapped. Each distinct label (text, font, size, spacing, stroke, glow) makes its picture once and keeps it while it's drawn every frame; a label whose text changes every frame, a counter, makes one a frame. In a release build that's about 0.6 ms for a 60 point numeral with a 10 point stroke, and 3 ms for ten 60 point digits with a stroke and a glow at 2 pixels a point (most of it the stroke's distances), so keep a busy counter's stroke thin or its glow off if the frame is tight. For neon lettering, a bright face with a 1--2 point stroke of its hue and a glow of the same hue reads best ([`flint-examples/hud_glow.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/hud_glow.scene.toml)).
 
 A picture can be no wider or taller than the GPU's largest texture (8192 pixels on most desktops). Lettering whose halo would pass it has its halo drawn at a half, a third and so on of the screen's pixel size and stretched back over the same place, which a glow's softness hides; a warning says so once a run (#657).
 
 ![A 12 point translucent stroke as eight copies, the same stroke as one band, and two glows](../images/hud-glow.png)
 
-*`examples/hud_glow.scene.toml`: left, a 12 point stroke at 0.3 alpha drawn as eight offset copies (what `stroke` was at every width before #626); middle, the same `stroke` now; right and below, `glow`, on HUD and world text.*
+*[`flint-examples/hud_glow.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/hud_glow.scene.toml): left, a 12 point stroke at 0.3 alpha drawn as eight offset copies (what `stroke` was at every width before #626); middle, the same `stroke` now; right and below, `glow`, on HUD and world text.*
 
 **Project fonts.** Drop `.ttf` / `.otf` files in `<project>/fonts/` (found by [the one asset search](assets.md#where-the-engine-looks-for-a-file), kind `font-faces`: every `fonts/` beside the scene, in each directory above it up to the project root, then in the mounted engine, a nearer file hiding a farther one of its name). Each file registers a font family named after its file stem, so `fonts/BarlowCondensed-Bold.ttf` is usable as `font: "BarlowCondensed-Bold"`. The folders are read (not their subfolders) once at startup and again on a scene change when the new scene sees other files. An optional `fonts/fonts.toml` (the nearest one) adds aliases that point at the same files:
 
@@ -2275,7 +2275,7 @@ A list's made items report the list's id, and `ui_get_value(list)` is the item's
 
 #### Example: a pause menu
 
-The showcase's pause menu (`examples/ui/pause.ui.toml`, `examples/ui/pause.style.toml`, `examples/scripts/showcase_controller.rhai`) works with the keyboard, a pad, the mouse and touch. Its three buttons:
+The showcase's pause menu ([`flint-examples/ui/pause.ui.toml`](https://github.com/chrischaps/flint-examples/blob/main/ui/pause.ui.toml), [`flint-examples/ui/pause.style.toml`](https://github.com/chrischaps/flint-examples/blob/main/ui/pause.style.toml), [`flint-examples/scripts/showcase_controller.rhai`](https://github.com/chrischaps/flint-examples/blob/main/scripts/showcase_controller.rhai)) works with the keyboard, a pad, the mouse and touch. Its three buttons:
 
 ```toml
 [elements.card]
@@ -2308,7 +2308,7 @@ And the menu's whole share of the script (the file also registers the `paused` s
 
 ```rhai
 import "menu" as menu;
-load_ui("examples/ui/pause.ui.toml");
+load_ui("flint-examples/ui/pause.ui.toml");
 
 fn on_draw_ui() {
     if is_action_just_pressed("pause") { menu::toggle_pause("pause_menu"); }
@@ -2326,7 +2326,7 @@ fn on_ui(id, event) {
 **Seeing it without a window.** `flint render --scripts` draws the HUD as the player draws it: `on_draw_ui`'s draw calls and the UI documents. A menu nothing opens without input is shown with `--ui-show`, and `--ui-focus` gives an element focus, so its `focus` state is in the picture:
 
 ```bash
-flint render examples/showcase_tavern.scene.toml --ui-show pause_menu --ui-focus restart -o pause.png
+flint render flint-examples/showcase_tavern.scene.toml --ui-show pause_menu --ui-focus restart -o pause.png
 ```
 
 #### When to use each UI system
@@ -2347,7 +2347,7 @@ Rhai finds a function when the line that calls it runs, so a misspelt name in a 
 
 ```bash
 flint script check                    # every script of the project here
-flint script check examples/          # every script under a folder
+flint script check flint-examples/    # every script under a folder
 flint script check levels/dock.scene.toml   # the scripts one scene runs
 flint script check scripts/hud.rhai   # one file
 flint script check . --json           # one JSON document, as flint check prints

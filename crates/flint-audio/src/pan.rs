@@ -3,7 +3,7 @@
 //! A kira spatial track works out a sound's distance falloff and each ear's
 //! share for every sample it mixes: on the Pixel 8 Pro's main thread that
 //! was most of a 15 ms mix, and natively a spatial track costs about 14
-//! times a plain voice (`examples/mix_bench.rs`). Here the same gains are
+//! times a plain voice (`crates/flint-audio/examples/mix_bench.rs`). Here the same gains are
 //! worked out once a frame, from the same formulas, and handed to an
 //! ordinary sound as a volume and a constant-power pan, which kira applies
 //! per sample for almost nothing. The listener and the sources move a few

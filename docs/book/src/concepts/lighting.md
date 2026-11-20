@@ -32,7 +32,7 @@ source_radius = 0.1
 
 Point and spot lights sit at their entity's world position, so they follow transform hierarchies and animation like any other entity. Directional lights ignore position.
 
-**Direction follows rotation when it isn't written** (#682). A light with no `direction` shines down its entity's own -Y axis, turned by the entity's rotation and every parent's: a spot light under a hand, a car or a swinging lamp turns with it. Unturned, a spot points straight down and a directional light is a sun overhead. A `direction` that is written is world space and stays put whatever the entity does, as it always has. `examples/swinging_lamp.scene.toml` hangs a lamp on an arm a script swings, and its beam sweeps the yard with it.
+**Direction follows rotation when it isn't written** (#682). A light with no `direction` shines down its entity's own -Y axis, turned by the entity's rotation and every parent's: a spot light under a hand, a car or a swinging lamp turns with it. Unturned, a spot points straight down and a directional light is a sun overhead. A `direction` that is written is world space and stays put whatever the entity does, as it always has. [`flint-examples/swinging_lamp.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/swinging_lamp.scene.toml) hangs a lamp on an arm a script swings, and its beam sweeps the yard with it.
 
 ```toml
 [entities.arm.transform]
@@ -143,14 +143,14 @@ cast_shadows = true
 
 ![A figure and a floating ball under one spot light, each with its own shadow](../images/spot-shadow.png)
 
-*`examples/spot_shadow.scene.toml`: the only light is the spot. The figure's feet meet their shadow; the ball, a metre up, casts a wider and softer one.*
+*[`flint-examples/spot_shadow.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/spot_shadow.scene.toml): the only light is the spot. The figure's feet meet their shadow; the ball, a metre up, casts a wider and softer one.*
 
 - **One spot casts**: the first by entity name that asks. Another spot that asks lights without a shadow and says so once (`shadow-cap`). It must be among the 8 spots the frame draws, and give light.
 - **It works with or without a sun.** The spot's map is the last layer of the cascades' texture, drawn from the light down its axis out to its `range`, and covering its cone up to 80 degrees from the axis. A wider cone is shadowed out to 80 degrees and lit past it.
 - **Softness is `source_radius`**, the size of the lamp in metres, as `angular_size` is the sun's: a blocker search finds how far the caster is from what it shadows, and the penumbra widens with that gap (PCSS). The kernel turns a little each pixel, so its edge is a fine grain rather than rings. `source_radius = 0` is a hard 3x3 PCF shadow.
 - **What it shadows**: meshes, skinned meshes and terrain receive it. Grass and the ocean take no spot light at all yet (#1048), so they take no spot shadow either; grass doesn't cast into it.
 - **Off** the same ways as every shadow: `--no-shadows`, F4, `[environment] shadows = false`, the quality tier's `shadows`. `material.cast_shadows = false` keeps a mesh out of the spot's map as it does out of the cascades.
-- **Cost**: one more depth pass over the casters in the spot's view, the filter on the pixels the spot lights (it is skipped outside the cone and past `range`), and one more layer of the texture (16 MB at the default 2048 texels, allocated whether or not a scene uses it). `examples/spot_shadow.scene.toml` at 1920 x 1080 on an RTX 4070 (debug build, `--gpu-time 240`, p50): the depth pass 0.024 ms, the scene pass 0.075 ms without the shadow and 0.316 ms with it, so about 0.26 ms a frame. A scene with no spot asking draws exactly what it drew before.
+- **Cost**: one more depth pass over the casters in the spot's view, the filter on the pixels the spot lights (it is skipped outside the cone and past `range`), and one more layer of the texture (16 MB at the default 2048 texels, allocated whether or not a scene uses it). [`flint-examples/spot_shadow.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/spot_shadow.scene.toml) at 1920 x 1080 on an RTX 4070 (debug build, `--gpu-time 240`, p50): the depth pass 0.024 ms, the scene pass 0.075 ms without the shadow and 0.316 ms with it, so about 0.26 ms a frame. A scene with no spot asking draws exactly what it drew before.
 - **Point lights cast no shadow yet.** A point light with `cast_shadows = true` lights without one and says so; cube shadow maps are #1112. The strongest directional light casts the cascades whatever `cast_shadows` says, and a `false` on it is said once too.
 
 ## The `[environment]` Block
@@ -203,7 +203,7 @@ emissive_scale = 3.0
 
 ![An ambient-only scene with unlit bars](../images/unlit-ambient.png)
 
-*`examples/unlit_ambient.scene.toml`: props lit by the ambient alone, no shadow pass, and three unlit bars, two of them blooming.*
+*[`flint-examples/unlit_ambient.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/unlit_ambient.scene.toml): props lit by the ambient alone, no shadow pass, and three unlit bars, two of them blooming.*
 
 How they combine in the shader: hemisphere ambient interpolates between the two colors by the surface normal's Y. Diffuse wrap replaces the raw `n·l` term; Oren-Nayar scales the diffuse magnitude; the Charlie sheen adds a rim lobe on top. The three are orthogonal, and when all are zero the shader takes the original code path. The wrap and Oren-Nayar values ride the `w` components of the ambient uniforms encoded as `1 + value`, which is why a stale or default uniform (w = 0) still means "off".
 

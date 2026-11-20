@@ -5,7 +5,7 @@
 //!
 //! ```bash
 //! flint check                         # the project in the working directory
-//! flint check examples/               # every scene under a folder
+//! flint check flint-examples/        # every scene under a folder
 //! flint check scenes/dock.scene.toml  # one scene and the files it names
 //! flint check . --json                # one JSON document on stdout
 //! ```

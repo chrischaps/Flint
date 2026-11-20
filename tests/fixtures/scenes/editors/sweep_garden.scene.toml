@@ -1,0 +1,143 @@
+# FROZEN (#984): flint-examples' sweep_garden.scene.toml on 2026-11-20, the
+# track flint edit --spline --render draws in edit_render_cli.rs.
+#
+# ================================================================
+#  SWEEP GARDEN (#750)
+# ================================================================
+#
+#  One spline, six cross-sections swept along it. `spline_mesh` used to
+#  sweep only a box; since #750 it sweeps any polygon in `profile`:
+#
+#    path     the old box, 2.4 m by 0.12 m
+#    kerbs    low boxes striped in two colours (stripe_color)
+#    rail     a smooth tube, twelve points round, shaded round (smooth)
+#    gutter   an open U, a surface with no caps (profile_closed = false)
+#    beam     an I-beam, a concave solid: its caps are ear-clipped
+#
+#  The loop climbs a low hill and banks through its turns. At the top a
+#  control point has gap_after, so every sweep stops, caps itself and
+#  starts again past the gap.
+#
+#  Render:  cargo run --bin flint -- render flint-examples/sweep_garden.scene.toml \
+#             --output renders/sweep_garden.png --no-grid
+#  Check:   cargo run --bin flint -- check flint-examples/sweep_garden.scene.toml
+# ================================================================
+
+[scene]
+name = "Sweep Garden"
+version = "1.0"
+description = "Six cross-sections swept along one banked loop: a box, striped kerbs, a smooth tube, an open gutter and a concave I-beam, with a gap (#750)"
+
+# Up the first bend toward the hill, where the gap is
+[camera]
+position = [17.0, 3.2, 9.0]
+target = [7.0, 2.0, -9.0]
+fov = 40.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+ssao_enabled = true
+fog_enabled = true
+fog_density = 0.006
+fog_color = [0.93, 0.78, 0.66]
+fog_height_falloff = 0.08
+vignette_enabled = true
+vignette_intensity = 0.28
+
+[entities.sky.sky]
+zenith_color = [0.25, 0.32, 0.55, 1.0]
+horizon_color = [0.98, 0.76, 0.6, 1.0]
+haze_color = [1.0, 0.8, 0.66, 0.6]
+cloud_coverage = 0.15
+sun_glow = 0.7
+
+[entities.sun.light]
+type = "directional"
+direction = [0.55, 0.5, 0.35]
+color = [1.0, 0.86, 0.7]
+intensity = 2.4
+
+[entities.lawn.transform]
+position = [0.0, 0.0, 0.0]
+[entities.lawn.bounds]
+min = [-40.0, -0.4, -40.0]
+max = [40.0, -0.1, 40.0]
+[entities.lawn.material]
+color = [0.34, 0.47, 0.29, 1.0]
+roughness = 0.95
+
+# --- the path every shape follows ---------------------------------
+
+[entities.loop.spline]
+file = "splines/sweep_garden.spline.toml"
+
+# --- the sweeps ---------------------------------------------------
+
+# The box spline_mesh has always made: its top just at the path
+[entities.path.spline_mesh]
+spline = "loop"
+width = 2.4
+height = 0.12
+offset = [0.0, -0.06]
+color = [0.78, 0.71, 0.6, 1.0]
+roughness = 0.85
+
+[entities.kerb_left.spline_mesh]
+spline = "loop"
+width = 0.24
+height = 0.16
+offset = [-1.32, -0.02]
+color = [0.95, 0.92, 0.84, 1.0]
+stripe_color = [0.78, 0.33, 0.24, 1.0]
+stripe_width = 1.5
+roughness = 0.7
+
+[entities.kerb_right.spline_mesh]
+spline = "loop"
+width = 0.24
+height = 0.16
+offset = [1.32, -0.02]
+color = [0.95, 0.92, 0.84, 1.0]
+stripe_color = [0.78, 0.33, 0.24, 1.0]
+stripe_width = 1.5
+roughness = 0.7
+
+# A brass hand rail: twelve points round, shaded round
+[entities.rail.spline_mesh]
+spline = "loop"
+profile = [
+    [0.055, 0.0], [0.0476, 0.0275], [0.0275, 0.0476], [0.0, 0.055],
+    [-0.0275, 0.0476], [-0.0476, 0.0275], [-0.055, 0.0], [-0.0476, -0.0275],
+    [-0.0275, -0.0476], [0.0, -0.055], [0.0275, -0.0476], [0.0476, -0.0275],
+]
+smooth = true
+offset = [-1.62, 0.9]
+color = [0.86, 0.64, 0.3, 1.0]
+metallic = 1.0
+roughness = 0.28
+collider = false
+
+# An open U beside the path: a surface listed left to right, so it faces
+# up into its channel, with no closing edge and no caps
+[entities.gutter.spline_mesh]
+spline = "loop"
+profile = [[-0.22, 0.04], [-0.17, -0.07], [0.0, -0.11], [0.17, -0.07], [0.22, 0.04]]
+profile_closed = false
+smooth = true
+offset = [1.72, 0.0]
+color = [0.42, 0.47, 0.52, 1.0]
+roughness = 0.6
+
+# An I-beam under the inside edge: a concave solid, its caps ear-clipped
+[entities.beam.spline_mesh]
+spline = "loop"
+profile = [
+    [-0.13, 0.16], [0.13, 0.16], [0.13, 0.11], [0.035, 0.11],
+    [0.035, -0.11], [0.13, -0.11], [0.13, -0.16], [-0.13, -0.16],
+    [-0.13, -0.11], [-0.035, -0.11], [-0.035, 0.11], [-0.13, 0.11],
+]
+offset = [-0.9, -0.3]
+color = [0.25, 0.36, 0.42, 1.0]
+metallic = 0.6
+roughness = 0.45

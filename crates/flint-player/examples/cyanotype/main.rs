@@ -11,7 +11,7 @@
 //! cargo run -p flint-player --example cyanotype
 //! cargo run -p flint-player --example cyanotype -- --style cyanotype:process=print
 //! cargo run -p flint-player --example cyanotype -- --screenshot print.png
-//! cargo run -p flint-player --example cyanotype -- --scene examples/double_sided.scene.toml \
+//! cargo run -p flint-player --example cyanotype -- --scene flint-examples/double_sided.scene.toml \
 //!     --style cyanotype
 //! ```
 //!
