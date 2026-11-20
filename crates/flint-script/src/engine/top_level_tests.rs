@@ -209,6 +209,30 @@ fn a_global_constant_reaches_every_callback_and_the_functions_they_call() {
     assert_eq!(logged(&engine), vec!["top level".to_string()]);
 }
 
+/// A `global::` read inside a method call's arguments, which Rhai's walk
+/// skips, is found too (#998).
+#[test]
+fn a_global_constant_reaches_a_method_calls_arguments() {
+    let mut engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let id = probed(&mut world, "glow");
+    add(
+        &mut engine,
+        id,
+        r#"
+        const GLOW = 0.5;
+        fn on_update() {
+            let keys = [];
+            keys.push(global::GLOW);
+            set_field(self_entity(), "probe", "lx", keys[0]);
+        }
+        "#,
+    );
+    engine.call_updates(&mut world);
+    assert!(engine.errors().is_empty(), "{:?}", engine.errors().all());
+    assert_eq!(probe_float(&world, id, "lx"), 0.5);
+}
+
 /// A constant's initializer runs once, with the top level: `global::` reads
 /// the value it made then, never a new call of the initializer.
 #[test]
