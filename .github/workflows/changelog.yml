@@ -12,7 +12,10 @@
 # - Runs queue rather than overlap (one concurrency group, never cancelled),
 #   and a run that finds no fragments does nothing.
 # - An open branch made before an assembly still merges cleanly: it adds its
-#   own fragment, and the assembly touched only other files.
+#   own fragment, and the assembly touched only other files. If it also
+#   carries a fragment main already assembled (it was stacked on that PR's
+#   branch), the squash brings that file back; the next run deletes it
+#   without adding the entry again (#994).
 #
 # By hand, the same thing: `bash scripts/changelog.sh assemble` on main.
 name: Changelog
