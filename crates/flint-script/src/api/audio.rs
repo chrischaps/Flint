@@ -3,7 +3,7 @@
 //! host plays after the script batch; each `play_sound*` returns a handle
 //! the script names it by later (#699).
 
-use super::builder::kind::{Any, Entity, Int, Num, Str};
+use super::builder::kind::{Any, Bool, Entity, Int, Num, Str};
 use super::builder::{Call, CallResult, ScriptApi};
 use crate::context::{ScriptCallContext, ScriptCommand, SoundPlay, SoundRef};
 use rhai::Dynamic;
@@ -24,7 +24,7 @@ const PLACE_KEYS: &[&str] = &[
     "rolloff",
 ];
 
-const HANDLE_NOTE: &str = "its handle, for stop_sound and set_sound_volume";
+const HANDLE_NOTE: &str = "its handle, for stop_sound, set_sound_volume and is_sound_playing";
 
 pub(crate) fn register(api: &mut ScriptApi) {
     let mut m = api.module("audio");
@@ -137,6 +137,19 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("volume", Num)
     .arg("fade", Num)
     .run(|call, (h, volume, fade)| set_volume(call, h, volume, fade));
+
+    m.func(
+        "is_sound_playing",
+        "Whether a sound a script started is still playing, by its handle, as the frame began: true from the frame after play_sound until it ends or is stopped. Headless (flint render --scripts, a capture) there is no sound, so always false.",
+    )
+    .arg("handle", Int)
+    .returns(
+        Bool,
+        "false for a sound that ended, was stopped or never started (an unknown name, no sound device, a one-shot placed out of earshot, the web before Begin) and for an unknown handle",
+    )
+    .run(|call, (h,)| {
+        u64::try_from(h).is_ok_and(|h| call.ctx_ref().sounds_playing.contains(&h))
+    });
 
     m.func(
         "audio_position",
@@ -395,6 +408,30 @@ mod tests {
         }
         assert_eq!(ask(&engine, &mut world, "audio_position(ID)"), 1.25);
         assert_eq!(ask(&engine, &mut world, "audio_output_latency()"), 0.042);
+    }
+
+    /// #1000: `is_sound_playing` reads the host's set of playing handles,
+    /// which nothing fills headless; an unknown or negative handle is false.
+    #[test]
+    fn is_sound_playing_reads_the_hosts_set() {
+        let mut system = crate::ScriptSystem::new();
+        let ask = |system: &crate::ScriptSystem, s: &str| -> bool {
+            system.engine.rhai_engine().eval(s).unwrap()
+        };
+        let h: i64 = system
+            .engine
+            .rhai_engine()
+            .eval(r#"play_sound("hum")"#)
+            .unwrap();
+        let asks = format!("is_sound_playing({h})");
+        assert!(!ask(&system, &asks), "no host has said so: headless");
+        system.set_sounds_playing([h as u64, 7]);
+        assert!(ask(&system, &asks));
+        assert!(ask(&system, "is_sound_playing(7)"));
+        assert!(!ask(&system, "is_sound_playing(8)"), "unknown");
+        assert!(!ask(&system, "is_sound_playing(-1)"), "never a handle");
+        system.set_sounds_playing([7]);
+        assert!(!ask(&system, &asks), "each frame's set replaces the last");
     }
 
     #[test]

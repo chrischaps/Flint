@@ -222,14 +222,25 @@ impl AudioEngine {
     /// yet ended (a remote one by its length, which the worklet doesn't
     /// report).
     pub fn is_keyed_playing(&self, key: u64) -> bool {
+        self.playing_keys().any(|k| k == key)
+    }
+
+    /// The key of every sound playing now, as
+    /// [`is_keyed_playing`](Self::is_keyed_playing) says each one, for a
+    /// host to hand its scripts once a frame (`is_sound_playing`, #1000).
+    pub fn playing_keys(&self) -> impl Iterator<Item = u64> + '_ {
         let now = Instant::now();
-        self.keyed
+        let on_a_bus = self
+            .keyed
             .iter()
-            .any(|k| k.key == key && !k.stopped && !k.is_finished(now))
-            || self
-                .oneshots
-                .iter()
-                .any(|o| o.key == Some(key) && o.is_sounding(now))
+            .filter(move |k| !k.stopped && !k.is_finished(now))
+            .map(|k| k.key);
+        let placed = self
+            .oneshots
+            .iter()
+            .filter(move |o| o.is_sounding(now))
+            .filter_map(|o| o.key);
+        on_a_bus.chain(placed)
     }
 
     /// Stop the keyed loops on a bus (for a scene transition): a placed
@@ -441,5 +452,91 @@ mod tests {
         }
         engine.cleanup_finished_oneshots();
         assert!(engine.keyed.is_empty() && engine.oneshots.is_empty());
+    }
+
+    /// The presentation's timeline (#1000): every 20 ms over 1.2 s, the
+    /// worklet's loudness of a loop and a 0.4 s one-shot beside what
+    /// `playing_keys` says of each; the loop is stopped at 0.6 s. Prints CSV.
+    #[test]
+    #[ignore]
+    fn playing_keys_timeline() {
+        let (mut engine, mut w) = remote_engine();
+        let ding: Vec<f32> = tone().into_iter().take(17_640).collect();
+        engine
+            .load_sound_from_samples("ding", 44_100, &[&ding])
+            .unwrap();
+        engine.play_keyed(1, "hum", LOOP).unwrap();
+        engine.play_keyed(2, "ding", KeyedPlay::default()).unwrap();
+        println!("ms,mixer_peak,hum_playing,ding_playing");
+        let start = Instant::now();
+        // 20 ms of 48 kHz is 7.5 quanta; 8 renders keep the mixer near the clock
+        for step in 0..60 {
+            if step == 30 {
+                engine.stop_keyed(1, Duration::ZERO);
+            }
+            let peak = w.loudness(8);
+            let keys: Vec<u64> = engine.playing_keys().collect();
+            println!(
+                "{},{peak:.3},{},{}",
+                start.elapsed().as_millis(),
+                keys.contains(&1) as u8,
+                keys.contains(&2) as u8
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// #1000 on the desktop: a keyed one-shot is among `playing_keys` while
+    /// kira plays it and leaves once it has played out; a loop stays until
+    /// stopped. Skipped with no device.
+    #[test]
+    fn a_keyed_one_shot_leaves_the_playing_keys_when_it_ends_on_the_device() {
+        let mut engine = AudioEngine::new();
+        if !engine.is_available() {
+            eprintln!("no audio device: keyed one-shot test skipped");
+            return;
+        }
+        let blip: Vec<f32> = tone().into_iter().take(4_410).collect();
+        engine
+            .load_sound_from_samples("blip", 44_100, &[&blip])
+            .unwrap();
+        engine
+            .load_sound_from_samples("hum", 44_100, &[&tone()])
+            .unwrap();
+        engine.create_listener(Vec3::new(0.0, 0.0, 0.0)).unwrap();
+        let quiet = KeyedPlay {
+            volume: 0.05,
+            ..KeyedPlay::default()
+        };
+        engine.play_keyed(1, "blip", quiet).unwrap();
+        engine
+            .play_keyed(
+                2,
+                "hum",
+                KeyedPlay {
+                    looping: true,
+                    ..quiet
+                },
+            )
+            .unwrap();
+        let keys = |e: &AudioEngine| {
+            let mut k: Vec<u64> = e.playing_keys().collect();
+            k.sort();
+            k
+        };
+        assert_eq!(keys(&engine), [1, 2], "both, as soon as they're played");
+        let start = Instant::now();
+        while engine.is_keyed_playing(1) {
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "a 0.1 s blip never ended"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let took = start.elapsed();
+        assert!(took >= Duration::from_millis(50), "it played: {took:?}");
+        assert_eq!(keys(&engine), [2], "the loop plays on");
+        engine.stop_keyed(2, Duration::ZERO);
+        assert!(keys(&engine).is_empty(), "stopped, from the call on");
     }
 }
