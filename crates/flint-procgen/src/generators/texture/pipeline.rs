@@ -384,7 +384,8 @@ fn resolve_output_channels(
 }
 
 /// Every op, in the order the editor lists them: the registry (#720). An
-/// op's struct, `impl TextureOp` and [`OpDescriptor`] live in `ops.rs`;
+/// op's struct, `impl TextureOp` and [`OpDescriptor`] live in its family's
+/// module under `ops/`;
 /// adding one is those and a line here.
 pub const OPS: &[&OpDescriptor] = &[
     &ops::BRICK_GRID,
