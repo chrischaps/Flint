@@ -1,6 +1,6 @@
 # ADR 0122: What a game's `engine/` carries: one tree under a budget, no binary twice
 
-Status: accepted, 2026-11-14 (#759). Decision 1's split was made on 2026-11-20 (#984, [ADR 0131](0131-the-examples-are-a-project-of-their-own.md)): see "The examples leave" under Measured.
+Status: accepted, 2026-11-14 (#759). Decision 1's split was made on 2026-11-20 (#984, [ADR 0131](0131-the-examples-are-a-project-of-their-own.md)): see "The examples leave" under Measured. The engine area's budget moved on 2026-11-20 (#1303): see "The engine area grows by its code".
 
 ## Context
 
@@ -48,7 +48,7 @@ carries, with a decision on moving the heavy part out of the subtree.
    | the book (`docs/`) | 78 MB | 70.2 MB |
    | tests (`tests/`, the golden PNGs) | 27 MB, 50 since #984 | 23.4 MB; 45.7 at #984 |
    | `showcase_game/` | 16 MB, 18 since #984 | 13.8 MB; 16.2 at #984 |
-   | the engine proper (crates, schemas, styles, scripts, tools) | 20 MB | 16.1 MB |
+   | the engine proper (crates, schemas, styles, scripts, tools) | 20 MB, 23 since #1303 | 16.1 MB; 20.5 at #1303 |
    | one file | 8 MB | `MetalRoughSpheres.glb` excepted (11 MB of Khronos geometry) |
    | one texture, loose or in a `.glb` | 2048 texels a side, 3 MB | |
 
@@ -179,3 +179,24 @@ The whole-tree budget goes to 175 MB (the measurement and about a tenth),
 tests to 50 MB, `showcase_game/` to 18 MB. The engine area's breach is
 #1303's and is left for it. The sparse recipe no longer names
 `engine/examples`.
+
+### The engine area grows by its code (#1303, 2026-11-20)
+
+The engine area crossed 20 MB as code, not as a file to shrink. On main
+04a9588b it is 20.5 MB on this Windows checkout (files on disk, CRLF) and
+20.1 MB on CI's Linux checkout; git's blob sizes total 19.06 MiB, of which
+`.rs` files are 16.42 MiB (86%), Markdown 0.91 (the month's changelog alone
+0.31), WGSL 0.51, TOML 0.31, and every image together 0.22 (the play site's
+posters). Its largest files are `changelog/2026-11.md`, `stylize.rs`'s GPU
+tests, `Cargo.lock` and the texture ops. In the two days from #1303's
+measurement (19.98 MB) to here it grew about 0.5 MB, spread over a dozen
+crates (render +169 KB, cli +116, player +109, script +58, physics +48,
+procgen +44), the largest single addition `frame_grab.rs` at 38 KB.
+
+Source is what this area is for, and this budget can't be met by moving or
+re-encoding anything, unlike the book's in #1276. So the budget moves, by
+the decision's own rule: the measurement and about a tenth, **23 MB**. The
+whole-tree budget (175 MB, 158.2 measured) has room for it. At the rate
+measured here that is a week or two of work, so the next breach is expected
+soon; when it comes, the question to argue is whether source code needs
+a byte budget at all, rather than another tenth.

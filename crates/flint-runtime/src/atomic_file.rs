@@ -60,6 +60,8 @@ pub fn write_with(
 fn sync_dir(path: &Path) {
     #[cfg(unix)]
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        // Opens the directory to fsync its entry after a write: not an asset read
+        #[allow(clippy::disallowed_methods)]
         if let Ok(dir) = std::fs::File::open(dir) {
             let _ = dir.sync_all();
         }
