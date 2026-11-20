@@ -1,7 +1,32 @@
 [component.particle_emitter]
-description = "Inline GPU-instanced particle emitter. For multi-emitter effects with curves, forces, bursts and sub-emitters, author a *.particles.toml asset and use particle_effect instead (ADR 0068)"
+description = "Inline GPU-instanced particle emitter: one emitter, read by the same reader as an emitter of a *.particles.toml asset (use particle_effect for several). Modern keys (lifetime, speed, size, color, shape = { kind = .. }) win over the legacy flat ones (lifetime_min, size_start, shape_radius); the reader checks each `any` key's form (ADR 0068)"
+
+# Every key here is one `flint_particles::EmitterDef` reads, and every key it
+# reads is here (`known_keys_are_the_structs_fields`). A `default` is written
+# into the component by the loader when the scene leaves the key out, so a
+# key gets one only when the reader falls back to that same value without
+# it: a legacy key's default would otherwise outvote its modern key
+# (`rotation_min` over `rotation`, #1051; `tests/inline_component.rs`).
 
 [component.particle_emitter.fields]
+name = { type = "string", description = "The emitter's name, which on_death / on_birth of an effect's other emitters target" }
+lifetime = { type = "any", description = "Particle lifetime in seconds: a number or [min, max]. Wins over lifetime_min / lifetime_max" }
+speed = { type = "any", description = "Initial speed: a number or [min, max]. Wins over speed_min / speed_max" }
+size = { type = "any", description = "Size over life, per axis: a curve of [w, h] (a constant, { start, end } or { keys = [{ t, v }], interp }). Wins over size_start / size_end" }
+size_scale = { type = "any", description = "Random per-particle size multiplier: a number or [min, max] (1 when unset)" }
+color = { type = "any", description = "RGBA over life: a curve of [r, g, b, a]. Wins over color_start / color_end" }
+alpha = { type = "any", description = "Alpha multiplier over life: a curve of numbers" }
+brightness = { type = "any", description = "Random per-particle RGB multiplier: a number or [min, max] (1 when unset)" }
+rotation = { type = "any", description = "Initial rotation in degrees: a number or [min, max] ([0, 360] when unset). rotation_min / rotation_max win when written" }
+angular_velocity = { type = "any", description = "Spin in degrees per second: a number or [min, max] (0 when unset). angular_velocity_min / _max win when written" }
+speed_curve = { type = "any", description = "Speed multiplier over life: a curve of numbers" }
+bursts = { type = "array", element = "table", description = "Burst timeline: [{ time, count = n or [min, max], cycles, interval, probability }]" }
+forces = { type = "array", element = "table", description = "Forces: [{ kind = \"wind\" | \"drag\" | \"noise\" | \"vortex\" | \"attractor\", .. }]" }
+on_death = { type = "table", description = "Spawn into a sibling emitter when a particle dies: { emitter, count, inherit_velocity }" }
+on_birth = { type = "table", description = "Spawn into a sibling emitter when a particle is born: { emitter, count, inherit_velocity }" }
+trail = { type = "table", description = "Reserved for ribbon trails ({ length, width }); read and ignored with a warning" }
+lighting = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "How much scene lighting tints the particles (0 = unlit)" }
+fog = { type = "bool", default = false, description = "Particles take the scene's fog" }
 emission_rate = { type = "f32", default = 10.0, min = 0.0, max = 10000.0, description = "Particles emitted per second (0 = burst-only)" }
 burst_count = { type = "i32", default = 0, min = 0, max = 10000, description = "Particles per burst" }
 max_particles = { type = "i32", default = 256, min = 1, max = 10000, description = "Maximum pool capacity" }
@@ -23,8 +48,8 @@ frames_x = { type = "i32", default = 1, min = 1, max = 64, description = "Sprite
 frames_y = { type = "i32", default = 1, min = 1, max = 64, description = "Sprite sheet rows" }
 animate_frames = { type = "bool", default = false, description = "Auto-advance frames over lifetime" }
 blend_mode = { type = "enum", values = ["alpha", "additive", "premultiplied", "multiply"], default = "alpha", description = "Blend mode: alpha, additive, premultiplied or multiply" }
-shape = { type = "enum", values = ["point", "sphere", "cone", "box"], default = "point", description = "Emission shape: point, sphere, cone, box" }
-shape_radius = { type = "f32", default = 0.5, min = 0.0, max = 100.0, description = "Radius for the sphere shape, or the spawn disc of a cone (cones spawn from a point unless set)" }
+shape = { type = "any", default = "point", description = "Emission shape: \"point\", \"sphere\", \"cone\" or \"box\" (sized by the shape_* keys), or a table { kind = \"cone\", radius, angle } / { kind = \"box\", extents }" }
+shape_radius = { type = "f32", min = 0.0, max = 100.0, description = "Radius for the sphere shape (0.5 when unset), or the spawn disc of a cone (cones spawn from a point unless set)" }
 shape_angle = { type = "f32", default = 30.0, min = 0.0, max = 180.0, description = "Half-angle for cone shape in degrees" }
 shape_offset = { type = "vec3", default = [0, 0, 0], description = "Spawn-region translation relative to the emitter position" }
 shape_axis_u = { type = "vec3", default = [0, 0, 0], description = "Box orientation: extents.x runs along this world direction (zero = axis-aligned)" }
@@ -39,10 +64,10 @@ local_axes = { type = "bool", default = false, description = "Rotate direction, 
 sort = { type = "enum", values = ["none", "back_to_front", "youngest_first", "oldest_first"], default = "none", description = "Draw order within the emitter: none, back_to_front, youngest_first, oldest_first" }
 frame_rate = { type = "f32", default = 0.0, min = 0.0, max = 240.0, description = "Sprite-sheet frames per second (0 = follow animate_frames)" }
 random_start_frame = { type = "bool", default = false, description = "Each particle starts on a random sprite-sheet frame" }
-rotation_min = { type = "f32", default = 0.0, min = -3600.0, max = 3600.0, description = "Minimum initial rotation in degrees" }
-rotation_max = { type = "f32", default = 360.0, min = -3600.0, max = 3600.0, description = "Maximum initial rotation in degrees" }
-angular_velocity_min = { type = "f32", default = 0.0, min = -3600.0, max = 3600.0, description = "Minimum spin in degrees per second" }
-angular_velocity_max = { type = "f32", default = 0.0, min = -3600.0, max = 3600.0, description = "Maximum spin in degrees per second" }
+rotation_min = { type = "f32", min = -3600.0, max = 3600.0, description = "Minimum initial rotation in degrees (legacy: written, it and rotation_max replace rotation; 0 when only rotation_max is)" }
+rotation_max = { type = "f32", min = -3600.0, max = 3600.0, description = "Maximum initial rotation in degrees (legacy; 360 when only rotation_min is written)" }
+angular_velocity_min = { type = "f32", min = -3600.0, max = 3600.0, description = "Minimum spin in degrees per second (legacy: written, it and angular_velocity_max replace angular_velocity)" }
+angular_velocity_max = { type = "f32", min = -3600.0, max = 3600.0, description = "Maximum spin in degrees per second (legacy; 0 when only angular_velocity_min is written)" }
 inherit_velocity = { type = "f32", default = 0.0, min = -10.0, max = 10.0, description = "Fraction of the emitter's own velocity added to new particles" }
 emission_per_meter = { type = "f32", default = 0.0, min = 0.0, max = 1000.0, description = "Particles spawned per metre the emitter moves (trails), in addition to emission_rate" }
 start_delay = { type = "f32", default = 0.0, min = 0.0, max = 3600.0, description = "Seconds to wait after play before emitting" }

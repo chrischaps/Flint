@@ -357,6 +357,8 @@ fn type_schema(field_type: &FieldType) -> Map<String, Value> {
             "type": "array",
             "items": Value::Object(type_schema(element)),
         }),
+        // Any value: the component's reader judges its form (#1051)
+        FieldType::Any => json!({}),
     };
     match value {
         Value::Object(map) => map,

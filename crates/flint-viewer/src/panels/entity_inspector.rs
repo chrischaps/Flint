@@ -288,8 +288,10 @@ fn edit_field(
         | FieldType::Table
         | FieldType::Fields { .. }
         | FieldType::Vec2
-        | FieldType::Vec4 => {
-            // Read-only for arrays, tables and the 2- and 4-vectors
+        | FieldType::Vec4
+        | FieldType::Any => {
+            // Read-only for arrays, tables, the 2- and 4-vectors and a value
+            // of any form (its reader knows which forms it takes)
             ui.horizontal(|ui| {
                 ui.label(format!("{}:", name));
                 ui.monospace(format_toml_leaf(value));

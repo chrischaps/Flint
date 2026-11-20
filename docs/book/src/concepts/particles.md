@@ -198,6 +198,14 @@ The system keeps a global alive cap (default 100 000; the F3 Particles panel exp
 
 | Field | Type | Default | Description |
 |---|---|---|---|
+| `name` | string | unset | The emitter's name |
+| `lifetime`, `speed` | any | unset | A number or `[min, max]` ([Ranges and Curves](#ranges-and-curves)); each wins over its legacy `_min` / `_max` pair |
+| `size`, `color`, `alpha`, `speed_curve` | any | unset | Curves over life; `size` and `color` win over `size_start` / `size_end` and `color_start` / `color_end` |
+| `size_scale`, `brightness` | any | 1 | Per-particle multipliers: a number or `[min, max]` |
+| `rotation`, `angular_velocity` | any | [0, 360] / 0 | Initial rotation and spin, degrees (per second): a number or `[min, max]` |
+| `bursts`, `forces` | array of tables | unset | [Bursts](#bursts) and [forces](#motion-and-forces), as in an effect asset |
+| `on_death`, `on_birth` | table | unset | [Sub-emitters](#sub-emitters); `trail` is reserved |
+| `lighting` / `fog` | f32 / bool | 0 / false | Scene lighting and fog on the particles |
 | `emission_rate` | f32 | 10.0 | Particles per second (0 = burst-only) |
 | `emission_per_meter` | f32 | 0.0 | Particles per metre of emitter travel |
 | `burst_count` | i32 | 0 | Particles fired on play/loop start |
@@ -211,8 +219,8 @@ The system keeps a global alive cap (default 100 000; the F3 Particles panel exp
 | `inherit_velocity` | f32 | 0.0 | Fraction of emitter velocity added at birth |
 | `size_start` / `size_end` | f32 | 0.1 / 0.0 | Size at birth / death |
 | `color_start` / `color_end` | vec4 | [1,1,1,1] / [1,1,1,0] | RGBA at birth / death |
-| `rotation_min` / `rotation_max` | f32 | 0 / 360 | Initial rotation range, degrees |
-| `angular_velocity_min` / `angular_velocity_max` | f32 | 0 / 0 | Spin range, degrees per second |
+| `rotation_min` / `rotation_max` | f32 | unset | Initial rotation range, degrees; written, they replace `rotation` (an unwritten one of the pair is 0 / 360) |
+| `angular_velocity_min` / `angular_velocity_max` | f32 | unset | Spin range, degrees per second; written, they replace `angular_velocity` (an unwritten one is 0) |
 | `texture` | string | "" | Sprite texture (empty = soft disc) |
 | `stretch` | f32 | 0.0 | Velocity-aligned billboard stretch, seconds |
 | `frames_x` / `frames_y` | i32 | 1 / 1 | Sprite sheet columns / rows |
@@ -221,8 +229,8 @@ The system keeps a global alive cap (default 100 000; the F3 Particles panel exp
 | `random_start_frame` | bool | false | Random starting frame per particle |
 | `blend_mode` | string | "alpha" | `alpha`, `additive`, `premultiplied`, `multiply` |
 | `sort` | string | "none" | `none`, `back_to_front`, `youngest_first`, `oldest_first` |
-| `shape` | string | "point" | `point`, `sphere`, `cone`, `box` |
-| `shape_radius` | f32 | 0.5 | Sphere radius; cone spawn-disc radius |
+| `shape` | any | "point" | `point`, `sphere`, `cone`, `box`, or a [shape table](#emission-shapes) `{ kind = "cone", .. }` |
+| `shape_radius` | f32 | unset | Sphere radius (0.5 unset); cone spawn-disc radius (a point unset) |
 | `shape_angle` | f32 | 30.0 | Cone half-angle, degrees |
 | `shape_extents` | vec3 | [0.5,0.5,0.5] | Box half-extents |
 | `shape_offset` | vec3 | [0,0,0] | Spawn-region translation relative to the emitter |

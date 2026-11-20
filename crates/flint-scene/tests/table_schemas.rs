@@ -31,6 +31,7 @@ fn sample(field_type: &FieldType) -> toml::Value {
         FieldType::Fields { fields } => Value::Table(sample_table(fields)),
         FieldType::Enum { values } => values[0].clone().into(),
         FieldType::Array { element } => Value::Array(vec![sample(element)]),
+        FieldType::Any => Value::Float(0.5),
     }
 }
 

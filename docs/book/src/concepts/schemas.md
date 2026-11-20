@@ -33,6 +33,7 @@ open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 | `enum` | one of `values` | `"hinged"` |
 | `array` | a list of `element`, of any length (`string` if none is given) | `["a", "b"]` |
 | `table` | a table of any shape; with `fields`, a table of those fields | `{ xz = 0.25 }` |
+| `any` | any value: the key is known and documented, and its component's reader judges the form | `[0.4, 0.9]`, `{ start = 1.0, end = 0.0 }` |
 
 **One spelling per type.** These are the names to write. Four older spellings still load, so no schema file breaks, and each gets an `old-type-name` warning from `flint validate` that names the file and the field: `float` (write `f32`), `boolean` (`bool`), `int` and `integer` (`i32`), `entity_ref` (`entity`). The engine's own schema files use the one spelling throughout, and a test holds them to it. A name that is no type at all (`"integr"`) still loads, checked as a `string`, with an `unknown-type` warning.
 
@@ -218,7 +219,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `bad-ui` | error | a UI document (`.ui.toml`) or the style file it names has an unknown type, anchor, key, parent, class or style property, or a value of the wrong shape, named with its element or class; `load_ui` refuses the same document ([Scripting](scripting.md#file-format-uitoml)) |
 | `spec-param` | error or warning | a parameter of that spec, named by its path (`ops[2].columns`) as the field: an error for a value its generator can't use (wrong type, out of range, not one of the choices or a colour, a required key missing), a warning for a key it ignores (unknown, for another mode, deprecated); the file is the spec's |
 | `bad-spline` | error | a `.spline.toml` a scene's `spline.file` names does not parse, placed by line and column; at load, also a `spline_mesh.profile` that is no polygon |
-| `bad-emitter` | error | an inline `particle_emitter` has a key the emitter doesn't read or a value it can't use (a curve or range of the wrong form, a zero lifetime, an unknown shape), named by entity and key; it replaces the schema's `unknown-field`, `bad-type` and `bad-enum-value` for that component, since the emitter reads more keys and forms than the schema lists |
+| `bad-emitter` | error | an inline `particle_emitter` has a key the emitter doesn't read or a value it can't use (a curve or range of the wrong form, a zero lifetime, an unknown shape), named by entity and key; it replaces the schema's `unknown-field`, `bad-type` and `bad-enum-value` for that component, so one mistake is said once, in the emitter's words (the schema declares every key the emitter reads, its many-form keys as `any`) |
 | `bad-input-config` | error | the input config the scene or the manifest names does not parse |
 | `bad-user-style` | error | a user style does not load or its shader does not compile (a warning for what the style's own check only warns about) |
 | `bad-style-setting` | warning | `[post_process.styles]` names a style, a key or a value there is not |

@@ -439,6 +439,8 @@ fn check_value(
             }
         }
         (FieldType::Table, toml::Value::Table(_)) => {}
+        // The component's reader judges an `any` value's form
+        (FieldType::Any, _) => {}
         (FieldType::Array { element }, toml::Value::Array(arr)) => {
             for (i, item) in arr.iter().enumerate() {
                 check_value(

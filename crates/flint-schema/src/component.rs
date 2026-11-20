@@ -17,6 +17,7 @@
 //! | `enum` | one of `values` |
 //! | `array` | a list of `element` |
 //! | `table` | a table; with `fields`, a table of those fields |
+//! | `any` | any value: the component's reader judges its form |
 //!
 //! [`OLD_TYPE_NAMES`] are the spellings that still load and that
 //! [`lint`](crate::lint) reports.
@@ -56,6 +57,10 @@ pub const TYPE_NAMES: &[(&str, &str)] = &[
     (
         "table",
         "a table; with `fields`, a table of those fields, checked like a component's",
+    ),
+    (
+        "any",
+        "any value, its form left to the component's reader (a number or [min, max], a curve)",
     ),
 ];
 
@@ -133,6 +138,11 @@ pub enum FieldType {
     Array {
         element: Box<FieldType>,
     },
+    /// Any value: a key its component's reader takes in forms no one type
+    /// above names (a number or `[min, max]`, a curve, a name or a table).
+    /// Declared so the key is known and documented; the reader checks the
+    /// form (`particle_emitter`'s, #1051).
+    Any,
 }
 
 impl FieldType {
@@ -155,6 +165,7 @@ impl FieldType {
             FieldType::Table | FieldType::Fields { .. } => "table",
             FieldType::Enum { .. } => "enum",
             FieldType::Array { .. } => "array",
+            FieldType::Any => "any",
         }
     }
 
@@ -453,6 +464,7 @@ fn parse_field_type(type_str: &str, detail: Option<&DetailedFieldSchema>) -> Fie
             },
             None => FieldType::Table,
         },
+        Some("any") => FieldType::Any,
         Some("enum") => FieldType::Enum {
             values: detail.and_then(|d| d.values.clone()).unwrap_or_default(),
         },
