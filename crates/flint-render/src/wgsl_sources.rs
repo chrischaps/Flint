@@ -10,9 +10,10 @@
 //! |---|---|---|
 //! | `lights.wgsl` | `LightUniforms` and its lights, `ShadowUniforms` | all six |
 //! | `light_bindings.wgsl` | bind group 2, bindings 0-3 | all six |
-//! | `brdf.wgsl` | GGX, Smith, Schlick, `attenuation`, the spot cone, `evaluate_light` | meshes, terrain |
-//! | `shadows.wgsl` | the sun's cascades (`shadow_factor`), the casting spot's map | meshes, terrain, ocean |
+//! | `brdf.wgsl` | GGX, Smith, Schlick, `attenuation`, the spot cone, `evaluate_light` | meshes, terrain, ocean, grass |
+//! | `shadows.wgsl` | the sun's cascades (`shadow_factor`), the casting spot's map | meshes, terrain, ocean, grass |
 //! | `direct_light.wgsl` | the loops over every light | meshes, terrain |
+//! | `local_lights.wgsl` | one point or spot light at a point, for a look of its own | ocean, grass |
 //! | `tonemap.wgsl` | `aces_filmic` | meshes, terrain, ocean, the composite |
 //! | `pbr_surface.wgsl` | the PBR material and every fragment stage but the entry | meshes |
 //!
@@ -66,21 +67,28 @@ pub(crate) const TERRAIN: &str = wgsl!(
 );
 
 /// The ocean and water bodies: their own stylized shading, the scene's
-/// lights and the sun's cascades.
+/// lights (the point and spot lights through `local_lights.wgsl`, #1048) and
+/// the sun's cascades.
 pub(crate) const OCEAN: &str = wgsl!(
     "lights.wgsl",
     "light_bindings.wgsl",
+    "brdf.wgsl",
     "shadows.wgsl",
+    "local_lights.wgsl",
     "tonemap.wgsl",
     "ocean_shader.wgsl",
 );
 
 /// Grass blades. The comb (#252) is shallow wooze's noise, so grass and a
-/// bench standing in it are moved by one field.
+/// bench standing in it are moved by one field. Lanterns reach the blades
+/// through `local_lights.wgsl` (#1048).
 pub(crate) const GRASS: &str = wgsl!(
     "wooze_noise.wgsl",
     "lights.wgsl",
     "light_bindings.wgsl",
+    "brdf.wgsl",
+    "shadows.wgsl",
+    "local_lights.wgsl",
     "grass_render.wgsl",
 );
 
@@ -161,6 +169,9 @@ mod tests {
             ("fn shadow_factor(", "shadows.wgsl"),
             ("fn spot_shadow_factor(", "shadows.wgsl"),
             ("fn direct_light(", "direct_light.wgsl"),
+            ("fn point_light_at(", "local_lights.wgsl"),
+            ("fn spot_light_at(", "local_lights.wgsl"),
+            ("fn attenuation(", "brdf.wgsl"),
             ("fn aces_filmic(", "tonemap.wgsl"),
         ] {
             let found: Vec<&str> = files
