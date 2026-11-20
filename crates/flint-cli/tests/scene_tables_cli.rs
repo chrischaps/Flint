@@ -112,6 +112,26 @@ fn project(name: &str) -> PathBuf {
     dir
 }
 
+/// Every `[table.<name>]` the engine's `schemas/scene/*.toml` declare.
+fn engine_tables() -> Vec<String> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(repo().join("schemas/scene")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "toml") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        let doc: toml::Table = text
+            .parse()
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        if let Some(tables) = doc.get("table").and_then(|t| t.as_table()) {
+            names.extend(tables.keys().cloned());
+        }
+    }
+    assert!(!names.is_empty(), "no engine scene tables found");
+    names
+}
+
 fn flint(dir: &Path, args: &[&str]) -> Output {
     Command::new(FLINT)
         .current_dir(dir)
@@ -208,26 +228,41 @@ fn a_wrong_value_in_a_table_is_an_error() {
 #[test]
 fn flint_schema_lists_shows_and_exports_tables() {
     let dir = project("schema");
+    // The engine's tables as its files declare them, and the game's one:
+    // a table the engine adds changes this list, not the test (#928).
+    let mut expected = engine_tables();
+    assert!(
+        !expected.iter().any(|t| t == "weather"),
+        "the engine declares a `weather` table, so the game's would replace it: {expected:?}"
+    );
+    expected.push("weather".to_string());
+    expected.sort();
+
     let list = stdout(&flint(&dir, &["schema", "--list"]));
-    assert!(list.contains("\nScene tables (7):\n"), "{list}");
-    for name in [
-        "camera",
-        "environment",
-        "living",
-        "panels",
-        "post_process",
-        "weather",
-        "wooze",
-    ] {
-        assert!(
-            list.lines()
-                .any(|line| line.split_whitespace().next() == Some(name)),
-            "`{name}` is not in the list:\n{list}"
-        );
-    }
+    let heading = format!("\nScene tables ({}):\n", expected.len());
+    assert!(
+        list.contains(&heading),
+        "no `{}` in:\n{list}",
+        heading.trim()
+    );
+    let listed: Vec<&str> = list
+        .split(heading.as_str())
+        .nth(1)
+        .unwrap()
+        .lines()
+        .take_while(|line| line.starts_with(' '))
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    assert_eq!(listed, expected, "{list}");
+
     let names = json(&flint(&dir, &["schema", "--list", "--json"]));
-    assert_eq!(names["tables"].as_array().unwrap().len(), 7);
-    assert_eq!(names["tables"][5]["name"], "weather");
+    let tables: Vec<&str> = names["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(tables, expected, "{names}");
 
     let text = stdout(&flint(&dir, &["schema", "weather"]));
     assert!(

@@ -79,7 +79,7 @@ A component schema with a name and **no fields** is open: the component is known
 
 ## Scene-level tables
 
-A scene file has tables that belong to no entity: `[camera]`, `[environment]`, `[post_process]`, `[living]`, `[wooze]`. Each is declared the way a component is, as a `[table.<name>]` in a file under the schema directory's `scene/`, and takes the same fields, types and constraints:
+A scene file has tables that belong to no entity: `[camera]`, `[environment]`, `[post_process]`, `[living]`, `[wooze]`, `[panels]`. Each is declared the way a component is, as a `[table.<name>]` in a file under the schema directory's `scene/`, and takes the same fields, types and constraints:
 
 ```toml
 # schemas/scene/camera.toml

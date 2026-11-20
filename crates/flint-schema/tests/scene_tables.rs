@@ -88,19 +88,34 @@ fn schemas_components_holds_only_components() {
         wrong.push(format!("`{both}` is both a component and a scene table"));
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    assert!(tables.contains("wooze") && tables.contains("post_process"));
     assert_eq!(
-        tables.into_iter().collect::<Vec<_>>(),
-        [
-            "camera",
-            "environment",
-            "living",
-            "panels",
-            "post_process",
-            "wooze"
-        ],
-        "the engine's scene tables; a new one needs a reader, and a line in the book"
+        tables,
+        book_tables(),
+        "the engine's scene tables against the ones the book's Scene-level tables \
+         section names (docs/book/src/concepts/schemas.md): a new table needs its line there"
     );
     assert!(components.len() > 40 && !components.contains("wooze"));
+}
+
+/// The tables the book names in its one sentence listing them: every
+/// `` `[name]` `` on the line that opens "A scene file has tables". Was a
+/// count in this file, which #880's `panels` broke while the book's list
+/// went on naming five (#928).
+fn book_tables() -> BTreeSet<String> {
+    let page = repo().join("docs/book/src/concepts/schemas.md");
+    let text = std::fs::read_to_string(&page).unwrap();
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("A scene file has tables that belong to no entity:"))
+        .unwrap_or_else(|| panic!("{}: no sentence listing the scene tables", page.display()));
+    // The sentence alone: the next says each is a `[table.<name>]`
+    let sentence = line.split_once(". ").map_or(line, |(first, _)| first);
+    sentence
+        .split("`[")
+        .skip(1)
+        .filter_map(|rest| rest.split_once("]`").map(|(name, _)| name.to_string()))
+        .collect()
 }
 
 /// The registry loads them from `scene/`, with no lint, and each declares
@@ -119,7 +134,15 @@ fn the_registry_loads_the_engine_tables_clean() {
             );
         }
     }
-    assert_eq!(registry.tables().len(), 6);
+    // Every table a file under `scene/` declares, and nothing else (#928:
+    // was a count, six, which the next table would have broken)
+    let loaded: BTreeSet<String> = registry.tables().iter().map(|t| t.name.clone()).collect();
+    let declared: BTreeSet<String> = toml_files("schemas/scene")
+        .iter()
+        .flat_map(|(_, doc)| doc.get("table").and_then(|t| t.as_table()))
+        .flat_map(|t| t.keys().cloned())
+        .collect();
+    assert_eq!(loaded, declared);
     let about_tables: Vec<String> = registry
         .lints()
         .iter()
