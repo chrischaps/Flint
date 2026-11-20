@@ -141,7 +141,7 @@ flint validate levels/tavern.scene.toml --strict
 
 `flint validate` does not look for the files a scene names. [`flint check`](../cli-reference/overview.md#the-check-command) does, for one scene or for the whole project, and runs the constraints as well.
 
-`--fix` writes only what its fixes changed: a field set in place (its comment kept), a field taken out, a new child entity appended at the end of the file. The rest of the file is left as written, its `[scene]` name, `[camera]`, `[environment]`, `[post_process]`, `[living]`, `[wooze]`, prefabs, comments and key order included. A fix to an entity a prefab instance expands into has nowhere in the scene file to go: it's printed as `not written` and the prefab is left alone. `--output-diff` prints the line diff of the file itself.
+`--fix` writes only what its fixes changed: a field set in place (its comment kept), a field taken out, a new child entity appended at the end of the file. The rest of the file is left as written, its `[scene]` name, `[camera]`, `[environment]`, `[post_process]`, `[living]`, `[wooze]`, prefabs, comments and key order included. A fix to an entity a prefab instance expands into goes into that instance's overrides, `[prefabs.<instance>.overrides.<entity>.<component>]`, as the viewer's save writes it, and the template is left alone. What overrides can't say is printed as `not written`: a changed archetype or parent, a whole component, a field the template sets taken away, and a change to an entity no instance makes. `--output-diff` prints the line diff of the file itself.
 
 ## Real Example
 

@@ -1,0 +1,20 @@
+[package]
+name = "flint-living"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Living props at run time: rings of poses on a frame budget, their clocks, knobs and blending"
+
+# The scheduler a game links only when it has living props (#1024). The
+# generators' side (`LivingGenerator`, the rig and its poses, the `[living]`
+# spec and scene tables) stays in flint-procgen, whose resolver lends these
+# props its specs, its generators and what its queue left of the frame budget.
+[dependencies]
+web-time = { workspace = true }
+tracing = { workspace = true }
+flint-core = { workspace = true }
+flint-wooze = { workspace = true }
+flint-procgen = { workspace = true }
+
+[lints]
+workspace = true

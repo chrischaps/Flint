@@ -12,7 +12,7 @@ use crate::picking::{build_pick_targets, pick_entity};
 use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
 use crate::undo::{EditAction, UndoCommand, UndoStack};
 use crate::watch::StyleSources;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
@@ -22,7 +22,9 @@ use flint_render::{
     post_process_config_from_def, Camera, FrameInputs, PostProcessConfig, RendererConfig,
     SceneBinding, SceneRenderer,
 };
-use flint_scene::{load_scene, load_scene_after, CameraDef, PostProcessDef, SceneDocument};
+use flint_scene::{
+    load_failed, load_scene, load_scene_after, CameraDef, PostProcessDef, SceneDocument,
+};
 use flint_schema::{SchemaDirs, SchemaRegistry};
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, Debouncer};
@@ -210,9 +212,12 @@ pub fn viewer(
     // A word may name one of the scene's styles, registered just now
     flint_render::stylize::check_style_specs(&style.specs, binding.styles())
         .map_err(anyhow::Error::msg)?;
-    let (world, mut scene_file) = load_scene(scene_path, &registry)?;
+    // A failure names the file (#1044)
+    let (world, mut scene_file) =
+        load_scene(scene_path, &registry).with_context(|| load_failed(scene_path))?;
     // Living props' tables: checked, and the preset [wooze] names filled in (#686)
-    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))
+        .with_context(|| load_failed(scene_path))?;
 
     eprintln!("Loaded scene: {}", scene_file.scene.name);
     eprintln!("Entities: {}", world.entity_count());
@@ -312,8 +317,10 @@ pub fn track_editor(
     let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
     let binding = scene_binding(scene_path);
-    let (world, mut scene_file) = load_scene(scene_path, &registry)?;
-    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
+    let (world, mut scene_file) =
+        load_scene(scene_path, &registry).with_context(|| load_failed(scene_path))?;
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))
+        .with_context(|| load_failed(scene_path))?;
 
     eprintln!("Loaded scene: {}", scene_file.scene.name);
     eprintln!("Entities: {}", world.entity_count());
@@ -593,6 +600,48 @@ fn scene_binding(scene_path: &str) -> SceneBinding {
 /// debounce; the window only stops a commit it missed from keeping the F4
 /// post over some later edit of the file.
 const OWN_COMMIT_RELOAD: Duration = Duration::from_secs(3);
+
+/// F4's Commit to scene just wrote the file through a document of its own
+/// (#1046): append each `[post_process]` key it changed to the change list,
+/// in a save's line shape, by comparing the file with the document the
+/// viewer holds, and hold that document anew, so a Ctrl+S before the
+/// watcher's reload doesn't write the old `[post_process]` back over it.
+fn log_commit(state: &mut ViewerState) {
+    let now_doc = match SceneDocument::from_file(&state.scene_path) {
+        Ok(doc) => doc,
+        Err(e) => {
+            tracing::warn!("Commit not logged: {e}");
+            return;
+        }
+    };
+    let before = state
+        .scene_doc
+        .as_ref()
+        .map(|d| d.to_string())
+        .unwrap_or_default();
+    let changes = crate::edits::post_process_changes(&before, &now_doc.to_string());
+    if !changes.is_empty() {
+        append_change_list(&state.scene_path, |scene, now| {
+            crate::edits::commit_log_lines(&changes, scene, now)
+        });
+    }
+    state.scene_doc = Some(now_doc);
+}
+
+/// Append lines to the project's change list, `.flint/viewer-edits.jsonl`
+/// (#679): `lines` is given the scene as the log names it and the time.
+fn append_change_list(scene_path: &str, lines: impl FnOnce(&str, u64) -> String) {
+    let path = crate::edits::edit_log_path(Path::new(scene_path));
+    #[allow(clippy::disallowed_methods)] // a wall-clock stamp for the log, native only
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let lines = lines(&crate::edits::scene_in_log(&path, scene_path), now);
+    if let Err(e) = crate::edits::append_log(&path, &lines) {
+        tracing::warn!("Couldn't append to {}: {e}", path.display());
+    }
+}
 
 /// `config` with the `--style` words (#328) and `--motion-hold` (#871)
 /// written over it.
@@ -1392,6 +1441,7 @@ impl ViewerApp {
             if flags.styles_committed {
                 // The watcher is about to reload the file just written
                 self.own_commit_until = Some(Instant::now() + OWN_COMMIT_RELOAD);
+                log_commit(&mut self.state.lock().unwrap());
             }
             if flags.pp_changed {
                 renderer.set_post_process_config(rp.pp.clone());
@@ -2175,17 +2225,9 @@ impl ViewerApp {
     /// Append what a save wrote to the project's change list, for an agent
     /// to read what the human changed (#679).
     fn log_edits(&self, plan: &crate::edits::SavePlan, scene_path: &str) {
-        let path = crate::edits::edit_log_path(Path::new(scene_path));
-        #[allow(clippy::disallowed_methods)] // a wall-clock stamp for the log, native only
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let lines =
-            crate::edits::log_lines(plan, &crate::edits::scene_in_log(&path, scene_path), now);
-        if let Err(e) = crate::edits::append_log(&path, &lines) {
-            tracing::warn!("Couldn't append to {}: {e}", path.display());
-        }
+        append_change_list(scene_path, |scene, now| {
+            crate::edits::log_lines(plan, scene, now)
+        });
     }
 
     /// `dirty` is whether the world differs from the file: set it, and the
@@ -2344,6 +2386,15 @@ impl ViewerApp {
                             .selected_entity()
                             .and_then(|id| state.world.get_name(id))
                             .map(str::to_owned);
+                        // The undo history follows the entities by name
+                        // (#1046): an agent's edit to the file leaves the
+                        // human's steps elsewhere to undo
+                        let dropped = self.undo_stack.carry_over(&state.world, &new_world);
+                        if dropped > 0 {
+                            println!(
+                                "Undo: {dropped} step(s) dropped, the reloaded file changed what they edited"
+                            );
+                        }
                         state.world = new_world;
                         self.scene_tree
                             .select(selected_name.and_then(|name| state.world.get_id(&name)));
@@ -2446,8 +2497,9 @@ impl ViewerApp {
                     self.update_constraints();
                     self.update_diagnostics();
 
-                    // External reload clears undo and dirty state
-                    self.undo_stack.clear();
+                    // The world is the file's now: nothing is edited. The
+                    // undo stack was carried over above, so an undo after
+                    // this is an edit like any other, and dirty
                     self.edits.clear();
                     self.save_problems.clear();
                     self.dirty = false;
@@ -2460,7 +2512,11 @@ impl ViewerApp {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to reload scene: {:?}", e);
+                    tracing::error!(
+                        "Failed to reload scene {}: {:?}",
+                        flint_core::project::shown(std::path::Path::new(&scene_path)),
+                        e
+                    );
                     // The last world stays on screen; the panel says why
                     // the file no longer loads
                     self.update_diagnostics();

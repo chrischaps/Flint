@@ -62,6 +62,8 @@ The gizmo uses constraint-plane dragging: for single-axis movement, it automatic
 
 Every edit, from the gizmo or the inspector, is on an undo/redo stack. The title's `*` and the status bar's **Modified** say the scene differs from its file: an undo after a save marks it again (the next save writes the value it put back), and undoing back to what the file says clears it.
 
+The history outlives a reload. When the file changes on disk (an agent editing it while you work), the viewer reloads it and keeps each undo step whose field still holds what the step left there, finding its entity by name. Undo then puts back your last edit over the agent's file. A field the agent changed itself ends that field's history, so an undo never throws the agent's value away; the terminal says how many steps went.
+
 An entity a prefab instance makes isn't written in the scene file, so its edits go into the instance's overrides, `[prefabs.<instance>.overrides.<entity>.<component>]`, which the loader merges over the template. An edit that can't be written anywhere (an entity the file doesn't have and no instance makes) is named in red in the status bar and keeps the scene marked; the save doesn't say "Saved!".
 
 ### What you changed
@@ -73,6 +75,14 @@ Each save appends one JSON line per field it wrote to `.flint/viewer-edits.jsonl
 ```
 
 `old` is the value the file had (`null`: the entity didn't have the field), `new` the one written, `table` where it went, and `saved_at` the save's time in Unix seconds; one save's lines share it. `flint init` puts the file in the project's `.gitignore`.
+
+F4's **Commit to scene** is in the list too, a line for each `[post_process]` key it wrote, with `entity` `null`:
+
+```json
+{"component":"post_process","entity":null,"field":"cell","new":12,"old":8,"saved_at":1794808530,"scene":"scenes/props.scene.toml","table":"post_process.styles.ascii"}
+```
+
+A key the commit took out (back at its default) has `new` `null`.
 
 ## The Inspector Panel
 

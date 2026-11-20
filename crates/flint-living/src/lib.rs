@@ -1,11 +1,20 @@
 //! Living props at run time (#211): each prop's window of poses, kept full a
 //! few steps ahead of its clock within the procgen frame budget.
 //!
+//! This is the scheduler a game links only when it has living props (#1024):
+//! `flint-procgen` keeps the generators' side ([`LivingGenerator`], the rig,
+//! the skeleton and its poses, the `[living]` spec and scene tables), and a
+//! host keeps a [`LivingProps`] beside its [`ProcGenResolver`], which lends it
+//! specs, generators and the frame budget its queue left (`seam.rs`).
+//!
+//! [`LivingGenerator`]: flint_procgen::LivingGenerator
+//! [`ProcGenResolver`]: flint_procgen::ProcGenResolver
+//!
 //! A lineage is one spec and lineage seed: a [`LivingSkeleton`] and a
 //! [`LivingRig`], shared by every prop that grows from it. A prop is one entity
 //! on a lineage, with its own stream of shape seeds and its own [`PoseRing`].
 //!
-//! Poses don't go through [`ProcGenQueue`](crate::ProcGenQueue). That queue
+//! Poses don't go through [`ProcGenQueue`](flint_procgen::ProcGenQueue). That queue
 //! dedupes by spec name and caches by content hash, so a ring of poses of one
 //! spec would collapse into one request, and its cache would have poses evict
 //! meshes. They share its frame budget instead: this gets whatever the queue
@@ -30,22 +39,34 @@
 //! the prop is doing and what it's about to do, and the prop keeps its old clocks
 //! until the new ones have every pose they'd read. No frame goes without one.
 
+// Unit tests read specs off the disk; the lib build still holds the rules (#761).
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 mod ab;
 mod blend;
+mod defs;
 mod layers;
 mod prop;
 mod ring;
 mod schedule;
+mod seam;
+#[cfg(test)]
+mod test_grove;
 
 use std::sync::Arc;
 
 use flint_core::{ContentHash, EntityId};
 use flint_wooze::{Cycle, WoozeSample};
 
-use crate::living::{mix64, LivingClock, LivingJitter, LivingRig, LivingSkeleton};
-use crate::spec::{ProcGenSpec, Stagger, VarianceConfig};
+use flint_procgen::living::{mix64, LivingClock, LivingJitter, LivingRig, LivingSkeleton};
+use flint_procgen::{ProcGenSpec, Stagger, VarianceConfig};
 
 pub use blend::{BlendFrame, PropBlend};
+pub use defs::{
+    apply_preset, defaults_of, echoes_of, jitter_rate_of, row_rate_of, softness_of, species_of,
+    species_problems, variance_of,
+};
+pub use flint_procgen::{KnobValue, LivingKnob};
 pub use layers::{
     jitter_rate_clamped, row_rate_clamped, ClockOverride, EchoOverride, Layer, Layered,
     LivingDefaults, LivingLayer, LivingLayers, LivingScope, LivingShadows, Resolved, ResolvedProp,

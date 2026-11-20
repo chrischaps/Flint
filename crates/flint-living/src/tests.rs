@@ -6,11 +6,11 @@ use super::blend::*;
 use super::ring::*;
 use super::schedule::*;
 use super::*;
-use crate::cache::ProcGenCacheConfig;
-use crate::generator::LivingGenerator;
-use crate::living::{LivingPose, SegmentPose, BOIL_BONES};
-use crate::spec::{EchoConfig, EchoCopy};
-use crate::ProcGenResolver;
+use crate::test_grove::Grove;
+use flint_procgen::living::{LivingPose, SegmentPose, BOIL_BONES};
+use flint_procgen::LivingGenerator;
+use flint_procgen::ProcGenCacheConfig;
+use flint_procgen::{EchoConfig, EchoCopy};
 use flint_wooze::WoozeField;
 use std::path::Path;
 use web_time::Instant;
@@ -70,8 +70,8 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
     )
 }
 
-fn resolver_with(spec: &str) -> ProcGenResolver {
-    let mut resolver = ProcGenResolver::new();
+fn resolver_with(spec: &str) -> Grove {
+    let mut resolver = Grove::new();
     resolver.index_spec(ProcGenSpec::parse(spec).unwrap());
     resolver
 }
@@ -131,7 +131,7 @@ fn what_was_drawn_is_what_it_reports() {
 }
 
 /// 40 props ticked over `seconds` with a budget wide enough to never bind.
-fn run(resolver: &mut ProcGenResolver, seconds: f64, dt: f64) {
+fn run(resolver: &mut Grove, seconds: f64, dt: f64) {
     for _ in 0..(seconds / dt).round() as usize {
         resolver.process_living(dt);
     }
@@ -218,13 +218,13 @@ fn a_ring_can_reach_back_and_keeps_what_both_windows_share() {
     assert_eq!(ring.get(13).unwrap().shape_seed, 13);
 }
 
-fn with_echoes(echoes: &str) -> ProcGenResolver {
+fn with_echoes(echoes: &str) -> Grove {
     resolver_with(&sapling(&format!("echoes = {{ {echoes} }}")))
 }
 
 /// One prop with its rings full, a little way into its stream so that what's
 /// behind it matters. Its clock is on a fixed step of half a second.
-fn running(echoes: &str, seconds: f64) -> (ProcGenResolver, LivingPropId) {
+fn running(echoes: &str, seconds: f64) -> (Grove, LivingPropId) {
     let mut resolver = with_echoes(echoes);
     let id = resolver.add_living_prop(request(1, "oak")).unwrap().0;
     resolver.make_living_now();
@@ -232,13 +232,13 @@ fn running(echoes: &str, seconds: f64) -> (ProcGenResolver, LivingPropId) {
     (resolver, id)
 }
 
-fn no_pose_missed(resolver: &ProcGenResolver) {
+fn no_pose_missed(resolver: &Grove) {
     let stats = resolver.living_props().stats();
     assert_eq!(stats.frames_starved, 0, "{stats:?}");
     assert_eq!(stats.blends_starved, 0, "{stats:?}");
 }
 
-fn blend_all(resolver: &mut ProcGenResolver, frame: &mut BlendFrame, id: LivingPropId) -> usize {
+fn blend_all(resolver: &mut Grove, frame: &mut BlendFrame, id: LivingPropId) -> usize {
     let props = resolver.living_props_mut();
     props.blend_prop(id, frame);
     let mut wrote = 0;
@@ -446,8 +446,8 @@ fn sweeping_count_and_spread_across_their_range_misses_no_pose() {
         // A triangle each, out of step, so every pairing of the two gets a turn.
         let tri = |x: f64| 1.0 - (2.0 * x.fract() - 1.0).abs();
         let echoes = EchoConfig {
-            count: (tri(t * 3.0) * f64::from(crate::spec::MAX_ECHOES)).round() as u32,
-            spread: (tri(t * 7.0 + 0.3) * f64::from(crate::spec::MAX_ECHO_SPREAD)) as f32,
+            count: (tri(t * 3.0) * f64::from(flint_procgen::MAX_ECHOES)).round() as u32,
+            spread: (tri(t * 7.0 + 0.3) * f64::from(flint_procgen::MAX_ECHO_SPREAD)) as f32,
             alpha: 0.2,
         };
         resolver.living_props_mut().set_echoes(echoes);
@@ -550,7 +550,7 @@ fn a_new_stagger_grows_the_ring_first_and_starts_in_one_piece() {
     no_pose_missed(&resolver);
 }
 
-fn held_is_what_variance_says(resolver: &ProcGenResolver, id: LivingPropId, want: VarianceConfig) {
+fn held_is_what_variance_says(resolver: &Grove, id: LivingPropId, want: VarianceConfig) {
     let props = resolver.living_props();
     let prop = props.prop(id);
     let (skeleton, _) = props.rig_of(id).unwrap();
@@ -617,7 +617,7 @@ fn unheld_variance_is_each_pose_exactly_as_it_grew() {
     let prop = props.prop(id);
     let (skeleton, _) = props.rig_of(id).unwrap();
     let spec = ProcGenSpec::parse(&sapling("")).unwrap();
-    let tree = crate::generators::tree::TreeGenerator;
+    let tree = flint_procgen::TreeGenerator;
     let first = prop.first_step().unwrap();
     for index in first..first + prop.ring_len() as u64 {
         let grew = LivingGenerator::full_pose(&tree, &spec, skeleton, prop.shape_seed(index));
@@ -696,7 +696,7 @@ fn a_re_hold_reaches_what_every_prop_is_drawing_first() {
         keep_size: true,
     };
     resolver.living_props_mut().set_variance(want);
-    let is_current = |resolver: &ProcGenResolver, id: LivingPropId, index: u64| {
+    let is_current = |resolver: &Grove, id: LivingPropId, index: u64| {
         let props = resolver.living_props();
         let prop = props.prop(id);
         let (skeleton, _) = props.rig_of(id).unwrap();
@@ -705,7 +705,7 @@ fn a_re_hold_reaches_what_every_prop_is_drawing_first() {
     };
     // A pose a frame, and enough frames for what's in use and little more.
     resolver.frame_budget_for_test(1e-6);
-    let in_use = |resolver: &ProcGenResolver, id: LivingPropId| {
+    let in_use = |resolver: &Grove, id: LivingPropId| {
         let prop = resolver.living_props().prop(id);
         let first = prop.beats().floor() as u64;
         first..first + prop.clock().reach(2) + 1
@@ -1171,7 +1171,7 @@ fn a_paused_clock_makes_nothing() {
 #[test]
 fn poses_do_not_depend_on_the_frame_rate_or_the_budget() {
     let seeds_after = |dts: &[f64], budget: f64| {
-        let mut resolver = ProcGenResolver::with_config(ProcGenCacheConfig {
+        let mut resolver = Grove::with_config(ProcGenCacheConfig {
             runtime_max_generation_ms_per_frame: budget,
             ..Default::default()
         });
@@ -1201,7 +1201,7 @@ fn poses_do_not_depend_on_the_frame_rate_or_the_budget() {
 
 #[test]
 fn a_tiny_budget_still_makes_one_pose_a_frame() {
-    let mut resolver = ProcGenResolver::with_config(ProcGenCacheConfig {
+    let mut resolver = Grove::with_config(ProcGenCacheConfig {
         runtime_max_generation_ms_per_frame: 1e-6,
         ..Default::default()
     });
@@ -1210,7 +1210,7 @@ fn a_tiny_budget_still_makes_one_pose_a_frame() {
 
     // No make_living_now: the first frame builds, then it's a pose a frame.
     assert_eq!(resolver.process_living(0.0).len(), 1);
-    let filled = |r: &ProcGenResolver| r.living_props().props()[0].ready();
+    let filled = |r: &Grove| r.living_props().props()[0].ready();
     assert_eq!(filled(&resolver), 0);
     resolver.process_living(0.0);
     assert_eq!(filled(&resolver), 1);
@@ -1296,7 +1296,7 @@ fn the_pose_cache_keeps_to_its_size_and_rings_keep_their_poses() {
 #[test]
 #[ignore = "wants a release build to mean anything"]
 fn a_grove_of_forty_keeps_full_within_the_budget() {
-    let mut resolver = ProcGenResolver::new();
+    let mut resolver = Grove::new();
     resolver.index_spec(ProcGenSpec::from_file(Path::new(OAK)).unwrap());
     for n in 0..40u64 {
         let mut prop = request(n, &format!("oak_{n:02}"));
@@ -1320,7 +1320,7 @@ fn a_grove_of_forty_keeps_full_within_the_budget() {
 }
 
 /// A full ring, one sapling prop on `extra`'s settings, and a place to blend.
-fn one_prop(extra: &str, defaults: LivingDefaults) -> (ProcGenResolver, LivingPropId) {
+fn one_prop(extra: &str, defaults: LivingDefaults) -> (Grove, LivingPropId) {
     let mut resolver = resolver_with(&sapling(extra));
     resolver.set_living_defaults(defaults);
     let id = resolver.add_living_prop(request(1, "oak")).unwrap().0;
@@ -1331,7 +1331,7 @@ fn one_prop(extra: &str, defaults: LivingDefaults) -> (ProcGenResolver, LivingPr
 const NO_JITTER: &str = "jitter = { amplitude = 0.0 }";
 
 /// Everything the bones say about a tree: each segment's far end.
-fn tips(resolver: &ProcGenResolver, id: LivingPropId, bones: &[[[f32; 4]; 4]]) -> Vec<[f32; 3]> {
+fn tips(resolver: &Grove, id: LivingPropId, bones: &[[[f32; 4]; 4]]) -> Vec<[f32; 3]> {
     let (skeleton, rig) = resolver.living_props().rig_of(id).unwrap();
     skeleton
         .segments
@@ -1355,11 +1355,7 @@ fn farthest(a: &[[f32; 3]], b: &[[f32; 3]]) -> f32 {
 }
 
 /// `seconds` of play at 60 fps: each frame's tips and whether its bones changed.
-fn play(
-    resolver: &mut ProcGenResolver,
-    id: LivingPropId,
-    seconds: f64,
-) -> Vec<(Vec<[f32; 3]>, bool)> {
+fn play(resolver: &mut Grove, id: LivingPropId, seconds: f64) -> Vec<(Vec<[f32; 3]>, bool)> {
     let mut frame = BlendFrame::default();
     let first = resolver.living_props_mut().blend_prop(id, &mut frame);
     assert_eq!(first.first_bone, Some(0), "the first blend writes it all");
@@ -1378,7 +1374,7 @@ fn play(
 }
 
 /// The most the tree moves between two poses, measured with the bones.
-fn pose_gap(resolver: &ProcGenResolver, id: LivingPropId) -> f32 {
+fn pose_gap(resolver: &Grove, id: LivingPropId) -> f32 {
     let props = resolver.living_props();
     let prop = props.prop(id);
     let (skeleton, rig) = props.rig_of(id).unwrap();
@@ -1913,7 +1909,7 @@ fn a_redraw_sends_every_leaf_tint_even_one_on_step_zero() {
     });
     let mut frame = BlendFrame::default();
     resolver.process_living_in(1.0 / 60.0, Some((&still, 0.0)));
-    let sent = |resolver: &mut ProcGenResolver, frame: &mut BlendFrame| {
+    let sent = |resolver: &mut Grove, frame: &mut BlendFrame| {
         resolver.living_props_mut().blend_prop(id, frame);
         frame.tints.len()
     };
@@ -1945,7 +1941,7 @@ fn field(global: &str, zones: &[&str]) -> WoozeField {
 }
 
 /// One frame on `field`, with the bones of each prop that moved.
-fn tick_with(resolver: &mut ProcGenResolver, field: &WoozeField, time: f64, dt: f64) {
+fn tick_with(resolver: &mut Grove, field: &WoozeField, time: f64, dt: f64) {
     resolver.process_living_in(dt, Some((field, time)));
 }
 
@@ -2000,7 +1996,7 @@ fn a_zone_makes_the_props_inside_it_glide_longer_with_a_falloff_between() {
 /// The tips' largest move on any frame of `seconds` of play, where `change`
 /// runs on the frame it's given.
 fn largest_move(
-    resolver: &mut ProcGenResolver,
+    resolver: &mut Grove,
     id: LivingPropId,
     field: &mut WoozeField,
     seconds: f64,
@@ -2141,7 +2137,7 @@ fn an_echo_keeps_its_distance_and_never_pops_through_a_change() {
     let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
     let gap = pose_gap(&resolver, id);
     let mut field = field("step = 0.5\nglide = 0.5", &[]);
-    let offset = |r: &ProcGenResolver| {
+    let offset = |r: &Grove| {
         let prop = r.living_props().prop(id);
         prop.echo_beats(3) - prop.beats()
     };
@@ -2295,7 +2291,7 @@ fn renamed(spec: &str, name: &str) -> String {
 }
 
 /// Two saplings and two thorns, with the scene's species values, built.
-fn grove(defaults: LivingDefaults) -> ProcGenResolver {
+fn grove(defaults: LivingDefaults) -> Grove {
     let spec = sapling("echoes = { count = 1, spread = 0.5 }");
     let mut resolver = resolver_with(&spec);
     resolver.index_spec(ProcGenSpec::parse(&renamed(&spec, "thorn")).unwrap());
@@ -2347,7 +2343,12 @@ fn softness_layers_from_the_spec_up_and_changes_no_pose() {
     tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
     let before = resolver.living_props().stats();
     let props = resolver.living_props_mut();
-    let read = |props: &LivingProps, i: usize| props.resolved(LivingPropId(i), None).softness;
+    let read = |props: &LivingProps, i: usize| {
+        props
+            .resolved(LivingPropId(i), None)
+            .get(LivingKnob::Softness)
+            .clone()
+    };
     assert_eq!(read(props, 0).value, 0.25, "the scene's beats the spec's");
     assert_eq!(read(props, 0).layer, LivingLayer::Global);
     assert_eq!(props.global_softness(), Some(0.25));
@@ -2396,25 +2397,40 @@ fn a_species_value_beats_the_field_and_its_zones_and_no_other_species_sees_it() 
 
     let sapling = at(0);
     assert_eq!(sapling.species, "sapling");
-    assert_eq!(sapling.step.value, 1.0);
-    assert_eq!(sapling.step.layer, LivingLayer::Zone("slow".into()));
-    assert_eq!(sapling.glide.layer, LivingLayer::Global);
-    assert_eq!(sapling.echo_count.value, 1);
-    assert_eq!(sapling.echo_count.layer, LivingLayer::Spec);
-    assert_eq!(sapling.stagger.value, Stagger::PerLevel);
-    assert_eq!(sapling.variance_amount.value, 0.5);
+    assert_eq!(sapling.get(LivingKnob::Step).value, 1.0);
+    assert_eq!(
+        sapling.get(LivingKnob::Step).layer,
+        LivingLayer::Zone("slow".into())
+    );
+    assert_eq!(sapling.get(LivingKnob::Glide).layer, LivingLayer::Global);
+    assert_eq!(sapling.get(LivingKnob::EchoCount).value, 1);
+    assert_eq!(sapling.get(LivingKnob::EchoCount).layer, LivingLayer::Spec);
+    assert_eq!(sapling.get(LivingKnob::Stagger).value, Stagger::PerLevel);
+    assert_eq!(sapling.get(LivingKnob::VarianceAmount).value, 0.5);
 
     let thorn = at(2);
-    assert_eq!(thorn.step.value, 0.25, "the species beats the zone");
-    assert_eq!(thorn.step.layer, LivingLayer::Species);
-    assert_eq!(thorn.glide.value, 0.5, "and leaves the rest to the field");
+    assert_eq!(
+        thorn.get(LivingKnob::Step).value,
+        0.25,
+        "the species beats the zone"
+    );
+    assert_eq!(thorn.get(LivingKnob::Step).layer, LivingLayer::Species);
+    assert_eq!(
+        thorn.get(LivingKnob::Glide).value,
+        0.5,
+        "and leaves the rest to the field"
+    );
     assert_eq!(props.prop(LivingPropId(2)).clock().step, 0.25);
-    assert_eq!((thorn.echo_count.value, thorn.echo_spread.value), (3, 0.5));
-    assert_eq!(thorn.echo_count.layer, LivingLayer::Species);
-    assert_eq!(thorn.echo_spread.layer, LivingLayer::Spec);
-    assert_eq!(thorn.stagger.value, Stagger::None);
-    assert_eq!(thorn.variance_amount.value, 0.9);
-    assert_eq!(thorn.variance_steady.layer, LivingLayer::Spec);
+    assert_eq!(thorn.get(LivingKnob::EchoCount).value, 3);
+    assert_eq!(thorn.get(LivingKnob::EchoSpread).value, 0.5);
+    assert_eq!(thorn.get(LivingKnob::EchoCount).layer, LivingLayer::Species);
+    assert_eq!(thorn.get(LivingKnob::EchoSpread).layer, LivingLayer::Spec);
+    assert_eq!(thorn.get(LivingKnob::Stagger).value, Stagger::None);
+    assert_eq!(thorn.get(LivingKnob::VarianceAmount).value, 0.9);
+    assert_eq!(
+        thorn.get(LivingKnob::VarianceSteady).layer,
+        LivingLayer::Spec
+    );
     assert_eq!(props.prop(LivingPropId(3)).echo_count(), 3);
     assert_eq!(
         props.variances(),
@@ -2459,21 +2475,33 @@ fn a_global_knob_moved_live_leaves_explicit_species_values_standing() {
 
     let props = resolver.living_props();
     let sapling = props.resolved(LivingPropId(0), Some((&field, 0.0)));
-    assert_eq!((sapling.step.value, sapling.glide.value), (2.0, 0.9));
-    assert_eq!(sapling.echo_count.value, 6);
-    assert_eq!(sapling.echo_count.layer, LivingLayer::Global);
-    assert_eq!(sapling.stagger.value, Stagger::PerBranch);
-    assert_eq!(sapling.variance_amount.value, 0.2);
+    assert_eq!(sapling.get(LivingKnob::Step).value, 2.0);
+    assert_eq!(sapling.get(LivingKnob::Glide).value, 0.9);
+    assert_eq!(sapling.get(LivingKnob::EchoCount).value, 6);
+    assert_eq!(
+        sapling.get(LivingKnob::EchoCount).layer,
+        LivingLayer::Global
+    );
+    assert_eq!(sapling.get(LivingKnob::Stagger).value, Stagger::PerBranch);
+    assert_eq!(sapling.get(LivingKnob::VarianceAmount).value, 0.2);
 
     let thorn = props.resolved(LivingPropId(2), Some((&field, 0.0)));
-    assert_eq!(thorn.step.value, 0.25, "the species' step stood");
-    assert_eq!(thorn.glide.value, 0.9, "what it doesn't set follows");
-    assert_eq!(thorn.echo_count.value, 3);
-    assert_eq!(thorn.echo_spread.value, 1.0);
-    assert_eq!(thorn.echo_spread.layer, LivingLayer::Global);
-    assert_eq!(thorn.stagger.value, Stagger::None);
-    assert_eq!(thorn.variance_amount.value, 0.9);
-    assert_eq!(thorn.variance_steady.value, 0.1);
+    assert_eq!(
+        thorn.get(LivingKnob::Step).value,
+        0.25,
+        "the species' step stood"
+    );
+    assert_eq!(
+        thorn.get(LivingKnob::Glide).value,
+        0.9,
+        "what it doesn't set follows"
+    );
+    assert_eq!(thorn.get(LivingKnob::EchoCount).value, 3);
+    assert_eq!(thorn.get(LivingKnob::EchoSpread).value, 1.0);
+    assert_eq!(thorn.get(LivingKnob::EchoSpread).layer, LivingLayer::Global);
+    assert_eq!(thorn.get(LivingKnob::Stagger).value, Stagger::None);
+    assert_eq!(thorn.get(LivingKnob::VarianceAmount).value, 0.9);
+    assert_eq!(thorn.get(LivingKnob::VarianceSteady).value, 0.1);
 
     // Cleared, the species takes what the grove has.
     let props = resolver.living_props_mut();
@@ -2482,10 +2510,10 @@ fn a_global_knob_moved_live_leaves_explicit_species_values_standing() {
     let thorn = resolver
         .living_props()
         .resolved(LivingPropId(2), Some((&field, 0.0)));
-    assert_eq!(thorn.step.value, 2.0);
-    assert_eq!(thorn.echo_count.value, 6);
-    assert_eq!(thorn.stagger.value, Stagger::PerBranch);
-    assert_eq!(thorn.variance_amount.value, 0.2);
+    assert_eq!(thorn.get(LivingKnob::Step).value, 2.0);
+    assert_eq!(thorn.get(LivingKnob::EchoCount).value, 6);
+    assert_eq!(thorn.get(LivingKnob::Stagger).value, Stagger::PerBranch);
+    assert_eq!(thorn.get(LivingKnob::VarianceAmount).value, 0.2);
 }
 
 #[test]
@@ -2540,14 +2568,14 @@ fn with_no_species_values_every_layer_is_what_it_was() {
     for i in 0..4 {
         let at = props.resolved(LivingPropId(i), None);
         for layer in [
-            &at.amplitude.layer,
-            &at.step.layer,
-            &at.glide.layer,
-            &at.jitter.layer,
-            &at.stagger.layer,
-            &at.echo_count.layer,
-            &at.variance_amount.layer,
-            &at.keep_size.layer,
+            &at.get(LivingKnob::Amplitude).layer,
+            &at.get(LivingKnob::Step).layer,
+            &at.get(LivingKnob::Glide).layer,
+            &at.get(LivingKnob::Jitter).layer,
+            &at.get(LivingKnob::Stagger).layer,
+            &at.get(LivingKnob::EchoCount).layer,
+            &at.get(LivingKnob::VarianceAmount).layer,
+            &at.get(LivingKnob::KeepSize).layer,
         ] {
             assert_eq!(*layer, LivingLayer::Spec);
         }
@@ -2567,15 +2595,19 @@ fn an_entity_stagger_is_its_own_layer_under_the_global_one() {
     let id = resolver.add_living_prop(asked).unwrap().0;
     resolver.make_living_now();
     let props = resolver.living_props_mut();
-    assert_eq!(props.resolved(id, None).stagger.layer, LivingLayer::Entity);
-    props.set_stagger(Stagger::PerBranch);
-    assert_eq!(props.resolved(id, None).stagger.layer, LivingLayer::Global);
-    props.tune_stagger(LivingScope::Species("sapling"), Stagger::PerLevel);
-    let stagger = props.resolved(id, None).stagger;
     assert_eq!(
-        (stagger.value, stagger.layer),
-        (Stagger::PerLevel, LivingLayer::Species)
+        props.resolved(id, None).get(LivingKnob::Stagger).layer,
+        LivingLayer::Entity
     );
+    props.set_stagger(Stagger::PerBranch);
+    assert_eq!(
+        props.resolved(id, None).get(LivingKnob::Stagger).layer,
+        LivingLayer::Global
+    );
+    props.tune_stagger(LivingScope::Species("sapling"), Stagger::PerLevel);
+    let stagger = props.resolved(id, None).get(LivingKnob::Stagger).clone();
+    assert_eq!(stagger.value, Stagger::PerLevel);
+    assert_eq!(stagger.layer, LivingLayer::Species);
 }
 
 #[test]
@@ -2590,7 +2622,10 @@ fn a_clock_given_back_live_keeps_the_species_step_over_it() {
     props.set_wooze_of(id, back);
     assert_eq!(props.prop(id).clock().step, 0.25);
     assert_eq!(props.prop(id).wooze_below(), back);
-    assert_eq!(props.resolved(id, None).glide.layer, LivingLayer::Global);
+    assert_eq!(
+        props.resolved(id, None).get(LivingKnob::Glide).layer,
+        LivingLayer::Global
+    );
     props.set_wooze_of(LivingPropId(0), back);
     assert_eq!(props.prop(LivingPropId(0)).clock().step, 0.7);
 }
@@ -2599,7 +2634,7 @@ fn a_clock_given_back_live_keeps_the_species_step_over_it() {
 fn layers_put_back_are_the_grove_as_it_was() {
     let mut resolver = grove(thorny());
     let start = resolver.living_props().layers();
-    let configs = |r: &ProcGenResolver| -> Vec<(EchoConfig, Stagger, f32)> {
+    let configs = |r: &Grove| -> Vec<(EchoConfig, Stagger, f32)> {
         let props = r.living_props();
         props
             .props()
@@ -2661,7 +2696,7 @@ fn boil_now(props: &LivingProps, id: LivingPropId) -> Vec<f32> {
     let prop = props.prop(id);
     let jitter = prop.jitter().scaled(prop.wooze().jitter);
     let t = prop.jitter_now();
-    (0..crate::living::JITTER_CHANNELS)
+    (0..flint_procgen::living::JITTER_CHANNELS)
         .map(|channel| jitter.card_turn(prop.stream, channel, t))
         .collect()
 }
@@ -2671,7 +2706,7 @@ const BOILING: &str = "jitter = { amplitude = 0.5, step = 0.125, glide = 0.0 }";
 
 /// For each channel, the seconds from now to its next change, frame by frame at
 /// 240 fps, ticking `resolver` through them.
-fn next_ticks(resolver: &mut ProcGenResolver, id: LivingPropId, seconds: f64) -> Vec<f64> {
+fn next_ticks(resolver: &mut Grove, id: LivingPropId, seconds: f64) -> Vec<f64> {
     let dt = 1.0 / 240.0;
     let start = boil_now(resolver.living_props(), id);
     let mut found: Vec<Option<f64>> = vec![None; start.len()];
@@ -2743,7 +2778,7 @@ fn a_jitter_rate_halves_and_doubles_how_often_the_cards_turn() {
         }
         count
     };
-    let channels = crate::living::JITTER_CHANNELS;
+    let channels = flint_procgen::living::JITTER_CHANNELS;
     // 4 s on a 0.125 s step is 32 ticks a channel; one more or less at the ends.
     let near = |count: usize, ticks: usize| count.abs_diff(ticks * channels) <= channels;
     let (normal, double, half) = (changes(1.0), changes(2.0), changes(0.5));
@@ -2799,7 +2834,12 @@ fn a_jitter_rate_layers_like_softness_and_makes_no_pose() {
     let field = field("", &[]);
     tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
     let props = resolver.living_props_mut();
-    let read = |props: &LivingProps, i: usize| props.resolved(LivingPropId(i), None).jitter_rate;
+    let read = |props: &LivingProps, i: usize| {
+        props
+            .resolved(LivingPropId(i), None)
+            .get(LivingKnob::JitterRate)
+            .clone()
+    };
     assert_eq!(read(props, 0).value, 1.5, "the scene's");
     assert_eq!(read(props, 0).layer, LivingLayer::Global);
     assert_eq!(props.global_jitter_rate(), Some(1.5));
@@ -2892,7 +2932,7 @@ fn an_echo_boils_at_its_props_rate_and_never_pops_through_a_change() {
 
 /// A page whose words drift along their lines at 3 cm a second, with no boil,
 /// one prop of it, built.
-fn drifting_page(echoes: &str) -> (ProcGenResolver, LivingPropId) {
+fn drifting_page(echoes: &str) -> (Grove, LivingPropId) {
     let spec = format!(
         r#"
 generator = "form_v1"
@@ -2935,7 +2975,7 @@ echoes = {echoes}
 }
 
 /// The drift bones a prop's blend wrote this frame, if it wrote them.
-fn drift_bones(resolver: &mut ProcGenResolver, id: LivingPropId) -> Option<Vec<[[f32; 4]; 4]>> {
+fn drift_bones(resolver: &mut Grove, id: LivingPropId) -> Option<Vec<[[f32; 4]; 4]>> {
     let props = resolver.living_props_mut();
     let first = props
         .rig_of(id)
@@ -2977,7 +3017,7 @@ fn a_drifting_page_writes_its_words_every_frame_it_moves() {
         .clone()
         .unwrap();
     assert_eq!(first.len(), rows.words.len());
-    assert!(rig_len <= crate::MAX_SKINNED_BONES);
+    assert!(rig_len <= flint_procgen::MAX_SKINNED_BONES);
     // A frame on, the words have moved, though the pose may be holding.
     resolver.process_living(1.0 / 60.0);
     let next = drift_bones(&mut resolver, id).expect("the words moved");
@@ -3015,7 +3055,7 @@ fn a_new_row_rate_moves_the_words_on_faster_from_where_they_are() {
         .living_props_mut()
         .tune_row_rate(LivingScope::All, 3.0);
     assert_eq!(changed.living_props().row_rate(b), 3.0);
-    let row_time = |r: &ProcGenResolver, id| r.living_props().prop(id).row_time();
+    let row_time = |r: &Grove, id| r.living_props().prop(id).row_time();
     let (t_steady, t_changed) = (row_time(&steady, a), row_time(&changed, b));
     assert_eq!(t_steady, t_changed, "setting a rate moves nothing");
     steady.process_living(dt);
@@ -3051,19 +3091,14 @@ fn a_new_row_rate_moves_the_words_on_faster_from_where_they_are() {
 
 /// The drift bones a prop's rig gives at `row_time`, over its current pose: the
 /// segment bones it last wrote.
-fn rows_at(
-    resolver: &ProcGenResolver,
-    id: LivingPropId,
-    row_time: f64,
-    out: &mut Vec<[[f32; 4]; 4]>,
-) {
+fn rows_at(resolver: &Grove, id: LivingPropId, row_time: f64, out: &mut Vec<[[f32; 4]; 4]>) {
     let props = resolver.living_props();
     let rig = props.rig_of(id).unwrap().1;
     let rows = rig.rows.as_ref().unwrap();
     let mut palette = props.prop(id).drawn.bones.segments.clone();
     palette.extend_from_slice(&[[[0.0; 4]; 4]; BOIL_BONES]);
     rows.bones_into(
-        &[0.0; crate::living::JITTER_CHANNELS],
+        &[0.0; flint_procgen::living::JITTER_CHANNELS],
         row_time,
         &mut palette,
     );
@@ -3108,7 +3143,12 @@ fn a_row_rate_layers_like_the_jitter_rate() {
     let field = field("", &[]);
     tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
     let props = resolver.living_props_mut();
-    let read = |props: &LivingProps, i: usize| props.resolved(LivingPropId(i), None).row_rate;
+    let read = |props: &LivingProps, i: usize| {
+        props
+            .resolved(LivingPropId(i), None)
+            .get(LivingKnob::RowRate)
+            .clone()
+    };
     assert_eq!(read(props, 0).value, 1.5, "the scene's");
     assert_eq!(read(props, 0).layer, LivingLayer::Global);
     assert_eq!(props.global_row_rate(), Some(1.5));

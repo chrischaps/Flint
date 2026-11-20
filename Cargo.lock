@@ -1756,6 +1756,7 @@ dependencies = [
  "flint-geometry",
  "flint-import",
  "flint-input-capture",
+ "flint-living",
  "flint-music",
  "flint-particles",
  "flint-physics",
@@ -1888,6 +1889,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-living"
+version = "0.1.0"
+dependencies = [
+ "flint-core",
+ "flint-procgen",
+ "flint-wooze",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
 name = "flint-music"
 version = "0.1.0"
 dependencies = [
@@ -1956,6 +1968,7 @@ dependencies = [
  "flint-geometry",
  "flint-import",
  "flint-input-capture",
+ "flint-living",
  "flint-music",
  "flint-particles",
  "flint-physics",

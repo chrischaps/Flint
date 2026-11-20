@@ -136,7 +136,8 @@ struct BodyUniforms {
 @group(1) @binding(1)
 var<uniform> body: BodyUniforms;
 
-// Bind group 2: lights + shadows (lights.wgsl, light_bindings.wgsl, #738)
+// Bind group 2: lights + shadows (lights.wgsl, light_bindings.wgsl, #738);
+// the point and spot lights are read through local_lights.wgsl (#1048)
 
 // Grab pass (valid when grab_enabled == 1): the opaque scene rendered
 // before the ocean, for refraction of whatever is underwater.
@@ -166,8 +167,38 @@ struct VertexOutput {
     @location(5) rest_normal: vec3<f32>, // the surface's normal at rest
 };
 
-const PI: f32 = 3.14159265359;
+// PI is brdf.wgsl's, which comes in front with the local lights (#1048)
 const TAU: f32 = 6.28318530718;
+
+// A lantern's light scattered in the surface (#1048): what the water's own
+// colour takes of it, over PI as a lit ground's Lambert does. Foam takes it
+// most, being the brightest part of `base`.
+fn water_local_scatter(l: LocalLight, N: vec3<f32>) -> vec3<f32> {
+    return l.radiance * (max(dot(N, l.L), 0.0) / PI);
+}
+
+// A lantern's light glowing through the wave flanks facing the eye, as the
+// sun's does (`toward_sun` in fs_main), from wherever the lamp stands; at
+// half the sun's weight, so the sss colour tints the lamp's pool rather than
+// taking it over.
+fn water_local_sss(l: LocalLight, V: vec3<f32>, rim: f32) -> vec3<f32> {
+    return l.radiance * (0.5 * rim * pow(max(dot(V, -l.L), 0.0), 2.0));
+}
+
+// A lantern's reflection on the waves (#1048): the sun's cel glint (the same
+// lobe, threshold and specular_strength), so the light breaks into the same
+// hard sparkle on the swell, inside a wider cel band of the lamp's colour at
+// a quarter of it: the streak of a lamp's reflection on rippled water.
+fn water_local_glint(l: LocalLight, N: vec3<f32>, V: vec3<f32>) -> vec3<f32> {
+    let H = normalize(V + l.L);
+    let n_dot_h = max(dot(N, H), 0.0);
+    let raw = pow(n_dot_h, 220.0) * ocean.specular_strength;
+    let aa = clamp(fwidth(raw) * 1.5, 1e-4, 0.4);
+    let wide = pow(n_dot_h, 24.0) * ocean.specular_strength;
+    let wide_aa = clamp(fwidth(wide) * 1.5, 1e-4, 0.4);
+    return l.radiance * (smoothstep(0.30 - aa, 0.30 + aa, raw)
+        + 0.25 * smoothstep(0.30 - wide_aa, 0.30 + wide_aa, wide));
+}
 
 // ── Grid warp ───────────────────────────────────────────────────────────
 // Chebyshev-radius exponential-ish warp: dense center, km-scale rim.
@@ -543,6 +574,27 @@ fn fs_main(in: VertexOutput,
     let toward_sun = pow(max(dot(V, -L), 0.0), 2.0);
     water_color += sss_rgb * (rim * toward_sun * height01);
 
+    // ── The point and spot lights (#1048): the light each scatters in the
+    // surface, glows through the flanks with and glints off the waves.
+    // With none, the loops run zero times and every sum below adds 0. ──
+    var local_scatter = vec3<f32>(0.0);
+    var local_sss = vec3<f32>(0.0);
+    var local_glint = vec3<f32>(0.0);
+    for (var i = 0u; i < lights.point_count; i = i + 1u) {
+        let l = point_light_at(i, in.world_pos);
+        local_scatter += water_local_scatter(l, N);
+        local_sss += water_local_sss(l, V, rim);
+        local_glint += water_local_glint(l, N, V);
+    }
+    for (var i = 0u; i < lights.spot_count; i = i + 1u) {
+        // The rest normal offsets the spot's map, as the cascades take none:
+        // the swell's own normal would move the shadow with the waves
+        let l = spot_light_at(i, in.world_pos, in.rest_normal, in.clip_position.xy);
+        local_scatter += water_local_scatter(l, N);
+        local_sss += water_local_sss(l, V, rim);
+        local_glint += water_local_glint(l, N, V);
+    }
+
     // ── Foam: crest pinch (Jacobian) broken up by drifting noise ───────
     // Foam fades with distance: graphic detail near the camera, flat color
     // toward the horizon (matches the reference art and hides aliasing).
@@ -857,7 +909,8 @@ fn fs_main(in: VertexOutput,
 
     // Styled opaque water body (no foam) — also the infinite-depth limit of
     // the transmission below, so high turbidity converges to it seamlessly.
-    let water_body = water_color * sun_tint * shadow_dim + ambient * water_color * 0.5;
+    let water_body = water_color * sun_tint * shadow_dim + ambient * water_color * 0.5
+        + water_color * local_scatter + sss_rgb * local_sss * height01;
 
     let base = mix(water_color, foam_tint, foam_mix);
     var color = base * sun_tint * shadow_dim;
@@ -867,6 +920,8 @@ fn fs_main(in: VertexOutput,
         * clamp(fresnel * 3.0, 0.0, 1.0);
     color += mix(ambient * water_color, foam_ambient * foam_tint,
                  foam_mix) * 0.5;
+    // The lanterns' light in the surface and through the flanks (#1048)
+    color += base * local_scatter + sss_rgb * local_sss * (height01 * (1.0 - foam_mix));
 
     // ── Refraction + turbidity (grab pass): see through to the legs ─────
     if (ocean.grab_enabled == 1u) {
@@ -921,6 +976,12 @@ fn fs_main(in: VertexOutput,
             * (1.0 - foam_mix) * reflect_sf;
         color = mix(color, sky_ref, clamp(reflect_amt, 0.0, 1.0));
     }
+
+    // The lanterns' glints (#1048), laid over the sky's reflection since
+    // they are part of what the water reflects: weighted by fresnel as the
+    // sun's is, none on the underside, none on foam
+    color += local_glint * (front_f * foam_distance_fade * (1.0 - foam_mix)
+        * clamp(fresnel * 3.0, 0.0, 1.0));
 
     // ── Bioluminescent foam (foam_glow.a > 0: the component's foam_glow,
     // which a game raises at night). Emissive, added AFTER reflection/

@@ -1,10 +1,10 @@
 //! Query command: a scene file's world, or a running game's (`--attach`,
 //! #713), answered by the one `flint_query::answer`.
 
+use super::common_args::load_scene;
 use anyhow::{Context, Result};
 use flint_ecs::FlintWorld;
 use flint_query::{answer, parse_query, Ask};
-use flint_scene::load_scene;
 use serde_json::Value;
 
 /// `flint query`'s flags. Boxed in `Commands`, as every variant there is,
@@ -55,7 +55,7 @@ pub fn run(args: QueryArgs) -> Result<()> {
                 // The one resolver (ADR 0114). With no directory found the
                 // scene still loads, with no archetype defaults
                 let (registry, _) = super::common_args::load_schemas(Some(path), &args.schemas)?;
-                let (world, _) = load_scene(path, &registry).context("Failed to load scene")?;
+                let (world, _) = load_scene(path, &registry)?;
                 world
             } else {
                 // Create empty world if no scene

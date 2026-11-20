@@ -18,7 +18,7 @@
 //! the second side's to both. Both sides write every bone every frame while
 //! split, since the buffers swap hands twice a frame. A is always left.
 
-use flint_procgen::{BlendFrame, LivingProps, ProcGenResolver};
+use flint_living::{BlendFrame, LivingProps};
 use flint_render::{Camera, SceneRenderer, SplitView};
 use flint_wooze::{BoilClock, WoozeField};
 
@@ -216,7 +216,7 @@ impl LivingSubsystem {
             return;
         };
         let side = &mut ab.hidden;
-        let live = ctx.resolver.living_props_mut();
+        let live = &mut *ctx.living;
         std::mem::swap(live, &mut side.props);
         live.swap_cache(&mut side.props);
         std::mem::swap(&mut self.wooze, &mut side.wooze);
@@ -236,10 +236,10 @@ impl LivingSubsystem {
             self.reset_living_knobs(ctx);
             result = self.load_living_preset(ctx, name);
         }
-        ctx.resolver.settle_living_now(None);
+        ctx.living.settle(ctx.resolver, None);
         // Glide and drift reach a part on its next beat, which would show the
         // last look's for up to a beat: a whole look, frozen, for ever.
-        ctx.resolver.living_props_mut().restart_cycles();
+        ctx.living.restart_cycles();
         result
     }
 
@@ -252,7 +252,7 @@ impl LivingSubsystem {
         a: &str,
         b: &str,
     ) -> Result<(), String> {
-        if ctx.resolver.living_props().is_empty() {
+        if ctx.living.is_empty() {
             return Err("this scene has no living props to compare".to_string());
         }
         self.stop_comparing_living(ctx);
@@ -260,7 +260,7 @@ impl LivingSubsystem {
             self.tune.at_load = Some(self.living_at_load(ctx));
         }
         let hidden = LivingSide {
-            props: ctx.resolver.living_props().fork(),
+            props: ctx.living.fork(),
             wooze: self.wooze.clone(),
             wooze_time: self.wooze_time,
             boil_clock: self.boil_clock,
@@ -284,7 +284,7 @@ impl LivingSubsystem {
         if let Err(problem) = self.become_preset(ctx, a) {
             problems.push(format!("A ({}): {problem}", side_label(a)));
         }
-        ctx.resolver.living_props_mut().redraw_all();
+        ctx.living.redraw_all();
         if problems.is_empty() {
             Ok(())
         } else {
@@ -302,7 +302,7 @@ impl LivingSubsystem {
         if let Some(ab) = self.tune.ab.as_mut() {
             ab.showing_b = !ab.showing_b;
         }
-        ctx.resolver.living_props_mut().redraw_all();
+        ctx.living.redraw_all();
         true
     }
 
@@ -315,7 +315,7 @@ impl LivingSubsystem {
         if ab.split != split {
             ab.split = split;
             // Whatever the buffers hold now, the shown side writes all of it.
-            ctx.resolver.living_props_mut().redraw_all();
+            ctx.living.redraw_all();
         }
         true
     }
@@ -323,7 +323,7 @@ impl LivingSubsystem {
     /// End the comparison, keeping the side that's shown.
     pub(super) fn stop_comparing_living(&mut self, ctx: &mut StageCtx<'_>) {
         if self.tune.ab.take().is_some() {
-            ctx.resolver.living_props_mut().redraw_all();
+            ctx.living.redraw_all();
         }
     }
 
@@ -345,15 +345,15 @@ impl LivingSubsystem {
             side.boil_clock.tick(dt, &sample);
         }
         let wooze = side.wooze.as_ref().map(|field| (field, side.wooze_time));
-        ctx.resolver
-            .process_living_beside(&mut side.props, dt, wooze);
+        ctx.living
+            .process_beside(&mut side.props, ctx.resolver, dt, wooze);
         if let Some(field) = &side.wooze {
             side.shallow.advance(ctx.world, field, side.wooze_time, dt);
         }
     }
 
     /// The hidden side's ring report, for `--exit-after`.
-    pub(super) fn hidden_side_stats(&self) -> Option<flint_procgen::LivingStats> {
+    pub(super) fn hidden_side_stats(&self) -> Option<flint_living::LivingStats> {
         Some(self.tune.ab.as_ref()?.hidden.props.stats())
     }
 
@@ -376,7 +376,7 @@ impl LivingSubsystem {
 
     /// F5: stop or start the clock living props run on, as the panel's Freeze.
     pub(super) fn toggle_living_freeze(&mut self, ctx: &mut StageCtx<'_>) {
-        if !ctx.resolver.living_props().is_empty() {
+        if !ctx.living.is_empty() {
             self.tune.frozen = !self.tune.frozen;
         }
     }
@@ -384,7 +384,7 @@ impl LivingSubsystem {
     /// F6 flips (`split` false) and F7 splits or unsplits, starting a comparison
     /// of the picks if there isn't one. In a scene with no living props, nothing.
     pub(super) fn living_ab_key(&mut self, ctx: &mut StageCtx<'_>, split: bool) {
-        if ctx.resolver.living_props().is_empty() {
+        if ctx.living.is_empty() {
             return;
         }
         if self.tune.ab.is_none() {
@@ -414,7 +414,7 @@ impl LivingSubsystem {
 
     /// The comparison asked for at start, once there are props to compare.
     pub(super) fn start_asked_comparison(&mut self, ctx: &mut StageCtx<'_>) {
-        if ctx.resolver.living_props().is_empty() {
+        if ctx.living.is_empty() {
             return;
         }
         let Some(split) = self.tune.compare_at_start.take() else {
@@ -445,7 +445,7 @@ impl LivingSubsystem {
 /// its renderer and context.
 pub struct OtherSide<'a> {
     pub ab: &'a mut LivingAb,
-    pub resolver: &'a mut ProcGenResolver,
+    pub living: &'a mut LivingProps,
     pub blend: &'a mut BlendFrame,
     pub world: &'a flint_ecs::FlintWorld,
     pub camera: &'a Camera,
@@ -471,7 +471,7 @@ pub fn draw_other_side(
 ) {
     let OtherSide {
         ab,
-        resolver,
+        living,
         blend,
         world,
         camera,
@@ -522,5 +522,5 @@ pub fn draw_other_side(
     // frame, and next frame's `prepare` takes its boil and shallow wooze and
     // rebuilds its draws.
     renderer.set_post_process_config(own_config);
-    resolver.living_props_mut().redraw_all();
+    living.redraw_all();
 }

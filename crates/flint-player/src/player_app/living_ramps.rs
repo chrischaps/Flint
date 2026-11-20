@@ -17,189 +17,68 @@
 //! the panel or a preset, takes over from its ramp.
 
 use flint_core::field::Ramp;
-use flint_procgen::{LivingDef, LivingEchoesDef, LivingSpeciesDef, LivingVarianceDef};
+use flint_procgen::{KnobValue, LivingDef, LivingKnob, LivingSpeciesDef};
 
 use super::living_props::species_of;
 use super::living_subsystem::LivingSubsystem;
 use super::living_tuning::{tune_props, tune_species, LivingView, ScriptTune};
 use super::subsystem::StageCtx;
 
-/// A knob a timed tune eases rather than steps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Eased {
-    Amplitude,
-    Step,
-    Glide,
-    Jitter,
-    EchoSpread,
-    EchoAlpha,
-    VarianceAmount,
-    VarianceSteady,
-    Softness,
-    JitterRate,
-    RowRate,
+/// A knob a timed tune eases rather than steps: one whose value is a number.
+pub(crate) type Eased = LivingKnob;
+
+/// Every knob a timed tune eases, for a species, in the panel's order.
+fn eased() -> impl Iterator<Item = Eased> {
+    LivingKnob::ALL.into_iter().filter(|knob| knob.is_number())
 }
 
-impl Eased {
-    /// Every one, in the order a species table lists them.
-    pub(crate) const ALL: [Eased; 11] = [
-        Eased::Amplitude,
-        Eased::Step,
-        Eased::Glide,
-        Eased::Jitter,
-        Eased::EchoSpread,
-        Eased::EchoAlpha,
-        Eased::VarianceAmount,
-        Eased::VarianceSteady,
-        Eased::Softness,
-        Eased::JitterRate,
-        Eased::RowRate,
-    ];
-
-    /// The ones the whole grove's `[living]` holds: its clock is the field's.
-    pub(crate) const GROVE: [Eased; 7] = [
-        Eased::EchoSpread,
-        Eased::EchoAlpha,
-        Eased::VarianceAmount,
-        Eased::VarianceSteady,
-        Eased::Softness,
-        Eased::JitterRate,
-        Eased::RowRate,
-    ];
-
-    /// Its key, as `clear_living` names it.
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            Eased::Amplitude => "amplitude",
-            Eased::Step => "step",
-            Eased::Glide => "glide",
-            Eased::Jitter => "jitter",
-            Eased::EchoSpread => "echoes.spread",
-            Eased::EchoAlpha => "echoes.alpha",
-            Eased::VarianceAmount => "variance.amount",
-            Eased::VarianceSteady => "variance.steady",
-            Eased::Softness => "softness",
-            Eased::JitterRate => "jitter_rate",
-            Eased::RowRate => "row_rate",
-        }
-    }
-
-    /// Whether `key` (a [`SPECIES_KEYS`](super::living_tuning::SPECIES_KEYS)
-    /// entry) covers it: its own key, or its table's (`echoes`).
-    fn named_by(self, key: &str) -> bool {
-        let own = self.key();
-        own == key
-            || own
-                .strip_prefix(key)
-                .is_some_and(|rest| rest.starts_with('.'))
-    }
-
-    /// Its slot in a species table, if the table has it.
-    fn get(self, def: &LivingSpeciesDef) -> Option<f32> {
-        let echoes = def.echoes.as_ref();
-        let variance = def.variance.as_ref();
-        match self {
-            Eased::Amplitude => def.amplitude,
-            Eased::Step => def.step,
-            Eased::Glide => def.glide,
-            Eased::Jitter => def.jitter,
-            Eased::EchoSpread => echoes.and_then(|e| e.spread),
-            Eased::EchoAlpha => echoes.and_then(|e| e.alpha),
-            Eased::VarianceAmount => variance.and_then(|v| v.amount),
-            Eased::VarianceSteady => variance.and_then(|v| v.steady),
-            Eased::Softness => def.softness,
-            Eased::JitterRate => def.jitter_rate,
-            Eased::RowRate => def.row_rate,
-        }
-    }
-
-    /// Take it out of a species table, leaving the rest.
-    fn take(self, def: &mut LivingSpeciesDef) -> Option<f32> {
-        let echoes = def.echoes.as_mut();
-        let variance = def.variance.as_mut();
-        match self {
-            Eased::Amplitude => def.amplitude.take(),
-            Eased::Step => def.step.take(),
-            Eased::Glide => def.glide.take(),
-            Eased::Jitter => def.jitter.take(),
-            Eased::EchoSpread => echoes.and_then(|e| e.spread.take()),
-            Eased::EchoAlpha => echoes.and_then(|e| e.alpha.take()),
-            Eased::VarianceAmount => variance.and_then(|v| v.amount.take()),
-            Eased::VarianceSteady => variance.and_then(|v| v.steady.take()),
-            Eased::Softness => def.softness.take(),
-            Eased::JitterRate => def.jitter_rate.take(),
-            Eased::RowRate => def.row_rate.take(),
-        }
-    }
-
-    /// Say `value` for it in a species table.
-    fn put(self, def: &mut LivingSpeciesDef, value: f32) {
-        let echoes = LivingEchoesDef::default;
-        let variance = LivingVarianceDef::default;
-        let slot = match self {
-            Eased::Amplitude => &mut def.amplitude,
-            Eased::Step => &mut def.step,
-            Eased::Glide => &mut def.glide,
-            Eased::Jitter => &mut def.jitter,
-            Eased::EchoSpread => &mut def.echoes.get_or_insert_with(echoes).spread,
-            Eased::EchoAlpha => &mut def.echoes.get_or_insert_with(echoes).alpha,
-            Eased::VarianceAmount => &mut def.variance.get_or_insert_with(variance).amount,
-            Eased::VarianceSteady => &mut def.variance.get_or_insert_with(variance).steady,
-            Eased::Softness => &mut def.softness,
-            Eased::JitterRate => &mut def.jitter_rate,
-            Eased::RowRate => &mut def.row_rate,
-        };
-        *slot = Some(value);
-    }
-
-    /// What it reads now over a view's props.
-    fn read(self, view: &LivingView) -> f32 {
-        match self {
-            Eased::Amplitude => view.amplitude.value,
-            Eased::Step => view.step.value,
-            Eased::Glide => view.glide.value,
-            Eased::Jitter => view.jitter.value,
-            Eased::EchoSpread => view.echo_spread.value,
-            Eased::EchoAlpha => view.echo_alpha.value,
-            Eased::VarianceAmount => view.variance_amount.value,
-            Eased::VarianceSteady => view.variance_steady.value,
-            Eased::Softness => view.softness.value,
-            Eased::JitterRate => view.jitter_rate.value,
-            Eased::RowRate => view.row_rate.value,
-        }
-    }
+/// The ones the whole grove's `[living]` holds: its clock is the field's.
+fn eased_grove() -> impl Iterator<Item = Eased> {
+    eased().filter(|knob| !knob.is_clock())
 }
 
-/// The grove's `[living]` as a species table holds the same knobs, and back.
-fn grove_def(living: &LivingDef) -> LivingSpeciesDef {
-    LivingSpeciesDef {
-        softness: living.softness,
-        jitter_rate: living.jitter_rate,
-        row_rate: living.row_rate,
-        echoes: living.echoes,
-        variance: living.variance,
-        ..Default::default()
-    }
+/// What a knob reads now over a view's props.
+fn read(knob: Eased, view: &LivingView) -> f32 {
+    view.get(knob).value.as_f32().unwrap_or_default()
 }
 
+/// Say `value` for a knob in a species table.
+fn put(knob: Eased, def: &mut LivingSpeciesDef, value: f32) {
+    knob.set_in_species(def, &KnobValue::Number(value));
+}
+
+/// A species table of the grove's knobs as a `[living]` says them.
 fn grove_living(def: LivingSpeciesDef) -> LivingDef {
-    LivingDef {
-        softness: def.softness,
-        jitter_rate: def.jitter_rate,
-        row_rate: def.row_rate,
-        echoes: def.echoes,
-        variance: def.variance,
-        ..Default::default()
+    let mut living = LivingDef::default();
+    for knob in LivingKnob::ALL {
+        if let Some(value) = knob.in_species(&def) {
+            knob.set_in_living(&mut living, &value);
+        }
     }
+    living
 }
 
 /// Knobs to ease, each with the value it's heading for.
 type Targets = Vec<(Eased, f32)>;
 
-/// Take every eased knob out of `def`, with the value it asks for.
-fn take_eased(def: &mut LivingSpeciesDef, knobs: &[Eased]) -> Targets {
-    (knobs.iter())
-        .filter_map(|&knob| knob.take(def).map(|to| (knob, to)))
+/// Take every eased knob out of a species table, with the value it asks for.
+fn take_eased(def: &mut LivingSpeciesDef) -> Targets {
+    eased()
+        .filter_map(|knob| {
+            let to = knob.take_from_species(def)?.as_f32()?;
+            Some((knob, to))
+        })
+        .collect()
+}
+
+/// Take every eased knob out of the grove's `[living]`, with the value it asks
+/// for.
+fn take_eased_grove(living: &mut LivingDef) -> Targets {
+    eased_grove()
+        .filter_map(|knob| {
+            let to = knob.take_from_living(living)?.as_f32()?;
+            Some((knob, to))
+        })
         .collect()
 }
 
@@ -266,15 +145,14 @@ impl KnobRamps {
 
     /// Stop easing whatever the grove's `living` sets at once.
     pub(crate) fn cancel_grove(&mut self, living: &LivingDef) {
-        let def = grove_def(living);
         self.ramps
-            .retain(|r| r.species.is_some() || r.knob.get(&def).is_none());
+            .retain(|r| r.species.is_some() || r.knob.in_living(living).is_none());
     }
 
     /// Stop easing whatever `def` sets at once for `species`.
     pub(crate) fn cancel_species(&mut self, species: &str, def: &LivingSpeciesDef) {
         self.ramps
-            .retain(|r| r.species.as_deref() != Some(species) || r.knob.get(def).is_none());
+            .retain(|r| r.species.as_deref() != Some(species) || r.knob.in_species(def).is_none());
     }
 
     /// Stop easing the knobs `keys` name for `species` (`None`: the grove),
@@ -313,7 +191,7 @@ impl KnobRamps {
                     moved.len() - 1
                 }
             };
-            ramp.knob.put(&mut moved[at].1, value);
+            put(ramp.knob, &mut moved[at].1, value);
         }
         self.ramps.retain(|r| !r.ramp.arrived(time));
         moved
@@ -341,18 +219,12 @@ impl LivingSubsystem {
             ScriptTune::Grove(mut tune) => {
                 let wooze = std::mem::take(&mut tune.wooze);
                 problems.extend(self.tune_wooze_over(ctx, &wooze, seconds));
-                let mut def = grove_def(&tune.living);
-                eased.push((None, take_eased(&mut def, &Eased::GROVE)));
-                tune.living.softness = def.softness;
-                tune.living.jitter_rate = def.jitter_rate;
-                tune.living.row_rate = def.row_rate;
-                tune.living.echoes = def.echoes;
-                tune.living.variance = def.variance;
+                eased.push((None, take_eased_grove(&mut tune.living)));
                 // A species no prop grows from keeps its values at once, and
                 // is named, as a step names it
                 for (name, def) in &mut tune.living.species {
                     if grown.contains(name) {
-                        eased.push((Some(name.clone()), take_eased(def, &Eased::ALL)));
+                        eased.push((Some(name.clone()), take_eased(def)));
                     }
                 }
                 if let Err(problem) = self.tune_living(ctx, &tune) {
@@ -361,7 +233,7 @@ impl LivingSubsystem {
             }
             ScriptTune::Species(name, mut def) => {
                 if grown.contains(&name) {
-                    eased.push((Some(name.clone()), take_eased(&mut def, &Eased::ALL)));
+                    eased.push((Some(name.clone()), take_eased(&mut def)));
                 }
                 problems.extend(self.tune_species(ctx, &name, &def));
             }
@@ -393,7 +265,7 @@ impl LivingSubsystem {
         let mut problems = Vec::new();
         for &(knob, to) in knobs {
             let mut one = LivingSpeciesDef::default();
-            knob.put(&mut one, to);
+            put(knob, &mut one, to);
             let mut bad = None;
             species_of(&one, &mut |problem| bad = Some(problem));
             if let Some(problem) = bad {
@@ -404,7 +276,7 @@ impl LivingSubsystem {
                 continue;
             }
             self.ramps
-                .head_for(species, knob, knob.read(&view), to, seconds);
+                .head_for(species, knob, read(knob, &view), to, seconds);
         }
         problems
     }
@@ -416,7 +288,7 @@ impl LivingSubsystem {
         if self.ramps.is_empty() {
             return;
         }
-        let props = ctx.resolver.living_props_mut();
+        let props = &mut *ctx.living;
         // Every value was checked when its ramp started, and an ease between
         // two good values stays between them
         for (species, def) in self.ramps.advance(dt) {

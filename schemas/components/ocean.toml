@@ -33,22 +33,25 @@ foam_glow_color = { type = "color", description = "Bioluminescent foam glow colo
 foam_glow = { type = "f32", description = "Bioluminescent glow strength: emissive light from churned foam, brightest at contact foam (0 = off)", default = 0.0 }
 
 # ── Tint (#746): the palette moves toward another, which a game drives ───
-# A tint names the colours it moves toward: one it leaves out is the sea's
-# own (deep_color, shallow_color...), and every other setting defaults to
-# changing nothing, so `tint` alone moves the sea toward itself (#1041).
-# The colours have no schema default for that reason: the reader falls
-# back on the sea's own field.
+# A tint names the colours it moves toward, or a preset that does
+# (tint_preset, #1035: blood, the crimson tide; underside, the surface seen
+# from below). The tint_* fields and tint_preset carry no schema default: a
+# default is written into the component at load, where it would beat the
+# preset. With no preset written (#1041), a colour left out is the sea's
+# own (deep_color...) and every other setting changes nothing, so `tint`
+# alone moves the sea toward itself.
 tint = { type = "f32", description = "How far the palette moves to the tint's, 0..1; with tint_pools above 0, also how much of the sea the pools cover (0 = off)", default = 0.0 }
-tint_deep_color = { type = "color", description = "The tint's deep water colour (RGBA linear; unset = deep_color)" }
-tint_shallow_color = { type = "color", description = "The tint's shallow water colour (RGBA linear; unset = shallow_color)" }
-tint_sss_color = { type = "color", description = "The tint's subsurface glow colour (RGBA linear; unset = sss_color)" }
-tint_foam_color = { type = "color", description = "The tint's foam colour, the shore foam's too (RGBA linear; unset = foam_color)" }
-tint_sky = { type = "color", description = "What the sky's reflection is multiplied by where tinted (RGB; [1, 1, 1] leaves it)", default = [1.0, 1.0, 1.0, 1.0] }
-tint_ramp_steps = { type = "f32", description = "Cel bands where tinted (0 = the sea's own ramp_steps)", default = 0.0 }
-tint_band_wobble = { type = "f32", description = "Added to band_wobble where tinted", default = 0.0 }
-tint_pools = { type = "f32", description = "World-anchored pools, this many per metre, spreading to full cover as tint rises (0 = tint evenly)", default = 0.0 }
-tint_keep_light = { type = "bool", description = "Scale the tint's deep and shallow by the palette's own brightness, so a night sea stays dark", default = false }
-tint_below = { type = "bool", description = "Tint only the surface seen from below, the ceiling over a submerged camera", default = false }
+tint_preset = { type = "enum", values = ["blood", "underside"], description = "A named tint the tint_* fields below fall back on when unwritten: blood (the crimson tide: night-dark pools that spread with tint, two wobbling bands) or underside (the surface seen from under it: murk blues and flat foam panes, below only). A script switches between them with one set_field; a written tint_* field still wins. Unwritten: none, so the fields fall back on the sea's own palette and change nothing" }
+tint_deep_color = { type = "color", description = "The tint's deep water colour (RGBA linear); unwritten, the preset's, else deep_color" }
+tint_shallow_color = { type = "color", description = "The tint's shallow water colour (RGBA linear); unwritten, the preset's, else shallow_color" }
+tint_sss_color = { type = "color", description = "The tint's subsurface glow colour (RGBA linear); unwritten, the preset's, else sss_color" }
+tint_foam_color = { type = "color", description = "The tint's foam colour, the shore foam's too (RGBA linear); unwritten, the preset's, else foam_color" }
+tint_sky = { type = "color", description = "What the sky's reflection is multiplied by where tinted (RGB; [1, 1, 1] leaves it); unwritten, the preset's, else [1, 1, 1]" }
+tint_ramp_steps = { type = "f32", description = "Cel bands where tinted (0 = the sea's own ramp_steps); unwritten, the preset's, else 0" }
+tint_band_wobble = { type = "f32", description = "Added to band_wobble where tinted; unwritten, the preset's, else 0" }
+tint_pools = { type = "f32", description = "World-anchored pools, this many per metre, spreading to full cover as tint rises (0 = tint evenly); unwritten, the preset's, else 0" }
+tint_keep_light = { type = "bool", description = "Scale the tint's deep and shallow by the palette's own brightness, so a night sea stays dark; unwritten, the preset's, else false" }
+tint_below = { type = "bool", description = "Tint only the surface seen from below, the ceiling over a submerged camera; unwritten, the preset's, else false" }
 
 # ── Contact foam (a splash ring round each ocean_contact entity) ────────
 splash_strength = { type = "f32", description = "Contact foam overall gain (0 disables)", default = 1.0 }

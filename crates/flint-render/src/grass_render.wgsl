@@ -2,7 +2,8 @@
 // Grass instanced rendering — stylized cross-quads with wind and bending
 //
 // wooze_noise.wgsl is prepended (grass_pipeline.rs), for the comb of woozy
-// grass (#252).
+// grass (#252), and the lights' files (wgsl_sources.rs), local_lights.wgsl
+// among them for the lanterns (#1048).
 
 struct TransformUniforms {
     view_proj: mat4x4<f32>,
@@ -82,6 +83,21 @@ struct VertexOutput {
     @location(2) color: vec3<f32>,
     @location(3) world_normal: vec3<f32>,
 };
+
+// How far round a blade a lantern's light wraps: a blade is lit through as
+// much as on its face, so light from low beside it still reaches it (#1048)
+const GRASS_LOCAL_WRAP: f32 = 0.5;
+
+// One point or spot light on a blade (#1048): a wrapped diffuse over PI, as
+// the ground's Lambert is, so a lantern's pool runs on from the ground into
+// the grass at the brightness it has on the ground; and the glow of a tip
+// with the lamp behind it, the sun's backlight (`sss` in fs_main) from the
+// side of the blade that faces away from the lamp.
+fn grass_local_light(l: LocalLight, N: vec3<f32>, V: vec3<f32>, tip: f32) -> vec3<f32> {
+    let wrapped = max((dot(N, l.L) + GRASS_LOCAL_WRAP) / (1.0 + GRASS_LOCAL_WRAP), 0.0);
+    let through = pow(max(dot(V, -l.L), 0.0), 4.0) * tip * 0.3;
+    return (wrapped / PI + through) * l.radiance;
+}
 
 fn hash21(p: vec2<f32>) -> f32 {
     var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
@@ -170,6 +186,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var color = in.color;
 
+    // The point and spot lights (#1048). With none, both loops run zero
+    // times and `lamps` adds nothing to the sums below.
+    var lamps = vec3<f32>(0.0);
+    let view_local = normalize(transform.camera_pos - in.world_pos);
+    for (var i = 0u; i < lights.point_count; i = i + 1u) {
+        lamps += grass_local_light(point_light_at(i, in.world_pos),
+            in.world_normal, view_local, in.uv.y);
+    }
+    for (var i = 0u; i < lights.spot_count; i = i + 1u) {
+        lamps += grass_local_light(spot_light_at(i, in.world_pos, in.world_normal, in.clip_pos.xy),
+            in.world_normal, view_local, in.uv.y);
+    }
+
     // Simple directional lighting
     if lights.directional_count > 0u {
         let light_dir = normalize(-lights.directional_lights[0].direction);
@@ -195,10 +224,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let light_color = lights.directional_lights[0].color;
         // Use ambient_sky as ambient color with unit intensity
         let ambient = mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, 0.5);
-        color *= (diffuse + sss) * light_color + ambient;
+        color *= (diffuse + sss) * light_color + ambient + lamps;
     } else {
         let ambient = mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, 0.5);
-        color *= ambient;
+        color *= ambient + lamps;
     }
 
     return vec4<f32>(color, 1.0);

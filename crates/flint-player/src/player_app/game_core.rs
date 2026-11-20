@@ -75,9 +75,15 @@ pub struct GameCore {
     /// The renderer's config generation the scripts' style reader was
     /// last made from (#372).
     pub(crate) style_reader_generation: Option<u64>,
-    /// The procgen resolver, which holds the scene's living props.
+    /// The procgen resolver: the scene's specs and generators, and the
+    /// frame budget its queue lends the living props.
     #[cfg(feature = "procgen")]
     pub(crate) procgen_resolver: ProcGenResolver,
+    /// The scene's living props (flint-living, #1024), beside the resolver
+    /// that makes their poses: added at load, before the living subsystem
+    /// exists, and kept across scenes for their pose cache.
+    #[cfg(feature = "living")]
+    pub(crate) living_props: flint_living::LivingProps,
     /// What scripts asked of the frame (#697): the camera, post-processing,
     /// distance levers, cursor and touch, held from the command that asked
     /// to the step of the frame that applies each.
@@ -119,6 +125,8 @@ impl GameCore {
             style_reader_generation: None,
             #[cfg(feature = "procgen")]
             procgen_resolver: ProcGenResolver::new(),
+            #[cfg(feature = "living")]
+            living_props: Default::default(),
             script_requests: Default::default(),
             commands_warned: Default::default(),
             fixed_steps: 0,
@@ -447,6 +455,8 @@ impl GameCore {
             gpu: lent.gpu,
             #[cfg(feature = "procgen")]
             resolver: &mut self.procgen_resolver,
+            #[cfg(feature = "living")]
+            living: &mut self.living_props,
             project: &self.project,
             scene_path: &self.scene_path,
             scene_file_writable: lent.scene_file_writable,

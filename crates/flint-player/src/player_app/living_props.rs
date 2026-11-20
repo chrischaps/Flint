@@ -28,194 +28,19 @@ use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
 use flint_ecs::FlintWorld;
 use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
-use flint_procgen::{
-    AssetKind, BlendFrame, ClockOverride, EchoConfig, EchoOverride, LineageDone, LivingDefaults,
-    LivingPropId, LivingPropRequest, LivingProps, LivingRig, LivingScope, LivingShadows,
-    LivingStats, ProcGenResolver, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
+use flint_living::{
+    BlendFrame, LineageDone, LivingPropId, LivingPropRequest, LivingProps, LivingStats,
 };
+use flint_procgen::{AssetKind, LivingRig, ProcGenResolver, Stagger};
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
 use flint_wooze::WoozeField;
 
 use super::procgen_assets::{AssetSink, ProcGenMode};
 
-/// A scene's `[living]` table as the resolver wants it. A bad value is named
-/// and then means its default, since a look lab shouldn't refuse to start over
-/// one knob.
-pub fn defaults_of(table: Option<&flint_procgen::LivingDef>) -> LivingDefaults {
-    let Some(table) = table else {
-        return LivingDefaults::default();
-    };
-    let shadows = match table.shadows.as_deref() {
-        None | Some("blended") => LivingShadows::Blended,
-        Some("drift") => LivingShadows::Drift,
-        Some(other) => {
-            tracing::warn!(
-                "[living] shadows = \"{other}\" isn't \"blended\" or \"drift\"; using blended"
-            );
-            LivingShadows::Blended
-        }
-    };
-    let mut warn = |problem: String| tracing::warn!("[living] {problem}; using each spec's");
-    let stagger = table
-        .stagger
-        .as_deref()
-        .and_then(|name| checked_stagger(name, &mut warn));
-    let species = table
-        .species
-        .iter()
-        .map(|(name, def)| {
-            let mut warn = |problem: String| {
-                tracing::warn!("[living.species.{name}] {problem}; leaving it to the layers below")
-            };
-            (name.clone(), species_of(def, &mut warn))
-        })
-        .collect();
-    LivingDefaults {
-        shadows,
-        echoes: echoes_of(table.echoes.as_ref(), &mut warn),
-        stagger,
-        variance: variance_of(table.variance.as_ref(), &mut warn),
-        softness: softness_of(table.softness, &mut warn),
-        jitter_rate: jitter_rate_of(table.jitter_rate, &mut warn),
-        row_rate: row_rate_of(table.row_rate, &mut warn),
-        species,
-    }
-}
-
-/// A jitter rate (#529) as a scene or a tune gives it: 0 to
-/// [`JITTER_RATE_MAX`](flint_procgen::JITTER_RATE_MAX), or `None` with the reason
-/// sent to `say`.
-pub fn jitter_rate_of(value: Option<f32>, say: &mut dyn FnMut(String)) -> Option<f32> {
-    let value = value?;
-    let max = flint_procgen::JITTER_RATE_MAX;
-    if value.is_finite() && (0.0..=max).contains(&value) {
-        Some(value)
-    } else {
-        say(format!("jitter_rate = {value} must be in [0.0, {max:?}]"));
-        None
-    }
-}
-/// A row rate (#576) as a scene or a tune gives it: 0 to
-/// [`ROW_RATE_MAX`](flint_procgen::ROW_RATE_MAX), or `None` with the reason
-/// sent to `say`.
-pub fn row_rate_of(value: Option<f32>, say: &mut dyn FnMut(String)) -> Option<f32> {
-    let value = value?;
-    let max = flint_procgen::ROW_RATE_MAX;
-    if value.is_finite() && (0.0..=max).contains(&value) {
-        Some(value)
-    } else {
-        say(format!("row_rate = {value} must be in [0.0, {max:?}]"));
-        None
-    }
-}
-
-/// A softness (#582) as a scene or a tune gives it: 0 to 1, or `None` with the
-/// reason sent to `say`.
-pub fn softness_of(value: Option<f32>, say: &mut dyn FnMut(String)) -> Option<f32> {
-    let value = value?;
-    if value.is_finite() && (0.0..=1.0).contains(&value) {
-        Some(value)
-    } else {
-        say(format!("softness = {value} must be in [0.0, 1.0]"));
-        None
-    }
-}
-
-/// One species' table (#246) as the resolver wants it. Each bad value goes to
-/// `say`, by key, and is left unset, so the layers below decide it.
-pub fn species_of(
-    def: &flint_procgen::LivingSpeciesDef,
-    say: &mut dyn FnMut(String),
-) -> SpeciesOverride {
-    let mut knob = |name: &str, value: Option<f32>| {
-        value.filter(|&value| match flint_wooze::check_knob_named(name, value) {
-            Ok(_) => true,
-            Err(problem) => {
-                say(problem);
-                false
-            }
-        })
-    };
-    let clock = ClockOverride {
-        amplitude: knob("amplitude", def.amplitude),
-        step: knob("step", def.step),
-        glide: knob("glide", def.glide),
-        jitter: knob("jitter", def.jitter),
-    };
-    SpeciesOverride {
-        clock,
-        stagger: def
-            .stagger
-            .as_deref()
-            .and_then(|name| checked_stagger(name, say)),
-        echoes: echoes_of(def.echoes.as_ref(), say),
-        variance: variance_of(def.variance.as_ref(), say),
-        softness: softness_of(def.softness, say),
-        jitter_rate: jitter_rate_of(def.jitter_rate, say),
-        row_rate: row_rate_of(def.row_rate, say),
-    }
-}
-
-/// Everything wrong with one species' table, for `flint validate`.
-pub fn species_problems(def: &flint_procgen::LivingSpeciesDef) -> Vec<String> {
-    let mut problems = Vec::new();
-    species_of(def, &mut |problem| problems.push(problem));
-    problems
-}
-
-/// A stagger by name, or `None` with the reason sent to `say`.
-fn checked_stagger(name: &str, say: &mut dyn FnMut(String)) -> Option<Stagger> {
-    let stagger = stagger_of(name);
-    if stagger.is_none() {
-        say(format!(
-            "stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\""
-        ));
-    }
-    stagger
-}
-
-/// A stagger by the name a spec or a scene knows it by.
-pub fn stagger_of(name: &str) -> Option<Stagger> {
-    toml::Value::String(name.to_string()).try_into().ok()
-}
-
-/// The name a spec or a scene knows a stagger by.
-pub fn stagger_name(stagger: Stagger) -> &'static str {
-    match stagger {
-        Stagger::None => "none",
-        Stagger::PerLevel => "per_level",
-        Stagger::PerBranch => "per_branch",
-    }
-}
-
-/// A `variance` table as the resolver wants it, with a bad field sent to `say`
-/// and then left to the layers below.
-pub fn variance_of(
-    table: Option<&flint_procgen::LivingVarianceDef>,
-    say: &mut dyn FnMut(String),
-) -> VarianceOverride {
-    let Some(table) = table else {
-        return VarianceOverride::default();
-    };
-    let mut fine = |variance: VarianceConfig| match variance.check() {
-        Ok(()) => true,
-        Err((key, reason)) => {
-            say(format!("variance.{key} = {reason}"));
-            false
-        }
-    };
-    let base = VarianceConfig::default();
-    VarianceOverride {
-        amount: table
-            .amount
-            .filter(|&amount| fine(VarianceConfig { amount, ..base })),
-        steady: table
-            .steady
-            .filter(|&steady| fine(VarianceConfig { steady, ..base })),
-        keep_size: table.keep_size,
-    }
-}
+// A scene's `[living]` tables in the runtime's terms are flint-living's (#1025),
+// beside the layers they fill; these names stay for the player's callers.
+pub use flint_living::{apply_preset, defaults_of, species_of, species_problems};
 
 /// The field a scene's `[wooze]` table describes, if it has one. For the same
 /// reason as above, what's wrong with it is named and left out, here where
@@ -228,36 +53,6 @@ pub fn field_of(table: Option<&flint_procgen::WoozeDef>) -> Option<WoozeField> {
     Some(field)
 }
 
-/// An `echoes` table as the resolver wants it, with a bad field sent to `say`
-/// and then left to the layers below.
-pub fn echoes_of(
-    table: Option<&flint_procgen::LivingEchoesDef>,
-    say: &mut dyn FnMut(String),
-) -> EchoOverride {
-    let Some(table) = table else {
-        return EchoOverride::default();
-    };
-    let mut fine = |echoes: EchoConfig| match echoes.check() {
-        Ok(()) => true,
-        Err((key, reason)) => {
-            say(format!("echoes.{key} = {reason}"));
-            false
-        }
-    };
-    let base = EchoConfig::default();
-    EchoOverride {
-        count: table
-            .count
-            .filter(|&count| fine(EchoConfig { count, ..base })),
-        spread: table
-            .spread
-            .filter(|&spread| fine(EchoConfig { spread, ..base })),
-        alpha: table
-            .alpha
-            .filter(|&alpha| fine(EchoConfig { alpha, ..base })),
-    }
-}
-
 /// Whether `world` has a living prop. A capture of a scene with none, and no
 /// `[wooze]` table, draws as `flint render` always has.
 pub fn wanted_by(world: &FlintWorld) -> bool {
@@ -266,47 +61,6 @@ pub fn wanted_by(world: &FlintWorld) -> bool {
             .get_components(entity.id)
             .is_some_and(|comps| comps.get(comp::LIVING_PROP).is_some())
     })
-}
-
-/// Lay a preset file's `[living]` over the scene's, as the player's Load does
-/// (#249): its stagger, echoes and variance set the global layer a field at a
-/// time, and each species it names takes exactly its values. Its `[wooze]`
-/// knobs go to the field, [`wooze_of_scene`]. What can't be used is returned.
-pub fn apply_preset(props: &mut LivingProps, living: &flint_procgen::LivingDef) -> Vec<String> {
-    let mut problems = Vec::new();
-    let mut say = |problem: String| problems.push(problem);
-    let stagger = (living.stagger.as_deref()).and_then(|name| checked_stagger(name, &mut say));
-    let echoes = echoes_of(living.echoes.as_ref(), &mut say);
-    let variance = variance_of(living.variance.as_ref(), &mut say);
-    let softness = softness_of(living.softness, &mut say);
-    let jitter_rate = jitter_rate_of(living.jitter_rate, &mut say);
-    let row_rate = row_rate_of(living.row_rate, &mut say);
-    let species: Vec<(String, SpeciesOverride)> = (living.species.iter())
-        .map(|(name, def)| {
-            let mut say = |problem: String| say(format!("species '{name}': {problem}"));
-            (name.clone(), species_of(def, &mut say))
-        })
-        .collect();
-    if let Some(stagger) = stagger {
-        props.tune_stagger(LivingScope::All, stagger);
-    }
-    props.tune_echoes(LivingScope::All, echoes);
-    props.tune_variance(LivingScope::All, variance);
-    if let Some(softness) = softness {
-        props.tune_softness(LivingScope::All, softness);
-    }
-    if let Some(rate) = jitter_rate {
-        props.tune_jitter_rate(LivingScope::All, rate);
-    }
-    if let Some(rate) = row_rate {
-        props.tune_row_rate(LivingScope::All, rate);
-    }
-    for (name, over) in species {
-        if !props.set_species(&name, over) {
-            problems.push(format!("no living prop grows from '{name}'"));
-        }
-    }
-    problems
 }
 
 /// A scene's `[wooze]` field with `knobs` laid over it (a sweep's column), or
@@ -336,14 +90,14 @@ pub fn boil_at(field: &WoozeField, viewer: [f32; 3], time: f64, on: u32) -> flin
 /// One frame's blending and upload for every prop, timed for `--exit-after`.
 /// The clock moved in `process_living`, so this draws where it now stands.
 pub fn upload_blends(
-    resolver: &mut ProcGenResolver,
+    props: &mut LivingProps,
     frame: &mut BlendFrame,
     renderer: &mut SceneRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) {
     flint_core::scope!("living::blend_upload");
-    upload_props(resolver.living_props_mut(), frame, renderer, device, queue);
+    upload_props(props, frame, renderer, device, queue);
 }
 
 /// [`upload_blends`] for any set of props: the scene's, or the other side of an
@@ -494,6 +248,7 @@ pub fn resolve(
     world: &mut FlintWorld,
     config: &ModelLoadConfig,
     resolver: &mut ProcGenResolver,
+    living: &mut LivingProps,
     sink: &mut dyn AssetSink,
     mode: ProcGenMode,
 ) {
@@ -523,7 +278,7 @@ pub fn resolve(
             .get_world_position(entity.id)
             .map_or([0.0; 3], |p| [p.x, p.y, p.z]);
         let added = read_request(entity.id, name, position, spec_name, component)
-            .and_then(|request| resolver.add_living_prop(request));
+            .and_then(|request| living.add_prop(resolver, request));
         match added {
             Ok((_, asset)) => assets.push((entity.id, asset)),
             Err(reason) => {
@@ -545,7 +300,7 @@ pub fn resolve(
         }
     }
 
-    let props = resolver.living_props();
+    let props = &*living;
     tracing::debug!(target: "load",
         "[living] {} prop(s) on {} lineage(s)",
         props.props().len(),
@@ -554,9 +309,9 @@ pub fn resolve(
     match mode {
         ProcGenMode::Immediate => {
             let started = web_time::Instant::now();
-            let done = resolver.make_living_now();
+            let done = living.make_now(resolver);
             apply_lineages(&done, sink);
-            let props = resolver.living_props();
+            let props = &*living;
             let poses: usize = props.props().iter().map(|p| p.ready()).sum();
             tracing::debug!(target: "load",
                 "[living] {} lineage(s) and {poses} poses in {:.0} ms",

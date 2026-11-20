@@ -4,7 +4,8 @@
 use crate::player_app::PlayerApp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_procgen::{LivingPropRequest, ProcGenSpec};
+use flint_living::LivingPropRequest;
+use flint_procgen::{LivingKnob, ProcGenSpec};
 use flint_wooze::{WoozeField, WoozeSample};
 
 const SPEC: &str = r#"
@@ -37,23 +38,27 @@ fn grove() -> PlayerApp {
         None,
         None,
     );
-    let resolver = &mut app.core.procgen_resolver;
+    let core = &mut app.core;
+    let resolver = &mut core.procgen_resolver;
     resolver.index_spec(ProcGenSpec::parse(SPEC).unwrap());
     for i in 0..3u64 {
-        resolver
-            .add_living_prop(LivingPropRequest {
-                entity: EntityId::from_raw(i + 1),
-                entity_name: format!("sapling_{i}"),
-                position: [i as f32, 0.0, 0.0],
-                spec_name: "sapling".to_string(),
-                lineage_seed: None,
-                pose_ring: None,
-                phase_offset: Some(0.25),
-                stagger: None,
-            })
+        (core.living_props)
+            .add_prop(
+                resolver,
+                LivingPropRequest {
+                    entity: EntityId::from_raw(i + 1),
+                    entity_name: format!("sapling_{i}"),
+                    position: [i as f32, 0.0, 0.0],
+                    spec_name: "sapling".to_string(),
+                    lineage_seed: None,
+                    pose_ring: None,
+                    phase_offset: Some(0.25),
+                    stagger: None,
+                },
+            )
             .unwrap();
     }
-    resolver.make_living_now();
+    core.living_props.make_now(resolver);
     app.living().wooze = Some(WoozeField::new(WoozeSample::NEUTRAL));
     app
 }
@@ -63,13 +68,17 @@ fn map(toml: &str) -> toml::Value {
 }
 
 fn spread(app: &mut PlayerApp) -> f32 {
-    app.living_view(None).echo_spread.value
+    app.living_view(None)
+        .get(LivingKnob::EchoSpread)
+        .value
+        .as_f32()
+        .unwrap()
 }
 
 /// Each prop's echoes as its ring shows them, so a knob that has "arrived" in
 /// the layers but not on the props would fail.
 fn prop_spreads(app: &mut PlayerApp) -> Vec<f32> {
-    let props = app.core.procgen_resolver.living_props();
+    let props = &app.core.living_props;
     props
         .props()
         .iter()
@@ -131,7 +140,7 @@ fn with_no_seconds_it_is_a_step() {
     assert!(timed.living().ramps.is_empty());
     for app in [&mut stepped, &mut timed] {
         assert_eq!(spread(app), 1.8);
-        assert_eq!(app.living_view(None).echo_count.value, 3);
+        assert_eq!(app.living_view(None).get(LivingKnob::EchoCount).value, 3);
     }
     assert_eq!(stepped.living_look(), timed.living_look());
 }
@@ -143,8 +152,8 @@ fn a_count_switches_at_once_while_its_spread_eases() {
     app.tune_living_over(map("[living.echoes]\ncount = 4\nspread = 1.0"), 1.0)
         .unwrap();
     let view = app.living_view(None);
-    assert_eq!(view.echo_count.value, 4);
-    assert_eq!(view.echo_spread.value, 0.4);
+    assert_eq!(view.get(LivingKnob::EchoCount).value, 4);
+    assert_eq!(view.get(LivingKnob::EchoSpread).value, 0.4);
     let seen = spreads_over(&mut app, 60, 1.0 / 60.0);
     assert!(seen[0] > 0.4 && seen[0] < 0.41);
     assert_eq!(seen[59], 1.0);
@@ -231,7 +240,7 @@ fn a_step_takes_over_from_a_ramp() {
     assert_eq!(spreads_over(&mut app, 30, 1.0 / 60.0), [0.5; 30]);
     assert_eq!(app.living().ramps.len(), 1, "softness is still on its way");
     spreads_over(&mut app, 60, 1.0 / 60.0);
-    assert_eq!(app.living_view(None).softness.value, 1.0);
+    assert_eq!(app.living_view(None).get(LivingKnob::Softness).value, 1.0);
 }
 
 /// A species' own values ease too, its clock included, and a freeze holds
@@ -239,7 +248,13 @@ fn a_step_takes_over_from_a_ramp() {
 #[test]
 fn a_species_eases_its_own_clock_and_a_freeze_holds_it() {
     let mut app = grove();
-    let step = |app: &mut PlayerApp| app.living_view(Some("sapling")).step.value;
+    let step = |app: &mut PlayerApp| {
+        app.living_view(Some("sapling"))
+            .get(LivingKnob::Step)
+            .value
+            .as_f32()
+            .unwrap()
+    };
     let start = step(&mut app);
     app.tune_living_over(map("species = \"sapling\"\nstep = 1.5"), 1.0)
         .unwrap();
@@ -257,7 +272,7 @@ fn a_species_eases_its_own_clock_and_a_freeze_holds_it() {
         app.tick_procgen_for_test(1.0 / 60.0);
     }
     assert_eq!(step(&mut app), 1.5);
-    let props = app.core.procgen_resolver.living_props();
+    let props = &app.core.living_props;
     assert!(props.props().iter().all(|p| p.clock().step == 1.5));
 }
 
@@ -315,10 +330,16 @@ fn the_jitter_rate_steps_eases_and_clears_and_the_boil_follows_it() {
     let mut app = grove();
     app.tick_procgen_for_test(1.0 / 60.0);
     let jitter_times = |app: &mut PlayerApp| -> Vec<f64> {
-        let props = app.core.procgen_resolver.living_props();
+        let props = &app.core.living_props;
         props.props().iter().map(|p| p.jitter_time()).collect()
     };
-    let rate = |app: &mut PlayerApp| app.living_view(None).jitter_rate.value;
+    let rate = |app: &mut PlayerApp| {
+        app.living_view(None)
+            .get(LivingKnob::JitterRate)
+            .value
+            .as_f32()
+            .unwrap()
+    };
     assert_eq!(rate(&mut app), 1.0, "the spec's pace, with nothing said");
 
     app.tune_living_from_script(map("[living]\njitter_rate = 2.0"))
@@ -369,10 +390,16 @@ fn the_row_rate_steps_eases_and_clears_and_the_row_clock_follows_it() {
     let mut app = grove();
     app.tick_procgen_for_test(1.0 / 60.0);
     let row_times = |app: &mut PlayerApp| -> Vec<f64> {
-        let props = app.core.procgen_resolver.living_props();
+        let props = &app.core.living_props;
         props.props().iter().map(|p| p.row_time()).collect()
     };
-    let rate = |app: &mut PlayerApp| app.living_view(None).row_rate.value;
+    let rate = |app: &mut PlayerApp| {
+        app.living_view(None)
+            .get(LivingKnob::RowRate)
+            .value
+            .as_f32()
+            .unwrap()
+    };
     assert_eq!(rate(&mut app), 1.0, "the spec's pace, with nothing said");
 
     app.tune_living_from_script(map("[living]\nrow_rate = 2.0"))

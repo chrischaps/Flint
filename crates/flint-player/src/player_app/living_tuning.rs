@@ -11,19 +11,16 @@
 //! while frozen, and glide and drift arrive on each part's next beat, as they do
 //! at speed.
 
+use flint_living::{LivingLayer, LivingLayers, LivingPropId, ResolvedProp};
 use flint_procgen::{
-    commit_look, read_preset, BoilDef, LivingDef, LivingEchoesDef, LivingSpeciesDef,
-    LivingVarianceDef, WoozeKnobs, WoozePreset,
-};
-use flint_procgen::{
-    EchoConfig, EchoOverride, LivingLayer, LivingLayers, LivingPropId, LivingScope, Resolved,
-    ResolvedProp, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
+    commit_look, read_preset, species_keys, wooze_knobs_of, BoilDef, KnobValue, LivingDef,
+    LivingKnob, LivingSpeciesDef, WoozeKnobs, WoozePreset,
 };
 use flint_wooze::{preset as builtin_preset, WoozeField, WoozeSample, PRESETS};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use super::living_props::{echoes_of, species_of, stagger_name, stagger_of, variance_of};
+use super::living_props::species_of;
 use super::living_subsystem::LivingSubsystem;
 use super::subsystem::StageCtx;
 
@@ -113,101 +110,32 @@ impl Unsaved {
     }
 }
 
-/// A species' own values as its scene table says them.
-pub(crate) fn species_table(over: &SpeciesOverride) -> LivingSpeciesDef {
-    LivingSpeciesDef {
-        amplitude: over.clock.amplitude,
-        step: over.clock.step,
-        glide: over.clock.glide,
-        jitter: over.clock.jitter,
-        stagger: over.stagger.map(|s| stagger_name(s).to_string()),
-        echoes: echoes_table(over.echoes),
-        variance: variance_table(over.variance),
-        softness: over.softness,
-        jitter_rate: over.jitter_rate,
-        row_rate: over.row_rate,
-    }
-}
-
-fn echoes_table(echoes: EchoOverride) -> Option<LivingEchoesDef> {
-    (echoes != EchoOverride::default()).then_some(LivingEchoesDef {
-        count: echoes.count,
-        spread: echoes.spread,
-        alpha: echoes.alpha,
-    })
-}
-
-fn variance_table(variance: VarianceOverride) -> Option<LivingVarianceDef> {
-    (variance != VarianceOverride::default()).then_some(LivingVarianceDef {
-        amount: variance.amount,
-        steady: variance.steady,
-        keep_size: variance.keep_size,
-    })
-}
-
-/// The keys [`PlayerApp::clear_living_species`] takes, each a knob or a group.
-pub const SPECIES_KEYS: [&str; 16] = [
-    "amplitude",
-    "step",
-    "glide",
-    "jitter",
-    "stagger",
-    "echoes",
-    "echoes.count",
-    "echoes.spread",
-    "echoes.alpha",
-    "variance",
-    "variance.amount",
-    "variance.steady",
-    "variance.keep_size",
-    "softness",
-    "jitter_rate",
-    "row_rate",
-];
-
 /// One knob over some props (#247): the first one's value, whether they
 /// disagree, and the layers that set it, each once, as `flint render --report
 /// json` names them: `spec`, `entity`, `global`, `zone:<name>` or `species`.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct KnobRead<T> {
-    pub value: T,
+pub(crate) struct KnobRead {
+    pub value: KnobValue,
     pub mixed: bool,
     pub layers: Vec<String>,
 }
 
-/// Every knob a species can set, over the props a scope covers (#247).
+/// Every knob a species can set, over the props a scope covers (#247), kept
+/// by [`LivingKnob`]: nothing here names one (#1025).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LivingView {
     /// How many props that is.
     pub props: usize,
-    pub amplitude: KnobRead<f32>,
-    pub step: KnobRead<f32>,
-    pub glide: KnobRead<f32>,
-    pub jitter: KnobRead<f32>,
-    pub stagger: KnobRead<Stagger>,
-    pub echo_count: KnobRead<u32>,
-    pub echo_spread: KnobRead<f32>,
-    pub echo_alpha: KnobRead<f32>,
-    pub variance_amount: KnobRead<f32>,
-    pub variance_steady: KnobRead<f32>,
-    pub keep_size: KnobRead<bool>,
-    pub softness: KnobRead<f32>,
-    pub jitter_rate: KnobRead<f32>,
-    pub row_rate: KnobRead<f32>,
+    reads: [KnobRead; LivingKnob::COUNT],
 }
 
 /// One knob over `props`. For the whole grove, a prop whose species sets its
 /// own is left out, since the grove's knob doesn't reach it, unless every one
 /// does: then the knob reads what they run on.
-fn read_knob<T: Clone + PartialEq>(
-    props: &[ResolvedProp],
-    grove: bool,
-    fallback: T,
-    pick: impl Fn(&ResolvedProp) -> &Resolved<T>,
-) -> KnobRead<T> {
+fn read_knob(props: &[ResolvedProp], grove: bool, knob: LivingKnob) -> KnobRead {
     let reached: Vec<&ResolvedProp> = props
         .iter()
-        .filter(|prop| !grove || pick(prop).layer != LivingLayer::Species)
+        .filter(|prop| !grove || prop.get(knob).layer != LivingLayer::Species)
         .collect();
     let read: Vec<&ResolvedProp> = if reached.is_empty() {
         props.iter().collect()
@@ -216,21 +144,21 @@ fn read_knob<T: Clone + PartialEq>(
     };
     let Some(first) = read.first() else {
         return KnobRead {
-            value: fallback,
+            value: knob.default_value(),
             mixed: false,
             layers: Vec::new(),
         };
     };
-    let value = pick(first).value.clone();
+    let value = first.get(knob).value.clone();
     let mut layers: Vec<String> = Vec::new();
     for prop in &read {
-        let label = pick(prop).layer.label();
+        let label = prop.get(knob).layer.label();
         if !layers.contains(&label) {
             layers.push(label);
         }
     }
     KnobRead {
-        mixed: read.iter().any(|prop| pick(prop).value != value),
+        mixed: read.iter().any(|prop| prop.get(knob).value != value),
         value,
         layers,
     }
@@ -239,76 +167,29 @@ fn read_knob<T: Clone + PartialEq>(
 impl LivingView {
     /// Every knob over `props`, for the whole grove or for one species.
     fn of(props: &[ResolvedProp], grove: bool) -> Self {
-        let echoes = EchoConfig::default();
-        let variance = VarianceConfig::default();
-        let clock = WoozeSample::NEUTRAL;
         Self {
             props: props.len(),
-            amplitude: read_knob(props, grove, clock.amplitude, |p| &p.amplitude),
-            step: read_knob(props, grove, clock.step, |p| &p.step),
-            glide: read_knob(props, grove, clock.glide, |p| &p.glide),
-            jitter: read_knob(props, grove, clock.jitter, |p| &p.jitter),
-            stagger: read_knob(props, grove, Stagger::default(), |p| &p.stagger),
-            echo_count: read_knob(props, grove, echoes.count, |p| &p.echo_count),
-            echo_spread: read_knob(props, grove, echoes.spread, |p| &p.echo_spread),
-            echo_alpha: read_knob(props, grove, echoes.alpha, |p| &p.echo_alpha),
-            variance_amount: read_knob(props, grove, variance.amount, |p| &p.variance_amount),
-            variance_steady: read_knob(props, grove, variance.steady, |p| &p.variance_steady),
-            keep_size: read_knob(props, grove, variance.keep_size, |p| &p.keep_size),
-            softness: read_knob(props, grove, 0.0, |p| &p.softness),
-            jitter_rate: read_knob(props, grove, 1.0, |p| &p.jitter_rate),
-            row_rate: read_knob(props, grove, 1.0, |p| &p.row_rate),
+            reads: LivingKnob::ALL.map(|knob| read_knob(props, grove, knob)),
         }
+    }
+
+    /// One knob over the view's props.
+    pub(crate) fn get(&self, knob: LivingKnob) -> &KnobRead {
+        &self.reads[knob.index()]
+    }
+
+    fn get_mut(&mut self, knob: LivingKnob) -> &mut KnobRead {
+        &mut self.reads[knob.index()]
     }
 
     /// The knobs as a preset with every one set, and the boil as given.
     pub(crate) fn knobs(&self, boil: BoilDef) -> WoozePreset {
-        WoozePreset {
-            wooze: WoozeKnobs {
-                amplitude: Some(self.amplitude.value),
-                step: Some(self.step.value),
-                glide: Some(self.glide.value),
-                jitter: Some(self.jitter.value),
-            },
-            living: LivingDef {
-                shadows: None,
-                stagger: Some(stagger_name(self.stagger.value).to_string()),
-                echoes: Some(LivingEchoesDef {
-                    count: Some(self.echo_count.value),
-                    spread: Some(self.echo_spread.value),
-                    alpha: Some(self.echo_alpha.value),
-                }),
-                variance: Some(LivingVarianceDef {
-                    amount: Some(self.variance_amount.value),
-                    steady: Some(self.variance_steady.value),
-                    keep_size: Some(self.keep_size.value),
-                }),
-                softness: Some(self.softness.value),
-                jitter_rate: Some(self.jitter_rate.value),
-                row_rate: Some(self.row_rate.value),
-                ..Default::default()
-            },
-            boil: Some(boil),
+        let mut preset = WoozePreset::default();
+        for knob in LivingKnob::ALL {
+            knob.set_in_preset(&mut preset, &self.get(knob).value);
         }
-    }
-}
-
-/// What a species table says for the knobs a panel edit set (#247): the shape
-/// `[living.species.<spec>]` and a script's `tune_living` take. The boil has no
-/// place in it, being one pass over the whole frame.
-#[cfg(feature = "debug-hud")]
-pub(crate) fn species_def_of(moved: &WoozePreset) -> LivingSpeciesDef {
-    LivingSpeciesDef {
-        amplitude: moved.wooze.amplitude,
-        step: moved.wooze.step,
-        glide: moved.wooze.glide,
-        jitter: moved.wooze.jitter,
-        stagger: moved.living.stagger.clone(),
-        echoes: moved.living.echoes,
-        variance: moved.living.variance,
-        softness: moved.living.softness,
-        jitter_rate: moved.living.jitter_rate,
-        row_rate: moved.living.row_rate,
+        preset.boil = Some(boil);
+        preset
     }
 }
 
@@ -316,7 +197,7 @@ impl LivingSubsystem {
     /// Every prop's values, each with the layer that set it, as `flint render
     /// --report json` reads them.
     pub(super) fn living_resolved(&self, ctx: &StageCtx<'_>) -> Vec<ResolvedProp> {
-        let living = ctx.resolver.living_props();
+        let living = &*ctx.living;
         let field = self.wooze.as_ref().map(|field| (field, self.wooze_time));
         (0..living.props().len())
             .map(|i| living.resolved(LivingPropId(i), field))
@@ -334,14 +215,12 @@ impl LivingSubsystem {
         let mut view = LivingView::of(&props, species.is_none());
         if let (None, Some(field)) = (species, &self.wooze) {
             let global = field.global(self.wooze_time);
-            for (knob, value) in [
-                (&mut view.amplitude, global.amplitude),
-                (&mut view.step, global.step),
-                (&mut view.glide, global.glide),
-                (&mut view.jitter, global.jitter),
-            ] {
-                knob.value = value;
-                knob.mixed = false;
+            for knob in LivingKnob::ALL {
+                if let Some(value) = knob.in_sample(&global) {
+                    let read = view.get_mut(knob);
+                    read.value = KnobValue::Number(value);
+                    read.mixed = false;
+                }
             }
         }
         view
@@ -349,7 +228,7 @@ impl LivingSubsystem {
 
     /// The species any prop grows from, by name.
     pub(crate) fn living_species(&self, ctx: &StageCtx<'_>) -> Vec<String> {
-        let living = ctx.resolver.living_props();
+        let living = &*ctx.living;
         let mut names: Vec<String> = (living.species_names().into_iter())
             .filter(|species| living.has_species(species))
             .map(str::to_string)
@@ -376,68 +255,11 @@ impl LivingSubsystem {
         let view = self.living_view(ctx, None);
         let mut knobs = view.knobs(self.living_boil(ctx));
         let mut left_out = Vec::new();
-        let mut out = |is: bool, name: &'static str| {
-            if is {
-                left_out.push(name);
+        for knob in LivingKnob::ALL {
+            if view.get(knob).mixed {
+                knob.clear_in_preset(&mut knobs);
+                left_out.push(knob.key());
             }
-            is
-        };
-        let wooze = &mut knobs.wooze;
-        for (is, name, value) in [
-            (view.step.mixed, "step", &mut wooze.step),
-            (view.glide.mixed, "glide", &mut wooze.glide),
-            (view.amplitude.mixed, "amplitude", &mut wooze.amplitude),
-            (view.jitter.mixed, "jitter", &mut wooze.jitter),
-        ] {
-            if out(is, name) {
-                *value = None;
-            }
-        }
-        if out(view.stagger.mixed, "stagger") {
-            knobs.living.stagger = None;
-        }
-        if let Some(echoes) = &mut knobs.living.echoes {
-            if out(view.echo_count.mixed, "echoes.count") {
-                echoes.count = None;
-            }
-            for (is, name, value) in [
-                (view.echo_spread.mixed, "echoes.spread", &mut echoes.spread),
-                (view.echo_alpha.mixed, "echoes.alpha", &mut echoes.alpha),
-            ] {
-                if out(is, name) {
-                    *value = None;
-                }
-            }
-        }
-        if let Some(variance) = &mut knobs.living.variance {
-            for (is, name, value) in [
-                (
-                    view.variance_amount.mixed,
-                    "variance.amount",
-                    &mut variance.amount,
-                ),
-                (
-                    view.variance_steady.mixed,
-                    "variance.steady",
-                    &mut variance.steady,
-                ),
-            ] {
-                if out(is, name) {
-                    *value = None;
-                }
-            }
-            if out(view.keep_size.mixed, "variance.keep_size") {
-                variance.keep_size = None;
-            }
-        }
-        if out(view.softness.mixed, "softness") {
-            knobs.living.softness = None;
-        }
-        if out(view.jitter_rate.mixed, "jitter_rate") {
-            knobs.living.jitter_rate = None;
-        }
-        if out(view.row_rate.mixed, "row_rate") {
-            knobs.living.row_rate = None;
         }
         (knobs, left_out)
     }
@@ -534,8 +356,7 @@ impl LivingSubsystem {
         seconds: f64,
     ) -> Vec<String> {
         let start = ctx
-            .resolver
-            .living_props()
+            .living
             .props()
             .first()
             .map_or(WoozeSample::NEUTRAL, |prop| prop.wooze_below());
@@ -546,7 +367,7 @@ impl LivingSubsystem {
     /// one that isn't stays as each prop has it: moving echo `count` in a grove
     /// of several species leaves each its own `spread` and `alpha`.
     fn tune_props(&mut self, ctx: &mut StageCtx<'_>, living: &LivingDef) -> Vec<String> {
-        tune_props(ctx.resolver.living_props_mut(), living)
+        tune_props(&mut *ctx.living, living)
     }
 
     /// One species' own values (#246), over whatever it has already: they beat
@@ -559,7 +380,7 @@ impl LivingSubsystem {
         def: &LivingSpeciesDef,
     ) -> Vec<String> {
         self.ramps.cancel_species(name, def);
-        let (mut problems, grown) = tune_species(ctx.resolver.living_props_mut(), name, def);
+        let (mut problems, grown) = tune_species(&mut *ctx.living, name, def);
         if !grown {
             problems.push(self.no_such_species(ctx, name));
         }
@@ -575,7 +396,7 @@ impl LivingSubsystem {
         def: &LivingSpeciesDef,
     ) -> Vec<String> {
         self.ramps.cancel_keys(Some(name), &[]);
-        let (mut problems, grown) = replace_species(ctx.resolver.living_props_mut(), name, def);
+        let (mut problems, grown) = replace_species(&mut *ctx.living, name, def);
         if !grown {
             problems.push(self.no_such_species(ctx, name));
         }
@@ -583,7 +404,7 @@ impl LivingSubsystem {
     }
 
     /// Clear some of a species' own values, or all of them with no keys, so the
-    /// layers below decide them again. Keys are [`SPECIES_KEYS`].
+    /// layers below decide them again. Keys are [`species_keys`](flint_procgen::species_keys).
     pub(super) fn clear_living_species(
         &mut self,
         ctx: &mut StageCtx<'_>,
@@ -591,7 +412,7 @@ impl LivingSubsystem {
         keys: &[String],
     ) -> Result<(), String> {
         self.ramps.cancel_keys(Some(name), keys);
-        if clear_species(ctx.resolver.living_props_mut(), name, keys)? {
+        if clear_species(&mut *ctx.living, name, keys)? {
             Ok(())
         } else {
             Err(self.no_such_species(ctx, name))
@@ -650,37 +471,21 @@ impl LivingSubsystem {
     /// knobs, if there's a field, the global layer of `[living]` as it was set,
     /// a field at a time, each species' own values, and the boil.
     pub(super) fn living_look(&self, ctx: &StageCtx<'_>) -> WoozePreset {
-        let props = ctx.resolver.living_props();
-        let wooze = match &self.wooze {
-            Some(field) => {
-                let global = field.global(self.wooze_time);
-                WoozeKnobs {
-                    amplitude: Some(global.amplitude),
-                    step: Some(global.step),
-                    glide: Some(global.glide),
-                    jitter: Some(global.jitter),
-                }
-            }
-            None => WoozeKnobs::default(),
-        };
-        let (echoes, stagger, variance) = props.global_layer();
+        let props = &*ctx.living;
+        let wooze = (self.wooze.as_ref())
+            .map(|field| wooze_knobs_of(&field.global(self.wooze_time)))
+            .unwrap_or_default();
         let species = (self.living_species(ctx).into_iter())
             .filter_map(|name| {
                 let over = props.species_override(&name)?;
-                (!over.is_empty()).then(|| (name, species_table(&over)))
+                (!over.is_empty()).then(|| (name, over.to_def()))
             })
             .collect();
         WoozePreset {
             wooze,
             living: LivingDef {
-                shadows: None,
-                stagger: stagger.map(|s| stagger_name(s).to_string()),
-                echoes: echoes_table(echoes),
-                variance: variance_table(variance),
-                softness: props.global_softness(),
-                jitter_rate: props.global_jitter_rate(),
-                row_rate: props.global_row_rate(),
                 species,
+                ..props.global_def()
             },
             boil: Some(self.living_boil(ctx)),
         }
@@ -763,7 +568,7 @@ impl LivingSubsystem {
         AtLoad {
             knobs,
             no_field,
-            layers: ctx.resolver.living_props().layers(),
+            layers: ctx.living.layers(),
             look: self.living_look(ctx),
         }
     }
@@ -783,9 +588,7 @@ impl LivingSubsystem {
             // A clock knob may since have given the scene a field it didn't have.
             self.wooze = None;
         }
-        ctx.resolver
-            .living_props_mut()
-            .restore_layers(&at_load.layers);
+        ctx.living.restore_layers(&at_load.layers);
     }
 
     /// Queue exactly one beat of the clock.
@@ -809,7 +612,7 @@ impl LivingSubsystem {
                 self.tune_boil(ctx, boil);
             }
         }
-        if self.tune.at_load.is_none() && !ctx.resolver.living_props().is_empty() {
+        if self.tune.at_load.is_none() && !ctx.living.is_empty() {
             self.tune.at_load = Some(self.living_at_load(ctx));
         }
         self.start_asked_comparison(ctx);
@@ -821,8 +624,7 @@ impl LivingSubsystem {
         let seconds = match &self.wooze {
             Some(field) => f64::from(field.global(self.wooze_time).step),
             None => ctx
-                .resolver
-                .living_props()
+                .living
                 .props()
                 .first()
                 .map_or(0.0, |prop| f64::from(prop.clock().step)),
@@ -830,9 +632,7 @@ impl LivingSubsystem {
         if self.tune.ab.is_some() {
             return seconds;
         }
-        ctx.resolver
-            .living_props_mut()
-            .advance_beats(beats, seconds);
+        ctx.living.advance_beats(beats, seconds);
         if let Some(field) = &self.wooze {
             let sample = field.sample(ctx.camera.position_array(), self.wooze_time);
             self.boil_clock
@@ -903,13 +703,10 @@ pub(crate) fn tune_field(
     knobs: &WoozeKnobs,
     seconds: f64,
 ) -> Vec<String> {
-    let wanted = [
-        ("amplitude", knobs.amplitude),
-        ("step", knobs.step),
-        ("glide", knobs.glide),
-        ("jitter", knobs.jitter),
-    ];
-    if wanted.iter().all(|(_, value)| value.is_none()) {
+    if LivingKnob::ALL
+        .iter()
+        .all(|knob| knob.in_wooze(knobs).is_none())
+    {
         return Vec::new();
     }
     tune_global(
@@ -927,12 +724,6 @@ pub(crate) fn tune_global(
     knobs: &WoozeKnobs,
     seconds: f64,
 ) -> Vec<String> {
-    let wanted = [
-        ("amplitude", knobs.amplitude),
-        ("step", knobs.step),
-        ("glide", knobs.glide),
-        ("jitter", knobs.jitter),
-    ];
     // A step compares with where a knob stands; an ease with where it's
     // heading, so that asking again every frame for the same place lets the
     // ramp under way get there rather than starting it over (#514).
@@ -941,15 +732,17 @@ pub(crate) fn tune_global(
     } else {
         field.global(time)
     };
-    let current = [now.amplitude, now.step, now.glide, now.jitter];
     // Only what's moved, so that the rest of a full set of knobs doesn't cut
     // short a ramp a script has going, and one at a time, so that one bad knob
     // leaves the others standing.
     let mut problems = Vec::new();
-    for ((name, value), current) in wanted.into_iter().zip(current) {
-        if let Some(value) = value.filter(|value| *value != current) {
+    for knob in LivingKnob::ALL {
+        let (Some(value), Some(current)) = (knob.in_wooze(knobs), knob.in_sample(&now)) else {
+            continue;
+        };
+        if value != current {
             let mut table = toml::Table::new();
-            table.insert(name.to_string(), toml::Value::Float(f64::from(value)));
+            table.insert(knob.key().to_string(), toml::Value::Float(f64::from(value)));
             if let Err(problem) = field.set_global(&table, time, seconds) {
                 problems.push(problem);
             }
@@ -962,40 +755,8 @@ pub(crate) fn tune_global(
 /// goes to every prop, and one
 /// that isn't stays as each prop has it: moving echo `count` in a grove of
 /// several species leaves each its own `spread` and `alpha`.
-pub(crate) fn tune_props(
-    props: &mut flint_procgen::LivingProps,
-    living: &LivingDef,
-) -> Vec<String> {
-    let mut problems = Vec::new();
-    let mut say = |problem: String| problems.push(problem);
-    // The global layer, a field at a time (#246): a species' own value still
-    // beats whatever this sets.
-    let stagger = living.stagger.as_deref().and_then(|name| {
-        let stagger = stagger_of(name);
-        if stagger.is_none() {
-            say(format!(
-                "stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\""
-            ));
-        }
-        stagger
-    });
-    let echoes = echoes_of(living.echoes.as_ref(), &mut say);
-    let variance = variance_of(living.variance.as_ref(), &mut say);
-    if let Some(stagger) = stagger {
-        props.tune_stagger(LivingScope::All, stagger);
-    }
-    props.tune_echoes(LivingScope::All, echoes);
-    props.tune_variance(LivingScope::All, variance);
-    if let Some(softness) = super::living_props::softness_of(living.softness, &mut say) {
-        props.tune_softness(LivingScope::All, softness);
-    }
-    if let Some(rate) = super::living_props::jitter_rate_of(living.jitter_rate, &mut say) {
-        props.tune_jitter_rate(LivingScope::All, rate);
-    }
-    if let Some(rate) = super::living_props::row_rate_of(living.row_rate, &mut say) {
-        props.tune_row_rate(LivingScope::All, rate);
-    }
-    problems
+pub(crate) fn tune_props(props: &mut flint_living::LivingProps, living: &LivingDef) -> Vec<String> {
+    props.tune_global(living)
 }
 
 /// Turn the shading boil's knobs on `config`. `off` is what the amounts come back
@@ -1035,12 +796,7 @@ pub(crate) fn find_preset(scene_path: &Path, name: &str) -> Result<WoozePreset, 
         .or_else(|| {
             builtin_preset(name).map(|sample| {
                 Ok(WoozePreset {
-                    wooze: WoozeKnobs {
-                        amplitude: Some(sample.amplitude),
-                        step: Some(sample.step),
-                        glide: Some(sample.glide),
-                        jitter: Some(sample.jitter),
-                    },
+                    wooze: wooze_knobs_of(&sample),
                     ..Default::default()
                 })
             })
@@ -1052,7 +808,7 @@ pub(crate) fn find_preset(scene_path: &Path, name: &str) -> Result<WoozePreset, 
 /// doesn't say goes back to the layers below. Returns what couldn't be used, and
 /// whether any prop grows from the species.
 pub(crate) fn replace_species(
-    props: &mut flint_procgen::LivingProps,
+    props: &mut flint_living::LivingProps,
     name: &str,
     def: &LivingSpeciesDef,
 ) -> (Vec<String>, bool) {
@@ -1067,7 +823,7 @@ pub(crate) fn replace_species(
 /// One species' own values (#246), over whatever it has already. Returns what
 /// couldn't be used, and whether any prop grows from the species.
 pub(crate) fn tune_species(
-    props: &mut flint_procgen::LivingProps,
+    props: &mut flint_living::LivingProps,
     name: &str,
     def: &LivingSpeciesDef,
 ) -> (Vec<String>, bool) {
@@ -1086,14 +842,10 @@ pub(crate) fn tune_species(
 #[cfg(any(feature = "debug-hud", test))]
 pub(crate) fn scene_says(scene: &flint_scene::SceneFile) -> Vec<String> {
     let tables = flint_procgen::LivingTables::or_warn(scene);
-    let wooze = tables.wooze.as_ref();
     let own = WoozePreset {
-        wooze: WoozeKnobs {
-            amplitude: wooze.and_then(|w| w.amplitude),
-            step: wooze.and_then(|w| w.step),
-            glide: wooze.and_then(|w| w.glide),
-            jitter: wooze.and_then(|w| w.jitter),
-        },
+        wooze: (tables.wooze.as_ref())
+            .map(flint_procgen::WoozeDef::knobs)
+            .unwrap_or_default(),
         living: LivingDef {
             shadows: None,
             ..tables.living.clone().unwrap_or_default()
@@ -1109,56 +861,28 @@ pub(crate) fn scene_says(scene: &flint_scene::SceneFile) -> Vec<String> {
 /// The F3 panel's half: its actions come in here and what's true goes back out.
 #[cfg(feature = "debug-hud")]
 pub(super) mod panel {
-    use super::{species_def_of, KnobRead, LivingSubsystem, LivingView, StageCtx};
+    use super::{LivingSubsystem, LivingView, StageCtx};
     use flint_debug_ui::{
         DebugPanel, Knob, KnobFlags, KnobSources, LivingKnobs, LivingPanelAction,
         LivingPickedState, LivingPropRow, LivingPropsDebugPanel, LivingSpeciesState, PanelScope,
     };
-    use flint_procgen::{LivingPropId, LivingShadows};
+    use flint_living::{LivingPropId, LivingShadows};
+    use flint_procgen::species_def_of;
 
     /// Which knobs a view's props disagree on.
     pub(crate) fn mixed_of(view: &LivingView) -> KnobFlags {
-        KnobFlags {
-            step: view.step.mixed,
-            glide: view.glide.mixed,
-            amplitude: view.amplitude.mixed,
-            jitter: view.jitter.mixed,
-            stagger: view.stagger.mixed,
-            echo_count: view.echo_count.mixed,
-            echo_spread: view.echo_spread.mixed,
-            echo_alpha: view.echo_alpha.mixed,
-            variance_amount: view.variance_amount.mixed,
-            variance_steady: view.variance_steady.mixed,
-            keep_size: view.keep_size.mixed,
-            softness: view.softness.mixed,
-            jitter_rate: view.jitter_rate.mixed,
-            row_rate: view.row_rate.mixed,
+        let mut flags = KnobFlags::default();
+        for knob in Knob::ALL {
+            flags.set_flag(knob, view.get(knob).mixed);
         }
+        flags
     }
 
     /// The layers that set each knob of a view, as the report names them.
     pub(crate) fn sources_of(view: &LivingView) -> KnobSources {
-        fn layers<T>(read: &KnobRead<T>) -> Vec<String> {
-            read.layers.clone()
-        }
         let mut sources = KnobSources::default();
-        for (knob, labels) in [
-            (Knob::Amplitude, layers(&view.amplitude)),
-            (Knob::Step, layers(&view.step)),
-            (Knob::Glide, layers(&view.glide)),
-            (Knob::Jitter, layers(&view.jitter)),
-            (Knob::Stagger, layers(&view.stagger)),
-            (Knob::EchoCount, layers(&view.echo_count)),
-            (Knob::EchoSpread, layers(&view.echo_spread)),
-            (Knob::EchoAlpha, layers(&view.echo_alpha)),
-            (Knob::VarianceAmount, layers(&view.variance_amount)),
-            (Knob::VarianceSteady, layers(&view.variance_steady)),
-            (Knob::KeepSize, layers(&view.keep_size)),
-            (Knob::Softness, layers(&view.softness)),
-            (Knob::JitterRate, layers(&view.jitter_rate)),
-            (Knob::RowRate, layers(&view.row_rate)),
-        ] {
-            sources.set(knob, labels);
+        for knob in Knob::ALL {
+            sources.set(knob, view.get(knob).layers.clone());
         }
         sources
     }
@@ -1199,7 +923,7 @@ pub(super) mod panel {
 
         /// Each prop's place on its clock, for the panel and the overlay.
         pub(in super::super) fn living_rows(&self, ctx: &StageCtx<'_>) -> Vec<LivingPropRow> {
-            let props = ctx.resolver.living_props();
+            let props = &*ctx.living;
             props
                 .props()
                 .iter()
@@ -1248,7 +972,7 @@ pub(super) mod panel {
             ctx: &StageCtx<'_>,
             name: &str,
         ) -> Option<LivingPickedState> {
-            let living = ctx.resolver.living_props();
+            let living = &*ctx.living;
             let i = (living.props().iter()).position(|prop| prop.entity_name() == name)?;
             let prop = &living.props()[i];
             let field = self.wooze.as_ref().map(|field| (field, self.wooze_time));
@@ -1336,7 +1060,7 @@ pub(super) mod panel {
         /// is open, the cursor is free, and there are props to pick.
         pub(in super::super) fn living_wants_clicks(&self, ctx: &StageCtx<'_>) -> bool {
             !ctx.cursor_captured
-                && !ctx.resolver.living_props().is_empty()
+                && !ctx.living.is_empty()
                 && ctx.panels.iter().any(|panel| {
                     panel.name() == flint_debug_ui::LIVING_PROPS_DEBUG_PANEL && panel.is_open()
                 })
@@ -1377,7 +1101,7 @@ pub(super) mod panel {
             let species = self.living_species_states(ctx, &unsaved);
             let no_field = self.wooze.is_none();
             let rows = self.living_rows(ctx);
-            let shadows = match ctx.resolver.living_props().shadows() {
+            let shadows = match ctx.living.shadows() {
                 LivingShadows::Blended => "blended",
                 LivingShadows::Drift => "drift",
             };
@@ -1392,7 +1116,7 @@ pub(super) mod panel {
             let frozen = self.tune.frozen;
             let overlay = self.tune.overlay;
             let status = self.tune.status.clone();
-            let props = ctx.resolver.living_props();
+            let props = &*ctx.living;
             let health = flint_debug_ui::LivingHealth {
                 rings_short: props
                     .props()
@@ -1563,45 +1287,21 @@ pub(super) mod panel {
 
 /// A script's `clear_living` on `props` (the player's, or a headless capture's,
 /// #697): clear some of a species' own values, or all of them with no keys, so
-/// the layers below decide them again. Keys are [`SPECIES_KEYS`]. Whether any
+/// the layers below decide them again. Keys are [`species_keys`](flint_procgen::species_keys). Whether any
 /// prop grows from the species, or what's wrong with the keys.
 pub(super) fn clear_species(
-    props: &mut flint_procgen::LivingProps,
+    props: &mut flint_living::LivingProps,
     name: &str,
     keys: &[String],
 ) -> Result<bool, String> {
     let mut over = props.species_override(name).unwrap_or_default();
-    if keys.is_empty() {
-        over = Default::default();
-    }
-    let mut unknown = Vec::new();
-    for key in keys {
-        match key.as_str() {
-            "amplitude" => over.clock.amplitude = None,
-            "step" => over.clock.step = None,
-            "glide" => over.clock.glide = None,
-            "jitter" => over.clock.jitter = None,
-            "stagger" => over.stagger = None,
-            "echoes" => over.echoes = Default::default(),
-            "echoes.count" => over.echoes.count = None,
-            "echoes.spread" => over.echoes.spread = None,
-            "echoes.alpha" => over.echoes.alpha = None,
-            "variance" => over.variance = Default::default(),
-            "variance.amount" => over.variance.amount = None,
-            "variance.steady" => over.variance.steady = None,
-            "variance.keep_size" => over.variance.keep_size = None,
-            "softness" => over.softness = None,
-            "jitter_rate" => over.jitter_rate = None,
-            "row_rate" => over.row_rate = None,
-            other => unknown.push(other.to_string()),
-        }
-    }
+    let cleared = over.clear_keys(keys);
     let any = props.set_species(name, over);
-    if !unknown.is_empty() {
+    if let Err(unknown) = cleared {
         return Err(format!(
             "{} isn't a species value; it takes {}",
             unknown.join(", "),
-            SPECIES_KEYS.join(", ")
+            species_keys().join(", ")
         ));
     }
     Ok(any)

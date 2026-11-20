@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use flint_core::ContentHash;
 
-use crate::living::{LivingPose, SegmentPose};
+use flint_procgen::living::{LivingPose, SegmentPose};
 
 /// A window onto a prop's endless stream of poses: `first` and the steps after
 /// it, in fixed slots, so sliding it along allocates nothing.
@@ -134,7 +134,7 @@ impl PoseRing {
 }
 
 /// Poses that have been generated, apart from the meshes in
-/// [`ProcGenCache`](crate::ProcGenCache): they're tiny, and a grove makes a
+/// [`ProcGenCache`](flint_procgen::ProcGenCache): they're tiny, and a grove makes a
 /// hundred a second, so they'd push the meshes out. First in, first out, since
 /// a prop only moves forward through its stream, and a pose in a ring stays
 /// alive whatever happens to it here.

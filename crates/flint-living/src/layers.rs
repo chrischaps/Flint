@@ -15,10 +15,14 @@ use flint_wooze::{WoozeField, WoozeSample};
 
 use super::prop::PendingClocks;
 use super::{LivingPropId, LivingProps};
-use crate::spec::{EchoConfig, Stagger, VarianceConfig};
+use flint_procgen::{
+    EchoConfig, KnobType, KnobValue, LivingDef, LivingKnob, LivingSpeciesDef, Stagger,
+    VarianceConfig,
+};
 
-/// The fastest a boil can be asked to tick, times its spec's pace (#529).
-pub const JITTER_RATE_MAX: f32 = 8.0;
+// The two rates' ceilings are flint-procgen's, which holds a preset file's
+// rates to them too.
+pub use flint_procgen::living::{JITTER_RATE_MAX, ROW_RATE_MAX};
 
 /// A jitter rate in the range one can be: 0 (held) to [`JITTER_RATE_MAX`]. Not a
 /// number is 1, the spec's pace.
@@ -29,10 +33,6 @@ pub fn jitter_rate_clamped(rate: f32) -> f32 {
         rate.clamp(0.0, JITTER_RATE_MAX)
     }
 }
-
-/// The fastest a form's words can be asked to drift along their lines, times
-/// its spec's `row_pace` (#576).
-pub const ROW_RATE_MAX: f32 = 8.0;
 
 /// A row rate in the range one can be: 0 (held) to [`ROW_RATE_MAX`]. Not a
 /// number is 1, the spec's pace.
@@ -260,6 +260,85 @@ impl SpeciesOverride {
     pub fn is_empty(&self) -> bool {
         *self == SpeciesOverride::default()
     }
+
+    /// What it says of one knob, if anything: the runtime's own field for each
+    /// of [`LivingKnob::ALL`] (#1025).
+    pub fn get(&self, knob: LivingKnob) -> Option<KnobValue> {
+        let (clock, echoes, variance) = (self.clock, self.echoes, self.variance);
+        match knob {
+            LivingKnob::Amplitude => clock.amplitude.map(KnobType::into_knob),
+            LivingKnob::Step => clock.step.map(KnobType::into_knob),
+            LivingKnob::Glide => clock.glide.map(KnobType::into_knob),
+            LivingKnob::Jitter => clock.jitter.map(KnobType::into_knob),
+            LivingKnob::Stagger => self.stagger.map(|s| KnobValue::Name(s.name().to_string())),
+            LivingKnob::EchoCount => echoes.count.map(KnobType::into_knob),
+            LivingKnob::EchoSpread => echoes.spread.map(KnobType::into_knob),
+            LivingKnob::EchoAlpha => echoes.alpha.map(KnobType::into_knob),
+            LivingKnob::VarianceAmount => variance.amount.map(KnobType::into_knob),
+            LivingKnob::VarianceSteady => variance.steady.map(KnobType::into_knob),
+            LivingKnob::KeepSize => variance.keep_size.map(KnobType::into_knob),
+            LivingKnob::Softness => self.softness.map(KnobType::into_knob),
+            LivingKnob::JitterRate => self.jitter_rate.map(KnobType::into_knob),
+            LivingKnob::RowRate => self.row_rate.map(KnobType::into_knob),
+        }
+    }
+
+    /// Forget its word on one knob, so the layers below decide it again.
+    pub fn clear(&mut self, knob: LivingKnob) {
+        match knob {
+            LivingKnob::Amplitude => self.clock.amplitude = None,
+            LivingKnob::Step => self.clock.step = None,
+            LivingKnob::Glide => self.clock.glide = None,
+            LivingKnob::Jitter => self.clock.jitter = None,
+            LivingKnob::Stagger => self.stagger = None,
+            LivingKnob::EchoCount => self.echoes.count = None,
+            LivingKnob::EchoSpread => self.echoes.spread = None,
+            LivingKnob::EchoAlpha => self.echoes.alpha = None,
+            LivingKnob::VarianceAmount => self.variance.amount = None,
+            LivingKnob::VarianceSteady => self.variance.steady = None,
+            LivingKnob::KeepSize => self.variance.keep_size = None,
+            LivingKnob::Softness => self.softness = None,
+            LivingKnob::JitterRate => self.jitter_rate = None,
+            LivingKnob::RowRate => self.row_rate = None,
+        }
+    }
+
+    /// Forget what `keys` name, each a knob's key or a table's (`echoes`), or
+    /// everything with none. Returns the keys that name nothing, if any.
+    pub fn clear_keys(&mut self, keys: &[String]) -> Result<(), Vec<String>> {
+        if keys.is_empty() {
+            *self = SpeciesOverride::default();
+            return Ok(());
+        }
+        let mut unknown = Vec::new();
+        for key in keys {
+            let named: Vec<LivingKnob> = (LivingKnob::ALL.into_iter())
+                .filter(|knob| knob.named_by(key))
+                .collect();
+            if named.is_empty() {
+                unknown.push(key.clone());
+            }
+            for knob in named {
+                self.clear(knob);
+            }
+        }
+        if unknown.is_empty() {
+            Ok(())
+        } else {
+            Err(unknown)
+        }
+    }
+
+    /// These values as a scene's `[living.species.<spec>]` says them.
+    pub fn to_def(&self) -> LivingSpeciesDef {
+        let mut def = LivingSpeciesDef::default();
+        for knob in LivingKnob::ALL {
+            if let Some(value) = self.get(knob) {
+                knob.set_in_species(&mut def, &value);
+            }
+        }
+        def
+    }
 }
 
 /// Which props a live change reaches (#246): every one, or one species'.
@@ -323,25 +402,26 @@ pub struct Resolved<T> {
     pub layer: LivingLayer,
 }
 
-/// Every value a species can set on one prop, resolved, each with its layer.
+/// Every value a species can set on one prop, resolved, each with its layer,
+/// kept by [`LivingKnob`] (#1025): a reader loops over [`LivingKnob::ALL`]
+/// rather than naming each knob.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedProp {
     /// Its spec's name.
     pub species: String,
-    pub amplitude: Resolved<f32>,
-    pub step: Resolved<f32>,
-    pub glide: Resolved<f32>,
-    pub jitter: Resolved<f32>,
-    pub stagger: Resolved<Stagger>,
-    pub echo_count: Resolved<u32>,
-    pub echo_spread: Resolved<f32>,
-    pub echo_alpha: Resolved<f32>,
-    pub variance_amount: Resolved<f32>,
-    pub variance_steady: Resolved<f32>,
-    pub keep_size: Resolved<bool>,
-    pub softness: Resolved<f32>,
-    pub jitter_rate: Resolved<f32>,
-    pub row_rate: Resolved<f32>,
+    values: [Resolved<KnobValue>; LivingKnob::COUNT],
+}
+
+impl ResolvedProp {
+    /// One knob's value and the layer that set it.
+    pub fn get(&self, knob: LivingKnob) -> &Resolved<KnobValue> {
+        &self.values[knob.index()]
+    }
+
+    /// Every knob's, in [`LivingKnob::ALL`]'s order.
+    pub fn iter(&self) -> impl Iterator<Item = (LivingKnob, &Resolved<KnobValue>)> {
+        LivingKnob::ALL.into_iter().zip(&self.values)
+    }
 }
 
 /// Every layer the grove's values are made of, apart from the field, to put back
@@ -546,6 +626,28 @@ impl LivingProps {
         )
     }
 
+    /// The global layer as a scene's `[living]` says it (#249), a field at a
+    /// time: what a scene file would hold for it. No species, no shadows.
+    pub fn global_def(&self) -> LivingDef {
+        let (echoes, stagger, variance) = self.global_layer();
+        let global = SpeciesOverride {
+            clock: ClockOverride::default(),
+            stagger,
+            echoes,
+            variance,
+            softness: self.global_softness(),
+            jitter_rate: self.global_jitter_rate(),
+            row_rate: self.global_row_rate(),
+        };
+        let mut living = LivingDef::default();
+        for knob in LivingKnob::ALL {
+            if let Some(value) = global.get(knob) {
+                knob.set_in_living(&mut living, &value);
+            }
+        }
+        living
+    }
+
     /// Every layer as it stands, apart from the field, to go back to.
     pub fn layers(&self) -> LivingLayers {
         LivingLayers {
@@ -719,8 +821,11 @@ impl LivingProps {
                 LivingLayer::Spec
             }
         };
-        fn resolved<T>(value: T, layer: LivingLayer) -> Resolved<T> {
-            Resolved { value, layer }
+        fn resolved(value: impl KnobType, layer: LivingLayer) -> Resolved<KnobValue> {
+            Resolved {
+                value: value.into_knob(),
+                layer,
+            }
         }
         let from =
             |species: bool, global: bool| LivingLayer::of(species, global, LivingLayer::Spec);
@@ -729,75 +834,84 @@ impl LivingProps {
         } else {
             LivingLayer::Spec
         };
-        let stagger_layer = LivingLayer::of(
-            over.stagger.is_some(),
-            prop.stagger_layers.global.is_some(),
-            stagger_lowest,
-        );
         let (echoes, global) = (prop.echo_config, prop.echo_layers.global);
         let (variance, global_variance) = (lineage.variance, lineage.variance_layers.global);
         let (own_echoes, own_variance) = (over.echoes, over.variance);
-        ResolvedProp {
-            species: species.name.clone(),
-            amplitude: resolved(prop.wooze.amplitude, clock_layer(0, over.clock.amplitude)),
-            step: resolved(prop.wooze.step, clock_layer(1, over.clock.step)),
-            glide: resolved(prop.wooze.glide, clock_layer(2, over.clock.glide)),
-            jitter: resolved(prop.wooze.jitter, clock_layer(3, over.clock.jitter)),
-            stagger: resolved(prop.stagger(), stagger_layer),
-            echo_count: resolved(
+        // Each knob's own resolution: its value where the prop runs on it, and
+        // which layer's word that is.
+        let values = LivingKnob::ALL.map(|knob| match knob {
+            LivingKnob::Amplitude => {
+                resolved(prop.wooze.amplitude, clock_layer(0, over.clock.amplitude))
+            }
+            LivingKnob::Step => resolved(prop.wooze.step, clock_layer(1, over.clock.step)),
+            LivingKnob::Glide => resolved(prop.wooze.glide, clock_layer(2, over.clock.glide)),
+            LivingKnob::Jitter => resolved(prop.wooze.jitter, clock_layer(3, over.clock.jitter)),
+            LivingKnob::Stagger => resolved(
+                prop.stagger().name().to_string(),
+                LivingLayer::of(
+                    over.stagger.is_some(),
+                    prop.stagger_layers.global.is_some(),
+                    stagger_lowest.clone(),
+                ),
+            ),
+            LivingKnob::EchoCount => resolved(
                 echoes.count,
                 from(own_echoes.count.is_some(), global.count.is_some()),
             ),
-            echo_spread: resolved(
+            LivingKnob::EchoSpread => resolved(
                 echoes.spread,
                 from(own_echoes.spread.is_some(), global.spread.is_some()),
             ),
-            echo_alpha: resolved(
+            LivingKnob::EchoAlpha => resolved(
                 echoes.alpha,
                 from(own_echoes.alpha.is_some(), global.alpha.is_some()),
             ),
-            variance_amount: resolved(
+            LivingKnob::VarianceAmount => resolved(
                 variance.amount,
                 from(
                     own_variance.amount.is_some(),
                     global_variance.amount.is_some(),
                 ),
             ),
-            variance_steady: resolved(
+            LivingKnob::VarianceSteady => resolved(
                 variance.steady,
                 from(
                     own_variance.steady.is_some(),
                     global_variance.steady.is_some(),
                 ),
             ),
-            keep_size: resolved(
+            LivingKnob::KeepSize => resolved(
                 variance.keep_size,
                 from(
                     own_variance.keep_size.is_some(),
                     global_variance.keep_size.is_some(),
                 ),
             ),
-            softness: resolved(
+            LivingKnob::Softness => resolved(
                 self.softness(id),
                 from(
                     over.softness.is_some(),
                     prop.softness_layers.global.is_some(),
                 ),
             ),
-            jitter_rate: resolved(
+            LivingKnob::JitterRate => resolved(
                 self.jitter_rate(id),
                 from(
                     over.jitter_rate.is_some(),
                     prop.jitter_rate_layers.global.is_some(),
                 ),
             ),
-            row_rate: resolved(
+            LivingKnob::RowRate => resolved(
                 self.row_rate(id),
                 from(
                     over.row_rate.is_some(),
                     prop.row_rate_layers.global.is_some(),
                 ),
             ),
+        });
+        ResolvedProp {
+            species: species.name.clone(),
+            values,
         }
     }
 
@@ -827,8 +941,10 @@ impl LivingProps {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LivingPropRequest, ProcGenResolver, ProcGenSpec};
+    use crate::test_grove::Grove;
+    use crate::LivingPropRequest;
     use flint_core::EntityId;
+    use flint_procgen::ProcGenSpec;
 
     const SPEC: &str = r#"
 generator = "tree_v1"
@@ -868,8 +984,8 @@ variance = { amount = 0.5, steady = 0.5, keep_size = false }
 
     /// Two birches (one with a stagger of its own) and an alder, added and
     /// never built: no lineage, no pose.
-    fn grove(defaults: LivingDefaults) -> ProcGenResolver {
-        let mut resolver = ProcGenResolver::new();
+    fn grove(defaults: LivingDefaults) -> Grove {
+        let mut resolver = Grove::new();
         resolver.index_spec(spec("birch"));
         resolver.index_spec(spec("alder"));
         resolver.living_props_mut().set_defaults(defaults);
@@ -981,16 +1097,16 @@ variance = { amount = 0.5, steady = 0.5, keep_size = false }
         built_nothing(props);
         let first = props.resolved(LivingPropId(0), None);
         assert_eq!(first.species, "birch");
-        assert_eq!(first.stagger.value, Stagger::PerLevel);
-        assert_eq!(first.stagger.layer, LivingLayer::Spec);
-        assert_eq!(first.echo_count.value, 2);
-        assert_eq!(first.echo_count.layer, LivingLayer::Spec);
-        assert_eq!(first.softness.value, 0.25);
-        assert_eq!(first.variance_amount.value, 0.5);
-        assert_eq!(first.step.layer, LivingLayer::Spec);
+        assert_eq!(first.get(LivingKnob::Stagger).value, Stagger::PerLevel);
+        assert_eq!(first.get(LivingKnob::Stagger).layer, LivingLayer::Spec);
+        assert_eq!(first.get(LivingKnob::EchoCount).value, 2);
+        assert_eq!(first.get(LivingKnob::EchoCount).layer, LivingLayer::Spec);
+        assert_eq!(first.get(LivingKnob::Softness).value, 0.25);
+        assert_eq!(first.get(LivingKnob::VarianceAmount).value, 0.5);
+        assert_eq!(first.get(LivingKnob::Step).layer, LivingLayer::Spec);
         let own = props.resolved(LivingPropId(1), None);
-        assert_eq!(own.stagger.value, Stagger::PerBranch);
-        assert_eq!(own.stagger.layer, LivingLayer::Entity);
+        assert_eq!(own.get(LivingKnob::Stagger).value, Stagger::PerBranch);
+        assert_eq!(own.get(LivingKnob::Stagger).layer, LivingLayer::Entity);
     }
 
     #[test]
@@ -1021,16 +1137,17 @@ variance = { amount = 0.5, steady = 0.5, keep_size = false }
         built_nothing(props);
         let birch = props.resolved(LivingPropId(1), None);
         // The scene's stagger beats the entity's own.
-        assert_eq!(birch.stagger.value, Stagger::None);
-        assert_eq!(birch.stagger.layer, LivingLayer::Global);
-        assert_eq!((birch.echo_count.value, birch.echo_alpha.value), (5, 0.3));
-        assert_eq!(birch.echo_alpha.layer, LivingLayer::Spec);
-        assert_eq!(birch.softness.value, 0.5);
+        assert_eq!(birch.get(LivingKnob::Stagger).value, Stagger::None);
+        assert_eq!(birch.get(LivingKnob::Stagger).layer, LivingLayer::Global);
+        assert_eq!(birch.get(LivingKnob::EchoCount).value, 5);
+        assert_eq!(birch.get(LivingKnob::EchoAlpha).value, 0.3);
+        assert_eq!(birch.get(LivingKnob::EchoAlpha).layer, LivingLayer::Spec);
+        assert_eq!(birch.get(LivingKnob::Softness).value, 0.5);
         let alder = props.resolved(LivingPropId(2), None);
-        assert_eq!(alder.softness.value, 0.75);
-        assert_eq!(alder.softness.layer, LivingLayer::Species);
-        assert_eq!(alder.echo_alpha.value, 0.9);
-        assert_eq!(alder.echo_count.layer, LivingLayer::Global);
+        assert_eq!(alder.get(LivingKnob::Softness).value, 0.75);
+        assert_eq!(alder.get(LivingKnob::Softness).layer, LivingLayer::Species);
+        assert_eq!(alder.get(LivingKnob::EchoAlpha).value, 0.9);
+        assert_eq!(alder.get(LivingKnob::EchoCount).layer, LivingLayer::Global);
     }
 
     #[test]
@@ -1067,19 +1184,25 @@ variance = { amount = 0.5, steady = 0.5, keep_size = false }
 
         let birch = props.resolved(LivingPropId(0), None);
         assert_eq!(
-            (birch.echo_count.value, birch.echo_count.layer.clone()),
-            (4, LivingLayer::Global)
+            (
+                birch.get(LivingKnob::EchoCount).value.clone(),
+                birch.get(LivingKnob::EchoCount).layer.clone()
+            ),
+            (KnobValue::Count(4), LivingLayer::Global)
         );
-        assert_eq!(birch.softness.value, 1.0);
-        assert_eq!(birch.variance_steady.value, 0.0);
-        assert_eq!(birch.variance_steady.layer, LivingLayer::Species);
-        assert_eq!(birch.step.value, 2.0);
-        assert_eq!(birch.step.layer, LivingLayer::Species);
-        assert_eq!(birch.stagger.value, Stagger::PerLevel);
+        assert_eq!(birch.get(LivingKnob::Softness).value, 1.0);
+        assert_eq!(birch.get(LivingKnob::VarianceSteady).value, 0.0);
+        assert_eq!(
+            birch.get(LivingKnob::VarianceSteady).layer,
+            LivingLayer::Species
+        );
+        assert_eq!(birch.get(LivingKnob::Step).value, 2.0);
+        assert_eq!(birch.get(LivingKnob::Step).layer, LivingLayer::Species);
+        assert_eq!(birch.get(LivingKnob::Stagger).value, Stagger::PerLevel);
         let alder = props.resolved(LivingPropId(2), None);
-        assert_eq!(alder.stagger.value, Stagger::PerBranch);
-        assert_eq!(alder.stagger.layer, LivingLayer::Species);
-        assert_eq!(alder.variance_steady.value, 0.5);
+        assert_eq!(alder.get(LivingKnob::Stagger).value, Stagger::PerBranch);
+        assert_eq!(alder.get(LivingKnob::Stagger).layer, LivingLayer::Species);
+        assert_eq!(alder.get(LivingKnob::VarianceSteady).value, 0.5);
         assert_eq!(props.global_layer().0, echoes);
         assert_eq!(props.global_softness(), Some(1.0));
         // A species nobody grows from is kept, for none.
@@ -1088,13 +1211,16 @@ variance = { amount = 0.5, steady = 0.5, keep_size = false }
         props.restore_layers(&loaded);
         let birch = props.resolved(LivingPropId(0), None);
         assert_eq!(
-            (birch.echo_count.value, birch.echo_count.layer),
-            (2, LivingLayer::Spec)
+            (
+                birch.get(LivingKnob::EchoCount).value.clone(),
+                birch.get(LivingKnob::EchoCount).layer.clone()
+            ),
+            (KnobValue::Count(2), LivingLayer::Spec)
         );
-        assert_eq!(birch.softness.value, 0.25);
-        assert_eq!(birch.step.layer, LivingLayer::Spec);
+        assert_eq!(birch.get(LivingKnob::Softness).value, 0.25);
+        assert_eq!(birch.get(LivingKnob::Step).layer, LivingLayer::Spec);
         let alder = props.resolved(LivingPropId(2), None);
-        assert_eq!(alder.stagger.value, Stagger::PerLevel);
+        assert_eq!(alder.get(LivingKnob::Stagger).value, Stagger::PerLevel);
         built_nothing(props);
     }
 }

@@ -3,7 +3,7 @@
 //! files and none of this is in one: a lineage is, but which pose a prop has reached
 //! and what the field told it exist only once it's running.
 
-use flint_procgen::{LivingPropId, LivingProps, Resolved, Stagger};
+use flint_living::{KnobValue, LivingKnob, LivingPropId, LivingProps, Resolved};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -144,50 +144,25 @@ pub enum ReportValue {
     Number(f32),
     Count(u32),
     Flag(bool),
-    Name(&'static str),
+    Name(String),
 }
 
-impl From<f32> for ReportValue {
-    fn from(value: f32) -> Self {
-        Self::Number(value)
+impl From<&KnobValue> for ReportValue {
+    fn from(value: &KnobValue) -> Self {
+        match value {
+            KnobValue::Number(value) => Self::Number(*value),
+            KnobValue::Count(value) => Self::Count(*value),
+            KnobValue::Flag(value) => Self::Flag(*value),
+            KnobValue::Name(value) => Self::Name(value.clone()),
+        }
     }
 }
 
-impl From<u32> for ReportValue {
-    fn from(value: u32) -> Self {
-        Self::Count(value)
-    }
-}
-
-impl From<bool> for ReportValue {
-    fn from(value: bool) -> Self {
-        Self::Flag(value)
-    }
-}
-
-impl From<&'static str> for ReportValue {
-    fn from(value: &'static str) -> Self {
-        Self::Name(value)
-    }
-}
-
-fn value<T: Into<ReportValue>>(resolved: Resolved<T>) -> ValueReport {
+fn value(resolved: &Resolved<KnobValue>) -> ValueReport {
     ValueReport {
-        value: resolved.value.into(),
+        value: (&resolved.value).into(),
         layer: resolved.layer.label(),
     }
-}
-
-fn stagger_value(resolved: Resolved<Stagger>) -> ValueReport {
-    let name = match resolved.value {
-        Stagger::None => "none",
-        Stagger::PerLevel => "per_level",
-        Stagger::PerBranch => "per_branch",
-    };
-    value(Resolved {
-        value: name,
-        layer: resolved.layer,
-    })
 }
 
 /// Which poses a prop was drawn between, from the blend that drew it. A staggered
@@ -275,28 +250,15 @@ fn values_of(
     field: Option<(&flint_wooze::WoozeField, f64)>,
 ) -> BTreeMap<&'static str, ValueReport> {
     let at = props.resolved(id, field);
-    BTreeMap::from([
-        ("amplitude", value(at.amplitude)),
-        ("step", value(at.step)),
-        ("glide", value(at.glide)),
-        ("jitter", value(at.jitter)),
-        ("stagger", stagger_value(at.stagger)),
-        ("echoes.count", value(at.echo_count)),
-        ("echoes.spread", value(at.echo_spread)),
-        ("echoes.alpha", value(at.echo_alpha)),
-        ("variance.amount", value(at.variance_amount)),
-        ("variance.steady", value(at.variance_steady)),
-        ("variance.keep_size", value(at.keep_size)),
-        ("softness", value(at.softness)),
-        ("jitter_rate", value(at.jitter_rate)),
-        ("row_rate", value(at.row_rate)),
-    ])
+    (at.iter())
+        .map(|(knob, resolved): (LivingKnob, _)| (knob.key(), value(resolved)))
+        .collect()
 }
 
 /// How the values a sweep's column set compare with what its props actually read:
 /// nothing to say if they agree, or the spread if zones kept some off it.
 pub fn read_note(knob: &str, set: Option<f32>, props: &LivingProps) -> String {
-    let read = |prop: &flint_procgen::LivingProp| {
+    let read = |prop: &flint_living::LivingProp| {
         let wooze = prop.wooze();
         match knob {
             "amplitude" => Some(wooze.amplitude),

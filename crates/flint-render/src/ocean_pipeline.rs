@@ -186,25 +186,89 @@ impl Default for OceanTint {
 }
 
 impl OceanTint {
-    /// The tint from an `ocean` component's `tint*` fields, read through
-    /// the typed view (ADR 0115): a wrong type reads as the default and is
-    /// reported once. A colour it leaves out is the component's own (its
-    /// `deep_color`...), so `tint` alone moves the sea toward itself: no
-    /// change.
+    /// A sea of blood: pools that spread with `amount`, night-dark,
+    /// viscous (two wobbling bands). One of the presets `tint_preset` names.
+    pub fn blood(amount: f32) -> Self {
+        Self {
+            amount,
+            deep: [0.10, 0.005, 0.01],
+            shallow: [0.45, 0.04, 0.05],
+            sss: [0.85, 0.05, 0.03],
+            foam: [0.95, 0.78, 0.76],
+            sky: [1.1, 0.3, 0.32],
+            ramp_steps: 2.0,
+            band_wobble: 0.15,
+            pools: 0.08,
+            keep_light: true,
+            below: false,
+        }
+    }
+
+    /// The surface seen from under it: murk blues and flat white foam
+    /// panes on the underside only, two bands. One of the presets
+    /// `tint_preset` names.
+    pub fn underside(amount: f32) -> Self {
+        Self {
+            amount,
+            deep: [0.02, 0.12, 0.26],
+            shallow: [0.07, 0.30, 0.46],
+            sss: [0.10, 0.45, 0.55],
+            foam: [0.94, 0.98, 1.0],
+            sky: [1.0, 1.0, 1.0],
+            ramp_steps: 2.0,
+            band_wobble: 0.0,
+            pools: 0.0,
+            keep_light: false,
+            below: true,
+        }
+    }
+
+    /// The presets `tint_preset` names, in the schema's order.
+    pub const PRESETS: [&'static str; 2] = ["blood", "underside"];
+
+    /// A preset by name at `amount`: `blood` or `underside` (#1035).
+    pub fn preset(name: &str, amount: f32) -> Option<Self> {
+        match name {
+            "blood" => Some(Self::blood(amount)),
+            "underside" => Some(Self::underside(amount)),
+            _ => None,
+        }
+    }
+
+    /// The tint from an `ocean` component's `tint*` fields, each falling
+    /// back on the preset `tint_preset` names, so a script switches between
+    /// two tints with one string (#1035) and a written field still wins
+    /// over its preset. With no preset (#1041) a tint names the colours it
+    /// moves toward: one it leaves out is the component's own (its
+    /// `deep_color`...) and every other setting changes nothing, so `tint`
+    /// alone moves the sea toward itself. Read through the typed view (ADR
+    /// 0115): a wrong type or an unknown preset reads as the default and is
+    /// reported once.
     pub fn from_component(view: &flint_ecs::ComponentView<'_>) -> Self {
-        let d = Self::default();
+        let preset = view
+            .opt_choice("tint_preset", &Self::PRESETS)
+            .and_then(|name| Self::preset(name, 0.0));
+        let d = preset.unwrap_or_default();
         let f = |name: &str, dv: f32| view.f32(name, dv);
         let c = |name: &str, dv: [f32; 3]| {
             let c = view.color(name, [dv[0], dv[1], dv[2], 1.0]);
             [c[0], c[1], c[2]]
         };
         let b = |name: &str, dv: bool| view.bool(name, dv);
+        // A preset names its colours; with none, the sea's own stand in
+        let own = |sea_field: &str, dv: [f32; 3]| {
+            if preset.is_some() {
+                dv
+            } else {
+                c(sea_field, dv)
+            }
+        };
         Self {
             amount: f("tint", d.amount).clamp(0.0, 1.0),
-            deep: c("tint_deep_color", c("deep_color", d.deep)),
-            shallow: c("tint_shallow_color", c("shallow_color", d.shallow)),
-            sss: c("tint_sss_color", c("sss_color", d.sss)),
-            foam: c("tint_foam_color", c("foam_color", d.foam)),
+            deep: c("tint_deep_color", own("deep_color", d.deep)),
+            shallow: c("tint_shallow_color", own("shallow_color", d.shallow)),
+            sss: c("tint_sss_color", own("sss_color", d.sss)),
+            foam: c("tint_foam_color", own("foam_color", d.foam)),
             sky: c("tint_sky", d.sky),
             ramp_steps: f("tint_ramp_steps", d.ramp_steps).clamp(0.0, 8.0),
             band_wobble: f("tint_band_wobble", d.band_wobble).clamp(0.0, 1.0),
@@ -818,6 +882,92 @@ mod tests {
             .map(|d| d.field.unwrap())
             .collect();
         assert_eq!(fields, ["tint", "tint_below"]);
+    }
+
+    /// #1035: `tint_preset` picks the fields' fallbacks, and a written
+    /// field still wins. #1041: an unknown preset is no preset (the sea's
+    /// own palette, every setting neutral), said once.
+    #[test]
+    fn the_tint_preset_is_what_unwritten_fields_read() {
+        let reports = flint_ecs::ReadReports::new();
+        let view = |v| flint_ecs::ComponentView::of("sea", "ocean", Some(v), &reports);
+        let under: toml::Value = toml::from_str("tint_preset = \"underside\"\ntint = 0.8").unwrap();
+        assert_eq!(
+            OceanTint::from_component(&view(&under)),
+            OceanTint::underside(0.8)
+        );
+        let blood: toml::Value = toml::from_str("tint_preset = \"blood\"\ntint = 0.3").unwrap();
+        assert_eq!(
+            OceanTint::from_component(&view(&blood)),
+            OceanTint::blood(0.3)
+        );
+        let mixed: toml::Value =
+            toml::from_str("tint_preset = \"underside\"\ntint = 1.0\ntint_pools = 0.5").unwrap();
+        let t = OceanTint::from_component(&view(&mixed));
+        assert_eq!(t.pools, 0.5, "a written field wins");
+        assert_eq!(t.deep, OceanTint::underside(1.0).deep);
+        assert!(t.below);
+        assert!(reports.is_empty());
+        for name in OceanTint::PRESETS {
+            assert!(OceanTint::preset(name, 1.0).is_some(), "{name}");
+        }
+
+        let wrong: toml::Value = toml::from_str("tint_preset = \"bloood\"").unwrap();
+        assert_eq!(
+            OceanTint::from_component(&view(&wrong)),
+            OceanTint::default()
+        );
+        let said = reports.snapshot();
+        assert_eq!(said.len(), 1);
+        assert_eq!(said[0].field.as_deref(), Some("tint_preset"));
+    }
+
+    /// #1035: the loader writes a schema default into the component, so a
+    /// `tint_*` field with one would beat the preset (and since #1041 so
+    /// would a `tint_preset` default: an unwritten preset is none). Through the engine's
+    /// own schemas, a loaded `tint_preset = "underside"` is the underside,
+    /// and a script's one `set_field` of it switches a loaded sea over.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // reads the engine's schema files from the checkout
+    fn a_loaded_sea_takes_its_preset() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+        let registry = flint_schema::SchemaRegistry::load_from_directory(&dir).unwrap();
+        let scene = |ocean: &str| {
+            format!("[scene]\nname = \"t\"\n\n[entities.sea.ocean]\nseed = 7\n{ocean}\n")
+        };
+        let tint_of = |world: &flint_ecs::FlintWorld| {
+            let id = world.get_id("sea").unwrap();
+            OceanTint::from_component(&world.view(id, "ocean"))
+        };
+
+        let (world, _) = flint_scene::load_scene_string(
+            &scene("tint_preset = \"underside\"\ntint = 0.6"),
+            &registry,
+        )
+        .unwrap();
+        assert_eq!(tint_of(&world), OceanTint::underside(0.6));
+
+        // #1041: no preset written is none, so `tint` alone is the sea's own
+        let (world, _) = flint_scene::load_scene_string(&scene("tint = 0.5"), &registry).unwrap();
+        let t = tint_of(&world);
+        assert_eq!(
+            t,
+            OceanTint {
+                amount: 0.5,
+                ..OceanTint::default()
+            },
+            "no red"
+        );
+
+        let (mut world, _) = flint_scene::load_scene_string(&scene(""), &registry).unwrap();
+        assert_eq!(tint_of(&world), OceanTint::default(), "off, the sea's own");
+        let id = world.get_id("sea").unwrap();
+        let mut components = world.get_components_mut(id).unwrap();
+        components.set_field("ocean", "tint_preset", toml::Value::from("underside"));
+        components.set_field("ocean", "tint", toml::Value::from(1.0));
+        drop(components);
+        assert_eq!(tint_of(&world), OceanTint::underside(1.0));
+        assert!(world.read_reports().is_empty());
     }
 
     #[test]

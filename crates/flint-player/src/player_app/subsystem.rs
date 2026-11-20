@@ -144,9 +144,12 @@ pub(crate) struct SceneCtx<'a> {
     /// The styles the scene is drawn with (#742).
     pub styles: &'a flint_render::stylize::StyleRegistry,
     pub script: &'a mut ScriptSystem,
-    /// The procgen resolver, which holds the scene's living props.
+    /// The procgen resolver, whose specs the scene's living props grow from.
     #[cfg(feature = "procgen")]
     pub resolver: &'a mut ProcGenResolver,
+    /// The scene's living props, added by its load.
+    #[cfg(feature = "living")]
+    pub living: &'a mut flint_living::LivingProps,
     /// `None` in a headless test.
     pub renderer: Option<&'a mut SceneRenderer>,
     /// The sound, when the host has it: a subsystem that plays on the
@@ -206,10 +209,13 @@ pub(crate) struct StageCtx<'a> {
     pub renderer: Option<&'a mut SceneRenderer>,
     /// The device and queue, when there is a window.
     pub gpu: Option<(&'a wgpu::Device, &'a wgpu::Queue)>,
-    /// The procgen resolver, which holds the scene's living props and makes
-    /// their poses on its frame budget.
+    /// The procgen resolver, which lends the living props its generators and
+    /// what its queue left of the frame budget.
     #[cfg(feature = "procgen")]
     pub resolver: &'a mut ProcGenResolver,
+    /// The scene's living props (flint-living, #1024).
+    #[cfg(feature = "living")]
+    pub living: &'a mut flint_living::LivingProps,
     pub project: &'a Project,
     pub scene_path: &'a str,
     /// Whether the scene file may be written (#364).
@@ -273,8 +279,8 @@ pub(crate) struct EncodeCtx<'a> {
     pub renderer: &'a mut SceneRenderer,
     pub world: &'a FlintWorld,
     pub camera: &'a Camera,
-    #[cfg(feature = "procgen")]
-    pub resolver: &'a mut ProcGenResolver,
+    #[cfg(feature = "living")]
+    pub living: &'a mut flint_living::LivingProps,
 }
 
 /// What a subsystem may read for the `--exit-after` report.
@@ -282,6 +288,8 @@ pub(crate) struct EncodeCtx<'a> {
 pub(crate) struct ReportCtx<'a> {
     #[cfg(feature = "procgen")]
     pub resolver: &'a ProcGenResolver,
+    #[cfg(feature = "living")]
+    pub living: &'a flint_living::LivingProps,
     pub renderer: Option<&'a SceneRenderer>,
 }
 
@@ -582,6 +590,8 @@ macro_rules! stage_ctx {
             gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
             #[cfg(feature = "procgen")]
             resolver: &mut $app.core.procgen_resolver,
+            #[cfg(feature = "living")]
+            living: &mut $app.core.living_props,
             project: &$app.core.project,
             scene_path: &$app.core.scene_path,
             scene_file_writable: $app.launch.scene_file_writable,
@@ -618,6 +628,8 @@ macro_rules! scene_ctx {
             script: &mut $app.core.script,
             #[cfg(feature = "procgen")]
             resolver: &mut $app.core.procgen_resolver,
+            #[cfg(feature = "living")]
+            living: &mut $app.core.living_props,
             renderer: $app.scene_renderer.as_mut(),
             audio: Some(&mut $app.audio.engine),
             pads: Some($crate::player_app::subsystem::Pads {
@@ -723,6 +735,8 @@ impl super::PlayerApp {
         let ctx = ReportCtx {
             #[cfg(feature = "procgen")]
             resolver: &self.core.procgen_resolver,
+            #[cfg(feature = "living")]
+            living: &self.core.living_props,
             renderer: self.scene_renderer.as_ref(),
         };
         self.core.subsystems.exit_report(&ctx, &mut report);

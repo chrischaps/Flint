@@ -227,22 +227,22 @@ pub fn sample_open_spline(points: &[SplineControlPoint], spacing: f32) -> Vec<Sp
 
         let position = catmull_rom(p0, p1, p2, p3, local_t);
 
-        // Forward tangent
+        // Forward tangent: a step on, or past the path's end a step back,
+        // since a step on from the last sample is the sample itself (#1016)
         let dt = 0.001;
         let next_t = local_t + dt;
-        let pos_next = if next_t <= 1.0 {
-            catmull_rom(p0, p1, p2, p3, next_t)
+        let forward = if next_t <= 1.0 {
+            catmull_rom(p0, p1, p2, p3, next_t) - position
         } else if seg + 1 < num_segs {
             let np0 = extended[seg + 1].position;
             let np1 = extended[seg + 2].position;
             let np2 = extended[seg + 3].position;
             let np3 = extended[seg + 4].position;
-            catmull_rom(np0, np1, np2, np3, next_t - 1.0)
+            catmull_rom(np0, np1, np2, np3, next_t - 1.0) - position
         } else {
-            catmull_rom(p0, p1, p2, p3, 1.0)
-        };
-
-        let forward = (pos_next - position).normalized();
+            position - catmull_rom(p0, p1, p2, p3, local_t - dt)
+        }
+        .normalized();
 
         // Interpolate twist using Catmull-Rom (C1 continuous, matches position)
         let tw0 = extended[seg].twist;
@@ -373,6 +373,59 @@ pub fn gap_at(t: f32, gaps: &[(f32, f32)]) -> Option<(f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn open_points(positions: &[[f32; 3]], twist: f32) -> Vec<SplineControlPoint> {
+        positions
+            .iter()
+            .map(|&p| SplineControlPoint {
+                position: Vec3::from_array(p),
+                twist,
+                gap_after: false,
+            })
+            .collect()
+    }
+
+    fn is_unit(v: Vec3) -> bool {
+        (v.length() - 1.0).abs() < 1e-4
+    }
+
+    #[test]
+    fn every_open_sample_has_a_unit_frame() {
+        // #1016: the last sample's forward was a step on from itself, zero
+        for (positions, twist) in [
+            (
+                &[[0.0, 0.0, 0.0], [5.0, 0.0, 0.0], [10.0, 0.0, 0.0]][..],
+                0.0,
+            ),
+            (
+                &[[0.0, 0.0, 0.0], [3.0, 0.5, 0.0], [6.0, 0.0, 2.0]][..],
+                15.0,
+            ),
+            (&[[0.0, 0.0, 0.0], [4.0, 1.0, 3.0]][..], -30.0),
+        ] {
+            let samples = sample_open_spline(&open_points(positions, twist), 0.5);
+            for (i, s) in samples.iter().enumerate() {
+                assert!(
+                    is_unit(s.forward) && is_unit(s.right) && is_unit(s.up),
+                    "sample {i} of {}: {s:?}",
+                    samples.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_open_paths_last_forward_points_on_along_it() {
+        let pts = open_points(&[[0.0, 0.0, 0.0], [3.0, 0.5, 0.0], [6.0, 0.0, 2.0]], 0.0);
+        let samples = sample_open_spline(&pts, 0.5);
+        let [.., before, last] = &samples[..] else {
+            panic!("too few samples");
+        };
+        let chord = (last.position - before.position).normalized();
+        assert!(last.forward.dot(&chord) > 0.99, "{last:?} vs {chord:?}");
+        // and it carries on from the sample before's, not a turn
+        assert!(last.forward.dot(&before.forward) > 0.99);
+    }
 
     fn make_square_loop() -> Vec<SplineControlPoint> {
         vec![

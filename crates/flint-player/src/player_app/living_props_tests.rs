@@ -29,8 +29,66 @@ fn no_catalog() -> ModelLoadConfig {
     ModelLoadConfig::from_scene_path("levels/grove.scene.toml")
 }
 
-fn resolver() -> ProcGenResolver {
-    let mut resolver = ProcGenResolver::new();
+/// The resolver and the props beside it, as `GameCore` keeps them (#1024).
+#[derive(Default)]
+struct Grove {
+    resolver: ProcGenResolver,
+    living: LivingProps,
+}
+
+impl Grove {
+    fn index_spec(&mut self, spec: ProcGenSpec) {
+        self.resolver.index_spec(spec);
+    }
+
+    fn add_living_prop(
+        &mut self,
+        request: LivingPropRequest,
+    ) -> Result<(flint_living::LivingPropId, String), String> {
+        self.living.add_prop(&mut self.resolver, request)
+    }
+
+    fn make_living_now(&mut self) -> Vec<LineageDone> {
+        self.living.make_now(&self.resolver)
+    }
+
+    fn process_living(&mut self, dt: f64) -> Vec<LineageDone> {
+        self.living.process(&self.resolver, dt, None)
+    }
+
+    fn process_living_in(
+        &mut self,
+        dt: f64,
+        wooze: Option<(&WoozeField, f64)>,
+    ) -> Vec<LineageDone> {
+        self.living.process(&self.resolver, dt, wooze)
+    }
+
+    fn living_props(&self) -> &LivingProps {
+        &self.living
+    }
+
+    /// `resolve` with this resolver and these props.
+    fn resolve(
+        &mut self,
+        world: &mut FlintWorld,
+        config: &ModelLoadConfig,
+        sink: &mut dyn AssetSink,
+        mode: ProcGenMode,
+    ) {
+        resolve(
+            world,
+            config,
+            &mut self.resolver,
+            &mut self.living,
+            sink,
+            mode,
+        );
+    }
+}
+
+fn resolver() -> Grove {
+    let mut resolver = Grove::default();
     resolver.index_spec(ProcGenSpec::parse(SAPLING).unwrap());
     resolver
 }
@@ -134,13 +192,7 @@ fn immediate_mode_uploads_one_mesh_a_lineage_and_bones_a_prop() {
     let mut sink = Recorder::default();
     let config = no_catalog();
 
-    resolve(
-        &mut world,
-        &config,
-        &mut resolver,
-        &mut sink,
-        ProcGenMode::Immediate,
-    );
+    resolver.resolve(&mut world, &config, &mut sink, ProcGenMode::Immediate);
 
     // Each model now asks for its lineage's mesh, and nothing else will load it.
     assert_eq!(
@@ -204,13 +256,7 @@ fn deferred_mode_shows_a_placeholder_until_the_lineage_is_built() {
     let mut sink = Recorder::default();
     let config = no_catalog();
 
-    resolve(
-        &mut world,
-        &config,
-        &mut resolver,
-        &mut sink,
-        ProcGenMode::Deferred,
-    );
+    resolver.resolve(&mut world, &config, &mut sink, ProcGenMode::Deferred);
     assert_eq!(
         sink.events,
         [Event::Placeholder("sapling@7".into(), AssetKind::Model)],
@@ -244,13 +290,7 @@ fn a_prop_that_cannot_live_stays_a_still_model() {
     let mut resolver = resolver();
     let mut sink = Recorder::default();
 
-    resolve(
-        &mut world,
-        &no_catalog(),
-        &mut resolver,
-        &mut sink,
-        ProcGenMode::Immediate,
-    );
+    resolver.resolve(&mut world, &no_catalog(), &mut sink, ProcGenMode::Immediate);
 
     assert!(resolver.living_props().is_empty());
     assert!(sink.events.is_empty());
@@ -271,13 +311,7 @@ fn a_catalog_entry_wins_over_living() {
     let mut resolver = resolver();
     let mut sink = Recorder::default();
 
-    resolve(
-        &mut world,
-        &config,
-        &mut resolver,
-        &mut sink,
-        ProcGenMode::Immediate,
-    );
+    resolver.resolve(&mut world, &config, &mut sink, ProcGenMode::Immediate);
 
     assert!(resolver.living_props().is_empty());
     assert_eq!(
@@ -293,13 +327,7 @@ fn a_scene_with_no_living_props_touches_nothing() {
     let mut resolver = resolver();
     let mut sink = Recorder::default();
 
-    resolve(
-        &mut world,
-        &no_catalog(),
-        &mut resolver,
-        &mut sink,
-        ProcGenMode::Immediate,
-    );
+    resolver.resolve(&mut world, &no_catalog(), &mut sink, ProcGenMode::Immediate);
 
     assert!(resolver.living_props().is_empty());
     assert!(sink.events.is_empty());
@@ -313,7 +341,7 @@ fn a_scene_with_no_living_props_touches_nothing() {
 }
 
 fn built_rig(spec: &str) -> std::sync::Arc<LivingRig> {
-    let mut resolver = ProcGenResolver::new();
+    let mut resolver = Grove::default();
     let spec = ProcGenSpec::parse(spec).unwrap();
     let name = spec.meta.name.clone();
     resolver.index_spec(spec);
@@ -438,8 +466,8 @@ fn the_renderer_gets_the_jitter_influences_and_the_glb_does_not() {
 
 #[test]
 fn a_scene_living_table_reads_as_defaults() {
+    use flint_living::{LivingDefaults, LivingShadows};
     use flint_procgen::{LivingDef, LivingEchoesDef};
-    use flint_procgen::{LivingDefaults, LivingShadows};
 
     assert_eq!(defaults_of(None), LivingDefaults::default());
     let read = defaults_of(Some(&LivingDef {

@@ -46,7 +46,7 @@ This page shows how Flint's crates depend on each other. Dependencies flow downw
                       └─────────────────────────────────────────────┘
 ```
 
-The long arrow into `render` comes from the player (top right) and from `viewer` and `debug-ui`; the systems row beneath it (`script`, `physics`, `audio`, `animation`, `particles`) does not depend on `render`. Some edges are left out for legibility (every crate reaches `flint-core`; `render`, `animation`, `viewer` and `asset-gen` reach `import`; `render` reaches `scene`; `terrain` also feeds `debug-ui`), and so are eight crates: `rhythm` (over `music`, under `input-capture`, the player and the CLI), `procgen-ai` (under the CLI), `ai-core` (under `procgen-ai`, `asset-gen` and the CLI: what every paid AI call goes through), `android` (the Android entry, over the player), the small `wooze` and `geometry` layers just above `flint-core`, `pixels` (no dependencies, under `render`), and `audio-worklet`, a separate wasm with no engine dependency at all. The table below is complete: `tools/arch-analyzer` writes it from each crate's `Cargo.toml`, and CI fails a pull request that leaves it stale.
+The long arrow into `render` comes from the player (top right) and from `viewer` and `debug-ui`; the systems row beneath it (`script`, `physics`, `audio`, `animation`, `particles`) does not depend on `render`. Some edges are left out for legibility (every crate reaches `flint-core`; `render`, `animation`, `viewer` and `asset-gen` reach `import`; `render` reaches `scene`; `terrain` also feeds `debug-ui`), and so are nine crates: `living` (the living props' runtime, over `procgen`, under the player and the CLI), `rhythm` (over `music`, under `input-capture`, the player and the CLI), `procgen-ai` (under the CLI), `ai-core` (under `procgen-ai`, `asset-gen` and the CLI: what every paid AI call goes through), `android` (the Android entry, over the player), the small `wooze` and `geometry` layers just above `flint-core`, `pixels` (no dependencies, under `render`), and `audio-worklet`, a separate wasm with no engine dependency at all. The table below is complete: `tools/arch-analyzer` writes it from each crate's `Cargo.toml`, and CI fails a pull request that leaves it stale.
 
 ## Dependency Details
 
@@ -54,20 +54,20 @@ The long arrow into `render` comes from the player (top right) and from `viewer`
 <!-- Written by tools/arch-analyzer from each Cargo.toml; don't edit by hand.
      Rewrite: cargo run -p flint-arch-analyzer -- --book. CI's crate-table job runs --check-book. -->
 
-The workspace has 32 crates under `crates/`, plus one tool (`tools/arch-analyzer`). Rows run bottom-up: a crate's **tier** is the longest chain of engine crates beneath it, so every crate depends only on crates of a lower tier. Optional and target-only dependencies are marked; dev-dependencies are left out.
+The workspace has 33 crates under `crates/`, plus one tool (`tools/arch-analyzer`). Rows run bottom-up: a crate's **tier** is the longest chain of engine crates beneath it, so every crate depends only on crates of a lower tier. Optional and target-only dependencies are marked; dev-dependencies are left out.
 
 | Tier | Crate | Depends On | Depended On By |
 |-----:|-------|-----------|----------------|
 | 0 | `flint-ai-core` | *(none)* | asset-gen, cli, procgen-ai |
 | 0 | `flint-arch-analyzer` (`tools/arch-analyzer`) | *(none)* | *(none)* |
 | 0 | `flint-audio-worklet` | *(none)* | *(none)* |
-| 0 | `flint-core` | *(none)* | android, animation, asset, asset-gen, audio, cli, constraint, debug-ui, ecs, geometry, import, input-capture, music, particles, physics, player, procgen, query, render, rhythm, runtime, scene, schema, script, terrain, viewer, wooze |
+| 0 | `flint-core` | *(none)* | android, animation, asset, asset-gen, audio, cli, constraint, debug-ui, ecs, geometry, import, input-capture, living, music, particles, physics, player, procgen, query, render, rhythm, runtime, scene, schema, script, terrain, viewer, wooze |
 | 0 | `flint-pixels` | *(none)* | player, render |
 | 1 | `flint-asset` | core | asset-gen, cli, import, player, scene |
 | 1 | `flint-geometry` | core | cli, debug-ui, player, procgen, render, script, viewer |
 | 1 | `flint-music` | core | cli, input-capture, player (optional), rhythm |
 | 1 | `flint-schema` | core | android, cli, constraint, debug-ui, ecs, player, procgen, render, scene, script, viewer |
-| 1 | `flint-wooze` | core | cli, debug-ui, player, procgen, render, viewer |
+| 1 | `flint-wooze` | core | cli, debug-ui, living, player, procgen, render, viewer |
 | 2 | `flint-ecs` | core, schema | android, animation, audio, cli, constraint, debug-ui, particles, physics, player, query, render, runtime, scene, script, terrain, viewer |
 | 2 | `flint-import` | asset, core | animation, asset-gen, cli, player, procgen, render, viewer |
 | 2 | `flint-rhythm` | core, music | cli, input-capture, player (optional) |
@@ -81,16 +81,17 @@ The workspace has 32 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 4 | `flint-input-capture` | core, music, rhythm, runtime | cli, player (optional) |
 | 4 | `flint-particles` | core, ecs, runtime | cli, debug-ui, player, render, viewer |
 | 4 | `flint-physics` | core, ecs, runtime | cli, player, script |
-| 4 | `flint-procgen` | core, geometry, import, scene, schema, wooze | asset-gen, cli, debug-ui (optional), player (optional), procgen-ai, viewer |
+| 4 | `flint-procgen` | core, geometry, import, scene, schema, wooze | asset-gen, cli, debug-ui (optional), living, player (optional), procgen-ai, viewer |
 | 5 | `flint-asset-gen` | ai-core, asset, core, import, procgen | cli |
+| 5 | `flint-living` | core, procgen, wooze | cli, player (optional) |
 | 5 | `flint-procgen-ai` | ai-core, procgen | cli |
 | 5 | `flint-render` | core, ecs, geometry, import, particles, pixels, scene, schema, terrain, wooze | cli, debug-ui, player, viewer |
 | 5 | `flint-script` | animation, core, ecs, geometry, physics, runtime, schema, terrain | cli, player |
 | 6 | `flint-debug-ui` | core, ecs, geometry, particles, procgen (optional), render, scene, schema, terrain, wooze | cli, player (optional), viewer |
-| 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, geometry, import, input-capture (optional), music (optional), particles, physics, pixels, procgen (optional), query, render, rhythm (optional), runtime, scene, schema, script, terrain, wooze | android, cli |
+| 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, geometry, import, input-capture (optional), living (optional), music (optional), particles, physics, pixels, procgen (optional), query, render, rhythm (optional), runtime, scene, schema, script, terrain, wooze | android, cli |
 | 7 | `flint-viewer` | constraint, core, debug-ui, ecs, geometry, import, particles, procgen, render, scene, schema, wooze | cli |
 | 8 | `flint-android` | core, ecs, player, scene, schema | *(none)* |
-| 8 | `flint-cli` | ai-core, animation, asset, asset-gen, constraint, core, debug-ui, ecs, geometry, import, input-capture, music, particles, physics, player, procgen, procgen-ai, query, render, rhythm, runtime, scene, schema, script, terrain, viewer, wooze | *(none)* |
+| 8 | `flint-cli` | ai-core, animation, asset, asset-gen, constraint, core, debug-ui, ecs, geometry, import, input-capture, living, music, particles, physics, player, procgen, procgen-ai, query, render, rhythm, runtime, scene, schema, script, terrain, viewer, wooze | *(none)* |
 
 <!-- crate-table:end -->
 

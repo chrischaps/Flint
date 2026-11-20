@@ -95,7 +95,7 @@ What it hits: everything in the next section's first four rows.
 
 ## What in the living path is tree-specific
 
-Generic already, so a new target gets these free: the `LivingGenerator` trait's shape, found through `as_living()` on any registered generator (`living_side` in `living_props/schedule.rs`); the pose ring, cache and budget; the warped clock; echoes; the wooze field and zones; shadow modes; species tuning and the F3 panel; `flint render --time` and `--report json`.
+Generic already, so a new target gets these free: the `LivingGenerator` trait's shape, found through `as_living()` on any registered generator (`living_side` in flint-living's `schedule.rs`); the pose ring, cache and budget; the warped clock; echoes; the wooze field and zones; shadow modes; species tuning and the F3 panel; `flint render --time` and `--report json`.
 
 Tree-specific, and what each would have to become:
 
@@ -109,7 +109,7 @@ Tree-specific, and what each would have to become:
 | `VarianceConfig::weight` (`spec.rs:428`), `Stagger::PerLevel` | Depth from the trunk decides how much a part may drift, and when | Creatures: depth from the root bone works, but "steady" means "the trunk side holds", which a body may not want |
 | `keep_size` (`living.rs`) | One shared length scale keeps the box, since limbs stay on a trunk | Creatures, whose legs touch the ground: a box can stay still while feet sink |
 | `JITTER_TARGETS = ["leaf_cards"]` (`spec.rs:100`), `CardBoil`, `BOIL_BONES` | The fast layer exists only for leaf cards | `library_root` and creatures get no fast layer at all |
-| `LivingRig::first_leaf_vertex`, `leaf_parts`, the runtime tint (`living_props/blend.rs`, `TINT_UNSENT`) | Leaf shades are the only parts that tint | Any prop whose colour wants to shift |
+| `LivingRig::first_leaf_vertex`, `leaf_parts`, the runtime tint (flint-living's `blend.rs`, `TINT_UNSENT`) | Leaf shades are the only parts that tint | Any prop whose colour wants to shift |
 | `DRIFT_PARAMS` (`spec.rs:97`) | Drift names tree params (`branch_angle`, `lsystem_tropism`, `trunk_curve`), and nothing reads them yet | Anything that isn't a tree, once drift is read |
 | `posed_mesh` | Rebuilds bark through `segments_to_mesh` | Nothing: it should stay per generator |
 

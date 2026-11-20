@@ -67,7 +67,7 @@ procgen = ["dep:flint-procgen"]
 # `debug` one (the A/B and commit calls, #854) and the Living Props panel.
 # Needs procgen, which makes the props' poses. Off, a scene with any of it
 # says so once and stands still.
-living = ["procgen", "flint-debug-ui?/living"]
+living = ["procgen", "dep:flint-living", "flint-debug-ui?/living"]
 # Summonable debug overlay (Phase 4 F8, ADR 0035), and the `debug` script
 # module where living props run (#854). Feature-off builds carry zero debug
 # surface and must still compile.
@@ -111,6 +111,7 @@ rhai = { workspace = true }
 profiling = { workspace = true }
 tracy-client = { workspace = true, optional = true, features = ["only-localhost", "ondemand"] }
 flint-procgen = { workspace = true, optional = true }
+flint-living = { workspace = true, optional = true }
 flint-debug-ui = { workspace = true, optional = true }
 bytemuck = { workspace = true }
 clap = { workspace = true }
