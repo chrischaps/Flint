@@ -1,3 +1,0 @@
-### A `style_mask` or `<style>_style` on a billboard sprite now styles it (#1011)
-**What changed.** A billboard (`sprite` with `mode = "billboard"`, the default) that asks for a per-entity style (`style_mask`, or a style's own component such as `ascii_style`) is drawn into the style mask, cut out by its texture's alpha as the scene draws it, so only the sprite's shape takes the style. Before, the mask drew no billboards and a styled sprite stayed plain. An unstyled billboard in front of a styled entity still cuts through its style, as before.
-**What to do.** Nothing. A scene that put a style on a billboard and relied on it staying plain should take the style off.
