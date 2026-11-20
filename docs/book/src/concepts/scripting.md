@@ -873,13 +873,24 @@ Query spline entities for path-following, track layouts, and procedural placemen
 | Function | Returns | Description |
 |---|---|---|
 | `spline_closest_point(spline: entity, x: num, y: num, z: num)` | `map`: `#{t, x, y, z, dist_sq}`; () when the entity has no `spline_data` samples | The spline's sample nearest a world point. |
-| `spline_is_gap(spline: entity, t: num)` | `bool`: false too when the entity has no `spline_data` | Whether t (wrapped into 0..1) falls in one of the spline's gaps. |
-| `spline_gap_at(spline: entity, t: num)` | `map`: `#{start_t, end_t}`; () when t is in no gap or the entity has no `spline_data` | The spline's gap that t (wrapped into 0..1) falls in. |
+| `spline_point_attr(spline: entity, name: str, t: num)` | `any`: the value as written; () where the attribute is unset or the entity has no `spline_data` | The value of a control point attribute at t (wrapped into 0..1): what the point before t names in its \`attrs\` (or \``gap_after`\`, true over a gap), holding until the next point. |
+| `spline_point_attr_span(spline: entity, name: str, t: num)` | `map`: `#{value, start_t, end_t}` (`start_t` \> `end_t` when it runs through t = 1); () where the attribute is unset or the entity has no `spline_data` | The stretch of the spline t (wrapped into 0..1) is in over which a control point attribute holds one value: neighbouring points with equal values are one span. |
 | `spline_sample_at(spline: entity, t: num)` | `map`: `#{x, y, z, fwd_x, fwd_y, fwd_z, right_x, right_y, right_z}`; () with fewer than two samples | The spline's point at t (wrapped into 0..1), with its forward and level right directions. |
 
 <!-- script-api:end -->
 
 The `t` parameter wraps for closed splines. The returned forward and right vectors are normalized and can be used for orientation.
+
+A control point's `attrs` in the `.spline.toml` (and its `gap_after`) are data the game gives the path: a road's surface, a speed limit, where a jump is ([the format](../formats/overview.md)). Each holds from its point to the next:
+
+```rhai
+// Airborne over a gap: hold the heading
+if spline_point_attr(track, "gap_after", t) == true { steer = 0.0; }
+
+// Respawn past the gap rather than inside it
+let gap = spline_point_attr_span(track, "gap_after", t);
+if gap != () { t = gap.end_t; }
+```
 
 ### Particle API
 

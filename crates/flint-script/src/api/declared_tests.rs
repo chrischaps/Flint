@@ -550,8 +550,13 @@ fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
     )
     .unwrap();
     assert_eq!(h, 0.0);
-    let gap: bool = eval(&engine, &mut world, &format!("spline_is_gap({id}, 0)")).unwrap();
-    assert!(!gap, "no spline_data: no gap");
+    let gap: rhai::Dynamic = eval(
+        &engine,
+        &mut world,
+        &format!("spline_point_attr({id}, \"gap_after\", 0)"),
+    )
+    .unwrap();
+    assert!(gap.is_unit(), "no spline_data: no attribute");
     // A fractional float is not an int
     let err = eval::<()>(&engine, &mut world, &format!("emit_burst({id}, 2.5)")).unwrap_err();
     assert!(

@@ -1,12 +1,17 @@
 //! The `spline` module: queries of a spline entity's sampled path, its
 //! `spline_data` component (positions and `t` values in parallel arrays,
-//! and the gaps where the track breaks). ADR 0116.
+//! and its control points' attributes as spans of `t`). ADR 0116.
+//!
+//! The attributes are the game's own data along the path (a point's
+//! `attrs` in the `.spline.toml`, and `gap_after`), so nothing here knows
+//! what a track, a gap or a jump is (#855).
 //!
 //! The sampling is the plain functions below, over the component's TOML
 //! table; the registrations only find the table.
 
-use super::builder::kind::{Bool, Entity, Map as MapKind, Num};
+use super::builder::kind::{Any, Entity, Map as MapKind, Num, Str};
 use super::builder::ScriptApi;
+use super::convert::toml_to_dynamic;
 use flint_core::toml_util::toml_f64;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -100,29 +105,37 @@ pub(crate) fn closest_point(table: &toml::Table, q: [f64; 3]) -> Option<Closest>
     })
 }
 
-/// The gap of `table` that `t` (wrapped) falls in, as `(start, end)`; a
-/// gap whose start is after its end wraps through 1.
-pub(crate) fn gap_at(table: &toml::Table, t: f64) -> Option<(f64, f64)> {
-    let count = table
-        .get("gap_count")
-        .and_then(|v| v.as_integer())
-        .unwrap_or(0);
-    if count <= 0 {
-        return None;
-    }
-    let starts = numbers(table, "gap_starts")?;
-    let ends = numbers(table, "gap_ends")?;
+/// A span of an attribute: where it starts and ends, and its value.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AttrSpan<'t> {
+    pub start: f64,
+    pub end: f64,
+    pub value: &'t toml::Value,
+}
+
+/// The span of attribute `name` that `t` (wrapped) falls in: start
+/// inclusive, end exclusive; a span whose start is after its end wraps
+/// through 1. `None` where the attribute is unset.
+pub(crate) fn attr_span<'t>(table: &'t toml::Table, name: &str, t: f64) -> Option<AttrSpan<'t>> {
+    let runs = table.get("attrs")?.as_table()?.get(name)?.as_table()?;
+    let starts = numbers(runs, "starts")?;
+    let ends = numbers(runs, "ends")?;
+    let values = numbers(runs, "values")?;
     let t = wrap(t);
     starts
         .iter()
         .zip(ends)
-        .take(count as usize)
-        .map(|(s, e)| (num(s), num(e)))
-        .find(|&(start, end)| {
-            if start <= end {
-                t >= start && t < end
+        .zip(values)
+        .map(|((s, e), value)| AttrSpan {
+            start: num(s),
+            end: num(e),
+            value,
+        })
+        .find(|span| {
+            if span.start <= span.end {
+                t >= span.start && t < span.end
             } else {
-                t >= start || t < end
+                t >= span.start || t < span.end
             }
         })
 }
@@ -220,38 +233,51 @@ pub(crate) fn register(api: &mut ScriptApi) {
     });
 
     m.func(
-        "spline_is_gap",
-        "Whether t (wrapped into 0..1) falls in one of the spline's gaps.",
+        "spline_point_attr",
+        "The value of a control point attribute at t (wrapped into 0..1): what the point before t names in its `attrs` (or `gap_after`, true over a gap), holding until the next point.",
     )
     .arg("spline", Entity)
+    .arg("name", Str)
     .arg("t", Num)
-    .returns(Bool, "false too when the entity has no spline_data")
-    .run(|call, (id, t)| {
+    .returns(
+        Any,
+        "the value as written; () where the attribute is unset or the entity has no spline_data",
+    )
+    .run(|call, (id, name, t)| {
         let world = call.world()?;
-        Ok(spline_table(world, id).and_then(|s| gap_at(s, t)).is_some())
+        Ok(
+            match spline_table(world, id).and_then(|s| attr_span(s, &name, t)) {
+                Some(span) => toml_to_dynamic(span.value.clone()),
+                None => Dynamic::UNIT,
+            },
+        )
     });
 
     m.func(
-        "spline_gap_at",
-        "The spline's gap that t (wrapped into 0..1) falls in.",
+        "spline_point_attr_span",
+        "The stretch of the spline t (wrapped into 0..1) is in over which a control point attribute holds one value: neighbouring points with equal values are one span.",
     )
     .arg("spline", Entity)
+    .arg("name", Str)
     .arg("t", Num)
     .returns(
         MapKind,
-        "#{start_t, end_t}; () when t is in no gap or the entity has no spline_data",
+        "#{value, start_t, end_t} (start_t > end_t when it runs through t = 1); () where the attribute is unset or the entity has no spline_data",
     )
-    .run(|call, (id, t)| {
+    .run(|call, (id, name, t)| {
         let world = call.world()?;
-        Ok(match spline_table(world, id).and_then(|s| gap_at(s, t)) {
-            Some((start, end)) => {
-                let mut map = Map::new();
-                put(&mut map, "start_t", start);
-                put(&mut map, "end_t", end);
-                Dynamic::from_map(map)
-            }
-            None => Dynamic::UNIT,
-        })
+        Ok(
+            match spline_table(world, id).and_then(|s| attr_span(s, &name, t)) {
+                Some(span) => {
+                    let mut map = Map::new();
+                    map.insert("value".into(), toml_to_dynamic(span.value.clone()));
+                    put(&mut map, "start_t", span.start);
+                    put(&mut map, "end_t", span.end);
+                    Dynamic::from_map(map)
+                }
+                None => Dynamic::UNIT,
+            },
+        )
     });
 
     m.func(
@@ -289,10 +315,10 @@ pub(crate) fn register(api: &mut ScriptApi) {
 mod tests {
     use super::*;
 
-    /// A square track of side 10 in the xz plane, sampled at its corners
-    /// and back to the start, with a gap from 0.875 round to 0.125 and one
-    /// from 0.25 to 0.375 (values a float holds exactly: `t` is wrapped
-    /// with `%`, so 0.4 comes back as 0.39999...).
+    /// A square path of side 10 in the xz plane, sampled at its corners
+    /// and back to the start, with `gap_after` from 0.875 round to 0.125
+    /// and from 0.25 to 0.375, and a `surface` (values a float holds
+    /// exactly: `t` is wrapped with `%`, so 0.4 comes back as 0.39999...).
     fn square() -> toml::Table {
         r#"
         sample_count = 5
@@ -300,12 +326,22 @@ mod tests {
         positions_y = [0.0, 0.0, 2, 0.0, 0.0]
         positions_z = [0.0, 0.0, 10.0, 10.0, 0.0]
         t_values = [0.0, 0.25, 0.5, 0.75, 1.0]
-        gap_count = 2
-        gap_starts = [0.875, 0.25]
-        gap_ends = [0.125, 0.375]
+        [attrs.gap_after]
+        starts = [0.875, 0.25]
+        ends = [0.125, 0.375]
+        values = [true, true]
+        [attrs.surface]
+        starts = [0.0, 0.5]
+        ends = [0.5, 0.75]
+        values = ["ice", "sand"]
         "#
         .parse()
         .unwrap()
+    }
+
+    /// The span's `(start, end)`, as the old `gap_at` returned it.
+    fn ends(table: &toml::Table, name: &str, t: f64) -> Option<(f64, f64)> {
+        attr_span(table, name, t).map(|s| (s.start, s.end))
     }
 
     #[test]
@@ -337,16 +373,32 @@ mod tests {
     }
 
     #[test]
-    fn gaps_include_their_start_and_wrap_through_one() {
+    fn spans_include_their_start_and_wrap_through_one() {
         let sq = square();
-        assert_eq!(gap_at(&sq, 0.3), Some((0.25, 0.375)));
-        assert_eq!(gap_at(&sq, 0.25), Some((0.25, 0.375)));
-        assert_eq!(gap_at(&sq, 0.375), None, "the end is outside");
-        assert_eq!(gap_at(&sq, 0.95), Some((0.875, 0.125)));
-        assert_eq!(gap_at(&sq, 0.05), Some((0.875, 0.125)));
-        assert_eq!(gap_at(&sq, 1.05), Some((0.875, 0.125)));
-        assert_eq!(gap_at(&sq, -0.05), Some((0.875, 0.125)));
-        assert_eq!(gap_at(&sq, 0.5), None);
+        let gap = |t| ends(&sq, "gap_after", t);
+        assert_eq!(gap(0.3), Some((0.25, 0.375)));
+        assert_eq!(gap(0.25), Some((0.25, 0.375)));
+        assert_eq!(gap(0.375), None, "the end is outside");
+        assert_eq!(gap(0.95), Some((0.875, 0.125)));
+        assert_eq!(gap(0.05), Some((0.875, 0.125)));
+        assert_eq!(gap(1.05), Some((0.875, 0.125)));
+        assert_eq!(gap(-0.05), Some((0.875, 0.125)));
+        assert_eq!(gap(0.5), None);
+        assert_eq!(
+            attr_span(&sq, "gap_after", 0.3).unwrap().value,
+            &toml::Value::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn each_attribute_reads_its_own_spans() {
+        let sq = square();
+        let surface = |t| attr_span(&sq, "surface", t).map(|s| s.value.as_str().unwrap());
+        assert_eq!(surface(0.1), Some("ice"));
+        assert_eq!(surface(0.6), Some("sand"));
+        assert_eq!(surface(0.8), None, "unset from 0.75");
+        assert_eq!(ends(&sq, "surface", 0.6), Some((0.5, 0.75)));
+        assert_eq!(attr_span(&sq, "speed", 0.1), None, "no such attribute");
     }
 
     #[test]
@@ -359,9 +411,17 @@ mod tests {
         short.insert("positions_y".into(), toml::Value::Array(vec![]));
         assert_eq!(closest_point(&short, [0.0; 3]), None);
         assert_eq!(sample_at(&short, 0.5), None);
-        let mut gapless = square();
-        gapless.insert("gap_count".into(), toml::Value::Integer(0));
-        assert_eq!(gap_at(&gapless, 0.95), None);
-        assert_eq!(gap_at(&toml::Table::new(), 0.95), None);
+        let mut plain = square();
+        plain.insert("attrs".into(), toml::Value::Table(toml::Table::new()));
+        assert_eq!(attr_span(&plain, "gap_after", 0.95), None);
+        assert_eq!(attr_span(&toml::Table::new(), "gap_after", 0.95), None);
+        // Arrays of different lengths: only what all three cover
+        let mut ragged = square();
+        ragged["attrs"]["surface"]
+            .as_table_mut()
+            .unwrap()
+            .insert("values".into(), toml::Value::Array(vec!["ice".into()]));
+        assert!(attr_span(&ragged, "surface", 0.1).is_some());
+        assert_eq!(attr_span(&ragged, "surface", 0.6), None);
     }
 }
