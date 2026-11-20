@@ -1,6 +1,7 @@
 //! `schemas/scene/living.toml` and `schemas/scene/wooze.toml` against the
 //! types that read those tables (#686; flint-scene's `tests/table_schemas.rs`
-//! does the same for the tables it reads itself).
+//! does the same for the tables it reads itself, flint-render's
+//! `tests/panels_schema.rs` for `[panels]`).
 //!
 //! Both types refuse a key they don't know, so a table that writes every
 //! field its schema declares, and parses, shows the schema declares nothing
