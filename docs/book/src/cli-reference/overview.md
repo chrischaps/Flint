@@ -153,6 +153,7 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 | Every other file a scene, prefab, particle effect, glyph set, chunk, user style or script names by path | `missing-file` |
 | User styles load and compile; `[post_process.styles]`; the look | `bad-user-style` `bad-style-setting` `bad-look` |
 | `[wooze]` and `[living.species]` | `bad-wooze` `bad-species` |
+| Each field a scene declares, `[field.<name>]`: its keys and its zones | `bad-field` |
 | Constraints, and that each one can be evaluated | `constraint` `bad-constraint` |
 | `flint.toml` reads, its schema directories exist, its start scene is there | `bad-manifest` `bad-schemas` `missing-asset` |
 | A folder's `Cargo.toml` (a game with a Rust binary) names every `[patch.crates-io]` line of the engine it builds by path, since cargo applies only the root workspace's ([Upgrading the Engine](../guides/upgrading-the-engine.md#cargo)) | `missing-cargo-patch` |

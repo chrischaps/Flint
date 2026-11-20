@@ -346,6 +346,12 @@ impl HeadlessGame {
         {
             core.subsystems.push(music);
         }
+        // The scene's declared fields (#1014), for the scripts' field_sample
+        if let Some(fields) =
+            super::subsystem::field::for_capture(&mut core.script, &core.scene_path)
+        {
+            core.subsystems.push(fields);
+        }
         // The modules the capture's subsystems own (#698), as the player
         // enables them before its scripts load
         core.enable_script_modules();

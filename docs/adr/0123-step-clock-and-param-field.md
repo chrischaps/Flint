@@ -97,3 +97,20 @@ Two general ideas had grown up inside one aesthetic and under its name.
 - Book: concepts/procgen.md, "The wooze field".
 - `Cycle::read` takes `(beats, glide, amount)`; a caller outside the tree that
   passed a `&WoozeSample` passes `s.glide, s.amplitude`.
+
+## Decision 4, taken (2026-11-20, #1014)
+
+A scene declares a field (`[field.<name>] keys = { wind = { min, max, default } }`
+with `[[field.<name>.zone]]` entries), and scripts read it with
+`field_sample("weather", "wind", pos)`. Of the two storages decision 4
+named, the field is a `ParamField` over a heap key list (`SceneField`),
+not one `ParamField<1>` per key: a `FieldKeys` is `'static` with a `fn`
+check, so a key per field would have leaked a key set per declared key and
+lost its range, and a script samples one key at a time anyway
+(`SceneField::sample_index`), which reads the one list slot and allocates
+nothing. The zone readers are one generic code path over both (`ZoneOf<S>`,
+the private `KeySet`), so the wooze field's zones read and refuse as they did
+and `ParamField<N>` samples the same bits; a test holds a `SceneField` to a
+`ParamField<2>` with the same keys, bit for bit. The write functions are
+`field_set`, `field_set_zone` and `field_remove_zone` rather than
+`set_field*`, which would overload the component setter `set_field`.

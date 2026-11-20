@@ -252,6 +252,7 @@ fn check_all(
         out.diagnostics.extend(wooze);
         out.diagnostics
             .extend(species(scene, &file, world.as_ref()));
+        out.diagnostics.extend(fields(scene, &file));
     }
     if checks.constraints {
         out.diagnostics.extend(schemas.problems.iter().cloned());
@@ -845,6 +846,33 @@ fn wooze(scene: &Path, file: &SceneFile, schemas: &SceneSchemas) -> Vec<Diagnost
             match &issue.zone {
                 Some(zone) => d.field(zone.clone()),
                 None => d,
+            }
+        })
+        .collect()
+}
+
+/// What's wrong with the fields the scene declares, `[field.<name>]`
+/// (#1014): each key and zone the player would leave out, in the field's
+/// words (the zones' are the wooze field's), placed by field and key
+/// (`weather.keys.wind`) or zone (`weather.zone.storm`). `[table.field]` is
+/// open, so the scene pass says nothing of it and this is the one check.
+fn fields(scene: &Path, file: &SceneFile) -> Vec<Diagnostic> {
+    let Some((_, issues)) = flint_core::field::SceneFields::of_tables(&file.tables) else {
+        return Vec::new();
+    };
+    issues
+        .into_iter()
+        .map(|issue| {
+            // The place is the diagnostic's table and field, so the message
+            // is the issue's alone
+            let place = issue.place();
+            let d = Diagnostic::error(codes::BAD_FIELD, issue.message)
+                .file(scene)
+                .table("field");
+            if place.is_empty() {
+                d
+            } else {
+                d.field(place)
             }
         })
         .collect()
