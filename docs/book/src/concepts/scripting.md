@@ -247,7 +247,7 @@ fn last_key() { global::KEYS[global::KEYS.len() - 1] }   // a helper reads the c
 fn on_update() { let k = last_key(); }
 ```
 
-A `let` is not a constant, so `global::` doesn't reach it. Each constant a script reads as `global::` is handed to every callback again, about half a microsecond each for a small array, so a callback itself can read the bare name, which costs nothing extra; `global::` is for the helpers. `crates/flint-script/src/engine.rs`'s `test_top_level_state_reaches_callbacks_not_helpers` holds all of this.
+A `let` is not a constant, so `global::` doesn't reach it: `flint script check` reports such a read as `unknown-global` (below), since it would fail every frame. Each constant a script reads as `global::` is handed to every callback again, about half a microsecond each for a small array, so a callback itself can read the bare name, which costs nothing extra; `global::` is for the helpers. `crates/flint-script/src/engine/tests.rs`'s `test_top_level_state_reaches_callbacks_not_helpers` and `engine/top_level_tests.rs` hold all of this.
 
 ### Input API
 
@@ -2379,7 +2379,7 @@ scripts/keeper.rhai:7:1: error[unknown-callback]: `fn on_colision` is not a call
 checked 1 script: 3 errors
 ```
 
-and exits 1. What else it reports: a syntax error at its line, a literal no declaration accepts (`set_position("crate", ...)`, an entity id given as a string), a callback with the wrong parameters (`fn on_update(dt)`; `delta_time()` is the step), an import that finds no module, with the paths tried, a call of a deprecated function (a warning), and, as a warning, a call in `on_update` or `on_draw_ui` that mixes int and float literals in four or more number arguments (`draw_rect(10, 10, 100.0, 50, ...)`), which misses both signatures the engine registers for it and takes Rhai's slow search every frame: write its numbers all as floats or all as ints. The full list of codes is in [Scene diagnostics](schemas.md#scene-diagnostics).
+and exits 1. What else it reports: a syntax error at its line, a literal no declaration accepts (`set_position("crate", ...)`, an entity id given as a string), a callback with the wrong parameters (`fn on_update(dt)`; `delta_time()` is the step), an import that finds no module, with the paths tried, a `global::NAME` read with no top-level `const NAME` (`unknown-global`: a `let` read that way fails every time it runs), a call of a deprecated function (a warning), and, as a warning, a call in `on_update` or `on_draw_ui` that mixes int and float literals in four or more number arguments (`draw_rect(10, 10, 100.0, 50, ...)`), which misses both signatures the engine registers for it and takes Rhai's slow search every frame: write its numbers all as floats or all as ints. The full list of codes is in [Scene diagnostics](schemas.md#scene-diagnostics).
 
 `flint check` and `flint validate` run the same check, so a script error fails them too.
 

@@ -216,6 +216,9 @@ pub mod codes {
     /// literals, which takes Rhai's slow signature search (ADR 0116
     /// decision 5).
     pub const MIXED_NUMBERS: &str = "mixed-numbers";
+    /// A `global::NAME` read in a script with no top-level `const NAME`,
+    /// which fails every call that reaches it (#1007).
+    pub const UNKNOWN_GLOBAL: &str = "unknown-global";
 
     /// Every code, the severity it is raised with, and what it means.
     pub const ALL: &[(&str, Severity, &str)] = &[
@@ -450,6 +453,11 @@ pub mod codes {
             MIXED_NUMBERS,
             Severity::Warning,
             "a per-frame call mixes int and float literals where numbers go, the slow lookup",
+        ),
+        (
+            UNKNOWN_GLOBAL,
+            Severity::Error,
+            "a script reads global::NAME and has no top-level const NAME",
         ),
         (
             UNKNOWN_TABLE,
@@ -982,7 +990,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 53);
+        assert_eq!(seen.len(), 54);
     }
 
     /// A problem in a scene-level table names the table as its header is

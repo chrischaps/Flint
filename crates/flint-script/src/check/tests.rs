@@ -197,6 +197,57 @@ fn a_callback_at_the_wrong_arity_and_near_misses() {
     assert!(found[3].starts_with("5:1 unknown-callback `fn onUpdate`"));
 }
 
+/// `global::NAME` reaches a script's top-level constants only (#1007): a
+/// read of a `let`, or of a name never declared, fails every time it runs.
+/// Found in functions, closures and a method call's arguments; a
+/// constant's reads, wherever it is declared, pass.
+#[test]
+fn a_global_read_needs_a_top_level_constant() {
+    let c = checker();
+    let source = "fn park() { for i in 0..global::MAX_POOL {} }\n\
+                  const MAX_POOL = 9;\n\
+                  let speed = 2.0;\n\
+                  const KEYS = [1.0];\n\
+                  fn on_update() {\n  park();\n  let s = global::speed;\n  \
+                  log(global::KEYS.len().to_string());\n  \
+                  let f = || global::KYES;\n  \
+                  [1].map(|x| global::MAX_POOOL);\n}\n";
+    let found = c.check_source(Path::new("t.rhai"), source, false);
+    let globals: Vec<&Diagnostic> = found
+        .iter()
+        .filter(|d| d.code == codes::UNKNOWN_GLOBAL)
+        .collect();
+    assert_eq!(globals.len(), 3, "{found:#?}");
+    assert!(globals.iter().all(|d| d.is_error()));
+    let at = |name: &str| {
+        globals
+            .iter()
+            .find(|d| d.message.contains(&format!("`global::{name}`")))
+            .unwrap_or_else(|| panic!("no finding for {name}: {found:#?}"))
+    };
+    assert_eq!(at("speed").line, Some(7));
+    assert!(at("speed")
+        .hint
+        .as_deref()
+        .unwrap()
+        .contains("top-level `let`"));
+    assert_eq!(at("KYES").line, Some(9));
+    assert_eq!(at("KYES").hint.as_deref(), Some("did you mean `KEYS`?"));
+    assert_eq!(at("MAX_POOOL").line, Some(10));
+    assert_eq!(
+        at("MAX_POOOL").hint.as_deref(),
+        Some("did you mean `MAX_POOL`?")
+    );
+}
+
+/// A module's `global::` is its own, so a module file is not judged.
+#[test]
+fn a_modules_global_reads_are_not_judged() {
+    let c = checker();
+    let found = c.check_source(Path::new("lib/m.rhai"), "fn f() { global::X }\n", true);
+    assert!(found.is_empty(), "{found:#?}");
+}
+
 /// ADR 0116 decision 5: a warning for ints and floats mixed in four or
 /// more `num` slots, every frame, literals only.
 #[test]

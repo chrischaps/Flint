@@ -37,7 +37,7 @@
 //! | `[wooze]`, `[living.species]` | `flint validate` | `bad-wooze` `bad-species` |
 //! | constraints, and that each can be evaluated | `flint validate`; the second is new | `constraint` `bad-constraint` |
 //! | the manifest reads, its schema directories exist, its scene is there | new | `bad-manifest` `bad-schemas` `missing-asset` |
-//! | the scripts compile, and their calls, callbacks and imports fit the script API | `flint script check` (#694, [`scripts`]) | `script-syntax` `unknown-function` `wrong-arity` `bad-argument` `unknown-callback` `callback-arity` `missing-module` `deprecated-function` `mixed-numbers` |
+//! | the scripts compile, and their calls, callbacks and imports fit the script API | `flint script check` (#694, [`scripts`]) | `script-syntax` `unknown-function` `wrong-arity` `bad-argument` `unknown-callback` `callback-arity` `missing-module` `deprecated-function` `mixed-numbers` `unknown-global` |
 //! | a project with a `Cargo.toml` names the `[patch.crates-io]` of the engine it builds by path (a folder only) | new (#982, [`cargo`]) | `missing-cargo-patch` |
 //! | that project's `Cargo.lock` gives gpu-allocator the `windows` crate wgpu-hal has | new (#995, [`cargo`]) | `stale-cargo-lock` |
 //!
