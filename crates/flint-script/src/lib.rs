@@ -7,7 +7,13 @@
 //!
 //! Scripts can read/write ECS data, respond to collisions/triggers/input,
 //! control animation and audio, and hot-reload while the game is running.
-#![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
+// Unit tests read their files off the disk and assert on TOML as written;
+// the lib build still holds the rules (#761)
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+// Everything the crate says goes through `tracing`, so `RUST_LOG` can
+// quiet it and stdout stays the caller's (`flint render --report json`,
+// #703, #1010); unit tests may still print their measurements
+#![cfg_attr(not(test), deny(clippy::print_stdout, clippy::print_stderr))]
 
 pub mod api;
 #[cfg(feature = "check")]

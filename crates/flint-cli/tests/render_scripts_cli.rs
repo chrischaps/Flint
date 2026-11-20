@@ -84,7 +84,12 @@ fn schemas() -> PathBuf {
 }
 
 fn render(dir: &Path, out: &str, args: &[&str]) -> Output {
-    std::process::Command::new(FLINT)
+    render_command(dir, out, args).output().expect("run flint")
+}
+
+fn render_command(dir: &Path, out: &str, args: &[&str]) -> std::process::Command {
+    let mut command = std::process::Command::new(FLINT);
+    command
         .arg("render")
         .arg(dir.join("floor.scene.toml"))
         .arg("--schemas")
@@ -97,9 +102,8 @@ fn render(dir: &Path, out: &str, args: &[&str]) -> Output {
         .arg("48")
         .arg("-o")
         .arg(dir.join(out))
-        .args(args)
-        .output()
-        .expect("run flint")
+        .args(args);
+    command
 }
 
 fn timeline(dir: &Path) -> String {
@@ -585,6 +589,46 @@ fn a_script_print_never_reaches_the_json_report() {
             .unwrap_or_else(|| panic!("{said:?} not in the log: {err}"));
         assert!(line.contains("script:"), "{line}");
         assert!(line.contains("entity=director"), "{line}");
+    }
+}
+
+/// #1010: the per-script load line and the system's count are the log's,
+/// so the default filter shows them and `RUST_LOG=warn` quiets them.
+#[test]
+fn rust_log_quiets_the_script_load_lines() {
+    let dir = project("load_lines");
+    let run = |rust_log: Option<&str>, out: &str| {
+        let mut command = render_command(&dir, out, &["--scripts", "--time", "0.5"]);
+        match rust_log {
+            Some(filter) => command.env("RUST_LOG", filter),
+            None => command.env_remove("RUST_LOG"),
+        };
+        command.output().expect("run flint")
+    };
+    let shown = run(None, "default.png");
+    if no_gpu(&shown) {
+        return;
+    }
+    ok(&shown);
+    let err = plain(&stderr(&shown));
+    let loaded = err
+        .lines()
+        .find(|l| l.contains("Loaded: director"))
+        .unwrap_or_else(|| panic!("no load line under the default filter: {err}"));
+    assert!(
+        loaded.contains("DEBUG") && loaded.contains("load:"),
+        "{loaded}"
+    );
+    assert!(
+        err.contains("Script system initialized (1 scripts)"),
+        "{err}"
+    );
+
+    let quiet = run(Some("warn"), "quiet.png");
+    ok(&quiet);
+    let err = plain(&stderr(&quiet));
+    for line in ["Loaded: director", "Script system initialized"] {
+        assert!(!err.contains(line), "{line:?} under RUST_LOG=warn: {err}");
     }
 }
 
