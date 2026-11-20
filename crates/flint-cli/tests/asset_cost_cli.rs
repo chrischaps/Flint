@@ -96,7 +96,19 @@ fn project(name: &str, base: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("asset_cost_cli_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join(".flint")).unwrap();
-    std::fs::write(dir.join("flint.toml"), "[project]\nid = \"budget\"\n").unwrap();
+    // The engine's schemas: they are what says `material.texture` names an
+    // asset (#968)
+    let schemas = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../schemas")
+        .canonicalize()
+        .unwrap();
+    let schemas = schemas.to_string_lossy().replace('\\', "/");
+    let schemas = schemas.trim_start_matches("//?/");
+    std::fs::write(
+        dir.join("flint.toml"),
+        format!("[project]\nid = \"budget\"\nschemas = [\"{schemas}\"]\n"),
+    )
+    .unwrap();
     std::fs::write(
         dir.join(".flint/config.toml"),
         format!(
