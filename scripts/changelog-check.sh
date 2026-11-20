@@ -12,9 +12,11 @@
 #   Changelog: none (reason)
 #
 # for a change no game can notice (a comment, a refactor, a test). On every
-# branch it also checks that the fragments are well formed and that
-# CHANGELOG.md stays a short page (the entries live in changelog/). CI's
-# `changelog` job runs this on every pull request.
+# branch it also checks that the fragments are well formed, that CHANGELOG.md
+# stays a short page (the entries live in changelog/), and that no fragment the
+# branch adds has a heading a month file already holds: one a merge brought
+# back after its assembly (#1006). CI's `changelog` job runs this on every
+# pull request.
 #
 # CLI flags, Cargo features, file formats and defaults aren't watched: no path
 # says reliably that one changed. They still belong in the changelog.
@@ -43,6 +45,48 @@ if [ "$size" -gt "$index_limit" ]; then
     exit 1
 fi
 
+fragments=$(git diff --name-only --diff-filter=AM "$base"...HEAD | grep -E "$fragment" | grep -v '/README\.md$' || true)
+
+# A fragment this branch adds whose entry a month file already holds came back
+# with a merge (#1006): a branch stacked on a sibling's carries the sibling's
+# fragment as its own addition, and squashing it onto main after the sibling's
+# assembly adds it again. assemble deletes one that is word for word what the
+# month holds (#994); this catches it before the merge, by its heading, so an
+# older copy of the sibling's text is caught too, and so it doesn't pass for
+# this branch's own entry. The months are base's and this branch's: a stacked
+# branch that hasn't merged main has the fragment and not the assembly.
+assembled_headings() {
+    local f
+    git ls-tree --name-only "$base" -- changelog/ | grep -E '^changelog/[0-9][^/]*\.md$' |
+        while IFS= read -r f; do git show "$base:$f"; done
+    for f in changelog/[0-9]*.md; do
+        [ -e "$f" ] && cat "$f"
+    done
+    return 0
+}
+if [ -n "$fragments" ]; then
+    headings=$(assembled_headings | sed 's/\r$//' | grep '^### ' | LC_ALL=C sort -u || true)
+    returned=""
+    while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        while IFS= read -r h; do
+            if printf '%s\n' "$headings" | grep -qxF -- "$h"; then
+                returned="$returned  $f: $h"$'\n'
+            fi
+        done < <(sed 's/\r$//' "$f" | grep '^### ' || true)
+    done <<< "$fragments"
+    if [ -n "$returned" ]; then
+        {
+            echo "changelog: this branch adds a fragment whose entry is already in changelog/:"
+            printf '%s' "$returned"
+            echo "A merge brought it back after it was assembled: this branch is stacked on"
+            echo "another's, or merged it before its assembly. Drop it (git rm <file>) and"
+            echo "commit. If it is a new entry, give it a heading of its own."
+        } >&2
+        exit 1
+    fi
+fi
+
 changed=$(git diff --name-only "$base"...HEAD)
 hits=$(printf '%s\n' "$changed" | grep -E "$watched" || true)
 
@@ -50,7 +94,6 @@ if [ -z "$hits" ]; then
     echo "changelog: nothing a game reads changed"
     exit 0
 fi
-fragments=$(git diff --name-only --diff-filter=AM "$base"...HEAD | grep -E "$fragment" | grep -v '/README\.md$' || true)
 if [ -n "$fragments" ]; then
     echo "changelog: entry present:"
     printf '%s\n' "$fragments" | sed 's/^/  /'

@@ -9,8 +9,9 @@
 # day or later, fragments included, and the same before and after assembly;
 # assembly loses no entry and lists the new month; a fragment a squash merge
 # brings back after its assembly is neither printed nor assembled twice, and
-# assembling it deletes it (#994); the check fails a schema change with no
-# fragment and passes one with a fragment or a waiver.
+# assembling it deletes it (#994), and the check fails a branch that carries
+# it before the merge, by its heading (#1006); the check fails a schema change
+# with no fragment and passes one with a fragment or a waiver.
 set -euo pipefail
 
 src=$(cd "$(dirname "$0")/.." && pwd)
@@ -166,6 +167,44 @@ git add -A
 at 2026-12-07 commit -qm assemble
 assembled=$(cat changelog/2026-12.md)
 count=$(bash scripts/changelog.sh count)
+
+# --- the check catches it before the merge (#1006) ---
+git checkout -q s3
+check "while s3 targets s1, the check passes it" "bash scripts/changelog-check.sh s1 >/dev/null 2>&1"
+check "against main after s1's assembly, the check fails s3 for carrying s1's fragment" \
+    "! bash scripts/changelog-check.sh main >/dev/null 2>&1"
+said=$(bash scripts/changelog-check.sh main 2>&1 || true)
+check "and names the fragment and its heading" \
+    "printf '%s\n' \"\$said\" | grep -qF 'changelog.d/906-t906.md: ### Stacked under two branches (#906)'"
+check "and doesn't name s3's own fragment" \
+    "! printf '%s\n' \"\$said\" | grep -q '908-t908'"
+git checkout -q s2
+check "s2 changes nothing a game reads, and still fails for carrying it" \
+    "! bash scripts/changelog-check.sh main >/dev/null 2>&1"
+git checkout -q -b s2-crlf s2
+sed 's/$/\r/' changelog.d/906-t906.md > changelog.d/x && mv changelog.d/x changelog.d/906-t906.md
+printf 'One more line.\r\n' >> changelog.d/906-t906.md
+git add -A
+at 2026-12-06 commit -qm "an older copy, CRLF"
+check "a copy whose text differs, with CRLF line ends, is caught by its heading" \
+    "! bash scripts/changelog-check.sh main >/dev/null 2>&1"
+git checkout -q -b s3-fixed s3
+git rm -q changelog.d/906-t906.md
+at 2026-12-06 commit -qm "drop s1's fragment"
+check "once s3 drops it, the check passes s3 on its own entry" \
+    "bash scripts/changelog-check.sh main 2>/dev/null | grep -q '908-t908'"
+git checkout -q s2
+git rm -q changelog.d/906-t906.md
+at 2026-12-06 commit -qm "drop s1's fragment"
+# s2's diff from main still holds s1's schema change, so it is judged on that
+# (no entry of its own), no longer on the returned fragment.
+said=$(bash scripts/changelog-check.sh main 2>&1 || true)
+check "and s2, dropped, is no longer failed for a returned fragment" \
+    "! printf '%s\n' \"\$said\" | grep -q 'already in changelog/' && printf '%s\n' \"\$said\" | grep -q 'adds no changelog entry'"
+git reset -q --hard HEAD~1
+git checkout -q main
+git branch -q -D s2-crlf s3-fixed
+
 merge s2 2026-12-08
 check "squashing a branch stacked on an assembled one brings its fragment back" "[ -f changelog.d/906-t906.md ]"
 check "since prints the returned entry once" \
