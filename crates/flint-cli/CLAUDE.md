@@ -141,6 +141,8 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    variants still come from the job's `stylize-goldens-warp` artifact. Two traps it caught (DX12/FXC only): a `switch` miscompiled, and
    `fract(theta - base)` on a ±ε knife edge. **Its own command since #327** (`Commands::Goldens(render_goldens::GoldensArgs)`, the manifest plus the flattened `GoldenArgs`): `flint music render` (once `render-suite`) is music to WAV only, with `--output` required by clap, and each command's `--help` lists only its flags (`tests/render_goldens.rs::goldens_and_music_each_list_only_their_own_flags`). The old spelling `render-suite <x>.goldens.toml ...` still works, by the old-names router below. Keep it on the words, not a flattened `GoldenArgs` in `RenderSuiteArgs`, or the music help grows the golden flags again.
 
+- `tests/fixtures/scenes/` -- Frozen copies of the scenes the goldens and CLI tests load. No golden may load a scene from `examples/` (`no_golden_case_loads_an_example`); a change here is a change to a test. The binaries they share with the examples they borrow by path (`../../../examples/models/YBot.glb`), each pinned by SHA-256 in `tests/fixtures/borrowed.toml` (#759), so changing a borrowed example file fails `scripts/ci.sh` until the fixture keeps the old bytes
+
 ## `flint capture`
 
 - **`flint capture <shots.toml> [--shot id]... [--take name]... [--scale f | --width W --height H] [--out dir] [--verify [--tolerance n]] [--encode mp4] [--dry-run] [--schemas d]... [-- <play flags>]`** (#722, `commands/capture.rs`; was `tools/showcase/capture.py` + `compare.py`). A shot list is `[capture]` (title, fps 30, width 1280, height 720, points_wide = width, out, look, seed, args) and `[[shot]]`s (id, scene, seconds; title, notes, fps, width, height, look, seed, input, args, `[[shot.take]]` with name, seconds, look, seed, input, args); serde `deny_unknown_fields`, `ShotList::check` (ids and take names are folder names, unique; seconds > 0, a take's at most its shot's). Paths are from the list's folder (`native` joins by components); `out` default `captures/<list name>/` beside the list (`.gitignore` and `flint init`'s gitignore have `captures/`). `plan` makes one `TakePlan` a take (layered capture < shot < take; args appended in that order, then everything after `--`); `pixels_per_point = width / points_wide`, where a shot's canvas is `list_points * shot_width / list_width`, so `--scale` shrinks pixels and keeps the layout. **Each take spawns `current_exe() play <scene>`** with `--frame-step 1/fps --screenshot <take>/frame.png --screenshot-every 1/fps --exit-after seconds - step/2 --pixels-per-point --music-volume 0 --sfx-volume 0 --no-activate` (+ seed, look, the scaled input copy `<take>/input.txt`, `--schemas`): stdout and stderr to `<take>/player.log`, never this command's stdout (`--json` is allowed: one document, `takes[]` = `take.json` + `folder`/`ok`/`verify`/`encoded`). A process a take, not `flint_player::launch` in process: winit makes one event loop a process. `fresh_folder` empties a take folder only if it is a take's (`take.json`, or only `frame_*`/`player.log`). A take fails on a non-zero exit or a frame count other than `round(seconds * fps) + 1`. `scale_input` moves `mouse`/`click` x y and `touch`/`drag` id x y into pixels, `look` untouched. **`--verify`** captures into `<take>.again`, then `capture_compare::compare_folders` (byte-equal files skip the decode; else RGB, per frame pixels differing, worst channel level, fraction; size mismatch = 255; on `available_parallelism` threads), `verify.json` per take and for the run; exit 1 when `!same_within(tolerance)` or a frame is in one run only; an identical `.again` is deleted, a differing one kept. **`--encode mp4`** refuses up front without ffmpeg (`ffmpeg -version`), then `mp4_words`: libx264 crf 16 slow, even size, BT.709 limited with `setparams` tags (ffmpeg 8), `+faststart`, no audio, `<shot>/<take>.mp4`. Disk: an estimate at 8 MB a 4K frame is printed, not enforced (std has no free-space call). The film: `tools/showcase/film.toml` is a list in this format (unit test `the_film_list_parses`), and `cut.py <cut> --capture` writes a cut's list. Example: `showcase_game/trailer.shots.toml` (three shots, a two-take shot, an input script that turns with `look` after a `click` captures the cursor). Tests: `commands::capture::tests`, `commands::capture_compare::tests`, `tests/capture_cli.rs` (a three-shot list in a temp game, `--verify --json`; skips without a GPU)
@@ -159,10 +161,12 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
 - **Never deletes or overwrites**: a directory with files is refused without `--force`; with it, a file already there is kept and listed as kept.
 - **The printed "Next steps" and the generated `CLAUDE.md` are tested as written** (`tests/init_cli.rs`): every printed `flint` line is run in a fresh project of each template (render: luma mean and spread, so a black or flat frame fails; then `--scripts --time 0.5` with no script error), every inline-code path in the guide must exist in the project (or, for `engine/...` in a subtree project, in this repo), every `flint <word>` must take `--help`, and every `flint` line in a code block is run. So a path or command added to a template must exist, and prose there says "Flint", not "flint", unless it names a command. `flint play` opens a window: the test resolves its default scene and the window is checked by hand (`flint-player --exit-after 2 --no-activate --screenshot x.png` in a fresh project draws the HUD too, which a headless render does not).
 - A scene edit in a template needs a look: `flint init x --template <t>` somewhere scratch, then the printed render. `testGame/` (a committed copy of the old scaffold) is gone; the test generates its projects.
+- `crates/flint-cli/templates/` -- What `flint init` writes (#707): the game-project scaffold, compiled into the binary; `tests/init_cli.rs` builds and runs each
 
 ## `flint examples`
 
 - `flint examples [--topic t] [--json] [--check] [--dir d] [--schemas s]` (#763, `commands/examples.rs`): lists `examples/index.toml` (`[[example]] scene/topic/purpose`, unknown keys refused) grouped by topic in index order; `--dir` defaults to `examples/`, else `engine/examples/`. `--check` fails (exit 1, a `FAIL` line each) on a scene on disk with no entry (`dist/` skipped), an entry with no file, an empty topic or purpose, a duplicate, or a scene failing `validate::check` -- everything `flint validate` checks, but the scene is loaded even with no constraints, and style warnings count as failures. CI's headless job runs it. Test: `tests/examples_cli.rs`
+- `examples/` -- Curated example scenes and their assets (was `demo/`, #763); `examples/index.toml` gives each a topic and purpose, `flint examples` lists them, `flint examples --check` (CI) holds the index to the folder and validates each. Improve them freely: nothing pins their pixels
 
 ## `flint env`
 
@@ -222,3 +226,63 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
 
 - **`flint schema`** (#684; `commands/schema.rs`, `commands/schema_export.rs`) -- `Commands::Schema(SchemaArgs)` (an `Args` struct, so the enum did not grow): `[name] [--list] [--format text|json|json-schema] [--json] [--output file] [--schemas dir]...`. A name may be a component, a scene table (#686: `flint schema post_process`, `Scene tables (n):` in `--list`, `tables` in both JSON forms, `table_json` / `scene_table_schema`; nested table fields print indented under their field) or an archetype; one that is none of them is `bail!` (exit 1, nearest name suggested), checked before any output for every format. `schema_export` builds from a `SchemaRegistry`: `list_json` (`--list --json`), `registry_json` / `component_json` / `archetype_json` (`--format json`; `schema_dirs`, `types`, `old_type_names`, `components`, `archetypes`), `scene_json_schema` (draft-07: `definitions.entity` with `archetype` as an enum of the loaded ones, `parent`, a `$ref` per component and `additionalProperties: false`; `definitions.components.<name>` with typed fields and `additionalProperties` left open, since an unknown field is only a warning; `required` only for a field with no default that no archetype supplies; `[scene]` and `[prefabs]` described, and every scene table a `[table.<name>]` declares as a `$ref` into `definitions.tables`, #686; a top-level table none declares stays allowed) and `component_schema` (`<name> --format json-schema`). Directories are named from the working directory where they are under it, so a committed schema carries no machine's paths, and so are schema files (`schema_export::shown_file`). **Each field's layer** (#794): text prints `Declared in:` and, for a component a later layer extended (`extend = true`), `Extended by:` with the files numbered and each top-level field's line ending `[n]`; JSON's `component_json` / `table_json` take the registry's `SchemaOrigin` and add `declared_in`, `extended_by` and each field's `file`. Test: `schema_cli.rs::a_game_adds_one_field_to_an_engine_component`. `--output` exists because a PowerShell redirect can add a byte-order mark. `tests/schema_cli.rs` compiles the scene schema with the `boon` crate (a dev-dependency) and validates every `examples/**/*.scene.toml` against it, then checks it refuses seven one-mistake scenes; it has not been tried in an editor. `flint validate` puts `registry.game_lints()` ahead of the scene's diagnostics and prefixes a diagnostic about another file with that file
 - **Edit, don't rewrite** (#678, `commands/entity.rs`): both go through `flint_scene::SceneDocument` (`insert_entity`, `remove_entity`, `children_of`, `descendants_of`), so one table goes in after the last entity or comes out with the comment above it, and every other byte stays: never write back the `SceneFile` from `load_scene`, which has prefabs expanded, the wooze preset filled in and every `[post_process]` default set. The edited text is loaded with `flint_scene::load_scene_text(text, path, registry)` before writing, and each `--props` component is checked with `validate_component_data` (an error here, a warning at load); a component with no schema is written with a warning. `create` writes archetype, parent and props only. `delete` refuses a parent unless `--recursive`, and names the `[prefabs.<instance>]` for a prefab-made entity. Test: `tests/entity_cli.rs`
+
+## The edit -> validate -> play loop (the root's examples, #992)
+
+Flint uses an **edit -> validate -> play** loop:
+
+1. **`flint render`** -- Headless scene-to-PNG snapshot. Primary validation tool for AI agents.
+   ```bash
+   flint render levels/demo.scene.toml --output test.png --width 1280 --height 720
+   flint render levels/demo.scene.toml --output test.png \
+     --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
+   ```
+   Every flag: `flint render --help`, `--list-styles --json`, `--look help`, and `crates/flint-cli/CLAUDE.md`.
+
+2. **`flint edit <file>`** -- Unified interactive editor. Auto-detects file type and opens the right tool:
+   ```bash
+   flint edit levels/demo.scene.toml              # Scene viewer (hot-reload)
+   flint edit models/character.glb                 # Model previewer (orbit camera)
+   flint edit specs/oak_tree.procgen.toml          # Procgen previewer (mesh/texture)
+   ```
+   More: `crates/flint-cli/CLAUDE.md`.
+
+3. **`flint gen`** -- Run a procedural generation spec to produce meshes (GLB) or textures (PNG).
+   ```bash
+   flint gen specs/oak_tree.procgen.toml -o tree.glb
+   flint gen specs/stone_wall.procgen.toml -o wall.png
+   flint gen specs/oak_tree.procgen.toml --dry-run
+   flint gen examples/rolling_meadow.terrain.toml -o terrain/   # heightmap + splat PNGs, no window
+   ```
+   More, and the goldens: `crates/flint-cli/CLAUDE.md`.
+
+4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
+   ```bash
+   flint play examples/phase4_runtime.scene.toml
+   flint play examples/phase4_runtime.scene.toml --width 1920 --height 1080
+   ```
+   More: `crates/flint-player/CLAUDE.md`.
+
+5. **`flint capture`** -- A shot list (`[[shot]]` scene, seconds, look, input script) captured as
+   deterministic frame sequences, each take a stepped `flint play`; `--verify` runs each twice and
+   names the frames that differ, `--encode mp4` with ffmpeg. More: `crates/flint-cli/CLAUDE.md`.
+   ```bash
+   flint capture showcase_game/trailer.shots.toml --verify --encode mp4
+   ```
+
+**For AI agents:** Before playing, rendering or bundling, `flint check <dir|scene> [--json]` is the pre-flight (#687): every problem of a project in one run, each with its file, entity, field, a hint and the paths tried, exit 1 on an error, scripts included (`flint script check` alone gives each script's mistakes as `file:line:col`, #694; `crates/flint-cli/CLAUDE.md`). Every command that opens no window takes the global `--json` (#710): exactly one JSON document on stdout, everything else on stderr, exit 1 on a failure with the report or an `{"error": ...}` document still on stdout; read answers from it, not from the text (`crates/flint-cli/CLAUDE.md`, "Output"). After a gameplay change, `flint playtest <scene> --input-script <file>` (#714) plays it headless on a fixed clock and fails on what didn't happen: an input script's `expect` / `wait` lines, the scripts' `test_assert` / `test_fail`, any script error; one JSON report, byte-identical run to run (`crates/flint-player/CLAUDE.md`, book: guides/playtesting.md). After visual changes, always run `flint render` to verify before moving on. The render command loads models (found by the project's one asset search: `models/` beside the scene, beside each directory up to the project root, then `engine/`; `flint asset where models <name> --scene <scene>` shows it), generates geometry, and computes the full transform hierarchy.
+
+## The command list's notes (from the root's Architecture tree, #992)
+
+What the root's tree said after `Commands:`:
+
+```
+flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
+  │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc
+  │                 (`music`: validate, play, render, calibrate, chart play|replay, #709; hidden aliases: serve, preview,
+  │                 gen-preview, spline-edit, terrain-edit, tex-edit, and for one release the old music names, spike-rumble)
+```
+
+## Windows' stack and the clap parser (from the root's gotchas, #992)
+
+- Windows links a 1 MB main-thread stack; `.cargo/config.toml` links debug builds with `/STACK:8388608`. Don't remove it: the commands' own stack use is unmeasured. The clap parser was what overflowed (a derived `augment_args` is one frame of about 8 KB a flag in debug: 1346 KB while `flint render` was one 130-flag struct, about 600 KB (579 to 643 as commands come and go) since #708 made a struct a help heading and boxed every `Commands` variant). Keep an `Args` struct to a dozen or so flags; `stack_tests::the_parser_fits_in_windows_default_stack` in `main.rs` fails past 1 MB.

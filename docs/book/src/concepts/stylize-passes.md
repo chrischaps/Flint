@@ -1688,7 +1688,7 @@ mips = true                # a mip chain, for a paper tiled smaller than its tex
 
 The scene picks with strings, as for any built-in's options: `[post_process.styles.darkroom] paper = "papers/washi.png"`, `--style darkroom:finish=gloss`, `--sweep darkroom.grade=luts/neutral.png,luts/bleach.png`. F4 draws each option as a combo box of its choices. A value outside them is warned when the scene loads, naming the choices and the default it draws as (#318), and `--style` refuses it.
 
-Each image `<name>` gets four helpers. They read through the input's sampler, so images add no sampler to the bind group (the DX12 heap, see Critical Gotchas):
+Each image `<name>` gets four helpers. They read through the input's sampler, so images add no sampler to the bind group (DX12's sampler heap; `crates/flint-render/CLAUDE.md`, "Frame and GPU rules"):
 
 | | |
 |---|---|

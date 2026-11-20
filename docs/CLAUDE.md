@@ -25,3 +25,13 @@ The script API is generated too (#695): `reference/script-api.md` is written who
 
 - Publishing pushes to the separate `docs.chaps.dev` repo (default `~/dev/docs.chaps.dev`; `-DocsRepo` / `--docs-repo` to change it). It is outward-facing: only on request.
 - Renders for the book are made locally with `flint render` (no GPU in CI) and land in `docs/book/src/images/` in kebab-case.
+
+## From the root (#992)
+
+The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. CI checks its generated parts, the script API (`flint script api --check-book`) and the crate table (`flint-arch-analyzer --check-book`), and `python scripts/docs-check.py` (#375) checks what the prose names against a built `flint`: every `--flag` on a `flint` command line (book and CLAUDE.md files), every `[post_process.styles.<name>]`, every image a page links, and the maps (#756): a crate or member count (in digits), every crate in the root CLAUDE.md's Architecture tree and the book's overview, and a `Commands:` list against `flint --help`. Nothing checks what the prose says a flag or key does. When a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory. There is no `tools/docs-check`, `DOCS_SYNC.md` or `.synced-to` (#175, #375): a ticket that names them is wrong.
+
+`tools/arch-analyzer` is a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI.
+
+- `docs/book/` -- mdBook source; `docs/build.ps1` / `docs/publish.sh` -- build, preview and publish it
+- `docs/design/` -- Living design notes (the web port, the showcase film, Living Props targets, spike and cost measurements); `docs/archive/` -- superseded plans and the March 2026 design doc, each with a banner naming the book page that is current (#756). A plan whose work has shipped moves to the archive
+- `docs/adr/` -- Architecture decision records, one file per number cited anywhere in the tree (0111 on written here; earlier ones rebuilt from commits and the Starchild repo, #374); `README.md` says how to take a number

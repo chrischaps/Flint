@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build output across agent worktrees (#762). Every worktree builds its own
-# target/ (CLAUDE.md, "Build output across worktrees" says why one shared
+# target/ (scripts/CLAUDE.md, "Build output across worktrees" says why one shared
 # CARGO_TARGET_DIR isn't safe here), so disk is what runs out. This keeps it
 # in check:
 #
