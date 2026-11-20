@@ -66,6 +66,7 @@ mod tests {
             line: Some(42),
             column: Some(5),
             message: "Function not found: drw_text (i64)".into(),
+            once_a_scene: false,
         };
         for _ in 0..1240 {
             errors.next_frame();

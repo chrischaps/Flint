@@ -2359,6 +2359,12 @@ and exits 1. What else it reports: a syntax error at its line, a literal no decl
   ```
 
   An error inside a helper names it after the callback (`door, on_init > swing`). A script that isn't found or doesn't compile is an error the same way, with `load` or `compile` for the callback, and so is a failure in its top-level statements (`top level`).
+
+  A call into a module the scene hasn't enabled (`tune_living` in a scene without living props, `conducted_coherence` without a chart) is logged **once a scene** instead (#856): a HUD shared by scenes with and without the feature makes that call every frame on purpose, so each call site says it once, then again only after a scene change or a reload of its file. It is still counted every time, shown on the card, listed at the end and failed by `--strict-scripts` like any other error. A script that would rather stay quiet asks first: `if module_enabled("living") { tune_living(knobs) }`.
+
+  ```text
+  [script] scripts/hud.rhai:3:5: hud_controller, on_update: tune_living: the living module is not enabled here; it is enabled when the scene has living props, ... (logged once a scene)
+  ```
 - **On screen.** The player draws a card in the bottom-left corner with each failing script of the scene: the entity and callback, the file and line, the message and how many times. A script is taken off the card when its file is saved and reloads, and every script is when the scene changes. A script that didn't compile at load is loaded again when its file is saved, and runs its `on_init` then. The card is part of the debug HUD (`debug-hud`, on by default).
 - **At the end of a run.** `flint-player --exit-after` prints `[script] N errors (M times in all)` and one line for each, or `[script] no errors`. So does `flint render --scripts` (and `--script-time`), whose `--report json` adds a `script_errors` list: each error's `file`, `entity`, `callback`, `function`, `line`, `column`, `message`, `count`, `first_frame` and `last_frame`.
 - **As a failed run.** `--strict-scripts` (on `flint-player`, `flint play` and `flint render`, where it implies `--scripts`) makes any script error at load or run time exit 1, naming how many and the first, so a headless check of a broken game can't pass:
