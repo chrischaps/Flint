@@ -117,7 +117,7 @@ impl SkinnedPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             })
         };
         let pipeline = make_opaque("Skinned PBR Render Pipeline", Some(wgpu::Face::Back));
@@ -180,7 +180,7 @@ impl SkinnedPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             })
         };
         let alpha = wgpu::BlendState::ALPHA_BLENDING;
@@ -258,7 +258,7 @@ impl SkinnedPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             });
 
         // Transparent multiply pipeline for skinned meshes
@@ -303,7 +303,7 @@ impl SkinnedPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             });
 
         // Wireframe line pipeline for skinned meshes — same skinning vertex
@@ -350,7 +350,7 @@ impl SkinnedPipeline {
                 ..Default::default()
             },
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
 
         Self {

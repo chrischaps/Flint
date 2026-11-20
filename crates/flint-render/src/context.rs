@@ -110,13 +110,15 @@ impl RenderContext {
                 label: Some("Flint Device"),
                 // Timestamps where the adapter has them, so the
                 // renderer's GPU timing can be turned on (ADR 0108).
-                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                required_features: (adapter.features() & wgpu::Features::TIMESTAMP_QUERY)
+                    | crate::driver_cache::features(&adapter),
                 required_limits: limits,
                 memory_hints: Default::default(),
                 ..Default::default()
             })
             .await
             .map_err(|e| RenderError::DeviceCreation(e.to_string()))?;
+        crate::driver_cache::init(&device, &adapter.get_info());
 
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps

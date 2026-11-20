@@ -177,7 +177,7 @@ impl Sprite2dPipeline {
                 ..Default::default()
             },
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
 
         // Shared quad index buffer (same as particle pipeline)

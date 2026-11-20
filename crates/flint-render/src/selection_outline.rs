@@ -201,7 +201,7 @@ fn mask_pipeline(
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
-        cache: None,
+        cache: crate::driver_cache::cache(),
     })
 }
 
@@ -357,7 +357,7 @@ impl SelectionOutline {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Selection Outline Uniforms"),

@@ -692,7 +692,7 @@ impl RenderPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             })
         };
         let pipeline = make_opaque("PBR Render Pipeline", Some(wgpu::Face::Back));
@@ -740,7 +740,7 @@ impl RenderPipeline {
                 ..Default::default()
             },
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
 
         // Overlay line pipeline: lines over solid geometry, LessEqual and no
@@ -787,7 +787,7 @@ impl RenderPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             });
 
         // Skeleton line pipeline: as the overlay's, unbiased (#944)
@@ -832,7 +832,7 @@ impl RenderPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             });
 
         // Alpha-blended meshes draw in two passes, back faces first (cull front) then
@@ -881,7 +881,7 @@ impl RenderPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             })
         };
         let transparent_alpha_back_pipeline = make_transparent_alpha(
@@ -935,7 +935,7 @@ impl RenderPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             });
 
         // Transparent multiply pipeline: src*DstColor + dst*OneMinusSrcAlpha
@@ -980,7 +980,7 @@ impl RenderPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             });
 
         Self {

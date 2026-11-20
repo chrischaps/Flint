@@ -101,7 +101,8 @@ pub fn backends() -> wgpu::Backends {
 /// in a release build (#1083).
 pub fn instance() -> wgpu::Instance {
     let backends = backends();
-    let mut flags = wgpu::InstanceFlags::default();
+    // SPIKE #963: wgpu's own switches (WGPU_STRICT_WEBGPU_COMPLIANCE...).
+    let mut flags = wgpu::InstanceFlags::default().with_env();
     if crate::gpu_labels::draws() {
         flags |= wgpu::InstanceFlags::DEBUG;
     }

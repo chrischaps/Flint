@@ -40,6 +40,7 @@ pub mod panels;
 pub(crate) mod particle_pipeline;
 mod pipeline;
 pub mod pipeline_cache;
+pub mod driver_cache;
 pub mod post_style;
 pub mod postprocess;
 mod primitives;

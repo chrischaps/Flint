@@ -670,7 +670,7 @@ impl GrassPipeline {
                 module: &compute_shader,
                 entry_point: Some(entry_point),
                 compilation_options: Default::default(),
-                cache: None,
+                cache: crate::driver_cache::cache(),
             })
         };
         let count_pipeline = compute_pass("Grass Count Pipeline", "cs_count");
@@ -772,7 +772,7 @@ impl GrassPipeline {
                 ..Default::default()
             },
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
 
         // Shadow pipeline (depth-only, uses vs_shadow entry point)
@@ -833,7 +833,7 @@ impl GrassPipeline {
             }),
             multisample: Default::default(),
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
 
         // Generate blade mesh

@@ -136,7 +136,9 @@ pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Repor
 /// reports the error instead. The browser's WebGPU always takes them.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn style_capabilities() -> naga::valid::Capabilities {
-    naga::valid::Capabilities::default() | naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32
+    naga::valid::Capabilities::default()
+        | naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32
+        | naga::valid::Capabilities::SHADER_FLOAT16 // SPIKE #963
 }
 
 /// The composed text under an error's primary span: for an unknown

@@ -1,0 +1,16 @@
+# bench_onepass.sh, 2026-11-20, RTX 4070, release, tavern_hub --style kuwahara, 1920x1080, --gpu-time 300
+# backend variant round  pass  min  p50  p90  max (ms)
+vulkan f32 1   Kuwahara       4.518   4.550   4.924   6.653
+vulkan onepass 1   Kuwahara       1.973   1.982   3.712   4.317
+dx12 f32 1   Kuwahara       4.654   4.680   6.939   7.454
+dx12 onepass 1   Kuwahara       1.517   1.528   1.994   3.021
+vulkan f32 2   Kuwahara       4.539   4.568   6.274   7.522
+vulkan onepass 2   Kuwahara       1.973   1.982   3.506   4.328
+dx12 f32 2   Kuwahara       4.652   4.679   6.834   7.452
+dx12 onepass 2   Kuwahara       1.525   1.530   2.313   3.041
+vulkan f32 3   Kuwahara       4.534   4.569   7.125   7.310
+vulkan onepass 3   Kuwahara       1.975   1.983   3.509   4.322
+dx12 f32 3   Kuwahara       4.659   4.681   6.386   7.477
+dx12 onepass 3   Kuwahara       1.518   1.528   2.315   3.073
+# pixels: onepass vs f32, 0 of 2073600 differ on both backends;
+# f16 vs f32: 588941 (Vulkan) / 584884 (DX12) differ, max 77 / 83 levels

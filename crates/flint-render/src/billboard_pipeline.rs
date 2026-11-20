@@ -161,7 +161,7 @@ impl BillboardPipeline {
                 ..Default::default()
             },
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
 
         // Shared quad index buffer: 2 triangles = 6 indices

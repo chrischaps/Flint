@@ -1299,7 +1299,7 @@ fn veil_pipeline(
         }),
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
-        cache: None,
+        cache: crate::driver_cache::cache(),
     })
 }
 
@@ -1487,7 +1487,7 @@ fn mask_pipeline(
             ..Default::default()
         },
         multiview_mask: None,
-        cache: None,
+        cache: crate::driver_cache::cache(),
     })
 }
 
@@ -1629,7 +1629,7 @@ impl MsaaMask {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
         Self {
             static_pipeline,

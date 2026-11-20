@@ -35,13 +35,15 @@ impl HeadlessContext {
                 label: Some("Flint Headless Device"),
                 // Timestamps where the adapter has them, so the
                 // renderer's GPU timing can be turned on (ADR 0108).
-                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                required_features: (adapter.features() & wgpu::Features::TIMESTAMP_QUERY)
+                    | crate::driver_cache::features(&adapter),
                 required_limits: wgpu::Limits::default(),
                 memory_hints: Default::default(),
                 ..Default::default()
             })
             .await
             .map_err(|e| RenderError::DeviceCreation(e.to_string()))?;
+        crate::driver_cache::init(&device, &adapter.get_info());
 
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let (color_texture, color_view, depth_texture, depth_view) =

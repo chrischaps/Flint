@@ -77,7 +77,7 @@ impl SplitView {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
         let (texture, scene_view, bind_group) = Self::target(
             device,

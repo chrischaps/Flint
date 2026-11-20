@@ -603,7 +603,7 @@ impl OceanPipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             })
         };
         let pipeline = water_pipeline("Ocean Pipeline", "vs_main", OceanVertex::desc());
@@ -674,7 +674,7 @@ impl OceanPipeline {
             depth_stencil: None,
             multisample: Default::default(),
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
 
         let (vertices, indices) = generate_ocean_grid(OCEAN_GRID_CELLS);

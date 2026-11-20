@@ -553,7 +553,7 @@ impl FxaaPipeline {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -975,7 +975,7 @@ impl PostProcessPipeline {
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
                     multiview_mask: None,
-                    cache: None,
+                    cache: crate::driver_cache::cache(),
                 })
             },
         );
@@ -1011,7 +1011,7 @@ impl PostProcessPipeline {
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
                     multiview_mask: None,
-                    cache: None,
+                    cache: crate::driver_cache::cache(),
                 })
             },
         );
@@ -1059,7 +1059,7 @@ impl PostProcessPipeline {
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
                     multiview_mask: None,
-                    cache: None,
+                    cache: crate::driver_cache::cache(),
                 })
             },
         );
@@ -1291,7 +1291,7 @@ impl PostProcessPipeline {
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
                     multiview_mask: None,
-                    cache: None,
+                    cache: crate::driver_cache::cache(),
                 })
             });
 
@@ -1386,7 +1386,7 @@ impl PostProcessPipeline {
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
                     multiview_mask: None,
-                    cache: None,
+                    cache: crate::driver_cache::cache(),
                 })
             },
         );
@@ -1536,7 +1536,7 @@ impl PostProcessPipeline {
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
                     multiview_mask: None,
-                    cache: None,
+                    cache: crate::driver_cache::cache(),
                 })
             },
         );
@@ -1654,7 +1654,7 @@ impl PostProcessPipeline {
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
                     multiview_mask: None,
-                    cache: None,
+                    cache: crate::driver_cache::cache(),
                 })
             },
         );
@@ -2589,7 +2589,7 @@ fn composite_pipeline(
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
-        cache: None,
+        cache: crate::driver_cache::cache(),
     })
 }
 

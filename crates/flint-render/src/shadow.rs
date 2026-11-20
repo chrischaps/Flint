@@ -222,7 +222,7 @@ impl ShadowPass {
                 }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             })
         };
         let shadow_pipeline = make_shadow("Shadow Depth Pipeline", Some(wgpu::Face::Back));
@@ -289,7 +289,7 @@ impl ShadowPass {
                 }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             })
         };
         let skinned_shadow_pipeline =
@@ -496,7 +496,7 @@ impl ShadowPass {
                 }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             })
         };
         let pipeline = pipeline_for(

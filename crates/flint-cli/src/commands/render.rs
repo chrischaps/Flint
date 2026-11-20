@@ -178,7 +178,15 @@ pub fn run(args: RenderArgs) -> Result<()> {
 
 /// `flint render` on `host`'s GPU (made on first use).
 pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
-    render(&fold_script_time(args), host, None)
+    let t0 = std::time::Instant::now();
+    let r = render(&fold_script_time(args), host, None);
+    eprintln!(
+        "spike963: render {:.0} ms, building pipelines {:.0} ms",
+        t0.elapsed().as_secs_f64() * 1e3,
+        flint_render::pipeline_cache::thread_build_time().as_secs_f64() * 1e3
+    );
+    flint_render::driver_cache::save();
+    r
 }
 
 /// --script-time T is --scripts --time T (#371): everything after reads those.

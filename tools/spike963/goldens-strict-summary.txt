@@ -1,0 +1,4 @@
+  PASS  reality-tron-iris              0.00% past 48 (limit 2.00%), mean 0.00 (limit 3.00), max 0, 117 ms
+drift: none, every passing case is byte-identical with its golden
+125 case(s) in 26.3 s (one process, 1 GPU device(s)); contact sheet: C:\Users\chris\dev\Flint\.claude\worktrees\signal-963-0276\target\spike963\goldens-strict\index.html
+pipelines: 80 built, 3743 reused from an earlier case; ASCII glyph pipeline built 1, reused 57

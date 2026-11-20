@@ -124,7 +124,7 @@ impl DepthUpscale {
             }),
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Depth Upscale Bind Group"),

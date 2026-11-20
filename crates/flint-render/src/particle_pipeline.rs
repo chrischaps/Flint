@@ -186,7 +186,7 @@ impl ParticlePipeline {
                     ..Default::default()
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: crate::driver_cache::cache(),
             })
         };
         let pipelines = [

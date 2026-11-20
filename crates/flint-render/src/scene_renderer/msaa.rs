@@ -182,7 +182,7 @@ impl MsaaTargets {
             }),
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None,
+            cache: crate::driver_cache::cache(),
         });
         self.resolve = Some(DepthResolve { pipeline, layout });
     }

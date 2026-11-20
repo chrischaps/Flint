@@ -1,0 +1,216 @@
+== NVIDIA GeForce RTX 4070 (Vulkan, DiscreteGpu)
+   driver: NVIDIA 610.88
+   subgroup size: 32..32
+   yes  TIMESTAMP_QUERY
+   yes  TIMESTAMP_QUERY_INSIDE_ENCODERS
+   yes  TIMESTAMP_QUERY_INSIDE_PASSES
+   yes  PIPELINE_STATISTICS_QUERY
+   yes  PIPELINE_CACHE
+   yes  SUBGROUP
+   yes  SUBGROUP_BARRIER
+   yes  SHADER_F16
+   yes  DUAL_SOURCE_BLENDING
+   yes  IMMEDIATES
+   yes  FLOAT32_FILTERABLE
+   yes  FLOAT32_BLENDABLE
+   yes  RG11B10UFLOAT_RENDERABLE
+   yes  CLIP_DISTANCES
+   yes  PRIMITIVE_INDEX
+   yes  SHADER_BARYCENTRICS
+   yes  MULTIVIEW
+   yes  SELECTIVE_MULTIVIEW
+   yes  MULTI_DRAW_INDIRECT_COUNT
+   yes  TEXTURE_BINDING_ARRAY
+   yes  SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+   yes  PARTIALLY_BOUND_BINDING_ARRAY
+   yes  EXPERIMENTAL_RAY_QUERY
+   yes  EXPERIMENTAL_MESH_SHADER
+   yes  EXPERIMENTAL_COOPERATIVE_MATRIX
+   yes  TEXTURE_COMPRESSION_BC
+    -   TEXTURE_COMPRESSION_ASTC
+    -   TEXTURE_COMPRESSION_ETC2
+   max_immediate_size: 256
+   max_binding_array_elements_per_shader_stage: 1048576
+   max_multiview_view_count: 32
+   max_color_attachment_bytes_per_sample: 128
+   transient attachments save memory: Some(false)
+== NVIDIA GeForce RTX 4070 (Dx12, DiscreteGpu)
+   driver: 32.0.16.1088 
+   subgroup size: 32..32
+   yes  TIMESTAMP_QUERY
+   yes  TIMESTAMP_QUERY_INSIDE_ENCODERS
+   yes  TIMESTAMP_QUERY_INSIDE_PASSES
+    -   PIPELINE_STATISTICS_QUERY
+    -   PIPELINE_CACHE
+   yes  SUBGROUP
+    -   SUBGROUP_BARRIER
+   yes  SHADER_F16
+   yes  DUAL_SOURCE_BLENDING
+   yes  IMMEDIATES
+   yes  FLOAT32_FILTERABLE
+   yes  FLOAT32_BLENDABLE
+   yes  RG11B10UFLOAT_RENDERABLE
+    -   CLIP_DISTANCES
+   yes  PRIMITIVE_INDEX
+   yes  SHADER_BARYCENTRICS
+   yes  MULTIVIEW
+   yes  SELECTIVE_MULTIVIEW
+   yes  MULTI_DRAW_INDIRECT_COUNT
+   yes  TEXTURE_BINDING_ARRAY
+   yes  SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+   yes  PARTIALLY_BOUND_BINDING_ARRAY
+   yes  EXPERIMENTAL_RAY_QUERY
+   yes  EXPERIMENTAL_MESH_SHADER
+    -   EXPERIMENTAL_COOPERATIVE_MATRIX
+   yes  TEXTURE_COMPRESSION_BC
+    -   TEXTURE_COMPRESSION_ASTC
+    -   TEXTURE_COMPRESSION_ETC2
+   max_immediate_size: 128
+   max_binding_array_elements_per_shader_stage: 1048576
+   max_multiview_view_count: 4
+   max_color_attachment_bytes_per_sample: 128
+   transient attachments save memory: Some(false)
+== NVIDIA GeForce RTX 4070 (Dx12, DiscreteGpu)
+   driver: 32.0.16.1088 
+   subgroup size: 32..32
+   yes  TIMESTAMP_QUERY
+   yes  TIMESTAMP_QUERY_INSIDE_ENCODERS
+   yes  TIMESTAMP_QUERY_INSIDE_PASSES
+    -   PIPELINE_STATISTICS_QUERY
+    -   PIPELINE_CACHE
+   yes  SUBGROUP
+    -   SUBGROUP_BARRIER
+   yes  SHADER_F16
+   yes  DUAL_SOURCE_BLENDING
+   yes  IMMEDIATES
+   yes  FLOAT32_FILTERABLE
+   yes  FLOAT32_BLENDABLE
+   yes  RG11B10UFLOAT_RENDERABLE
+    -   CLIP_DISTANCES
+   yes  PRIMITIVE_INDEX
+   yes  SHADER_BARYCENTRICS
+   yes  MULTIVIEW
+   yes  SELECTIVE_MULTIVIEW
+   yes  MULTI_DRAW_INDIRECT_COUNT
+   yes  TEXTURE_BINDING_ARRAY
+   yes  SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+   yes  PARTIALLY_BOUND_BINDING_ARRAY
+   yes  EXPERIMENTAL_RAY_QUERY
+   yes  EXPERIMENTAL_MESH_SHADER
+    -   EXPERIMENTAL_COOPERATIVE_MATRIX
+   yes  TEXTURE_COMPRESSION_BC
+    -   TEXTURE_COMPRESSION_ASTC
+    -   TEXTURE_COMPRESSION_ETC2
+   max_immediate_size: 128
+   max_binding_array_elements_per_shader_stage: 1048576
+   max_multiview_view_count: 4
+   max_color_attachment_bytes_per_sample: 128
+   transient attachments save memory: Some(false)
+== NVIDIA GeForce RTX 4070 (Dx12, DiscreteGpu)
+   driver: 32.0.16.1088 
+   subgroup size: 32..32
+   yes  TIMESTAMP_QUERY
+   yes  TIMESTAMP_QUERY_INSIDE_ENCODERS
+   yes  TIMESTAMP_QUERY_INSIDE_PASSES
+    -   PIPELINE_STATISTICS_QUERY
+    -   PIPELINE_CACHE
+   yes  SUBGROUP
+    -   SUBGROUP_BARRIER
+   yes  SHADER_F16
+   yes  DUAL_SOURCE_BLENDING
+   yes  IMMEDIATES
+   yes  FLOAT32_FILTERABLE
+   yes  FLOAT32_BLENDABLE
+   yes  RG11B10UFLOAT_RENDERABLE
+    -   CLIP_DISTANCES
+   yes  PRIMITIVE_INDEX
+   yes  SHADER_BARYCENTRICS
+   yes  MULTIVIEW
+   yes  SELECTIVE_MULTIVIEW
+   yes  MULTI_DRAW_INDIRECT_COUNT
+   yes  TEXTURE_BINDING_ARRAY
+   yes  SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+   yes  PARTIALLY_BOUND_BINDING_ARRAY
+   yes  EXPERIMENTAL_RAY_QUERY
+   yes  EXPERIMENTAL_MESH_SHADER
+    -   EXPERIMENTAL_COOPERATIVE_MATRIX
+   yes  TEXTURE_COMPRESSION_BC
+    -   TEXTURE_COMPRESSION_ASTC
+    -   TEXTURE_COMPRESSION_ETC2
+   max_immediate_size: 128
+   max_binding_array_elements_per_shader_stage: 1048576
+   max_multiview_view_count: 4
+   max_color_attachment_bytes_per_sample: 128
+   transient attachments save memory: Some(false)
+== Microsoft Basic Render Driver (Dx12, Cpu)
+   driver: 10.0.26100.9818 
+   subgroup size: 4..4
+   yes  TIMESTAMP_QUERY
+   yes  TIMESTAMP_QUERY_INSIDE_ENCODERS
+   yes  TIMESTAMP_QUERY_INSIDE_PASSES
+    -   PIPELINE_STATISTICS_QUERY
+    -   PIPELINE_CACHE
+   yes  SUBGROUP
+    -   SUBGROUP_BARRIER
+   yes  SHADER_F16
+   yes  DUAL_SOURCE_BLENDING
+   yes  IMMEDIATES
+   yes  FLOAT32_FILTERABLE
+   yes  FLOAT32_BLENDABLE
+   yes  RG11B10UFLOAT_RENDERABLE
+    -   CLIP_DISTANCES
+   yes  PRIMITIVE_INDEX
+   yes  SHADER_BARYCENTRICS
+   yes  MULTIVIEW
+   yes  SELECTIVE_MULTIVIEW
+   yes  MULTI_DRAW_INDIRECT_COUNT
+   yes  TEXTURE_BINDING_ARRAY
+   yes  SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+   yes  PARTIALLY_BOUND_BINDING_ARRAY
+   yes  EXPERIMENTAL_RAY_QUERY
+   yes  EXPERIMENTAL_MESH_SHADER
+    -   EXPERIMENTAL_COOPERATIVE_MATRIX
+   yes  TEXTURE_COMPRESSION_BC
+    -   TEXTURE_COMPRESSION_ASTC
+    -   TEXTURE_COMPRESSION_ETC2
+   max_immediate_size: 128
+   max_binding_array_elements_per_shader_stage: 1048576
+   max_multiview_view_count: 4
+   max_color_attachment_bytes_per_sample: 128
+   transient attachments save memory: Some(false)
+== NVIDIA GeForce RTX 4070/PCIe/SSE2 (Gl, Other)
+   driver:  4.6.0 NVIDIA 610.88
+   subgroup size: 4..128
+   yes  TIMESTAMP_QUERY
+   yes  TIMESTAMP_QUERY_INSIDE_ENCODERS
+   yes  TIMESTAMP_QUERY_INSIDE_PASSES
+    -   PIPELINE_STATISTICS_QUERY
+    -   PIPELINE_CACHE
+    -   SUBGROUP
+    -   SUBGROUP_BARRIER
+    -   SHADER_F16
+   yes  DUAL_SOURCE_BLENDING
+   yes  IMMEDIATES
+   yes  FLOAT32_FILTERABLE
+    -   FLOAT32_BLENDABLE
+    -   RG11B10UFLOAT_RENDERABLE
+   yes  CLIP_DISTANCES
+   yes  PRIMITIVE_INDEX
+    -   SHADER_BARYCENTRICS
+   yes  MULTIVIEW
+    -   SELECTIVE_MULTIVIEW
+    -   MULTI_DRAW_INDIRECT_COUNT
+    -   TEXTURE_BINDING_ARRAY
+    -   SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+    -   PARTIALLY_BOUND_BINDING_ARRAY
+    -   EXPERIMENTAL_RAY_QUERY
+    -   EXPERIMENTAL_MESH_SHADER
+    -   EXPERIMENTAL_COOPERATIVE_MATRIX
+   yes  TEXTURE_COMPRESSION_BC
+    -   TEXTURE_COMPRESSION_ASTC
+   yes  TEXTURE_COMPRESSION_ETC2
+   max_immediate_size: 256
+   max_binding_array_elements_per_shader_stage: 0
+   max_multiview_view_count: 0
+   max_color_attachment_bytes_per_sample: 128
+   transient attachments save memory: None
