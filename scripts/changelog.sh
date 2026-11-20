@@ -17,8 +17,11 @@
 # A fragment's date is the day of the commit that brought it onto the current
 # branch's first-parent line: on main, the merge; in a game that carries the
 # engine as a subtree, the pull that brought it. One not yet committed is
-# dated today. Plain bash, git and POSIX awk, so a game can run it from
-# engine/scripts/ on any machine that has git.
+# dated today. An entry is in the changelog once: a fragment whose entry a
+# month file already holds word for word (a squash merge brought it back
+# after its assembly, #994) is left out of `since` and `count`, and
+# `assemble` deletes it without adding it again. Plain bash, git and POSIX
+# awk, so a game can run it from engine/scripts/ on any machine that has git.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -122,19 +125,56 @@ new_month_header() { # YYYY-MM
     echo "it and how to add an entry: [CHANGELOG.md](../CHANGELOG.md)."
 }
 
+# The records of every month file.
+month_records() {
+    local f
+    [ -d "$month_dir" ] || return 0
+    for f in "$month_dir"/[0-9]*.md; do
+        [ -e "$f" ] || continue
+        records "$f" 1000000
+    done
+}
+
+# Reads the month files' records (entry order 1000000 and up), then the
+# fragments', and prints the fragments' less every entry whose text, heading
+# to last line, a month file or an earlier fragment already holds. That is a
+# fragment a merge brought back after it was assembled (#994): a branch
+# stacked on a sibling's, or one that merged main before the sibling's
+# assembly, adds it again when it is squashed onto main.
+unassembled() {
+    awk -F '\t' '
+        function end_entry() {
+            if (key == "") return
+            if (!assembled && !(text in seen)) printf "%s", buf
+            seen[text] = 1
+            key = ""; text = ""; buf = ""
+        }
+        {
+            line = $0; sub(/^[^\t]*\t[^\t]*\t[^\t]*\t/, "", line)
+            if (($1 FS $2) != key) { end_entry(); key = $1 FS $2; assembled = ($2 + 0 >= 1000000) }
+            text = text line "\n"; buf = buf $0 "\n"
+        }
+        END { end_entry() }'
+}
+
+# The fragments' records, from stamped_fragments' lines, less what the month
+# files already hold.
+fragment_records() { # stamped
+    local t d f i=0
+    {
+        month_records
+        while read -r t d f; do
+            [ -n "$f" ] || continue
+            records "$f" $((i * 100)) "$d"
+            i=$((i + 1))
+        done <<< "$1"
+    } | unassembled
+}
+
 # Every record there is: the month files, then the fragments.
 all_records() {
-    local f i=0 t d
-    if [ -d "$month_dir" ]; then
-        for f in "$month_dir"/[0-9]*.md; do
-            [ -e "$f" ] || continue
-            records "$f" 1000000
-        done
-    fi
-    while read -r t d f; do
-        records "$f" $((i * 100)) "$d"
-        i=$((i + 1))
-    done < <(stamped_fragments)
+    month_records
+    fragment_records "$(stamped_fragments)"
 }
 
 cmd_since() {
@@ -205,10 +245,12 @@ cmd_assemble() {
         echo "changelog: no fragments to assemble"
         return 0
     fi
-    local before after month out tmp t d f i
+    local before after month out tmp t d f i fresh
     before=$(cmd_count)
+    # Only what isn't in a month file yet: a month with nothing new is left as it is.
+    fresh=$(fragment_records "$stamped")
     mkdir -p "$month_dir"
-    for month in $(printf '%s\n' "$stamped" | awk '{ print substr($2, 1, 7) }' | LC_ALL=C sort -u); do
+    for month in $(printf '%s\n' "$fresh" | awk -F '\t' 'NF { print substr($1, 1, 7) }' | LC_ALL=C sort -u); do
         out="$month_dir/$month.md"
         tmp=$(mktemp)
         {
@@ -216,11 +258,7 @@ cmd_assemble() {
             echo
             {
                 if [ -f "$out" ]; then records "$out" 1000000; fi
-                i=0
-                printf '%s\n' "$stamped" | while read -r t d f; do
-                    if [ "${d:0:7}" = "$month" ]; then records "$f" $((i * 100)) "$d"; fi
-                    i=$((i + 1))
-                done
+                printf '%s\n' "$fresh" | awk -F '\t' -v m="$month" 'substr($1, 1, 7) == m'
             } | emit
         } > "$tmp"
         if [ "$dry" = 1 ]; then
@@ -234,9 +272,16 @@ cmd_assemble() {
     done
     [ "$dry" = 1 ] && return 0
     write_index
+    i=0
     printf '%s\n' "$stamped" | while read -r t d f; do
         rm -f "$f"
-        echo "changelog: assembled $f ($d)"
+        # Fragment i's entries are ordered i * 100 and up.
+        if printf '%s\n' "$fresh" | awk -F '\t' -v i="$i" 'NF && int($2 / 100) == i { found = 1 } END { exit !found }'; then
+            echo "changelog: assembled $f ($d)"
+        else
+            echo "changelog: deleted $f: its entry is already in $month_dir/ (a merge brought it back)"
+        fi
+        i=$((i + 1))
     done
     after=$(cmd_count)
     [ "$before" = "$after" ] || die "assemble: $before entries before, $after after; nothing should be lost"
