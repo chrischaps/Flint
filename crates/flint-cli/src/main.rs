@@ -400,8 +400,9 @@ mod stack_tests {
             .unwrap()
     }
 
-    /// Windows' default main-thread stack. `.cargo/config.toml` links an
-    /// 8 MB one, but the parser alone should never need it: a debug build's
+    /// Windows' default main-thread stack. `build.rs` links an 8 MB one
+    /// however the crate is built (#990), but the parser alone should never
+    /// need it: a debug build's
     /// derived `augment_args` is one frame of about 8 KB a flag, and #708
     /// measured 1346 KB to parse any command line while `flint render` was
     /// one struct of 130 flags (about 600 KB once each help heading was its own

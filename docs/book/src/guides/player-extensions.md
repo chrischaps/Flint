@@ -69,6 +69,26 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
+On Windows a program's main thread gets the stack its exe asks for, 1 MB unless the linker is told otherwise, where Linux and macOS give 8 MB. `flint` and `flint-player` ask for 8 MB in their build scripts, but a build script reaches only its own package's binaries, and the engine's `.cargo/config.toml` is read only by a cargo run inside the engine's checkout. So a game binary asks for itself, in its crate's `build.rs`:
+
+```rust
+// build.rs: an 8 MB main-thread stack on Windows, as flint-player links
+use std::env;
+
+fn main() {
+    let target = |key: &str| env::var(key).unwrap_or_default();
+    if target("CARGO_CFG_TARGET_OS") == "windows" {
+        match target("CARGO_CFG_TARGET_ENV").as_str() {
+            "msvc" => println!("cargo:rustc-link-arg-bins=/STACK:8388608"),
+            "gnu" => println!("cargo:rustc-link-arg-bins=-Wl,--stack,8388608"),
+            _ => {}
+        }
+    }
+}
+```
+
+A debug build's frames are large: a stock `flint-player` playing a `flint init` scene needed 905 KB of a 1 MB stack, and a game's own code, scripts and scenes add to that.
+
 `PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same launch options `flint-player`'s `main.rs` sets for the features your scenes use, on `player.launch` (`window_size`, `msaa_sample_count`, `style_specs`, ...), and `capture` for `--screenshot`-style runs. What the scene's file says is `player.scene` (`SceneSettings`), which `apply_scene_settings` fills in. Pass the engine's `schemas/` yourself, ahead of the game's. The game itself, with no window, is `player.core` (a `GameCore`, [ADR 0117](https://github.com/chrischaps/Flint/blob/main/docs/adr/0117-player-subsystems-and-one-game-step.md)): the world, its clock, scripts, physics, animation and particles are `player.core.world`, `player.core.clock`, `player.core.script` and so on, and each frame runs the core's one frame order, the one `flint render --scripts` runs too.
 
 ### What the player links

@@ -27,4 +27,4 @@ mach-dxcompiler-rs = { path = "engine/vendor/static-dxc" }
 egui-winit = { path = "engine/vendor/egui-winit" }
 ```
 
-`flint check` warns about a line the root lacks (`missing-cargo-patch`).
+`flint check` warns about a line the root lacks (`missing-cargo-patch`). On Windows the binary also asks for its own 8 MB main-thread stack, as the engine's `flint` and `flint-player` do in their build scripts: the guide has the build script, a dozen lines.
