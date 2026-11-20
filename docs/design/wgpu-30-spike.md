@@ -156,12 +156,13 @@ throwaway profile:
 | Feature | Version | Flint's use |
 |---|---|---|
 | epaint rasterizes with skrifa + vello_cpu (hinting, variable-font axes); harfrust shaping | 0.34, 0.35 | The ASCII glyph atlas's TTF sets still use `ab_glyph`, its only user. On skrifa + vello_cpu (already built, at opt-level 3) they'd share egui's rasterizer and gain hinting and weights. epaint's raster API is private, so it's skrifa directly, not through epaint. Coverage changes, so the TTF ramps recalibrate and the ASCII goldens are re-blessed. |
-| `DragValue::prefix/suffix`, `TextEdit::prefix/suffix`, `TextEdit::event_filter` | 0.34, 0.36.2 | Units inside the inspector's and F4's fields; an inspector field that stops eating the gizmo's W/E/R |
-| `egui::Scene` (pan and zoom over real widgets) | 0.31 | Zoom in `CurveEditor` / `GradientEditor`, which have none |
-| `dnd_set_drag_payload` / `dnd_drop_zone` | older | Reparent by drag in the scene tree, which has no drag |
+| `egui::Scene` (pan and zoom over real widgets) | 0.31 | Zoom in `CurveEditor` / `GradientEditor`, which have none (#1360) |
+| `dnd_set_drag_payload` / `dnd_drop_zone` | older | Reparent by drag in the scene tree, which has no drag (#1360) |
+| `TextEdit::event_filter` | 0.36.2 | Which keys a text field takes. The viewer's host already skips keys egui consumes, so there's no problem shown for it to fix |
 | `Response::total_drag_delta` | 0.33.2 | The gizmo's and curve editor's shift-drag lock without a kept origin |
 | `Panel` (one API, drag to open and close) | 0.34 to 0.36 | The F3/F4 columns are hand-built |
-| `egui::Plugin` | 0.33 | Replaces `on_begin_pass` in `PlayerExtension` |
+| `DragValue::prefix/suffix` | before 0.31 | Not new: 0.34 only moved them to Atoms |
+| `egui::Plugin` | 0.33 | Flint calls no `on_begin_pass` for it to replace |
 | `egui_inspection` / `egui_mcp` (AccessKit tree over a port) | 0.35 | An agent driving F3/F4; eframe-only as shipped, so it needs wiring for Flint's host |
 | Colour emoji | none | Does not exist in 0.36.2 |
 
@@ -187,42 +188,43 @@ throwaway profile:
 
 ## Proposed tickets
 
-Ranked by what a player or a game author would feel. Not filed: Chris decides.
+Ranked by what a player or a game author would feel. Filed after the spike
+(2026-11-20), at Chris's word.
 
-1. **Kuwahara walks its window once.** Players of the painterly look: 4.6 to
-   2.0 ms (Vulkan) and 4.7 to 1.5 ms (DX12) at 1080p, byte-identical. The
-   shader is in `tools/spike963/kuwahara_onepass.wgsl`. Impact high,
+1. **#1354 Kuwahara walks its window once.** Players of the painterly look:
+   4.6 to 2.0 ms (Vulkan) and 4.7 to 1.5 ms (DX12) at 1080p, byte-identical.
+   The shader is in `tools/spike963/kuwahara_onepass.wgsl`. Impact high,
    complexity low.
-2. **Build a scene's pipelines off the frame thread at load**, and on DX12
-   cache DXIL across launches. Players on DX12 wait 0.7 to 1.7 s at every
-   start, and every player waits 1.3 to 2.5 s after a driver update or on a
-   fresh install. A style switched on mid-game hitches the same way. Building
-   on worker threads is safe again since wgpu 30's per-wait events (#948). A
-   DXIL cache needs `PASSTHROUGH_SHADERS` (DX12 supports it) and Flint calling
-   DXC itself. Impact high on DX12, complexity medium (threads) to high (DXIL).
-3. **HDR output.** Players with HDR displays see bloom, emissive and the sky
-   past white. wgpu 30's `color_space` (scRGB/PQ on DX12, driver-dependent on
-   Vulkan) and Chrome's `toneMapping: extended`; Firefox can't yet. Opt-in,
-   tonemapped against `display_hdr_info().tone_map_headroom()`. Impact
-   medium-high for those players, complexity medium. It needs an HDR display
-   to judge.
-4. **Strict WebGPU mode in CI and `InstanceFlags::with_env()`.** For game
+2. **#1355 DX12 compiles every shader through DXC at every launch.** Players
+   on DX12 wait 0.7 to 1.7 s at every start; a DXIL cache needs
+   `PASSTHROUGH_SHADERS` (DX12 supports it) and Flint calling DXC itself.
+   Building pipelines on worker threads is safe again since wgpu 30's per-wait
+   events (#948). A style switched on mid-game was already #1121, and
+   preloading looks #1159, so this ticket is the launch. Impact medium (high
+   for DX12 players), complexity high.
+3. **#1356 HDR output.** Players with HDR displays see bloom, emissive and the
+   sky past white. wgpu 30's `color_space` (scRGB/PQ on DX12, driver-dependent
+   on Vulkan) and Chrome's `toneMapping: extended`; Firefox can't yet. Opt-in,
+   tonemapped against `display_hdr_info().tone_map_headroom()`. Impact medium,
+   complexity medium. It needs an HDR display to judge.
+4. **#1357 Strict WebGPU mode in CI and `InstanceFlags::with_env()`.** For game
    authors: a native-only feature can't sneak into the web player. CI's GPU
    job sets `WGPU_STRICT_WEBGPU_COMPLIANCE=1` for the goldens, which pass today.
    With the env read on, `WGPU_VALIDATION` and friends work too. Impact medium,
    complexity low.
-5. **Android: pipeline cache, `LoadOp::DontCare` and transient attachments,
-   measured on the phone first.** Players on phones: the cold start (Vulkan on
-   Android keeps no implicit cache on many drivers) and the post chain's
-   bandwidth on a tiler. The prototype cache is about 60 lines plus the 50
-   descriptor sites. Impact medium on Android, unknown until measured,
-   complexity low-medium.
-6. **TTF glyph sets on skrifa + vello_cpu** (drop `ab_glyph`). Game authors
-   making ASCII fonts get hinting and variable weights, with one rasterizer in
-   the tree. Impact low-medium, complexity medium (recalibrate and re-bless).
-7. **Editor touches from egui 0.36**: units in fields, `event_filter` so the
-   inspector stops taking gizmo keys, `Scene` zoom in the curve editor, drag to
-   reparent. For game authors in `flint edit`. Impact low-medium each,
-   complexity low each.
+5. **#1358 Android: pipeline cache, `LoadOp::DontCare` and transient
+   attachments, measured on the phone first.** Players on phones: the cold
+   start (Vulkan on Android keeps no implicit cache on many drivers) and the
+   post chain's bandwidth on a tiler. The prototype cache is about 60 lines
+   plus the 50 descriptor sites. Impact medium, unknown until measured,
+   complexity medium.
+6. **#1359 TTF glyph sets on skrifa + vello_cpu.** Drops `ab_glyph` and with it
+   the tree's only path to `ttf-parser`, unmaintained since RUSTSEC-2026-0192,
+   which names skrifa as the alternative. Game authors making ASCII fonts get
+   hinting and variable weights, with one rasterizer in the tree. Impact
+   medium, complexity medium (recalibrate and re-bless).
+7. **#1360 Editor: `Scene` zoom in the curve and gradient editors, and drag to
+   reparent in the scene tree.** For game authors in `flint edit`. Impact low,
+   complexity low.
 8. **Watch upstream: wgpu's WebGPU backend mapping `subgroups` and immediates.**
    Chrome has both. No ticket until wgpu passes them through.
