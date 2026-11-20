@@ -625,8 +625,8 @@ fn sweep_samples(
             // The normals at a and b on this sample and the next
             let [na0, nb0, na1, nb1] = match &point_normals {
                 // Smooth: each point's normal in its own sample's frame. A
-                // sample with no frame (an open path's last, #1016) takes
-                // the flat one, never a zero the shader would make NaN of
+                // sample with no frame (a path that doubles back on itself)
+                // takes the flat one, never a zero the shader would make NaN of
                 Some(pn) => {
                     let at = |s: &SplineSample, k: usize| {
                         let n = combine(s.right, pn[k][0], s.up, pn[k][1]).normalized();
@@ -870,9 +870,9 @@ mod tests {
 
     #[test]
     fn a_smooth_sweep_has_no_zero_normal_on_its_sides() {
-        // An open spline's last sample has no frame (#1016); a smooth
-        // profile's normal there would be zero, which the shader makes NaN
-        // and bloom spreads into a black block
+        // An open spline's last sample once had no frame (#1016); a smooth
+        // profile's normal there was zero, which the shader made NaN and
+        // bloom spread into a black block
         use crate::spline::{sample_open_spline, SplineControlPoint};
         let points: Vec<SplineControlPoint> = [[0.0, 0.0, 0.0], [3.0, 0.5, 0.0], [6.0, 0.0, 2.0]]
             .into_iter()
@@ -893,6 +893,43 @@ mod tests {
         let mesh = sweep(&open_path(&samples), &tube, &style());
         let sides = (samples.len() - 1) * 6 * 4;
         assert!(mesh.vertices[..sides].iter().all(|v| v.normal != [0.0; 3]));
+    }
+
+    #[test]
+    fn an_open_sweep_keeps_its_width_and_caps_facing_along_the_path() {
+        // #1016: the last ring collapsed to the centre line, and its cap
+        // had a zero normal
+        use crate::spline::{sample_open_spline, SplineControlPoint};
+        let points: Vec<SplineControlPoint> = [[0.0, 0.0, 0.0], [3.0, 0.5, 0.0], [6.0, 0.0, 2.0]]
+            .into_iter()
+            .map(|p| SplineControlPoint {
+                position: Vec3::from_array(p),
+                twist: 0.0,
+                gap_after: false,
+            })
+            .collect();
+        let samples = sample_open_spline(&points, 0.5);
+        let mesh = sweep(&open_path(&samples), &Profile::rect(2.0, 1.0), &style());
+        let sides = (samples.len() - 1) * 4 * 4;
+        // the last segment's top face: its far edge as wide as its near one
+        let top = &mesh.vertices[sides - 16..sides - 12];
+        let width = |a: &SweptVertex, b: &SweptVertex| {
+            (Vec3::from_array(a.position) - Vec3::from_array(b.position)).length()
+        };
+        assert!((width(&top[2], &top[3]) - width(&top[0], &top[1])).abs() < 1e-3);
+        // caps: the start's against the path, the end's along it
+        let (start, end) = (&samples[0], &samples[samples.len() - 1]);
+        let chord = |a: &SplineSample, b: &SplineSample| (b.position - a.position).normalized();
+        let start_cap = Vec3::from_array(mesh.vertices[sides].normal);
+        let end_cap = Vec3::from_array(mesh.vertices[sides + 4].normal);
+        assert!(
+            start_cap.dot(&chord(start, &samples[1])) < -0.99,
+            "{start_cap:?}"
+        );
+        assert!(
+            end_cap.dot(&chord(&samples[samples.len() - 2], end)) > 0.99,
+            "{end_cap:?}"
+        );
     }
 
     #[test]
