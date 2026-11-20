@@ -359,23 +359,32 @@ impl Ascii {
         cell: [f32; 2],
         [table, edge_table]: [&wgpu::BindGroup; 2],
         variants: usize,
-        glyph_rect: Option<kit::PixelRect>,
+        [glyph_rect, edge_area]: [Option<kit::PixelRect>; 2],
     ) {
         let origin = grid_origin([frame.width, frame.height], cell);
         // What the glyph pass reads of the edges inside its rect (#385):
-        // the edge cells under it and one beside (thinning asks a
-        // neighbour), and the edge pixels under those cells (the outline
+        // the edge cells under it and those its cells' corners reach
+        // (#930), and the edge pixels under those cells (the outline
         // pass's)
-        let regions = glyph_rect.map(|g| {
-            edge_regions(
-                g,
-                cell,
-                origin,
-                [frame.width, frame.height],
-                edge_cells.size,
-                frame.depth_size,
-            )
-        });
+        let regions_in = |rect: Option<kit::PixelRect>| {
+            rect.map(|g| {
+                edge_regions(
+                    g,
+                    cell,
+                    origin,
+                    [frame.width, frame.height],
+                    edge_cells.size,
+                    frame.depth_size,
+                )
+            })
+        };
+        let regions = regions_in(glyph_rect);
+        // The edge cell pass is cut to the same cells with the scissor off
+        // (#930): only the cells round the entities hold lines, so last
+        // frame's cells and slots, which this frame's start from (#477),
+        // are what they are with it on, where the pass never wrote the
+        // rest. The glyphs read no cell past them (`EDGE_CORNER_REACH`)
+        let kept_cells = regions_in(edge_area).map(|r| r.edge_cells);
         let source = self.edge_source_bind(frame);
         // Last frame's edge cells and slots (#477), copied aside before
         // this frame's passes write over them, when they're its past: the
@@ -510,7 +519,7 @@ impl Ascii {
                 &self.picture_bind(frame, input, false),
                 &past_and_outlines,
             ],
-            regions.map(|r| r.edge_cells),
+            kept_cells,
         );
 
         // The glyph each cell draws (#910), decided here once a cell
@@ -916,9 +925,12 @@ impl StylePass for Ascii {
             .chain([cell])
             .map(|c| c[0].max(c[1]))
             .fold(0.0f32, f32::max);
-        let glyph_rect = frame
-            .styled_rect((2.0 * reach).ceil() as u32)
-            .filter(|_| frame.debug_mode != crate::DebugMode::StyleEdges);
+        let glyph_pad = (GLYPH_RECT_CELLS as f32 * reach).ceil() as u32;
+        let edge_view = frame.debug_mode == crate::DebugMode::StyleEdges;
+        let glyph_rect = frame.styled_rect(glyph_pad).filter(|_| !edge_view);
+        // Where the edge cells are kept (#930): the glyph rect's, scissor
+        // or not, so a cell's edge history is the same either way
+        let edge_area = frame.styled_area(glyph_pad).filter(|_| !edge_view);
         // Where the mask can hold any variant's id, opt-outs too (#507): a
         // pixel further than a cell from it asks no grid of the mask, so a
         // whole frame over a few props reads the mask only near them
@@ -960,7 +972,6 @@ impl StylePass for Ascii {
             self.upload_table(frame, &variants, &slots);
         // The edge debug view (#349) runs the edge passes even with the
         // glyphs' edges off, and draws them in place of the glyphs
-        let edge_view = frame.debug_mode == crate::DebugMode::StyleEdges;
         if edges > 0.0 || edge_view {
             self.encode_edges(
                 frame,
@@ -970,7 +981,7 @@ impl StylePass for Ascii {
                 cell,
                 [&uniform, &edge_table],
                 variants.len(),
-                glyph_rect,
+                [glyph_rect, edge_area],
             );
         }
         if edge_view {

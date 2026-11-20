@@ -324,6 +324,20 @@ pub(super) const EDGE_SLOT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R3
 /// How many cells bigger than the grid the thin pass's texture is on each
 /// side (`THIN_PAD` in ascii_edge_slot.wgsl).
 pub(super) const EDGE_THIN_PAD: u32 = 1;
+/// How many of the largest cell in play the glyph pass's rect reaches past
+/// the styled entities' screen bounds (#385): a whole cell (a snapped
+/// silhouette) round any styled pixel, and one more.
+pub(super) const GLYPH_RECT_CELLS: u32 = 2;
+/// How many cells from a cell the edge cells its glyph depends on this
+/// frame can be (#930): the corner pass reads the thin pass's texels a
+/// cell round it (`ascii_edge_corners.wgsl`, the diagonal ones too), and a
+/// thin texel's arms read the lines of its four neighbours, each of which
+/// reads the neighbour it leans to (`ascii_edge_thin.wgsl`): one plus two,
+/// along an axis. Every cell within this of a cell the glyph pass draws is
+/// one the edge cell pass writes: `edge_regions` takes the cells under the
+/// glyph rect (`GLYPH_RECT_CELLS` round the entities) and this many less
+/// that round them. A pass that reads further raises it.
+pub(super) const EDGE_CORNER_REACH: u32 = 3;
 
 
 /// A fragment uniform buffer at binding 0.

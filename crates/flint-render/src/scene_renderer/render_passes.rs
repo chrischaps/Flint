@@ -1503,8 +1503,10 @@ impl SceneRenderer {
                 resources.height,
             )
         });
-        // Where each id's entities are (#385), for styles' scissors
-        let style_bounds = if style_mask.is_some() && self.style_mask.scissor {
+        // Where each id's entities are (#385), for styles' scissors, and
+        // with the scissor off too for what a style keeps only around its
+        // entities (#930: ASCII's edge cells)
+        let style_bounds = if style_mask.is_some() {
             self.style_bounds(&camera.view_projection_matrix())
         } else {
             crate::style_mask::StyleBounds::default()
@@ -1534,6 +1536,7 @@ impl SceneRenderer {
                 mask_fades: self.style_mask_fades(),
                 style_ids: &self.style_mask.ids,
                 style_bounds: &style_bounds,
+                scissor: self.style_mask.scissor,
                 edges: None,
                 albedo: style_albedo,
                 linear_sampler: &pp.linear_sampler,

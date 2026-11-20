@@ -139,6 +139,12 @@ pub struct StyleFrame<'a> {
     /// from the world bounds of the draws the mask draws. Read it through
     /// [`styled_rect`](Self::styled_rect).
     pub style_bounds: &'a crate::style_mask::StyleBounds,
+    /// Whether passes are cut to [`styled_rect`](Self::styled_rect) and the
+    /// other rects (#385): the renderer's
+    /// [`set_style_scissor`](crate::SceneRenderer::set_style_scissor).
+    /// Off, they are `None` and the passes draw whole, while
+    /// [`styled_area`](Self::styled_area) still says where the entities are.
+    pub scissor: bool,
     /// The shared geometry edges (#301, [`edges`] says what the channels
     /// hold): [`EDGE_FORMAT`], the depth's size, read by UV with
     /// `textureLoad`. `Some` whenever a style that
@@ -547,10 +553,30 @@ impl StyleFrame<'_> {
     /// Outside it a per-entity style's passthrough holds, so a pass that
     /// writes the input there ([`kit::scissored_pass`]) is the full pass.
     pub fn styled_rect(&self, pad: u32) -> Option<kit::PixelRect> {
+        if !self.scissors() {
+            return None;
+        }
+        self.styled_area(pad)
+    }
+
+    /// [`styled_rect`](Self::styled_rect) whether or not the scissor is on
+    /// (#930): where the style's entities are, for state a style keeps only
+    /// around them, so that the frame is the same with the scissor off.
+    /// ASCII's edge cells are its one user: what lies outside the area is
+    /// empty either way, and a cell's edge history was what an earlier
+    /// frame left there only while the scissor was on. `None` as for
+    /// `styled_rect` when the entities could be anywhere.
+    pub fn styled_area(&self, pad: u32) -> Option<kit::PixelRect> {
         if self.covers_frame() {
             return None;
         }
-        self.variants_rect(pad, |_, v| !v.off)
+        self.variants_area(pad, |_, v| !v.off)
+    }
+
+    /// Whether the scissor is on, for this renderer and the process
+    /// (`FLINT_STYLE_SCISSOR`).
+    fn scissors(&self) -> bool {
+        self.scissor && scissor_enabled()
     }
 
     /// The pixels of this frame where the style mask can hold one of the
@@ -577,20 +603,37 @@ impl StyleFrame<'_> {
         pad: u32,
         with: impl Fn(u16, &crate::style_mask::StyleVariant) -> bool,
     ) -> Option<kit::PixelRect> {
+        if !self.scissors() {
+            return None;
+        }
+        self.variants_area(pad, with)
+    }
+
+    /// [`variants_rect`](Self::variants_rect) with the scissor on or off.
+    fn variants_area(
+        &self,
+        pad: u32,
+        with: impl Fn(u16, &crate::style_mask::StyleVariant) -> bool,
+    ) -> Option<kit::PixelRect> {
         let mine: Vec<u16> = self
             .variants()
             .filter(|&(id, v)| with(id, v))
             .map(|(id, _)| id)
             .collect();
-        self.ids_rect(pad, |id| mine.contains(&id))
+        self.ids_area(pad, |id| mine.contains(&id))
+    }
+
+    /// [`ids_area`](Self::ids_area) while the scissor is on, else `None`.
+    fn ids_rect(&self, pad: u32, with: impl Fn(u16) -> bool) -> Option<kit::PixelRect> {
+        if !self.scissors() {
+            return None;
+        }
+        self.ids_area(pad, with)
     }
 
     /// The screen bounds of the ids `with` picks, grown by `pad` and the
     /// mask's rounding ([`variants_rect`](Self::variants_rect)).
-    fn ids_rect(&self, pad: u32, with: impl Fn(u16) -> bool) -> Option<kit::PixelRect> {
-        if !scissor_enabled() {
-            return None;
-        }
+    fn ids_area(&self, pad: u32, with: impl Fn(u16) -> bool) -> Option<kit::PixelRect> {
         let mut uv = crate::style_mask::IdBounds::Nowhere;
         for (id, _) in self.style_ids.iter() {
             if with(id) {
