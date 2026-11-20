@@ -1,0 +1,3 @@
+### A scene that fails to load is named: `Failed to load scene levels/cart.scene.toml` (#1044)
+**What changed.** `flint render`, `play`, `playtest`, `edit`, `spline-edit`, `entity` and `query` said only `Failed to load scene` above the cause (a parent cycle, a missing prefab), which names entities but not the file; each now names the scene, as `flint check` does. `flint edit` said nothing of a scene at all, and its hot reload's error names the file too. `flint_scene::load_failed(path)` is the one wording, for a game binary's own commands; `entity create`/`delete` say `Refusing to write <scene>: ...`.
+**What to do.** Nothing, unless a script matches the bare `Failed to load scene` line: the path now follows it.

@@ -30,7 +30,8 @@ use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{
     Camera, DebugMode, FrameInputs, HeadlessContext, RendererConfig, SceneRenderer,
 };
-use flint_scene::load_scene;
+// A scene loaded for drawing, its failure naming the file (#1044)
+use super::common_args::load_settled;
 use flint_schema::SchemaRegistry;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,19 +55,6 @@ macro_rules! say {
 const REPORT_TO_STDOUT: &str = "json";
 
 pub use super::render_args::RenderArgs;
-
-/// A scene loaded for drawing: `flint_scene::load_scene`, then living props'
-/// tables checked and the preset `[wooze] preset` names filled in
-/// (`flint_procgen::settle_scene`), as the player loads one.
-fn load_settled(
-    scene: &str,
-    registry: &flint_schema::SchemaRegistry,
-) -> Result<(flint_ecs::FlintWorld, flint_scene::SceneFile)> {
-    let (world, mut scene_file) = load_scene(scene, registry).context("Failed to load scene")?;
-    flint_procgen::settle_scene(&mut scene_file, Path::new(scene))
-        .context("Failed to load scene")?;
-    Ok((world, scene_file))
-}
 
 /// `--list-styles [--json]`: the registry as text or JSON, with the user
 /// styles beside the scene when one is given.

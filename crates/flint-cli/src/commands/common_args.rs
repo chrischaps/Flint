@@ -204,6 +204,33 @@ pub fn load_schemas(
     }
 }
 
+/// The scene at `path`, for a command: [`flint_scene::load_scene`] whose
+/// failure names the file ([`flint_scene::load_failed`], #1044), so an
+/// agent running a command over a folder of scenes knows which one to
+/// open. Every command loads its scene through this, or through
+/// [`load_settled`].
+pub fn load_scene(
+    path: &str,
+    registry: &flint_schema::SchemaRegistry,
+) -> anyhow::Result<(flint_ecs::FlintWorld, flint_scene::SceneFile)> {
+    use anyhow::Context;
+    flint_scene::load_scene(path, registry).with_context(|| flint_scene::load_failed(path))
+}
+
+/// [`load_scene`], then living props' tables checked and the preset
+/// `[wooze] preset` names filled in (`flint_procgen::settle_scene`), as the
+/// player loads one: a scene loaded for drawing.
+pub fn load_settled(
+    path: &str,
+    registry: &flint_schema::SchemaRegistry,
+) -> anyhow::Result<(flint_ecs::FlintWorld, flint_scene::SceneFile)> {
+    use anyhow::Context;
+    let (world, mut scene_file) = load_scene(path, registry)?;
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(path))
+        .with_context(|| flint_scene::load_failed(path))?;
+    Ok((world, scene_file))
+}
+
 /// TEMPORARY, for one release (ADR 0114 decision 3, #765): say on stderr
 /// which `schemas/` beside the scene this command used to add to its
 /// `--schemas` flags and no longer does. For the commands that did add

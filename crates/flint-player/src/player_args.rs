@@ -549,10 +549,11 @@ impl PlayerArgs {
 
         #[cfg_attr(not(feature = "living"), allow(unused_mut))]
         let (world, mut scene_file) =
-            load_scene(&scene, &registry).context("Failed to load scene")?;
+            load_scene(&scene, &registry).with_context(|| flint_scene::load_failed(&scene))?;
         // Living props' tables: checked, and the preset [wooze] names filled in (#686)
         #[cfg(feature = "living")]
-        flint_procgen::settle_scene(&mut scene_file, scene_path).context("Failed to load scene")?;
+        flint_procgen::settle_scene(&mut scene_file, scene_path)
+            .with_context(|| flint_scene::load_failed(scene_path))?;
         // The scene's name and size are said with what it loaded, once it
         // is up (`enter_scene`'s summary). On stderr, so `--list-keys
         // --json`'s stdout is the table alone

@@ -1,8 +1,8 @@
 //! Track editor — loads a scene with spline data and launches the interactive editor.
 
+use super::common_args::load_scene;
 use anyhow::{Context, Result};
 use flint_core::toml_util::toml_f32;
-use flint_scene::load_scene;
 use flint_viewer::spline_editor::{ControlPoint, SplineEditorConfig};
 use std::path::Path;
 
@@ -38,7 +38,7 @@ pub fn editor(
     }
 
     // Load scene
-    let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    let (world, scene_file) = load_scene(&args.scene, &registry)?;
     crate::output::say!("Loaded scene: {}", scene_file.scene.name);
     crate::output::say!("Entities: {}", world.entity_count());
 
