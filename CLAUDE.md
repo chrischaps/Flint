@@ -39,7 +39,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-32-crate Cargo workspace (plus `tools/arch-analyzer`, which feeds the book's crate table). Every member but `flint-android` is a default member, so plain `cargo test` runs every desktop crate's tests (#758):
+33-crate Cargo workspace (plus `tools/arch-analyzer`, which feeds the book's crate table). Every member but `flint-android` is a default member, so plain `cargo test` runs every desktop crate's tests (#758):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
@@ -55,6 +55,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
   ├── flint-input-capture 1 kHz gamepad capture stamped against the audio clock
   ├── flint-debug-ui F3/F4 debug panels and shared widgets
   ├── flint-script   Rhai scripting with hot-reload
+  ├── flint-living   Living props' runtime: pose rings, clocks, knobs
   ├── flint-particles Particle sim: effects, curves, forces, bursts, sub-emitters
   ├── flint-animation Property tween + skeletal animation
   ├── flint-audio    Kira spatial audio

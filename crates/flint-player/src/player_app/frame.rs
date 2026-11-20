@@ -223,8 +223,8 @@ impl PlayerApp {
                 renderer: &mut *renderer,
                 world: &self.core.world,
                 camera: &self.camera,
-                #[cfg(feature = "procgen")]
-                resolver: &mut self.core.procgen_resolver,
+                #[cfg(feature = "living")]
+                living: &mut self.core.living_props,
             };
             self.core.subsystems.post_encode(&mut ctx);
         }

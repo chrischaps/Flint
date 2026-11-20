@@ -4,7 +4,8 @@
 use super::*;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_procgen::{LivingPropRequest, ProcGenSpec, Stagger, VarianceConfig};
+use flint_living::LivingPropRequest;
+use flint_procgen::{ProcGenSpec, Stagger, VarianceConfig};
 use flint_wooze::warp;
 
 const SPEC: &str = r#"
@@ -40,20 +41,23 @@ fn app_with(n: u64, folder: &Path) -> PlayerApp {
         .index_spec(ProcGenSpec::parse(SPEC).unwrap());
     for i in 0..n {
         app.core
-            .procgen_resolver
-            .add_living_prop(LivingPropRequest {
-                entity: EntityId::from_raw(i + 1),
-                entity_name: format!("oak_{i}"),
-                position: [i as f32, 0.0, 0.0],
-                spec_name: "sapling".to_string(),
-                lineage_seed: None,
-                pose_ring: None,
-                phase_offset: Some(0.25),
-                stagger: None,
-            })
+            .living_props
+            .add_prop(
+                &mut app.core.procgen_resolver,
+                LivingPropRequest {
+                    entity: EntityId::from_raw(i + 1),
+                    entity_name: format!("oak_{i}"),
+                    position: [i as f32, 0.0, 0.0],
+                    spec_name: "sapling".to_string(),
+                    lineage_seed: None,
+                    pose_ring: None,
+                    phase_offset: Some(0.25),
+                    stagger: None,
+                },
+            )
             .unwrap();
     }
-    app.core.procgen_resolver.make_living_now();
+    app.core.living_props.make_now(&app.core.procgen_resolver);
     app.living().wooze = Some(WoozeField::new(WoozeSample::NEUTRAL));
     app
 }
@@ -78,12 +82,12 @@ impl Drop for Folder {
 }
 
 fn beats_of(app: &mut PlayerApp) -> Vec<f64> {
-    let props = app.core.procgen_resolver.living_props();
+    let props = &app.core.living_props;
     props.props().iter().map(|p| p.beats()).collect()
 }
 
 fn poses_at(app: &mut PlayerApp) -> Vec<(u64, f32)> {
-    let props = app.core.procgen_resolver.living_props();
+    let props = &app.core.living_props;
     props
         .props()
         .iter()
@@ -98,10 +102,7 @@ fn freeze_holds_and_a_step_is_exactly_one_beat_of_the_warped_clock() {
     app.tick_procgen_for_test(0.1);
     let before = beats_of(&mut app);
     let poses = poses_at(&mut app);
-    let (time, field_time) = (
-        app.core.procgen_resolver.living_props().time(),
-        app.living().wooze_time,
-    );
+    let (time, field_time) = (app.core.living_props.time(), app.living().wooze_time);
 
     // Frozen is what the frame loop does with its dt: nothing moves.
     for _ in 0..5 {
@@ -121,7 +122,7 @@ fn freeze_holds_and_a_step_is_exactly_one_beat_of_the_warped_clock() {
         assert_eq!(weight, was_weight, "at the same place in its step");
     }
     // A step of the field's 0.5 s for the clocks that run in seconds.
-    let moved = app.core.procgen_resolver.living_props().time() - time;
+    let moved = app.core.living_props.time() - time;
     assert!((moved - 0.5).abs() < 1e-9, "{moved}");
     assert!((app.living().wooze_time - field_time - 0.5).abs() < 1e-9);
 
@@ -154,8 +155,7 @@ step = 3.0
     app.tick_procgen_for_test(0.0);
     let steps: Vec<f32> = app
         .core
-        .procgen_resolver
-        .living_props()
+        .living_props
         .props()
         .iter()
         .map(|p| p.clock().step)
@@ -239,9 +239,7 @@ fn turning_a_clock_knob_gives_a_scene_with_no_field_one() {
     let mut app = app_with(1, &folder.0);
     app.living().wooze = None;
     app.tick_procgen_for_test(0.0);
-    let spec_step = app.core.procgen_resolver.living_props().props()[0]
-        .wooze()
-        .step;
+    let spec_step = app.core.living_props.props()[0].wooze().step;
 
     // Knobs that aren't the field's don't make one.
     let echoes: WoozePreset = toml::from_str("[living]\nechoes = { count = 1 }\n").unwrap();
@@ -254,12 +252,7 @@ fn turning_a_clock_knob_gives_a_scene_with_no_field_one() {
     assert_eq!(field.glide, 0.9);
     assert_eq!(field.step, spec_step, "the rest as it stood");
     app.tick_procgen_for_test(0.0);
-    assert_eq!(
-        app.core.procgen_resolver.living_props().props()[0]
-            .clock()
-            .glide,
-        0.9
-    );
+    assert_eq!(app.core.living_props.props()[0].clock().glide, 0.9);
 }
 
 #[test]
@@ -429,8 +422,8 @@ fn two_species_from(folder: &Path, field: bool, living: Option<&LivingDef>) -> P
     let mut app = app_with(0, folder);
     if let Some(table) = living {
         app.core
-            .procgen_resolver
-            .set_living_defaults(super::super::living_props::defaults_of(Some(table)));
+            .living_props
+            .set_defaults(super::super::living_props::defaults_of(Some(table)));
     }
     let mut oak = ProcGenSpec::parse(SPEC).unwrap();
     oak.living.as_mut().unwrap().echoes = EchoConfig {
@@ -444,20 +437,23 @@ fn two_species_from(folder: &Path, field: bool, living: Option<&LivingDef>) -> P
         .index_spec(ProcGenSpec::parse(THORN).unwrap());
     for (i, spec) in ["sapling", "sapling", "thorn", "thorn"].iter().enumerate() {
         app.core
-            .procgen_resolver
-            .add_living_prop(LivingPropRequest {
-                entity: EntityId::from_raw(i as u64 + 1),
-                entity_name: format!("{spec}_{i}"),
-                position: [i as f32, 0.0, 0.0],
-                spec_name: spec.to_string(),
-                lineage_seed: None,
-                pose_ring: None,
-                phase_offset: Some(0.25),
-                stagger: None,
-            })
+            .living_props
+            .add_prop(
+                &mut app.core.procgen_resolver,
+                LivingPropRequest {
+                    entity: EntityId::from_raw(i as u64 + 1),
+                    entity_name: format!("{spec}_{i}"),
+                    position: [i as f32, 0.0, 0.0],
+                    spec_name: spec.to_string(),
+                    lineage_seed: None,
+                    pose_ring: None,
+                    phase_offset: Some(0.25),
+                    stagger: None,
+                },
+            )
             .unwrap();
     }
-    app.core.procgen_resolver.make_living_now();
+    app.core.living_props.make_now(&app.core.procgen_resolver);
     if !field {
         app.living().wooze = None;
     }
@@ -474,7 +470,7 @@ struct Species {
 }
 
 fn species_of(app: &mut PlayerApp) -> Species {
-    let living = app.core.procgen_resolver.living_props();
+    let living = &app.core.living_props;
     Species {
         echoes: living.props().iter().map(|p| p.echo_config()).collect(),
         staggers: living.props().iter().map(|p| p.stagger()).collect(),
@@ -527,18 +523,18 @@ mod panel_edits {
         let folder = Folder::new("glide");
         let mut app = two_species(&folder.0, true);
         let start = species_of(&mut app);
-        let reholding = app.core.procgen_resolver.living_props().is_reholding();
+        let reholding = app.core.living_props.is_reholding();
 
         move_on_panel(&mut app, |k| k.glide = 0.8);
         app.tick_procgen_for_test(0.0);
 
         assert_eq!(species_of(&mut app), start);
         assert_eq!(
-            app.core.procgen_resolver.living_props().is_reholding(),
+            app.core.living_props.is_reholding(),
             reholding,
             "no variance changed, so nothing to re-hold"
         );
-        let glides: Vec<f32> = (app.core.procgen_resolver.living_props().props().iter())
+        let glides: Vec<f32> = (app.core.living_props.props().iter())
             .map(|p| p.clock().glide)
             .collect();
         assert_eq!(glides, [0.8; 4], "and glide did move: {glides:?}");
@@ -636,7 +632,7 @@ mod panel_edits {
         let mut app = two_species(&folder.0, false);
         app.before_living_tick();
         let clocks = |app: &PlayerApp| -> Vec<(f32, f32)> {
-            let living = app.core.procgen_resolver.living_props();
+            let living = &app.core.living_props;
             living
                 .props()
                 .iter()
@@ -681,12 +677,12 @@ mod panel_edits {
 /// Every bone buffer the props would fill now, written whole: each prop's, then
 /// each of its echoes'.
 fn everything_drawn(app: &mut PlayerApp) -> Vec<Vec<[[f32; 4]; 4]>> {
-    let props = app.core.procgen_resolver.living_props_mut();
+    let props = &mut app.core.living_props;
     props.redraw_all();
-    let mut frame = flint_procgen::BlendFrame::default();
+    let mut frame = flint_living::BlendFrame::default();
     let mut drawn = Vec::new();
     for i in 0..props.props().len() {
-        let id = flint_procgen::LivingPropId(i);
+        let id = flint_living::LivingPropId(i);
         props.blend_prop(id, &mut frame);
         drawn.push(frame.bones.clone());
         for echo in 0..props.prop(id).echo_count() {
@@ -778,10 +774,10 @@ fn a_side_shown_by_a_flip_is_the_side_that_was_shown_all_along() {
             }
             app.tick_procgen_for_test(1.0 / 60.0);
             // As the player's frame does: the shown side blends every frame.
-            let props = app.core.procgen_resolver.living_props_mut();
-            let mut blend = flint_procgen::BlendFrame::default();
+            let props = &mut app.core.living_props;
+            let mut blend = flint_living::BlendFrame::default();
             for i in 0..props.props().len() {
-                let id = flint_procgen::LivingPropId(i);
+                let id = flint_living::LivingPropId(i);
                 props.blend_prop(id, &mut blend);
                 for echo in 0..props.prop(id).echo_count() {
                     props.blend_echo(id, echo, &mut blend);
@@ -816,20 +812,23 @@ fn oak_app(n: u64, folder: &Path) -> PlayerApp {
         .index_spec(ProcGenSpec::parse(&spec).unwrap());
     for i in 0..n {
         app.core
-            .procgen_resolver
-            .add_living_prop(LivingPropRequest {
-                entity: EntityId::from_raw(i + 1),
-                entity_name: format!("oak_{i}"),
-                position: [i as f32 * 6.0, 0.0, 0.0],
-                spec_name: "oak_living".to_string(),
-                lineage_seed: None,
-                pose_ring: None,
-                phase_offset: None,
-                stagger: None,
-            })
+            .living_props
+            .add_prop(
+                &mut app.core.procgen_resolver,
+                LivingPropRequest {
+                    entity: EntityId::from_raw(i + 1),
+                    entity_name: format!("oak_{i}"),
+                    position: [i as f32 * 6.0, 0.0, 0.0],
+                    spec_name: "oak_living".to_string(),
+                    lineage_seed: None,
+                    pose_ring: None,
+                    phase_offset: None,
+                    stagger: None,
+                },
+            )
             .unwrap();
     }
-    app.core.procgen_resolver.make_living_now();
+    app.core.living_props.make_now(&app.core.procgen_resolver);
     app
 }
 
@@ -843,14 +842,14 @@ struct Held {
 }
 
 fn hold_frame(app: &mut PlayerApp, held: &mut Held) {
-    let props = app.core.procgen_resolver.living_props_mut();
-    let mut frame = flint_procgen::BlendFrame::default();
+    let props = &mut app.core.living_props;
+    let mut frame = flint_living::BlendFrame::default();
     let n = props.props().len();
     held.bones.resize(n * 17, Vec::new());
     held.tints.resize(n, Default::default());
     held.echoes.resize(n, 0);
     for i in 0..n {
-        let id = flint_procgen::LivingPropId(i);
+        let id = flint_living::LivingPropId(i);
         let blend = props.blend_prop(id, &mut frame);
         if let Some(first) = blend.first_bone {
             let buffer = &mut held.bones[i * 17];
@@ -916,21 +915,18 @@ fn both_sides_run_on_the_same_clock() {
     for _ in 0..90 {
         app.tick_procgen_for_test(1.0 / 60.0);
     }
-    let (time, field) = (
-        app.core.procgen_resolver.living_props().time(),
-        app.living().wooze_time,
-    );
+    let (time, field) = (app.core.living_props.time(), app.living().wooze_time);
     app.flip_living();
-    assert_eq!(app.core.procgen_resolver.living_props().time(), time);
+    assert_eq!(app.core.living_props.time(), time);
     assert_eq!(app.living().wooze_time, field);
 
     // A step is the same seconds for both: a beat of the side being shown.
     app.step_living();
     app.tick_procgen_for_test(0.0);
-    let moved = app.core.procgen_resolver.living_props().time() - time;
+    let moved = app.core.living_props.time() - time;
     assert!((moved - 0.5).abs() < 1e-9, "{moved}");
     app.flip_living();
-    let other = app.core.procgen_resolver.living_props().time() - time;
+    let other = app.core.living_props.time() - time;
     assert!((other - moved).abs() < 1e-12, "{other} against {moved}");
     let stats = app.hidden_side_stats().unwrap();
     assert_eq!(stats.frames_starved, 0, "{stats:?}");
@@ -1053,7 +1049,7 @@ fn compare_at_start_waits_for_the_props_and_outlives_the_scene_reset() {
 
 /// What one prop runs on, read the way a person would check it.
 fn running(app: &mut PlayerApp, i: usize) -> (f32, f32, EchoConfig, Stagger) {
-    let prop = &app.core.procgen_resolver.living_props().props()[i];
+    let prop = &app.core.living_props.props()[i];
     (
         prop.clock().step,
         prop.clock().glide,
@@ -1145,12 +1141,7 @@ fn a_global_change_from_a_script_leaves_a_species_value_standing() {
 fn softness_comes_in_every_way_the_other_knobs_do() {
     let folder = Folder::new("softness");
     let mut app = two_species_under(&folder.0, true, Some("softness = 0.2"));
-    let soft = |app: &PlayerApp, i: usize| {
-        app.core
-            .procgen_resolver
-            .living_props()
-            .softness(LivingPropId(i))
-    };
+    let soft = |app: &PlayerApp, i: usize| app.core.living_props.softness(LivingPropId(i));
     assert_eq!(
         (soft(&mut app, 0), soft(&mut app, 2)),
         (0.2, 0.2),
@@ -1254,7 +1245,8 @@ mod scopes {
     use flint_debug_ui::{
         Knob, KnobFlags, LivingKnobs, LivingPanelAction, LivingSpeciesState, PanelScope,
     };
-    use flint_procgen::{BlendFrame, LivingPropId, WarpedTime};
+    use flint_living::{BlendFrame, LivingPropId};
+    use flint_procgen::WarpedTime;
 
     fn repo() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -1270,14 +1262,14 @@ mod scopes {
         .unwrap();
         let scene: flint_scene::SceneFile = toml::from_str(&text).unwrap();
         let mut app = app_with(0, folder);
-        app.core.procgen_resolver.set_living_defaults(
-            super::super::super::living_props::defaults_of(
+        app.core
+            .living_props
+            .set_defaults(super::super::super::living_props::defaults_of(
                 flint_procgen::LivingTables::of(&scene)
                     .unwrap()
                     .living
                     .as_ref(),
-            ),
-        );
+            ));
         for spec in ["grove_birch", "grove_cypress", "grove_oak", "grove_thorn"] {
             let path = repo().join(format!(
                 "tests/fixtures/scenes/woozy_grove/specs/{spec}.procgen.toml"
@@ -1306,9 +1298,12 @@ mod scopes {
                 component,
             )
             .unwrap();
-            app.core.procgen_resolver.add_living_prop(request).unwrap();
+            app.core
+                .living_props
+                .add_prop(&mut app.core.procgen_resolver, request)
+                .unwrap();
         }
-        app.core.procgen_resolver.make_living_now();
+        app.core.living_props.make_now(&app.core.procgen_resolver);
         app.living().wooze = super::super::super::living_props::field_of(
             flint_procgen::LivingTables::of(&scene)
                 .unwrap()
@@ -1320,7 +1315,7 @@ mod scopes {
     }
 
     fn species_at(app: &mut PlayerApp, i: usize) -> String {
-        let living = app.core.procgen_resolver.living_props();
+        let living = &app.core.living_props;
         living.species_of(LivingPropId(i)).to_string()
     }
 
@@ -1347,11 +1342,11 @@ mod scopes {
     fn at_species_scope_in_woozy_grove_echo_count_moves_that_species_alone() {
         let folder = Folder::new("scope_grove");
         let mut app = woozy_grove(&folder.0);
-        let n = app.core.procgen_resolver.living_props().props().len();
+        let n = app.core.living_props.props().len();
         assert_eq!(app.living_species().len(), 4, "{:?}", app.living_species());
         assert!(n >= 20, "{n} trees");
         let before: Vec<_> = (0..n).map(|i| running(&mut app, i)).collect();
-        let variances = app.core.procgen_resolver.living_props().variances();
+        let variances = app.core.living_props.variances();
         let unsaved = app.living_unsaved();
         let states = app.living_species_states(&unsaved);
         let thorn = state_of(&mut app, "grove_thorn");
@@ -1375,10 +1370,7 @@ mod scopes {
             }
         }
         assert_eq!(thorns, thorn.props);
-        assert_eq!(
-            app.core.procgen_resolver.living_props().variances(),
-            variances
-        );
+        assert_eq!(app.core.living_props.variances(), variances);
 
         // The panel sees the same: the thorns' count is their own, the other
         // three species are exactly as they were, and Global says one owns it.
@@ -1416,7 +1408,7 @@ mod scopes {
         let states = app.living_species_states(&unsaved);
         let wooze = app.living().wooze.clone();
         let time = app.living().wooze_time;
-        let living = app.core.procgen_resolver.living_props();
+        let living = &app.core.living_props;
         let field = wooze.as_ref().map(|field| (field, time));
         let mut zoned = 0;
         for state in states {
@@ -1467,7 +1459,7 @@ mod scopes {
 
     /// What each of a prop's parts is drawn between, right now.
     fn drawn(app: &mut PlayerApp, i: usize) -> Vec<WarpedTime> {
-        let living = app.core.procgen_resolver.living_props_mut();
+        let living = &mut app.core.living_props;
         living.blend_prop(LivingPropId(i), &mut BlendFrame::default());
         living.prop(LivingPropId(i)).drawn_times().to_vec()
     }
@@ -1516,14 +1508,14 @@ mod scopes {
                 "every part drawn: {held:?}"
             );
             let beats: Vec<f64> = (2..4)
-                .map(|i| app.core.procgen_resolver.living_props().props()[i].beats())
+                .map(|i| app.core.living_props.props()[i].beats())
                 .collect();
             app.apply_living_action(LivingPanelAction::Clear("thorn".to_string(), Some(knob)));
             app.tick_procgen_for_test(0.0);
             let now: Vec<_> = (2..4).map(|i| drawn(&mut app, i)).collect();
             assert_eq!(now, held, "clearing {knob:?} moved what's drawn");
             let beats_now: Vec<f64> = (2..4)
-                .map(|i| app.core.procgen_resolver.living_props().props()[i].beats())
+                .map(|i| app.core.living_props.props()[i].beats())
                 .collect();
             assert_eq!(beats_now, beats, "clearing {knob:?} moved the clock");
             assert!(
@@ -1573,7 +1565,7 @@ mod picks {
         DebugPanel, Knob, KnobFlags, LivingKnobs, LivingPanelAction, LivingPropsDebugPanel,
         PanelScope,
     };
-    use flint_procgen::{LivingPropId, ResolvedProp};
+    use flint_living::{LivingPropId, ResolvedProp};
     use winit::event::{ElementState, MouseButton};
 
     /// Woozy Grove with its Living Props panel, on a 1280 x 720 window.
@@ -1594,7 +1586,7 @@ mod picks {
 
     /// The prop standing at `x, z`, by name.
     fn named_at(app: &mut PlayerApp, x: f32, z: f32) -> String {
-        let living = app.core.procgen_resolver.living_props();
+        let living = &app.core.living_props;
         let prop = (living.props().iter())
             .find(|p| (p.position()[0] - x).abs() < 0.01 && (p.position()[2] - z).abs() < 0.01)
             .unwrap_or_else(|| panic!("no prop at {x}, {z}"));
@@ -1602,7 +1594,7 @@ mod picks {
     }
 
     fn index_of(app: &mut PlayerApp, name: &str) -> usize {
-        let living = app.core.procgen_resolver.living_props();
+        let living = &app.core.living_props;
         (living.props().iter())
             .position(|p| p.entity_name() == name)
             .unwrap()
@@ -1639,8 +1631,7 @@ mod picks {
                 let index = index_of(&mut app, want);
                 let species = app
                     .core
-                    .procgen_resolver
-                    .living_props()
+                    .living_props
                     .species_of(LivingPropId(index))
                     .to_string();
                 assert_eq!(panel(&mut app).scope(), &PanelScope::Species(species));
@@ -1678,7 +1669,7 @@ mod picks {
     fn the_cycle_key_goes_through_the_grove_by_name() {
         let folder = Folder::new("pick_cycle");
         let mut app = grove(&folder.0);
-        let mut names: Vec<String> = (app.core.procgen_resolver.living_props().props().iter())
+        let mut names: Vec<String> = (app.core.living_props.props().iter())
             .map(|p| p.entity_name().to_string())
             .collect();
         names.sort();
@@ -1808,8 +1799,7 @@ mod picks {
         let index = index_of(&mut app, &named);
         let species = app
             .core
-            .procgen_resolver
-            .living_props()
+            .living_props
             .species_of(LivingPropId(index))
             .to_string();
         let moved = k.moved(&before, &KnobFlags::default());
@@ -1820,14 +1810,14 @@ mod picks {
         app.tick_procgen_for_test(0.0);
 
         let (mut zoned, mut open, mut own) = (0, 0, 0);
-        let names: Vec<String> = (app.core.procgen_resolver.living_props().props().iter())
+        let names: Vec<String> = (app.core.living_props.props().iter())
             .map(|p| p.entity_name().to_string())
             .collect();
         for (i, name) in names.iter().enumerate() {
             let picked = app.living_picked_state(name).unwrap();
             let wooze = app.living().wooze.clone();
             let time = app.living().wooze_time;
-            let living = app.core.procgen_resolver.living_props();
+            let living = &app.core.living_props;
             let field = wooze.as_ref().map(|field| (field, time));
             let resolved = living.resolved(LivingPropId(i), field);
             // Knob by knob: the window lists them in the panel's order (#753),
@@ -1862,13 +1852,7 @@ mod picks {
             "{zoned} trees in zones, {open} out of them"
         );
         let of_species = (0..names.len())
-            .filter(|i| {
-                app.core
-                    .procgen_resolver
-                    .living_props()
-                    .species_of(LivingPropId(*i))
-                    == species
-            })
+            .filter(|i| app.core.living_props.species_of(LivingPropId(*i)) == species)
             .count();
         assert_eq!(
             own, of_species,
@@ -1893,11 +1877,10 @@ mod picks {
             let i = index_of(&mut app, &name);
             let species = app
                 .core
-                .procgen_resolver
-                .living_props()
+                .living_props
                 .species_of(LivingPropId(i))
                 .to_string();
-            let n = app.core.procgen_resolver.living_props().props().len();
+            let n = app.core.living_props.props().len();
             let before: Vec<_> = (0..n).map(|i| running(&mut app, i)).collect();
 
             // What the window sends for a hand on its step: the panel's state,
@@ -1917,13 +1900,7 @@ mod picks {
             }
             for (j, was) in before.iter().enumerate() {
                 let now = running(&mut app, j);
-                if app
-                    .core
-                    .procgen_resolver
-                    .living_props()
-                    .species_of(LivingPropId(j))
-                    == species
-                {
+                if app.core.living_props.species_of(LivingPropId(j)) == species {
                     assert_eq!(now.0, 0.8, "frozen {frozen}");
                     assert_eq!(now.2.count, shown.knobs.echo_count + 2);
                 } else {

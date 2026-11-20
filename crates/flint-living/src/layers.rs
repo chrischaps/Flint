@@ -15,10 +15,11 @@ use flint_wooze::{WoozeField, WoozeSample};
 
 use super::prop::PendingClocks;
 use super::{LivingPropId, LivingProps};
-use crate::spec::{EchoConfig, Stagger, VarianceConfig};
+use flint_procgen::{EchoConfig, Stagger, VarianceConfig};
 
-/// The fastest a boil can be asked to tick, times its spec's pace (#529).
-pub const JITTER_RATE_MAX: f32 = 8.0;
+// The two rates' ceilings are flint-procgen's, which holds a preset file's
+// rates to them too.
+pub use flint_procgen::living::{JITTER_RATE_MAX, ROW_RATE_MAX};
 
 /// A jitter rate in the range one can be: 0 (held) to [`JITTER_RATE_MAX`]. Not a
 /// number is 1, the spec's pace.
@@ -29,10 +30,6 @@ pub fn jitter_rate_clamped(rate: f32) -> f32 {
         rate.clamp(0.0, JITTER_RATE_MAX)
     }
 }
-
-/// The fastest a form's words can be asked to drift along their lines, times
-/// its spec's `row_pace` (#576).
-pub const ROW_RATE_MAX: f32 = 8.0;
 
 /// A row rate in the range one can be: 0 (held) to [`ROW_RATE_MAX`]. Not a
 /// number is 1, the spec's pace.
@@ -827,8 +824,10 @@ impl LivingProps {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LivingPropRequest, ProcGenResolver, ProcGenSpec};
+    use crate::test_grove::Grove;
+    use crate::LivingPropRequest;
     use flint_core::EntityId;
+    use flint_procgen::ProcGenSpec;
 
     const SPEC: &str = r#"
 generator = "tree_v1"
@@ -868,8 +867,8 @@ variance = { amount = 0.5, steady = 0.5, keep_size = false }
 
     /// Two birches (one with a stagger of its own) and an alder, added and
     /// never built: no lineage, no pose.
-    fn grove(defaults: LivingDefaults) -> ProcGenResolver {
-        let mut resolver = ProcGenResolver::new();
+    fn grove(defaults: LivingDefaults) -> Grove {
+        let mut resolver = Grove::new();
         resolver.index_spec(spec("birch"));
         resolver.index_spec(spec("alder"));
         resolver.living_props_mut().set_defaults(defaults);

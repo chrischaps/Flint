@@ -11,14 +11,15 @@
 //! while frozen, and glide and drift arrive on each part's next beat, as they do
 //! at speed.
 
+use flint_living::{
+    EchoOverride, LivingLayer, LivingLayers, LivingPropId, LivingScope, Resolved, ResolvedProp,
+    SpeciesOverride, VarianceOverride,
+};
 use flint_procgen::{
     commit_look, read_preset, BoilDef, LivingDef, LivingEchoesDef, LivingSpeciesDef,
     LivingVarianceDef, WoozeKnobs, WoozePreset,
 };
-use flint_procgen::{
-    EchoConfig, EchoOverride, LivingLayer, LivingLayers, LivingPropId, LivingScope, Resolved,
-    ResolvedProp, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
-};
+use flint_procgen::{EchoConfig, Stagger, VarianceConfig};
 use flint_wooze::{preset as builtin_preset, WoozeField, WoozeSample, PRESETS};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -316,7 +317,7 @@ impl LivingSubsystem {
     /// Every prop's values, each with the layer that set it, as `flint render
     /// --report json` reads them.
     pub(super) fn living_resolved(&self, ctx: &StageCtx<'_>) -> Vec<ResolvedProp> {
-        let living = ctx.resolver.living_props();
+        let living = &*ctx.living;
         let field = self.wooze.as_ref().map(|field| (field, self.wooze_time));
         (0..living.props().len())
             .map(|i| living.resolved(LivingPropId(i), field))
@@ -349,7 +350,7 @@ impl LivingSubsystem {
 
     /// The species any prop grows from, by name.
     pub(crate) fn living_species(&self, ctx: &StageCtx<'_>) -> Vec<String> {
-        let living = ctx.resolver.living_props();
+        let living = &*ctx.living;
         let mut names: Vec<String> = (living.species_names().into_iter())
             .filter(|species| living.has_species(species))
             .map(str::to_string)
@@ -534,8 +535,7 @@ impl LivingSubsystem {
         seconds: f64,
     ) -> Vec<String> {
         let start = ctx
-            .resolver
-            .living_props()
+            .living
             .props()
             .first()
             .map_or(WoozeSample::NEUTRAL, |prop| prop.wooze_below());
@@ -546,7 +546,7 @@ impl LivingSubsystem {
     /// one that isn't stays as each prop has it: moving echo `count` in a grove
     /// of several species leaves each its own `spread` and `alpha`.
     fn tune_props(&mut self, ctx: &mut StageCtx<'_>, living: &LivingDef) -> Vec<String> {
-        tune_props(ctx.resolver.living_props_mut(), living)
+        tune_props(&mut *ctx.living, living)
     }
 
     /// One species' own values (#246), over whatever it has already: they beat
@@ -559,7 +559,7 @@ impl LivingSubsystem {
         def: &LivingSpeciesDef,
     ) -> Vec<String> {
         self.ramps.cancel_species(name, def);
-        let (mut problems, grown) = tune_species(ctx.resolver.living_props_mut(), name, def);
+        let (mut problems, grown) = tune_species(&mut *ctx.living, name, def);
         if !grown {
             problems.push(self.no_such_species(ctx, name));
         }
@@ -575,7 +575,7 @@ impl LivingSubsystem {
         def: &LivingSpeciesDef,
     ) -> Vec<String> {
         self.ramps.cancel_keys(Some(name), &[]);
-        let (mut problems, grown) = replace_species(ctx.resolver.living_props_mut(), name, def);
+        let (mut problems, grown) = replace_species(&mut *ctx.living, name, def);
         if !grown {
             problems.push(self.no_such_species(ctx, name));
         }
@@ -591,7 +591,7 @@ impl LivingSubsystem {
         keys: &[String],
     ) -> Result<(), String> {
         self.ramps.cancel_keys(Some(name), keys);
-        if clear_species(ctx.resolver.living_props_mut(), name, keys)? {
+        if clear_species(&mut *ctx.living, name, keys)? {
             Ok(())
         } else {
             Err(self.no_such_species(ctx, name))
@@ -650,7 +650,7 @@ impl LivingSubsystem {
     /// knobs, if there's a field, the global layer of `[living]` as it was set,
     /// a field at a time, each species' own values, and the boil.
     pub(super) fn living_look(&self, ctx: &StageCtx<'_>) -> WoozePreset {
-        let props = ctx.resolver.living_props();
+        let props = &*ctx.living;
         let wooze = match &self.wooze {
             Some(field) => {
                 let global = field.global(self.wooze_time);
@@ -763,7 +763,7 @@ impl LivingSubsystem {
         AtLoad {
             knobs,
             no_field,
-            layers: ctx.resolver.living_props().layers(),
+            layers: ctx.living.layers(),
             look: self.living_look(ctx),
         }
     }
@@ -783,9 +783,7 @@ impl LivingSubsystem {
             // A clock knob may since have given the scene a field it didn't have.
             self.wooze = None;
         }
-        ctx.resolver
-            .living_props_mut()
-            .restore_layers(&at_load.layers);
+        ctx.living.restore_layers(&at_load.layers);
     }
 
     /// Queue exactly one beat of the clock.
@@ -809,7 +807,7 @@ impl LivingSubsystem {
                 self.tune_boil(ctx, boil);
             }
         }
-        if self.tune.at_load.is_none() && !ctx.resolver.living_props().is_empty() {
+        if self.tune.at_load.is_none() && !ctx.living.is_empty() {
             self.tune.at_load = Some(self.living_at_load(ctx));
         }
         self.start_asked_comparison(ctx);
@@ -821,8 +819,7 @@ impl LivingSubsystem {
         let seconds = match &self.wooze {
             Some(field) => f64::from(field.global(self.wooze_time).step),
             None => ctx
-                .resolver
-                .living_props()
+                .living
                 .props()
                 .first()
                 .map_or(0.0, |prop| f64::from(prop.clock().step)),
@@ -830,9 +827,7 @@ impl LivingSubsystem {
         if self.tune.ab.is_some() {
             return seconds;
         }
-        ctx.resolver
-            .living_props_mut()
-            .advance_beats(beats, seconds);
+        ctx.living.advance_beats(beats, seconds);
         if let Some(field) = &self.wooze {
             let sample = field.sample(ctx.camera.position_array(), self.wooze_time);
             self.boil_clock
@@ -962,10 +957,7 @@ pub(crate) fn tune_global(
 /// goes to every prop, and one
 /// that isn't stays as each prop has it: moving echo `count` in a grove of
 /// several species leaves each its own `spread` and `alpha`.
-pub(crate) fn tune_props(
-    props: &mut flint_procgen::LivingProps,
-    living: &LivingDef,
-) -> Vec<String> {
+pub(crate) fn tune_props(props: &mut flint_living::LivingProps, living: &LivingDef) -> Vec<String> {
     let mut problems = Vec::new();
     let mut say = |problem: String| problems.push(problem);
     // The global layer, a field at a time (#246): a species' own value still
@@ -1052,7 +1044,7 @@ pub(crate) fn find_preset(scene_path: &Path, name: &str) -> Result<WoozePreset, 
 /// doesn't say goes back to the layers below. Returns what couldn't be used, and
 /// whether any prop grows from the species.
 pub(crate) fn replace_species(
-    props: &mut flint_procgen::LivingProps,
+    props: &mut flint_living::LivingProps,
     name: &str,
     def: &LivingSpeciesDef,
 ) -> (Vec<String>, bool) {
@@ -1067,7 +1059,7 @@ pub(crate) fn replace_species(
 /// One species' own values (#246), over whatever it has already. Returns what
 /// couldn't be used, and whether any prop grows from the species.
 pub(crate) fn tune_species(
-    props: &mut flint_procgen::LivingProps,
+    props: &mut flint_living::LivingProps,
     name: &str,
     def: &LivingSpeciesDef,
 ) -> (Vec<String>, bool) {
@@ -1114,7 +1106,7 @@ pub(super) mod panel {
         DebugPanel, Knob, KnobFlags, KnobSources, LivingKnobs, LivingPanelAction,
         LivingPickedState, LivingPropRow, LivingPropsDebugPanel, LivingSpeciesState, PanelScope,
     };
-    use flint_procgen::{LivingPropId, LivingShadows};
+    use flint_living::{LivingPropId, LivingShadows};
 
     /// Which knobs a view's props disagree on.
     pub(crate) fn mixed_of(view: &LivingView) -> KnobFlags {
@@ -1199,7 +1191,7 @@ pub(super) mod panel {
 
         /// Each prop's place on its clock, for the panel and the overlay.
         pub(in super::super) fn living_rows(&self, ctx: &StageCtx<'_>) -> Vec<LivingPropRow> {
-            let props = ctx.resolver.living_props();
+            let props = &*ctx.living;
             props
                 .props()
                 .iter()
@@ -1248,7 +1240,7 @@ pub(super) mod panel {
             ctx: &StageCtx<'_>,
             name: &str,
         ) -> Option<LivingPickedState> {
-            let living = ctx.resolver.living_props();
+            let living = &*ctx.living;
             let i = (living.props().iter()).position(|prop| prop.entity_name() == name)?;
             let prop = &living.props()[i];
             let field = self.wooze.as_ref().map(|field| (field, self.wooze_time));
@@ -1336,7 +1328,7 @@ pub(super) mod panel {
         /// is open, the cursor is free, and there are props to pick.
         pub(in super::super) fn living_wants_clicks(&self, ctx: &StageCtx<'_>) -> bool {
             !ctx.cursor_captured
-                && !ctx.resolver.living_props().is_empty()
+                && !ctx.living.is_empty()
                 && ctx.panels.iter().any(|panel| {
                     panel.name() == flint_debug_ui::LIVING_PROPS_DEBUG_PANEL && panel.is_open()
                 })
@@ -1377,7 +1369,7 @@ pub(super) mod panel {
             let species = self.living_species_states(ctx, &unsaved);
             let no_field = self.wooze.is_none();
             let rows = self.living_rows(ctx);
-            let shadows = match ctx.resolver.living_props().shadows() {
+            let shadows = match ctx.living.shadows() {
                 LivingShadows::Blended => "blended",
                 LivingShadows::Drift => "drift",
             };
@@ -1392,7 +1384,7 @@ pub(super) mod panel {
             let frozen = self.tune.frozen;
             let overlay = self.tune.overlay;
             let status = self.tune.status.clone();
-            let props = ctx.resolver.living_props();
+            let props = &*ctx.living;
             let health = flint_debug_ui::LivingHealth {
                 rings_short: props
                     .props()
@@ -1566,7 +1558,7 @@ pub(super) mod panel {
 /// the layers below decide them again. Keys are [`SPECIES_KEYS`]. Whether any
 /// prop grows from the species, or what's wrong with the keys.
 pub(super) fn clear_species(
-    props: &mut flint_procgen::LivingProps,
+    props: &mut flint_living::LivingProps,
     name: &str,
     keys: &[String],
 ) -> Result<bool, String> {

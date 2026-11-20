@@ -180,8 +180,8 @@ impl PlayerApp {
         // adds (their clocks and field are the living subsystem's)
         #[cfg(feature = "living")]
         self.core
-            .procgen_resolver
-            .set_living_defaults(super::living_props::defaults_of(self.scene.living.as_ref()));
+            .living_props
+            .set_defaults(super::living_props::defaults_of(self.scene.living.as_ref()));
 
         // Procgen before the model loader: catalog > procgen > file (#32).
         // A build without it (#754) says what it won't make.
@@ -195,9 +195,7 @@ impl PlayerApp {
         }
         #[cfg(feature = "procgen")]
         super::procgen_assets::resolve_scene(
-            &self.core.scene_path,
-            &mut self.core.world,
-            &mut self.core.procgen_resolver,
+            &mut self.core,
             self.launch.procgen_mode,
             super::procgen_assets::GpuSink {
                 renderer,

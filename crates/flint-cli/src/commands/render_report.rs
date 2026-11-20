@@ -3,7 +3,8 @@
 //! files and none of this is in one: a lineage is, but which pose a prop has reached
 //! and what the field told it exist only once it's running.
 
-use flint_procgen::{LivingPropId, LivingProps, Resolved, Stagger};
+use flint_living::{LivingPropId, LivingProps, Resolved};
+use flint_procgen::Stagger;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -296,7 +297,7 @@ fn values_of(
 /// How the values a sweep's column set compare with what its props actually read:
 /// nothing to say if they agree, or the spread if zones kept some off it.
 pub fn read_note(knob: &str, set: Option<f32>, props: &LivingProps) -> String {
-    let read = |prop: &flint_procgen::LivingProp| {
+    let read = |prop: &flint_living::LivingProp| {
         let wooze = prop.wooze();
         match knob {
             "amplitude" => Some(wooze.amplitude),

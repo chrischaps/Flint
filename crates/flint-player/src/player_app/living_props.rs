@@ -28,11 +28,12 @@ use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
 use flint_ecs::FlintWorld;
 use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
-use flint_procgen::{
-    AssetKind, BlendFrame, ClockOverride, EchoConfig, EchoOverride, LineageDone, LivingDefaults,
-    LivingPropId, LivingPropRequest, LivingProps, LivingRig, LivingScope, LivingShadows,
-    LivingStats, ProcGenResolver, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
+use flint_living::{
+    BlendFrame, ClockOverride, EchoOverride, LineageDone, LivingDefaults, LivingPropId,
+    LivingPropRequest, LivingProps, LivingScope, LivingShadows, LivingStats, SpeciesOverride,
+    VarianceOverride,
 };
+use flint_procgen::{AssetKind, EchoConfig, LivingRig, ProcGenResolver, Stagger, VarianceConfig};
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
 use flint_wooze::WoozeField;
@@ -336,14 +337,14 @@ pub fn boil_at(field: &WoozeField, viewer: [f32; 3], time: f64, on: u32) -> flin
 /// One frame's blending and upload for every prop, timed for `--exit-after`.
 /// The clock moved in `process_living`, so this draws where it now stands.
 pub fn upload_blends(
-    resolver: &mut ProcGenResolver,
+    props: &mut LivingProps,
     frame: &mut BlendFrame,
     renderer: &mut SceneRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) {
     flint_core::scope!("living::blend_upload");
-    upload_props(resolver.living_props_mut(), frame, renderer, device, queue);
+    upload_props(props, frame, renderer, device, queue);
 }
 
 /// [`upload_blends`] for any set of props: the scene's, or the other side of an
@@ -494,6 +495,7 @@ pub fn resolve(
     world: &mut FlintWorld,
     config: &ModelLoadConfig,
     resolver: &mut ProcGenResolver,
+    living: &mut LivingProps,
     sink: &mut dyn AssetSink,
     mode: ProcGenMode,
 ) {
@@ -523,7 +525,7 @@ pub fn resolve(
             .get_world_position(entity.id)
             .map_or([0.0; 3], |p| [p.x, p.y, p.z]);
         let added = read_request(entity.id, name, position, spec_name, component)
-            .and_then(|request| resolver.add_living_prop(request));
+            .and_then(|request| living.add_prop(resolver, request));
         match added {
             Ok((_, asset)) => assets.push((entity.id, asset)),
             Err(reason) => {
@@ -545,7 +547,7 @@ pub fn resolve(
         }
     }
 
-    let props = resolver.living_props();
+    let props = &*living;
     tracing::debug!(target: "load",
         "[living] {} prop(s) on {} lineage(s)",
         props.props().len(),
@@ -554,9 +556,9 @@ pub fn resolve(
     match mode {
         ProcGenMode::Immediate => {
             let started = web_time::Instant::now();
-            let done = resolver.make_living_now();
+            let done = living.make_now(resolver);
             apply_lineages(&done, sink);
-            let props = resolver.living_props();
+            let props = &*living;
             let poses: usize = props.props().iter().map(|p| p.ready()).sum();
             tracing::debug!(target: "load",
                 "[living] {} lineage(s) and {poses} poses in {:.0} ms",

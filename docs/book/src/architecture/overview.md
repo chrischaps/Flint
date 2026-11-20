@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 33-member Cargo workspace (32 crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 34-member Cargo workspace (33 crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -10,6 +10,7 @@ flint/
 │   ├── flint-cli/          # CLI binary (clap). Entry point for all commands.
 │   ├── flint-asset-gen/    # AI asset generation: providers, style guides, batch resolution
 │   ├── flint-procgen/      # Procedural generation: Generator trait, registry, tree/texture/creature generators
+│   ├── flint-living/       # Living props at run time: pose rings on the frame budget, clocks, knobs, blending
 │   ├── flint-procgen-ai/   # AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
 │   ├── flint-ai-core/      # What every paid AI call goes through: transport, retry, prices, ledger, cost meter
 │   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation, scripting
@@ -340,6 +341,15 @@ Procedural generation framework:
 - Built-in generators: `tree_v1` (L-system/space colonization trees), `texture_v1` (PBR texture maps), `creature_v1`, `form_v1` (one abstract living form on a spine)
 - `ProcGenCache` --- LRU cache keyed by (spec_hash, seed) with memory budget, over a `DiskCache` tier in `.flint/procgen-cache/` that keeps outputs between runs
 - Algorithmic building blocks: noise (Perlin, simplex, Worley, FBM), L-system engine, mesh builder, space colonization
+- The living side of a generator: `LivingGenerator` (a structure and its poses), `LivingRig`, `LivingSkeleton`, `LivingPose`, and the `[living]` / `[wooze]` scene tables. What runs them over time is `flint-living`
+
+### flint-living
+
+Living props at run time (#1024), split out of `flint-procgen` so that only a game with living props links the scheduler (`flint-player`'s `living` feature):
+- `LivingProps` --- every lineage (one skeleton and rig a spec and lineage seed) and every prop on it, each with its ring of poses a few steps ahead of its clock, its echoes and its knobs' layers
+- The seam with the resolver: a host keeps `LivingProps` beside its `ProcGenResolver`, which lends it its specs (`living_spec`), its generators and what its queue left of the frame budget (`budget_left_ms`); `add_prop`, `process`, `step_now`, `process_beside` and `settle` take the resolver
+- `BlendFrame` / `blend_prop` --- each frame's two-pose blend per part, written only where something moved
+- Knobs (`tune_*`, `LivingScope`, `LivingLayers`) and the A/B fork (`fork`, `swap_cache`, `redraw_all`)
 
 ### flint-procgen-ai
 

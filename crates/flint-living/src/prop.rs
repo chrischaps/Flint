@@ -8,8 +8,8 @@ use flint_wooze::{Cycle, WoozeSample};
 use super::blend::{DrawnBones, DrawnState, PropEcho};
 use super::layers::{EchoOverride, Layered};
 use super::ring::PoseRing;
-use crate::living::{LivingClock, LivingJitter, LivingPose, WarpedTime};
-use crate::spec::{EchoBlend, EchoConfig, EchoCopy, EchoPlaces, Stagger};
+use flint_procgen::living::{LivingClock, LivingJitter, LivingPose, WarpedTime};
+use flint_procgen::{EchoBlend, EchoConfig, EchoCopy, EchoPlaces, Stagger};
 
 /// One prop's runtime state, the other half of its `living_prop` component.
 #[derive(Debug, Clone)]

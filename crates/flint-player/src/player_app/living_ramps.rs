@@ -416,7 +416,7 @@ impl LivingSubsystem {
         if self.ramps.is_empty() {
             return;
         }
-        let props = ctx.resolver.living_props_mut();
+        let props = &mut *ctx.living;
         // Every value was checked when its ramp started, and an ease between
         // two good values stays between them
         for (species, def) in self.ramps.advance(dt) {
