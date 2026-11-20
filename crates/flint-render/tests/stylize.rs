@@ -2475,6 +2475,164 @@ fn two_styles_share_one_edge_pass_a_frame() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #952 (#484's fix, carried into the shared pass by #743): a crease in
+/// the shared edges is the two pixels astride the fold, not a band. A
+/// pillar stands on the ground, seen square on, so its foot is a level
+/// crease across the frame; each column through the foot holds one run of
+/// crease pixels, as tall as the band is wide. Rebuilt by central
+/// difference, every normal beside the fold mixed the two faces and the
+/// Sobel widened those into a band about 4 px tall (5 here).
+#[test]
+fn a_crease_in_the_shared_edges_is_two_pixels_wide() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    // A user style that paints green where the shared edges hold a
+    // crease, red where a silhouette, black elsewhere
+    let dir = std::env::temp_dir().join(format!("flint-edges-952-{}", std::process::id()));
+    let styles = dir.join("styles");
+    std::fs::create_dir_all(&styles).unwrap();
+    std::fs::write(
+        styles.join("utest_crease_ink.shader.toml"),
+        "version = 1\nname = \"utest_crease_ink\"\nshader = \"utest_crease_ink.wgsl\"\ninputs = [\"edges\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        styles.join("utest_crease_ink.wgsl"),
+        "fn style(p: StylePixel) -> vec4<f32> {\n    \
+         let e = flint_edges(p.uv);\n    \
+         return vec4<f32>(select(0.0, 1.0, e.r >= 1.0), select(0.0, 1.0, e.g >= 1.0), 0.0, 1.0);\n}\n",
+    )
+    .unwrap();
+    let mut registry = flint_render::stylize::StyleRegistry::new();
+    let messages = registry.load_dir(&dir);
+    assert!(messages.is_empty(), "{messages:?}");
+
+    let mut world = FlintWorld::new();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    for (name, min, max) in [
+        ("ground", [-30.0, -0.1, -30.0], [30.0, 0.0, 30.0]),
+        ("pillar", [-2.0, 0.0, -2.0], [2.0, 8.0, 2.0]),
+    ] {
+        let id = world.spawn(name).unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3(min));
+        bounds.insert("max".into(), vec3(max));
+        world.set_component(id, "bounds", bounds.into()).unwrap();
+    }
+    let camera = Camera {
+        position: flint_core::Vec3::new(0.0, 4.0, 14.0),
+        target: flint_core::Vec3::new(0.0, 1.5, 0.0),
+        aspect: 1.0,
+        ..Camera::default()
+    };
+
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    renderer.set_styles(registry);
+    let mut config = renderer.post_process_config().clone();
+    config.styles.set_enabled("utest_crease_ink", true);
+    renderer.set_post_process_config(config);
+    renderer.ensure_style_resources(gpu.device);
+    renderer.prepare(
+        gpu.device,
+        gpu.queue,
+        &world,
+        &flint_render::FrameInputs::default(),
+    );
+    renderer.render_to(
+        gpu.device,
+        gpu.queue,
+        &gpu.depth_view,
+        &camera,
+        &gpu.color_view,
+    );
+    let _ = flint_render::wait_for_gpu(gpu.device);
+    let pixels = gpu.pixels();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let size = SIZE as usize;
+    let crease = |x: usize, y: usize| pixels[(y * size + x) * 4 + 1] > 127;
+    let silhouette = |x: usize, y: usize| pixels[(y * size + x) * 4] > 127;
+    // The frame as text, for the failures: S silhouette, c crease, B both
+    let map: String = (0..size)
+        .map(|y| {
+            let row: String = (0..size)
+                .map(|x| match (silhouette(x, y), crease(x, y)) {
+                    (true, true) => 'B',
+                    (true, false) => 'S',
+                    (false, true) => 'c',
+                    _ => '.',
+                })
+                .collect();
+            format!("{row}\n")
+        })
+        .collect();
+    // The pillar's columns: those its two outlines bound, in a row above
+    // the horizon, where nothing else is drawn
+    let outline: Vec<usize> = (0..size).filter(|&x| silhouette(x, size / 4)).collect();
+    assert_eq!(
+        outline.len(),
+        2,
+        "the pillar's two sides: {outline:?}\n{map}"
+    );
+    let (left, right) = (outline[0], outline[1]);
+    assert!(
+        right - left > 12,
+        "the pillar spans columns {left}..{right}: too narrow to measure\n{map}"
+    );
+    // Each column well inside the outlines: its runs of crease pixels
+    let mut widths = Vec::new();
+    let mut foot = size;
+    for x in left + 3..=right - 3 {
+        let mut runs = Vec::new();
+        let mut run = 0;
+        for y in 0..size {
+            if crease(x, y) {
+                foot = foot.min(y);
+                run += 1;
+            } else if run > 0 {
+                runs.push(run);
+                run = 0;
+            }
+        }
+        if run > 0 {
+            runs.push(run);
+        }
+        assert_eq!(
+            runs.len(),
+            1,
+            "column {x}: crease runs {runs:?}, not one foot\n{map}"
+        );
+        widths.push(runs[0]);
+    }
+    eprintln!("crease widths at the foot, columns {left}..{right}: {widths:?}");
+    assert!(
+        widths.iter().all(|&w| (1..=2).contains(&w)),
+        "the foot's crease is a band, not a line: {widths:?}\n{map}"
+    );
+    // Beside each side, from the top of the frame down to the foot, the
+    // ground just behind the pillar is a step too shallow for the depth
+    // Sobel: a row there holds at most two crease pixels a side (central
+    // differences made three or four)
+    for y in 0..foot {
+        for side in [left, right] {
+            let near = (side - 3..=side + 3).filter(|&x| crease(x, y)).count();
+            assert!(
+                near <= 2,
+                "row {y}: {near} crease pixels beside the side at column {side}\n{map}"
+            );
+        }
+    }
+}
+
 /// #743: ASCII, pencil and contour read the one shared edge pass, which
 /// is drawn once a frame with all three on; ASCII asks for it only while
 /// its `edges` are on, and contour asks for the depth steps alone.
