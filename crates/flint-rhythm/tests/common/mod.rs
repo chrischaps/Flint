@@ -30,8 +30,9 @@ pub const BAR: i64 = 96_000;
 
 /// `tests/data` — synthetic manifests/scripts private to this crate's tests.
 pub fn data_dir() -> PathBuf {
-    // The synthetic suites are flint-music's, shared with its tests.
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../flint-music/tests/data")
+    // The rhythm layer's own synthetic suite: six buses and a seam table
+    // (flint-music's copy has neither, #1041).
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")
 }
 
 /// The repo's golden `fixtures/` directory, or None when the crate is built

@@ -2,9 +2,9 @@
 //!
 //! Every bus the manifest declares gets a kira sub-track and filter, in the
 //! order it declares them, including silent ones, which simply have no sound
-//! playing. Silent buses stay addressable so a layer over this one (the
-//! rhythm layer's reintegration entries, degraded alternates) can bring
-//! material in without rebuilding the mixer.
+//! playing. Silent buses stay addressable so a layer over this one (buses
+//! entering after a timeline jump, degraded alternates) can bring material
+//! in without rebuilding the mixer.
 //!
 //! kira handles are write-only, so each bus keeps shadow state of the last
 //! *commanded* values for introspection. During a tween the audible value lags
@@ -75,8 +75,8 @@ pub struct StemBus {
     track: TrackHandle,
     filter: FilterHandle,
     sound: Option<StaticSoundHandle>,
-    /// The stem's sound data, retained so reintegration can re-play it at a
-    /// new position (Arc-backed; the clone is cheap). `None` for silent buses.
+    /// The stem's sound data, retained so a timeline jump can re-play it at
+    /// a new position (Arc-backed; the clone is cheap). `None` for silent buses.
     data: Option<StaticSoundData>,
     alternate: Option<AlternateVoice>,
     pub state: BusState,
@@ -129,8 +129,9 @@ impl StemBus {
     /// alternate is silent there by authoring, and the bus must not duck
     /// against nothing). No-op when the bus has no alternate.
     ///
-    /// Per-sound volume is also the reintegration entry-envelope channel —
-    /// callers (the ladder driver) must not write it during reassembly.
+    /// Per-sound volume is also the entry-envelope channel after a timeline
+    /// jump: a caller ramping the buses back in owns it until the ramp ends,
+    /// and nothing else may write it meanwhile.
     pub fn set_alternate_mix(&mut self, mix: f64, now_sample: i64, tween: Tween) {
         let Some(alt) = &mut self.alternate else {
             return;
@@ -161,8 +162,8 @@ impl StemBus {
     }
 
     /// Fade this bus's playing sound to silence and stop it. The tween's
-    /// `start_time`/`duration` are the authored seam envelope — this is how
-    /// reintegration leaves the old timeline without a hard cut.
+    /// `start_time`/`duration` are the jump's authored fade envelope: this
+    /// is how a timeline jump leaves the old timeline without a hard cut.
     pub fn stop(&mut self, fade: Tween) {
         if let Some(sound) = &mut self.sound {
             sound.stop(fade);
@@ -176,8 +177,8 @@ impl StemBus {
     /// Play this bus's retained stem again from `start_position_samples`
     /// (a position within the stem = a suite sample, since stems start at
     /// suite sample 0), scheduled at `start_at`, with an initial per-sound
-    /// volume of `entry_db` (the reintegration entry level — 0 for the lead
-    /// bus, deep negative for buses that ramp back in). Replaces the old
+    /// volume of `entry_db` (the bus's entry level after a jump: 0 for a
+    /// bus that leads back in, deep negative for one that ramps back in). Replaces the old
     /// handle; detune resets to 0, which re-establishes sample-lock.
     /// Track-level gain and LPF carry over untouched. No-op on silent buses.
     pub fn replay_at(
@@ -221,9 +222,9 @@ impl StemBus {
     }
 
     /// Set the *per-sound* volume (independent of the track gain the ladder
-    /// drives). The reintegration reassembly ramp lives here: one clock-timed
-    /// tween per bus from its entry level to full, so entry envelopes never
-    /// fight ladder trims. No-op on silent buses.
+    /// drives). A ramp back in after a timeline jump lives here: one
+    /// clock-timed tween per bus from its entry level to full, so entry
+    /// envelopes never fight the track's trims. No-op on silent buses.
     pub fn set_sound_volume(&mut self, db: f32, tween: Tween) {
         if let Some(sound) = &mut self.sound {
             sound.set_volume(Decibels(db), tween);
@@ -231,8 +232,8 @@ impl StemBus {
     }
 
     /// Play an extra one-shot of this bus's retained stem as a *cue* — a
-    /// gesture outside the sample-locked timeline (the reintegration pickup
-    /// spin-up). The caller owns the returned handle and commands its
+    /// gesture outside the sample-locked timeline (a pickup that winds up
+    /// into a jump's re-entry). The caller owns the returned handle and commands its
     /// tweens/stop; the bus's own `sound` slot is untouched. `Ok(None)` on
     /// silent buses.
     pub fn play_cue(

@@ -462,40 +462,40 @@ mod tests {
     use super::*;
     use crate::run_headless_frame;
 
-    const CALM: &str = r#"
-[component.dead_calm.panel]
-title = "Dead Calm"
+    const FOG: &str = r#"
+[component.fog_bank.panel]
+title = "Fog Bank"
 
-[component.dead_calm.fields]
-phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Idle", "Falling calm", "Dead calm", "Life returning"] } }
-calm = { type = "f32", default = 0.0, panel = { role = "status", format = "calm {:.2}" } }
+[component.fog_bank.fields]
+phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Idle", "Rolling in", "Fogbound", "Lifting"] } }
+fog = { type = "f32", default = 0.0, panel = { role = "status", format = "fog {:.2}" } }
 next_in_s = { type = "f32", default = -1.0, panel = { role = "status", format = "next in {:.0}s", unset = -1.0 } }
-trigger_calm = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Calm now" } }
+trigger_fog = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Fog now" } }
 end_now = { type = "bool", default = false, panel = { role = "trigger", label = "End now" } }
 hold_hours = { type = "f32", default = 4.0, panel = { role = "tune", min = 0.0, max = 24.0 } }
 "#;
 
     fn world_and_panel() -> (FlintWorld, ComponentPanel) {
         let mut registry = flint_schema::SchemaRegistry::new();
-        registry.load_component_string(CALM).unwrap();
+        registry.load_component_string(FOG).unwrap();
         let spec = registry
-            .get_component("dead_calm")
+            .get_component("fog_bank")
             .unwrap()
             .panel
             .clone()
             .unwrap();
         let mut world = FlintWorld::new();
-        let id = world.spawn("calm_controller").unwrap();
+        let id = world.spawn("fog_controller").unwrap();
         let table: toml::Value = toml::from_str(
-            "phase = 2.0\ncalm = 0.954\nnext_in_s = -1.0\ntrigger_calm = -1.0\nend_now = false\nhold_hours = 4.0\n",
+            "phase = 2.0\nfog = 0.954\nnext_in_s = -1.0\ntrigger_fog = -1.0\nend_now = false\nhold_hours = 4.0\n",
         )
         .unwrap();
-        world.set_component(id, "dead_calm", table.clone()).unwrap();
+        world.set_component(id, "fog_bank", table.clone()).unwrap();
         let panel = ComponentPanel::new(
             spec,
-            "dead_calm",
-            "calm_controller",
-            "Dead Calm".into(),
+            "fog_bank",
+            "fog_controller",
+            "Fog Bank".into(),
             Some(&table),
             None,
         );
@@ -503,8 +503,8 @@ hold_hours = { type = "f32", default = 4.0, panel = { role = "tune", min = 0.0, 
     }
 
     fn field(world: &FlintWorld, name: &str) -> toml::Value {
-        let id = world.get_id("calm_controller").unwrap();
-        world.get_components(id).unwrap().get("dead_calm").unwrap()[name].clone()
+        let id = world.get_id("fog_controller").unwrap();
+        world.get_components(id).unwrap().get("fog_bank").unwrap()[name].clone()
     }
 
     #[test]
@@ -512,7 +512,7 @@ hold_hours = { type = "f32", default = 4.0, panel = { role = "tune", min = 0.0, 
         let (mut world, mut panel) = world_and_panel();
         panel.toggle();
         panel.sync_world(&mut world);
-        assert_eq!(panel.status_line(), "Dead calm  ·  calm 0.95");
+        assert_eq!(panel.status_line(), "Fogbound  ·  fog 0.95");
         assert_eq!(panel.weight(), 1 + 1 + 1 + 1 + 1);
     }
 
@@ -527,7 +527,7 @@ hold_hours = { type = "f32", default = 4.0, panel = { role = "tune", min = 0.0, 
         assert!(!panel.is_dirty(), "drawing writes nothing");
         // What the End now button does when pressed
         assert!(panel.press("end_now", None));
-        assert!(!panel.press("calm", None), "a status row is no trigger");
+        assert!(!panel.press("fog", None), "a status row is no trigger");
         assert!(panel.is_dirty());
         panel.sync_world(&mut world);
         assert_eq!(field(&world, "end_now"), toml::Value::Boolean(true));

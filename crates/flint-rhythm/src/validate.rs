@@ -60,7 +60,14 @@ pub fn validate_manifest(m: &SuiteManifest) -> Vec<Issue> {
     }
 
     // --- reintegration -------------------------------------------------------
-    let Some(reintegration) = &m.reintegration else {
+    let reintegration = match crate::reintegration::Reintegration::of(m) {
+        Ok(r) => r,
+        Err(e) => {
+            issues.push(Issue::new("BadReintegration", e.to_string()));
+            return issues;
+        }
+    };
+    let Some(reintegration) = &reintegration else {
         issues.push(Issue::new(
             "MissingReintegration",
             "a rhythm suite needs a [reintegration] table (re_entry_sections, lead_bus, reassembly_bars)",

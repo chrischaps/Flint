@@ -602,7 +602,19 @@ flint render scene.toml --style tron:blend_source=tear --set post.tear=0.45 --se
 
 The `ocean` component's `tint` (0--1) moves its whole palette toward another before any use, so bands, subsurface, foam and reflections agree, and after a script's palette lands, so it can't race one: `tint_deep_color`, `tint_shallow_color`, `tint_sss_color`, `tint_foam_color`, `tint_sky` (what the sky's reflection is multiplied by), `tint_ramp_steps`, `tint_band_wobble`, `tint_pools` (world-anchored pools that spread with the tint; 0 tints evenly), `tint_keep_light` (scaled by the palette's own brightness, so a night sea stays dark) and `tint_below` (only the surface seen from below). `flint schema ocean` lists them.
 
-`tint_preset` names what those fields are when unwritten: `blood` (the default, the crimson tide: night-dark pools that spread with the tint) or `underside` (the surface seen from under it: murk blues and flat foam panes, below only). A written field still wins over its preset. So a game that shows both looks switches between them with one field and drives `tint` alone, and its scripts need no colours (#1035):
+A tint names the colours it moves toward. With no preset, a colour it leaves out is the sea's own (`deep_color`, `shallow_color`, `sss_color`, `foam_color`), and every other setting changes nothing (`tint_sky` white, no bands of its own, no wobble, no pools, light not kept), so `tint = 0.5` alone draws the sea it was (#1041):
+
+```toml
+[entities.sea.ocean]
+tint = 0.6                                   # a storm greying the sea, in pools
+tint_deep_color = [0.05, 0.07, 0.09, 1.0]
+tint_shallow_color = [0.22, 0.27, 0.30, 1.0]
+tint_sky = [0.6, 0.65, 0.7, 1.0]
+tint_pools = 0.05
+tint_keep_light = true
+```
+
+`tint_preset` names a tint the fields fall back on instead: `blood` (the crimson tide: night-dark pools that spread with the tint) or `underside` (the surface seen from under it: murk blues and flat foam panes, below only). A written field still wins over its preset. So a game that shows both looks switches between them with one field and drives `tint` alone, and its scripts need no colours (#1035):
 
 ```rhai
 let sea = get_entity("ocean");
@@ -610,7 +622,9 @@ set_field(sea, "ocean", "tint_preset", "underside");   // the eye went under
 set_field(sea, "ocean", "tint", 1.0);
 ```
 
-The `tint_*` fields carry no schema default for this reason: a scene load writes a field's default into the component, where it would beat the preset. Give the fields one writer: a second script writing `tint` races the first, since scripts run in no set order. Float's `seat_camera.rhai` owns them, drawing the underside while the eye is under and the blood tear's tint (which `reality.rhai` publishes) otherwise.
+The `tint_*` fields and `tint_preset` carry no schema default for this reason: a scene load writes a field's default into the component, where it would beat the preset (or, for `tint_preset`, name one the scene never asked for). Give the fields one writer: a second script writing `tint` races the first, since scripts run in no set order. Float's `seat_camera.rhai` owns them, drawing the underside while the eye is under and the blood tear's tint (which `reality.rhai` publishes) otherwise.
+
+Before #1041 an unwritten preset was `blood`, so a scene that set `tint` alone drew a sea of blood; it now draws its own sea, and names the palette or preset it wants.
 
 ### From scripts
 
@@ -633,10 +647,10 @@ Unlike the old render mode, these hold until changed, as every other post overri
 | Mode | Is now |
 |------|--------|
 | 1 Matrix | `matrix` with `blend_source = "tear"`, `tear` = mix, `tear_scale` = x, `tear_iris` = y >= 0.5, `rate` = z (0 reads as 6) |
-| 2 Blood | `blood` following the tear, and the ocean's tint at the mix (`OceanTint::blood`) |
+| 2 Blood | `blood` following the tear, and the ocean's tint at the mix (`tint_preset = "blood"`, `OceanTint::blood`) |
 | 3 Drunk | `drunk` at `blend` = mix |
 | 4 Tron | `tron` following the tear |
-| 5 Underwater | `underwater` at `blend` = mix, `depth`, `churn`, `daylight`, `glow` = x, y, z, w, and the ocean's tint on its underside (`OceanTint::underside`) |
+| 5 Underwater | `underwater` at `blend` = mix, `depth`, `churn`, `daylight`, `glow` = x, y, z, w, and the ocean's tint on its underside (`tint_preset = "underside"`, `OceanTint::underside`) |
 | 6 Tear | the tear alone |
 
 The golden `render-mode-shim-matrix` holds `--render-mode 1` to the style and the tear pixel for pixel.

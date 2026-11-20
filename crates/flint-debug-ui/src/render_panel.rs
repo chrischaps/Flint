@@ -335,7 +335,7 @@ impl RenderDebugPanel {
             if self.show_freeze {
                 ui.checkbox(&mut self.freeze_scripts, "Freeze script post overrides")
                     .on_hover_text(
-                        "Scripts and the reintegration ladder re-stamp several post fields \
+                        "Scripts and a rhythm game's ladder re-stamp several post fields \
                          every frame (exposure, vignette, bloom intensity, chromatic, radial \
                          blur, SSAO intensity, fog density/color, desaturate, DoF, render \
                          mode). While frozen, those stamps are skipped so panel edits stick.",

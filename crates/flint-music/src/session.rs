@@ -33,7 +33,7 @@ fn static_sound_from_file(
 
 /// Beats of silence before sample 0 (at the first anchor's tempo), giving
 /// every stem's start a scheduled future clock time — the same lookahead
-/// pattern reintegration entries will use.
+/// pattern a timeline jump's re-entry uses ([`SuiteSession::schedule_jump`]).
 pub const PREROLL_BEATS: f64 = 2.0;
 
 /// Provides each bus's sound data. `FileStems` is the real implementation;
@@ -90,13 +90,13 @@ pub struct SuiteSession {
     pub conductor: Conductor,
     pub scheduler: Scheduler,
     preroll_samples: u64,
-    /// Reintegration timeline map: `suite_sample = raw_clock_sample -
-    /// timeline_offset`. The clock never rewinds; a seam that returns the
+    /// The timeline map: `suite_sample = raw_clock_sample -
+    /// timeline_offset`. The clock never rewinds; a jump that returns the
     /// suite to an earlier section adjusts this offset instead. 0 until the
-    /// first seam.
+    /// first jump.
     timeline_offset: i64,
-    /// A seam whose audio is already scheduled but whose musical-time jump
-    /// hasn't been reached yet: `(raw_sample_of_seam, new_offset)`. Committed
+    /// A jump whose audio is already scheduled but whose musical-time move
+    /// hasn't been reached yet: `(raw_sample_of_jump, new_offset)`. Committed
     /// by `pump` when the clock arrives.
     pending_jump: Option<(i64, i64)>,
 }
@@ -184,16 +184,16 @@ impl SuiteSession {
     }
 
     /// Monotonic clock position in samples past pre-roll (negative during
-    /// pre-roll). Never rewinds; seam bookkeeping lives on this timeline.
+    /// pre-roll). Never rewinds; jump bookkeeping lives on this timeline.
     pub fn raw_clock_sample(&self) -> i64 {
         let t = self.clock.time();
         (t.ticks as f64 + t.fraction - self.preroll_samples as f64).floor() as i64
     }
 
     /// Suite sample position implied by the clock: the raw clock position
-    /// mapped through the reintegration timeline offset. This is the sample
-    /// every musical consumer (conductor, judge, chart eval, replay) sees;
-    /// it jumps backwards exactly once per seam.
+    /// mapped through the timeline offset. This is the sample every musical
+    /// consumer (the conductor, and a layer's judge or replay) sees; it moves
+    /// exactly once per jump.
     pub fn clock_sample(&self) -> i64 {
         self.raw_clock_sample() - self.timeline_offset
     }
@@ -215,15 +215,17 @@ impl SuiteSession {
         )
     }
 
-    /// Schedule a reintegration seam: fade the current timeline to silence
-    /// over `fade_ms` ending exactly at seam time `seam_suite_sample` (a
-    /// sample on the *current* suite timeline, far enough ahead for the
-    /// fade), re-play every stem from `re_entry_sample` at that same clock
-    /// tick with per-bus entry levels, and queue the musical-time jump,
-    /// which `pump` commits when the clock reaches the seam. The caller
-    /// flushes the scheduler and owns the reassembly ramps; this method owns
-    /// only sample-accurate mechanics.
-    pub fn schedule_seam(
+    /// Jump the suite's timeline without a hard cut (#1041; it was
+    /// `schedule_seam`): fade the current timeline to silence over `fade_ms`
+    /// ending exactly at `seam_suite_sample` (a sample on the *current* suite
+    /// timeline, far enough ahead for the fade), re-play every stem from
+    /// `re_entry_sample` at that same clock tick with per-bus entry levels,
+    /// and queue the musical-time move, which `pump` commits when the clock
+    /// reaches the seam. The caller flushes the scheduler and owns any ramp
+    /// back in; this method owns only sample-accurate mechanics. A rhythm
+    /// game's return after a full fail is one caller
+    /// (`flint_rhythm::Reintegrator`).
+    pub fn schedule_jump(
         &mut self,
         re_entry_sample: i64,
         seam_suite_sample: i64,
@@ -280,7 +282,7 @@ impl SuiteSession {
     }
 
     /// Issue scheduled events entering the lookahead horizon, committing any
-    /// pending seam jump the clock has reached. Call regularly (each poll
+    /// pending timeline jump the clock has reached. Call regularly (each poll
     /// tick live; each chunk offline).
     pub fn pump(&mut self) -> Vec<FiredEvent> {
         if let Some((seam_raw, offset)) = self.pending_jump {

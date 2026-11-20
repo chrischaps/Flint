@@ -24,8 +24,7 @@ use flint_rhythm::Chart;
 use std::path::Path;
 
 fn manifest() -> SuiteManifest {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../flint-music/tests/data/tempo_change.suite.toml");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/tempo_change.suite.toml");
     SuiteManifest::load(&path).expect("synthetic manifest")
 }
 

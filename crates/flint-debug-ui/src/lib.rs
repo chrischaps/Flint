@@ -168,7 +168,7 @@ mod column_tests {
         // A representative full roster in creation order, mixing engine
         // panels with game-supplied ones (which take the default weight).
         // Rendering & Effects, Ocean, then a game's component panels
-        // (Day / Time, Weather, Reality, Visitor, Dead Calm) and Camera.
+        // (Day / Time, Weather, Lantern, Fog Bank, Tide) and Camera.
         let weights = [60, 46, 10, 15, 20, 5, 6, 6];
         let cols = assign_columns(&weights, 3);
         assert_eq!(cols.len(), 3);

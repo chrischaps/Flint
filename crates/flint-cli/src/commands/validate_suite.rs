@@ -48,7 +48,8 @@ pub fn run(args: ValidateSuiteArgs) -> Result<()> {
     };
 
     // The rhythm contract runs the general pass first
-    let rhythm = args.rhythm || args.chart.is_some() || manifest.reintegration.is_some();
+    let rhythm =
+        args.rhythm || args.chart.is_some() || flint_rhythm::Reintegration::declared(&manifest);
     record(
         "manifest",
         if rhythm {

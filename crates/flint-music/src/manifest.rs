@@ -8,9 +8,11 @@
 //!
 //! The buses are the manifest's own: as many as it declares, named as it
 //! likes, mixed and listed in the order it declares them
-//! ([`SuiteManifest::bus_order`]). `[reintegration]` and each section's
-//! `pulse_window_ms` are the rhythm layer's (flint-rhythm requires them);
-//! a suite that only plays music leaves them out.
+//! ([`SuiteManifest::bus_order`]). A top-level table this layer doesn't
+//! read is kept whole in [`SuiteManifest::tables`] for a layer built on the
+//! suite, which parses its own there (flint-rhythm reads its seam table, as
+//! it reads charts), and each section's `pulse_window_ms` is a judgment
+//! window for such a layer; a suite that only plays music leaves them out.
 
 use crate::config_toml::{self, VersionPolicy};
 use flint_core::{vfs, FlintError, Result};
@@ -31,13 +33,6 @@ pub struct Section {
     pub start_sample: i64,
     /// The section's judgment window (a half-width), for the rhythm layer.
     pub pulse_window_ms: Option<f64>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Reintegration {
-    pub re_entry_sections: Vec<String>,
-    pub lead_bus: String,
-    pub reassembly_bars: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -62,9 +57,10 @@ pub struct SuiteManifest {
     pub sample_rate: u32,
     pub tempo: Vec<TempoAnchor>,
     pub sections: Vec<Section>,
-    /// The rhythm layer's seam: where a full fail re-enters and which bus
-    /// leads it back. `None` for a suite that only plays music.
-    pub reintegration: Option<Reintegration>,
+    /// Every top-level table and key this layer doesn't read, by name, as
+    /// written: a layer built on the suite parses its own from here. Empty
+    /// for a suite that only plays music.
+    pub tables: toml::Table,
     pub buses: BTreeMap<String, BusDecl>,
     /// Every bus name in `buses`, in the order the manifest declares them:
     /// the order they are built, mixed and listed in.
@@ -129,28 +125,15 @@ impl SuiteManifest {
             });
         }
 
-        let reintegration = match root.get("reintegration") {
-            None => None,
-            Some(_) => {
-                let reint = table(&root, "reintegration")?;
-                let re_entry_sections = reint
-                    .get("re_entry_sections")
-                    .and_then(|v| v.as_array())
-                    .ok_or_else(|| bad("reintegration.re_entry_sections"))?
-                    .iter()
-                    .map(|v| {
-                        v.as_str()
-                            .map(String::from)
-                            .ok_or_else(|| bad("reintegration.re_entry_sections entry"))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                Some(Reintegration {
-                    re_entry_sections,
-                    lead_bus: string(reint, "lead_bus")?,
-                    reassembly_bars: int_in(reint, "reassembly_bars")?,
-                })
-            }
-        };
+        let tables: toml::Table = root
+            .as_table()
+            .map(|t| {
+                t.iter()
+                    .filter(|(k, _)| !READ_HERE.contains(&k.as_str()))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let mut buses = BTreeMap::new();
         for (name, v) in table(&root, "buses")?.iter() {
@@ -188,7 +171,7 @@ impl SuiteManifest {
             sample_rate,
             tempo,
             sections,
-            reintegration,
+            tables,
             buses,
             bus_order,
             degraded_alternates,
@@ -235,6 +218,17 @@ fn declared_order(text: &str, buses: &BTreeMap<String, BusDecl>) -> Vec<String> 
 // -- small extraction helpers (FlintError::ParseError on shape problems) ------
 
 const NAME: &str = "suite manifest";
+
+/// The top-level keys this layer reads; the rest go to `tables`.
+const READ_HERE: &[&str] = &[
+    "schema_version",
+    "suite",
+    "audio",
+    "tempo",
+    "sections",
+    "buses",
+    "degraded_alternates",
+];
 
 fn bad(what: &str) -> FlintError {
     config_toml::bad(NAME, what)
@@ -294,7 +288,7 @@ file = "stems/bass.wav"
             ["zither", "bass"],
             "not the map's alphabetical order"
         );
-        assert!(m.reintegration.is_none());
+        assert!(m.tables.is_empty());
         assert_eq!(m.sections[0].pulse_window_ms, None);
         assert!(
             crate::validate_manifest(&m).is_empty(),
@@ -304,15 +298,17 @@ file = "stems/bass.wav"
     }
 
     #[test]
-    fn a_reintegration_table_and_pulse_windows_still_parse() {
+    fn a_layers_own_table_is_kept_whole_and_pulse_windows_parse() {
         let text = TWO_BUSES.replace(
             "start_sample = 0\n",
             "start_sample = 0\npulse_window_ms = 90\n",
-        ) + "[reintegration]\nre_entry_sections = [\"a\"]\nlead_bus = \"bass\"\nreassembly_bars = 2\n";
+        ) + "[encore]\nfrom_sections = [\"a\"]\nlead_bus = \"bass\"\nbars = 2\n";
         let m = SuiteManifest::parse(&text).unwrap();
         assert_eq!(m.sections[0].pulse_window_ms, Some(90.0));
-        let r = m.reintegration.expect("parsed");
-        assert_eq!((r.lead_bus.as_str(), r.reassembly_bars), ("bass", 2));
+        let names: Vec<&str> = m.tables.keys().map(String::as_str).collect();
+        assert_eq!(names, ["encore"], "only what this layer doesn't read");
+        assert_eq!(m.tables["encore"]["lead_bus"].as_str(), Some("bass"));
+        assert_eq!(m.tables["encore"]["bars"].as_integer(), Some(2));
     }
 
     #[test]

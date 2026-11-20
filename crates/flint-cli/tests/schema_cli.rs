@@ -564,22 +564,22 @@ fn a_games_old_type_spelling_is_a_warning_naming_the_file() {
 }
 
 /// #1020: `flint schema <component>` shows the F3 panel its fields declare
-/// (#744), and `--format json` carries it as `panel`. The component is
-/// Float's `dead_calm`, cut to its panel rows and one tune row.
+/// (#744), and `--format json` carries it as `panel`. The component is a
+/// fog bank a script rolls in and lifts: its panel rows and one tune row.
 #[test]
 fn a_components_panel_is_shown_and_exported() {
     let game = Game::new(
         "panel",
         &[
-            ("flint.toml", "[project]\nid = \"calm\"\n"),
+            ("flint.toml", "[project]\nid = \"fog\"\n"),
             (
-                "schemas/components/dead_calm.toml",
-                r#"[component.dead_calm.fields]
+                "schemas/components/fog_bank.toml",
+                r#"[component.fog_bank.fields]
 hold_hours = { type = "f32", default = 4.0, min = 0.5, max = 12.0, panel = { role = "tune", step = 0.25, presets = [["short", 1.0], ["long", 8.0]], commit = false } }
-trigger_calm = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Calm now" } }
+trigger_fog = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Fog now" } }
 end_now = { type = "bool", default = false, panel = { role = "trigger", label = "End now" } }
-phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Idle", "Falling calm", "Dead calm", "Life returning"] } }
-calm = { type = "f32", default = 0.0, panel = { role = "status", format = "calm {:.2}" } }
+phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Idle", "Rolling in", "Fogbound", "Lifting"] } }
+fog = { type = "f32", default = 0.0, panel = { role = "status", format = "fog {:.2}" } }
 next_in_s = { type = "f32", default = -1.0, panel = { role = "status", format = "next in {:.0}s", unset = -1.0 } }
 debug_log = { type = "bool", default = false }
 "#,
@@ -587,13 +587,13 @@ debug_log = { type = "bool", default = false }
         ],
     );
 
-    let out = game.flint(&["schema", "dead_calm"]);
+    let out = game.flint(&["schema", "fog_bank"]);
     let text = stdout(&out);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(
         text.contains(
-            "\nPanel \"Dead calm\": status phase, calm, next_in_s · tune hold_hours · \
-             trigger trigger_calm \"Calm now\", end_now\n"
+            "\nPanel \"Fog bank\": status phase, fog, next_in_s · tune hold_hours · \
+             trigger trigger_fog \"Fog now\", end_now\n"
         ),
         "{text}"
     );
@@ -602,19 +602,19 @@ debug_log = { type = "bool", default = false }
     let out = game.flint(&["schema", "transform"]);
     assert!(!stdout(&out).contains("Panel"), "{}", stdout(&out));
 
-    let out = game.flint(&["schema", "dead_calm", "--format", "json"]);
+    let out = game.flint(&["schema", "fog_bank", "--format", "json"]);
     let panel = &json(&out)["panel"];
-    assert_eq!(panel["title"], "Dead calm");
+    assert_eq!(panel["title"], "Fog bank");
     let rows = panel["rows"].as_array().unwrap();
     let fields: Vec<&str> = rows.iter().map(|r| r["field"].as_str().unwrap()).collect();
     assert_eq!(
         fields,
         [
             "hold_hours",
-            "trigger_calm",
+            "trigger_fog",
             "end_now",
             "phase",
-            "calm",
+            "fog",
             "next_in_s"
         ],
         "the rows keep the order the fields are written in"
@@ -629,12 +629,12 @@ debug_log = { type = "bool", default = false }
     );
     assert_eq!(
         rows[1],
-        serde_json::json!({ "field": "trigger_calm", "role": "trigger", "label": "Calm now", "press": 1.0 })
+        serde_json::json!({ "field": "trigger_fog", "role": "trigger", "label": "Fog now", "press": 1.0 })
     );
     assert_eq!(rows[2]["press"], true);
     assert_eq!(
         rows[3]["labels"],
-        serde_json::json!(["Idle", "Falling calm", "Dead calm", "Life returning"])
+        serde_json::json!(["Idle", "Rolling in", "Fogbound", "Lifting"])
     );
     assert_eq!(
         rows[5],
@@ -647,6 +647,6 @@ debug_log = { type = "bool", default = false }
     // The whole export carries it too, and only where there is one
     let out = game.flint(&["schema", "--format", "json"]);
     let all = json(&out);
-    assert_eq!(all["components"]["dead_calm"]["panel"], *panel);
+    assert_eq!(all["components"]["fog_bank"]["panel"], *panel);
     assert!(all["components"]["transform"].get("panel").is_none());
 }

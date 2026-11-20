@@ -4,7 +4,7 @@
 //! job is to hold events beyond a lookahead horizon, resolve musical time to
 //! a sample position **once, at push** (via the Conductor — a resolved event
 //! never re-interprets time), and issue the kira commands as events enter the
-//! horizon. Section transitions and reintegration entries in later phases are
+//! horizon. Section transitions and a timeline jump's re-entries are
 //! consumers of this same queue.
 
 use crate::conductor::Conductor;
@@ -132,12 +132,12 @@ impl Scheduler {
         self.pending.len()
     }
 
-    /// Drop every event not yet handed to kira. Reintegration calls this at
-    /// full-fail: pending events were resolved against the old timeline and
-    /// would land at wrong musical positions after the seam. Returns how many
+    /// Drop every event not yet handed to kira. A timeline jump's caller
+    /// calls this first: pending events were resolved against the old
+    /// timeline and would land at wrong musical positions after the jump. Returns how many
     /// were discarded. Events already inside the horizon are kira's — they
-    /// cannot be withdrawn, which is one reason ladder moves don't use the
-    /// scheduler.
+    /// cannot be withdrawn, which is one reason a layer's live mix moves
+    /// don't use the scheduler.
     pub fn flush(&mut self) -> usize {
         let n = self.pending.len();
         self.pending.clear();
@@ -149,7 +149,7 @@ impl Scheduler {
     /// has already passed). Returns what was issued, in order.
     /// `tick_base` maps suite samples to clock ticks (`tick = sample +
     /// tick_base`): the pre-roll length, plus the session's timeline offset
-    /// once reintegration seams exist.
+    /// after a timeline jump ([`crate::session::SuiteSession::schedule_jump`]).
     pub fn pump(
         &mut self,
         now_sample: i64,
@@ -175,7 +175,7 @@ impl Scheduler {
                 StartTime::Immediate
             } else {
                 // Suite sample -> clock tick via the caller's base (pre-roll
-                // plus any reintegration timeline offset).
+                // plus any timeline jump's offset).
                 StartTime::ClockTime(ClockTime::from_ticks_u64(
                     clock,
                     (key.sample + tick_base) as u64,

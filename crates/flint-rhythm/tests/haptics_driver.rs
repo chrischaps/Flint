@@ -12,8 +12,7 @@ use std::path::Path;
 
 fn conductor() -> Conductor {
     let manifest = SuiteManifest::load(
-        &Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../flint-music/tests/data/tempo_change.suite.toml"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/tempo_change.suite.toml"),
     )
     .expect("fixture manifest");
     Conductor::new(&manifest, None)

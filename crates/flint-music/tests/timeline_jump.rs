@@ -1,18 +1,14 @@
-//! Historical note (2026-08-19 hygiene pass): `seam_milestone3.rs` now
-//! exercises the full reactive loop on top of this mechanism, but this spike
-//! remains the *isolated* proof of the seam primitive (no judge, no ladder)
-//! and is cited from the Phase 3 status entry — kept, not superseded.
+//! A timeline jump (`SuiteSession::schedule_jump`), alone: stopping all
+//! stems with a short fade and re-playing them from an earlier position on
+//! one shared clock tick (a) lands the re-entry sample-accurately, (b) keeps
+//! the stems sample-locked after the jump, (c) produces no click, and (d)
+//! moves the suite timeline backwards exactly once via the session's
+//! timeline offset. It was the seam spike (ADR 0014); flint-rhythm's
+//! `seam_milestone3.rs` runs its full-fail loop on top of the same jump.
 //!
-//! E4 seam-mechanism spike (Phase 3): prove that stopping all stems with a
-//! short fade and re-playing them from an earlier position on one shared
-//! clock tick (a) lands the re-entry sample-accurately, (b) keeps the stems
-//! sample-locked after the seam, (c) produces no click, and (d) moves the
-//! suite timeline backwards exactly once via the session's timeline offset —
-//! before the reintegration sequencer (E5) is built on top of it.
-//!
-//! Content encoding: home_theme carries 880 Hz only during the first two
-//! bars of the *suite* timeline, so its reappearance in the rendered output
-//! is direct evidence that playback returned to suite sample 0.
+//! Content encoding: the bell carries 880 Hz only during the first two bars
+//! of the *suite* timeline, so its reappearance in the rendered output is
+//! direct evidence that playback returned to suite sample 0.
 
 use flint_music::analysis::{find_tone_transitions, max_step, peak, tone_envelope, TransitionKind};
 use flint_music::event_script::EventScript;
@@ -24,18 +20,18 @@ use common::{tempo_change_manifest, SineStems, BAR, CHUNK, SR, WINDOW};
 
 /// Render 8 bars of *clock* time.
 const DURATION: i64 = 8 * BAR;
-/// home_theme sounds for suite samples [0, 2 bars).
-const THEME_END: i64 = 2 * BAR;
-/// The director triggers the seam once the play head passes bar 4...
+/// The bell sounds for suite samples [0, 2 bars).
+const BELL_END: i64 = 2 * BAR;
+/// The director triggers the jump once the play head passes bar 4...
 const TRIGGER_AT: i64 = 4 * BAR;
 /// ...scheduling the re-entry (to suite sample 0) at bar 5.
 const SEAM_AT: i64 = 5 * BAR;
 const FADE_MS: f64 = 20.0;
 
-/// foundation/texture: steady tones (lock + click material across the seam).
-/// home_theme: 880 Hz gated to the first two suite bars (position evidence).
-fn seam_stems() -> SineStems {
-    SineStems::theme_gated(DURATION, vec![(0, THEME_END)])
+/// pad/rain: steady tones (lock + click material across the jump).
+/// bell: 880 Hz gated to the first two suite bars (position evidence).
+fn jump_stems() -> SineStems {
+    SineStems::bell_gated(DURATION, vec![(0, BELL_END)])
 }
 
 struct Rendered {
@@ -59,20 +55,20 @@ fn render() -> Rendered {
     let mut positions = Vec::new();
     let mut max_skew_after_seam = 0.0f64;
     let mut triggered = false;
-    let result = render_offline_with(&manifest, &seam_stems(), &script, &cfg, |pos, session| {
+    let result = render_offline_with(&manifest, &jump_stems(), &script, &cfg, |pos, session| {
         positions.push(*pos);
         if !triggered && pos.sample >= TRIGGER_AT {
             triggered = true;
             session
-                .schedule_seam(0, SEAM_AT, FADE_MS, &|_| 0.0)
-                .expect("schedule seam");
+                .schedule_jump(0, SEAM_AT, FADE_MS, &|_| 0.0)
+                .expect("schedule jump");
         }
         if session.timeline_offset() != 0 {
             max_skew_after_seam = max_skew_after_seam.max(session.mixer.max_stem_skew());
         }
     })
     .expect("offline render");
-    assert!(triggered, "seam trigger never reached");
+    assert!(triggered, "jump trigger never reached");
     Rendered {
         result,
         positions,
@@ -81,13 +77,13 @@ fn render() -> Rendered {
 }
 
 #[test]
-fn seam_replays_at_position_sample_locked_without_click() {
+fn a_jump_replays_at_position_sample_locked_without_click() {
     let r = render();
     let audio = &r.result.samples;
     assert_eq!(audio.len(), DURATION as usize * 2);
     assert!(peak(audio) > 0.2, "render must not be silent");
 
-    // --- home_theme reappears exactly at the seam --------------------------
+    // --- the bell reappears exactly at the jump ----------------------------
     // Output index = raw clock sample. Expected 880 Hz shape: on during raw
     // [0, 2 bars), off, on again at the seam (suite restarts at 0), off two
     // suite bars later.
@@ -97,7 +93,7 @@ fn seam_replays_at_position_sample_locked_without_click() {
     assert_eq!(
         transitions.len(),
         3,
-        "drop at theme end, rise at seam, drop at theme end again: {transitions:?}"
+        "drop at bell end, rise at the jump, drop at bell end again: {transitions:?}"
     );
     let (t0, k0) = transitions[0];
     let (t1, k1) = transitions[1];
@@ -105,13 +101,13 @@ fn seam_replays_at_position_sample_locked_without_click() {
     assert_eq!(k0, TransitionKind::Drop);
     assert_eq!(k1, TransitionKind::Rise);
     assert_eq!(k2, TransitionKind::Drop);
-    assert!((t0 - THEME_END).abs() <= tol, "first drop at {t0}");
+    assert!((t0 - BELL_END).abs() <= tol, "first drop at {t0}");
     assert!(
         (t1 - SEAM_AT).abs() <= tol,
         "re-entry landed at {t1}, scheduled {SEAM_AT} (tol {tol})"
     );
     assert!(
-        (t2 - (SEAM_AT + THEME_END)).abs() <= tol,
+        (t2 - (SEAM_AT + BELL_END)).abs() <= tol,
         "post-seam suite time must run from 0: second drop at {t2}"
     );
 
@@ -128,7 +124,7 @@ fn seam_replays_at_position_sample_locked_without_click() {
 }
 
 #[test]
-fn seam_jumps_suite_time_backwards_exactly_once() {
+fn a_jump_moves_suite_time_backwards_exactly_once() {
     let r = render();
     let pos = &r.positions;
 
@@ -164,7 +160,7 @@ fn seam_jumps_suite_time_backwards_exactly_once() {
 }
 
 #[test]
-fn seam_render_is_deterministic() {
+fn a_jump_render_is_deterministic() {
     let a = render();
     let b = render();
     assert_eq!(

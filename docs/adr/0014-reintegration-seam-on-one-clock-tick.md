@@ -53,7 +53,7 @@ Not recorded in the surviving text.
 
 ## Measured
 
-From the spike (`tests/seam_spike.rs`): sample-locked re-entry under 1 µs
+From the spike (`tests/seam_spike.rs`, now flint-music's `tests/timeline_jump.rs`, #1041): sample-locked re-entry under 1 µs
 skew, no click, a single backwards jump, bit-identical renders.
 
 ## Sources

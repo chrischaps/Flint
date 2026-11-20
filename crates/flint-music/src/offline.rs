@@ -101,12 +101,12 @@ pub fn render_offline(
 }
 
 /// [`render_offline`] with a *director* instead of a read-only observer: the
-/// per-chunk callback gets the mutable session, so a coherence-reactive
-/// ladder or a reintegration sequencer can drive the mix mid-render — the
+/// per-chunk callback gets the mutable session, so a layer over this one (a
+/// rhythm game's ladder, its timeline jumps) can drive the mix mid-render — the
 /// same reactive loop the realtime harness runs, made deterministic. The
 /// director runs after the scheduler pump and before the chunk's audio.
 /// Output index 0 = suite sample 0; the render length is fixed in frames, so
-/// a seam that jumps the suite timeline backwards still renders the same
+/// a jump that moves the suite timeline backwards still renders the same
 /// number of samples.
 pub fn render_offline_with(
     manifest: &SuiteManifest,

@@ -69,6 +69,10 @@ impl TimelineMap {
         // Round up to the next bar line so the strip ends on musical ground.
         let end_bar = conductor.position_at_sample(raw_end).bar + 1;
         let end_sample = conductor.sample_at_bar(end_bar, 0.0);
+        // An unreadable table marks nothing; the validator names it.
+        let reintegration = crate::reintegration::Reintegration::of(manifest)
+            .ok()
+            .flatten();
 
         let mut sections: Vec<TimelineSection> = manifest
             .sections
@@ -77,10 +81,9 @@ impl TimelineMap {
                 name: s.name.clone(),
                 start_sample: s.start_sample,
                 end_sample, // patched below from the next section's start
-                re_entry: manifest
-                    .reintegration
+                re_entry: reintegration
                     .as_ref()
-                    .is_some_and(|r| r.re_entry_sections.contains(&s.name)),
+                    .is_some_and(|r| r.re_enters_at(&s.name)),
             })
             .collect();
         for i in 0..sections.len().saturating_sub(1) {
