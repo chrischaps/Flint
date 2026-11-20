@@ -179,3 +179,139 @@ fn an_edit_of_the_file_still_hot_reloads_its_post_process() {
     assert_eq!(on_screen(&app).bloom_intensity, 0.04);
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+/// The change list's lines, parsed
+fn change_list(path: &Path) -> Vec<serde_json::Value> {
+    let log = crate::edits::edit_log_path(path);
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+/// #1046: a Commit to scene is in the change list, a line a key it wrote,
+/// in a save's shape, and a Ctrl+S after it doesn't write it back out
+#[test]
+fn a_commit_appends_its_keys_to_the_change_list() {
+    let Some((device, queue)) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let path = scene_file("logged");
+    let mut app = viewer(&path, device, queue);
+    let mut tuned = tune(&mut app);
+
+    let mut editor = flint_debug_ui::StylesEditor::default();
+    editor.set_scene_file(Some(path.clone()));
+    let ascii = flint_render::stylize::builtin("ascii").unwrap();
+    editor.commit(ascii, &mut tuned).unwrap();
+    // What the viewer does on the panel's styles_committed flag
+    log_commit(&mut app.state.lock().unwrap());
+
+    let lines = change_list(&path);
+    let cell = lines
+        .iter()
+        .find(|l| l["field"] == "cell")
+        .unwrap_or_else(|| panic!("no line for the cell: {lines:?}"));
+    assert_eq!(cell["entity"], serde_json::Value::Null);
+    assert_eq!(cell["component"], "post_process");
+    assert_eq!(cell["table"], "post_process.styles.ascii");
+    assert_eq!(cell["old"], 8);
+    assert_eq!(cell["new"], 12);
+    assert_eq!(cell["scene"], "commit.scene.toml");
+    assert!(cell["saved_at"].as_u64().unwrap() > 0);
+    // Only what the commit wrote: the unsaved bloom and fog aren't in it
+    assert!(
+        lines.iter().all(|l| l["table"] != "post_process"),
+        "{lines:?}"
+    );
+
+    // An entity edit saved before the watcher's reload keeps the commit
+    let marker = app.state.lock().unwrap().world.get_id("marker").unwrap();
+    app.pending_edits.push(EditAction {
+        entity_id: marker,
+        component: "transform".into(),
+        field: "position".into(),
+        old_value: toml::Value::Array(vec![0.into(), 0.into(), 0.into()]),
+        new_value: toml::Value::Array(vec![1.0.into(), 0.0.into(), 0.0.into()]),
+    });
+    app.apply_pending_edits();
+    app.save();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        text.contains("cell = 12"),
+        "the save wrote the commit away:\n{text}"
+    );
+    assert!(text.contains("position = [1.0, 0.0, 0.0]"), "{text}");
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// #1046: the human moves the marker and saves; an agent then edits the
+/// file. The reload keeps the human's history: undo puts the marker back,
+/// the scene is dirty, and the save writes it into the agent's file
+#[test]
+fn undo_after_an_agents_edit_still_undoes_the_humans_last_edit() {
+    let Some((device, queue)) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let path = scene_file("undo");
+    let mut app = viewer(&path, device, queue);
+    let marker = app.state.lock().unwrap().world.get_id("marker").unwrap();
+    app.pending_edits.push(EditAction {
+        entity_id: marker,
+        component: "transform".into(),
+        field: "position".into(),
+        old_value: toml::Value::Array(vec![0.into(), 0.into(), 0.into()]),
+        new_value: toml::Value::Array(vec![2.0.into(), 0.0.into(), 0.0.into()]),
+    });
+    app.apply_pending_edits();
+    app.save();
+    app.suppress_reload_until = None;
+
+    // The agent turns the bloom up in the file, past the save's own window
+    let saved = std::fs::read_to_string(&path).unwrap();
+    let agents = saved.replace("bloom_intensity = 0.04", "bloom_intensity = 0.3");
+    assert_ne!(saved, agents);
+    std::fs::write(&path, &agents).unwrap();
+    reload(&mut app);
+    assert!(!app.dirty);
+    assert!(
+        app.undo_stack.can_undo(),
+        "the reload threw the history away"
+    );
+
+    app.undo();
+    assert!(app.dirty, "an undo after the reload is an edit");
+    let position = |app: &ViewerApp| {
+        let st = app.state.lock().unwrap();
+        let id = st.world.get_id("marker").unwrap();
+        st.world
+            .get_components(id)
+            .unwrap()
+            .get_field("transform", "position")
+            .cloned()
+    };
+    assert_eq!(
+        position(&app),
+        Some(toml::Value::Array(vec![0.into(), 0.into(), 0.into()]))
+    );
+    app.save();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        text.contains("bloom_intensity = 0.3"),
+        "the agent's edit: {text}"
+    );
+    let file: toml::Table = toml::from_str(&text).unwrap();
+    let back = &file["entities"]["marker"]["transform"]["position"];
+    assert_eq!(back.as_array().unwrap().len(), 3, "{text}");
+    assert!(
+        back.as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v.as_float().or(v.as_integer().map(|i| i as f64)) == Some(0.0)),
+        "{text}"
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}

@@ -305,10 +305,7 @@ impl SceneDocument {
                 continue;
             }
             if !self.has_entity(&info.name) {
-                problems.push(format!(
-                    "'{}' changed, but the file doesn't write it (a prefab's?): not saved",
-                    info.name
-                ));
+                self.write_prefab_changes(&info.name, changes, &mut problems);
                 continue;
             }
             for change in changes {
@@ -358,6 +355,71 @@ impl SceneDocument {
             }
         }
         problems
+    }
+
+    /// [`apply_world_diff`](Self::apply_world_diff)'s changes to an entity the
+    /// file doesn't write (#1046): a field set goes into the overrides of the
+    /// prefab instance that makes it, through
+    /// [`write_entity_field`](Self::write_entity_field), as the viewer's save
+    /// writes it. Overrides merge over the template field by field, so a
+    /// field taken away can be written only when the overrides are what set
+    /// it, and an archetype, parent or whole component can't be at all:
+    /// each of those is a problem, and so is an entity no instance makes.
+    fn write_prefab_changes(
+        &mut self,
+        name: &str,
+        changes: Vec<FieldChange<'_>>,
+        problems: &mut Vec<String>,
+    ) {
+        let origin = match self.prefab_origin(name) {
+            Ok(origin) => origin,
+            Err(why) => {
+                problems.push(format!("'{name}' changed, but not saved: {why}"));
+                return;
+            }
+        };
+        let (instance, entity) = &origin;
+        let overrides = format!("[prefabs.{instance}.overrides.{entity}]");
+        for change in changes {
+            let result = match change {
+                FieldChange::Set(component, field, value) => self
+                    .write_entity_field(name, component, field, Some(value))
+                    .map(|_| ()),
+                FieldChange::Remove(component, field) => {
+                    let path = ["prefabs", instance, "overrides", entity, component];
+                    let overridden = self.has_table(&path) && self.field_at(&path, field).is_some();
+                    if overridden {
+                        self.write_entity_field(name, component, field, None)
+                            .map(|_| ())
+                    } else {
+                        Err(format!(
+                            "'{name}' lost {component}.{field}, but its template sets it and \
+                             {overrides} can't take a field away: not saved"
+                        ))
+                    }
+                }
+                FieldChange::Entity(key) => Err(format!(
+                    "'{name}' changed its {key}, which a prefab's template sets and \
+                     {overrides} can't: not saved"
+                )),
+                FieldChange::Component(component, _) => Err(format!(
+                    "'{name}' changed its whole {component} component, which \
+                     {overrides} can't write (it sets fields): not saved"
+                )),
+            };
+            if let Err(e) = result {
+                problems.push(e);
+            }
+        }
+    }
+
+    /// The value at `field` in the table at `path`, if the file writes one.
+    fn field_at(&self, path: &[&str], field: &str) -> Option<&toml_edit::Item> {
+        let mut at: &dyn toml_edit::TableLike = self.doc.as_table();
+        for segment in path {
+            at = at.get(segment)?.as_table_like()?;
+        }
+        at.get(field)
     }
 
     /// Patch multiple dirty fields at once
@@ -1396,9 +1458,11 @@ intensity = 2.0
         assert!(file.tables.contains_key("wooze") && file.tables.contains_key("living"));
     }
 
+    /// A fix to an entity a prefab instance expands into, which is in the
+    /// world only, goes into the instance's overrides (#1046), as the
+    /// viewer's save writes it (#679)
     #[test]
-    fn a_change_to_an_entity_the_file_does_not_write_is_reported() {
-        // An entity a prefab instance expands into is in the world only
+    fn a_fix_to_a_prefab_entity_goes_into_its_instance_overrides() {
         let mut before = every_table_world();
         before.spawn("porch_bulb").unwrap();
         let mut after = every_table_world();
@@ -1410,9 +1474,88 @@ intensity = 2.0
         );
         let mut doc = SceneDocument::from_str(EVERY_TABLE).unwrap();
         let problems = doc.apply_world_diff(&before, &after);
-        assert_eq!(problems.len(), 1, "{problems:?}");
-        assert!(problems[0].contains("porch_bulb"), "{problems:?}");
+        assert!(problems.is_empty(), "{problems:?}");
+        let out = doc.to_string();
+        let file: crate::SceneFile = toml::from_str(&out).unwrap();
+        assert_eq!(
+            file.prefabs["porch"].overrides["bulb"]["light"]["intensity"],
+            toml::Value::Float(9.0)
+        );
+        // Nothing else moved
+        kept_lines(EVERY_TABLE, &out, &[]);
+    }
+
+    /// What overrides can't say is still refused, by name: an archetype, a
+    /// parent, a whole component, a field the template sets taken away, and
+    /// a change to an entity no instance makes
+    #[test]
+    fn what_prefab_overrides_cannot_say_is_reported() {
+        let mut before = every_table_world();
+        let bulb = before.spawn("porch_bulb").unwrap();
+        {
+            let mut c = before.get_components_mut(bulb).unwrap();
+            c.set_field("light", "range", toml::Value::Float(4.0));
+            c.set_field("light", "intensity", toml::Value::Float(1.0));
+        }
+        before.spawn("ghost").unwrap();
+        let mut after = every_table_world();
+        let bulb = after.spawn("porch_bulb").unwrap();
+        {
+            let mut c = after.get_components_mut(bulb).unwrap();
+            c.set_archetype(Some("street_lamp".into()));
+            c.set_field("light", "intensity", toml::Value::Float(1.0));
+            c.set("tag", toml::Value::String("lit".into()));
+        }
+        let ghost = after.spawn("ghost").unwrap();
+        after.get_components_mut(ghost).unwrap().set_field(
+            "transform",
+            "scale",
+            toml::Value::Float(2.0),
+        );
+        let mut doc = SceneDocument::from_str(EVERY_TABLE).unwrap();
+        let problems = doc.apply_world_diff(&before, &after);
+        let has = |what: &str| problems.iter().any(|p| p.contains(what));
+        assert!(has("'porch_bulb' changed its archetype"), "{problems:?}");
+        assert!(has("whole tag component"), "{problems:?}");
+        assert!(has("lost light.range"), "{problems:?}");
+        assert!(
+            has("'ghost' changed") && has("no [prefabs]"),
+            "{problems:?}"
+        );
+        assert_eq!(problems.len(), 4, "{problems:?}");
         assert_eq!(doc.to_string(), EVERY_TABLE);
+    }
+
+    /// A field the overrides set, taken away by a fix, comes out of them:
+    /// the entity falls back to its template's value
+    #[test]
+    fn a_prefab_field_the_overrides_set_is_taken_out_of_them() {
+        let registry = flint_schema::SchemaRegistry::new();
+        let mut doc = SceneDocument::from_str(PROPS).unwrap();
+        let mut before = crate::loader::load_scene_string(PROPS, &registry)
+            .unwrap()
+            .0;
+        let barrel = before.spawn("props_barrel").unwrap();
+        before.get_components_mut(barrel).unwrap().set_field(
+            "style_mask",
+            "style",
+            toml::Value::String("ascii".into()),
+        );
+        let mut after = crate::loader::load_scene_string(PROPS, &registry)
+            .unwrap()
+            .0;
+        let barrel = after.spawn("props_barrel").unwrap();
+        after.get_components_mut(barrel).unwrap().set_field(
+            "style_mask",
+            "other",
+            toml::Value::Integer(1),
+        );
+        let problems = doc.apply_world_diff(&before, &after);
+        assert!(problems.is_empty(), "{problems:?}");
+        let file: crate::SceneFile = toml::from_str(&doc.to_string()).unwrap();
+        let mask = &file.prefabs["props"].overrides["barrel"]["style_mask"];
+        assert!(mask.get("style").is_none(), "{mask:?}");
+        assert_eq!(mask["other"], toml::Value::Integer(1));
     }
 
     const PROPS: &str = r#"[scene]

@@ -209,6 +209,86 @@ pub fn log_lines(plan: &SavePlan, scene: &str, saved_at_unix: u64) -> String {
     out
 }
 
+/// A key of the scene's `[post_process]` that F4's Commit to scene changed
+/// (#1046): the table it's in (`post_process`,
+/// `post_process.styles.ascii`), the key, and its value before and after
+/// (`None`: the table didn't have it).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PostChange {
+    pub table: String,
+    pub key: String,
+    pub old: Option<toml::Value>,
+    pub new: Option<toml::Value>,
+}
+
+/// Every `[post_process]` key that differs between two texts of a scene,
+/// in (table, key) order. A table that isn't a value (`styles.<name>`) is
+/// walked into, so a style's key is named in its own table. A text that
+/// doesn't parse reads as no `[post_process]`.
+pub fn post_process_changes(before: &str, after: &str) -> Vec<PostChange> {
+    fn leaves(text: &str) -> BTreeMap<(String, String), toml::Value> {
+        fn walk(
+            table: &toml::Table,
+            path: &str,
+            out: &mut BTreeMap<(String, String), toml::Value>,
+        ) {
+            for (key, value) in table {
+                match value {
+                    toml::Value::Table(inner) => walk(inner, &format!("{path}.{key}"), out),
+                    _ => {
+                        out.insert((path.to_string(), key.clone()), value.clone());
+                    }
+                }
+            }
+        }
+        let mut out = BTreeMap::new();
+        let parsed: Option<toml::Table> = toml::from_str(text).ok();
+        if let Some(post) = parsed
+            .as_ref()
+            .and_then(|t| t.get("post_process"))
+            .and_then(|p| p.as_table())
+        {
+            walk(post, "post_process", &mut out);
+        }
+        out
+    }
+    let (old, new) = (leaves(before), leaves(after));
+    let mut keys: Vec<&(String, String)> = old.keys().chain(new.keys()).collect();
+    keys.sort();
+    keys.dedup();
+    keys.into_iter()
+        .filter(|k| old.get(*k) != new.get(*k))
+        .map(|k| PostChange {
+            table: k.0.clone(),
+            key: k.1.clone(),
+            old: old.get(k).cloned(),
+            new: new.get(k).cloned(),
+        })
+        .collect()
+}
+
+/// One JSON line a key a Commit to scene wrote, in a save's shape (#1046):
+/// `entity` null, `component` `post_process`, the key as `field`, and the
+/// table it went into.
+pub fn commit_log_lines(changes: &[PostChange], scene: &str, saved_at_unix: u64) -> String {
+    let mut out = String::new();
+    for change in changes {
+        let line = serde_json::json!({
+            "saved_at": saved_at_unix,
+            "scene": scene,
+            "entity": serde_json::Value::Null,
+            "component": "post_process",
+            "field": change.key,
+            "old": change.old.as_ref().map(to_json),
+            "new": change.new.as_ref().map(to_json),
+            "table": change.table,
+        });
+        out.push_str(&line.to_string());
+        out.push('\n');
+    }
+    out
+}
+
 /// Append the plan's lines to the log, making `.flint/` if it isn't there.
 #[allow(clippy::disallowed_methods)] // a write, which the vfs doesn't do
 pub fn append_log(path: &Path, lines: &str) -> std::io::Result<()> {
@@ -447,6 +527,48 @@ position = [0.0, 0.0, 0.0] # by the door
             ],
             "{saved}"
         );
+    }
+
+    /// #1046: a commit's keys, each in its own table: a value changed, a
+    /// key put back at its default (gone), a folded old key removed, and a
+    /// style turned off whose whole table went
+    #[test]
+    fn a_commits_post_process_keys_are_named_in_their_tables() {
+        let before = "[post_process]\nbloom_intensity = 0.04\nkuwahara_radius = 3\n\n\
+                      [post_process.styles.ascii]\ncell = 8\nlevels = 6\n\n\
+                      [post_process.styles.pencil]\nenabled = true\n";
+        let after = "[post_process]\nbloom_intensity = 0.04\n\n\
+                     [post_process.styles.ascii]\ncell = 12\n";
+        let changes = post_process_changes(before, after);
+        let named: Vec<(&str, &str)> = changes
+            .iter()
+            .map(|c| (c.table.as_str(), c.key.as_str()))
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("post_process", "kuwahara_radius"),
+                ("post_process.styles.ascii", "cell"),
+                ("post_process.styles.ascii", "levels"),
+                ("post_process.styles.pencil", "enabled"),
+            ]
+        );
+        assert_eq!(changes[1].old, Some(8.into()));
+        assert_eq!(changes[1].new, Some(12.into()));
+        assert_eq!(changes[3].new, None);
+
+        let lines: Vec<serde_json::Value> = commit_log_lines(&changes, "a.scene.toml", 7)
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[1]["entity"], serde_json::Value::Null);
+        assert_eq!(lines[1]["component"], "post_process");
+        assert_eq!(lines[1]["field"], "cell");
+        assert_eq!(lines[1]["table"], "post_process.styles.ascii");
+        assert_eq!(lines[3]["new"], serde_json::Value::Null);
+        // Nothing changed is no line
+        assert!(post_process_changes(before, before).is_empty());
     }
 
     #[test]
