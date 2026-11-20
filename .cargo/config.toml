@@ -1,7 +1,11 @@
-# Windows links binaries with a 1 MB main-thread stack. Debug (unoptimized)
-# builds of flint-cli overflow it inside clap's derived parser — the Commands
-# enum is large enough that `flint --help` alone hits STATUS_STACK_OVERFLOW.
-# Link with an 8 MB stack instead, matching the default on Linux/macOS shells.
+# Windows links binaries with a 1 MB main-thread stack. Link with 8 MB
+# instead, matching the default on Linux/macOS shells. Cargo reads this file
+# only when it runs in this checkout (or below it), so `flint` and
+# `flint-player` don't rely on it: their build scripts ask for the same 8 MB
+# (#990), which reaches a game building the engine from its own root too.
+# This entry covers the rest of the checkout's builds: other crates' tests,
+# examples and tools (flint-arch-analyzer). A debug `flint --help` once
+# overflowed 1 MB in clap's derived parser (#708 cut it to about 600 KB).
 
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "link-arg=/STACK:8388608"]
