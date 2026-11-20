@@ -210,3 +210,93 @@ fn a_callback_ending_in_a_value_is_no_failure() {
     }
     assert!(system.errors().is_empty(), "{:?}", system.errors().all());
 }
+
+/// A module the scene hasn't enabled, for the tests below.
+struct Bells;
+impl crate::ScriptModule for Bells {
+    fn name(&self) -> &'static str {
+        "bells"
+    }
+    fn enabled_when(&self) -> &'static str {
+        "the scene has a belfry"
+    }
+    fn declare(&self, m: &mut crate::api::Module<'_>) {
+        m.func("ring", "Ring a bell.")
+            .arg("times", crate::api::builder::kind::Int)
+            .run(|_, (_times,)| ());
+    }
+}
+
+/// Ten seconds at 60 Hz.
+const TEN_SECONDS: usize = 600;
+
+/// A scene of one HUD running `dir`'s `hud.rhai` for ten seconds, after
+/// `system`'s last scene (if any) is cleared as a transition clears it.
+fn play_a_scene(system: &mut ScriptSystem, dir: &std::path::Path) {
+    system.clear();
+    // A transition's next scene sets its search again
+    system.sync.set_scripts_dir(dir.to_path_buf());
+    let mut world = FlintWorld::new();
+    scripted(&mut world, "hud_controller", "hud.rhai");
+    system.initialize(&mut world).unwrap();
+    for _ in 0..TEN_SECONDS {
+        system.update(&mut world, 1.0 / 60.0).unwrap();
+    }
+}
+
+/// A call into a module that isn't enabled is logged once a scene (#856),
+/// not at 1, 10, 100 calls as other errors are: a shared HUD that rings
+/// every frame for 10 s says it once, and once more in the next scene
+/// without the module. It is still counted every time, and still fails a
+/// run under --strict-scripts.
+#[test]
+fn a_call_into_a_module_not_enabled_is_logged_once_a_scene() {
+    let dir = scripts_dir(
+        "once-a-scene",
+        &[(
+            "hud.rhai",
+            "fn on_update() {\n    let n = 1;\n    ring(n);\n}\n",
+        )],
+    );
+    let mut system = system_in(&dir);
+    system.declare_module(&Bells);
+    play_a_scene(&mut system, &dir);
+
+    let errors = system.errors();
+    assert_eq!(errors.all().len(), 1, "{:?}", errors.all());
+    let rang = &errors.all()[0];
+    assert!(rang.once_a_scene, "{rang:?}");
+    assert!(
+        rang.message
+            .contains("ring: the bells module is not enabled here"),
+        "{}",
+        rang.message
+    );
+    assert_eq!(rang.line, Some(3));
+    assert_eq!(rang.count, TEN_SECONDS as u64, "counted every frame");
+    assert_eq!(errors.lines_logged(), 1, "said once over 10 s");
+
+    play_a_scene(&mut system, &dir);
+    let errors = system.errors();
+    assert_eq!(errors.lines_logged(), 2, "once more in the next scene");
+    assert_eq!(errors.all()[0].count, 2 * TEN_SECONDS as u64);
+    assert_eq!(errors.on_screen().len(), 1);
+    assert!(errors.strict_failure().is_some());
+}
+
+/// Other run-time errors are logged as #693 made them, at 1, 10 and 100
+/// calls over the same ten seconds, with the module declared beside them.
+#[test]
+fn an_ordinary_error_is_still_logged_at_one_ten_and_a_hundred() {
+    let dir = scripts_dir(
+        "ordinary",
+        &[("hud.rhai", "fn on_update() {\n    drw_text(1);\n}\n")],
+    );
+    let mut system = system_in(&dir);
+    system.declare_module(&Bells);
+    play_a_scene(&mut system, &dir);
+    let errors = system.errors();
+    assert!(!errors.all()[0].once_a_scene);
+    assert_eq!(errors.all()[0].count, TEN_SECONDS as u64);
+    assert_eq!(errors.lines_logged(), 3);
+}
