@@ -563,7 +563,9 @@ flint schema --format json           # everything: every field's type, default, 
 flint schema --format json-schema --output scene.schema.json
 ```
 
-writes a JSON Schema (draft-07) for a `.scene.toml` under the schemas of your project: each entity takes `archetype` (one of the loaded archetypes), `parent`, and a table per component, with every field typed, described and given its default, range and enum values. [Taplo](https://taplo.tamasfe.dev/) and the Even Better TOML extension for VS Code read it, and give completion and inline errors while you type. Point a scene at it with a first line:
+writes a JSON Schema (draft-07) for a `.scene.toml` under the schemas of your project: each entity takes `archetype` (one of the loaded archetypes), `parent`, and a table per component, with every field typed, described and given its default, range and enum values. [Taplo](https://taplo.tamasfe.dev/) reads it, and so does the Even Better TOML extension for VS Code, which runs taplo. Under `[entities.<name>]` it offers the components, `archetype` and `parent`; under a component, its fields, a field's default filled in; for an enum field, its values. A wrong enum value or a vec3 of two numbers is marked where it stands (the vec3's message is a JSON Schema `anyOf`'s: valid under none of the forms).
+
+Point a scene at it with a `#:schema` line before its first table (comments may come before it):
 
 ```toml
 #:schema ../scene.schema.json
@@ -572,7 +574,9 @@ writes a JSON Schema (draft-07) for a `.scene.toml` under the schemas of your pr
 name = "Hall"
 ```
 
-or for every scene at once, in a `.taplo.toml` at the project root:
+The path is relative to the scene file: `../` for a scene in `levels/` with the schema at the project root. A full path is written as a URL, `file:///C:/games/hall/scene.schema.json`: taplo reads `C:\...` as a URL whose scheme is `c`.
+
+Or point every scene at it at once, with a `.taplo.toml` at the project root:
 
 ```toml
 [[rule]]
@@ -580,8 +584,13 @@ include = ["**/*.scene.toml"]
 
 [rule.schema]
 path = "./scene.schema.json"
-enabled = true
 ```
+
+Taplo finds `.taplo.toml` in the folder it runs from or the nearest parent folder that has one. But it reads the `include` patterns and the schema `path` against the folder it runs from, not the one that holds the file: in VS Code that is the workspace folder, and for `taplo lint` the working directory. So open the project folder itself in VS Code, not a folder above it, and run `taplo lint` from the project root. Run from `levels/`, the same file looks for `levels/scene.schema.json`. A `#:schema` line takes precedence over a rule and is relative to the scene wherever taplo runs.
+
+Taplo keeps a schema it has read for a minute in memory, and for up to ten where it keeps a cache on disk. After writing the file again, reload the editor window to see the new fields at once.
+
+These rules come from taplo 0.10.0's source (#1062); nobody has yet tried this setup in an editor.
 
 What it holds to, and what it leaves to `flint validate`:
 

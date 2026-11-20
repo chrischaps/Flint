@@ -112,6 +112,9 @@ fn list_json_names_every_component_and_archetype() {
         serde_json::json!([
             "friction",
             "is_sensor",
+            "layer",
+            "mask",
+            "model",
             "offset",
             "restitution",
             "rotation",
@@ -306,6 +309,72 @@ blend_mode = "additive"
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&written).unwrap(),
         schema
+    );
+}
+
+/// #1062: what taplo (Even Better TOML's engine) needs of the schema
+/// beyond a validator's. Its completion follows a `$ref` by setting the
+/// schema URL's fragment and reading it as a JSON pointer (taplo-common
+/// `reference_url` / `resolve_schema`), so every `$ref` is a local pointer
+/// that leads to a schema. It inserts a field's `default` as written, so a
+/// default is the decimal the schema meant, never an f32 widened
+/// (`0.03999999910593033` for 0.04).
+#[test]
+fn the_json_schema_is_one_taplo_can_follow() {
+    let schema = json(&flint(&["schema", "--format", "json-schema"]));
+    fn walk<'a>(
+        v: &'a serde_json::Value,
+        at: String,
+        out: &mut Vec<(String, &'a serde_json::Value)>,
+    ) {
+        match v {
+            serde_json::Value::Object(map) => {
+                for (k, x) in map {
+                    walk(x, format!("{at}/{k}"), out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (i, x) in items.iter().enumerate() {
+                    walk(x, format!("{at}/{i}"), out);
+                }
+            }
+            _ => out.push((at, v)),
+        }
+    }
+    let mut leaves = Vec::new();
+    walk(&schema, String::new(), &mut leaves);
+
+    let refs: Vec<&str> = leaves
+        .iter()
+        .filter(|(at, _)| at.ends_with("/$ref"))
+        .filter_map(|(_, v)| v.as_str())
+        .collect();
+    assert!(refs.len() > 20, "only {} refs", refs.len());
+    for r in refs {
+        let pointer = r
+            .strip_prefix('#')
+            .unwrap_or_else(|| panic!("{r} is not local"));
+        assert!(
+            schema.pointer(pointer).is_some_and(|s| s.is_object()),
+            "{r} leads to no schema"
+        );
+    }
+
+    let noisy: Vec<String> = leaves
+        .iter()
+        .filter(|(at, _)| at.contains("/default"))
+        .filter_map(|(at, v)| v.as_f64().map(|n| (at, n)))
+        .filter(|(_, n)| n.to_string().len() > (*n as f32).to_string().len())
+        .map(|(at, n)| format!("{at} = {n}"))
+        .collect();
+    assert!(
+        noisy.is_empty(),
+        "defaults widened from f32:\n{}",
+        noisy.join("\n")
+    );
+    assert_eq!(
+        schema["definitions"]["tables"]["post_process"]["properties"]["bloom_intensity"]["default"],
+        serde_json::json!(0.04)
     );
 }
 
