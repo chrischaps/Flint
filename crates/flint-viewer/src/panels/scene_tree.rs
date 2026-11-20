@@ -221,7 +221,7 @@ impl SceneTree {
                     rect,
                     2.0,
                     egui::Stroke::new(1.5f32, ui.visuals().selection.stroke.color),
-                    egui::StrokeKind::Middle,
+                    egui::StrokeKind::Outside,
                 );
             }
         }

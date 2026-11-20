@@ -188,11 +188,13 @@ pub(super) fn render_draw_commands(
             } => {
                 let rect =
                     egui::Rect::from_min_size(egui::Pos2::new(*x, *y), egui::Vec2::new(*w, *h));
+                // Outside the rect, where egui 0.30 drew it: a script's box
+                // keeps its size whatever the thickness (#989)
                 painter.rect_stroke(
                     rect,
                     *rounding,
                     egui::Stroke::new(*thickness, to_color32(color)),
-                    egui::StrokeKind::Middle,
+                    egui::StrokeKind::Outside,
                 );
             }
 
@@ -432,5 +434,94 @@ mod tests {
     fn over_ui_items_draw_over_panels_and_windows() {
         let (at, len) = dot_index(true);
         assert_eq!(at, len - 1, "painted after the header and the window");
+    }
+
+    /// The vertices egui tessellates for one `RectOutline` drawn through the
+    /// HUD path, with feathering off so each lies on a stroke edge.
+    fn outline_vertices(rect: egui::Rect, thickness: f32, rounding: f32) -> Vec<egui::Pos2> {
+        let ctx = egui::Context::default();
+        ctx.tessellation_options_mut(|o| o.feathering = false);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(640.0, 360.0),
+            )),
+            ..Default::default()
+        };
+        let items = [DrawItem {
+            cmd: DrawCommand::RectOutline {
+                x: rect.min.x,
+                y: rect.min.y,
+                w: rect.width(),
+                h: rect.height(),
+                color: MARK,
+                thickness,
+                rounding,
+                layer: 0,
+            },
+            clip: None,
+            over_ui: false,
+        }];
+        let out = run_headless_frame(&ctx, input, |ui| {
+            render_draw_commands(
+                &ui.ctx().clone(),
+                &items,
+                &HashMap::new(),
+                &HashSet::new(),
+                &mut HashSet::new(),
+                &mut TextHalos::default(),
+            );
+        });
+        let mark = to_color32(&MARK);
+        ctx.tessellate(out.shapes, 1.0)
+            .into_iter()
+            .filter_map(|p| match p.primitive {
+                egui::epaint::Primitive::Mesh(m) => Some(m),
+                _ => None,
+            })
+            .flat_map(|m| m.vertices)
+            .filter(|v| v.color == mark)
+            .map(|v| v.pos)
+            .collect()
+    }
+
+    /// A script's outline is drawn outside its rect, as egui 0.30 drew it:
+    /// the box keeps its size, and the stroke reaches one thickness out.
+    /// egui 0.31 made the side a `StrokeKind`; the port passed `Middle`,
+    /// which drew half of every stroke inside (#989). A later egui bump
+    /// that moves the stroke fails here.
+    #[test]
+    fn a_rect_outline_strokes_outside_its_rect() {
+        let rect = egui::Rect::from_min_size(egui::pos2(100.0, 60.0), egui::vec2(200.0, 120.0));
+        for thickness in [1.0, 4.0, 8.0] {
+            let vertices = outline_vertices(rect, thickness, 0.0);
+            assert!(!vertices.is_empty(), "the outline is painted");
+            let inside = rect.shrink(0.01);
+            let stray: Vec<_> = vertices.iter().filter(|p| inside.contains(**p)).collect();
+            assert!(
+                stray.is_empty(),
+                "{thickness} px: stroke vertices inside the rect: {stray:?}"
+            );
+            let reach = egui::Rect::from_points(&vertices);
+            let want = rect.expand(thickness);
+            assert!(
+                (reach.min - want.min).length() < 0.01 && (reach.max - want.max).length() < 0.01,
+                "{thickness} px: the stroke covers {reach:?}, egui 0.30 covered {want:?}"
+            );
+        }
+    }
+
+    /// A rounded outline reaches one thickness out too. (Its inner edge
+    /// follows the rounded corners, which cut into the rect's bounding box,
+    /// so only the reach is checked.)
+    #[test]
+    fn a_rounded_rect_outline_reaches_one_thickness_out() {
+        let rect = egui::Rect::from_min_size(egui::pos2(100.0, 60.0), egui::vec2(200.0, 120.0));
+        let reach = egui::Rect::from_points(&outline_vertices(rect, 6.0, 12.0));
+        let want = rect.expand(6.0);
+        assert!(
+            (reach.min - want.min).length() < 0.01 && (reach.max - want.max).length() < 0.01,
+            "the rounded stroke covers {reach:?}, egui 0.30 covered {want:?}"
+        );
     }
 }
