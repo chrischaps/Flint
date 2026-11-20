@@ -135,7 +135,7 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
-        depth_key: crate::bind_cache::DepthKey,
+        depth_key: crate::bind_cache::DepthKey<'_>,
     ) {
         flint_core::scope!("encode_style_mask");
         self.style_mask.veiled = false;
@@ -169,13 +169,13 @@ impl SceneRenderer {
         // and resolved, so a feature thinner than a pixel keeps the pixels
         // the scene's samples gave it (#306).
         let msaa_depth = match self.msaa.depth_at(resources.width, resources.height) {
-            Some((view, id)) if self.pipelines.samples() == crate::style_mask::MSAA_SAMPLES => {
+            Some(view) if self.pipelines.samples() == crate::style_mask::MSAA_SAMPLES => {
                 pass.ensure_msaa(
                     device,
                     &self.layouts.transform_bind_group_layout,
                     &skinned.bone_bind_group_layout,
                 );
-                Some(crate::style_mask::MsaaDepth { view, id })
+                Some(crate::style_mask::MsaaDepth { view })
             }
             _ => None,
         };
@@ -340,7 +340,7 @@ impl SceneRenderer {
         );
         // The scene's own samples while it drew 4x at this size
         let (scene_depth, samples) = match self.msaa.depth_at(resources.width, resources.height) {
-            Some((view, _)) if self.pipelines.samples() > 1 => (view, self.pipelines.samples()),
+            Some(view) if self.pipelines.samples() > 1 => (view, self.pipelines.samples()),
             _ => (depth_view, 1),
         };
         // A replay stepping the albedo (#1204): its meshes past the limit

@@ -1336,10 +1336,6 @@ pub struct StyleMaskPass {
     /// of them; replaced by a bigger one when a frame needs more.
     draw_buffer: wgpu::Buffer,
     draw_slots: usize,
-    /// The [`gpu_id`](crate::bind_cache::gpu_id) of `draw_buffer`, in the
-    /// cached bind group's key so a grown buffer gets a bind group of its
-    /// own (the old one goes with the chain's cache on the next resize).
-    draw_buffer_id: u64,
     /// The uniform bytes, kept so a frame reuses the allocation.
     scratch: Vec<u8>,
     /// Styled draws the last frame masked.
@@ -1400,12 +1396,6 @@ impl MaskStages {
     }
 }
 
-/// One cache variant for a pair of [`gpu_id`](crate::bind_cache::gpu_id)s:
-/// exact while both stay under 2^32, which a process never reaches.
-fn mix_ids(a: u64, b: u64) -> u64 {
-    (a << 32) ^ b
-}
-
 fn mask_draw_buffer(device: &wgpu::Device, slots: usize) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Style Mask Draws"),
@@ -1430,12 +1420,10 @@ struct MsaaMask {
     target: Option<(wgpu::TextureView, u32, u32, wgpu::BindGroup)>,
 }
 
-/// The scene's multisampled depth, for the mask's 4x path (#306): its
-/// view, and an id that changes whenever the texture is made again (a
-/// bind group over it is kept under that id).
+/// The scene's multisampled depth, for the mask's 4x path (#306). A bind
+/// group over it is kept while it is the same view (#960).
 pub(crate) struct MsaaDepth<'a> {
     pub view: &'a wgpu::TextureView,
-    pub id: u64,
 }
 
 /// The scene's sample count the mask matches under MSAA.
@@ -1766,7 +1754,6 @@ impl StyleMaskPass {
             shader,
             draw_buffer,
             draw_slots: INITIAL_MASK_SLOTS,
-            draw_buffer_id: crate::bind_cache::gpu_id(),
             scratch: Vec::new(),
             last_draws: 0,
             field_buffer,
@@ -1855,18 +1842,22 @@ impl StyleMaskPass {
         }
     }
 
-    /// The bind group of the per-draw uniforms and `scene_depth`: kept in
-    /// `binds` while the chain owns the depth, else made for this frame
-    /// (once a frame, never per draw).
+    /// The bind group of the per-draw uniforms and `scene_depth`, kept in
+    /// `binds` over the depth view, the draw buffer and the veil (#960: a
+    /// grown buffer's group takes the old one's place).
     fn draw_bind(
         &self,
         device: &wgpu::Device,
         binds: &crate::bind_cache::BindCache,
         scene_depth: &wgpu::TextureView,
         veil: &wgpu::TextureView,
-        depth_key: crate::bind_cache::DepthKey,
+        depth_key: crate::bind_cache::DepthKey<'_>,
     ) -> std::sync::Arc<wgpu::BindGroup> {
-        binds.get_over(depth_key, "Style Mask Draw BG", self.draw_buffer_id, || {
+        let over = [
+            crate::bind_cache::Bound::Buffer(&self.draw_buffer),
+            crate::bind_cache::Bound::View(veil),
+        ];
+        binds.get_over(depth_key, "Style Mask Draw BG", 0, &over, || {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Style Mask Draw BG"),
                 layout: &self.draw_bgl,
@@ -1997,11 +1988,10 @@ impl StyleMaskPass {
         }
     }
 
-    /// The 4x path's bind group over the veil and the scene's
-    /// multisampled depth, kept under the depth's id (the renderer owns
-    /// that texture, so a new one comes with a new id; the veil lives in
-    /// the same resources as `binds`, so it goes with them) and the
-    /// uniform buffer's (a grown buffer needs a bind group of its own, #311).
+    /// The 4x path's bind group over the veil, the scene's multisampled
+    /// depth and the uniform buffer, kept over those three (#960): a new
+    /// depth texture or a grown buffer (#311) gets a group in the old one's
+    /// place.
     fn msaa_draw_bind(
         &self,
         device: &wgpu::Device,
@@ -2010,8 +2000,12 @@ impl StyleMaskPass {
         veil: &wgpu::TextureView,
         depth: &MsaaDepth<'_>,
     ) -> std::sync::Arc<wgpu::BindGroup> {
-        let key = mix_ids(depth.id, self.draw_buffer_id);
-        binds.get("Style Mask MSAA Draw BG", key, || {
+        let over = [
+            crate::bind_cache::Bound::Buffer(&self.draw_buffer),
+            crate::bind_cache::Bound::View(veil),
+            crate::bind_cache::Bound::View(depth.view),
+        ];
+        binds.get_bound("Style Mask MSAA Draw BG", 0, &over, || {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Style Mask MSAA Draw BG"),
                 layout: &msaa.draw_bgl,
@@ -2048,7 +2042,7 @@ impl StyleMaskPass {
         mask: &crate::stylize::StyleTexture,
         veil_view: &wgpu::TextureView,
         scene_depth: &wgpu::TextureView,
-        depth_key: crate::bind_cache::DepthKey,
+        depth_key: crate::bind_cache::DepthKey<'_>,
         msaa_depth: Option<MsaaDepth<'_>>,
         draws: &[MaskDraw<'_>],
         veil: &Veil<'_>,
@@ -2063,7 +2057,6 @@ impl StyleMaskPass {
         if slots != self.draw_slots {
             self.draw_buffer = mask_draw_buffer(device, slots);
             self.draw_slots = slots;
-            self.draw_buffer_id = crate::bind_cache::gpu_id();
         }
         self.last_draws = draws.len();
         self.scratch.clear();

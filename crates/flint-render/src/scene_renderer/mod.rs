@@ -95,9 +95,12 @@ pub(super) const SKINNED_MODEL_FALLBACK_COLOR: [f32; 4] = [1.0, 1.0, 0.27, 1.0];
 #[allow(dead_code)]
 pub(super) struct DrawCall {
     // GPU handles are `Arc`s so the per-entity caches below can hand the
-    // same buffers and bind groups to every frame's draw list. wgpu 23's
-    // resources weren't `Clone`; since wgpu 24 every handle is, so these
-    // `Arc`s could go (#948 left them).
+    // same buffers and bind groups to every frame's draw list. Since wgpu
+    // 24 every handle is `Clone` too, but #960 kept the `Arc`s: the draw
+    // list clones these every frame, and in wgpu 30 a `Buffer` clone is two
+    // reference counts (the handle's and its map context's) where an `Arc`
+    // is one, while a `BindGroup` clone is one either way. They aren't keys
+    // (`BindCache` keys on the handles themselves), so nothing is gained.
     vertex_buffer: Arc<wgpu::Buffer>,
     index_buffer: Arc<wgpu::Buffer>,
     index_count: u32,

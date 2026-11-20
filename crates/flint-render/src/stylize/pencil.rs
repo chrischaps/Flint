@@ -891,13 +891,19 @@ impl Pencil {
         stroke: &StackedImages,
     ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
-        // Keyed by both images' uploads, so a new paper gets a new group,
-        // and by the albedo's and the edges' sizes, which a render-scale
-        // step changes
-        let key = (mask.is_some() as u64 | paper.generation << 1 | stroke.generation << 32)
-            ^ frame.albedo_key().wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            ^ frame.edges_key().wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-        frame.depth_bind("Pencil Geometry BG", key, || {
+        // Kept over the images, the albedo and the edges themselves (#960):
+        // a new paper or stroke upload is a new view, and its group takes
+        // the old one's place. With and without the mask side by side
+        let view = crate::bind_cache::Bound::View;
+        let over = [
+            view(mask.unwrap_or(&self.no_mask_view)),
+            view(&paper.view),
+            view(&stroke.view),
+            frame.albedo_or(&self.no_albedo_view),
+            frame.edges_or(&self.no_edges_view),
+        ];
+        let variant = mask.is_some() as u64;
+        frame.depth_bind_over("Pencil Geometry BG", variant, &over, || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Pencil Geometry BG"),
                 layout: &self.geometry_bgl,

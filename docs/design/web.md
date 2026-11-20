@@ -821,10 +821,12 @@ cell, glyph) and two `writeBuffer`s a frame, and at scale 1 one bind
 group a frame: the mask's draw group over the caller's depth view, which
 wgpu 23 can't key (the same reason the base chain makes two there). Under
 a render scale the chain owns its depth and all of them are kept. Since
-#379 the player passes its depth view with an id
-(`RenderContext::depth_target()`, a fresh `new_depth_id()` whenever the
-context makes the texture again) and those groups are kept at scale 1
-too (measured below the tables, "Bind groups over the caller's depth").
+#379 the player passed its depth view with an id (a fresh
+`new_depth_id()` whenever the context made the texture again) and those
+groups were kept at scale 1 too (measured below the tables, "Bind groups
+over the caller's depth"). Since #960 (wgpu 30) the renderer keys them on
+the view itself, which compares by identity, so every host's depth view is
+kept, a bare `&TextureView` included, and the id is gone.
 
 **Re-read with `tools/web-perf/run.mjs` (#381, 2026-11-12).** The table
 above is now one command over a `flint export web` folder of the same three
@@ -1252,6 +1254,14 @@ arrives, and the mesh's buffers are shared through `Arc`.
 because its steps share one uniform buffer (`PostProcessPipeline::run_bloom`);
 it makes 24 of the 36 bind groups left. Firefox no longer shows the cost,
 but it's the next to go. Safari wasn't run.
+
+**Half rate at the start (#962).** Firefox on hardware vsync runs every page
+at 33 to 38 fps for its first 15 to 18 s, then at 60. A page with no Flint
+at all does the same, and wgpu 23, wgpu 30 and main measured alike. That
+was #949's "Sun Prints hitches to 33 ms". `layout.frame_rate=60` removes
+it, so compare builds with `run.mjs --prefs layout.frame_rate=60`; the
+numbers are in `tools/web-perf/README.md`. What remains is a freeze of about
+2 s just after Begin, most often on main (#1349).
 
 ## Full screen (#135)
 

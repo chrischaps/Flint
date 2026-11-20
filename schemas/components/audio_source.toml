@@ -4,7 +4,7 @@
 description = "A sound that plays from the entity, spatial or not"
 
 [component.audio_source.fields]
-file = { type = "string", description = "Path to audio file (relative to scene directory)" }
+file = { type = "asset", kind = "audio", description = "The sound file: a path from the scene (`audio/hit.ogg`), else a file in an `audio/` folder the scene can see (`flint asset where audio <name>` shows the search)" }
 volume = { type = "f32", default = 1.0, min = 0.0, max = 2.0, description = "Volume multiplier" }
 pitch = { type = "f32", default = 1.0, min = 0.1, max = 4.0, description = "Playback rate multiplier" }
 loop = { type = "bool", default = false, description = "Loop continuously" }

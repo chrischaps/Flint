@@ -65,6 +65,9 @@ struct Variant {
     // #507: where the mask can hold the variant's id, output pixels
     // (x0, y0, x1, y1), the whole frame when its draws have no bounds
     bounds: vec4<f32>,
+    // #929: with SNAP, its grid's band in the snap owner state
+    // (ascii_snap_owner.wgsl), as `snap_bands` holds one
+    owner: vec4<i32>,
 };
 
 // A variant whose edge glyphs are the whole frame's (`edge_glyphs`)
@@ -166,6 +169,11 @@ struct AsciiUniforms {
     // (x0, y0, x1, y1): the variants' screen bounds grown by two of the
     // largest cell, the whole frame when they have none
     mask_rect: vec4<f32>,
+    // Each of `snap_grids`' band in the snap owner state (#929,
+    // ascii_snap_owner.wgsl): x, y = the grid's cell at the band's first
+    // texel, z = its first row + 1 (0: the grid has none), w = its columns
+    // | rows << 16
+    snap_bands: array<vec4<i32>, 8>,
 };
 
 // Whether the mask under output point `p` can hold a variant's id (#507).
@@ -228,6 +236,20 @@ fn slot_of(id: u32) -> u32 {
         return 0u;
     }
     return slots[id];
+}
+
+// A variant's flag: its silhouette snaps to whole cells (#338)
+const SNAP: u32 = 4u;
+
+// Whether slot `slot` is a drawn variant whose silhouette snaps
+fn snaps(slot: u32) -> bool {
+    return slot != 0u && (variants[slot].flags & (SNAP | 1u)) == SNAP;
+}
+
+// The lattice sample `k` (0..16, row by row) of the cell whose top left is
+// `cell_min`, `cell` wide: a pixel's top left
+fn lattice(cell_min: vec2<f32>, cell: vec2<f32>, k: i32) -> vec2<f32> {
+    return floor(cell_min + (vec2<f32>(f32(k & 3), f32(k >> 2u)) + 0.5) / 4.0 * cell);
 }
 
 struct VertexOutput {

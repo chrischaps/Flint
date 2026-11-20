@@ -31,12 +31,12 @@ Without visibility culling, every object renders every frame regardless of wheth
 
 **Priority: High**
 
-Every game with NPCs needs this. Currently enemies can only do simple raycast-based movement — entire genres are blocked without proper pathfinding. Tracked in [#969](https://github.com/chrischaps/Flint/issues/969).
+Every game with NPCs needs this. Tracked in [#969](https://github.com/chrischaps/Flint/issues/969), whose baseline has landed ([ADR 0130](https://github.com/chrischaps/Flint/blob/main/docs/adr/0130-navigation-is-a-lazy-grid-of-floors.md)): a grid of floors baked from the fixed colliders as searches reach it, A\* over it, and `find_path` / `move_along_path` for scripts ([Physics and Runtime: Navigation](concepts/physics-and-runtime.md#navigation)). Still to come:
 
-- Nav mesh generation from scene geometry
-- A\* pathfinding with dynamic obstacle avoidance
-- Script API: `find_path(from, to)`, `move_along_path()`
-- Optional crowd simulation (RVO) for dense NPC scenes
+- Dynamic obstacles: doors, lifts and other agents are not on the grid, so a path goes through a closed door
+- Avoidance between agents, and crowd simulation (RVO) for dense NPC scenes
+- Links between floors a step can't join (jumps, ladders, teleports)
+- A nav mesh built from the same column data, if a game's open ground outgrows a grid
 
 ## Coroutines & Async Scripting
 

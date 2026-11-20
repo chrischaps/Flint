@@ -11,7 +11,10 @@ pub mod patcher;
 mod prefab;
 mod saver;
 
-pub use diagnose::{declared_assets, diagnose, diagnose_all, diagnose_scene, diagnose_scene_in};
+pub use diagnose::{
+    asset_references, declared_assets, diagnose, diagnose_all, diagnose_scene, diagnose_scene_in,
+    AssetReference, Located,
+};
 pub use edit::{SceneEdit, SceneScalar};
 pub use flint_core::diagnostic::{self, Diagnostic, Severity};
 pub use format::{

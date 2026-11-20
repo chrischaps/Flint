@@ -343,7 +343,7 @@ pub fn render_still(
     }
     editor.draw(&Target {
         view: &context.color_view,
-        depth: DepthTarget::new(&context.depth_view, context.depth_id),
+        depth: context.depth_target(),
         gpu: &gpu,
     });
     let pixels =
