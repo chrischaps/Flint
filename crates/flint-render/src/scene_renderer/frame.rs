@@ -398,10 +398,11 @@ impl SceneRenderer {
     /// second camera's uniforms would overwrite this one's. After
     /// submitting, call [`frame_submitted`](Self::frame_submitted).
     ///
-    /// `depth` is the caller's depth buffer: a `&TextureView`, or a
-    /// [`DepthTarget`](crate::bind_cache::DepthTarget) with an id
-    /// ([`RenderContext::depth_target`](crate::RenderContext::depth_target))
-    /// so the bind groups over it are kept from frame to frame (#379).
+    /// `depth` is the caller's depth buffer: a `&TextureView` or a
+    /// [`DepthTarget`](crate::bind_cache::DepthTarget)
+    /// ([`RenderContext::depth_target`](crate::RenderContext::depth_target)).
+    /// The bind groups over it are kept from frame to frame while it is the
+    /// same view (#379, #960).
     pub fn encode_to<'d>(
         &mut self,
         device: &wgpu::Device,
@@ -462,12 +463,13 @@ impl SceneRenderer {
         let surface_depth_view = depth_view;
         let scaled_depth = self.scaled_depth.clone();
         let depth_view = scaled_depth.as_ref().map_or(depth_view, |d| &d.view);
-        // Who vouches for that view, so bind groups over it can be kept:
-        // the chain for its own, the caller's id for the caller's (#379).
+        // Whose view it is, so bind groups over it can be kept: the chain's
+        // own lives with the chain, the caller's while it's the same view
+        // (#379, #960).
         let depth_key = if scaled_depth.is_some() {
             crate::bind_cache::DepthKey::Owned
         } else {
-            crate::bind_cache::DepthKey::caller(depth.id)
+            crate::bind_cache::DepthKey::Caller(depth_view)
         };
         let clear_color = wgpu::Color {
             r: self.clear_color[0] as f64,
@@ -755,27 +757,28 @@ impl SceneRenderer {
                 // The grab runs only into the HDR chain, so the bind group
                 // is the chain's to keep while the depth is its too (#139).
                 let resources = self.postprocess_resources.as_ref().unwrap();
-                let blit_bind_group =
-                    resources
-                        .binds
-                        .get_over(depth_key, "ocean grab blit", 0, || {
-                            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                layout: &op.blit_bind_group_layout,
-                                entries: &[
-                                    wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: wgpu::BindingResource::TextureView(
-                                            scene_target_view,
-                                        ),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: wgpu::BindingResource::TextureView(depth_view),
-                                    },
-                                ],
-                                label: Some("Grab Blit Bind Group"),
-                            })
-                        });
+                let blit_bind_group = resources.binds.get_over(
+                    depth_key,
+                    "ocean grab blit",
+                    0,
+                    &[crate::bind_cache::Bound::View(scene_target_view)],
+                    || {
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: &op.blit_bind_group_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(scene_target_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::TextureView(depth_view),
+                                },
+                            ],
+                            label: Some("Grab Blit Bind Group"),
+                        })
+                    },
+                );
                 let grab_color_view = &self.water.grab.color.as_ref().unwrap().1;
                 let grab_depth_view = &self.water.grab.depth.as_ref().unwrap().1;
                 let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
