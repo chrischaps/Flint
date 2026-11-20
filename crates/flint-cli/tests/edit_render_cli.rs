@@ -101,23 +101,23 @@ fn every_kind_of_file_renders_a_still() {
         ),
         (
             "model",
-            repo().join("examples/models/barrel.glb"),
+            repo().join("tests/fixtures/scenes/models/barrel.glb"),
             &["--yaw", "30"],
         ),
         (
             "particles",
-            repo().join("examples/particles/campfire.particles.toml"),
+            repo().join("tests/fixtures/scenes/particles/campfire.particles.toml"),
             &["--anim-time", "0.5"],
         ),
         (
             "mesh",
-            repo().join("examples/specs/grove_oak.procgen.toml"),
+            repo().join("tests/fixtures/scenes/woozy_grove/specs/grove_oak.procgen.toml"),
             &["--seed", "3"],
         ),
         ("texture", tmp.join("plaster.procgen.toml"), &[]),
         (
             "graph",
-            repo().join("examples/specs/tavern_plank.procgen.toml"),
+            repo().join("tests/fixtures/scenes/editors/specs/tavern_plank.procgen.toml"),
             &[],
         ),
         // A missing terrain spec is made from the default one, as the
@@ -125,7 +125,7 @@ fn every_kind_of_file_renders_a_still() {
         ("terrain", tmp.join("new.terrain.toml"), &["--pitch", "40"]),
         (
             "track",
-            repo().join("examples/sweep_garden.scene.toml"),
+            repo().join("tests/fixtures/scenes/editors/sweep_garden.scene.toml"),
             &["--spline"],
         ),
     ];
@@ -148,8 +148,14 @@ fn every_kind_of_file_renders_a_still() {
 fn a_camera_flag_moves_every_editors_view() {
     let tmp = dir("camera");
     for (kind, file) in [
-        ("mesh", repo().join("examples/specs/grove_oak.procgen.toml")),
-        ("model", repo().join("examples/models/barrel.glb")),
+        (
+            "mesh",
+            repo().join("tests/fixtures/scenes/woozy_grove/specs/grove_oak.procgen.toml"),
+        ),
+        (
+            "model",
+            repo().join("tests/fixtures/scenes/models/barrel.glb"),
+        ),
         ("terrain", tmp.join("t.terrain.toml")),
     ] {
         let a = tmp.join(format!("{kind}-a.png"));
@@ -182,17 +188,17 @@ fn a_flag_the_editor_doesnt_take_is_an_error() {
             "--yaw doesn't apply to a procgen texture spec",
         ),
         (
-            repo().join("examples/models/barrel.glb"),
+            repo().join("tests/fixtures/scenes/models/barrel.glb"),
             vec!["--seed", "4"],
             "--seed doesn't apply to a model",
         ),
         (
-            repo().join("examples/specs/tavern_plank.procgen.toml"),
+            repo().join("tests/fixtures/scenes/editors/specs/tavern_plank.procgen.toml"),
             vec!["--no-grid"],
             "--no-grid doesn't apply to a texture pipeline spec",
         ),
         (
-            repo().join("examples/particles/campfire.particles.toml"),
+            repo().join("tests/fixtures/scenes/particles/campfire.particles.toml"),
             vec!["--clip", "Walk"],
             "--clip doesn't apply to a particle effect",
         ),

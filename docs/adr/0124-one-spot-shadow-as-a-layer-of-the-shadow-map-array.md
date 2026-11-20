@@ -84,7 +84,7 @@ grass, volumetric, ocean).
   default 2048, 4 MB at 1024).
 - A scene whose spot casts draws one more depth pass over the casters in its
   view and filters the pixels the spot lights (skipped outside the cone and
-  past `range`, where the light adds nothing). `examples/spot_shadow` at
+  past `range`, where the light adds nothing). `flint-examples/spot_shadow.scene.toml` at
   1920 x 1080 on an RTX 4070, debug, p50 of `--gpu-time 240`: depth pass
   0.024 ms; scene pass 0.075 ms without, 0.316 ms with (0.43 ms before the
   skip). About 0.26 ms a frame.

@@ -9,7 +9,7 @@ else. For the phone, see `../phone-perf/`.
 
 ```bash
 # 1. a game folder: here #270's, the ASCII scene and two variants of it
-python -I tools/phone-perf/ascii_variants.py examples/ascii_entities.scene.toml <work>/asciiweb .
+python -I tools/phone-perf/ascii_variants.py flint-examples/ascii_entities.scene.toml <work>/asciiweb .
 
 # 2. the player and the bundle together, as play.chaps.dev has them (trunk, web-release)
 flint export web <work>/asciiweb --out <work>/site      # or --player <a trunk dist> to skip the build

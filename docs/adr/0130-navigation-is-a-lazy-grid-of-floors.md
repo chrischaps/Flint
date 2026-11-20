@@ -98,7 +98,7 @@ Nobody needs crowds yet, and nothing needs off-mesh links (jumps, ladders).
 
 ## Consequences
 
-- A script can ask for a way and walk it: `examples/nav_lamplighter.scene.toml`
+- A script can ask for a way and walk it: `flint-examples/nav_lamplighter.scene.toml`
   (a lamplighter round two hedges and up a ramp to four lanterns) passes
   `flint playtest` with `test_pass` after the fourth.
 - A path goes through a closed door and agents don't avoid each other:

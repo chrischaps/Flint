@@ -34,13 +34,10 @@ const KEPT: &[(&str, &str, &str)] = &[
         "bad-user-style",
         "the golden `user-style-broken-inputs` draws a style with every input whose WGSL fails",
     ),
-    (
-        "tests/fixtures/scenes/styles/darkroom.shader.toml",
-        "bad-user-style",
-        "its images are borrowed by `../` path (#759), which an image option refuses; \
-         no golden loads it (#1056)",
-    ),
 ];
+// `styles/darkroom.shader.toml` was kept here from #1056 until #984: it
+// borrowed its images from the examples by a `../` path, which an image
+// option refuses. The fixtures hold their own copies now, and it loads.
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

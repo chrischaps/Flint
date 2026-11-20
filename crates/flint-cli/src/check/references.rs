@@ -680,9 +680,9 @@ mod tests {
         let mut source = MemorySource::new();
         let json = r#"{"images": [{"uri": "../textures/tavern/plank.jpg"},
             {"uri": "../textures/tavern/iron.jpg"}]}"#;
-        source.insert("examples/models/bar.glb", glb(json));
-        source.insert("examples/textures/tavern/plank.jpg", "jpg");
-        let keys: BTreeSet<String> = ["examples/models/bar.glb".to_string()].into();
+        source.insert("levels/models/bar.glb", glb(json));
+        source.insert("levels/textures/tavern/plank.jpg", "jpg");
+        let keys: BTreeSet<String> = ["levels/models/bar.glb".to_string()].into();
         let subject = Subject::packed(keys.iter().cloned().collect(), Schemas::Listed(Vec::new()));
         let found = vfs::scoped(Arc::new(source), || check(&subject, &keys));
         assert_eq!(found.len(), 1, "{found:?}");
@@ -693,7 +693,7 @@ mod tests {
             .iter()
             .map(|p| flint_core::project::shown(p))
             .collect();
-        assert_eq!(tried, ["examples/textures/tavern/iron.jpg"]);
+        assert_eq!(tried, ["levels/textures/tavern/iron.jpg"]);
     }
 
     /// #382: a music suite names its stems, from the project root.
@@ -701,17 +701,17 @@ mod tests {
     fn a_music_suite_must_have_its_stems() {
         let found = missing(&[
             (
-                "examples/music/clock.suite.toml",
-                "[suite]\nid = \"c\"\n[buses.pad]\nfile = \"examples/music/stems/pad.flac\"\n\
-                 [buses.bell]\nfile = \"examples/music/stems/bell.flac\"\n",
+                "levels/music/clock.suite.toml",
+                "[suite]\nid = \"c\"\n[buses.pad]\nfile = \"levels/music/stems/pad.flac\"\n\
+                 [buses.bell]\nfile = \"levels/music/stems/bell.flac\"\n",
             ),
-            ("examples/music/stems/pad.flac", ""),
+            ("levels/music/stems/pad.flac", ""),
         ]);
         assert_eq!(
             found,
             [pair(
-                "examples/music/clock.suite.toml",
-                "examples/music/stems/bell.flac"
+                "levels/music/clock.suite.toml",
+                "levels/music/stems/bell.flac"
             )]
         );
     }

@@ -9,7 +9,7 @@ A frame is usually seen as one picture. Underneath it are a dozen passes or more
 A capture is the folder `flint render --frame-capture` writes, or the player's `--capture-frame-at`, Shift+F2 and `--capture-on-hitch` ([Profiling: a frame's images](profiling.md#a-frames-images)). Open one with:
 
 ```bash
-flint render examples/stylize_props.scene.toml --frame-capture props.flintframe
+flint render flint-examples/stylize_props.scene.toml --frame-capture props.flintframe
 flint frame open props.flintframe
 flint frame open captures/hitch_metronome-t3.101.flintframe --pass Scene --entity weight
 ```
@@ -87,7 +87,7 @@ Press **R** (or **Draw this frame again** above the draws) and the window loads 
 Each change draws the frame again in a fraction of a second once the scene is loaded (a grove of 38 living trees loads in about 14 s in a debug build, the tavern in 2). From the command line the same replay is `flint frame replay`, which writes the replayed frame as a capture of its own, so `show`, `diff` and `open` read it too:
 
 ```bash
-flint render examples/woozy_grove_grass.scene.toml --time 3 --frame-capture grove.flintframe
+flint render flint-examples/woozy_grove_grass.scene.toml --time 3 --frame-capture grove.flintframe
 flint frame replay grove.flintframe                          # byte-identical, or how many pixels differ, and why
 flint frame replay grove.flintframe --draws 193 --out grove-193.flintframe
 flint frame replay grove.flintframe --pass "Shadow cascade 0" --draws 12 --out cascade-12.flintframe

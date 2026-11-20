@@ -2,7 +2,7 @@
 tileable papers. Deterministic (fixed seeds), so a rerun writes the same
 bytes.
 
-    python tools/darkroom_images.py            # writes examples/styles/luts, papers
+    python tools/darkroom_images.py            # writes flint-examples/styles/luts, papers
 
 A strip is N slices of N x N side by side (N*N wide, N high): blue picks
 the slice left to right, red runs across a slice, green down it. That is

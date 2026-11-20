@@ -60,14 +60,14 @@ one at a time, the backend from `WGPU_BACKEND`. Builds came from this commit
   committed) called `load_scene` 6 s after each scene's start: tavern hub to
   collapsed library and back, 29 transitions in 3 minutes, each behind the
   game's own 1.5 s fade.
-- **The looks tour** (`examples/looks.scene.toml`): `looks_tour.rhai` calls
+- **The looks tour** (`flint-examples/looks.scene.toml`): `looks_tour.rhai` calls
   `set_look` every 3 s through graphite, ascii_noir, matrix, ink_wash,
   watercolor and none.
-- **Woozy Grove** (`examples/woozy_grove.scene.toml` with
-  `examples/woozy_grove_walk.txt`): living props, wooze, a walk.
-- **The Phase 4 tavern** (`examples/phase4_runtime.scene.toml`): NPCs, audio,
+- **Woozy Grove** (`flint-examples/woozy_grove.scene.toml` with
+  `flint-examples/woozy_grove_walk.txt`): living props, wooze, a walk.
+- **The Phase 4 tavern** (`flint-examples/phase4_runtime.scene.toml`): NPCs, audio,
   physics, a calm scene.
-- **The hitch metronome** (`examples/hitch_metronome.scene.toml`) as the
+- **The hitch metronome** (`flint-examples/hitch_metronome.scene.toml`) as the
   control: a 100 ms script stall every 3 s. 43 s of it logged 14 script
   hitches, exactly its stalls, each named `script stall.rhai:on_update`.
 
@@ -269,9 +269,9 @@ cargo build --release -p flint-player
 mkdir -p /tmp/ruins && printf 'essence_collected = 7\n' > /tmp/ruins/default.toml
 (cd showcase_game && WGPU_BACKEND=vulkan ../target/release/flint-player levels/tavern_hub.scene.toml \
    --save-dir /tmp/ruins --hitch-log ruins.jsonl --exit-after 180)
-WGPU_BACKEND=dx12 target/release/flint-player examples/looks.scene.toml --hitch-log looks.jsonl --exit-after 120
-FLINT_VSYNC=0 target/release/flint-player examples/woozy_grove.scene.toml \
-   --input-script examples/woozy_grove_walk.txt --hitch-log grove.jsonl --exit-after 120
+WGPU_BACKEND=dx12 target/release/flint-player flint-examples/looks.scene.toml --hitch-log looks.jsonl --exit-after 120
+FLINT_VSYNC=0 target/release/flint-player flint-examples/woozy_grove.scene.toml \
+   --input-script flint-examples/woozy_grove_walk.txt --hitch-log grove.jsonl --exit-after 120
 ```
 Then `[perf] hitches: ... causes: ...` at exit, and one JSON line per hitch
 in the log (the book's Profiling guide, Finding a hitch).

@@ -348,15 +348,15 @@ Engine edits are normal commits in your game repo. The subtree commands handle s
 
 ### What `engine/` carries, and leaving some of it out
 
-A subtree is the engine's whole tree, so a game carries the engine's examples, its book and its test fixtures along with the crates. The engine keeps that under a budget ([ADR 0122](https://github.com/chrischaps/Flint/blob/main/docs/adr/0122-what-a-games-engine-carries.md)): 185 MB in all, no file stored twice, no texture over 2048 texels a side, checked on every engine PR. `python3 engine/scripts/size-check.py --report` prints each part's size (in a sparse checkout, of what is written out).
+A subtree is the engine's whole tree, so a game carries the engine's book, its test fixtures and the showcase game along with the crates. The examples are not in it: they are their own repository, [flint-examples](https://github.com/chrischaps/flint-examples), since #984. The engine keeps the tree under a budget ([ADR 0122](https://github.com/chrischaps/Flint/blob/main/docs/adr/0122-what-a-games-engine-carries.md)): 175 MB in all, no file stored twice, no texture over 2048 texels a side, checked on every engine PR. `python3 engine/scripts/size-check.py --report` prints each part's size (in a sparse checkout, of what is written out).
 
-Nothing a game builds reads `engine/examples`, `engine/docs`, `engine/tests` or `engine/showcase_game`, so each clone or worktree of the game can leave them out of its working tree with a sparse checkout:
+Nothing a game builds reads `engine/docs`, `engine/tests` or `engine/showcase_game`, so each clone or worktree of the game can leave them out of its working tree with a sparse checkout:
 
 ```bash
-git sparse-checkout set --no-cone '/*' '!/engine/examples/' '!/engine/docs/' '!/engine/tests/' '!/engine/showcase_game/'
+git sparse-checkout set --no-cone '/*' '!/engine/docs/' '!/engine/tests/' '!/engine/showcase_game/'
 ```
 
-On a game with the engine of 2026-11-14 this took the working tree from 166 MB to 41 MB. The engine still builds (`cargo build --manifest-path engine/Cargo.toml`), and `git subtree pull` and `push` work as before: the files are still in the repository, just not written out. `git sparse-checkout disable` brings them back. In Git Bash, prefix the command with `MSYS_NO_PATHCONV=1`, or Git Bash rewrites `'/*'` as a Windows path and the checkout keeps everything.
+On a game with the engine of 2026-11-14 (examples and all) this took the working tree from 166 MB to 41 MB; since the examples left, the engine's whole tree is about 158 MB. A game with the old recipe can drop its `'!/engine/examples/'`. The engine still builds (`cargo build --manifest-path engine/Cargo.toml`), and `git subtree pull` and `push` work as before: the files are still in the repository, just not written out. `git sparse-checkout disable` brings them back. In Git Bash, prefix the command with `MSYS_NO_PATHCONV=1`, or Git Bash rewrites `'/*'` as a Windows path and the checkout keeps everything.
 
 ### After a pull: read the changelog
 

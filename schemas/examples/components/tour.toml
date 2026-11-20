@@ -1,4 +1,4 @@
 # Declared by name only: an open schema (ADR 0115). The component is known
 # and its table is not checked.
 [component.tour]
-description = "The looks tour's director table. Read by examples/scripts/looks_tour.rhai; open"
+description = "The looks tour's director table. Read by flint-examples/scripts/looks_tour.rhai; open"

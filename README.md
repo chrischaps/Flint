@@ -18,9 +18,9 @@ From the Flint checkout:
 
 ```bash
 cargo build --release
-cargo run --release --bin flint -- play examples/phase4_runtime.scene.toml   # play a demo scene
-cargo run --release --bin flint -- render examples/phase4_runtime.scene.toml --output shot.png
-cargo run --release --bin flint -- edit examples/phase4_runtime.scene.toml    # scene viewer with live inspector
+cargo run --release --bin flint -- play flint-examples/phase4_runtime.scene.toml   # play a demo scene
+cargo run --release --bin flint -- render flint-examples/phase4_runtime.scene.toml --output shot.png
+cargo run --release --bin flint -- edit flint-examples/phase4_runtime.scene.toml    # scene viewer with live inspector
 cargo test
 ```
 
@@ -73,6 +73,6 @@ trunk serve
 
 - `crates/` holds the 32-crate workspace: the `flint` CLI, `flint-player`, the wgpu renderer, Rapier physics, Kira audio, Rhai scripting, animation, particles, terrain, the query language and the editors
 - `schemas/` defines the engine's components and archetypes in TOML
-- `examples/` has showcase scenes, scripts and effects
+- [flint-examples](https://github.com/chrischaps/flint-examples) has the showcase scenes, scripts and effects, in a repository of their own
 - `docs/book/` is the mdBook source for [docs.chaps.dev/flint](https://docs.chaps.dev/flint)
 - `tools/` holds the crate-graph analyzer and viewer, the play.chaps.dev site builder, the showcase film rig and other helpers (`tools/README.md` lists them); the docs checker is `scripts/docs-check.py`

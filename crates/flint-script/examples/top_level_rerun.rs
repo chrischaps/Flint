@@ -46,8 +46,8 @@ fn main() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let subjects: Vec<(String, String)> = vec![
         (
-            "examples/scripts/audio_clock.rhai (12 top-level lets)".into(),
-            std::fs::read_to_string(root.join("examples/scripts/audio_clock.rhai")).unwrap(),
+            "audio_clock.rhai (12 top-level lets)".into(),
+            std::fs::read_to_string(root.join("tests/fixtures/scripts/audio_clock.rhai")).unwrap(),
         ),
         (
             "showcase_game/scripts/zone_hud.rhai (6 lets)".into(),

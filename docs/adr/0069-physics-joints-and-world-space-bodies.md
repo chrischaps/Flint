@@ -72,6 +72,6 @@ clips were deferred until the trike needs them.
 - Vault: "2026-09-04 Flint Physics Joints And World Space Bodies"
 - Code now: `crates/flint-physics/src/sync.rs`,
   `crates/flint-physics/src/joint_tests.rs`, `schemas/components/joint.toml`,
-  `examples/joint_test.scene.toml`
+  `flint-examples/joint_test.scene.toml`
 - Book: [Physics and Runtime](../book/src/concepts/physics-and-runtime.md),
   "Joints"

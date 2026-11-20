@@ -1264,7 +1264,10 @@ mod scopes {
     /// its four species, every tree, and its field with its zones.
     #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     pub(super) fn woozy_grove(folder: &Path) -> PlayerApp {
-        let text = std::fs::read_to_string(repo().join("examples/woozy_grove.scene.toml")).unwrap();
+        let text = std::fs::read_to_string(
+            repo().join("tests/fixtures/scenes/woozy_grove/woozy_grove.scene.toml"),
+        )
+        .unwrap();
         let scene: flint_scene::SceneFile = toml::from_str(&text).unwrap();
         let mut app = app_with(0, folder);
         app.core.procgen_resolver.set_living_defaults(
@@ -1276,7 +1279,9 @@ mod scopes {
             ),
         );
         for spec in ["grove_birch", "grove_cypress", "grove_oak", "grove_thorn"] {
-            let path = repo().join(format!("examples/specs/{spec}.procgen.toml"));
+            let path = repo().join(format!(
+                "tests/fixtures/scenes/woozy_grove/specs/{spec}.procgen.toml"
+            ));
             let text = std::fs::read_to_string(path).unwrap();
             app.core
                 .procgen_resolver

@@ -540,13 +540,13 @@ return vec4<f32>(vec3<f32>(x * params.mix), 1.0);
     assert_eq!(text.matches(&format!(">= {LOOP_LIMIT}u")).count(), 1);
 }
 
-/// #424: the shipped example styles load with no warning, and their
+/// #424: the example styles (frozen in the fixtures since #984) load with no warning, and their
 /// constant-bound loops (orton's 13-tap blurs) are left as written;
 /// radial_blur's loop runs to a parameter, so it is still guarded.
 #[test]
 #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn example_styles_warn_about_nothing() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/styles");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/scenes/styles");
     let mut checked = 0;
     for entry in std::fs::read_dir(&dir).unwrap() {
         let path = entry.unwrap().path();

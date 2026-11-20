@@ -3,7 +3,7 @@
 //! nearest-neighbour zooms of a region of every variant (`--zoom`).
 //!
 //! ```text
-//! flint render examples/ascii_entities.scene.toml -o cmp.png \
+//! flint render flint-examples/ascii_entities.scene.toml -o cmp.png \
 //!     --variant "as authored:" \
 //!     --variant "full screen: --style ascii:scope=screen" \
 //!     --variant "object grid: --style ascii:grid=object" \
@@ -795,7 +795,7 @@ mod tests {
         assert_eq!((v.label.as_str(), v.flags.len()), ("as authored", 0));
         let v = parse_variant("as authored:").unwrap();
         assert!(v.flags.is_empty());
-        assert!(parse_variant("x: examples/other.scene.toml").is_err());
+        assert!(parse_variant("x: levels/other.scene.toml").is_err());
         assert!(parse_variant("  ").is_err());
     }
 
@@ -848,28 +848,21 @@ mod tests {
     #[test]
     fn the_base_command_drops_this_commands_own_flags() {
         let base = base_words(&words(
-            "examples/a.scene.toml --variant 'x: --ascii' -o out.png --zoom 0,0,9,9 \
+            "levels/a.scene.toml --variant 'x: --ascii' -o out.png --zoom 0,0,9,9 \
              --variants=v.toml --width 640 -oother.png --output=o.png --distance 5",
         ));
-        assert_eq!(
-            base,
-            words("examples/a.scene.toml --width 640 --distance 5")
-        );
+        assert_eq!(base, words("levels/a.scene.toml --width 640 --distance 5"));
     }
 
     #[test]
     fn the_subcommand_words_skip_the_global_project() {
-        let argv =
-            words("flint --project ../game render examples/a.scene.toml --project=x --ascii");
-        assert_eq!(
-            subcommand_words(argv),
-            words("examples/a.scene.toml --ascii")
-        );
+        let argv = words("flint --project ../game render levels/a.scene.toml --project=x --ascii");
+        assert_eq!(subcommand_words(argv), words("levels/a.scene.toml --ascii"));
     }
 
     #[test]
     fn a_variant_overrides_the_base_and_adds_to_repeatable_flags() {
-        let mut w = words("examples/a.scene.toml --width 640 --style ascii:cell=8");
+        let mut w = words("levels/a.scene.toml --width 640 --style ascii:cell=8");
         w.extend(words(
             "--width 800 --style ascii:ramp=blocks --output x.png",
         ));
@@ -877,7 +870,7 @@ mod tests {
         assert_eq!(args.width, Some(800));
         assert_eq!(args.style.styles.len(), 2);
         assert_eq!(args.output, "x.png");
-        assert_eq!(args.scene, "examples/a.scene.toml");
+        assert_eq!(args.scene, "levels/a.scene.toml");
     }
 
     #[test]

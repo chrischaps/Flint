@@ -3270,10 +3270,7 @@ fn flat_terrain(world: &mut FlintWorld, half: f64) -> flint_core::EntityId {
         .set_component(ground, "transform", transform.into())
         .unwrap();
     let mut terrain = toml::Table::new();
-    terrain.insert(
-        "heightmap".into(),
-        "../../../examples/terrain/heightmap.png".into(),
-    );
+    terrain.insert("heightmap".into(), "./terrain/heightmap.png".into());
     terrain.insert("width".into(), (2.0 * half).into());
     terrain.insert("depth".into(), (2.0 * half).into());
     terrain.insert("height_scale".into(), 0.0.into());

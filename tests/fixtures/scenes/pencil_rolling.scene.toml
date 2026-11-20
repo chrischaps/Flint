@@ -1,4 +1,4 @@
-# Frozen copy of examples/pencil_rolling.scene.toml (#544) for the
+# Frozen copy of flint-examples/pencil_rolling.scene.toml (#544) for the
 # pencil-local golden: the two casks posed mid-roll and the crate turned,
 # with no script. The back cask's strokes are the world's, the front
 # cask's and the crate's their own (grid = "local").
@@ -71,7 +71,7 @@ position = [1.755, 0.38, 2.4]
 rotation = [90, 0, -144]
 scale = [0.4, 0.4, 0.4]
 [entities.cask_world.model]
-asset = "../../../examples/models/barrel.glb"
+asset = "./models/barrel.glb"
 [entities.cask_world.pencil_style]
 
 [entities.cask_local]
@@ -81,7 +81,7 @@ position = [1.755, 0.38, 4.4]
 rotation = [90, 0, -144]
 scale = [0.4, 0.4, 0.4]
 [entities.cask_local.model]
-asset = "../../../examples/models/barrel.glb"
+asset = "./models/barrel.glb"
 [entities.cask_local.pencil_style]
 grid = "local"
 lead = [0.34, 0.17, 0.07]
@@ -96,7 +96,7 @@ rotation = [0, 77, 0]
 min = [-0.4, 0.0, -0.4]
 max = [0.4, 0.8, 0.4]
 [entities.crate.material]
-texture = "../../../examples/textures/wood_planks.jpg"
+texture = "./textures/wood_planks.jpg"
 color = [0.9, 0.75, 0.6, 1.0]
 roughness = 0.8
 [entities.crate.pencil_style]

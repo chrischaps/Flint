@@ -113,7 +113,7 @@ What egui and eframe say, from their source in the cargo registry
 - A game's panels sit on the background layer with the script UI, after it,
   so in front; its windows float on Middle; the debug panels stay on
   Foreground over both.
-- `examples/cave_game` draws a side panel and a window through the hook.
+- `crates/flint-player/examples/cave_game` draws a side panel and a window through the hook.
 - The player's internal `Subsystem::ui(&egui::Context)`
   ([ADR 0117](0117-player-subsystems-and-one-game-step.md)) keeps its `Context`: it isn't public,
   and its one client draws windows.

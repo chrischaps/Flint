@@ -31,7 +31,7 @@ The ids are the names' ranks, so adding or renaming an entity moves the ids afte
 
 ### Order
 
-Everything that walks the world does it in a fixed order, the same every run: the entities with a component (`entities_with_component`) by id, which for a loaded scene is name order; all entities, their names and an entity's children by name. Physics creates its bodies in that order, so a pile of dynamic bodies settles the same way every time a scene is loaded (`examples/physics_pile.scene.toml`).
+Everything that walks the world does it in a fixed order, the same every run: the entities with a component (`entities_with_component`) by id, which for a loaded scene is name order; all entities, their names and an entity's children by name. Physics creates its bodies in that order, so a pile of dynamic bodies settles the same way every time a scene is loaded ([`flint-examples/physics_pile.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/physics_pile.scene.toml)).
 
 ## Named Entities
 

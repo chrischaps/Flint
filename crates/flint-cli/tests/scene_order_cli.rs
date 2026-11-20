@@ -45,17 +45,28 @@ fn ids_in_a_new_process(scene: &str) -> Vec<(String, u64)> {
 
 #[test]
 fn two_processes_give_a_scene_the_same_ids() {
-    // A scene with prefabs, parents and archetypes, written out of name order
-    let scene = "examples/phase4_runtime.scene.toml";
-    let first = ids_in_a_new_process(scene);
-    let second = ids_in_a_new_process(scene);
-    assert!(first.len() > 10, "expected a real scene, got {first:?}");
-    assert_eq!(first, second);
+    // A grove of parents and archetypes written out of name order, and a
+    // scene made of a prefab (frozen copies since #984)
+    for (scene, at_least) in [
+        (
+            "tests/fixtures/scenes/woozy_grove/woozy_grove.scene.toml",
+            30,
+        ),
+        ("tests/fixtures/scenes/stylize_props.scene.toml", 5),
+    ] {
+        let first = ids_in_a_new_process(scene);
+        let second = ids_in_a_new_process(scene);
+        assert!(
+            first.len() > at_least,
+            "expected a real scene, got {first:?}"
+        );
+        assert_eq!(first, second);
 
-    // The ids are the names' ranks: nothing else decides them
-    let mut by_name = first.clone();
-    by_name.sort();
-    let ranks: Vec<u64> = (1..=by_name.len() as u64).collect();
-    let ids: Vec<u64> = by_name.iter().map(|(_, id)| *id).collect();
-    assert_eq!(ids, ranks);
+        // The ids are the names' ranks: nothing else decides them
+        let mut by_name = first.clone();
+        by_name.sort();
+        let ranks: Vec<u64> = (1..=by_name.len() as u64).collect();
+        let ids: Vec<u64> = by_name.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids, ranks, "{scene}");
+    }
 }

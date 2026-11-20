@@ -44,7 +44,7 @@ shape_radius = 0.15
 
 ### Effect asset
 
-`examples/particles/campfire.particles.toml`, trimmed:
+[`flint-examples/particles/campfire.particles.toml`](https://github.com/chrischaps/flint-examples/blob/main/particles/campfire.particles.toml), trimmed:
 
 ```toml
 name = "campfire"

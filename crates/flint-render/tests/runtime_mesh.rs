@@ -2101,7 +2101,10 @@ fn every_instance_of_a_skinned_model_stays_skinned() {
             id
         })
         .collect();
-    let demo = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/x.scene.toml");
+    let demo = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/scenes/x.scene.toml"
+    );
     let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(demo);
     let loaded = flint_render::model_loader::load_models_from_world(
         &mut world,
@@ -2214,7 +2217,10 @@ fn a_scenes_grass_ground_loads_from_beside_the_scene() {
 fn a_skinned_model_still_draws_after_a_reload() {
     let gpu = gpu_or_skip!();
     let mut renderer = gpu.renderer();
-    let demo = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/x.scene.toml");
+    let demo = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/scenes/x.scene.toml"
+    );
     let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(demo);
     let camera = Camera::default();
     let mut skinned_draws = Vec::new();

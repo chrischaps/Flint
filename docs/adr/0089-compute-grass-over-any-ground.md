@@ -94,5 +94,5 @@ A 3 km ground at density 40 takes 21 MB of instances instead of 5.7 GB.
 - Code now: `crates/flint-render/src/grass_pipeline.rs` (`GrassGround`),
   `crates/flint-render/src/scene_renderer/grass_ground.rs`,
   `crates/flint-render/src/grass_compute.wgsl`,
-  `schemas/components/grass_ground.toml`, `examples/mesh_meadow.scene.toml`;
+  `schemas/components/grass_ground.toml`, `flint-examples/mesh_meadow.scene.toml`;
   book: [Grass on Any Ground](../book/src/concepts/grass-ground.md)
