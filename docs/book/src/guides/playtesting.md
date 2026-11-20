@@ -3,12 +3,12 @@
 `flint playtest` answers the question an agent asks after every change: *does the game still play?* It plays a scene the way `flint play` does, with physics, the character controller, scripts, animation, particles and transitions, but with no window, no GPU and no sound device, on a fixed clock. Then it says what happened as one JSON report and exits 1 when anything failed.
 
 ```bash
-flint playtest examples/phase4_runtime.scene.toml \
-    --input-script examples/playtests/phase4_runtime.playtest.txt --exit-after 8
+flint playtest flint-examples/phase4_runtime.scene.toml \
+    --input-script flint-examples/playtests/phase4_runtime.playtest.txt --exit-after 8
 ```
 
 ```text
-PASS examples/phase4_runtime.scene.toml: ended by exit_after at 8.000 s, 481 frames
+PASS flint-examples/phase4_runtime.scene.toml: ended by exit_after at 8.000 s, 481 frames
   checks 10 of 10 held; assertions 1 places, 0 failed; script errors 0; warnings 0 at load, 0 while running
 ```
 

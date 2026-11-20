@@ -20,7 +20,7 @@
 //!
 //! [[case]]
 //! name = "ascii-full-pbr"
-//! scene = "examples/pbr_test.scene.toml"
+//! scene = "tests/fixtures/scenes/pbr_test.scene.toml"
 //! golden = "ascii_pbr_test.png"   # beside the manifest; default "<name>.png"
 //! args = ["--style", "ascii"]
 //! text = "ascii_pbr_test.txt"     # optional (#317): the ASCII grid, compared exactly

@@ -519,29 +519,52 @@ fn a_script_completes_transitions_only_if_it_can_call_complete_transition() {
         r#"fn on_update() { import "fades" as fades; fades::run(); }"#
     ));
 
-    // The script that draws the examples' fades (the example game's
+    // The script that draws the examples' fades, frozen in tests/fixtures/scripts (#984; the example game's
     // zone_hud.rhai is the same shape; the engine names no game, #760)
     assert!(
         completes(include_str!(
-            "../../../../examples/scripts/showcase_hud.rhai"
+            "../../../../tests/fixtures/scripts/showcase_hud.rhai"
         )),
         "showcase_hud.rhai ends its own fades"
     );
 }
 
-/// The finder sees a name split across the pieces `Debug` writes, and a
-/// hot reload that takes the call out clears the flag.
+/// #998: the shapes the walk reaches by itself. Rhai's walk skips a method
+/// call's arguments, and the optimizer folds `Fn("..")` and constant
+/// arrays into values the walk doesn't open; a longer name holding the
+/// text, which the old `Debug` search matched, is not the call.
+#[test]
+fn the_transition_walk_reaches_method_arguments_and_folded_constants() {
+    let engine = ScriptEngine::new();
+    let completes = |source: &str| {
+        let ast = engine.compile(source).unwrap();
+        ScriptInstance::new(ast, "t.rhai".into()).completes_transition
+    };
+
+    assert!(completes(
+        r#"fn on_update() { let s = "x"; s.pad(1, call("complete_transition")); }"#
+    ));
+    assert!(completes(
+        r#"fn on_update() { [1].map(|v| v.max(complete_transition())); }"#
+    ));
+    assert!(completes(
+        r#"fn on_update() { let f = Fn("complete_transition"); f.call(); }"#
+    ));
+    assert!(completes(
+        r#"fn on_update() { for n in ["a", "complete_transition"] { call(n); } }"#
+    ));
+
+    assert!(!completes(
+        r#"fn complete_transition_soon() {} fn on_update() { complete_transition_soon(); }"#
+    ));
+    assert!(!completes(
+        r#"fn on_update() { log("complete_transition()"); }"#
+    ));
+}
+
+/// A hot reload that takes the call out clears the flag.
 #[test]
 fn completes_transition_follows_a_hot_reload() {
-    use std::fmt::Write;
-    let mut find = super::instance::Finder::new(&["complete_transition", "Import("]);
-    for piece in ["name: \"comp", "lete_tr", "ansition\""] {
-        if write!(find, "{piece}").is_err() {
-            break;
-        }
-    }
-    assert!(find.found, "a needle across three pieces");
-
     let mut engine = ScriptEngine::new();
     let id = EntityId::from_raw(1);
     let fades = engine

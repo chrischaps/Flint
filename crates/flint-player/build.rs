@@ -17,6 +17,11 @@
 //! `engine_commit` and a capture's `engine.commit` name the code the binary
 //! was built from, not the repository it happens to run in. See
 //! `src/provenance.rs`.
+//!
+//! And links the player's binaries with an 8 MB main-thread stack on
+//! Windows, as flint-cli's build script does `flint` (#990): there
+//! `.cargo/config.toml` is read only by a build run inside the engine's
+//! checkout, never by a game building the engine from its own root.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -45,6 +50,25 @@ fn main() {
     std::fs::write(dest, out).unwrap();
     subsystems();
     commit();
+    main_thread_stack();
+}
+
+/// The stack `link.exe` (`/STACK`) or MinGW's `ld` (`--stack`) reserves for
+/// the main thread of `flint-player`, its examples and its tests: 8 MB, what
+/// `.cargo/config.toml` gives the engine's own builds. flint-cli's build
+/// script says the same; keep the two alike. A game binary is another
+/// package, which this can't reach (guides/player-extensions.md).
+fn main_thread_stack() {
+    const BYTES: u32 = 8 << 20;
+    let target = |key: &str| std::env::var(key).unwrap_or_default();
+    if target("CARGO_CFG_TARGET_OS") != "windows" {
+        return;
+    }
+    match target("CARGO_CFG_TARGET_ENV").as_str() {
+        "msvc" => println!("cargo:rustc-link-arg=/STACK:{BYTES}"),
+        "gnu" => println!("cargo:rustc-link-arg=-Wl,--stack,{BYTES}"),
+        _ => {}
+    }
 }
 
 /// `ENGINE_BUILD_COMMIT`: the commit of the checkout the engine's sources

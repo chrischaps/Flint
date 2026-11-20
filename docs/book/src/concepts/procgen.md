@@ -244,7 +244,7 @@ noise = { turn = 12.0, wavelength = 3.0, stretch = 0.08 }  # these are the defau
 
 A colonized tree's grown `depth` counts growth steps along a limb, 31 on the pine. With that depth, per-level stagger spread the pine over five beats and it never held. So a colonization skeleton's `depth` is its **branch order**: 1 for a limb off the trunk, plus one at each fork for every child except the one that carries its parent on (the thickest, then the straightest). That gives the pine three levels, so it holds on every beat under per-level stagger, and its variance weights the twigs over the limbs. Leaves are still placed by the grown depth, as `flint gen` places them. A grammar's depth is its bracket nesting, which is already a branch order, so it is left as it is.
 
-A tree with more segments than bones folds its tips into their parents ([below](#the-skinned-rest-mesh)). The pine folds 397 of its 640 segments, and the willow 1,137 of its 1,380. `examples/noise_trees.scene.toml` puts the colonized pine (`examples/specs/grove_pine`) and the grammar willow (`grove_willow`) beside the grove's regrowing oak.
+A tree with more segments than bones folds its tips into their parents ([below](#the-skinned-rest-mesh)). The pine folds 397 of its 640 segments, and the willow 1,137 of its 1,380. [`flint-examples/noise_trees.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/noise_trees.scene.toml) puts the colonized pine (`flint-examples/specs/grove_pine.procgen.toml`) and the grammar willow (`grove_willow`) beside the grove's regrowing oak.
 
 A spec declares it with a `[living]` table. Only `lineage_seed` is required:
 
@@ -360,7 +360,7 @@ In play, each frame fills the emptiest rings first with whatever the asset queue
 
 A prop whose spec can't live, or whose component has a bad field, stays a still model, with a warning saying why. A catalog entry for the same name wins, as it does anywhere.
 
-`--exit-after` reports how the rings fared. The numbers below are 40 oaks over 65 s, from `examples/living_props.scene.toml` with its echoes off:
+`--exit-after` reports how the rings fared. The numbers below are 40 oaks over 65 s, from [`flint-examples/living_props.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/living_props.scene.toml) with its echoes off:
 
 ```
 [living] 40 props on 5 lineages, 8 poses a ring: 3900 of 3900 frames ended full, never more than 0 short, 0 frames missing a pose in use
@@ -408,10 +408,10 @@ The fast layer boils the leaf cards on a clock of its own, `jitter.step` and `ji
 
 `amplitude = 0`, or leaving `leaf_cards` out of `targets`, turns the layer off. It only reaches the player: `flint gen --strip` draws the slow layer.
 
-**Its pace, live** (Flint#529). `jitter_rate` runs the boil faster or slower than its spec's `jitter.step`, as a multiplier: 2 ticks twice as often, 0.5 half as often, 0 holds every card where it is, up to 8. Each prop's jitter reads a clock of its own that moves on by the frame's seconds times its rate, so a new rate changes how fast the clock runs from where it stands and never where it is: no card turns and no shade changes at the moment it's set, and each channel holds what it shows until its next tick, which comes after the time it had left over the rate. An echo reads that same clock a fixed few of its seconds away, so it stays the same many boil ticks behind at any rate. The pose clock (`step`, the wooze field's) doesn't move with it: a quickened form flickers faster, not wider. It's a run-time knob like softness: a scene's `[living] jitter_rate`, a species' own, a preset, the F3 panel's **jitter rate** slider and `tune_living(#{ living: #{ jitter_rate: 2.0 } })` (or eased, `tune_living(map, seconds)`) all set it through the same layers, and `--report json` gives each prop's with its layer. Unset is 1, and at 1 the jitter clock is the props' clock to the bit, so a scene that never says it draws as before. `examples/living_boil_rate.scene.toml` doubles, halves and eases a held flame's boil back:
+**Its pace, live** (Flint#529). `jitter_rate` runs the boil faster or slower than its spec's `jitter.step`, as a multiplier: 2 ticks twice as often, 0.5 half as often, 0 holds every card where it is, up to 8. Each prop's jitter reads a clock of its own that moves on by the frame's seconds times its rate, so a new rate changes how fast the clock runs from where it stands and never where it is: no card turns and no shade changes at the moment it's set, and each channel holds what it shows until its next tick, which comes after the time it had left over the rate. An echo reads that same clock a fixed few of its seconds away, so it stays the same many boil ticks behind at any rate. The pose clock (`step`, the wooze field's) doesn't move with it: a quickened form flickers faster, not wider. It's a run-time knob like softness: a scene's `[living] jitter_rate`, a species' own, a preset, the F3 panel's **jitter rate** slider and `tune_living(#{ living: #{ jitter_rate: 2.0 } })` (or eased, `tune_living(map, seconds)`) all set it through the same layers, and `--report json` gives each prop's with its layer. Unset is 1, and at 1 the jitter clock is the props' clock to the bit, so a scene that never says it draws as before. [`flint-examples/living_boil_rate.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/living_boil_rate.scene.toml) doubles, halves and eases a held flame's boil back:
 
 ```bash
-flint render examples/living_boil_rate.scene.toml --scripts --time 1.5..4.5 --fps 48 -o frames/f-%05d.png
+flint render flint-examples/living_boil_rate.scene.toml --scripts --time 1.5..4.5 --fps 48 -o frames/f-%05d.png
 ```
 
 ### Drifting rows
@@ -420,11 +420,11 @@ flint render examples/living_boil_rate.scene.toml --scripts --time 1.5..4.5 --fp
 
 Each word rides a bone of its own, after the jitter's, which carries it along its line's track: the surface sampled across the line, so it keeps to a rounded section. At a margin the bone squashes the word along its line to the part still inside, which for a plain stroke is the same as cutting it off there. A form has 256 bones, so when there are more words than bones left over, a few neighbours on a line share one and travel, turn and slide under the margin together. A drifting word's boil is a turn of its bone about its middle, so it still boils, as a word and not as a card. `row_pace = 0` makes no bones, and the form draws exactly as before.
 
-The words read the prop's row clock: seconds, moved on each frame by the frame's time times its **row rate**, so it's a pure function of the frames played and `flint render --time` and `--frame-step` draw the same pixels at the same time on every run. The row rate is a run-time knob like `jitter_rate`: a scene's `[living] row_rate`, a species' own, a preset, the F3 panel's **row rate** slider and `tune_living(#{ living: #{ row_rate: 2.0 } })` (or eased, `tune_living(map, seconds)`) set it through the same layers, from 0 (held) to 8, unset 1. A new rate changes how fast the words go from where they are, on the frame it's set, and never moves a word at the change, so a script can run a speaking cadence through the rows by setting rates alone. `--report json` gives each prop's `row_rate` with its layer and its `row_time`. An echo reads the row clock its offset of pose steps away, so it shows the lines a little before or after now. `examples/drifting_page.scene.toml` is a page made only of its writing; with `--scripts`, `scripts/drifting_page.rhai` speaks through it in phrases and pauses:
+The words read the prop's row clock: seconds, moved on each frame by the frame's time times its **row rate**, so it's a pure function of the frames played and `flint render --time` and `--frame-step` draw the same pixels at the same time on every run. The row rate is a run-time knob like `jitter_rate`: a scene's `[living] row_rate`, a species' own, a preset, the F3 panel's **row rate** slider and `tune_living(#{ living: #{ row_rate: 2.0 } })` (or eased, `tune_living(map, seconds)`) set it through the same layers, from 0 (held) to 8, unset 1. A new rate changes how fast the words go from where they are, on the frame it's set, and never moves a word at the change, so a script can run a speaking cadence through the rows by setting rates alone. `--report json` gives each prop's `row_rate` with its layer and its `row_time`. An echo reads the row clock its offset of pose steps away, so it shows the lines a little before or after now. [`flint-examples/drifting_page.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/drifting_page.scene.toml) is a page made only of its writing; with `--scripts`, `scripts/drifting_page.rhai` speaks through it in phrases and pauses:
 
 ```bash
-flint render examples/drifting_page.scene.toml --time 0..8 -o page.gif
-flint render examples/drifting_page.scene.toml --scripts --time 0..10.3 -o speaking.gif
+flint render flint-examples/drifting_page.scene.toml --time 0..8 -o page.gif
+flint render flint-examples/drifting_page.scene.toml --scripts --time 0..10.3 -o speaking.gif
 ```
 
 ### Shadows
@@ -486,9 +486,9 @@ softness = 0.45
 
 ![The same pose at softness 0, 0.45 and 1](../images/living-softness.png)
 
-*`examples/soft_form.scene.toml` at 2 s, 1:1 crops of 1920 x 1080 renders: a hard edge, an outline that feathers into the dusk, and a whole rim that fades. Nothing else differs between them.*
+*[`flint-examples/soft_form.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/soft_form.scene.toml) at 2 s, 1:1 crops of 1920 x 1080 renders: a hard edge, an outline that feathers into the dusk, and a whole rim that fades. Nothing else differs between them.*
 
-0 draws exactly as before. Above 0 the body draws in the translucent pass, after everything opaque, front faces only, and still writes depth and casts its whole shadow, since softness is how its outline looks to the eye, not how much of it is there. (Without the depth, SSAO read the cards behind the body through it and drew their outlines on it.) A body that's see-through anyway (`body_opacity` below 1) keeps its two-pass draw and casts no shadow, as before, and so does a soft body under shallow wooze. It's a run-time knob like echoes: a scene's `[living] softness`, a species' own, a preset, the F3 panel's **Silhouette** slider and `tune_living(#{ living: #{ softness: 0.6 } })` all set it, through the same layers, and `--report json` gives each prop's with its layer. Nothing baked reads it. A bench: `flint render examples/soft_form.scene.toml --time 2 --sweep wooze.preset=hard,soft,softest`.
+0 draws exactly as before. Above 0 the body draws in the translucent pass, after everything opaque, front faces only, and still writes depth and casts its whole shadow, since softness is how its outline looks to the eye, not how much of it is there. (Without the depth, SSAO read the cards behind the body through it and drew their outlines on it.) A body that's see-through anyway (`body_opacity` below 1) keeps its two-pass draw and casts no shadow, as before, and so does a soft body under shallow wooze. It's a run-time knob like echoes: a scene's `[living] softness`, a species' own, a preset, the F3 panel's **Silhouette** slider and `tune_living(#{ living: #{ softness: 0.6 } })` all set it, through the same layers, and `--report json` gives each prop's with its layer. Nothing baked reads it. A bench: `flint render flint-examples/soft_form.scene.toml --time 2 --sweep wooze.preset=hard,soft,softest`.
 
 ### The wooze field
 
@@ -558,7 +558,7 @@ remove_wooze_zone("spot", 1.0);                              // and out
 [wooze] 2 zones over 13 props: step 0.25..1.50, glide 0.30..0.80, amplitude 0.20..1.00, jitter 0.00..1.00
 ```
 
-Bench: `examples/wooze_field.scene.toml`, a row of oaks through a dreamy sphere and a calm box, whose script changes the step at 12 s.
+Bench: [`flint-examples/wooze_field.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/wooze_field.scene.toml), a row of oaks through a dreamy sphere and a calm box, whose script changes the step at 12 s.
 
 **Paint and ink read it too.** The [shading boil](post-processing.md#shading-boil) runs the Kuwahara filter and contour lines on the field's beat, as hard as its `jitter` says, where the camera stands.
 
@@ -634,7 +634,7 @@ Variance is held per lineage, as it was, and a lineage belongs to one spec, so a
 **Saying where a value came from.** `flint render --report json` gives every prop its `species` and a `values` map: each value it runs on and the layer that set it, `spec`, `entity`, `global`, `zone:<name>` or `species` ([What a Prop Was Doing](../guides/headless-rendering.md#what-a-prop-was-doing)).
 
 ```bash
-flint render examples/living_compare.scene.toml --time 3.5 -o compare.png --report json
+flint render flint-examples/living_compare.scene.toml --time 3.5 -o compare.png --report json
 ```
 
 **Checking it.** `flint validate` names a bad value, `[living.species.grove_thorn_twin]: step = -1 must be 0.01 seconds or more`, and a species no living prop in the scene grows from, which is most likely a misspelt spec. The player warns and leaves a bad value to the layers below. A misspelt key fails the scene's load, as it does in `[living]`.
@@ -653,7 +653,7 @@ Different species are different trees, so an oak beside a thorn compares nothing
 
 ![Left to right: the oak as specced, the oak at the morph end, the thorn as specced, the thorn at the shiver end](../images/living-compare.png)
 
-`examples/living_compare.scene.toml` does this twice under `linklater`. The oak twin is at the morph end (step 1, glide 1, all of its drift, brighter echoes) and the thorn twin at the shiver end (step 0.125, no glide, jitter 2.2, no echoes). Its twins are `examples/specs/grove_oak_twin.procgen.toml` and `grove_thorn_twin.procgen.toml`. Copy them again if their originals change.
+[`flint-examples/living_compare.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/living_compare.scene.toml) does this twice under `linklater`. The oak twin is at the morph end (step 1, glide 1, all of its drift, brighter echoes) and the thorn twin at the shiver end (step 0.125, no glide, jitter 2.2, no echoes). Its twins are [`flint-examples/specs/grove_oak_twin.procgen.toml`](https://github.com/chrischaps/flint-examples/blob/main/specs/grove_oak_twin.procgen.toml) and `grove_thorn_twin.procgen.toml`. Copy them again if their originals change.
 
 What still differs within a pair is each pose's shape seed, which comes from the entity's name. Two entities can't share a name, so the twins pass through cousins of each other's poses: the same rest shape, clock and settings, a different draw of the same distribution. Treat a pair as a look comparison, not a cost one. A copy has its own lineage and pose cache, so it builds and fills everything twice; measure frame cost on the 40-oak bench.
 
@@ -692,7 +692,7 @@ It covers the entity and everything below it, so a bench built from boards, or a
 - A prop's [echoes](#echoes) don't take it, if a living prop has both.
 - With no `[wooze]` table in the scene it does nothing, and the player warns once at load.
 
-`--exit-after` prints `[wooze] shallow: 15 entities on 5 clocks`. Bench: `examples/shallow_wooze.scene.toml`, a woozy set and a still set under the same oaks.
+`--exit-after` prints `[wooze] shallow: 15 entities on 5 clocks`. Bench: [`flint-examples/shallow_wooze.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/shallow_wooze.scene.toml), a woozy set and a still set under the same oaks.
 
 ### Woozy grass
 
@@ -714,7 +714,7 @@ It needs a `[wooze]` table: without one the player warns once and the grass keep
 
 ![The Woozy Grove with a meadow, at 3.5 s](../images/woozy-grove-grass.png)
 
-Bench: `examples/woozy_grove_grass.scene.toml`, the Woozy Grove grown over with a meadow worn along its paths. `python examples/woozy_grove_grass/experiment.py` renders every variant tried from three places and measures how the grass moves; `examples/woozy_grove_grass/README.md` has what was found.
+Bench: [`flint-examples/woozy_grove_grass.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/woozy_grove_grass.scene.toml), the Woozy Grove grown over with a meadow worn along its paths. `python flint-examples/woozy_grove_grass/experiment.py` renders every variant tried from three places and measures how the grass moves; [`flint-examples/woozy_grove_grass/README.md`](https://github.com/chrischaps/flint-examples/blob/main/woozy_grove_grass/README.md) has what was found.
 
 ### Scripted motion on the beat
 
@@ -731,19 +731,19 @@ set_position(me, pos.x, sin(t * 1.5) * 0.03, pos.z);
 set_rotation(me, rot.x, rot.y + sin(t * 0.8) * 2.0 * dt, rot.z);
 ```
 
-`time` keeps the wall clock's pace on average, so a motion tuned on `total_time()` keeps its speed. In `examples/wooze_props.scene.toml`'s bob run (`python examples/wooze_props/experiment.py --only bob`), the beetle with shallow wooze and that bob moved on all 48 frame pairs on the wall clock, and on 42 of 48 on the beat, against 41 for the same beetle with no script: the holds are back, every six frames. `showcase_game/scripts/creature_idle.rhai` reads it the same way, and in its levels, which have no `[wooze]`, renders byte for byte as it did.
+`time` keeps the wall clock's pace on average, so a motion tuned on `total_time()` keeps its speed. In [`flint-examples/wooze_props.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/wooze_props.scene.toml)'s bob run (`python flint-examples/wooze_props/experiment.py --only bob`), the beetle with shallow wooze and that bob moved on all 48 frame pairs on the wall clock, and on 42 of 48 on the beat, against 41 for the same beetle with no script: the holds are back, every six frames. `showcase_game/scripts/creature_idle.rhai` reads it the same way, and in its levels, which have no `[wooze]`, renders byte for byte as it did.
 
 ### Woozy Grove
 
-The benches each test one thing from a fixed camera. `examples/woozy_grove.scene.toml` puts them together in a place to walk through, since the look can only be judged by eye, from inside it:
+The benches each test one thing from a fixed camera. [`flint-examples/woozy_grove.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/woozy_grove.scene.toml) puts them together in a place to walk through, since the look can only be judged by eye, from inside it:
 
 ```bash
-flint play examples/woozy_grove.scene.toml
+flint play flint-examples/woozy_grove.scene.toml
 ```
 
 ![Woozy Grove, from the north path into the clearing](../images/woozy-grove.png)
 
-It's 38 living trees in four species, from `examples/specs/`: an oak, a cypress, a birch and a gnarled thorn. A bench and a lantern share one `shallow_wooze`, and three zones change the dial as you walk:
+It's 38 living trees in four species, from [`flint-examples/specs/`](https://github.com/chrischaps/flint-examples/tree/main/specs): an oak, a cypress, a birch and a gnarled thorn. A bench and a lantern share one `shallow_wooze`, and three zones change the dial as you walk:
 
 | Zone | Where | Field | What it's for |
 |------|-------|-------|---------------|
@@ -752,11 +752,11 @@ It's 38 living trees in four species, from `examples/specs/`: an oak, a cypress,
 | `drowse` | Far right, oaks and birch | step 1.1, glide 0.9, amplitude 1, jitter 0.4 | The morph end of the dial, which never rests |
 | `shiver` | Near right, thorn and birch | step 0.125, glide 0, amplitude 0.7, jitter 2.2 | The boil end of the dial, which never eases |
 
-`examples/woozy_grove_walk.txt` walks the same route through all of them, for `flint-player --input-script`. With `--frame-step 0.0166667` it's the same walk every time. Any step turns it the same way: the character takes mouse look once a frame, however many physics steps the frame runs.
+[`flint-examples/woozy_grove_walk.txt`](https://github.com/chrischaps/flint-examples/blob/main/woozy_grove_walk.txt) walks the same route through all of them, for `flint-player --input-script`. With `--frame-step 0.0166667` it's the same walk every time. Any step turns it the same way: the character takes mouse look once a frame, however many physics steps the frame runs.
 
 A few things the grove had to work around, which any scene like it will meet:
 
-- **Every species is the built-in L-system with no `[[lod]]`.** The conifer is a cypress and not a fir because the rule makes too few scaffold limbs for whorls. When the grove was planted, space colonization couldn't live at all. Now a pine can, by [noise](#noise-poses) (`grove_pine`, in `examples/noise_trees.scene.toml`).
+- **Every species is the built-in L-system with no `[[lod]]`.** The conifer is a cypress and not a fir because the rule makes too few scaffold limbs for whorls. When the grove was planted, space colonization couldn't live at all. Now a pine can, by [noise](#noise-poses) (`grove_pine`, in [`flint-examples/noise_trees.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/noise_trees.scene.toml)).
 - **A trunk's collider is a sibling, not on the tree.** Physics assumes unit scale, and the trees are scaled. Trunks hold still, so they can be solid. Limbs drift, so they aren't.
 - **The floor is a `texture_v1` spec covering the ground once.** A box's UVs are in metres, so `texture_scale = 1 / width` fits it, which is also the only way to avoid seams while pipeline noise doesn't tile.
 - **A character starts facing +Z** unless its `character_controller` gives a `start_yaw`, so the grove's way in is laid out along +Z.
@@ -807,7 +807,7 @@ The numbers narrow the choice, and don't make it. They put `linklater` between t
 - **Jitter stays at what the specs authored.** Most of the sharp change that's left is the leaf cards' own snap on their 8 Hz clock, and turning the shading boil off barely moves it. Jitter 0.5 takes the change down to 16.9, but this is the layer that makes it feel drawn.
 - **Stagger stays as each species has it,** `per_level` for oak and cypress and `per_branch` for birch and thorn. With none at all, the change goes up to 21.3. Putting the whole grove on one or the other moves it by less than 1%.
 
-**What a preset holds.** A built-in preset holds the clock's four knobs. The rest of the look is what the grove's tables and specs already say: Kuwahara and contour on, `boil_on = 1`, and each species' own `echoes`, `stagger`, `variance` and leaf `jitter` in `examples/specs/grove_*.procgen.toml`. `flint render examples/woozy_grove.scene.toml --time 3.5` reproduces any moment byte for byte. The strip and the scan come from the scene alone:
+**What a preset holds.** A built-in preset holds the clock's four knobs. The rest of the look is what the grove's tables and specs already say: Kuwahara and contour on, `boil_on = 1`, and each species' own `echoes`, `stagger`, `variance` and leaf `jitter` in `flint-examples/specs/grove_*.procgen.toml`. `flint render flint-examples/woozy_grove.scene.toml --time 3.5` reproduces any moment byte for byte. The strip and the scan come from the scene alone:
 
 ```bash
 python tools/living-strip/living_strip.py --player target/release/flint-player

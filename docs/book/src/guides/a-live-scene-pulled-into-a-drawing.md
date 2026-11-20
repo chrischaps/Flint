@@ -71,14 +71,14 @@ The inset's table sets `reveal = 1`. The scene's pencil is at `reveal = 0` by th
 
 ## The page is drawn by the HUD
 
-The panels' ink, the outer gutter, the caption boxes and the sound lettering are draw calls in `understudy_hud.rhai`, on the same 28-second clock as the director. Each caption names the panel it sits in. There is no engine code. The lettering is Patrick Hand (`examples/fonts/PatrickHand-Regular.ttf`, SIL Open Font License), which the HUD finds by its file stem:
+The panels' ink, the outer gutter, the caption boxes and the sound lettering are draw calls in `understudy_hud.rhai`, on the same 28-second clock as the director. Each caption names the panel it sits in. There is no engine code. The lettering is Patrick Hand ([`demos/understudy/fonts/PatrickHand-Regular.ttf`](https://github.com/chrischaps/flint-demos/blob/main/demos/understudy/fonts/PatrickHand-Regular.ttf) in flint-demos, SIL Open Font License), which the HUD finds by its file stem:
 
 ```rhai
 draw_text(x, y, "EVERY LINE WAS STILL DECIDING WHAT IT WOULD BE.", 27.0,
     #{ font: "PatrickHand-Regular", color: [0.09, 0.08, 0.07, 1.0], layer: 22 });
 ```
 
-Each box and each panel's border is a polygon whose corners move a point or so on each of the 12 ticks a second, so the page is redrawn by the same hand as the pencil and the figure. `flint render` runs no HUD, but it does draw panels, so stills of a beat without captions or ink come from `flint render examples/understudy.scene.toml --scripts --time 13 --no-grid -o drawn.png`. For the captions, capture with `flint-player` as above.
+Each box and each panel's border is a polygon whose corners move a point or so on each of the 12 ticks a second, so the page is redrawn by the same hand as the pencil and the figure. `flint render` runs no HUD, but it does draw panels, so stills of a beat without captions or ink come from `flint render demos/understudy/understudy.scene.toml --scripts --time 13 --no-grid -o drawn.png` (from a [flint-demos](https://github.com/chrischaps/flint-demos) checkout). For the captions, capture with `flint-player` as above.
 
 ## Making your own
 

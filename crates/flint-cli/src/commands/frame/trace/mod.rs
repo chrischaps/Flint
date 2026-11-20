@@ -605,7 +605,7 @@ pub(crate) mod tests {
         e.push(x(6, "hitch", 21_000.0, 40_000.0, "\"history_frame\":2,\"game_time\":3.0,\"judged_ms\":40,\"median_ms\":10,\"cause\":\"script stall.rhai:on_update 31.0 ms\""));
         e.push("{\"ph\":\"i\",\"s\":\"t\",\"name\":\"model load\",\"pid\":1,\"tid\":7,\"ts\":1000,\"args\":{\"detail\":\"models/a.glb\",\"depth\":0,\"ms\":4.5}}".into());
         format!(
-            "{{\"displayTimeUnit\":\"ms\",\"traceEvents\":[\n{}\n],\"otherData\":{{\"format\":\"flint-trace\",\"scene\":\"examples/stall.scene.toml\",\"reason\":\"exit\"}}}}\n",
+            "{{\"displayTimeUnit\":\"ms\",\"traceEvents\":[\n{}\n],\"otherData\":{{\"format\":\"flint-trace\",\"scene\":\"levels/stall.scene.toml\",\"reason\":\"exit\"}}}}\n",
             e.join(",\n")
         )
     }
@@ -797,7 +797,7 @@ pub(crate) mod tests {
             .find(|s| t.name(s.name) == "render")
             .unwrap();
         assert_eq!(render.detail.as_deref(), Some("12"), "a count is text");
-        assert_eq!(t.header_str("scene"), Some("examples/stall.scene.toml"));
+        assert_eq!(t.header_str("scene"), Some("levels/stall.scene.toml"));
     }
 
     #[test]

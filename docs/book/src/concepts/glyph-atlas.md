@@ -25,7 +25,7 @@ An atlas comes from one of four sources:
 - **The built-in set** (`GlyphSet::builtin()`), a hand-drawn 8x8 font made for the engine (`crates/flint-render/src/glyph_atlas/builtin_8x8.txt`, editable as text) with no font licence attached. Built once per process.
 - **A TTF or OTF**, rasterized with `ab_glyph` at a line height in pixels. The cell is the line height by the widest advance, and each glyph sits on the baseline, centred in its cell.
 - **A bitmap grid image** (PNG or JPEG), cut into cells left to right, top to bottom.
-- **Pixel text** (`.txt`), cells drawn by hand in the built-in set's format: `== c` starts a glyph, then a row of `#` ink and `.` paper per pixel row. Give the cell, `cell = [w, h]`, under `[font]`. `examples/fonts/halftone.txt` is one: a dot screen in 8x12 cells.
+- **Pixel text** (`.txt`), cells drawn by hand in the built-in set's format: `== c` starts a glyph, then a row of `#` ink and `.` paper per pixel row. Give the cell, `cell = [w, h]`, under `[font]`. [`flint-examples/fonts/halftone.txt`](https://github.com/chrischaps/flint-examples/blob/main/fonts/halftone.txt) is one: a dot screen in 8x12 cells.
 
 ## Built-in ramps
 
@@ -52,7 +52,7 @@ The two sub-cell ramps (#285) trade letterforms for resolution. `quadrants` is c
 
 ![The lantern scene in the quadrants and braille ramps](../images/ascii-lantern-sub-cell-ramps.png)
 
-*`flint render examples/ascii_lantern.scene.toml --sweep ascii.ramp=quadrants,braille --width 960 --height 540`*
+*`flint render flint-examples/ascii_lantern.scene.toml --sweep ascii.ramp=quadrants,braille --width 960 --height 540`*
 
 Both ramps still pick a glyph by the cell's mean luminance, one step of the ramp per band. Picking a pattern to match the cell's *sub-cell* luminance instead (a quadrant or braille pattern from each part's own brightness, so an edge falls inside a cell) needs the glyph pass to sample those parts, and isn't done yet; every one of the 16 quadrant and 256 braille patterns is in the atlas for it.
 
@@ -117,11 +117,11 @@ On the GPU the ASCII style packs each step's band start beside its glyph in the 
 
 ## Sets in the examples
 
-Eleven sets beside the scenes in `examples/fonts/` give the look other characters (#935). Each draws a bundled font under the SIL Open Font License, with the licence beside the font in `examples/fonts/ofl/<Family>/OFL.txt`; `examples/fonts/ofl/README.md` lists where each came from and how it was cut down to the glyphs its set uses. Name one as any set: `ascii.font = "kana"` in a scene, `--style ascii:font=kana` on a command line.
+Eleven sets beside the scenes in [`flint-examples/fonts/`](https://github.com/chrischaps/flint-examples/tree/main/fonts) give the look other characters (#935). Each draws a bundled font under the SIL Open Font License, with the licence beside the font in `flint-examples/fonts/ofl/<Family>/OFL.txt`; [`flint-examples/fonts/ofl/README.md`](https://github.com/chrischaps/flint-examples/blob/main/fonts/ofl/README.md) lists where each came from and how it was cut down to the glyphs its set uses. Name one as any set: `ascii.font = "kana"` in a scene, `--style ascii:font=kana` on a command line.
 
 ![The lantern scene in every set](../images/ascii-lantern-glyph-sets.png)
 
-*`flint render examples/ascii_lantern.scene.toml --style "ascii:ramp=,cell=14" --sweep ascii.font=builtin,phosphor,typewriter,poster,geometric,stars,kana,brush,hangul,cuneiform,moon,runes --width 1920 --height 1080 --sweep-crop 700,380,480,270`: each cell 1:1 from a 1080p frame. `ramp=` gives each set its own default ramp in place of the scene's `classic`.*
+*`flint render flint-examples/ascii_lantern.scene.toml --style "ascii:ramp=,cell=14" --sweep ascii.font=builtin,phosphor,typewriter,poster,geometric,stars,kana,brush,hangul,cuneiform,moon,runes --width 1920 --height 1080 --sweep-crop 700,380,480,270`: each cell 1:1 from a 1080p frame. `ramp=` gives each set its own default ramp in place of the scene's `classic`.*
 
 | Set | Font | Cell | Ramps (default first) | What it does to the look |
 |---|---|---|---|---|
@@ -157,7 +157,7 @@ What the comparison showed:
 
 Failures are cached too, so a bad name warns once rather than every frame, and the warning lists every path tried.
 
-**Hot reload** (#323). Natively, `GlyphSetCache::poll` checks the modified times of every file a cached set depended on: its `.glyphs.toml`, the font file that names, and every place searched ahead of it (absent ones too: a set that appears beside the scene takes over from the project's at the next poll). When one changes it clears the cache, the next `get` reads the set again, and the ASCII style, which polls a few times a second, uploads the new atlas. So a ramp edited with `flint edit` or `flint play` open redraws the frame within a second, and a name that failed (a typo, a missing font file) loads once the file is there. A set that loaded and then breaks (a half-typed table, a font file deleted) keeps drawing its last good glyphs, with one warning that ends `keeping the previous glyphs`, until the next save that changes the files (#286). On the web the bundle is fixed and nothing is polled. `examples/ascii_tidepool.scene.toml` names `examples/fonts/tidepool.glyphs.toml` to try it on.
+**Hot reload** (#323). Natively, `GlyphSetCache::poll` checks the modified times of every file a cached set depended on: its `.glyphs.toml`, the font file that names, and every place searched ahead of it (absent ones too: a set that appears beside the scene takes over from the project's at the next poll). When one changes it clears the cache, the next `get` reads the set again, and the ASCII style, which polls a few times a second, uploads the new atlas. So a ramp edited with `flint edit` or `flint play` open redraws the frame within a second, and a name that failed (a typo, a missing font file) loads once the file is there. A set that loaded and then breaks (a half-typed table, a font file deleted) keeps drawing its last good glyphs, with one warning that ends `keeping the previous glyphs`, until the next save that changes the files (#286). On the web the bundle is fixed and nothing is polled. [`flint-examples/ascii_tidepool.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/ascii_tidepool.scene.toml) names [`flint-examples/fonts/tidepool.glyphs.toml`](https://github.com/chrischaps/flint-examples/blob/main/fonts/tidepool.glyphs.toml) to try it on.
 
 ## Sprite text
 
@@ -197,9 +197,9 @@ flint gen fonts/terminal.glyphs.toml -o out/            # the sheet and every pi
 flint gen fonts/terminal.glyphs.toml --dry-run          # the summary alone
 ```
 
-![flint gen on examples/fonts/halftone.glyphs.toml](../images/glyph-set-sheet-halftone.png)
+![flint gen on flint-examples/fonts/halftone.glyphs.toml](../images/glyph-set-sheet-halftone.png)
 
-*`flint gen examples/fonts/halftone.glyphs.toml -o halftone.png`: the atlas as packed, the edge glyphs, then a row for each ramp with the sphere specimen next to the ramp's measured ink, one bar per step with its glyph underneath. The dotted line runs evenly from the first step's ink to the last. A step whose ink falls below the step before it is drawn in red, and so is the note above the chart.*
+*`flint gen flint-examples/fonts/halftone.glyphs.toml -o halftone.png`: the atlas as packed, the edge glyphs, then a row for each ramp with the sphere specimen next to the ramp's measured ink, one bar per step with its glyph underneath. The dotted line runs evenly from the first step's ink to the last. A step whose ink falls below the step before it is drawn in red, and so is the note above the chart.*
 
 Every run prints a summary with a line for each ramp: its glyphs, each step's ink, and either `rises`, `calibrated` for a `map = "coverage"` ramp, or the neighbours where a brighter input gets less ink (`GlyphRamp::inversions`):
 

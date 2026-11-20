@@ -204,7 +204,7 @@ checked further.
 
 **The throwaway branch.** On `spike/1095-scope-sinks`, `flint-player
 --features profile` (Tracy and the recorder in one build) run on
-`examples/hitch_metronome.scene.toml` with `SPIKE_TRACE=<file>
+`flint-examples/hitch_metronome.scene.toml` with `SPIKE_TRACE=<file>
 --exit-after 4` wrote a 1.67 MB Chrome JSON trace: 14 914 scopes, all 16
 names, 932 frames, every frame's 16. Its slowest `tick` is 100.9 ms (the
 scene's 100 ms busy wait) and no scope below it covers the stall: the scripts

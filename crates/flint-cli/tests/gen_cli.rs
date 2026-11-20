@@ -572,8 +572,10 @@ fn a_strip_is_byte_identical_across_runs_and_changes_with_glide() {
 /// The rolling meadow spec at 64 texels a side, written into `dir`, with
 /// `extra` appended (a stray key, say).
 fn small_terrain_spec(dir: &Path, extra: &str) -> PathBuf {
-    let src =
-        std::fs::read_to_string(repo_root().join("examples/rolling_meadow.terrain.toml")).unwrap();
+    let src = std::fs::read_to_string(
+        repo_root().join("tests/fixtures/scenes/terrain/rolling_meadow.terrain.toml"),
+    )
+    .unwrap();
     let small = src.replace("resolution = 512", "resolution = 64");
     assert_ne!(src, small, "rolling meadow no longer sets resolution = 512");
     let path = dir.join("meadow.terrain.toml");

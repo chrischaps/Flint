@@ -58,7 +58,9 @@ fn project(name: &str) -> PathBuf {
         schemas("schemas"),
         schemas("schemas/examples")
     );
-    let style = |name: &str| std::fs::read_to_string(repo().join("examples/styles").join(name));
+    let style = |name: &str| {
+        std::fs::read_to_string(repo().join("tests/fixtures/scenes/styles").join(name))
+    };
     let files = [
         ("flint.toml".to_string(), manifest),
         ("scenes/ranges.scene.toml".into(), SCENE.into()),

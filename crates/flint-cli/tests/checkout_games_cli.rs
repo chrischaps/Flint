@@ -2,7 +2,7 @@
 //!
 //! A game kept in the checkout is a top-level directory with a `flint.toml`
 //! (the example game is one), found here by its manifest so the engine names
-//! no game. Nothing ran one, so when `demo/` became `examples/` (#763) the
+//! no game. Nothing ran one, so when `demo/` was renamed (#763) the
 //! example game's `audio` symlink was left pointing at a folder that no
 //! longer existed, its input config was written from the wrong root, and
 //! `flint check` on it reported 16 missing files that nobody saw.

@@ -1,6 +1,6 @@
 # ADR 0122: What a game's `engine/` carries: one tree under a budget, no binary twice
 
-Status: accepted, 2026-11-14 (#759)
+Status: accepted, 2026-11-14 (#759). Decision 1's split was made on 2026-11-20 (#984, [ADR 0131](0131-the-examples-are-a-project-of-their-own.md)): see "The examples leave" under Measured. The engine area's budget moved on 2026-11-20 (#1303): see "The engine area grows by its code".
 
 ## Context
 
@@ -11,7 +11,7 @@ game clone, every game worktree and every CI checkout of a game, and in every
 agent worktree of the engine itself (#762).
 
 On 2026-11-14, before this change, the tree was 390 MB in 2,187 files:
-`examples/` 130 MB, `docs/` 89 MB, `tests/` 78 MB, `testModels/` 37 MB,
+the examples 130 MB, `docs/` 89 MB, `tests/` 78 MB, `testModels/` 37 MB,
 `crates/` 38 MB, `showcase_game/` 16 MB. Only 275 MB of that was distinct
 bytes: 54 groups of byte-identical files held 115 MB. `testModels/`
 duplicated the examples' bench and YBots, and #763 had copied 40 example
@@ -33,9 +33,9 @@ carries, with a decision on moving the heavy part out of the subtree.
    branch, no second repository in this change. The larger split is decided
    in direction: **examples move to a `flint-examples` repository**, pulled
    separately, as its own issue (#984, under epic #676). Since #763 no golden or CLI
-   test loads `examples/`, so the move costs the engine's CI little. What it
+   test loads an example, so the move costs the engine's CI little. What it
    costs is cross-repo work: a feature PR that adds an example bench becomes
-   two PRs, and the book's citations of `examples/`, `flint examples --check`,
+   two PRs, and the book's citations of the examples, `flint examples --check`,
    `flint export web` and the play site need to point across.
 2. **A budget, checked on every PR.** `scripts/size-check.py` (standard
    library; `scripts/ci.sh` runs it, so CI's rustfmt job and `issue.sh land`
@@ -43,12 +43,12 @@ carries, with a decision on moving the heavy part out of the subtree.
 
    | What | Budget | Measured at the decision |
    |---|---|---|
-   | The whole tree, which a game's `engine/` is | 185 MB | 168.8 MB |
-   | `examples/` | 52 MB | 45.3 MB |
+   | The whole tree, which a game's `engine/` is | 185 MB, 175 since #984 | 168.8 MB; 158.0 at #984 |
+   | the examples (gone since #984) | 52 MB | 45.3 MB |
    | the book (`docs/`) | 78 MB | 70.2 MB |
-   | tests (`tests/`, the golden PNGs) | 27 MB | 23.4 MB |
-   | `showcase_game/` | 16 MB | 13.8 MB |
-   | the engine proper (crates, schemas, styles, scripts, tools) | 20 MB | 16.1 MB |
+   | tests (`tests/`, the golden PNGs) | 27 MB, 50 since #984 | 23.4 MB; 45.7 at #984 |
+   | `showcase_game/` | 16 MB, 18 since #984 | 13.8 MB; 16.2 at #984 |
+   | the engine proper (crates, schemas, styles, scripts, tools) | 20 MB, 23 since #1303 | 16.1 MB; 20.5 at #1303 |
    | one file | 8 MB | `MetalRoughSpheres.glb` excepted (11 MB of Khronos geometry) |
    | one texture, loose or in a `.glb` | 2048 texels a side, 3 MB | |
 
@@ -57,10 +57,10 @@ carries, with a decision on moving the heavy part out of the subtree.
    passing.
 3. **No binary is tracked twice.** The check hashes every tracked binary.
    The frozen fixtures **borrow** the example files they share, by path
-   (`asset = "../../../examples/models/YBot.glb"`; the asset search's
+   (`asset = "../../../<the examples>/models/YBot.glb"`; the asset search's
    as-written step, ADR 0114), and `tests/fixtures/borrowed.toml` pins each
    one's SHA-256. The check fails when a pinned file changes, when a fixture
-   names an `examples/` binary that isn't pinned, and when a pin has no
+   names an example binary that isn't pinned, and when a pin has no
    borrower left. Changing a borrowed example file is copy on write: first
    copy the old bytes into the fixtures and point the fixture there, then
    change the example. Three kinds of copy are kept on purpose, each named
@@ -98,7 +98,7 @@ carries, with a decision on moving the heavy part out of the subtree.
   down: the duplicate rule would have a directory-sized hole, and the copies
   would still double whatever an example and a fixture share next.
 - **A shared root asset pool** both find through the asset search. The walk
-  reaches the root from both `examples/` and `tests/fixtures/scenes/`, but a
+  reaches the root from both the examples and `tests/fixtures/scenes/`, but a
   game's search also falls back to `engine/`, so every game would see those
   models.
 - **A CI-published game branch** (main without examples, docs and tests).
@@ -122,7 +122,7 @@ carries, with a decision on moving the heavy part out of the subtree.
   0.03 on average (the selection outline's planks, the Lantern and bench in
   the meadow scenes); the moved goldens were re-blessed with the change.
 - `testModels/` is gone. Its one unique file, `DoubleSidedCard.glb`, is
-  `tests/fixtures/models/`; the other tests read `examples/models/`.
+  `tests/fixtures/models/`; the other tests read the examples' models (until #984 gave the fixtures their own).
 - When examples move out, `borrowed.toml` lists exactly which bytes the
   fixtures must take back.
 
@@ -155,3 +155,48 @@ The budget stayed. The film stayed too: it was encoded tightly already
 (crf 28 saved 0.5 MB; crf 30 saved 1.3 MB at SSIM 0.984 against a copy
 that is itself lossy, the scene being in another repository), so the
 lossless repack was the cheaper room.
+
+### The examples leave (#984, 2026-11-20)
+
+Decision 1's split, made: the examples are the flint-examples repository
+([ADR 0131](0131-the-examples-are-a-project-of-their-own.md)), and
+`borrowed.toml` listed exactly what the fixtures took back, 26 files,
+19.2 MB, the same bytes. The showcase game kept its own copy of the
+bartender's YBot (2.4 MB, a named duplicate of the fixtures' copy). The
+showcase game's ten sounds and Sun Prints' palm stopped being duplicates.
+Measured by `size-check.py --report` on this Windows checkout (files on
+disk), main just before against the branch:
+
+| | Before (main 7b7f485d) | After |
+|---|---|---|
+| A game's `engine/` (the tracked tree) | 181.4 MB, 2,563 files | 158.0 MB, 2,176 files |
+| the examples and the engine proper | 66.0 MB together | 20.4 MB, the engine alone (still over its 20 MB, #1303) |
+| tests | 25.9 MB | 45.7 MB |
+| `showcase_game/` | 13.8 MB | 16.2 MB |
+| Named duplicate groups | 16 | 6 |
+
+The whole-tree budget goes to 175 MB (the measurement and about a tenth),
+tests to 50 MB, `showcase_game/` to 18 MB. The engine area's breach is
+#1303's and is left for it. The sparse recipe no longer names
+`engine/examples`.
+
+### The engine area grows by its code (#1303, 2026-11-20)
+
+The engine area crossed 20 MB as code, not as a file to shrink. On main
+04a9588b it is 20.5 MB on this Windows checkout (files on disk, CRLF) and
+20.1 MB on CI's Linux checkout; git's blob sizes total 19.06 MiB, of which
+`.rs` files are 16.42 MiB (86%), Markdown 0.91 (the month's changelog alone
+0.31), WGSL 0.51, TOML 0.31, and every image together 0.22 (the play site's
+posters). Its largest files are `changelog/2026-11.md`, `stylize.rs`'s GPU
+tests, `Cargo.lock` and the texture ops. In the two days from #1303's
+measurement (19.98 MB) to here it grew about 0.5 MB, spread over a dozen
+crates (render +169 KB, cli +116, player +109, script +58, physics +48,
+procgen +44), the largest single addition `frame_grab.rs` at 38 KB.
+
+Source is what this area is for, and this budget can't be met by moving or
+re-encoding anything, unlike the book's in #1276. So the budget moves, by
+the decision's own rule: the measurement and about a tenth, **23 MB**. The
+whole-tree budget (175 MB, 158.2 measured) has room for it. At the rate
+measured here that is a week or two of work, so the next breach is expected
+soon; when it comes, the question to argue is whether source code needs
+a byte budget at all, rather than another tenth.

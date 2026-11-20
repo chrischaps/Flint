@@ -67,7 +67,7 @@ A water body is a mesh drawn with the ocean's own shader.
   only show as the pipeline's `catch_unwind` turning all water off.
 - Since then: [ADR 0099](0099-water-body-scales-shore-band.md) gives each body
   a scale on the shoreline band, which this record left to the `ocean`
-  component. The demo moved from `demo/` to `examples/` (#763).
+  component. The demo moved from `demo/` to the examples folder (#763), and with the examples to flint-examples (#984).
 
 ## Measured
 
@@ -84,5 +84,5 @@ in 11 of 2,073,600 pixels, by 1/255.
   `crates/flint-render/src/ocean_shader.wgsl` (`vs_body`),
   `crates/flint-render/src/ocean_pipeline.rs`,
   `crates/flint-player/src/extension.rs` (`set_water_body`),
-  `schemas/components/water_body.toml`, `examples/water_bodies.scene.toml`
+  `schemas/components/water_body.toml`, `flint-examples/water_bodies.scene.toml`
 - Book: [Ocean](../book/src/concepts/ocean.md), "Water bodies"

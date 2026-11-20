@@ -1830,13 +1830,13 @@ mod tests {
             &[
                 "flint/crates/flint-core/Cargo.toml",
                 "flint/engine/particles/fire.particles.toml",
-                "flint/examples/a.scene.toml",
+                "flint/levels/a.scene.toml",
             ],
             || {
-                let p = project("flint/examples/a.scene.toml");
+                let p = project("flint/levels/a.scene.toml");
                 assert_eq!(p.found, Found::Engine);
                 assert_eq!(p.engine_mount(), None);
-                assert!(fire(&p, "flint/examples").is_err());
+                assert!(fire(&p, "flint/levels").is_err());
             },
         );
     }

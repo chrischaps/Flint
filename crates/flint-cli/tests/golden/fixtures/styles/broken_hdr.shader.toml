@@ -6,7 +6,7 @@
 # the frame to the frame without the style, so a passthrough that clamps
 # the HDR values (or hands bloom the wrong source) moves the halo.
 #
-# It lives here, not in examples/styles/, so no demo scene shows its error.
+# It lives here, not in flint-examples/styles/, so no demo scene shows its error.
 version = 1
 name = "broken_hdr"
 label = "Broken HDR (test fixture)"

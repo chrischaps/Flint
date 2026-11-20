@@ -206,7 +206,7 @@ Chris accepted the recommendations on 2026-11-10:
 - **`scene.version` and a migrations list are not done.** There is one
   migration (`fold_legacy_style_keys`) and no second to shape a list around;
   the version is still parsed and only printed.
-- **Found on the first run over `examples/`** (warnings, pinned in
+- **Found on the first run over the examples** (warnings, pinned in
   `crates/flint-schema/tests/scene_tables.rs`): four 2D examples write
   `[camera] orthographic = true`, which nothing reads (the key is
   `projection = "orthographic"`), so they have been drawn in perspective;

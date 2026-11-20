@@ -319,7 +319,7 @@ packs the engine's. Book: guides/publishing-to-the-web.md.
 
 | Run | Result |
 |---|---|
-| `flint export web examples/`, no `--player` | trunk built the player in 5 m 54 s (cold `web-release`); `demo.flintpack` 228 files 106.12 MB, `demo.audio.flintpack` 14 files 1.84 MB |
+| `flint export web` of the examples, no `--player` | trunk built the player in 5 m 54 s (cold `web-release`); `demo.flintpack` 228 files 106.12 MB, `demo.audio.flintpack` 14 files 1.84 MB |
 | `/` | the address became `/?game=demo`; the gate read "Flint demos"; the tavern loaded (49 entities), its scripts started, the late audio bundle arrived |
 | `/?scene=pencil_sketch.scene.toml` | `&game=demo` added; Pencil Sketch (11 entities) drawn from the same bundle |
 | `build.py` (Float `3e0b75f`, FlintKart `bd910be`) through export | float 16.03 MB in 3 bundles, kart 91.88 MB in 2 plus its film and poster; `games.json` holds the keys and values the old script wrote |
@@ -649,7 +649,7 @@ buffer, on the main thread. `?perf=1` now counts what it mixes: a
 really mixes, and the one-shots it skipped or stole; the `audio` line
 gains the mean time to mix one buffer.
 
-**Where the time goes.** `examples/mix_bench.rs` builds Float's mixer on
+**Where the time goes.** `crates/flint-audio/examples/mix_bench.rs` builds Float's mixer on
 kira's mock backend and times one 2048-frame buffer natively. Pausing the
 six loops Float keeps at volume 0 (four songs, rain, storm) saved only
 7%: a paused-or-not plain voice costs about 0.013 ms. A kira **spatial
@@ -760,7 +760,7 @@ The ASCII style (#265, per entity since #266, temporal since #277) adds
 two things to a frame: the entity style mask (`Style mask`, a redraw of
 the styled entities' ids after the scene pass) and the glyph style itself
 (`ASCII`, a cell pass and a glyph pass at the display stage). Measured on
-`examples/ascii_entities.scene.toml` (six styled props, meadow, SSAO, bloom),
+`flint-examples/ascii_entities.scene.toml` (six styled props, meadow, SSAO, bloom),
 RTX 4070 laptop, release build, 1920x1080 output, `flint render
 --gpu-time 240`, best of five processes since other jobs shared the GPU:
 
@@ -915,7 +915,7 @@ untouched, which is what a phone pays for.
 
 **In the browser (#538).** Measured with `tools/web-perf/run.mjs` on a
 `flint export web` folder of #270's ASCII variants plus
-`examples/watercolor.scene.toml` (watercolor is scissored since #538 too),
+`flint-examples/watercolor.scene.toml` (watercolor is scissored since #538 too),
 each page twice: as written, and with the page's `?scissor=0`, which draws
 the full passes as `FLINT_STYLE_SCISSOR=0` does natively. Chrome 157, RTX
 4070 laptop, 1920x1080 device pixels, two 10 s windows a page, three runs
@@ -1974,7 +1974,7 @@ The showcase film is not part of the wasm or any bundle, so the 4 MB gzip
 line above doesn't count it. It is a click-to-play film on the Flint page,
 loaded on its own (`preload="none"` with its poster), and these are its
 sizes, recorded so the next cut can be held to them. The storyboard
-(`docs/design/showcase-film.md`, "The 16:9 cut") has the whole table.
+(`flint-examples/tools/showcase/storyboard.md`, "The 16:9 cut") has the whole table.
 
 | File | Size | |
 |---|---|---|

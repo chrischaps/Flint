@@ -19,13 +19,13 @@ shader = "darkroom.wgsl"
 # image in its default's folder (luts/), found when the style loads.
 [options.grade]
 kind = "image"
-default = "../../../../examples/styles/luts/warm_print.png"
+default = "./luts/warm_print.png"
 label = "Grade (LUT)"
 help = "A 3D LUT as a strip: N slices of N x N, blue left to right"
 
 [options.paper]
 kind = "image"
-default = "../../../../examples/styles/papers/cotton.png"
+default = "./papers/cotton.png"
 label = "Paper"
 help = "A tileable paper the print sits on"
 

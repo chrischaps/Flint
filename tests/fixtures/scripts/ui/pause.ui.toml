@@ -1,0 +1,112 @@
+# The showcase's pause menu (#731): the tavern's and the crucible's, opened
+# by showcase_controller.rhai with scripts/lib/menu.rhai. The engine moves
+# focus between the buttons with the arrows, a pad's d-pad or stick, the
+# mouse and touch; Enter, Space or a pad's A presses the focused one, and
+# the script hears it as on_ui("resume", "activate").
+#
+# Elements draw and stack in the order written here. Paths are from the
+# project root (the checkout, for the examples).
+#
+#   flint render flint-examples/showcase_tavern.scene.toml --scripts --time 0.2 \
+#       --ui-focus restart -o pause.png        # the menu open, Restart focused
+
+[ui]
+style = "ui/pause.style.toml"
+
+# The whole screen, dimmed; hidden until the game pauses
+[elements.pause_menu]
+type = "panel"
+class = "veil"
+visible = false
+
+# A frame of brass corners, each two thin bars anchored in the veil
+[elements.corner_tl_h]
+type = "rect"
+parent = "pause_menu"
+anchor = "top-left"
+class = "corner_h_tl"
+
+[elements.corner_tl_v]
+type = "rect"
+parent = "pause_menu"
+anchor = "top-left"
+class = "corner_v_tl"
+
+[elements.corner_tr_h]
+type = "rect"
+parent = "pause_menu"
+anchor = "top-right"
+class = "corner_h_tr"
+
+[elements.corner_tr_v]
+type = "rect"
+parent = "pause_menu"
+anchor = "top-right"
+class = "corner_v_tr"
+
+[elements.corner_bl_h]
+type = "rect"
+parent = "pause_menu"
+anchor = "bottom-left"
+class = "corner_h_bl"
+
+[elements.corner_bl_v]
+type = "rect"
+parent = "pause_menu"
+anchor = "bottom-left"
+class = "corner_v_bl"
+
+[elements.corner_br_h]
+type = "rect"
+parent = "pause_menu"
+anchor = "bottom-right"
+class = "corner_h_br"
+
+[elements.corner_br_v]
+type = "rect"
+parent = "pause_menu"
+anchor = "bottom-right"
+class = "corner_v_br"
+
+# The card in the middle: a title, a rule, three buttons, a hint
+[elements.card]
+type = "panel"
+parent = "pause_menu"
+anchor = "center"
+class = "card"
+
+[elements.title]
+type = "text"
+parent = "card"
+class = "title"
+text = "PAUSED"
+
+[elements.rule]
+type = "rect"
+parent = "card"
+class = "rule"
+
+[elements.resume]
+type = "button"
+parent = "card"
+class = "button"
+text = "Resume"
+autofocus = true
+
+[elements.restart]
+type = "button"
+parent = "card"
+class = "button"
+text = "Restart"
+
+[elements.quit]
+type = "button"
+parent = "card"
+class = "button"
+text = "Quit"
+
+[elements.hint]
+type = "text"
+parent = "card"
+class = "hint"
+text = "Esc resumes    arrows choose    Enter selects"

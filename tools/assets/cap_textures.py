@@ -1,8 +1,8 @@
 """Bring textures under the repository's caps (#759, ADR 0121).
 
-    python tools/assets/cap_textures.py examples/models/wooden_bench.glb
-    python tools/assets/cap_textures.py --colour examples/textures/wood_planks.png
-    python tools/assets/cap_textures.py --dry-run examples/models/*.glb
+    python tools/assets/cap_textures.py flint-examples/models/wooden_bench.glb
+    python tools/assets/cap_textures.py --colour flint-examples/textures/wood_planks.png
+    python tools/assets/cap_textures.py --dry-run flint-examples/models/*.glb
 
 The caps are `scripts/size-check.py`'s: a texture is at most `--side` (2048)
 texels on its longer side and `--bytes` (3 MB) encoded. A texture already

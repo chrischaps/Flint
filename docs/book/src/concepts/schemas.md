@@ -494,7 +494,7 @@ The engine's own set, `schemas/archetypes/`:
 
 ### The Examples Layer
 
-The scenes under `examples/` are written in a room-builder vocabulary that is not part of the engine's set. It is a schema directory of its own, `schemas/examples/`:
+The scenes in [flint-examples](https://github.com/chrischaps/flint-examples) are written in a room-builder vocabulary that is not part of the engine's set. It is a schema directory of its own, `schemas/examples/`:
 
 | Archetype | Components | Description |
 |-----------|------------|-------------|

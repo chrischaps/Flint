@@ -808,7 +808,7 @@ mod tests {
 
     const PINE: &str = "specs/examples/pine_tree.procgen.toml";
     const WILLOW: &str = "specs/weeping_willow.procgen.toml";
-    const GROVE_OAK: &str = "examples/specs/grove_oak.procgen.toml";
+    const GROVE_OAK: &str = "tests/fixtures/scenes/woozy_grove/specs/grove_oak.procgen.toml";
 
     /// `relative` with `[living] pose = "noise"`, at the default variance.
     fn noisy(relative: &str) -> ProcGenSpec {

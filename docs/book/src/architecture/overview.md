@@ -43,7 +43,7 @@ flint/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
 │   └── arch-viewer/        # Static web page that renders that JSON as an interactive graph
 ├── schemas/                # Default component, archetype, and constraint definitions
-├── examples/               # Curated example scenes, indexed by examples/index.toml
+├── tests/fixtures/         # Frozen scenes the goldens and CLI tests load
 └── docs/                   # This documentation (mdBook)
 ```
 

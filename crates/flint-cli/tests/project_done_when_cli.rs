@@ -228,13 +228,15 @@ fn game(name: &str) -> PathBuf {
     }
     // Real files where a render reads them
     std::fs::copy(
-        repo().join("examples/models/Box.glb"),
+        repo().join("tests/fixtures/scenes/models/Box.glb"),
         dir.join("models/crate.glb"),
     )
     .unwrap();
     // An effect is known by the name it gives itself
-    let campfire =
-        std::fs::read_to_string(repo().join("examples/particles/campfire.particles.toml")).unwrap();
+    let campfire = std::fs::read_to_string(
+        repo().join("tests/fixtures/scenes/particles/campfire.particles.toml"),
+    )
+    .unwrap();
     assert!(campfire.contains("name = \"campfire\""));
     write(
         &dir,

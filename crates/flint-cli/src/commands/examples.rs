@@ -1,15 +1,24 @@
-//! `flint examples` (#763): the curated example scenes, listed from
-//! `examples/index.toml`, and `--check` that holds the index to the folder.
+//! `flint examples` (#763): the curated example scenes, listed from an
+//! `index.toml`, and `--check` that holds the index to the folder.
 //!
 //! ```bash
 //! flint examples                    # every example, grouped by topic, each with its purpose
 //! flint examples --topic stylize    # one topic
 //! flint examples --json             # the same as one JSON document
 //! flint examples --check            # the index matches the folder and every scene validates
+//! flint examples --dir demos        # an index in another folder
 //! ```
 //!
+//! The index is the project root's `index.toml` unless `--dir` names its
+//! folder: since #984 the examples are their own repository,
+//! [flint-examples](https://github.com/chrischaps/flint-examples), with the
+//! scenes and the index at its root and the engine as a subtree at
+//! `engine/`, so `flint examples --check` there needs no flag (its CI runs
+//! it). The walk for scenes on disk passes over an engine checkout (that
+//! subtree) and `dist/`.
+//!
 //! The examples are curated and free to change: nothing pins their pixels.
-//! What the goldens and CLI tests load are frozen copies under
+//! What the engine's goldens and CLI tests load are frozen copies under its
 //! `tests/fixtures/scenes/`. `--check` fails when an indexed scene is
 //! missing, a scene on disk has no entry, an entry has no purpose or topic,
 //! or a scene fails what `flint validate` checks (it doesn't load, a
@@ -35,8 +44,8 @@ pub struct ExamplesArgs {
     #[arg(long)]
     pub check: bool,
 
-    /// The examples folder. Default: examples/, else engine/examples/ (a
-    /// game that carries the engine as a subtree)
+    /// The folder holding the index.toml. Default: the project root (a
+    /// flint-examples checkout's, where the scenes and index are)
     #[arg(long, value_name = "DIR")]
     pub dir: Option<PathBuf>,
 
@@ -80,19 +89,19 @@ pub fn run(args: ExamplesArgs) -> Result<()> {
             text += &format!(
                 "{} examples in {}: every one indexed and valid\n",
                 examples.len(),
-                dir.display()
+                shown_dir(&dir)
             );
         } else {
             text += &format!(
                 "\n{} examples in {}: {} failure(s)\n",
                 examples.len(),
-                dir.display(),
+                shown_dir(&dir),
                 failures.len()
             );
         }
         let failures: Vec<String> = failures.iter().map(|f| f.to_string()).collect();
         let document = serde_json::json!({
-            "dir": dir.to_string_lossy().replace('\\', "/"),
+            "dir": shown_dir(&dir),
             "examples": examples.len(),
             "valid": failures.is_empty(),
             "failures": failures,
@@ -131,17 +140,41 @@ pub fn run(args: ExamplesArgs) -> Result<()> {
     Ok(())
 }
 
-/// `examples/` in the working directory, else `engine/examples/`.
+/// The project root's folder, when it holds an index: spelled from the
+/// working directory (empty when it is the working directory, so the
+/// listing shows each scene as the index names it).
 fn default_dir() -> Result<PathBuf> {
-    for dir in ["examples", "engine/examples"] {
-        let dir = PathBuf::from(dir);
-        if dir.join(INDEX_FILE).is_file() {
-            return Ok(dir);
-        }
+    let project = flint_core::project::Project::current().context("finding the project")?;
+    let root = project.root;
+    if !root.join(INDEX_FILE).is_file() {
+        bail!(
+            "no {INDEX_FILE} at the project root ({}): run this in a flint-examples checkout \
+             (https://github.com/chrischaps/flint-examples), or name the index's folder with --dir",
+            flint_core::project::shown(&root)
+        );
     }
-    bail!(
-        "no examples/{INDEX_FILE} or engine/examples/{INDEX_FILE} here; name the folder with --dir"
-    )
+    Ok(from_here(root))
+}
+
+/// `dir` from the working directory where it lies under it.
+fn from_here(dir: PathBuf) -> PathBuf {
+    let Ok(here) = std::env::current_dir() else {
+        return dir;
+    };
+    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    match canon(&dir).strip_prefix(canon(&here)) {
+        Ok(rel) => rel.to_path_buf(),
+        Err(_) => dir,
+    }
+}
+
+/// A folder for a message: `.` for the working directory.
+fn shown_dir(dir: &Path) -> String {
+    if dir.as_os_str().is_empty() {
+        ".".into()
+    } else {
+        flint_core::project::shown(dir)
+    }
 }
 
 fn read_index(dir: &Path) -> Result<Vec<Example>> {
@@ -182,7 +215,9 @@ fn listing(dir: &Path, examples: &[&Example]) -> String {
 }
 
 /// Every scene file under `dir`, relative to it with `/` separators.
-/// `dist/` (what `flint export web` and `flint bundle` write) is skipped.
+/// `dist/` (what `flint export web` and `flint bundle` write), hidden
+/// folders (`.git`) and an engine checkout (flint-examples' `engine/`
+/// subtree, whose scenes are the engine's) are skipped.
 fn scenes_on_disk(dir: &Path) -> Vec<String> {
     fn walk(root: &Path, at: &Path, out: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(at) else {
@@ -191,7 +226,11 @@ fn scenes_on_disk(dir: &Path) -> Vec<String> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if at == root && entry.file_name() == "dist" {
+                let name = entry.file_name();
+                if (at == root && name == "dist")
+                    || name.to_string_lossy().starts_with('.')
+                    || flint_core::project::is_engine_checkout(&path)
+                {
                     continue;
                 }
                 walk(root, &path, out);
@@ -223,7 +262,7 @@ fn check(dir: &Path, examples: &[Example], schemas: &[String]) -> Vec<String> {
     for scene in scenes_on_disk(dir) {
         if !indexed.contains(scene.as_str()) {
             failures.push(format!(
-                "{scene}: not in {INDEX_FILE} (add it, or move a test-only scene to tests/fixtures/scenes/)"
+                "{scene}: not in {INDEX_FILE} (add it; a scene only a test needs belongs with the test)"
             ));
         }
     }
@@ -278,17 +317,43 @@ mod tests {
             example("c/long_name.scene.toml", "stylize"),
         ];
         let refs: Vec<&Example> = list.iter().collect();
-        let out = listing(Path::new("examples"), &refs);
+        let out = listing(Path::new("demos"), &refs);
         assert_eq!(
             out,
             "stylize\n\
-             \x20 examples/b.scene.toml            b.scene.toml's purpose\n\
-             \x20 examples/c/long_name.scene.toml  c/long_name.scene.toml's purpose\n\
+             \x20 demos/b.scene.toml            b.scene.toml's purpose\n\
+             \x20 demos/c/long_name.scene.toml  c/long_name.scene.toml's purpose\n\
              \n\
              showcase\n\
-             \x20 examples/a.scene.toml            a.scene.toml's purpose\n\
+             \x20 demos/a.scene.toml            a.scene.toml's purpose\n\
              \n"
         );
+        // The project root's index, from the root itself: each scene as the
+        // index names it
+        let out = listing(Path::new(""), &refs[1..2]);
+        assert_eq!(out, "showcase\n  a.scene.toml  a.scene.toml's purpose\n\n");
+    }
+
+    /// flint-examples keeps the engine as a subtree beside its scenes; the
+    /// walk for scenes on disk passes over it, `dist/` and `.git`.
+    #[test]
+    fn the_walk_passes_over_an_engine_checkout() {
+        let dir = std::env::temp_dir().join(format!("flint-examples-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for file in [
+            "a.scene.toml",
+            "film/b.scene.toml",
+            "engine/crates/flint-core/Cargo.toml",
+            "engine/tests/fixtures/c.scene.toml",
+            "dist/d.scene.toml",
+            ".git/e.scene.toml",
+        ] {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+        assert_eq!(scenes_on_disk(&dir), ["a.scene.toml", "film/b.scene.toml"]);
+        assert_eq!(shown_dir(Path::new("")), ".");
     }
 
     #[test]

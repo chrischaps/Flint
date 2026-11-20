@@ -1,13 +1,21 @@
-//! Generate procedural texture PNGs for the Luminarium demo scene.
+//! Generate procedural texture PNGs for the Luminarium demo scene (which
+//! lives in flint-demos since 2026-11-17; its textures in flint-examples'
+//! `textures/` too).
 //!
-//! Run with: cargo run -p flint-render --example gen_textures
+//! Run with: cargo run -p flint-render --example gen_textures [-- <dir>]
+//! (default `textures/` in the working directory)
 
 use image::{Rgba, RgbaImage};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn main() {
-    let out_dir = Path::new("examples/textures");
-    std::fs::create_dir_all(out_dir).expect("Failed to create examples/textures");
+    let out_dir = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("textures"));
+    let out_dir = out_dir.as_path();
+    std::fs::create_dir_all(out_dir)
+        .unwrap_or_else(|e| panic!("Failed to create {}: {e}", out_dir.display()));
 
     generate_stone_wall(out_dir);
     generate_wood_planks(out_dir);

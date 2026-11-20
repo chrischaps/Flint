@@ -12,7 +12,7 @@ Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The pri
 cargo build                    # Debug build (--release for release)
 cargo build -p flint-cli --no-default-features  # Headless CLI: no sound card, gamepads or file dialogs (#221)
 cargo run --bin flint -- <cmd> # Run CLI
-cargo run --bin flint-player -- examples/phase4_runtime.scene.toml  # Standalone player
+cargo run --bin flint-player -- flint-examples/phase4_runtime.scene.toml  # Standalone player
 cargo test                     # Run all tests (-p flint-core for one crate)
 cargo clippy                   # Lint
 cargo fmt --all                # Format
@@ -95,7 +95,7 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear, project manifest, env switches |
 | `crates/flint-audio/CLAUDE.md` | audio clock, decoding, device features |
 | `crates/flint-{physics,animation,particles,terrain}/CLAUDE.md` | joints, IK, particles, terrain |
-| `tools/showcase/CLAUDE.md` | film rig |
+| `flint-examples/tools/showcase/CLAUDE.md` | film rig (in flint-examples, #984) |
 | `showcase_game/CLAUDE.md` | the example game |
 | `docs/CLAUDE.md` | the book, its checks, design notes, ADRs |
 
@@ -122,7 +122,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 - Runtime crates build for wasm (`bash scripts/wasm-check.sh` before pushing): time through `web-time`, never `Instant::now`
 - `AudioManager::new()` / `Gilrs::new()` may fail in headless/CI -- wrap in `Option`
 - `flint-android` is the one crate outside `default-members` (a new crate goes in both lists); `cargo test --workspace` fails on `ndk-sys` on Windows: use plain `cargo test`
-- Windows debug builds link an 8 MB stack: keep a clap `Args` struct to a dozen or so flags
+- On Windows `flint` and `flint-player` link an 8 MB stack from `build.rs` (#990): keep a clap `Args` struct to a dozen or so flags
 - Dependency API notes live in their crates' files: wgpu 30, winit 0.30 (render), Rapier 0.22 (physics), Kira 0.11 (audio), Rhai 1.24 (script)
 - Never allocate GPU buffers or bind groups per entity per frame; a frame is one submission (#139)
 - Lights are `[entities.x.light]` with a `type` (`flint schema light`); a `directional_light` table is not a light
@@ -135,7 +135,7 @@ A change a game can notice (a scene or schema key, a script function, a CLI flag
 ## Project Structure
 
 - `schemas/` -- engine schemas, `schemas/examples/` the examples' room-builder layer; `styles/` -- style guides and looks
-- `examples/` -- curated example scenes (`examples/index.toml`); improve them freely. `tests/fixtures/scenes/` -- frozen scenes the goldens load
+- `flint-examples/` -- the examples, their own repository (#984): clone it here (gitignored). `tests/fixtures/scenes/` -- frozen scenes the goldens load
 - `showcase_game/` -- the example game; `docs/book/` the book, `docs/design/` notes, `docs/adr/` decisions
 - **Every byte here is in every game** (ADR 0122): `scripts/size-check.py` caps the tree. The root holds only manifests and docs
 

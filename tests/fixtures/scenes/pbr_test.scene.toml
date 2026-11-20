@@ -14,7 +14,7 @@ archetype = "furniture"
 position = [-3, 0, 0]
 
 [entities.test_box.model]
-asset = "../../../examples/models/Box.glb"
+asset = "./models/Box.glb"
 
 # MetalRoughSpheres - grid of spheres with varying metallic/roughness
 # The canonical PBR validation model
@@ -25,7 +25,7 @@ archetype = "furniture"
 position = [3, 0, 0]
 
 [entities.spheres.model]
-asset = "../../../examples/models/YBot.glb"
+asset = "./models/YBot.glb"
 
 # A procedural entity to verify backward compatibility
 [entities.reference_cube]

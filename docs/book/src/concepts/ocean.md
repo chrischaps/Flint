@@ -143,7 +143,7 @@ square to it, and the half-extents grow with the entity's world scale.
 
 Up to **four** `ocean_contact` entities foam at once. With more, the four
 nearest the camera foam, and each one left out is warned about once by name.
-Where two rings meet, the stronger shows. `examples/contact_foam.scene.toml`
+Where two rings meet, the stronger shows. [`flint-examples/contact_foam.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/contact_foam.scene.toml)
 has three hulls, each posed a different way.
 
 The churn comes from *the water's orbital velocity relative to the hull,
@@ -276,7 +276,7 @@ it likes, with or without an `ocean`.
 
 ![A tarn above the sea, a river falling into it, its outflow falling on](../images/water-bodies.png)
 
-*`examples/water_bodies.scene.toml`: the tarn sits 6 m up, the river off the
+*[`flint-examples/water_bodies.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/water_bodies.scene.toml): the tarn sits 6 m up, the river off the
 plateau falls into it, and the outflow falls on to the sea. Fast water foams
 white along its flow.*
 

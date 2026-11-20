@@ -1477,10 +1477,10 @@ save_version = 1.5
         with_files(
             &[
                 ("flint/crates/flint-core/Cargo.toml", ""),
-                ("flint/examples/a.scene.toml", ""),
+                ("flint/levels/a.scene.toml", ""),
             ],
             || {
-                let p = discover("flint/examples/a.scene.toml").unwrap();
+                let p = discover("flint/levels/a.scene.toml").unwrap();
                 assert_eq!(p.root, Path::new("flint"));
                 assert_eq!(p.found, Found::Engine);
                 assert_eq!(p.id, None);
@@ -1686,12 +1686,12 @@ save_version = 1.5
                 ("engine/schemas/", ""),
                 ("schemas/", ""),
                 ("scenes/a.scene.toml", ""),
-                ("examples/b.scene.toml", ""),
+                ("levels/b.scene.toml", ""),
             ],
             || {
                 assert!(dropped("scenes/a.scene.toml", &["engine/schemas", "schemas"]).is_empty());
-                assert!(dropped("examples/b.scene.toml", &["schemas"]).is_empty());
-                assert!(dropped("examples/b.scene.toml", &["./schemas"]).is_empty());
+                assert!(dropped("levels/b.scene.toml", &["schemas"]).is_empty());
+                assert!(dropped("levels/b.scene.toml", &["./schemas"]).is_empty());
                 // No scene, no flags, a manifest, a host: never
                 assert!(schema_dirs(None, &["engine/schemas"])
                     .unwrap()
@@ -1892,10 +1892,10 @@ save_version = 1.5
             &[
                 ("crates/flint-core/Cargo.toml", ""),
                 ("schemas/", ""),
-                ("examples/a.scene.toml", ""),
+                ("levels/a.scene.toml", ""),
             ],
             || {
-                let dirs = schema_dirs(Some("examples/a.scene.toml".as_ref()), NO_FLAGS).unwrap();
+                let dirs = schema_dirs(Some("levels/a.scene.toml".as_ref()), NO_FLAGS).unwrap();
                 assert_eq!(dirs.source, SchemaSource::Discovery);
                 assert_eq!(paths(&dirs), ["schemas"]);
             },

@@ -21,8 +21,8 @@
 //! makes `<out>/<shot>/<take>.mp4` with ffmpeg when it is on PATH.
 //!
 //! This was the showcase film's `tools/showcase/capture.py` and
-//! `compare.py`; the film's list is `tools/showcase/film.toml`, now in this
-//! format.
+//! `compare.py`; the film's list, in this format, lives with the film in
+//! flint-examples since #984: `flint-examples/tools/showcase/film.toml`.
 
 use super::capture_compare::{compare_folders, Comparison};
 use crate::output::{self, progress, say};
@@ -1184,17 +1184,30 @@ fps = 20
         assert!(words.iter().any(|w| w.ends_with("frame_%04d.png")));
     }
 
+    /// A list shaped like the showcase film's (flint-examples'
+    /// `tools/showcase/film.toml` since #984: a 4K master laid out on a
+    /// 1920-point canvas, scenes named from the list's folder, a beat shot
+    /// two ways), over the frozen fixture scenes: every take plans, each
+    /// scene is found, and a point is two pixels.
     #[test]
-    fn the_film_list_parses() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/showcase/film.toml");
-        let list = ShotList::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    fn a_film_shaped_list_parses_and_finds_its_scenes() {
+        // Where the list would lie; nothing is read from it
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/film/film.toml");
+        let list = ShotList::parse(
+            "[capture]\ntitle = \"Many Hands\"\nfps = 60\nwidth = 3840\nheight = 2160\n\
+             points_wide = 1920\nout = \"~/flint-film\"\n\n\
+             [[shot]]\nid = \"01_plain\"\nscene = \"../../tests/fixtures/scenes/pbr_test.scene.toml\"\n\
+             seconds = 6.0\n\n\
+             [[shot]]\nid = \"02_type\"\nscene = \"../../tests/fixtures/scenes/ascii_entities.scene.toml\"\n\
+             seconds = 14.0\n\
+             [[shot.take]]\nname = \"main\"\n\
+             [[shot.take]]\nname = \"short\"\nseconds = 4.0\n",
+        )
+        .unwrap();
         let (_, plans) = plan(&list, &path, &over()).unwrap();
-        assert!(plans.len() >= 13, "{}", plans.len());
+        assert_eq!(plans.len(), 3, "{}", plans.len());
         for p in &plans {
             assert!(p.scene.is_file(), "{}: {}", p.label(), p.scene.display());
-            if let Some(i) = &p.input {
-                assert!(i.is_file(), "{}: {}", p.label(), i.display());
-            }
         }
         assert_eq!(plans[0].pixels_per_point, 2.0);
     }

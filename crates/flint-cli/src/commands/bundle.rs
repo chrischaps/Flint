@@ -46,7 +46,7 @@
 //!
 //! ```toml
 //! [mount]                                  # a folder outside the game, packed at a path inside it
-//! "engine/schemas" = "../schemas"          # (Flint's examples/, whose schemas are the repo's)
+//! "engine/schemas" = "../schemas"          # (a game beside the engine's checkout, not under it)
 //! [web]                                    # what `flint export web` puts on the page
 //! title = "Flint demos"
 //! line = "One sentence under the title."
@@ -61,7 +61,7 @@
 //! (`flint.toml`'s root; in the engine checkout, the checkout):
 //!
 //! ```bash
-//! flint bundle examples/ascii_entities.scene.toml   # examples/dist/ascii_entities.flintpack
+//! flint bundle levels/dock.scene.toml   # levels/dist/dock.flintpack
 //! ```
 //!
 //! See [`gather_scene`] for what "reaches" means. The bundle's paths are the

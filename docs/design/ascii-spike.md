@@ -46,8 +46,8 @@ which stay.
 
 ## Scenes
 
-`examples/phase4_runtime` (the tavern), `examples/mesh_meadow` (barrel, bench,
-lantern), `examples/campfire` (stones, with particles) and `examples/pbr_test`.
+`flint-examples/phase4_runtime.scene.toml` (the tavern), `flint-examples/mesh_meadow` (barrel, bench,
+lantern), `flint-examples/campfire.scene.toml` (stones, with particles) and `flint-examples/pbr_test.scene.toml`.
 Woozy Grove (#217) isn't on main yet, so the meadow stands in for it.
 
 ## Findings

@@ -261,7 +261,7 @@ installed on the spike's machine, and #1083 checks them with a screenshot):
 1. Build the player: `cargo build -p flint-player` (or `--release`).
 2. RenderDoc, **Launch Application**: executable
    `target/debug/flint-player.exe`, working directory the repo (or the
-   game's) root, arguments the scene (`examples/showcase.scene.toml`),
+   game's) root, arguments the scene (`flint-examples/showcase.scene.toml`),
    environment `WGPU_BACKEND=vulkan` or `WGPU_BACKEND=dx12` (read by
    `gpu_select`, `wgpu::Backends::from_env`), with `WGPU_ADAPTER_NAME` or
    `--gpu` to choose the adapter on a machine with two.
@@ -294,15 +294,15 @@ target as the captured frame.
 | same | `--script-time 2 --anim-time 0`, 1280x720 | **0** of 921,600 | scripts' lights and bob, animated patrons |
 | same, the replay host stepping the game once at load | | 68,691 (max 30 levels) | replay must run no game step |
 | same, without the captured bones | | 1,128 (max 133) | bones are an input |
-| `examples/woozy_grove_grass` (98 entities after load: 38 living trees with echoes, compute grass, shallow wooze) | `--time 3`, 1280x720 | **0** of 921,600 | authored scene + world by name + skinning from the GPU |
+| `flint-examples/woozy_grove_grass` (98 entities after load: 38 living trees with echoes, compute grass, shallow wooze) | `--time 3`, 1280x720 | **0** of 921,600 | authored scene + world by name + skinning from the GPU |
 | same, the world saved after load and loaded as a scene | | 485,649 (max 205) | model parts and living meshes don't load back |
 | same, with the captured ids kept | | 469,191 | still no trees: not the ids alone |
 | same, authored scene + world, no bones | | 304,768 (max 184) | trees at their rest pose |
 | same, bones but not echoes | | 218,921 (max 146) | the canopies' echoes are bones too |
-| `examples/ascii_motion` (ASCII, scripted camera) | `--script-time 0..1 --fps 30`, the frame at 29/30 s | 112,837 (max 255) | ASCII history isn't captured |
+| `flint-examples/ascii_motion.scene.toml` (ASCII, scripted camera) | `--script-time 0..1 --fps 30`, the frame at 29/30 s | 112,837 (max 255) | ASCII history isn't captured |
 | same, that frame drawn with no history | | **0** | history is the only difference |
-| `examples/motion_hold` (`rate = 12`, animated YBot) | `--script-time 0..1 --fps 50 --anim-time 0`, at 0.98 s (four frames into a held tick) | **0** | matched because this scene's held world matrices didn't move within the tick; see decision 4 |
-| `examples/shading_boil` (boil seed 11, amount 1, step 0.25) | `--time 0..1 --fps 30`, at 29/30 s | **0** | the boil is a `FrameInputs` value |
+| `flint-examples/motion_hold.scene.toml` (`rate = 12`, animated YBot) | `--script-time 0..1 --fps 50 --anim-time 0`, at 0.98 s (four frames into a held tick) | **0** | matched because this scene's held world matrices didn't move within the tick; see decision 4 |
+| `flint-examples/shading_boil.scene.toml` (boil seed 11, amount 1, step 0.25) | `--time 0..1 --fps 30`, at 29/30 s | **0** | the boil is a `FrameInputs` value |
 
 **What a capture costs**, release build, 1920 x 1080, every target the frame
 keeps read back at the frame's end in one submission (three runs of the

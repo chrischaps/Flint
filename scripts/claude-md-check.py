@@ -40,6 +40,9 @@ INDEX = "## Where the detail lives"
 BUDGET = 15_000
 
 ROW_RE = re.compile(r"^\|\s*`([^`]+CLAUDE\.md)`\s*\|")
+# A row may name a file in another repository cloned into the checkout: the
+# examples' (#984, gitignored here). It need not be cloned for the check to pass.
+OTHER_REPOS = ("flint-examples/",)
 
 
 def expand(path: str) -> list[str]:
@@ -103,7 +106,7 @@ def main() -> int:
     for row in rows:
         for path in expand(row):
             listed.add(path)
-            if not (ROOT / path).is_file():
+            if not path.startswith(OTHER_REPOS) and not (ROOT / path).is_file():
                 problems.append(f"CLAUDE.md's `{INDEX}` table names {path}, which isn't there")
     for path in scoped_files():
         if path not in listed:

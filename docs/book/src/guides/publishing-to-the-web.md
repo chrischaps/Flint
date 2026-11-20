@@ -3,8 +3,8 @@
 A Flint game can be put on the web with one command, whether it's a finished game, a FlintBench run, or a scene an agent wrote this afternoon:
 
 ```bash
-flint export web examples/
-python -m http.server -d examples/dist/web      # any static server will do
+flint export web flint-examples/
+python -m http.server -d flint-examples/dist/web      # any static server will do
 # open http://localhost:8000/
 ```
 
@@ -74,15 +74,15 @@ A game with no `engine/schemas` folder of its own (no engine subtree) and no `[m
 
 ## One scene: `flint bundle <scene>`
 
-Give `flint bundle` a `.scene.toml` instead of a folder and it packs that scene alone, with only what it reaches. This is how to check one engine feature in the browser without packing the whole `examples/` folder:
+Give `flint bundle` a `.scene.toml` instead of a folder and it packs that scene alone, with only what it reaches. This is how to check one engine feature in the browser without packing every example:
 
 ```bash
-flint bundle examples/ascii_entities.scene.toml   # examples/dist/ascii_entities.flintpack
+flint bundle flint-examples/ascii_entities.scene.toml   # flint-examples/dist/ascii_entities.flintpack
 # serve a web player build with the pack beside it, then open
 #   http://localhost:8000/?bundle=ascii_entities.flintpack
 ```
 
-The bundle's paths are the scene's project's: `flint.toml`'s folder, or the checkout itself for a scene in the engine repository. A scene plays from the pack exactly as it does from the disk, and `examples/`' showcase scenes, which name files by paths from the repository root, pack this way too. The pack is named after the scene, starts there, and is written to `dist/` beside it (`--name` and `--out-dir` change both). For `ascii_entities`, it holds the scene, its four models, `mesh_meadow/mask.png` and the schemas: 46.6 MB, against 110 MB for the whole demo pack.
+The bundle's paths are the scene's project's: `flint.toml`'s folder, or the checkout itself for a scene in the engine repository. A scene plays from the pack exactly as it does from the disk, and the examples' showcase scenes, which name files by paths from flint-examples' root, pack this way too. The pack is named after the scene, starts there, and is written to `dist/` beside it (`--name` and `--out-dir` change both). For `ascii_entities`, it holds the scene, its four models, `mesh_meadow/mask.png` and the schemas: 46.6 MB, against 110 MB for the whole demo pack.
 
 What goes in:
 

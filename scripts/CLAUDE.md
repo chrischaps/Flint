@@ -21,10 +21,10 @@ cargo build -p flint-cli --no-default-features  # Headless CLI: no sound card, g
                                #   so no ALSA/libudev headers on Linux (#221; features audio/gamepad/dialogs;
                                #   `bash scripts/headless-check.sh [--build]` keeps device crates out of its tree)
 cargo run --bin flint -- <cmd> # Run CLI
-cargo run --bin flint -- play examples/phase4_runtime.scene.toml  # Play a scene
-cargo run --bin flint-player -- examples/phase4_runtime.scene.toml  # Standalone player (schemas: the root flint.toml)
-cargo run --bin flint -- export web examples/  # any game as a folder a static server plays (#106):
-                               #   examples/dist/web = player + games/<id>/ bundles + games.json;
+cargo run --bin flint -- play flint-examples/phase4_runtime.scene.toml  # Play a scene
+cargo run --bin flint-player -- flint-examples/phase4_runtime.scene.toml  # Standalone player (schemas: the root flint.toml)
+cargo run --bin flint -- export web flint-examples/  # any game as a folder a static server plays (#106):
+                               #   flint-examples/dist/web = player + games/<id>/ bundles + games.json;
                                #   --out, --player <trunk dist> (else trunk builds it), --meta k=v, --clean
 cargo test                     # Run all tests
 cargo test -p flint-core       # Test a single crate

@@ -4,7 +4,7 @@
 //! - `flint schema --list --json` names every component and archetype of
 //!   the schema directories, and a name that is neither exits non-zero.
 //! - `flint schema --format json-schema` emits a JSON Schema that every
-//!   scene under `examples/` validates against (and that a scene with a
+//!   frozen scene under `tests/fixtures/scenes/` validates against (and that a scene with a
 //!   mistake does not), checked with a JSON Schema validator.
 //! - `flint validate` fails on `ik_two_bone.target = "nope"`, naming the
 //!   field, and on a model that isn't there, listing the paths tried.
@@ -217,8 +217,8 @@ fn the_json_schema_validates_every_example_scene() {
         .unwrap_or_else(|e| panic!("the JSON Schema does not compile: {e}"));
 
     let mut scenes = Vec::new();
-    scenes_under(&repo().join("examples"), &mut scenes);
-    assert!(scenes.len() > 60, "only {} example scenes", scenes.len());
+    scenes_under(&repo().join("tests/fixtures/scenes"), &mut scenes);
+    assert!(scenes.len() > 25, "only {} fixture scenes", scenes.len());
     let mut failures = Vec::new();
     for scene in &scenes {
         if let Err(e) = schemas.validate(&scene_as_json(scene), compiled) {
@@ -227,7 +227,7 @@ fn the_json_schema_validates_every_example_scene() {
     }
     assert!(
         failures.is_empty(),
-        "{} of {} example scenes do not validate:\n{}",
+        "{} of {} fixture scenes do not validate:\n{}",
         failures.len(),
         scenes.len(),
         failures.join("\n")

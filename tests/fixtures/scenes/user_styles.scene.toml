@@ -64,7 +64,7 @@ metallic = 0.0
 [entities.meadow.transform]
 position = [-48, 0, -48]
 [entities.meadow.grass_ground]
-mask = "../../../examples/mesh_meadow/mask.png"
+mask = "./mesh_meadow/mask.png"
 width = 96.0
 depth = 96.0
 scale_by_mask = true
@@ -90,7 +90,7 @@ position = [0.4, 0.48, 3.4]
 rotation = [0, 70, 0]
 scale = [0.5, 0.5, 0.5]
 [entities.cask.model]
-asset = "../../../examples/models/barrel.glb"
+asset = "./models/barrel.glb"
 
 # --- Projected: a style_mask naming the user style, or its own component ---
 
@@ -100,7 +100,7 @@ archetype = "character"
 position = [-0.9, 0, 4.4]
 rotation = [0, 25, 0]
 [entities.ybot.model]
-asset = "../../../examples/models/YBotWithIdle.glb"
+asset = "./models/YBotWithIdle.glb"
 [entities.ybot.skeleton]
 skin = "Armature"
 [entities.ybot.style_mask]
@@ -112,7 +112,7 @@ archetype = "furniture"
 position = [2.4, 0.48, 5.4]
 scale = [0.5, 0.5, 0.5]
 [entities.barrel.model]
-asset = "../../../examples/models/barrel.glb"
+asset = "./models/barrel.glb"
 [entities.barrel.hologram_style]
 glow = 2.0
 lines = 6.0

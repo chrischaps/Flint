@@ -118,12 +118,6 @@ jobs:
       - name: cargo check -p flint-cli --no-default-features
         run: bash scripts/headless-check.sh --build
 
-      # The examples (#763): every scene under examples/ is in
-      # examples/index.toml and passes what `flint validate` checks. No GPU
-      # needed; the headless CLI is the build CI already has here.
-      - name: flint examples --check
-        run: cargo run -p flint-cli --no-default-features --bin flint -- examples --check
-
       # The book against the script API (#695): the generated reference
       # (docs/book/src/reference/script-api.md) and the scripting chapter's
       # script-api tables match the engine's declarations, and no chapter
@@ -141,9 +135,13 @@ jobs:
       # The book's prose against the CLI (#375): every `--flag` on a `flint`
       # command line in the book and the CLAUDE.md files is one that
       # command's --help lists, every `[post_process.styles.<name>]` is a
-      # registered style, every image a page links exists. Same binary.
+      # registered style, every image a page links exists, and every
+      # `flint-examples/<path>` and link into that repository names a file it
+      # has (#984; its tree comes from GitHub's API). Same binary.
       # Names that aren't drift: docs/book/docs-check-allow.txt.
       - name: docs-check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/docs-check.py --flint target/debug/flint
 
   # The GPU tests and render goldens (#314) on WARP, the software DX12
