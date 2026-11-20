@@ -821,10 +821,12 @@ cell, glyph) and two `writeBuffer`s a frame, and at scale 1 one bind
 group a frame: the mask's draw group over the caller's depth view, which
 wgpu 23 can't key (the same reason the base chain makes two there). Under
 a render scale the chain owns its depth and all of them are kept. Since
-#379 the player passes its depth view with an id
-(`RenderContext::depth_target()`, a fresh `new_depth_id()` whenever the
-context makes the texture again) and those groups are kept at scale 1
-too (measured below the tables, "Bind groups over the caller's depth").
+#379 the player passed its depth view with an id (a fresh
+`new_depth_id()` whenever the context made the texture again) and those
+groups were kept at scale 1 too (measured below the tables, "Bind groups
+over the caller's depth"). Since #960 (wgpu 30) the renderer keys them on
+the view itself, which compares by identity, so every host's depth view is
+kept, a bare `&TextureView` included, and the id is gone.
 
 **Re-read with `tools/web-perf/run.mjs` (#381, 2026-11-12).** The table
 above is now one command over a `flint export web` folder of the same three

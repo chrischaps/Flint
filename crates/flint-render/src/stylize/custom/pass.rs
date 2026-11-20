@@ -1077,7 +1077,11 @@ impl StylePass for CustomPass {
                 if (!source.inputs.mask || frame.mask.is_some())
                     && (!source.inputs.edges || frame.edges.is_some()) =>
             {
-                Some(frame.depth_bind(names.extra, frame.edges_key(), || {
+                // Kept over the edges it reads, by identity (#960)
+                let edges = (frame.edges.as_ref())
+                    .filter(|_| source.inputs.edges)
+                    .map(|e| crate::bind_cache::Bound::View(&e.view));
+                Some(frame.depth_bind_over(names.extra, 0, edges.as_slice(), || {
                     let mut entries = Vec::new();
                     if source.inputs.depth {
                         entries.push(wgpu::BindGroupEntry {

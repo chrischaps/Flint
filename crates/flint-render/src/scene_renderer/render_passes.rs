@@ -1422,7 +1422,7 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
-        depth_key: crate::bind_cache::DepthKey,
+        depth_key: crate::bind_cache::DepthKey<'_>,
         target_view: &wgpu::TextureView,
         camera: &Camera,
         scopes: &mut crate::frame_capture::FrameScopes,
@@ -1655,7 +1655,6 @@ impl SceneRenderer {
                             depth_key,
                             camera,
                             crate::postprocess::VolumetricShadow {
-                                id: shadow_pass.id,
                                 view: &shadow_pass.shadow_view,
                                 sampler: &shadow_pass.shadow_sampler,
                                 uniforms: &shadow_pass.shadow_uniforms_buffer,

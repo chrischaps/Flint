@@ -1344,12 +1344,14 @@ fn held(gpu: &Gpu) -> [usize; 4] {
     ]
 }
 
-/// #379: at render scale 1 the scene draws into the caller's depth view,
-/// which wgpu 23 can't key. Given with an id, the bind groups over it
-/// (SSAO's, the composite's, the style mask's) are kept from frame to
-/// frame instead of made every frame, and a new id remakes them once.
+/// #379, #960: at render scale 1 the scene draws into the caller's depth
+/// view. The bind groups over it (SSAO's, the composite's, the style
+/// mask's) are kept from frame to frame while it is the same view, which
+/// wgpu 30 tells by identity (wgpu 23 couldn't, so a host passed an id and
+/// a bare view's groups were made every frame), and a new view remakes them
+/// once.
 #[test]
-fn the_callers_depth_with_an_id_makes_no_bind_groups_a_frame() {
+fn the_callers_depth_view_makes_no_bind_groups_a_frame() {
     let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
@@ -1410,66 +1412,161 @@ fn the_callers_depth_with_an_id_makes_no_bind_groups_a_frame() {
         (renderer.post_binds_made() - before, pixels)
     };
 
-    // No id: what every host did before, warmed up first
+    // A bare view, as every host but the player passed one (#960: on wgpu
+    // 23 its groups were made every frame). The first two frames make the
+    // groups, the next ones none. Two, not one: ASCII's cell history (#277)
+    // ping-pongs a pair of textures, and its group over the depth binds the
+    // side it reads, so the second side is first bound on the second frame
+    // (#572). The chain itself was made at the first frame, so its own
+    // groups are in the first count too.
     let bare = flint_render::DepthTarget::from(&gpu.depth_view);
     frame(&mut renderer, bare);
     assert!(
         renderer.style_mask_draws().is_some_and(|(_, n)| n > 0),
         "the test needs the style mask on"
     );
-    let (made_bare, bare_pixels) = per_frame(&mut renderer, bare);
-
-    // An id: the first two frames make them, the next ones none. Two, not
-    // one: ASCII's cell history (#277) ping-pongs a pair of textures, and
-    // its group over the depth binds the side it reads, so the second side
-    // is first bound on the second frame (#572)
-    let id = flint_render::new_depth_id();
-    let keyed = flint_render::DepthTarget::new(&gpu.depth_view, id);
-    let (made_first, _) = per_frame(&mut renderer, keyed);
-    let (made_second, _) = per_frame(&mut renderer, keyed);
-    let made_warm = made_first + made_second;
+    let (made_second, _) = per_frame(&mut renderer, bare);
     let kept = renderer.kept_post_binds();
-    let steady: Vec<u64> = (0..8).map(|_| per_frame(&mut renderer, keyed).0).collect();
-    let (_, keyed_pixels) = per_frame(&mut renderer, keyed);
+    let steady: Vec<u64> = (0..8).map(|_| per_frame(&mut renderer, bare).0).collect();
+    let (_, kept_pixels) = per_frame(&mut renderer, bare);
+    // A clone of the view is the same view
+    let (made_clone, _) = per_frame(&mut renderer, (&gpu.depth_view.clone()).into());
 
-    // A new depth texture (a resize, say) comes with a new id: made once
-    // again over the same two frames, and the old id's groups dropped
-    // rather than piled up
-    let next = flint_render::DepthTarget::new(&gpu.depth_view, flint_render::new_depth_id());
-    let made_next = per_frame(&mut renderer, next).0 + per_frame(&mut renderer, next).0;
-    let (made_after, _) = per_frame(&mut renderer, next);
+    // A new depth texture (a resize, say) is a new view: the groups over the
+    // depth are made once again over the same two frames, and the old
+    // view's dropped rather than piled up
+    let depth = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let next_view = depth.create_view(&Default::default());
+    let next = flint_render::DepthTarget::from(&next_view);
+    let (made_next_first, _) = per_frame(&mut renderer, next);
+    let (made_next_second, _) = per_frame(&mut renderer, next);
+    let (made_after, next_pixels) = per_frame(&mut renderer, next);
     eprintln!(
-        "bind groups a frame: bare {made_bare}, keyed first {made_first} + {made_second} then \
-         {steady:?}, new id {made_next} then {made_after}; kept {kept} -> {}",
+        "bind groups a frame: second {made_second} then {steady:?}, a clone {made_clone}, \
+         new view {made_next_first} + {made_next_second} then {made_after}; kept {kept} -> {}",
         renderer.kept_post_binds()
     );
+    // The new chain's second frame makes the history's second side and the
+    // chain's own groups first asked for then (measured: 2)
     assert!(
-        made_bare >= 3,
-        "a bare view should cost SSAO's, the composite's and the mask's groups every frame, made {made_bare}"
-    );
-    // A bare frame makes a group at each use, and some are used twice
-    assert!(
-        (1..=made_bare).contains(&made_warm),
-        "the first two keyed frames make each group once, made {made_first} + {made_second}"
-    );
-    assert!(
-        made_second <= 1,
-        "only the history's second side waits for the second frame, made {made_second}"
+        made_second <= 2,
+        "the second frame made {made_second} bind groups"
     );
     assert!(
         steady.iter().all(|&n| n == 0),
-        "a steady keyed frame made bind groups: {steady:?}"
+        "a steady frame over the caller's depth made bind groups: {steady:?}"
     );
-    assert_eq!(made_next, made_warm, "a new id remakes each group once");
+    assert_eq!(made_clone, 0, "a clone of the view is the same view");
+    assert!(
+        made_next_first >= 3,
+        "a new view remakes SSAO's, the composite's and the mask's groups, made {made_next_first}"
+    );
+    assert!(
+        made_next_second <= 1,
+        "only the history's second side waits for the second frame, made {made_next_second}"
+    );
     assert_eq!(made_after, 0);
     assert_eq!(
         renderer.kept_post_binds(),
         kept,
-        "the old id's groups were kept"
+        "the old view's groups were kept"
     );
     assert_eq!(
-        keyed_pixels, bare_pixels,
-        "kept groups drew a different frame"
+        next_pixels, kept_pixels,
+        "groups made again drew a different frame"
+    );
+}
+
+/// #960: the style mask's per-draw buffer grows with the styled draws (16,
+/// 32, 64, 128 slots). Its bind group was keyed on an id taken with each
+/// buffer, so every growth left the last buffer's group, and the buffer it
+/// held, in the chain's cache until a resize. Keyed on the buffer itself,
+/// the new group takes the old one's place.
+#[test]
+fn a_grown_mask_buffer_leaves_no_bind_group_behind() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let styles = flint_render::stylize::StyleRegistry::new();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut world = FlintWorld::new();
+    let spawn = |world: &mut FlintWorld, i: usize| {
+        let cube = world.spawn(format!("cube {i:03}")).unwrap();
+        // A 12-wide grid on the ground under the default camera
+        let (x, z) = ((i % 12) as f64 - 5.5, (i / 12) as f64 - 4.5);
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3([x * 0.4, 0.0, z * 0.4]));
+        world
+            .set_component(cube, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-0.15, -0.15, -0.15]));
+        bounds.insert("max".into(), vec3([0.15, 0.15, 0.15]));
+        world.set_component(cube, "bounds", bounds.into()).unwrap();
+        flint_render::entity_style::set_entity_style(world, &styles, cube, "ascii").unwrap();
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let frame = |renderer: &mut SceneRenderer, world: &FlintWorld| {
+        renderer.prepare(
+            gpu.device,
+            gpu.queue,
+            world,
+            &flint_render::FrameInputs::default(),
+        );
+        renderer.render_to(
+            gpu.device,
+            gpu.queue,
+            &gpu.depth_view,
+            &Camera::default(),
+            &gpu.color_view,
+        );
+        let _ = flint_render::wait_for_gpu(gpu.device);
+    };
+    let mut kept = Vec::new();
+    let mut spawned = 0;
+    for count in [8, 24, 48, 100] {
+        while spawned < count {
+            spawn(&mut world, spawned);
+            spawned += 1;
+        }
+        // Three frames a size: the history's second side and the grown
+        // buffer's first frame are made, the third is steady
+        for _ in 0..3 {
+            frame(&mut renderer, &world);
+        }
+        let masked = renderer.style_mask_draws().map_or(0, |(_, n)| n);
+        kept.push((count, masked, renderer.kept_post_binds()));
+    }
+    eprintln!("(cubes, masked draws, kept bind groups): {kept:?}");
+    assert!(
+        kept.last().is_some_and(|&(_, masked, _)| masked > 64),
+        "the test needs the mask buffer grown past 64 slots: {kept:?}"
+    );
+    let first = kept[0].2;
+    assert!(
+        kept.iter().all(|&(_, _, n)| n == first),
+        "each growth of the mask's buffer left a bind group behind: {kept:?}"
     );
 }
 

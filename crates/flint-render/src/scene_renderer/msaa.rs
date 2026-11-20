@@ -24,10 +24,9 @@ pub(crate) struct MsaaTargets {
 #[derive(Default)]
 pub(crate) struct MsaaView {
     color: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
+    /// The style mask keeps a bind group over its view, made again when
+    /// this is (#306; by the view's identity since #960).
     depth: Option<(wgpu::Texture, wgpu::TextureView)>,
-    /// A new id each time `depth` is made, so the style mask can keep a
-    /// bind group over it (#306).
-    depth_id: u64,
 }
 
 /// The sample-0 depth resolve's pipeline and its bind group layout.
@@ -75,14 +74,14 @@ impl MsaaTargets {
         self.view.depth.as_ref().map(|(_, view)| view)
     }
 
-    /// The multisampled depth and its id, when it was made at `width` x
-    /// `height`: what a pass drawing against the scene's own samples reads.
-    pub(crate) fn depth_at(&self, width: u32, height: u32) -> Option<(&wgpu::TextureView, u64)> {
+    /// The multisampled depth, when it was made at `width` x `height`: what
+    /// a pass drawing against the scene's own samples reads.
+    pub(crate) fn depth_at(&self, width: u32, height: u32) -> Option<&wgpu::TextureView> {
         match &self.view.depth {
             Some((texture, view))
                 if texture.size().width == width && texture.size().height == height =>
             {
-                Some((view, self.view.depth_id))
+                Some(view)
             }
             _ => None,
         }
@@ -127,7 +126,6 @@ impl MsaaTargets {
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
         self.view.color = Some((color, color_view, width, height));
         self.view.depth = Some((depth, depth_view));
-        self.view.depth_id = crate::bind_cache::gpu_id();
     }
 
     /// Lazily create the sample-0 depth-resolve pipeline (ADR 0058).

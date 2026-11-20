@@ -302,11 +302,16 @@ impl Ascii {
 
     /// The edge pixels' inputs (#743, `ascii_edge_source.wgsl`'s group 1):
     /// the shared edges (or no edge, if their pass couldn't be built), the
-    /// mask (or one unstyled pixel) and the depth, kept over the depth and
-    /// keyed by the edges' size, which a render-scale step changes.
+    /// mask (or one unstyled pixel) and the depth, kept over all three by
+    /// identity (#960).
     fn edge_source_bind(&self, frame: &StyleFrame<'_>) -> Arc<wgpu::BindGroup> {
-        let key = frame.edges_key() ^ (frame.mask.is_some() as u64) << 63;
-        frame.depth_bind("ASCII Edge Source BG", key, || {
+        let over = [
+            frame.edges_or(&self.no_edges_view),
+            crate::bind_cache::Bound::View(frame.mask.unwrap_or(&self.no_mask_view)),
+        ];
+        // With and without the mask kept side by side: it comes and goes
+        let variant = frame.mask.is_some() as u64;
+        frame.depth_bind_over("ASCII Edge Source BG", variant, &over, || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII Edge Source BG"),
                 layout: &self.source_bgl,
