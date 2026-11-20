@@ -6,10 +6,11 @@
 //! loaded first, so an edit that would leave the scene unloadable (a dangling
 //! `parent`, props a schema rejects) is refused before the file changes.
 
+use super::common_args::load_scene;
 use crate::output::{self, Answer};
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use flint_scene::{load_scene, load_scene_text, SceneDocument, SceneFile};
+use flint_scene::{load_scene_text, SceneDocument, SceneFile};
 use flint_schema::{validate_component_data, SchemaRegistry};
 use serde_json::json;
 use std::path::Path;
@@ -177,7 +178,7 @@ fn create(
     }
 
     // The scene as it loads, prefab instances and all, for the names in it
-    let (world, _) = load_scene(scene_path, &registry).context("Failed to load scene")?;
+    let (world, _) = load_scene(scene_path, &registry)?;
     if world.contains_name(name) {
         anyhow::bail!("Entity '{}' already exists", name);
     }
@@ -201,7 +202,7 @@ fn create(
 
     // The new file must load, and what the props set must fit the schemas
     let (world, _) = load_scene_text(&text, path, &registry)
-        .context("Refusing to write: the scene would not load")?;
+        .with_context(|| format!("Refusing to write {scene_path}: the scene would not load"))?;
     let id = world
         .get_id(name)
         .ok_or_else(|| anyhow::anyhow!("Refusing to write: '{}' did not load", name))?;
@@ -262,7 +263,7 @@ fn parse_props(json: &str) -> Result<Vec<(String, toml::Value)>> {
 
 fn list(scene_path: &str, format: &str, schemas: &[String]) -> Result<()> {
     let registry = load_registry(scene_path, schemas)?;
-    let (world, _) = load_scene(scene_path, &registry).context("Failed to load scene")?;
+    let (world, _) = load_scene(scene_path, &registry)?;
 
     let entities = world.all_entities();
 
@@ -289,7 +290,7 @@ fn delete(name: &str, scene_path: &str, recursive: bool, schemas: &[String]) -> 
     let mut doc = SceneDocument::from_file(path).map_err(anyhow::Error::msg)?;
 
     if !doc.has_entity(name) {
-        let (world, _) = load_scene(scene_path, &registry).context("Failed to load scene")?;
+        let (world, _) = load_scene(scene_path, &registry)?;
         if !world.contains_name(name) {
             anyhow::bail!("Entity '{}' not found", name);
         }
@@ -326,7 +327,7 @@ fn delete(name: &str, scene_path: &str, recursive: bool, schemas: &[String]) -> 
 
     // A prefab instance's `parent`, say, can still name what went
     load_scene_text(&text, path, &registry)
-        .context("Refusing to write: the scene would not load")?;
+        .with_context(|| format!("Refusing to write {scene_path}: the scene would not load"))?;
     std::fs::write(scene_path, text)?;
 
     let text = match doomed.len() {
@@ -361,7 +362,7 @@ fn show(
         (Some(addr), _) => super::attach::ask(addr, &ask)?.answer,
         (None, Some(scene_path)) => {
             let registry = load_registry(scene_path, schemas)?;
-            let (world, _) = load_scene(scene_path, &registry).context("Failed to load scene")?;
+            let (world, _) = load_scene(scene_path, &registry)?;
             flint_query::answer(&world, &ask).map_err(anyhow::Error::msg)?
         }
         (None, None) => anyhow::bail!("give --scene <file> or --attach <IP:PORT>"),

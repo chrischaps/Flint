@@ -34,6 +34,19 @@ pub fn load_scene<P: AsRef<Path>>(
     Ok((world, scene_file))
 }
 
+/// What a host says when the scene at `path` didn't load (#1044):
+/// `Failed to load scene levels/hall.scene.toml`, the error's cause under
+/// it. A load's own errors mostly name entities, not the file (a parent
+/// cycle, a missing prefab), so with a folder of scenes or a sweep of
+/// variants this line is the one that says which file to open. Every
+/// command, the player and the editor word it the same way.
+pub fn load_failed<P: AsRef<Path>>(path: P) -> String {
+    format!(
+        "Failed to load scene {}",
+        flint_core::project::shown(path.as_ref())
+    )
+}
+
 /// [`load_scene`] into a world whose ids start past every id `previous`
 /// gave out ([`FlintWorld::after`]): what a host that goes on loads its
 /// next scene with (a transition, an editor's reload), so no id held across

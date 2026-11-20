@@ -12,7 +12,7 @@ use crate::picking::{build_pick_targets, pick_entity};
 use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
 use crate::undo::{EditAction, UndoCommand, UndoStack};
 use crate::watch::StyleSources;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
@@ -22,7 +22,9 @@ use flint_render::{
     post_process_config_from_def, Camera, FrameInputs, PostProcessConfig, RendererConfig,
     SceneBinding, SceneRenderer,
 };
-use flint_scene::{load_scene, load_scene_after, CameraDef, PostProcessDef, SceneDocument};
+use flint_scene::{
+    load_failed, load_scene, load_scene_after, CameraDef, PostProcessDef, SceneDocument,
+};
 use flint_schema::{SchemaDirs, SchemaRegistry};
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, Debouncer};
@@ -210,9 +212,12 @@ pub fn viewer(
     // A word may name one of the scene's styles, registered just now
     flint_render::stylize::check_style_specs(&style.specs, binding.styles())
         .map_err(anyhow::Error::msg)?;
-    let (world, mut scene_file) = load_scene(scene_path, &registry)?;
+    // A failure names the file (#1044)
+    let (world, mut scene_file) =
+        load_scene(scene_path, &registry).with_context(|| load_failed(scene_path))?;
     // Living props' tables: checked, and the preset [wooze] names filled in (#686)
-    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))
+        .with_context(|| load_failed(scene_path))?;
 
     eprintln!("Loaded scene: {}", scene_file.scene.name);
     eprintln!("Entities: {}", world.entity_count());
@@ -312,8 +317,10 @@ pub fn track_editor(
     let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
     let binding = scene_binding(scene_path);
-    let (world, mut scene_file) = load_scene(scene_path, &registry)?;
-    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
+    let (world, mut scene_file) =
+        load_scene(scene_path, &registry).with_context(|| load_failed(scene_path))?;
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))
+        .with_context(|| load_failed(scene_path))?;
 
     eprintln!("Loaded scene: {}", scene_file.scene.name);
     eprintln!("Entities: {}", world.entity_count());
@@ -2460,7 +2467,11 @@ impl ViewerApp {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to reload scene: {:?}", e);
+                    tracing::error!(
+                        "Failed to reload scene {}: {:?}",
+                        flint_core::project::shown(std::path::Path::new(&scene_path)),
+                        e
+                    );
                     // The last world stays on screen; the panel says why
                     // the file no longer loads
                     self.update_diagnostics();
