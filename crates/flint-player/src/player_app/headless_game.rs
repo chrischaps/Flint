@@ -152,8 +152,9 @@ pub struct HeadlessGame {
     /// Post-processing as the scripts last left it. The renderer's config is
     /// sticky in the player, so only the last write of each value matters.
     look: ScriptLook,
-    /// `set_look` / `clear_look` since the stage last asked.
-    look_request: Option<LookRequest>,
+    /// Every `set_look` / `clear_look` since the stage last asked, in the
+    /// order asked: a fade starts from the look an earlier one left (#1157).
+    look_requests: Vec<LookRequest>,
     /// What a debug key would say (#367): nobody presses one in a capture.
     key_note: super::key_note::KeyNote,
     /// What scripts are told the capture draws at (`--pixels-per-point`).
@@ -190,7 +191,7 @@ impl HeadlessGame {
             notes: BTreeSet::new(),
             skipped: BTreeSet::new(),
             look: ScriptLook::default(),
-            look_request: None,
+            look_requests: Vec::new(),
             key_note: Default::default(),
             pixels_per_point: 1.0,
             hud: Vec::new(),
@@ -493,11 +494,13 @@ impl HeadlessGame {
         }
     }
 
-    /// A look the scripts asked for since the last call (its `name` `None`:
-    /// none), to lay under the scene's keys before the next draw, or to fade
-    /// to from the game time it was asked at (#496).
-    pub fn take_look_request(&mut self) -> Option<LookRequest> {
-        self.look_request.take()
+    /// The looks the scripts asked for since the last call (a `name` of
+    /// `None`: none), oldest first, each to lay under the scene's keys or to
+    /// fade to from the game time it was asked at (#496). A capture lays
+    /// them all in order (#1157): a fade asked after a cut starts from the
+    /// cut's look, not from what the last capture drew.
+    pub fn take_look_requests(&mut self) -> Vec<LookRequest> {
+        std::mem::take(&mut self.look_requests)
     }
 
     /// Post-processing and fog as the scripts have left them, and the last
@@ -692,8 +695,8 @@ impl ScriptHost for CaptureFrame<'_> {
 
     fn set_look(&mut self, name: Option<String>, seconds: f64) {
         // A look the search can't find changes nothing, as in the player:
-        // neither what get_look() reads (#497) nor an earlier request this
-        // frame, which the capture would otherwise drop for it
+        // neither what get_look() reads (#497) nor the requests the capture
+        // lays (a fade after it starts from the look before it)
         if let Some(n) = name.as_deref() {
             if let Err(e) = flint_render::look::find_in(n, &self.game.asset_scope()) {
                 tracing::warn!("set_look: {e}");
@@ -701,7 +704,7 @@ impl ScriptHost for CaptureFrame<'_> {
             }
         }
         self.game.core.script.set_current_look(name.as_deref());
-        self.game.look_request = Some(LookRequest {
+        self.game.look_requests.push(LookRequest {
             name,
             seconds,
             at: self.game.core.clock.total_time,

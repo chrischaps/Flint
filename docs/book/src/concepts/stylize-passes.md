@@ -1224,7 +1224,7 @@ What crosses, and how:
 
 The fade writes only what the two looks set differently. Whatever else moves the config meanwhile keeps moving: a script's `set_post_process` overrides are stamped over the fade each frame, and a style a script tweens that neither look touches is left to the tween. At the end the config is exactly what the cut would have drawn, and `look_faded` fires. A scene transition drops a fade in progress.
 
-`flint render --scripts --time T` captures a fade at T, from the game time the script asked: [`flint-examples/look_fade.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/look_fade.scene.toml) holds each look for 1.5 s and fades for 2, so `--time 2.5` is halfway from graphite to watercolor.
+A fade is timed from the game time the script asked it at: the frame drawn at that moment is where it starts, and the frame at the asked time plus its seconds is where it ends. `flint render --scripts --time T` captures a fade at T with the values the player draws at T, every look the scripts asked before T laid in the order asked (#1157), so a fade asked after a cut starts from the cut's look, not from the look the scene file authors. [`flint-examples/look_fade.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/look_fade.scene.toml) holds each look for 1.5 s and fades for 2, so `--time 2.5` is halfway from graphite to watercolor.
 
 ![flint-examples/look_fade.scene.toml in flint-player: graphite fading into watercolor over two seconds, at 1.0, 2.0, 2.5, 3.0 and 3.7 s of game time; the HUD bar is time, the picture eases](../images/look-fade-player.jpg)
 

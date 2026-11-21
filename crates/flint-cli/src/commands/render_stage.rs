@@ -471,20 +471,30 @@ impl Stage {
     }
 
     /// Lay on the renderer what the scripts have asked of it that waits for
-    /// the capture: a look (it replaces the config, as the player's does, or
-    /// fades to it from the moment it was asked, #496), then the
-    /// post-processing overrides, sticky as the player's. Their styles, boil
-    /// tunes, distance and quality levers landed as they asked. `t` is the
-    /// capture's moment on the game clock.
+    /// the capture: each look asked since the last capture, in the order
+    /// asked (it replaces the config, as the player's does, or fades to it
+    /// from the moment it was asked, #496), then the post-processing
+    /// overrides, sticky as the player's. Their styles, boil tunes, distance
+    /// and quality levers landed as they asked. `t` is the capture's moment
+    /// on the game clock.
+    ///
+    /// A fade starts from the frame as it was when it was asked (#1157): a
+    /// cut asked before it since the last capture, or a fade under way at
+    /// that moment of it, never the config the last capture drew, which
+    /// could be the scene's authored look several looks ago.
     fn lay_script_requests(&mut self, args: &RenderArgs, t: f64) -> Result<()> {
-        let asked = self.game.take_look_request();
+        let asked = self.game.take_look_requests();
         let mut config = self.renderer.post_process_config().clone();
         let mut changed = false;
         // Whole-frame styles the scripts changed since the last capture,
         // which go over a look's, as they did before the look
         let styled = config.styles != self.laid_styles;
-        if let Some(flint_player::LookRequest { name, seconds, at }) = &asked {
-            let before = config.clone();
+        for flint_player::LookRequest { name, seconds, at } in &asked {
+            // The frame at the moment this look was asked
+            let mut before = config.clone();
+            if let Some((fade, began)) = &self.look_fade {
+                fade.at((at - began) as f32).apply(&mut before);
+            }
             let base = match &self.scene_post {
                 Some(def) => def.clone(),
                 None => flint_scene::PostProcessDef::from_authored(toml::Table::new())
@@ -501,11 +511,11 @@ impl Stage {
                 Ok(def) => {
                     let boil = config.boil;
                     let styles = styled.then(|| config.styles.clone());
-                    config = post_process_config(args, Some(&def), self.renderer.styles())?;
+                    let mut target = post_process_config(args, Some(&def), self.renderer.styles())?;
                     // The shading boil's drawing is the clock's, not the look's
-                    config.boil = boil;
+                    target.boil = boil;
                     if let Some(styles) = styles {
-                        config.styles = styles;
+                        target.styles = styles;
                     }
                     // The scripts' overrides go over the new look
                     self.look_applied = ScriptLook::default();
@@ -513,25 +523,26 @@ impl Stage {
                     changed = true;
                     self.look_fade = None;
                     if *seconds > 0.0 && seconds.is_finite() {
-                        // Drawn from where the frame was; a style the new
-                        // look turns on is built at the capture it shows in
+                        // A style the new look turns on is built at the
+                        // capture it shows in
                         let fade = flint_render::look_fade::LookFade::new(
                             before.clone(),
-                            config,
+                            target,
                             *seconds as f32,
                             self.renderer.styles(),
                         );
                         config = before;
                         self.look_fade = Some((fade, *at));
+                    } else {
+                        config = target;
                     }
                 }
                 Err(e) => tracing::warn!("set_look: {e}"),
             }
         }
         let fading = self.look_fade.is_some();
-        if let Some((fade, at)) = &mut self.look_fade {
-            let mut at_moment = fade.clone();
-            at_moment.step((t - *at) as f32);
+        if let Some((fade, at)) = &self.look_fade {
+            let at_moment = fade.at((t - at) as f32);
             at_moment.apply(&mut config);
             changed = true;
             if at_moment.done() {

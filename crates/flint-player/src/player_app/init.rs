@@ -414,12 +414,18 @@ impl PlayerApp {
         // A fade's target is the look from its start, for get_look()
         self.publish_look();
         let config = self.scene_post_config();
-        self.style.look_fade = None;
+        let now = self.core.clock.total_time;
+        let running = self.style.look_fade.take();
         let device = self.render_context.as_ref().map(|c| &c.device);
         #[cfg(test)]
         let device = device.or(self.test_gpu.map(|g| &g.device));
         if let (Some(renderer), Some(device)) = (self.scene_renderer.as_mut(), device) {
-            let from = renderer.post_process_config().clone();
+            // From the frame as it is now: a fade under way at this moment
+            // of it, not at the last render's (#1157), as a capture lays it
+            let mut from = renderer.post_process_config().clone();
+            if let Some(running) = &running {
+                running.at_time(now).apply(&mut from);
+            }
             // Everything the new look switches on is built now, not on the
             // fade's first frame
             renderer.set_post_process_config(config.clone());
@@ -433,7 +439,11 @@ impl PlayerApp {
                     seconds as f32,
                     &self.core.styles,
                 );
-                self.style.look_fade = Some((fade, look.map(str::to_string)));
+                self.style.look_fade = Some(super::state::LookFadeState {
+                    fade,
+                    look: look.map(str::to_string),
+                    at: now,
+                });
             }
         }
         #[cfg(feature = "debug-hud")]
@@ -566,23 +576,27 @@ impl PlayerApp {
         self.style.look_fade.is_some()
     }
 
-    /// Move a look's cross-fade on by `dt` seconds of game time and lay it
-    /// on the renderer's config (only what the two looks differ in); at its
-    /// end, fire `look_faded` with `#{ look }` and drop it. Each render
-    /// calls it once, before the scripts' overrides are stamped.
-    pub(super) fn step_look_fade(&mut self, dt: f64) {
-        let (Some((fade, look)), Some(renderer)) =
-            (self.style.look_fade.as_mut(), self.scene_renderer.as_mut())
+    /// Lay a look's cross-fade on the renderer's config as it is at game
+    /// time `now` (only what the two looks differ in): `now - at` seconds
+    /// in, so the frame drawn at the moment a fade is asked is where it
+    /// starts, and a capture at the same game time lays the same values
+    /// (#1157). At its end, fire `look_faded` with `#{ look }` and drop it.
+    /// Each render calls it once with the clock's `total_time`, before the
+    /// scripts' overrides are stamped.
+    pub(super) fn lay_look_fade(&mut self, now: f64) {
+        let (Some(state), Some(renderer)) =
+            (self.style.look_fade.as_ref(), self.scene_renderer.as_mut())
         else {
             return;
         };
-        fade.step(dt as f32);
+        let fade = state.at_time(now);
         let mut config = renderer.post_process_config().clone();
         fade.apply(&mut config);
         renderer.set_post_process_config(config);
         if fade.done() {
+            let look = state.look.clone();
             let mut data = toml::Table::new();
-            data.insert("look".into(), look.clone().unwrap_or_default().into());
+            data.insert("look".into(), look.unwrap_or_default().into());
             self.core.events.push(flint_runtime::GameEvent::Custom {
                 name: super::style_commands::LOOK_FADED.into(),
                 data: toml::Value::Table(data),

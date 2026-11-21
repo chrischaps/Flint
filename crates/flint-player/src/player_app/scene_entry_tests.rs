@@ -291,7 +291,7 @@ fn a_look_fades(gpu: &'static HeadlessContext) {
         "nothing moves before a step"
     );
 
-    app.step_look_fade(1.0);
+    app.lay_look_fade(1.0);
     let half = drawn(&app);
     assert!(half.styles.is_enabled("watercolor"));
     assert!(
@@ -304,7 +304,7 @@ fn a_look_fades(gpu: &'static HeadlessContext) {
     );
     assert!(app.core.events.drain().is_empty(), "no arrival yet");
 
-    app.step_look_fade(1.5);
+    app.lay_look_fade(2.5);
     assert!(!app.look_fading());
     let arrived: Vec<_> = app
         .core
@@ -332,7 +332,7 @@ fn a_look_fades(gpu: &'static HeadlessContext) {
 
     // A cut during a fade takes over at once
     app.fade_to_look(None, 3.0).unwrap();
-    app.step_look_fade(0.5);
+    app.lay_look_fade(0.5);
     assert!(app.look_fading());
     app.set_look(Some("graphite")).unwrap();
     assert!(!app.look_fading());
