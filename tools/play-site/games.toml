@@ -35,13 +35,15 @@ id = "float"
 title = "SET + DRIFT"
 line = "Sit at the edge of a raft at sea, from sunrise to stars. There is nothing to win."
 repo = "chrischaps/Float"
-# master, now that engine-catchup is merged into it: the engine subtree at
-# Flint main, bundle.toml (#102), the early ambience bundle (#124), the touch
-# layout (#134), the iPad pointer-lock fix (#153, Float#4), the raft polish
-# (Float#7), the body playtest pass (Float#8), and the engine sync to Flint
-# main 356f44a (looks that work in play, the vignette at 0.18), whose
-# schemas pass the strict loader (#799)
-ref = "8595f72e8a940a75362ded941a5b89f7f121dcad"
+# engine-sync-2026-11-21, four commits on master: bundle.toml (#102), the
+# early ambience bundle (#124), the touch layout (#134), the iPad
+# pointer-lock fix (#153, Float#4), the raft polish (Float#7) and the body
+# playtest pass (Float#8), now with the engine subtree at Flint main
+# 3772abca. Its F3 panels are schema lines (#744); the reality tears and the
+# underwater dunk are display styles (#746, ported off the render-mode shims
+# with #1035's patch, so #1036 can drop them); no deprecated script names
+# (set_post, self_entity, draw_sprite); and lightning puts the exposure back
+ref = "e9d4efc7e3a5da333b7cbd9c4493bae95608b618"
 page = "https://chaps.dev/projects/float/"
 video = "https://chaps.dev/projects/float/a-day-at-sea.mp4"
 poster = "https://chaps.dev/projects/float/poster-day.jpg"
