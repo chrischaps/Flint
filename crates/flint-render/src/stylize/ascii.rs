@@ -780,6 +780,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         edge_thin: Mutex::new(None),
         edge_slots: Mutex::new(None),
         edge_past: Mutex::new(EdgePast::default()),
+        held: Default::default(),
         cells_pipeline,
         variant_cells_pipeline,
         variant_cells: Mutex::new([None, None]),

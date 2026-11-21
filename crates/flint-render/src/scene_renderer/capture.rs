@@ -195,7 +195,9 @@ impl SceneRenderer {
     /// and, while the frame is captured, read as it ends: `dst`, the target
     /// the plan has it write, then every target of the chain's table it
     /// asked for while it drew that no earlier pass gave (a style's own
-    /// intermediates and history, a user style's targets).
+    /// intermediates and history, a user style's targets), then every
+    /// texture the style holds itself that it noted in `held` as it drew
+    /// (#1161: ASCII's edge cells and their history).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn run_style_part(
         &self,
@@ -206,6 +208,7 @@ impl SceneRenderer {
         run: &mut dyn FnMut(&mut wgpu::CommandEncoder),
         dst: Option<&str>,
         refuse_repeat: Option<&str>,
+        held: Option<&crate::stylize::HeldTargets>,
     ) {
         if scopes.taps.is_none() {
             scopes.run_refusing(label, encoder, run, refuse_repeat);
@@ -217,8 +220,12 @@ impl SceneRenderer {
         };
         // What the part asks for, from here
         resources.styles.take_touched();
+        if let Some(h) = held {
+            h.begin();
+        }
         scopes.run_refusing(label, encoder, run, refuse_repeat);
         let touched = resources.styles.take_touched();
+        let held = held.map(|h| h.end()).unwrap_or_default();
         if let Some(dst) = dst {
             scopes.note(label, |p| {
                 p.writes(&[dst]);
@@ -228,6 +235,11 @@ impl SceneRenderer {
         else {
             return;
         };
+        for (id, texture) in &held {
+            if !log.targets.iter().any(|t| t.id == *id) {
+                log.targets.push(crate::frame_capture::target(id, texture));
+            }
+        }
         let Some(pass) = log.named(label) else {
             return;
         };
@@ -245,6 +257,10 @@ impl SceneRenderer {
                 pass.writes(&[name]);
                 taps.copy(device, encoder, pass, name, None, &texture, None);
             }
+        }
+        for (id, texture) in held {
+            pass.writes(&[id]);
+            taps.copy(device, encoder, pass, id, None, &texture, None);
         }
     }
 
@@ -303,6 +319,14 @@ impl SceneRenderer {
             "fxaa_in" => r.fxaa.as_ref().map(|f| &f.texture),
             "fog_veil_behind" => r.fog_veil.as_ref().map(|v| &v.behind),
             "fog_veil" => r.fog_veil.as_ref().map(|v| &v.veil),
+            "selection_mask" => {
+                return self
+                    .selection_outline
+                    .as_ref()
+                    .and_then(|o| o.mask_texture())
+                    .cloned()
+                    .ok_or("no selection mask");
+            }
             _ => None,
         };
         if let Some(t) = texture {
