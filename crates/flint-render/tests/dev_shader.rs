@@ -8,6 +8,8 @@
 //! A binary of its own, since the folder is the process's. Needs a GPU
 //! adapter; without one it prints a note and passes.
 
+#![allow(clippy::disallowed_methods)] // the test's own targets and read-backs, not the renderer's, so uncounted (#1091)
+
 mod shared_gpu;
 
 use flint_ecs::FlintWorld;

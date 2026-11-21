@@ -6,10 +6,10 @@
 //! is grown on demand and written once per frame (ADR 0068). Instance data
 //! is the same `#[repr(C)]` type the simulation packs — no per-crate copy.
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 pub use flint_particles::{ParticleBlendMode, ParticleInstance};
 
@@ -152,7 +152,7 @@ impl ParticlePipeline {
         };
 
         let make = |mode: ParticleBlendMode| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                 label: Some(&format!("Particle {} Pipeline", mode.as_str())),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -217,7 +217,7 @@ impl ParticlePipeline {
         sampler: &wgpu::Sampler,
         label: &str,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
+        device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: &self.texture_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -238,14 +238,15 @@ impl ParticleBuffers {
     pub fn new(device: &wgpu::Device, pipeline: &ParticlePipeline) -> Self {
         // Shared quad index buffer
         let quad_indices: [u32; 6] = [0, 1, 2, 2, 1, 3];
-        let quad_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Particle Quad Index Buffer"),
-            contents: bytemuck::cast_slice(&quad_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let quad_index_buffer =
+            device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                label: Some("Particle Quad Index Buffer"),
+                contents: bytemuck::cast_slice(&quad_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
 
         // Persistent uniform buffer for camera data
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let uniform_buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some("Particle Uniform Buffer"),
             contents: bytemuck::cast_slice(&[ParticleUniforms {
                 view_proj: [[0.0; 4]; 4],
@@ -257,7 +258,7 @@ impl ParticleBuffers {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let uniform_bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: &pipeline.uniform_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -287,13 +288,13 @@ impl ParticleBuffers {
         layout: &wgpu::BindGroupLayout,
         capacity: u32,
     ) -> (wgpu::Buffer, wgpu::BindGroup) {
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Particle Instance Buffer"),
             size: capacity as u64 * std::mem::size_of::<ParticleInstance>() as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -334,7 +335,7 @@ impl ParticleBuffers {
             return;
         }
         debug_assert!(instances.len() as u32 <= self.instance_capacity);
-        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
+        queue.write_buffer_counted(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
     }
 }
 

@@ -120,6 +120,7 @@
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::postprocess::PostProcessConfig;
 use crate::stylize::{StyleDescriptor, StyleParam, StyleRegistry};
 use crate::TrustedShader;
@@ -1319,7 +1320,7 @@ fn veil_pipeline(
         bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -1491,7 +1492,7 @@ fn billboard_mask_pipeline(
 }
 
 fn mask_draw_buffer(device: &wgpu::Device, slots: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
+    device.create_buffer_counted(&wgpu::BufferDescriptor {
         label: Some("Style Mask Draws"),
         size: DRAW_STRIDE * slots as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1541,7 +1542,7 @@ fn mask_pipeline(
         bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -1691,31 +1692,32 @@ impl MsaaMask {
             bind_group_layouts: &[Some(&resolve_bgl)],
             immediate_size: 0,
         });
-        let resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Style Mask Resolve Pipeline"),
-            layout: Some(&resolve_layout),
-            vertex: wgpu::VertexState {
-                module: &resolve_shader,
-                entry_point: Some("vs_fullscreen"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &resolve_shader,
-                entry_point: Some("fs_resolve"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: STYLE_MASK_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let resolve_pipeline =
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
+                label: Some("Style Mask Resolve Pipeline"),
+                layout: Some(&resolve_layout),
+                vertex: wgpu::VertexState {
+                    module: &resolve_shader,
+                    entry_point: Some("vs_fullscreen"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &resolve_shader,
+                    entry_point: Some("fs_resolve"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: STYLE_MASK_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
         Self {
             static_pipeline,
             skinned_pipeline,
@@ -1733,7 +1735,7 @@ impl MsaaMask {
         if matches!(&self.target, Some((_, w, h, _)) if (*w, *h) == (width, height)) {
             return;
         }
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Style Mask MSAA"),
             size: wgpu::Extent3d {
                 width,
@@ -1748,7 +1750,7 @@ impl MsaaMask {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             label: Some("Style Mask Resolve BG"),
             layout: &self.resolve_bgl,
             entries: &[wgpu::BindGroupEntry {
@@ -1833,7 +1835,7 @@ impl StyleMaskPass {
         );
         let draw_buffer = mask_draw_buffer(device, INITIAL_MASK_SLOTS);
         // Zeroed at creation: no shapes
-        let field_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let field_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Style Mask Field"),
             size: std::mem::size_of::<FieldUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1997,7 +1999,7 @@ impl StyleMaskPass {
             crate::bind_cache::Bound::View(veil),
         ];
         binds.get_over(depth_key, "Style Mask Draw BG", 0, &over, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Style Mask Draw BG"),
                 layout: &self.draw_bgl,
                 entries: &[
@@ -2145,7 +2147,7 @@ impl StyleMaskPass {
             crate::bind_cache::Bound::View(depth.view),
         ];
         binds.get_bound("Style Mask MSAA Draw BG", 0, &over, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Style Mask MSAA Draw BG"),
                 layout: &msaa.draw_bgl,
                 entries: &[
@@ -2223,12 +2225,12 @@ impl StyleMaskPass {
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
         }
         if !self.scratch.is_empty() {
-            queue.write_buffer(&self.draw_buffer, 0, &self.scratch);
+            queue.write_buffer_counted(&self.draw_buffer, 0, &self.scratch);
         }
         // The field (#859): written only when a draw reads it and it moved
         if follows_field && *field != self.field_written {
             let uniform = FieldUniform::of(field);
-            queue.write_buffer(&self.field_buffer, 0, bytemuck::bytes_of(&uniform));
+            queue.write_buffer_counted(&self.field_buffer, 0, bytemuck::bytes_of(&uniform));
             self.field_written.clone_from(field);
         }
 
@@ -2459,6 +2461,68 @@ mod tests {
         for c in ["ascii_style", "pencil_style", "watercolor_style"] {
             assert!(checked.contains(&c), "{c} checked: {checked:?}");
         }
+    }
+
+    /// #1063: each style's (and `ui_text`'s) asset field lists, as its
+    /// `builtins`, exactly the names its loader takes with no file, so
+    /// `flint validate` passes `amber` and `none` and calls `ambr` missing.
+    /// The schema can't ask this crate, so this holds the two lists equal.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // reads the engine's schema files from the checkout
+    fn the_asset_fields_name_the_built_ins_their_loaders_take() {
+        use flint_core::project::AssetKind;
+        use flint_schema::FieldType;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+        let registry = flint_schema::SchemaRegistry::load_from_directory(&dir).unwrap();
+        let none = [crate::stylize::images::NO_IMAGE];
+        let glyphs = [crate::glyph_atlas::BUILTIN_SET];
+        let fields: [(&str, &str, &[AssetKind], &[&str]); 6] = [
+            (
+                "ascii_style",
+                "palette",
+                &[AssetKind::Palettes],
+                crate::palette::BUILTIN_PALETTES,
+            ),
+            ("ascii_style", "font", &[AssetKind::GlyphSets], &glyphs),
+            ("pencil_style", "paper_image", &[AssetKind::Papers], &none),
+            ("pencil_style", "stroke_image", &[AssetKind::Strokes], &none),
+            (
+                "watercolor_style",
+                "paper_image",
+                &[AssetKind::Papers],
+                &none,
+            ),
+            (
+                "ui_text",
+                "font",
+                &[AssetKind::GlyphSets, AssetKind::Fonts],
+                &glyphs,
+            ),
+        ];
+        for (component, field, want_kinds, want_builtins) in fields {
+            let schema = registry
+                .get_component(component)
+                .and_then(|c| c.get_field(field))
+                .unwrap_or_else(|| panic!("no field {component}.{field}"));
+            let FieldType::Asset {
+                kinds, builtins, ..
+            } = &schema.field_type
+            else {
+                panic!("{component}.{field} is no asset field");
+            };
+            assert_eq!(kinds.as_slice(), want_kinds, "{component}.{field}'s kinds");
+            assert_eq!(builtins, want_builtins, "{component}.{field}'s builtins");
+        }
+        // Each image option's no-file name is the one the schema lists
+        let mut images = 0;
+        for style in ["pencil", "watercolor"] {
+            let d = crate::stylize::builtin(style).unwrap();
+            for option in d.options.iter().filter(|o| o.name.ends_with("_image")) {
+                assert_eq!(option.default, crate::stylize::images::NO_IMAGE);
+                images += 1;
+            }
+        }
+        assert_eq!(images, 3, "pencil's paper and strokes, watercolor's paper");
     }
 
     #[test]

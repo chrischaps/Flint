@@ -24,6 +24,7 @@
 //! again when the ground changes. The fog isn't lit: the game gives it the
 //! colour the hour's light would.
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 /// A ground fog's map over a world rectangle, for
 /// `SceneRenderer::set_ground_fog`.
 #[derive(Clone, Copy, Debug)]
@@ -175,7 +176,7 @@ impl GroundFogGpu {
         let Some(mips) = mip_chain(fog) else {
             return Ok(None);
         };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Ground Fog Map"),
             size: wgpu::Extent3d {
                 width: fog.width,
@@ -194,7 +195,7 @@ impl GroundFogGpu {
                 .iter()
                 .flat_map(|t| t.iter().flat_map(|&v| f16_bits(v).to_le_bytes()))
                 .collect();
-            queue.write_texture(
+            queue.write_texture_counted(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
                     mip_level: level as u32,

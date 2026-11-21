@@ -43,6 +43,10 @@ pub struct RenderReport {
     /// Left out of the JSON when nothing was.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub style_drops: Vec<flint_render::stylize::variant_table::Dropped>,
+    /// `--load-report` (#1092): where the load's time went, from the scene
+    /// read to the first capture.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load: Option<flint_core::load_report::LoadReport>,
 }
 
 /// One way a script failed (#693), as `flint_script::ScriptError` counts it.
@@ -313,6 +317,7 @@ mod tests {
             warnings: vec![],
             script_errors: vec![],
             style_drops: vec![],
+            load: None,
         };
         let json: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();

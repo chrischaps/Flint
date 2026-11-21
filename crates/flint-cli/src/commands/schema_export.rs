@@ -48,11 +48,18 @@ fn type_json(field_type: &FieldType) -> Map<String, Value> {
         FieldType::Array { element } => {
             out.insert("element".into(), Value::Object(type_json(element)));
         }
-        FieldType::Asset { kinds, unless } => {
+        FieldType::Asset {
+            kinds,
+            unless,
+            builtins,
+        } => {
             let labels: Vec<&str> = kinds.iter().map(|kind| kind.label()).collect();
             out.insert("kinds".into(), json!(labels));
             if let Some(unless) = unless {
                 out.insert("unless".into(), json!(unless));
+            }
+            if !builtins.is_empty() {
+                out.insert("builtins".into(), json!(builtins));
             }
         }
         FieldType::Fields { fields } => {
@@ -409,14 +416,23 @@ fn field_schema(field: &FieldSchema) -> Value {
     let mut description = field.description.clone().unwrap_or_default();
     let note = match &field.field_type {
         FieldType::Entity => Some("The name of an entity in this scene.".to_string()),
-        FieldType::Asset { kinds, .. } if !kinds.is_empty() => Some(format!(
-            "Found by the project's asset search as: {}.",
-            kinds
-                .iter()
-                .map(|kind| kind.label())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+        FieldType::Asset {
+            kinds, builtins, ..
+        } if !kinds.is_empty() => {
+            let found = format!(
+                "Found by the project's asset search as: {}.",
+                kinds
+                    .iter()
+                    .map(|kind| kind.label())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            Some(if builtins.is_empty() {
+                found
+            } else {
+                format!("{found} Built in, with no file: {}.", builtins.join(", "))
+            })
+        }
         _ => None,
     };
     if let Some(note) = note {

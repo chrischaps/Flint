@@ -426,6 +426,13 @@ impl HitchWatch {
         None
     }
 
+    /// The wall seconds of the frames after the start: what the report's
+    /// hitches a minute are over.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the report's, desktop only
+    pub(crate) fn after_start_secs(&self) -> f64 {
+        self.after_start_secs
+    }
+
     /// `--exit-after`'s lines (`[perf] hitches: ...`).
     pub(crate) fn report(&self) -> Vec<String> {
         let mut lines = Vec::new();

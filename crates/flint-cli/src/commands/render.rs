@@ -24,6 +24,7 @@ use super::render_post::{self, legacy_render_mode, post_process_config};
 use super::render_report::{self, CaptureReport};
 use anyhow::{anyhow, Context, Result};
 use flint_core::components as comp;
+use flint_core::load_report;
 use flint_core::Vec3;
 use flint_player::{ExpressionTimeline, GpuSink, HeadlessAnimation, HeadlessGame, ScriptLook};
 use flint_render::model_loader::{self, ModelLoadConfig};
@@ -223,6 +224,17 @@ pub(super) fn render(
     if args.scene.is_empty() {
         anyhow::bail!("a scene is required (flint render <scene.toml>)");
     }
+    // `--load-report` (#1092): from here to the first capture, the scene's
+    // read its first stage
+    if args.measure.load_report {
+        load_report::begin(
+            load_report::LoadKind::Render,
+            flint_core::project::shown(Path::new(&args.scene)),
+        );
+    }
+    let read = flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::SceneRead, || {
+        args.scene.clone()
+    });
     if !args.sweeps.variant.is_empty() || args.sweeps.variants.is_some() {
         return super::variants::run(args, host);
     }
@@ -360,6 +372,7 @@ pub(super) fn render(
     // an earlier render in this process loaded (a case before this one in
     // `flint goldens`, #911) from a folder this scene can't see is not one
     let (mut world, scene_file) = load_settled(&args.scene, &registry)?;
+    drop(read);
     say!("Loaded scene: {}", scene_file.scene.name);
     say!("Entities: {}", world.entity_count());
     // An echoes column with nothing to echo would draw the same picture
@@ -454,7 +467,9 @@ pub(super) fn render(
         eprintln!("Warning: {}", scripts_not_run(&scripted));
     }
 
+    let device = load_report::span(load_report::Stage::Device, String::new);
     let ctx = host.context(width, height, &args.debug.gpu)?;
+    drop(device);
 
     // Configure camera — scene-level first, then CLI overrides take precedence
     let mut camera = Camera::new();
@@ -517,6 +532,7 @@ pub(super) fn render(
     camera.update_orbit();
 
     // Create scene renderer
+    let made = load_report::span(load_report::Stage::Renderer, String::new);
     let mut renderer = SceneRenderer::new_headless(
         &ctx.device,
         &ctx.queue,
@@ -528,6 +544,7 @@ pub(super) fn render(
             sample_count: args.shading.msaa,
         },
     );
+    drop(made);
 
     // The scene bound, its levers set (#739), as every stage does
     bind_capture_scene(args, ctx, &mut renderer, &world, &scene_file, &binding);
@@ -678,6 +695,8 @@ pub(super) fn render(
         });
     }
 
+    // The load is up; its last stage is the first draw (#1092)
+    load_report::bring_up_done();
     // Draw and write the still or sheet; under --watch again on this same
     // renderer for each save of a user style's sources (#432). A redraw
     // sets the first column's config too: the last draw left the last's.
@@ -703,6 +722,7 @@ pub(super) fn render(
                 (i > 0 || redraw).then(|| config.clone()),
                 Some(&world),
             )?;
+            first_capture_done();
             if let Some((wanted, armed)) = dump {
                 let said = super::render_frame_dump::write(
                     armed,
@@ -1046,42 +1066,45 @@ fn spread_json(
     (scene_width, scene_height): (u32, u32),
     adapter: &wgpu::AdapterInfo,
 ) -> serde_json::Value {
-    let pass = |p: &flint_render::PassSpread| {
-        serde_json::json!({
-            "label": p.name(),
-            "frames": p.samples.len(),
-            "min_ms": p.min,
-            "p50_ms": p.p50,
-            "p90_ms": p.p90,
-            "max_ms": p.max,
-            "mean_ms": p.mean,
-            "samples_ms": p.samples,
-        })
-    };
-    serde_json::json!({
+    // The passes in the shape `flint-player --perf-report` writes them too,
+    // so `scripts/perf-compare.py` reads both (#1093)
+    let mut doc = spread.to_json(true);
+    let more = serde_json::json!({
+        "format": "flint-gpu-time",
+        "version": 1,
         "adapter": {
             "name": adapter.name,
             "backend": format!("{:?}", adapter.backend),
             "driver": adapter.driver,
             "driver_info": adapter.driver_info,
         },
+        "build_profile": flint_player::provenance::BUILD_PROFILE,
+        "engine_commit": flint_player::provenance::BUILD_COMMIT,
         "width": width,
         "height": height,
         "scene_width": scene_width,
         "scene_height": scene_height,
         "frames_drawn": frames.max(1),
         "frames_timed": spread.frames + spread.dropped,
-        "frames_dropped": spread.dropped,
-        "frames_kept": spread.frames,
-        "passes": spread.passes.iter().map(pass).collect::<Vec<_>>(),
-        "frame": spread.frame.as_ref().map(pass),
-    })
+    });
+    if let (Some(doc), serde_json::Value::Object(more)) = (doc.as_object_mut(), more) {
+        doc.extend(more);
+    }
+    doc
 }
 
 /// One still frame, read back: under `config` when given (a sweep column,
 /// a refine candidate), each drawn as a first frame so no column inherits
 /// the last one's ASCII history (#277's hysteresis would carry glyphs
 /// across).
+/// The first capture is drawn: a load being recorded (`--load-report`,
+/// #1092) ends, says its table and is returned, for `--report json`.
+fn first_capture_done() -> Option<load_report::LoadReport> {
+    let report = load_report::finish()?;
+    say!("{}", report.table());
+    Some(report)
+}
+
 fn draw_pixels(
     ctx: &HeadlessContext,
     renderer: &mut SceneRenderer,
@@ -1775,7 +1798,9 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         .frame_step
         .unwrap_or(render_plan::DEFAULT_FRAME_STEP);
 
+    let device = load_report::span(load_report::Stage::Device, String::new);
     let ctx = host.context(width, height, &args.debug.gpu)?;
+    drop(device);
 
     let timeline = match &args.clock.expression_timeline {
         Some(path) => Some(ExpressionTimeline::load(path)?),
@@ -1806,6 +1831,10 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
             },
         )?);
     }
+
+    // The load is up; its last stage is the first capture (#1092)
+    load_report::bring_up_done();
+    let mut load = None;
 
     // --ai-refine (#357) at a moment: each candidate is the one stage redrawn
     // at that moment under the candidate's look, its clocks never rewound
@@ -1907,6 +1936,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                     )
                 });
             pictures.push(stage.capture(args, ctx, t, frame_step)?);
+            load = load.or_else(first_capture_done);
             if let Some((wanted, armed)) = dump {
                 let said = super::render_frame_dump::write(
                     armed,
@@ -2275,6 +2305,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                 .map(render_report::ScriptErrorReport::from)
                 .collect(),
             style_drops: flint_render::stylize::variant_table::dropped(),
+            load,
         };
         let json = serde_json::to_string(&report).context("serialising the render report")?;
         crate::output::document_text(&json);
@@ -2894,6 +2925,7 @@ impl Stage {
         }
 
         // Create scene renderer
+        let made = load_report::span(load_report::Stage::Renderer, String::new);
         let mut renderer = SceneRenderer::new_headless(
             &ctx.device,
             &ctx.queue,
@@ -2906,6 +2938,7 @@ impl Stage {
                 sample_count: args.shading.msaa,
             },
         );
+        drop(made);
 
         // The scene bound, its levers set (#739), as the one-renderer path does
         bind_capture_scene(args, ctx, &mut renderer, &world, &scene_file, binding);

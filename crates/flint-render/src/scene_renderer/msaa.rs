@@ -7,6 +7,7 @@
 //! view after each opaque phase, so every depth consumer (SSAO, DoF, fog,
 //! volumetric, the ocean's grab) stays single-sample and unchanged.
 
+use crate::gpu_counts::CountedDevice;
 use crate::postprocess::HDR_FORMAT;
 use crate::TrustedShader;
 
@@ -36,6 +37,13 @@ struct DepthResolve {
 }
 
 impl MsaaTargets {
+    /// The multisampled colour and depth, bytes, every sample (#1091).
+    pub(crate) fn bytes(&self) -> u64 {
+        use crate::gpu_counts::bytes_of;
+        self.view.color.as_ref().map_or(0, |c| bytes_of(&c.0))
+            + self.view.depth.as_ref().map_or(0, |d| bytes_of(&d.0))
+    }
+
     /// Make what a 4x frame of `width` x `height` draws into, if it isn't
     /// made at that size yet: the targets at `samples`, and the resolve.
     pub(crate) fn prepare(&mut self, device: &wgpu::Device, samples: u32, width: u32, height: u32) {
@@ -94,7 +102,7 @@ impl MsaaTargets {
                 return;
             }
         }
-        let color = device.create_texture(&wgpu::TextureDescriptor {
+        let color = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("MSAA Scene Color"),
             size: wgpu::Extent3d {
                 width,
@@ -109,7 +117,7 @@ impl MsaaTargets {
             view_formats: &[],
         });
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
-        let depth = device.create_texture(&wgpu::TextureDescriptor {
+        let depth = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("MSAA Scene Depth"),
             size: wgpu::Extent3d {
                 width,
@@ -155,7 +163,7 @@ impl MsaaTargets {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
             label: Some("Depth Resolve Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
@@ -201,7 +209,7 @@ impl MsaaTargets {
             Some((_, v)) => v,
             None => return,
         };
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             label: Some("Depth Resolve Bind Group"),
             layout,
             entries: &[wgpu::BindGroupEntry {

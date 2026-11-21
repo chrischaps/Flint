@@ -156,6 +156,7 @@ impl PlayerApp {
         if self.stats.view == super::StatsView::Full
             || (self.stats.perf.readout && self.stats.perf.gpu_wanted)
             || self.stats.perf.trace.is_some()
+            || self.stats.report.is_some()
         {
             if !renderer.gpu_timing() {
                 self.stats.gpu_timing =
@@ -293,7 +294,7 @@ impl PlayerApp {
                 self.stats.perf.trace.as_deref_mut(),
                 renderer.gpu_timer_mut(),
             ) {
-                trace.tracks.gpu(timer.take_traced());
+                trace.tracks.gpu(timer.take_traced(), timer.timestamps());
             }
             // The GPU time read back this frame, for the frame history
             self.stats.perf.gpu_ms(renderer.take_gpu_frame_ms());
@@ -366,6 +367,8 @@ impl PlayerApp {
             context.queue.present(output);
         }
         let presented = web_time::Instant::now();
+        // A load's first frame is on screen: its table (#1092)
+        self.frame_presented_for_loads();
         self.stats.perf.presented_at(presented);
         self.perf_mark(super::perf::Phase::Present);
         #[cfg(target_arch = "wasm32")]
@@ -375,6 +378,16 @@ impl PlayerApp {
 
         if let Some(exit_after) = self.capture.exit_after {
             if self.core.clock.total_time >= super::PERF_SKIP_SECS {
+                // `--perf-report`'s GPU passes: every frame from here (#1093)
+                if self.stats.report.is_some() {
+                    if let Some(timer) =
+                        self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut())
+                    {
+                        if !timer.tallying() {
+                            timer.tally(true);
+                        }
+                    }
+                }
                 self.capture.perf_frames += 1;
                 self.capture.perf_time += self.core.clock.delta_time;
                 self.capture
@@ -391,6 +404,10 @@ impl PlayerApp {
                     if stats.gpu_frame_ms > 0.0 {
                         self.capture.perf_gpu_ms += stats.gpu_frame_ms as f64;
                         self.capture.perf_gpu_frames += 1;
+                    }
+                    self.capture.perf_gpu_calls += stats.gpu_calls;
+                    if stats.gpu_calls.created() > 0 {
+                        self.capture.perf_gpu_creating += 1;
                     }
                 }
             }
@@ -410,9 +427,10 @@ impl PlayerApp {
     pub(super) fn print_exit_report(&mut self) {
         // Headless perf figure: average frame time over the run, so a
         // scene change can be A/B'd without watching the overlay.
-        let frames = self.capture.perf_frames;
-        if frames > 0 {
-            let avg_ms = self.capture.perf_time * 1000.0 / frames as f64;
+        // The lines and `--perf-report`'s file both come from these (#1093)
+        let numbers = self.exit_numbers();
+        if let Some(n) = &numbers {
+            let (frames, avg_ms) = (n.frames, n.mean_ms());
             // The run's figures as fields too, for `--log-format json` (#716)
             tracing::info!(
                 target: "report",
@@ -420,42 +438,42 @@ impl PlayerApp {
                 avg_ms = (avg_ms * 100.0).round() / 100.0,
                 fps = (10_000.0 / avg_ms).round() / 10.0,
                 "[perf] {frames} frames over {:.2} s after t={:.0}: avg {avg_ms:.2} ms/frame ({:.1} fps)",
-                self.capture.perf_time,
+                n.secs,
                 super::PERF_SKIP_SECS,
                 1000.0 / avg_ms
             );
-            // How even they were: a mean hides bursts (#406).
-            if let Some(dt) = self.capture.perf_pacing.dt() {
-                tracing::info!(target: "report", "[perf] dt: {dt}");
+            // How even they were: a mean hides bursts (#406); the F2
+            // overlay's main figures, averaged, so a capture can compare
+            // draw counts and culling headlessly (H9); the GPU's time when
+            // the frames were timed (--stats, ADR 0108), which under vsync
+            // reads high on an idle GPU's clocks (#380)
+            let present = self
+                .render_context
+                .as_ref()
+                .map(|c| c.present_mode_in_use());
+            let note = n.gpu.map_or(String::new(), |g| {
+                super::perf::gpu_vsync_note(present, g.mean_ms as f32, avg_ms as f32)
+            });
+            for line in n.lines(&note) {
+                tracing::info!(target: "report", "{line}");
             }
-            if let Some(present) = self.capture.perf_pacing.present() {
-                tracing::info!(target: "report", "[perf] present to present: {present}");
-            }
-            // The F2 overlay's main figures, averaged, so a capture
-            // can compare draw counts and culling headlessly (H9).
-            let avg = |sum: u64| sum as f64 / frames as f64;
-            tracing::info!(target: "report",
-                "[perf] avg per frame: {:.0} draw calls ({:.0} entity draws, {:.0} culled, {:.0} of them by LOD), {:.0} triangles, {:.0} in shadows",
-                avg(self.capture.perf_draws),
-                avg(self.capture.perf_entity_draws),
-                avg(self.capture.perf_culled),
-                avg(self.capture.perf_lod_culled),
-                avg(self.capture.perf_triangles),
-                avg(self.capture.perf_shadow_triangles)
-            );
-            // GPU time, when the frames were timed (--stats, ADR 0108).
-            let gpu_frames = self.capture.perf_gpu_frames;
-            if gpu_frames > 0 {
-                let gpu_ms = self.capture.perf_gpu_ms / gpu_frames as f64;
-                // Under vsync an idle GPU clocks down and reads high (#380).
-                let present = self
-                    .render_context
-                    .as_ref()
-                    .map(|c| c.present_mode_in_use());
+            // The GPU memory the renderer holds as the run ends (#1091)
+            if let (Some(r), Some(ctx)) = (&self.scene_renderer, &self.render_context) {
+                let device = flint_render::gpu_counts::device_memory(&ctx.device);
                 tracing::info!(target: "report",
-                    "[perf] avg GPU {gpu_ms:.2} ms/frame over {gpu_frames} timed frames{}",
-                    super::perf::gpu_vsync_note(present, gpu_ms as f32, avg_ms as f32)
+                    "[perf] GPU memory at exit: {}",
+                    super::perf::gpu_memory_part(&r.gpu_memory(), device)
+                        .trim_start_matches("gpu mem ")
                 );
+            }
+            // That GPU total leaves out the scopes that read zero (#1316)
+            if n.gpu.is_some() {
+                if let Some(why) = self.gpu_timestamps_unusable() {
+                    tracing::warn!(target: "report",
+                        "[perf] {}: {why}, so the GPU total counts only the scopes that read",
+                        flint_render::TIMESTAMPS_UNAVAILABLE
+                    );
+                }
             }
         }
         // The run's hitches (#1079): a mean hides the one long frame. The
@@ -467,6 +485,8 @@ impl PlayerApp {
                 tracing::info!(target: "report", "{line}");
             }
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.write_perf_report(numbers.as_ref());
         for line in self.subsystem_report() {
             tracing::info!(target: "report", "{line}");
         }
@@ -604,6 +624,12 @@ impl PlayerApp {
                 .clock_ticked(super::frame_history::ClockSample::of(&self.core.clock));
             self.stats.perf.game_time(self.core.clock.total_time);
             found = self.stats.hitches.observe(&self.stats.perf);
+            // `--perf-report`'s phase and script totals (#1093)
+            if let Some(report) = &mut self.stats.report {
+                report
+                    .totals
+                    .add_closed(&self.stats.perf, super::PERF_SKIP_SECS);
+            }
             // The hitch log, the exit report's counts and the gate (#1079)
             self.stats
                 .watch
@@ -1047,12 +1073,24 @@ impl PlayerApp {
                 stats.frame_time_ms = (avg_dt * 1000.0) as f32;
                 if let Some(ctx) = &self.render_context {
                     stats.resolution = [ctx.config.width, ctx.config.height];
+                    stats.device_memory = flint_render::gpu_counts::device_memory(&ctx.device);
+                }
+                // A frame that made GPU objects is one frame of the
+                // overlay: keep it, so the row can say it (#1091)
+                if stats.gpu_calls.created() > 0 {
+                    self.stats.last_gpu_objects =
+                        Some((self.core.clock.total_time, stats.gpu_calls));
                 }
                 stats
             })
         } else {
             None
         };
+        let last_gpu_objects = self
+            .stats
+            .last_gpu_objects
+            .filter(|_| show_stats)
+            .map(|(at, calls)| (self.core.clock.total_time - at, calls));
         // Each style texture's row (#561), only while the full overlay
         // shows: closed, nothing is read or allocated
         let style_target_rows = match (&stats_data, self.scene_renderer.as_ref()) {
@@ -1167,6 +1205,7 @@ impl PlayerApp {
                     (super::StatsView::Full, Some(stats)) => render_stats_overlay(
                         ctx,
                         stats,
+                        last_gpu_objects,
                         &style_target_rows,
                         &gpu_label,
                         graph.as_mut(),
@@ -1552,6 +1591,10 @@ impl super::game_core::FrameHost for PlayerApp {
         }
     }
 
+    fn late_models(&mut self) {
+        self.load_late_models();
+    }
+
     fn bones_posed(&mut self) {
         // Push skeletal bone matrices to GPU
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
@@ -1670,6 +1713,7 @@ fn render_graph_overlay(ctx: &egui::Context, graph: Option<&mut OverlayGraph>, r
 fn render_stats_overlay(
     ctx: &egui::Context,
     stats: &flint_render::RenderStats,
+    last_gpu_objects: Option<(f64, flint_render::gpu_counts::GpuCalls)>,
     style_targets: &[String],
     gpu: &str,
     graph: Option<&mut OverlayGraph>,
@@ -1712,6 +1756,19 @@ fn render_stats_overlay(
             });
             ui.label(format!("Draw Calls: {}", stats.draw_calls));
             ui.label(format!("Triangles: {}", format_count(stats.triangles)));
+
+            ui.separator();
+
+            // GPU objects created this frame (#1091): zero on a steady
+            // frame, amber when not, and the last frame that made any
+            for row in super::stats_view::gpu_alloc_rows(stats, last_gpu_objects) {
+                let color = match row.tone {
+                    super::stats_view::Tone::Calm => egui::Color32::from_gray(200),
+                    super::stats_view::Tone::Quiet => egui::Color32::from_gray(136),
+                    super::stats_view::Tone::Alert => egui::Color32::from_rgb(245, 166, 35),
+                };
+                ui.colored_label(color, row.text);
+            }
 
             ui.separator();
 
@@ -1784,7 +1841,12 @@ fn render_stats_overlay(
             ui.colored_label(egui::Color32::from_gray(170), gpu);
 
             // GPU time per phase (ADR 0108), where the device can time
-            if !stats.gpu_passes.is_empty() {
+            if let (true, Some(why)) = (!stats.gpu_passes.is_empty(), stats.gpu_timestamps.why()) {
+                // Zeros that look like an answer are worse than none (#1316)
+                ui.label(flint_render::TIMESTAMPS_UNAVAILABLE);
+                ui.colored_label(egui::Color32::from_gray(170), format!("  {why}"));
+                ui.separator();
+            } else if !stats.gpu_passes.is_empty() {
                 ui.label(format!("GPU: {:.2}ms", stats.gpu_frame_ms));
                 for pass in &stats.gpu_passes {
                     ui.colored_label(

@@ -13,6 +13,7 @@
 //! example for one that does: `uses_mask: MaskUse::Always`, and
 //! [`StyleFrame::mask_bind`] for the bind group.
 
+use crate::gpu_counts::CountedQueue;
 use super::kit;
 use super::{
     StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleParam, StylePass,
@@ -94,7 +95,7 @@ impl StylePass for MaskView {
         };
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
         kit::fullscreen_pass(
             encoder,
             "Mask View Pass",

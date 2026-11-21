@@ -472,6 +472,13 @@ pub(crate) struct PerfContext {
     pub pacing: Option<String>,
     /// The WebGPU calls a frame made, on the web (#139).
     pub webgpu: Option<WebGpuCalls>,
+    /// The GPU objects the renderer created and the bytes it wrote a
+    /// frame, counted by flint-render itself on every platform (#1091);
+    /// `None` until a window has a reading before it.
+    pub gpu_calls: Option<GpuCallsPerFrame>,
+    /// The renderer's texture memory by class and its mesh buffers, and
+    /// the device's own `(buffers, textures)` where wgpu tracks them.
+    pub gpu_memory: Option<(flint_render::gpu_counts::GpuMemory, Option<(u64, u64)>)>,
     /// The hitches in the window and the run, and the window's worst with
     /// its cause (#1079); `None` while frames aren't judged.
     pub hitches: Option<super::hitch_watch::HitchReadout>,
@@ -515,6 +522,121 @@ impl WebGpuCalls {
     }
 }
 
+/// The mean frame's GPU objects created and uploads, as flint-render
+/// counts them (#1091, `flint_render::gpu_counts`): the native twin of
+/// [`WebGpuCalls`], which on the web reads the same frames from the page.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct GpuCallsPerFrame {
+    pub buffers: f32,
+    pub bind_groups: f32,
+    pub textures: f32,
+    /// Render and compute pipelines and shader modules.
+    pub pipelines: f32,
+    pub writes: f32,
+    /// What the buffer and texture writes carried, bytes.
+    pub write_bytes: f32,
+    /// Frames of the window that created any object.
+    pub frames_creating: u64,
+}
+
+impl GpuCallsPerFrame {
+    /// Every object created a frame.
+    pub(crate) fn created(&self) -> f32 {
+        self.buffers + self.bind_groups + self.textures + self.pipelines
+    }
+
+    /// The calls between two of the renderer's running totals, per frame.
+    pub(crate) fn per_frame(
+        now: &flint_render::gpu_counts::GpuCalls,
+        then: &flint_render::gpu_counts::GpuCalls,
+        frames: u64,
+        frames_creating: u64,
+    ) -> Option<Self> {
+        if frames == 0 {
+            return None;
+        }
+        let d = now.since(then);
+        let n = frames as f32;
+        Some(Self {
+            buffers: d.buffers as f32 / n,
+            bind_groups: d.bind_groups as f32 / n,
+            textures: d.textures as f32 / n,
+            pipelines: (d.pipelines + d.shader_modules) as f32 / n,
+            writes: (d.writes + d.texture_writes) as f32 / n,
+            write_bytes: (d.write_bytes + d.texture_write_bytes) as f32 / n,
+            frames_creating,
+        })
+    }
+}
+
+/// The renderer's running reading as a readout keeps it (#1091): the
+/// totals, the frames submitted and the frames that created any by then.
+pub(crate) type GpuCallsReading = (flint_render::gpu_counts::GpuCalls, u64, u64);
+
+/// The window from `then` to `now`, per frame (`None` at the first
+/// readout); `then` becomes `now`.
+pub(crate) fn gpu_calls_since(
+    then: &mut Option<GpuCallsReading>,
+    now: GpuCallsReading,
+) -> Option<GpuCallsPerFrame> {
+    let per_frame = then.as_ref().and_then(|(totals, frames, creating)| {
+        GpuCallsPerFrame::per_frame(
+            &now.0,
+            totals,
+            now.1.saturating_sub(*frames),
+            now.2.saturating_sub(*creating),
+        )
+    });
+    *then = Some(now);
+    per_frame
+}
+
+fn mb(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
+}
+
+/// `gpu/frame create 0.0 (buffer 0.0 bindgroup 0.0 texture 0.0 pipeline
+/// 0.0) in 0 frames write 15.0 (4.0 KB)`, the copied line's part (#1091).
+fn gpu_calls_part(g: &GpuCallsPerFrame) -> String {
+    format!(
+        "gpu/frame create {:.1} (buffer {:.1} bindgroup {:.1} texture {:.1} pipeline {:.1}) in {} frames write {:.1} ({:.1} KB)",
+        g.created(),
+        g.buffers,
+        g.bind_groups,
+        g.textures,
+        g.pipelines,
+        g.frames_creating,
+        g.writes,
+        g.write_bytes / 1024.0
+    )
+}
+
+/// `gpu mem textures 84.2 MB (scene 40.1 style 8.0 shadow 16.0 model 20.1
+/// glyph 0.0) meshes 3.1 MB device 12.0/96.3 MB`.
+pub(crate) fn gpu_memory_part(
+    m: &flint_render::gpu_counts::GpuMemory,
+    device: Option<(u64, u64)>,
+) -> String {
+    let mut part = format!(
+        "gpu mem textures {:.1} MB (scene {:.1} style {:.1} shadow {:.1} model {:.1} glyph {:.1}) meshes {:.1} MB",
+        mb(m.textures()),
+        mb(m.scene_targets),
+        mb(m.style_targets),
+        mb(m.shadow_maps),
+        mb(m.model_textures),
+        mb(m.glyph_atlases),
+        mb(m.mesh_buffers)
+    );
+    if let Some((buffers, textures)) = device {
+        part.push_str(&format!(
+            " device {:.1}/{:.1} MB",
+            mb(buffers),
+            mb(textures)
+        ));
+    }
+    part
+}
+
 /// Where the GPU's own times come from, said on the readout.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) enum GpuSource {
@@ -528,6 +650,10 @@ pub(crate) enum GpuSource {
         passes: Vec<(&'static str, f32)>,
         frame_ms: f32,
     },
+    /// Timestamp queries whose later scopes all read zero (#1316, the
+    /// Pixel 8 Pro's Mali): said, never listed. `why` is
+    /// [`flint_render::TimestampHealth::why`].
+    Unusable { why: String },
 }
 
 /// Under vsync, a GPU busy for less than this share of the wall clock
@@ -539,7 +665,7 @@ pub(crate) enum GpuSource {
 const IDLE_CLOCK_SHARE: f32 = 0.75;
 
 /// What the readout calls a present mode: wgpu's name, lower case.
-fn present_name(mode: wgpu::PresentMode) -> &'static str {
+pub(super) fn present_name(mode: wgpu::PresentMode) -> &'static str {
     use wgpu::PresentMode as P;
     match mode {
         P::Fifo | P::AutoVsync => "fifo",
@@ -551,7 +677,7 @@ fn present_name(mode: wgpu::PresentMode) -> &'static str {
 
 /// True when each frame waits for a vblank: the frame rate is the
 /// display's and the GPU rests in whatever the frame leaves over.
-fn under_vsync(mode: wgpu::PresentMode) -> bool {
+pub(super) fn under_vsync(mode: wgpu::PresentMode) -> bool {
     use wgpu::PresentMode as P;
     matches!(mode, P::Fifo | P::FifoRelaxed | P::AutoVsync)
 }
@@ -710,6 +836,10 @@ fn count(n: u32) -> String {
     flint_render::format_count(n)
 }
 
+/// What the readout and the copied line say in place of pass times that
+/// read zero (#1316).
+const UNAVAILABLE: &str = flint_render::TIMESTAMPS_UNAVAILABLE;
+
 /// The readout, a line per row; the page sets it as the panel's text.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
@@ -782,6 +912,43 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
             w.buffers
         ));
     }
+    // The renderer's own count (#1091): objects made a frame, and writes
+    if let Some(g) = &c.gpu_calls {
+        line(format!(
+            "alloc  {:.1} objects a frame ({:.1} buffers, {:.1} bind groups, {:.1} textures, {:.1} pipelines), in {} frames",
+            g.created(),
+            g.buffers,
+            g.bind_groups,
+            g.textures,
+            g.pipelines,
+            g.frames_creating
+        ));
+        line(format!(
+            "       {:.1} writes ({:.1} KB) a frame",
+            g.writes,
+            g.write_bytes / 1024.0
+        ));
+    }
+    if let Some((m, device)) = &c.gpu_memory {
+        line(format!(
+            "memory {:.1} MB textures: scene {:.1}, style {:.1}, shadow {:.1}, model {:.1}, glyph {:.1}",
+            mb(m.textures()),
+            mb(m.scene_targets),
+            mb(m.style_targets),
+            mb(m.shadow_maps),
+            mb(m.model_textures),
+            mb(m.glyph_atlases)
+        ));
+        let mut meshes = format!("       {:.1} MB meshes", mb(m.mesh_buffers));
+        if let Some((buffers, textures)) = device {
+            meshes.push_str(&format!(
+                "; device {:.1} MB buffers, {:.1} MB textures",
+                mb(*buffers),
+                mb(*textures)
+            ));
+        }
+        line(meshes);
+    }
     line(match c.audio {
         Some((late, buffers, buffer_ms, mix_ms)) => format!(
             "audio  {late} late of {buffers} ({buffer_ms:.0} ms buffers), mix {mix_ms:.2} ms"
@@ -829,6 +996,10 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
         GpuSource::Off => line("gpu ms   off (?perf=cpu)".to_string()),
         GpuSource::Unsupported => {
             line("gpu ms   no timestamp-query here: cpu phases only".to_string())
+        }
+        GpuSource::Unusable { why } => {
+            line(format!("gpu ms   {UNAVAILABLE}"));
+            line(format!("  ({why})"));
         }
         GpuSource::Timed { passes, frame_ms } => {
             let vsync = if c.present.is_some_and(under_vsync) {
@@ -929,6 +1100,7 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
     match &c.gpu {
         GpuSource::Off => parts.push("gpu off".into()),
         GpuSource::Unsupported => parts.push("gpu untimed".into()),
+        GpuSource::Unusable { why } => parts.push(format!("{UNAVAILABLE} ({why})")),
         GpuSource::Timed { passes, frame_ms } => parts.push(format!(
             "gpu {frame_ms:.2} ms{}: {}",
             gpu_vsync_note(c.present, *frame_ms, mean_frame_ms(s)),
@@ -955,6 +1127,13 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
             w.buffers
         ));
     }
+    // What the renderer counted itself (#1091), on every platform
+    if let Some(g) = &c.gpu_calls {
+        parts.push(gpu_calls_part(g));
+    }
+    if let Some((m, device)) = &c.gpu_memory {
+        parts.push(gpu_memory_part(m, *device));
+    }
     if let Some((late, buffers, _, mix_ms)) = c.audio {
         parts.push(format!("audio {late}/{buffers} late mix {mix_ms:.2} ms"));
     }
@@ -979,6 +1158,8 @@ impl super::PlayerApp {
     /// submissions a frame, so `?perf=cpu` leaves it off.
     pub fn enable_perf(&mut self, gpu: bool) {
         self.stats.perf.show_readout(gpu);
+        // Each load says where its time went too (#1092)
+        self.launch.load_report = true;
         self.core.script.set_timing(true);
     }
 
@@ -1005,6 +1186,25 @@ impl super::PlayerApp {
         true
     }
 
+    /// Take the first reading as soon as there is a renderer, so the first
+    /// readout's window has one before it (every frame until then; one
+    /// `is_some` after).
+    pub(super) fn seed_gpu_calls(&mut self) {
+        if self.stats.gpu_calls_then.is_none() {
+            if let Some(r) = &self.scene_renderer {
+                self.stats.gpu_calls_then = Some(r.gpu_calls_reading());
+            }
+        }
+    }
+
+    /// The renderer's GPU objects and writes a frame since the last
+    /// readout (#1091), from the first frame for the first.
+    pub(super) fn window_gpu_calls(&mut self) -> Option<GpuCallsPerFrame> {
+        self.seed_gpu_calls();
+        let now = self.scene_renderer.as_ref()?.gpu_calls_reading();
+        gpu_calls_since(&mut self.stats.gpu_calls_then, now)
+    }
+
     /// The window's frames and everything else the readout shows, with the
     /// browser and adapter as the platform names them.
     pub(super) fn perf_snapshot(
@@ -1024,6 +1224,8 @@ impl super::PlayerApp {
             GpuSource::Off
         } else if !renderer.gpu_timing() {
             GpuSource::Unsupported
+        } else if let Some(why) = stats.gpu_timestamps.why() {
+            GpuSource::Unusable { why }
         } else {
             GpuSource::Timed {
                 passes: stats.gpu_passes.iter().map(|p| (p.label, p.ms)).collect(),
@@ -1058,6 +1260,13 @@ impl super::PlayerApp {
                 present: Some(context.present_mode_in_use()),
                 pacing: self.frame_rate_line(),
                 webgpu: None,
+                // The window's calls are the caller's, which keeps the
+                // reading before it (`gpu_calls_since`)
+                gpu_calls: None,
+                gpu_memory: Some((
+                    stats.gpu_memory,
+                    flint_render::gpu_counts::device_memory(&context.device),
+                )),
                 hitches: Some(super::hitch_watch::HitchReadout::of(
                     &self.stats.hitches,
                     perf,
@@ -1077,6 +1286,7 @@ impl super::PlayerApp {
     /// every ten seconds, so the desktop can be set beside the browser.
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn print_perf(&mut self) {
+        self.seed_gpu_calls();
         if !self.perf_due(WINDOW_SECS) {
             return;
         }
@@ -1088,7 +1298,8 @@ impl super::PlayerApp {
                 flint_render::gpu_select::adapter_short(&c.adapter.get_info())
             })
             .unwrap_or_default();
-        if let Some((summary, context)) = self.perf_snapshot("native".into(), adapter) {
+        if let Some((summary, mut context)) = self.perf_snapshot("native".into(), adapter) {
+            context.gpu_calls = self.window_gpu_calls();
             // A window that began before the first readout is short; skip it.
             if summary.secs >= WINDOW_SECS * 0.9 {
                 let line = summary_line(&summary, &context);
@@ -1329,6 +1540,26 @@ mod tests {
                 worst: Some((84.2, "script whale.rhai:on_update 80.1 ms".into())),
             }),
             refresh_ms: Some(1000.0 / 60.0),
+            gpu_calls: Some(GpuCallsPerFrame {
+                buffers: 0.0,
+                bind_groups: 0.5,
+                textures: 0.0,
+                pipelines: 0.0,
+                writes: 15.0,
+                write_bytes: 4096.0,
+                frames_creating: 2,
+            }),
+            gpu_memory: Some((
+                flint_render::gpu_counts::GpuMemory {
+                    scene_targets: 40 << 20,
+                    style_targets: 8 << 20,
+                    shadow_maps: 16 << 20,
+                    model_textures: 20 << 20,
+                    glyph_atlases: 0,
+                    mesh_buffers: 3 << 20,
+                },
+                Some((12 << 20, 96 << 20)),
+            )),
         };
         (rec.summary().unwrap(), c)
     }
@@ -1431,6 +1662,78 @@ mod tests {
         let mut unknown = phone();
         unknown.refresh_ms = None;
         bare(&window_of(29.4, 2.0, 0.0), &unknown);
+    }
+
+    /// #1091: the renderer's own count beside the page's, in the copied
+    /// line and the readout, and the memory by class.
+    #[test]
+    fn the_line_and_the_readout_carry_the_renderers_gpu_count_and_memory() {
+        let (s, c) = sample();
+        let line = summary_line(&s, &c);
+        assert!(
+            line.contains(
+                " | gpu/frame create 0.5 (buffer 0.0 bindgroup 0.5 texture 0.0 pipeline 0.0) in 2 frames write 15.0 (4.0 KB) | "
+            ),
+            "{line}"
+        );
+        assert!(
+            line.contains(
+                " | gpu mem textures 84.0 MB (scene 40.0 style 8.0 shadow 16.0 model 20.0 glyph 0.0) meshes 3.0 MB device 12.0/96.0 MB | "
+            ),
+            "{line}"
+        );
+        let rows = readout(&s, &c);
+        assert!(
+            rows.contains("alloc  0.5 objects a frame (0.0 buffers, 0.5 bind groups"),
+            "{rows}"
+        );
+        assert!(
+            rows.contains("memory 84.0 MB textures: scene 40.0, style 8.0"),
+            "{rows}"
+        );
+        assert!(
+            rows.contains("; device 12.0 MB buffers, 96.0 MB textures"),
+            "{rows}"
+        );
+    }
+
+    /// #1091: a window is the difference of two renderer readings, and
+    /// the first readout has none before it.
+    #[test]
+    fn a_readouts_gpu_calls_are_the_window_since_the_last() {
+        use flint_render::gpu_counts::GpuCalls;
+        let mut then = None;
+        let at = |buffers, bind_groups, writes| GpuCalls {
+            buffers,
+            bind_groups,
+            writes,
+            ..Default::default()
+        };
+        assert!(gpu_calls_since(&mut then, (at(10, 30, 100), 50, 3)).is_none());
+        let w = gpu_calls_since(&mut then, (at(10, 32, 400), 70, 4)).unwrap();
+        assert_eq!(w.bind_groups, 0.1, "2 bind groups over 20 frames");
+        assert_eq!(w.buffers, 0.0);
+        assert_eq!(w.writes, 15.0);
+        assert_eq!(w.frames_creating, 1);
+        // No frame between two readings is no window
+        assert!(gpu_calls_since(&mut then, (at(10, 32, 400), 70, 4)).is_none());
+    }
+
+    /// #1091: reading the counts, a frame's difference and a window cost no
+    /// allocation, so a steady frame's count is free of the cliff it guards.
+    #[test]
+    fn counting_allocates_nothing() {
+        use flint_render::gpu_counts::{totals, GpuCalls};
+        let mut then = Some((totals(), 1, 0));
+        let ((), allocations) = super::super::alloc_count::allocations_in(|| {
+            let now = totals();
+            let frame = now.since(&GpuCalls::default());
+            let mut sum = GpuCalls::default();
+            sum += frame;
+            std::hint::black_box((frame.created(), sum));
+            std::hint::black_box(gpu_calls_since(&mut then, (now, 2, 0)));
+        });
+        assert_eq!(allocations, 0);
     }
 
     /// #1079: the copied line and the readout carry the hitches, so
@@ -1683,6 +1986,45 @@ mod tests {
         };
         let line = summary_line(&s, &c);
         assert!(line.contains("at idle clocks (25% busy"), "{line}");
+    }
+
+    /// The Pixel 8 Pro (#1316): every pass after Scene read 0.00, and #378
+    /// read the list as an answer. Both forms say the times are missing
+    /// and list none of them.
+    #[test]
+    fn unusable_timestamps_are_said_not_listed() {
+        let (s, mut c) = sample();
+        let real_line = summary_line(&s, &c);
+        let real_text = readout(&s, &c);
+        c.gpu = GpuSource::Unusable {
+            why: flint_render::TimestampHealth::Unusable { zero: 5, scopes: 7 }
+                .why()
+                .unwrap(),
+        };
+        let line = summary_line(&s, &c);
+        assert!(
+            line.contains(
+                "| GPU pass times unavailable on this adapter (5 of 7 scopes read 0 ticks for 60 frames) |"
+            ),
+            "{line}"
+        );
+        assert!(
+            !line.contains("Scene 3.10") && !line.contains("gpu 3.90"),
+            "{line}"
+        );
+        let text = readout(&s, &c);
+        assert!(
+            text.contains("gpu ms   GPU pass times unavailable on this adapter\n  (5 of 7"),
+            "{text}"
+        );
+        assert!(!text.contains("timestamp-query ("), "{text}");
+        // Real times are as they were
+        assert!(real_line.contains("gpu 3.90 ms under vsync"), "{real_line}");
+        assert!(real_line.contains("Scene 3.10, SSAO 0.80"), "{real_line}");
+        assert!(
+            real_text.contains("timestamp-query (3.90 a frame, vsync)"),
+            "{real_text}"
+        );
     }
 
     #[test]

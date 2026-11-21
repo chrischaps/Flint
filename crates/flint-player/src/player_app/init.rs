@@ -93,6 +93,10 @@ impl PlayerApp {
         if let Some(failure) = self.trace_failure() {
             return Some(failure);
         }
+        // `--perf-report` that couldn't be written (#1093)
+        if let Some(failure) = self.perf_report_failure() {
+            return Some(failure);
+        }
         // `--max-hitches` and `--max-hitches-startup` (#1079)
         self.stats.watch.failure()
     }
@@ -110,7 +114,12 @@ impl PlayerApp {
             fullscreen,
             input_config_override,
             scene_input_config,
-            AudioSystem::new(),
+            // Opening the sound device can take a second (#1092)
+            flint_core::load_report::timed(
+                flint_core::load_report::Stage::AudioDevice,
+                String::new,
+                AudioSystem::new,
+            ),
         )
     }
 
@@ -179,6 +188,7 @@ impl PlayerApp {
             particles_render_enabled: true,
             stats: Default::default(),
             loaded_chunks: HashMap::new(),
+            late_models: Default::default(),
             #[cfg(target_os = "android")]
             android_gamepad: AndroidGamepadTracker::new(),
             #[cfg(target_os = "android")]
@@ -602,11 +612,16 @@ impl PlayerApp {
     /// the web the device request runs as a promise and `finish_initialize`
     /// follows when it lands (see `web_startup.rs`).
     pub(super) fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
-        let window = self.create_window(event_loop)?;
+        use flint_core::load_report::{self, Stage};
+        let window = load_report::timed(Stage::Window, String::new, || {
+            self.create_window(event_loop)
+        })?;
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let render_context = pollster::block_on(RenderContext::new(window.clone()))
-                .context("Failed to initialize render context")?;
+            let render_context = load_report::timed(Stage::Device, String::new, || {
+                pollster::block_on(RenderContext::new(window.clone()))
+            })
+            .context("Failed to initialize render context")?;
             self.finish_initialize(window, render_context)
         }
         #[cfg(target_arch = "wasm32")]
@@ -624,17 +639,22 @@ impl PlayerApp {
         window: Arc<Window>,
         render_context: RenderContext,
     ) -> Result<()> {
+        use flint_core::load_report::{self, Stage};
         self.camera.aspect = render_context.aspect_ratio();
-        let scene_renderer = SceneRenderer::new(
-            &render_context,
-            flint_render::RendererConfig {
-                sample_count: self.launch.msaa_sample_count,
-                ..Default::default()
-            },
-        );
+        let scene_renderer = load_report::timed(Stage::Renderer, String::new, || {
+            SceneRenderer::new(
+                &render_context,
+                flint_render::RendererConfig {
+                    sample_count: self.launch.msaa_sample_count,
+                    ..Default::default()
+                },
+            )
+        });
 
         // Gamepad backend and the egui overlay
-        self.init_egui(&window, &render_context);
+        load_report::timed(Stage::Hud, String::new, || {
+            self.init_egui(&window, &render_context)
+        });
 
         self.render_context = Some(render_context);
         self.scene_renderer = Some(scene_renderer);

@@ -121,6 +121,15 @@ impl GameClock {
         self.accumulator += self.delta_time;
     }
 
+    /// One frame of `raw` wall seconds the caller measured itself, paced,
+    /// clamped and accumulated as [`tick`](Self::tick) would: for a host
+    /// that times its frames on its own clock and wants them judged by how
+    /// long they stood on screen (the scene viewer's F2 graph, #1110).
+    pub fn advance_wall(&mut self, raw: f64) {
+        self.first_tick = false;
+        self.advance(raw);
+    }
+
     /// One frame of `raw` wall seconds: pace it, clamp it, accumulate it.
     fn advance(&mut self, raw: f64) {
         self.raw_delta_time = raw;
@@ -317,6 +326,18 @@ mod tests {
         let mut unpaced = paced(None);
         unpaced.advance(0.006);
         assert_eq!(unpaced.paced_delta_time(), None);
+    }
+
+    /// A host's own wall times are paced from the first: no tick skipped.
+    #[test]
+    fn a_callers_wall_times_are_paced_as_ticks_are() {
+        let mut clock = paced(Some(HZ60));
+        for raw in bursts(40) {
+            clock.advance_wall(raw);
+            let paced = clock.paced_delta_time().unwrap();
+            assert!((paced - HZ60).abs() < 1e-9, "{paced}");
+        }
+        assert!((clock.total_time - 40.0 * HZ60).abs() < 0.1);
     }
 
     /// A page drawing one 120 Hz refresh in four (#140) steps 33.3 ms,

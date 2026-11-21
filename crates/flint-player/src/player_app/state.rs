@@ -119,6 +119,10 @@ pub struct LaunchOptions {
     /// Keep the `persist_*` store in memory only: read no save and write
     /// none (#714: a playtest starts from no save, and leaves none).
     pub saves_in_memory: bool,
+    /// `--load-report` or `--perf` (#1092): record each transition's and
+    /// chunk's load and say its table (the start-up's is begun before the
+    /// app exists, by whoever builds it).
+    pub load_report: bool,
     /// The screen scripts see, in points, when there is no window (#714:
     /// a playtest's `screen_width()` is its `--width`, not egui's
     /// placeholder). `None` keeps egui's.
@@ -160,6 +164,7 @@ impl Default for LaunchOptions {
             compare_at_start: None,
             strict_scripts: false,
             saves_in_memory: false,
+            load_report: false,
             headless_screen: None,
             #[cfg(not(target_arch = "wasm32"))]
             inspect: None,
@@ -405,6 +410,20 @@ pub(super) struct Stats {
     /// What the run keeps of them (#1079): the hitch log, the exit
     /// report's counts and the `--max-hitches` gate.
     pub(super) watch: hitch_watch::HitchWatch,
+    /// The renderer's GPU-call reading at the last perf readout (#1091):
+    /// the next readout's window is the difference.
+    pub(super) gpu_calls_then: Option<perf::GpuCallsReading>,
+    /// The last frame F2 saw create GPU objects: its game time and what it
+    /// made, so a one-frame creation stays readable on the overlay.
+    pub(super) last_gpu_objects: Option<(f64, flint_render::gpu_counts::GpuCalls)>,
+    /// Every load's report so far, the start-up first (#1092)
+    pub(super) loads: Vec<flint_core::load_report::LoadReport>,
+    /// The start-up's wait from `run_app` to the first `resumed`, timed
+    /// as the window's (#1092)
+    pub(super) awaiting_window: Option<flint_core::load_report::Span>,
+    /// `--perf-report FILE` (#1093): where the exit report's JSON goes and
+    /// the run's phase and script totals it is built from.
+    pub(super) report: Option<super::perf_report::ReportTo>,
 }
 
 impl Default for Stats {
@@ -421,6 +440,11 @@ impl Default for Stats {
             // `FLINT_HITCH_FACTOR` / `FLINT_HITCH_FLOOR_MS`, read once.
             hitches: hitch::HitchDetector::new(hitch::HitchThresholds::from_env()),
             watch: Default::default(),
+            gpu_calls_then: None,
+            last_gpu_objects: None,
+            loads: Vec::new(),
+            awaiting_window: None,
+            report: None,
         }
     }
 }

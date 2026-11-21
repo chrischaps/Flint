@@ -108,3 +108,18 @@ test('a range is one number when the reads agree', () => {
   assert.equal(range([undefined, 3], 1), '3.0');
   assert.equal(range([]), '');
 });
+
+test("the renderer's own GPU count and memory are read (#1091)", () => {
+  const p = parsePerfLine([
+    'flint perf · fixtures · t=20s',
+    'webgpu/frame submit 1.0 pass 14.0 bindgroup 0.0 write 17.0 (27.4 KB) buffer 0.0',
+    'gpu/frame create 0.5 (buffer 0.0 bindgroup 0.5 texture 0.0 pipeline 0.0) in 2 frames write 15.0 (4.0 KB)',
+    'gpu mem textures 84.0 MB (scene 40.0 style 8.0 shadow 16.0 model 20.0 glyph 0.0) meshes 3.0 MB device 12.0/96.0 MB',
+  ].join(' | '));
+  assert.deepEqual(p.created, { objects: 0.5, buffers: 0, bindGroups: 0.5, textures: 0, pipelines: 0, framesCreating: 2, writes: 15, writeKB: 4 });
+  assert.deepEqual(p.memory, { texturesMB: 84, sceneMB: 40, styleMB: 8, shadowMB: 16, modelMB: 20, glyphMB: 0, meshesMB: 3, deviceBuffersMB: 12, deviceTexturesMB: 96 });
+  assert.equal(p.gpu, undefined, "'gpu mem' is not the GPU time part");
+  // The web has no device memory to say
+  const web = parsePerfLine('gpu mem textures 1.0 MB (scene 1.0 style 0.0 shadow 0.0 model 0.0 glyph 0.0) meshes 0.5 MB');
+  assert.equal(web.memory.deviceTexturesMB, undefined);
+});

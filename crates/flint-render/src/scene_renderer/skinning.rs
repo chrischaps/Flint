@@ -8,6 +8,7 @@
 //! skinned extraction in `extract.rs` reads it while it builds the draws.
 
 use super::SceneRenderer;
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use flint_core::EntityId;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -59,7 +60,7 @@ pub(crate) fn write_bones(
     let room = crate::skinned_pipeline::MAX_BONES.saturating_sub(first);
     let matrices = &matrices[..matrices.len().min(room)];
     if !matrices.is_empty() {
-        queue.write_buffer(
+        queue.write_buffer_counted(
             buffer,
             (first * std::mem::size_of::<[[f32; 4]; 4]>()) as u64,
             bytemuck::cast_slice(matrices),
@@ -105,7 +106,7 @@ impl SkinningState {
         let bytes: &[u8] = bytemuck::cast_slice(matrices);
         let capacity = crate::skinned_pipeline::MAX_BONES * std::mem::size_of::<[[f32; 4]; 4]>();
         let buffer = self.bone_buffers.entry(entity_id).or_insert_with(|| {
-            device.create_buffer(&wgpu::BufferDescriptor {
+            device.create_buffer_counted(&wgpu::BufferDescriptor {
                 label: Some(&format!(
                     "{} Bone Buffer (entity {:?})",
                     asset_name, entity_id
@@ -118,7 +119,7 @@ impl SkinningState {
                 mapped_at_creation: false,
             })
         });
-        queue.write_buffer(buffer, 0, &bytes[..bytes.len().min(capacity)]);
+        queue.write_buffer_counted(buffer, 0, &bytes[..bytes.len().min(capacity)]);
         let kept = &matrices[..matrices.len().min(crate::skinned_pipeline::MAX_BONES)];
         let entity = self.bone_matrices.entry(entity_id).or_default();
         entity.clear();
@@ -135,7 +136,7 @@ impl SkinningState {
             .get_skinned(asset_name)
             .and_then(|meshes| meshes.first())
         {
-            queue.write_buffer(&mesh.bone_buffer, 0, bytes);
+            queue.write_buffer_counted(&mesh.bone_buffer, 0, bytes);
         }
     }
 
@@ -294,7 +295,7 @@ impl SkinningState {
 }
 
 fn create_entity_bones(device: &wgpu::Device, label: &str) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
+    device.create_buffer_counted(&wgpu::BufferDescriptor {
         label: Some(label),
         size: (crate::skinned_pipeline::MAX_BONES * std::mem::size_of::<[[f32; 4]; 4]>()) as u64,
         // COPY_SRC: a frame capture reads the palettes back (#1086)
