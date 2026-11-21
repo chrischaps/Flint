@@ -74,7 +74,7 @@ pub use atlas::{AtlasRegistry, TextureAtlas};
 pub use bind_cache::{DepthKey, DepthTarget};
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
-pub use context::{resolve_present_mode, RenderContext, RenderError};
+pub use context::{resolve_present_mode, PresentOptions, RenderContext, RenderError, Vsync};
 pub use debug::{DebugMode, DebugState};
 pub use frustum::Frustum;
 pub use glyph_atlas::{

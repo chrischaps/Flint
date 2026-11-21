@@ -77,9 +77,111 @@ pub fn resolve_present_mode(
         .unwrap_or(P::Fifo)
 }
 
+/// How frames reach the display (#1149): `flint play --vsync`, or its
+/// alias `FLINT_VSYNC`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Vsync {
+    /// Wait for vsync (Fifo): the default.
+    #[default]
+    Fifo,
+    /// Unlocked (Immediate where the surface has it): real frame times for
+    /// perf runs, with tearing.
+    Off,
+    /// Render uncapped and show the newest frame at each refresh: no
+    /// tearing, no Fifo stall. On an Optimus laptop Fifo has been seen
+    /// pacing at ~7 Hz against a virtual display; mailbox sidesteps it.
+    Mailbox,
+}
+
+impl Vsync {
+    /// The words `--vsync` and `FLINT_VSYNC` take, in `flint env`'s order.
+    pub const WORDS: [&'static str; 7] = ["1", "on", "fifo", "0", "off", "immediate", "mailbox"];
+
+    /// Read one of [`Self::WORDS`], any case.
+    pub fn parse(word: &str) -> Option<Self> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "1" | "on" | "fifo" => Some(Self::Fifo),
+            "0" | "off" | "immediate" => Some(Self::Off),
+            "mailbox" => Some(Self::Mailbox),
+            _ => None,
+        }
+    }
+
+    /// `FLINT_VSYNC`, the flag's alias: `None` unset (or a value it
+    /// refuses, which it says once).
+    pub fn from_env() -> Option<Self> {
+        flint_core::env::VSYNC.choice().and_then(Self::parse)
+    }
+
+    /// The mode the swapchain is configured with.
+    pub fn present_mode(self) -> wgpu::PresentMode {
+        match self {
+            Self::Fifo => wgpu::PresentMode::AutoVsync,
+            Self::Off => wgpu::PresentMode::AutoNoVsync,
+            Self::Mailbox => wgpu::PresentMode::Mailbox,
+        }
+    }
+}
+
+/// What a window's swapchain is configured with (#1149): the present mode
+/// and how many frames the CPU may queue ahead of the display. A host
+/// passes it to [`RenderContext::with_present`]; [`RenderContext::new`]
+/// takes [`PresentOptions::from_env`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresentOptions {
+    pub vsync: Vsync,
+    /// 1 to 3 (clamped).
+    pub frame_latency: u32,
+}
+
+impl PresentOptions {
+    /// The frame latency with nothing asked: 2.
+    pub const DEFAULT_FRAME_LATENCY: u32 = 2;
+    /// The most frames the CPU may queue ahead (and the fewest is 1).
+    pub const MAX_FRAME_LATENCY: u32 = 3;
+
+    /// A flag's values over their aliases (`FLINT_VSYNC`,
+    /// `FLINT_FRAME_LATENCY`), over the defaults: a flag wins.
+    pub fn resolve(vsync: Option<Vsync>, frame_latency: Option<u32>) -> Self {
+        Self {
+            vsync: vsync.or_else(Vsync::from_env).unwrap_or_default(),
+            frame_latency: frame_latency
+                .or_else(|| flint_core::env::FRAME_LATENCY.u32())
+                .unwrap_or(Self::DEFAULT_FRAME_LATENCY)
+                .clamp(1, Self::MAX_FRAME_LATENCY),
+        }
+    }
+
+    /// The environment's choice alone, for a host with no flags.
+    pub fn from_env() -> Self {
+        Self::resolve(None, None)
+    }
+}
+
+impl Default for PresentOptions {
+    /// Vsync and a frame latency of 2, whatever the environment says.
+    fn default() -> Self {
+        Self {
+            vsync: Vsync::Fifo,
+            frame_latency: Self::DEFAULT_FRAME_LATENCY,
+        }
+    }
+}
+
 impl RenderContext {
-    /// Create a new render context for a window
+    /// Create a new render context for a window, presenting as the
+    /// environment says ([`PresentOptions::from_env`]): the editors' and
+    /// tools' windows, which take no present flags.
     pub async fn new(window: Arc<Window>) -> Result<Self, RenderError> {
+        Self::with_present(window, PresentOptions::from_env()).await
+    }
+
+    /// Create a new render context for a window presenting with `present`
+    /// (`flint play --vsync`, `--frame-latency`).
+    pub async fn with_present(
+        window: Arc<Window>,
+        present: PresentOptions,
+    ) -> Result<Self, RenderError> {
         let size = window.inner_size();
 
         let instance = crate::gpu_select::instance();
@@ -143,17 +245,8 @@ impl RenderContext {
             );
         }
 
-        // FLINT_VSYNC picks the present mode: unset/"1" = vsync (Fifo),
-        // "0"/"off"/"immediate" = unlocked (real frame times for headless
-        // perf runs), "mailbox" = uncapped rendering with the newest frame
-        // shown at each refresh (no tearing, no Fifo stall). On this Optimus
-        // laptop Fifo has been seen pacing at ~7 Hz against a virtual
-        // display; mailbox sidesteps it.
-        let present_mode = match flint_core::env::VSYNC.choice() {
-            Some("0" | "off" | "immediate") => wgpu::PresentMode::AutoNoVsync,
-            Some("mailbox") => wgpu::PresentMode::Mailbox,
-            _ => wgpu::PresentMode::AutoVsync,
-        };
+        // The host's choice (`--vsync`, else `FLINT_VSYNC`; see `Vsync`)
+        let present_mode = present.vsync.present_mode();
         tracing::info!(
             "surface present modes: {:?}; using {:?}",
             surface_caps.present_modes,
@@ -179,7 +272,9 @@ impl RenderContext {
             } else {
                 vec![]
             },
-            desired_maximum_frame_latency: frame_latency(),
+            desired_maximum_frame_latency: present
+                .frame_latency
+                .clamp(1, PresentOptions::MAX_FRAME_LATENCY),
         };
         tracing::info!(
             "surface frame latency: {}",
@@ -399,12 +494,6 @@ impl RenderContext {
     }
 }
 
-/// Frames the CPU may queue ahead of the display. `FLINT_FRAME_LATENCY`
-/// overrides the default of 2 (1 to 3).
-fn frame_latency() -> u32 {
-    flint_core::env::FRAME_LATENCY.u32().unwrap_or(2)
-}
-
 fn create_depth_texture(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
@@ -437,7 +526,39 @@ fn create_depth_texture(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_present_mode;
+    use super::{resolve_present_mode, PresentOptions, Vsync};
+
+    #[test]
+    fn vsync_takes_every_word_flint_vsync_does() {
+        assert_eq!(Vsync::WORDS, flint_core::env::VSYNC_WORDS);
+        for word in Vsync::WORDS {
+            assert!(Vsync::parse(word).is_some(), "{word}");
+            assert!(flint_core::env::VSYNC.parse(word).is_ok(), "{word}");
+        }
+        assert_eq!(Vsync::parse("Mailbox"), Some(Vsync::Mailbox));
+        assert_eq!(Vsync::parse("immediate"), Some(Vsync::Off));
+        assert_eq!(Vsync::parse("ON"), Some(Vsync::Fifo));
+        assert_eq!(Vsync::parse("fasle"), None);
+        use wgpu::PresentMode as P;
+        assert_eq!(Vsync::Fifo.present_mode(), P::AutoVsync);
+        assert_eq!(Vsync::Off.present_mode(), P::AutoNoVsync);
+        assert_eq!(Vsync::Mailbox.present_mode(), P::Mailbox);
+    }
+
+    /// A flag wins over its alias, which wins over the default. The test
+    /// asks nothing of the environment it can't assume: with FLINT_VSYNC or
+    /// FLINT_FRAME_LATENCY set in the shell only the flag rows are checked.
+    #[test]
+    fn a_flag_wins_over_the_environment() {
+        let both = PresentOptions::resolve(Some(Vsync::Mailbox), Some(1));
+        assert_eq!(both.vsync, Vsync::Mailbox);
+        assert_eq!(both.frame_latency, 1);
+        assert_eq!(PresentOptions::resolve(None, Some(9)).frame_latency, 3);
+        assert_eq!(PresentOptions::resolve(None, Some(0)).frame_latency, 1);
+        if !flint_core::env::VSYNC.is_set() && !flint_core::env::FRAME_LATENCY.is_set() {
+            assert_eq!(PresentOptions::from_env(), PresentOptions::default());
+        }
+    }
     use wgpu::PresentMode as P;
 
     #[test]

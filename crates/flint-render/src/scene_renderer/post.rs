@@ -218,6 +218,8 @@ impl SceneRenderer {
     /// - `post_process`, `bloom`, `ssao`, `ssao_samples`, `fog`,
     ///   `volumetric` cap the post config: off turns the effect off, on
     ///   leaves it as set.
+    /// - `lod_scale`, `draw_distance_scale`: the distance levers, as
+    ///   [`set_lod_settings`](Self::set_lod_settings) sets them (#1149).
     pub fn set_quality(
         &mut self,
         device: &wgpu::Device,

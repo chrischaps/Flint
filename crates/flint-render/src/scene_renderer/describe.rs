@@ -347,7 +347,7 @@ impl SceneRenderer {
             return Some("lod");
         };
         let d = distance_to_box(eye, lod.ref_min, lod.ref_max);
-        let far = lod.band.draw_distance * self.lod_settings.draw_distance_scale;
+        let far = lod.band.draw_distance * self.quality.draw_distance_scale;
         Some(if d >= far { "draw distance" } else { "lod" })
     }
 

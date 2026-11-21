@@ -659,7 +659,10 @@ impl PlayerApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let render_context = load_report::timed(Stage::Device, String::new, || {
-                pollster::block_on(RenderContext::new(window.clone()))
+                pollster::block_on(RenderContext::with_present(
+                    window.clone(),
+                    crate::present_args::present_options(&self.launch),
+                ))
             })
             .context("Failed to initialize render context")?;
             self.finish_initialize(window, render_context)

@@ -108,6 +108,9 @@ fn text(shown: &[&Status]) -> String {
             };
             out.push_str(&format!("  {} {value}\n", s.name));
             out.push_str(&format!("      {}\n", s.help));
+            if let Some(alias) = s.alias_of {
+                out.push_str(&format!("      {}\n", env::alias_line(alias)));
+            }
             out.push_str(&format!(
                 "      accepts {}; unset: {}\n",
                 s.accepts, s.default

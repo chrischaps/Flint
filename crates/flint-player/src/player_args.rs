@@ -74,8 +74,9 @@ pub struct PlayerArgs {
     /// Quality settings as `key=value,...`, applied over --msaa and
     /// --render-scale (FlintKart#55). Keys: render_scale, render_scale_auto,
     /// msaa, shadows, shadow_resolution, shadow_cascades, shadow_distance,
-    /// post_process, bloom, ssao, ssao_samples, fog, volumetric. Scripts
-    /// change them while running with set_quality()
+    /// post_process, bloom, ssao, ssao_samples, fog, volumetric, lod_scale,
+    /// draw_distance_scale. Scripts change them while running with
+    /// set_quality()
     #[arg(long, value_name = "KEY=VALUE,...")]
     pub quality: Option<String>,
 
@@ -137,6 +138,12 @@ pub struct PlayerArgs {
     /// With --list-keys: the table as JSON
     #[arg(long, requires = "list_keys")]
     pub json: bool,
+
+    /// `--vsync off|mailbox|fifo`, `--frame-latency 1..3` and
+    /// `--no-pacing`: how frames reach the display (#1149), over
+    /// FLINT_VSYNC, FLINT_FRAME_LATENCY and FLINT_PACING
+    #[command(flatten)]
+    pub present: crate::PresentArgs,
 
     /// `--width`/`--height`, `--position`, `--borderless`, `--always-on-top`
     /// and `--no-activate`: the window's size and place, its frame, whether
@@ -625,6 +632,7 @@ impl PlayerArgs {
         launch.window_size = args.window.size();
         launch.window_options = args.window.clone();
         launch.pass_knobs = args.pass_knobs.knobs()?;
+        args.present.apply(launch);
         launch.expression_feed = expression_feed;
         #[cfg(not(target_arch = "wasm32"))]
         {

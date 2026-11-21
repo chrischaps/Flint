@@ -51,6 +51,15 @@ pub struct LaunchOptions {
     /// `?repeat_pass=`), handed to the renderer when it is made. `None`
     /// draws every part once.
     pub pass_knobs: Option<flint_render::PassKnobs>,
+    /// The present mode (`--vsync`, #1149); `None` is `FLINT_VSYNC`'s,
+    /// else vsync. Read when the window opens.
+    pub vsync: Option<flint_render::Vsync>,
+    /// Frames the CPU may queue ahead of the display, 1 to 3
+    /// (`--frame-latency`); `None` is `FLINT_FRAME_LATENCY`'s, else 2.
+    pub frame_latency: Option<u32>,
+    /// Pace the game clock to the monitor's refresh under vsync
+    /// (`--no-pacing` is `Some(false)`); `None` is `FLINT_PACING`'s, else on.
+    pub pacing: Option<bool>,
     /// When scene procgen assets are made (#32): during load, or behind
     /// placeholders on the frame-budgeted queue (`--procgen-defer`).
     pub procgen_mode: ProcGenMode,
@@ -151,6 +160,9 @@ impl Default for LaunchOptions {
             window_options: crate::WindowArgs::default(),
             msaa_sample_count: 1,
             pass_knobs: None,
+            vsync: None,
+            frame_latency: None,
+            pacing: None,
             procgen_mode: ProcGenMode::Immediate,
             render_scale: Default::default(),
             procgen_disk_cache: cfg!(not(target_arch = "wasm32")),

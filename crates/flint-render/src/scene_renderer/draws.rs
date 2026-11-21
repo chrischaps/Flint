@@ -171,13 +171,16 @@ impl SceneRenderer {
 
     /// The distance levers in force (#56).
     pub fn lod_settings(&self) -> LodSettings {
-        self.lod_settings
+        LodSettings::of(&self.quality)
     }
 
     /// Change the distance levers (#56): takes effect at the next
     /// `render_to`, no reload. Scales are clamped to
-    /// [`LodSettings::MIN_SCALE`] and non-finite values are ignored.
+    /// [`LodSettings::MIN_SCALE`] and non-finite values are ignored. They
+    /// are the quality settings' `lod_scale` and `draw_distance_scale`
+    /// (#1149), so [`quality`](Self::quality) reads them back.
     pub fn set_lod_settings(&mut self, settings: LodSettings) {
+        let old = self.lod_settings();
         let clamp = |v: f32, old: f32| {
             if v.is_finite() {
                 v.max(LodSettings::MIN_SCALE)
@@ -185,13 +188,9 @@ impl SceneRenderer {
                 old
             }
         };
-        self.lod_settings = LodSettings {
-            lod_scale: clamp(settings.lod_scale, self.lod_settings.lod_scale),
-            draw_distance_scale: clamp(
-                settings.draw_distance_scale,
-                self.lod_settings.draw_distance_scale,
-            ),
-        };
+        self.quality.lod_scale = clamp(settings.lod_scale, old.lod_scale);
+        self.quality.draw_distance_scale =
+            clamp(settings.draw_distance_scale, old.draw_distance_scale);
     }
 
     /// Draws set aside by the last `render_to` for their level of detail or
@@ -209,7 +208,7 @@ impl SceneRenderer {
         let LodSettings {
             lod_scale,
             draw_distance_scale,
-        } = self.lod_settings;
+        } = self.lod_settings();
         let mut culled = 0u32;
         for item in self.draws.iter_mut() {
             let lod = match &item.draw {
