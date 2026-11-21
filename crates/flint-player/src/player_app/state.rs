@@ -575,6 +575,9 @@ pub(super) struct StyleState {
     /// stepped on game time each render; dropped at its end, a cut, or a
     /// scene's teardown.
     pub(super) look_fade: Option<(flint_render::look_fade::LookFade, Option<String>)>,
+    /// The scene's `preload_looks` as read at its entry (#1159), by name,
+    /// so a cut to one reads no file. Replaced at each scene's entry.
+    pub(super) preloaded_looks: std::collections::HashMap<String, flint_render::look::Look>,
 }
 
 /// The input config's layers (built-in, game, user overrides, CLI) and a

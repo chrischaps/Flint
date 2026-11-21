@@ -27,6 +27,8 @@ description = "A scene's [post_process] table: exposure, bloom, SSAO, fog, gradi
 [table.post_process.fields]
 
 look = { type = "string", description = "A look laid under this table's own keys: a styles/<name>.look.toml beside the scene or its parent, or a built-in (ascii_noir, graphite, ...)" }
+preload_looks = { type = "array", element = "string", description = "Looks a script will cut or fade to later, named as look is: their styles are built at the scene's entry, so set_look's frame builds nothing (#1159)" }
+preload_styles = { type = "array", element = "string", description = "Styles a script will switch on later (set_post_style, a render mode's matrix or tron): built at the scene's entry with their blend, reveal and tear draws (#1159)" }
 styles = { type = "table", description = "Stylize passes by name: [post_process.styles.<style>] with enabled (default true) and the style's parameters, which the renderer checks against its registry" }
 
 # The spellings from before the style tables (#298, #599). They still load,
