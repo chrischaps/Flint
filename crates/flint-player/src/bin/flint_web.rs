@@ -13,7 +13,10 @@
 //! the browser; when one lands the vfs grows and the player loads the sounds
 //! it couldn't find at start.
 //!
-//! Query string (all optional):
+//! Query string (all optional). The options the desktop shares are read by
+//! `flint_player::PlayOptions::from_query` (#1142), with the desktop's
+//! readers; a value that doesn't read is a console warning and the default
+//! plays:
 //!   game=<id>       a game on play.chaps.dev (#103): the bundle at
 //!                   games/<id>/<id>.flintpack, which the site's deploy packs
 //!   bundle=<url>    a .flintpack, relative to the page (wins over game)
@@ -81,7 +84,7 @@ mod web {
     use flint_core::bundle::{self, Bundle, LateBundle};
     use flint_core::vfs::{self, MemorySource};
     use flint_ecs::FlintWorld;
-    use flint_player::{PlayerApp, WEB_CANVAS_ID};
+    use flint_player::{PlayOptions, PlayerApp, Query, WEB_CANVAS_ID};
     use flint_scene::SceneFile;
     use flint_schema::SchemaRegistry;
     use std::sync::Arc;
@@ -97,33 +100,22 @@ mod web {
     /// The scene a bare page plays, copied next to it by trunk (index.html).
     const DEFAULT_SCENE: &str = "scenes/web_first_light.scene.toml";
 
-    /// What `main.rs` takes from clap, read from the query string.
+    /// What `main.rs` takes from clap, read from the query string: the
+    /// options every host shares (`flint_player::PlayOptions`, #1142) and
+    /// the page's own keys.
     struct WebArgs {
+        /// msaa, scale, quality, style, touch, frame_step, seed, hold_at,
+        /// fps, perf, mix, skip_pass and repeat_pass
+        options: PlayOptions,
+        /// The values that didn't read, each a console warning
+        problems: Vec<String>,
         bundle: Option<String>,
         scene: Option<String>,
-        msaa: u32,
-        render_scale: flint_player::RenderScaleSetting,
         size: Option<(u32, u32)>,
-        frame_step: Option<f64>,
-        seed: Option<u64>,
-        hold_at: Option<f64>,
-        /// `Some(gpu)`: show the perf readout, timing the GPU too when true.
-        perf: Option<bool>,
         /// `loop=poll`: the old flat-out loop, for comparison (#121).
         poll: bool,
         /// `begin=auto`: lift the gate without a click (#381).
         begin_auto: bool,
-        /// `mix=old`: placed sounds on kira spatial tracks and every sound
-        /// mixed, heard or not, for comparison (#138).
-        old_mix: bool,
-        /// `touch=always|never`: the on-screen touch controls (#133).
-        touch: flint_runtime::TouchControlsMode,
-        /// `fps=`: which refreshes are drawn (#140).
-        fps: flint_player::FrameRateSetting,
-        /// `quality=key=value,...`: quality settings (FlintKart#55).
-        quality: String,
-        /// `style=name[:key=value,...]`, repeatable (#328).
-        styles: Vec<String>,
         /// `gpu_labels=1|groups|0`: name the frame for a GPU debugger, as
         /// `FLINT_GPU_LABELS` does natively (#1083); none by default, so a
         /// frame makes no WebGPU call more.
@@ -132,97 +124,37 @@ mod web {
         /// `FLINT_STYLE_SCISSOR=0` does natively, to measure what the
         /// scissor saves in a browser (#538).
         scissor: Option<bool>,
-        /// `skip_pass=<label>[,..]` and `repeat_pass=<label>:<N>[,..]`,
-        /// each repeatable: cost a part of the frame on a GPU whose
-        /// timestamps read 0 by taking it away or drawing it N times
-        /// (#1317, `flint_render::pass_knobs`). A word that doesn't read is
-        /// a console warning.
-        pass_knobs: Option<flint_render::PassKnobs>,
-    }
-
-    /// The pass knobs the query's `skip_pass` and `repeat_pass` ask for.
-    fn pass_knobs(params: Option<&web_sys::UrlSearchParams>) -> Option<flint_render::PassKnobs> {
-        let params = params?;
-        let all = |key: &str| -> Vec<String> {
-            params
-                .get_all(key)
-                .iter()
-                .filter_map(|v| v.as_string())
-                .collect()
-        };
-        let mut knobs = flint_render::PassKnobs::new();
-        for list in all("skip_pass") {
-            knobs.skip_list(&list);
-        }
-        for list in all("repeat_pass") {
-            if let Err(e) = knobs.repeat_list(&list) {
-                web_sys::console::warn_1(&format!("[flint-web] {e}").into());
-            }
-        }
-        (!knobs.is_empty()).then_some(knobs)
     }
 
     impl WebArgs {
         fn from_query() -> Self {
-            let params = web_sys::window()
+            let search = web_sys::window()
                 .and_then(|w| w.location().search().ok())
-                .and_then(|q| web_sys::UrlSearchParams::new_with_str(&q).ok());
-            let get = |key: &str| params.as_ref().and_then(|p| p.get(key));
+                .unwrap_or_default();
+            let query = Query::parse(&search);
+            let (mut options, problems) = PlayOptions::from_query(&query);
+            // `fps=` unsaid: every refresh paced on a phone, unpaced elsewhere
+            options.frame_rate.get_or_insert_with(|| {
+                if flint_player::web_coarse_pointer() {
+                    flint_player::FrameRateSetting::Auto
+                } else {
+                    flint_player::FrameRateSetting::Native
+                }
+            });
+            let get = |key: &str| query.get(key).filter(|v| !v.is_empty());
             let num = |key: &str| get(key).and_then(|v| v.parse::<u32>().ok());
-            let secs = |key: &str| {
-                get(key)
-                    .and_then(|v| v.parse::<f64>().ok())
-                    .filter(|s| s.is_finite() && *s >= 0.0)
-            };
             Self {
+                options,
+                problems,
                 bundle: get("bundle")
-                    .filter(|b| !b.is_empty())
-                    .or_else(|| get("game").as_deref().and_then(game_bundle)),
-                scene: get("scene").filter(|s| !s.is_empty()),
-                msaa: num("msaa").filter(|&m| m == 1 || m == 4).unwrap_or(1),
-                render_scale: get("scale")
-                    .and_then(|v| flint_player::RenderScaleSetting::web().parse(&v))
-                    .unwrap_or_else(flint_player::RenderScaleSetting::web),
+                    .map(str::to_string)
+                    .or_else(|| get("game").and_then(game_bundle)),
+                scene: get("scene").map(str::to_string),
                 size: num("width").zip(num("height")),
-                frame_step: secs("frame_step").filter(|s| *s > 0.0),
-                seed: get("seed").and_then(|v| v.parse::<u64>().ok()),
-                hold_at: secs("hold_at"),
-                perf: get("perf").and_then(|v| match v.as_str() {
-                    "cpu" => Some(false),
-                    "0" => None,
-                    _ => Some(true),
-                }),
-                poll: get("loop").as_deref() == Some("poll"),
-                begin_auto: get("begin").as_deref() == Some("auto"),
-                old_mix: get("mix").as_deref() == Some("old"),
-                touch: get("touch")
-                    .and_then(|v| flint_runtime::TouchControlsMode::parse(&v))
-                    .unwrap_or_default(),
-                fps: get("fps")
-                    .and_then(|v| flint_player::FrameRateSetting::parse(&v))
-                    .unwrap_or_else(|| {
-                        if flint_player::web_coarse_pointer() {
-                            flint_player::FrameRateSetting::Auto
-                        } else {
-                            flint_player::FrameRateSetting::Native
-                        }
-                    }),
-                quality: get("quality").unwrap_or_default(),
-                styles: params
-                    .as_ref()
-                    .map(|p| {
-                        p.get_all("style")
-                            .iter()
-                            .filter_map(|v| v.as_string())
-                            .filter(|s| !s.is_empty())
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                gpu_labels: flint_render::gpu_labels::GpuLabels::parse(
-                    get("gpu_labels").as_deref(),
-                ),
-                scissor: get("scissor").map(|v| v != "0"),
-                pass_knobs: pass_knobs(params.as_ref()),
+                poll: query.get("loop") == Some("poll"),
+                begin_auto: query.get("begin") == Some("auto"),
+                gpu_labels: flint_render::gpu_labels::GpuLabels::parse(query.get("gpu_labels")),
+                scissor: query.get("scissor").map(|v| v != "0"),
             }
         }
     }
@@ -267,10 +199,15 @@ mod web {
 
     async fn start() -> Result<(), String> {
         let args = WebArgs::from_query();
+        // A value that doesn't read is said and played without: a page has
+        // no command line to refuse it to (#1142)
+        for problem in &args.problems {
+            web_sys::console::warn_1(&format!("[flint-web] ?{problem}").into());
+        }
         // `?perf=1`: the start-up's load report (#1092), from the page's
         // first line here to the first frame, printed to the console. The
         // fetches and the device's promise are waits no stage names.
-        if args.perf.is_some() {
+        if args.options.perf.is_some() {
             flint_core::load_report::begin(flint_core::load_report::LoadKind::Start, "");
         }
         // Before the renderer reads it
@@ -324,27 +261,17 @@ mod web {
             None,
             loaded.scene_file.scene.input_config.clone(),
         );
-        app.launch.msaa_sample_count = args.msaa;
-        app.launch.pass_knobs = args.pass_knobs;
-        app.launch.render_scale = args.render_scale;
-        app.launch.quality_overrides = args.quality;
-        // A bad word is a warning in the console, not a page that won't
-        // start: the scene's user styles register later, at init (#274)
-        app.launch.style_specs = args.styles;
-        app.input.touch_controls_mut().set_mode(args.touch);
-        // The desktop's --frame-step and --seed rule (#705)
-        app.step_frames(args.frame_step, args.seed);
-        app.launch.hold_at = args.hold_at;
-        app.set_frame_rate(args.fps);
-        if let Some(gpu) = args.perf {
-            app.enable_perf(gpu);
-            // The scope recorder's look-back, which the readout's Save
-            // trace downloads (#1097), in a build that has the recorder
-            if flint_core::profile::COMPILED_IN {
-                app.trace_scopes(flint_player::TraceSetup::default());
-            }
+        // Msaa, scale, quality, styles, touch, frame step and seed, hold,
+        // fps, perf and the mix: the same call as the desktop's flags (#1142).
+        // A style word the scene's user styles don't know yet is a console
+        // warning at init, once they register (#274)
+        let perf = args.options.perf.is_some();
+        args.options.apply(&mut app);
+        // The scope recorder's look-back, which the readout's Save trace
+        // downloads (#1097), in a build that has the recorder
+        if perf && flint_core::profile::COMPILED_IN {
+            app.trace_scopes(flint_player::TraceSetup::default());
         }
-        app.audio.set_old_mix(args.old_mix);
         app.apply_scene_settings(&loaded.scene_file);
         app.set_schemas(loaded.registry, loaded.schemas);
         app.set_event_proxy(event_loop.create_proxy());
