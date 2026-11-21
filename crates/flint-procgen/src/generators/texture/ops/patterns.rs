@@ -576,7 +576,9 @@ pub const VORONOI_TEXTURE: OpDescriptor = OpDescriptor {
     label: "Voronoi Texture",
     summary: "Write a Voronoi (Worley) distance field, and optionally each pixel's cell.",
     reads: &[],
-    writes: &["<output>"],
+    // `<cell_output>` is optional: unset, the op writes no second channel and
+    // graph mode copies nothing out for it (#1166).
+    writes: &["<output>", "<cell_output>"],
     modifies: &[],
     params: &[
         P::channel("output", "output").help("Channel the distance (0–1) is written to"),

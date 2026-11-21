@@ -1,0 +1,3 @@
+### A graph-mode op can read `voronoi_texture`'s `cell_output` by node id (#1166)
+**What changed.** `voronoi_texture` now declares `<cell_output>` as a channel it writes, so in a pipeline whose ops have `id`s, another op's `inputs` can name it (`cell_id = "cells.cell"` or `"cells.<cell_output>"`), and the texture node editor shows it as a second output pin. Before, graph mode never copied it out and the reader got zeros. With `cell_output` unset nothing changes, and specs without ids render byte-identically. The node editor also stops guessing `height` for an optional channel left unset, which wired such a pin to whatever read height.
+**What to do.** Nothing.

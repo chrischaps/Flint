@@ -605,7 +605,7 @@ Writes `<output>`.
 
 Write a Voronoi (Worley) distance field, and optionally each pixel's cell.
 
-Writes `<output>`.
+Writes `<output>`, `<cell_output>`.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
