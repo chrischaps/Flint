@@ -81,6 +81,9 @@ pub enum NoteKind {
     PhysicsSteps,
     /// The clock saw a stall long enough that pacing passed it through.
     ClockStall,
+    /// The `persist_*` store written to its save file (#1119; `detail`:
+    /// why: `debounce`, `persist_save`, `scene transition`, `exit`).
+    Save,
     /// A screenshot read back and written (`--screenshot`; `detail`: its
     /// file). Tooling: see [`NoteKind::is_tooling`].
     Screenshot,
@@ -93,7 +96,7 @@ pub enum NoteKind {
 
 impl NoteKind {
     /// Every kind, in the order above.
-    pub const ALL: [NoteKind; 24] = [
+    pub const ALL: [NoteKind; 25] = [
         NoteKind::ModelLoad,
         NoteKind::TextureLoad,
         NoteKind::PipelineBuild,
@@ -115,6 +118,7 @@ impl NoteKind {
         NoteKind::SurfaceReconfigure,
         NoteKind::PhysicsSteps,
         NoteKind::ClockStall,
+        NoteKind::Save,
         NoteKind::Screenshot,
         NoteKind::StatsOverlay,
         NoteKind::TraceRing,
@@ -144,6 +148,7 @@ impl NoteKind {
             NoteKind::SurfaceReconfigure => "surface reconfigure",
             NoteKind::PhysicsSteps => "physics steps",
             NoteKind::ClockStall => "clock stall",
+            NoteKind::Save => "save",
             NoteKind::Screenshot => "screenshot",
             NoteKind::StatsOverlay => "stats overlay",
             NoteKind::TraceRing => "trace ring",

@@ -609,6 +609,7 @@ A note made inside another, such as a model inside a transition or a pipeline in
 | `surface reconfigure` | the window's swapchain made again (a resize) |
 | `physics steps` | a frame that ran more than one fixed step |
 | `clock stall` | a frame over 250 ms, which pacing passed through as it was |
+| `save` | the `persist_*` store written to its save file, by why (`debounce`, `persist_save`, `scene transition`, `exit`) |
 | `screenshot` | a `--screenshot` frame read back and written as a PNG, by its file |
 | `stats overlay` | the HUD pass of the first frame F2 shows a view on (`opened`, `opened (graph)`) |
 | `trace ring` | the scope recorder's ring grew to hold its look-back (`main ring grew to 655360 records`; [Recording a trace](#recording-a-trace)) |

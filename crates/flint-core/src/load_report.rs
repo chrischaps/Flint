@@ -193,6 +193,7 @@ impl Stage {
             | NoteKind::SurfaceReconfigure
             | NoteKind::PhysicsSteps
             | NoteKind::ClockStall
+            | NoteKind::Save
             | NoteKind::Screenshot
             | NoteKind::StatsOverlay
             | NoteKind::TraceRing => return None,

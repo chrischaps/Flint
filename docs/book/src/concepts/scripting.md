@@ -1528,12 +1528,16 @@ is one every `persist_get` sees last session's values from the first
 created until something is stored.
 
 It is written back 1 s after the last `persist_set` / `persist_remove` /
-`persist_clear` (a script writing every frame still produces one write per
-second), on every scene transition (after the outgoing scene's
+`persist_clear` that changed something (a script writing new values every
+frame still produces one write per second; setting a key to the value it
+already holds is no change and writes nothing), on every scene transition (after the outgoing scene's
 `on_scene_exit`), and on exit. `persist_save()` with no arguments forces the
 write at the end of the frame --- call it after a settings screen commits, so
 a crash a moment later loses nothing. Loads and saves log at `info`; a save
-that fails or a file that can't be read logs at `error`.
+that fails or a file that can't be read logs at `error`. A save is written on
+the frame (a few ms, more on a busy disk), and each one leaves a `save` frame
+note, so a hitch it causes is named `save debounce, 9.1 ms` in the hitch log
+rather than `sync +9.1 ms`.
 
 A game's Rust code shares the same store: a player extension reaches it as
 `ExtensionCtx::persist` (see [Player Extensions](../guides/player-extensions.md#saved-data)),
