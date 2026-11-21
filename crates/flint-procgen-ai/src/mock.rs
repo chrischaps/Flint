@@ -28,6 +28,10 @@ pub struct MockAgent;
 /// needs a skeleton). The mock starts from these and applies the prompt.
 pub(crate) const CREATURE_TEMPLATE: &str = include_str!("../templates/creature_v1.procgen.toml");
 
+/// A terrain's params default to a flat plain (no height layers, no splat
+/// rules), so the mock starts a `terrain_v1` spec from rolling hills (#1168).
+pub(crate) const TERRAIN_TEMPLATE: &str = include_str!("../templates/terrain_v1.procgen.toml");
+
 /// How a prompt word changes a param.
 #[derive(Debug, Clone, Copy)]
 enum Nudge {
@@ -366,6 +370,7 @@ impl ProcGenAgent for MockAgent {
             // Start from a template where defaults can't build anything.
             let mut params = match name {
                 "creature_v1" => ProcGenSpec::parse(CREATURE_TEMPLATE)?.params,
+                "terrain_v1" => ProcGenSpec::parse(TERRAIN_TEMPLATE)?.params,
                 _ => toml::Value::Table(Default::default()),
             };
             // Write out every scalar default, so the spec says what it makes.

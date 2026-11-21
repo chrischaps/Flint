@@ -261,19 +261,25 @@ fn append_vertices(out: &mut ModelMesh, prim: &ImportedMesh) {
     );
 }
 
-/// Read a PNG back into an [`ImageData`] (RGBA8), so a written texture can
-/// be validated as it lies on disk. The file can't say what the image
-/// means, so the caller names its `semantics`.
+/// Read a PNG back into an [`ImageData`], so a written texture can be
+/// validated as it lies on disk: a 16-bit greyscale file (a heightmap) as
+/// [`PixelFormat::L16`](crate::PixelFormat), anything else as RGBA8. The
+/// file can't say what the image means, so the caller names its `semantics`.
 pub fn read_png(path: &Path, semantics: crate::ChannelSemantics) -> Result<ImageData> {
     let bytes = flint_core::vfs::read(path)?;
     let img = image::load_from_memory(&bytes)
-        .map_err(|e| ProcGenError::ImageError(format!("could not read {}: {e}", path.display())))?
-        .into_rgba8();
+        .map_err(|e| ProcGenError::ImageError(format!("could not read {}: {e}", path.display())))?;
+    if let image::DynamicImage::ImageLuma16(grey) = img {
+        let (width, height) = grey.dimensions();
+        return Ok(ImageData::grey16(width, height, grey.as_raw(), semantics));
+    }
+    let img = img.into_rgba8();
     Ok(ImageData {
         width: img.width(),
         height: img.height(),
         pixels: img.into_raw(),
         channel_semantics: semantics,
+        format: crate::PixelFormat::Rgba8,
     })
 }
 

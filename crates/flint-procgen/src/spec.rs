@@ -814,9 +814,17 @@ impl ProcGenSpec {
         Ok(spec)
     }
 
-    /// Load a spec from a TOML file.
+    /// Load a spec from a TOML file. A terrain editor's `x.terrain.toml`
+    /// loads as the `terrain_v1` spec it is (#1168,
+    /// [`crate::generators::terrain::from_terrain_toml`]).
     pub fn from_file(path: &Path) -> Result<Self> {
         let content = vfs::read_to_string(path)?;
+        if path
+            .to_str()
+            .is_some_and(crate::generators::terrain::is_terrain_spec)
+        {
+            return crate::generators::terrain::from_terrain_toml(&content);
+        }
         Self::parse(&content)
     }
 

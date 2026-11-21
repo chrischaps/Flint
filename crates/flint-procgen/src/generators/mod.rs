@@ -6,6 +6,7 @@
 pub mod creature;
 pub mod form;
 pub mod sweep;
+pub mod terrain;
 pub mod texture;
 pub mod tree;
 pub mod util;
@@ -19,4 +20,5 @@ pub fn register_built_in_generators(registry: &mut GeneratorRegistry) {
     registry.register(Box::new(creature::CreatureGenerator));
     registry.register(Box::new(form::FormGenerator));
     registry.register(Box::new(sweep::SweepGenerator));
+    registry.register(Box::new(terrain::TerrainGenerator));
 }

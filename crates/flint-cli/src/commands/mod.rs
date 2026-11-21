@@ -66,7 +66,6 @@ pub mod style;
 pub mod style_sheet;
 pub mod sweep;
 pub mod terrain_edit;
-pub mod terrain_gen;
 pub mod tex_edit;
 pub mod validate;
 pub mod validate_suite;

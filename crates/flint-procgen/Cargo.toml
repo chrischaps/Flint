@@ -16,6 +16,9 @@ flint-import = { workspace = true }
 # through a `SceneDocument`.
 flint-scene = { workspace = true }
 flint-schema = { workspace = true }
+# terrain_v1 (#1168) wraps the terrain bake, so a .terrain.toml is a spec
+# like any other: one bake for the editor, the CLI and the cache.
+flint-terrain = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

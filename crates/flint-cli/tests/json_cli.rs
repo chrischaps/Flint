@@ -429,7 +429,7 @@ fn every_command_answers_with_one_json_document() {
             "--dry-run",
         ],
     );
-    assert_eq!(terrain["files"][1]["role"], "splat", "{terrain:#}");
+    assert_eq!(terrain["generator"], "terrain_v1", "{terrain:#}");
     ok(
         &dir,
         &[

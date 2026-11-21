@@ -99,9 +99,11 @@ pub fn editor(args: TerrainEditArgs) -> Result<TerrainEditApp> {
         spec.seed.value
     };
 
+    let spec_issues = spec_issues(&spec_path);
     Ok(TerrainEditApp {
         spec,
         spec_path,
+        spec_issues,
 
         // Edit mode
         edit_mode: EditMode::Generate,
@@ -205,6 +207,30 @@ pub struct TerrainEditApp {
     // Save state
     watcher_paused_until: Option<Instant>,
     status_message: Option<(String, Instant)>,
+    /// What `flint gen` warns of the spec file as it lies on disk (#1168):
+    /// a key nothing reads, a value the bake can't use. Shown until a save
+    /// or a reload clears them.
+    spec_issues: Vec<String>,
+}
+
+/// The spec file's issues, as `flint gen` prints them: the terrain_v1
+/// schema's, through the one check both run. A file that won't parse says
+/// so as its one issue.
+fn spec_issues(path: &std::path::Path) -> Vec<String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => return vec![format!("couldn't read the spec: {e}")],
+    };
+    match flint_procgen::generators::terrain::check_terrain_toml(&text) {
+        Ok(issues) => issues
+            .iter()
+            .map(|i| {
+                let level = if i.is_error() { "error" } else { "warning" };
+                format!("{level}: {i}")
+            })
+            .collect(),
+        Err(e) => vec![format!("error: {e}")],
+    }
 }
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -420,6 +446,7 @@ impl TerrainEditApp {
             match TerrainSpec::from_file(&self.spec_path) {
                 Ok(new_spec) => {
                     self.spec = new_spec;
+                    self.spec_issues = spec_issues(&self.spec_path);
                     self.mark_dirty();
                 }
                 Err(e) => tracing::warn!("Failed to reload spec: {}", e),
@@ -445,6 +472,9 @@ impl TerrainEditApp {
         match self.spec.save(&self.spec_path) {
             Ok(()) => {
                 self.watcher_paused_until = Some(Instant::now() + Duration::from_millis(1000));
+                // A save writes only what the spec read, so an unknown key
+                // is gone; a value out of range is still there
+                self.spec_issues = spec_issues(&self.spec_path);
                 self.set_status(&format!("Saved {}", self.spec_path.display()));
             }
             Err(e) => self.set_status(&format!("Save failed: {e}")),
@@ -473,6 +503,7 @@ impl TerrainEditApp {
             match self.spec.save(&path) {
                 Ok(()) => {
                     self.spec_path = path.clone();
+                    self.spec_issues = spec_issues(&self.spec_path);
                     self.watcher_paused_until = Some(Instant::now() + Duration::from_millis(1000));
                     self.set_status(&format!("Saved to {}", path.display()));
                 }
@@ -552,6 +583,12 @@ impl TerrainEditApp {
         let fps = self.fps;
         let brush_uv = self.brush_uv;
         let status_msg = self.status_message.clone();
+        let spec_issues = self.spec_issues.clone();
+        let spec_file = self
+            .spec_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let heightmap_res = spec.geometry.resolution;
 
         let mut dirty = false;
@@ -629,6 +666,31 @@ impl TerrainEditApp {
                             }
                         });
 
+                        // The spec's issues stay up: they don't fade
+                        // like a status, since the file still has them
+                        if !spec_issues.is_empty() {
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} in {}:",
+                                    match spec_issues.len() {
+                                        1 => "1 spec issue".to_string(),
+                                        n => format!("{n} spec issues"),
+                                    },
+                                    spec_file
+                                ))
+                                .small()
+                                .strong()
+                                .color(egui::Color32::from_rgb(232, 190, 110)),
+                            );
+                            for issue in &spec_issues {
+                                ui.label(
+                                    egui::RichText::new(issue)
+                                        .small()
+                                        .color(egui::Color32::from_rgb(222, 196, 150)),
+                                );
+                            }
+                        }
                         if let Some((msg, when)) = &status_msg {
                             let age = when.elapsed().as_secs_f32();
                             if age < 4.0 {

@@ -207,6 +207,16 @@ Only when `card_layout` is `scatter`:
 | `texture_length` | number >0 to 1000 |  | Metres of sweep per texture repeat (v); on a loop nudged so the repeats meet at the seam. Unset: the profile's width |
 | `width` | number >0 to 100 | `0.2` | Without a `profile`, the width of a box cross-section, metres |
 
+### `terrain_v1` (image set, written as PNGs)
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `geometry` | table |  | The terrain's size and the maps' resolution |
+| `grass` | table |  | The terrain component's GPU grass (see the book's Terrain page). Not read by the bake; leave it out unless the terrain should grow grass |
+| `height_layers` | array of tables |  | The height recipe, run in order on a grid starting at 0: `noise` adds fractal noise, `flatten` pulls heights toward a level, `erosion` wears them |
+| `splat_rules` | array of tables |  | Paint the four surface layers: each texel takes every rule whose height and slope it fits, weighted toward the middle of the rule's band, and the weights are normalized. No rules paints all layer 0 |
+| `textures` | table |  | The terrain component's surface textures and material; not read by the bake |
+
 ### `texture_v1` (image set, written as PNGs)
 
 | Key | Type | Default | What it does |

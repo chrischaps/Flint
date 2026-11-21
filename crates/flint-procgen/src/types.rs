@@ -277,12 +277,38 @@ pub enum ChannelSemantics {
     Height,
     /// General-purpose mask.
     Mask,
+    /// A terrain's four layer weights, R = layer 0 .. A = layer 3 (#1168).
+    /// Last, so the disk cache's variant numbers for the others hold.
+    Splat,
+}
+
+/// How an [`ImageData`]'s `pixels` are laid out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PixelFormat {
+    /// Four bytes a pixel, R G B A. What every generator but terrain makes.
+    #[default]
+    Rgba8,
+    /// One 16-bit grey sample a pixel, little-endian (#1168): a heightmap,
+    /// whose 65,536 steps a byte's 256 would turn into terraces. Written as
+    /// a 16-bit greyscale PNG.
+    L16,
+}
+
+impl PixelFormat {
+    /// Bytes one pixel takes.
+    pub fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Rgba8 => 4,
+            Self::L16 => 2,
+        }
+    }
 }
 
 /// A generated image with pixel data and semantic metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImageData {
-    /// Raw pixel data in RGBA8 format (4 bytes per pixel).
+    /// Raw pixel data, laid out as `format` says: RGBA8 (4 bytes a pixel)
+    /// unless it says otherwise.
     pub pixels: Vec<u8>,
     /// Width in pixels.
     pub width: u32,
@@ -290,6 +316,9 @@ pub struct ImageData {
     pub height: u32,
     /// What this image represents.
     pub channel_semantics: ChannelSemantics,
+    /// How `pixels` is laid out.
+    #[serde(default)]
+    pub format: PixelFormat,
 }
 
 impl ImageData {
@@ -302,6 +331,57 @@ impl ImageData {
             width,
             height,
             channel_semantics,
+            format: PixelFormat::Rgba8,
+        }
+    }
+
+    /// A 16-bit greyscale image from its samples, row by row (#1168).
+    pub fn grey16(
+        width: u32,
+        height: u32,
+        samples: &[u16],
+        channel_semantics: ChannelSemantics,
+    ) -> Self {
+        let mut pixels = Vec::with_capacity(samples.len() * 2);
+        for s in samples {
+            pixels.extend_from_slice(&s.to_le_bytes());
+        }
+        Self {
+            pixels,
+            width,
+            height,
+            channel_semantics,
+            format: PixelFormat::L16,
+        }
+    }
+
+    /// The samples of a 16-bit greyscale image; `None` for any other format.
+    pub fn grey16_samples(&self) -> Option<Vec<u16>> {
+        (self.format == PixelFormat::L16).then(|| {
+            self.pixels
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|b| u16::from_le_bytes(*b))
+                .collect()
+        })
+    }
+
+    /// The pixels as RGBA8, for a consumer that only takes that (a GPU
+    /// texture upload): itself for RGBA8, and a 16-bit grey image as opaque
+    /// grey from each sample's high byte.
+    pub fn to_rgba8(&self) -> std::borrow::Cow<'_, [u8]> {
+        match self.grey16_samples() {
+            None => std::borrow::Cow::Borrowed(&self.pixels),
+            Some(samples) => std::borrow::Cow::Owned(
+                samples
+                    .iter()
+                    .flat_map(|s| {
+                        let g = (s >> 8) as u8;
+                        [g, g, g, 255]
+                    })
+                    .collect(),
+            ),
         }
     }
 
@@ -317,10 +397,11 @@ impl ImageData {
 
     /// Validate that the pixel buffer size matches dimensions.
     pub fn validate(&self) -> crate::Result<()> {
-        let expected = (self.width * self.height * 4) as usize;
+        let bpp = self.format.bytes_per_pixel();
+        let expected = self.width as usize * self.height as usize * bpp;
         if self.pixels.len() != expected {
             return Err(crate::ProcGenError::ImageError(format!(
-                "pixel buffer length {} doesn't match {}x{}x4 = {}",
+                "pixel buffer length {} doesn't match {}x{}x{bpp} = {}",
                 self.pixels.len(),
                 self.width,
                 self.height,
@@ -330,20 +411,32 @@ impl ImageData {
         Ok(())
     }
 
-    /// Encode the image as PNG bytes in memory.
+    /// Encode the image as PNG bytes in memory: RGBA8, or for
+    /// [`PixelFormat::L16`] 16-bit greyscale.
     pub fn to_png_bytes(&self) -> crate::Result<Vec<u8>> {
         use image::codecs::png::PngEncoder;
         use image::ImageEncoder;
 
+        self.validate()?;
+        // image 0.25 takes 16-bit samples in native byte order (and writes
+        // PNG's big-endian itself), so the little-endian store is turned
+        // round on a big-endian machine; on any other it is the same bytes.
+        let native;
+        let (samples, color) = match self.format {
+            PixelFormat::Rgba8 => (&self.pixels, image::ExtendedColorType::Rgba8),
+            PixelFormat::L16 => {
+                native = self
+                    .grey16_samples()
+                    .unwrap_or_default()
+                    .iter()
+                    .flat_map(|s| s.to_ne_bytes())
+                    .collect::<Vec<u8>>();
+                (&native, image::ExtendedColorType::L16)
+            }
+        };
         let mut buf = Vec::new();
-        let encoder = PngEncoder::new(&mut buf);
-        encoder
-            .write_image(
-                &self.pixels,
-                self.width,
-                self.height,
-                image::ExtendedColorType::Rgba8,
-            )
+        PngEncoder::new(&mut buf)
+            .write_image(samples, self.width, self.height, color)
             .map_err(|e| crate::ProcGenError::ImageError(format!("PNG encoding failed: {e}")))?;
         Ok(buf)
     }
