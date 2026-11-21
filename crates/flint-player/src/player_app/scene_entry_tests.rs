@@ -201,6 +201,7 @@ fn a_scene_that_cannot_load_leaves_the_current_one_and_fails_the_run() {
         // back to idle (#362), not stuck loading
         app.transition_phase = super::TransitionPhase::Loading {
             target_scene: "missing.scene.toml".into(),
+            covered: false,
         };
         app.advance_transition();
         assert!(matches!(app.transition_phase, super::TransitionPhase::Idle));
@@ -229,6 +230,7 @@ fn a_scene_that_cannot_load_fades_back_in_over_the_current_one() {
 
         app.transition_phase = super::TransitionPhase::Loading {
             target_scene: "missing.scene.toml".into(),
+            covered: false,
         };
         app.advance_transition();
         assert_eq!(app.core.scene_path, A, "the scene playing is kept");

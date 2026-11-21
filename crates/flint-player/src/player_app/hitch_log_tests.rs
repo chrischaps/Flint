@@ -322,6 +322,9 @@ fn a_slow_transition_is_named_as_its_hitchs_cause() {
             .collect();
         assert_eq!(entered.len(), 1, "{text}");
         assert!(entered[0]["ms"].as_f64().unwrap() >= 150.0, "{text}");
+        // No script covers it (none calls complete_transition): it went
+        // straight through, so the player saw it, and it is the game's
+        assert_eq!(entered[0]["class"], "player", "{text}");
         let run = &app.stats.watch.run;
         assert!(
             run.all
@@ -330,6 +333,129 @@ fn a_slow_transition_is_named_as_its_hitchs_cause() {
                 .any(|(k, n)| k == "scene transition" && *n == 1),
             "{run:?}"
         );
+        assert_eq!(run.loading.hitches, 0, "{run:?}");
+        app.gate_hitches(HitchGate {
+            max: Some(0),
+            ..Default::default()
+        });
+        let why = app
+            .run_failure()
+            .expect("an uncovered load fails --max-hitches 0");
+        assert!(why.contains("scene transition"), "{why}");
+    });
+    let _ = std::fs::remove_file(&log);
+}
+
+/// Scene A's HUD leaves for B at 3.01 s and says its fade is drawn on the
+/// first frame it is asked to (as the showcase's `zone_hud.rhai` does after
+/// 1.5 s of black).
+const LEAVE_UNDER_COVER: &str = r#"
+fn on_update() {
+    let t = total_time();
+    if t - delta_time() < 3.01 && t >= 3.01 { load_scene("b.scene.toml"); }
+    if transition_phase() == "exiting" { complete_transition(); }
+}
+"#;
+
+/// Scene B takes 150 ms to start, then ends its fade-in at once.
+const ARRIVE_UNDER_COVER: &str = r#"
+fn on_init() {
+    let start = timestamp();
+    while start.elapsed < 0.15 { }
+}
+fn on_update() {
+    if transition_phase() == "entering" { complete_transition(); }
+}
+"#;
+
+/// #1125: the same slow load behind a script's cover is drawn under a black
+/// screen, so its hitch is logged and reported as `loading`, never counted
+/// against `--max-hitches 0`, and held to a limit only with
+/// `--max-hitches-of loading`.
+#[test]
+fn a_covered_transition_is_loading_and_passes_the_gate() {
+    let log = log_path("covered");
+    let mut files = game(LEAVE_UNDER_COVER);
+    files.insert(
+        "game/scenes/b.scene.toml",
+        "[scene]\nname = \"B\"\n\n[entities.arrival]\n[entities.arrival.script]\nsource = \"arrive.rhai\"\n",
+    );
+    files.insert("game/scripts/arrive.rhai", ARRIVE_UNDER_COVER);
+    vfs::scoped(Arc::new(files), || {
+        let mut app = started();
+        assert!(app.core.script.can_complete_transition());
+        app.log_hitches_to(&log).expect("the log opens");
+        app.gate_hitches(HitchGate {
+            max: Some(0),
+            ..Default::default()
+        });
+        play_to(&mut app, 3.5);
+        assert!(app.core.scene_path.ends_with("b.scene.toml"));
+        assert!(app.transition_phase.is_idle(), "B ended its fade-in");
+        app.print_exit_report();
+
+        let text = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let entered: Vec<&serde_json::Value> = lines
+            .iter()
+            .filter(|l| {
+                l["cause"]
+                    .as_str()
+                    .is_some_and(|c| c.starts_with("scene transition b.scene.toml, "))
+            })
+            .collect();
+        assert_eq!(entered.len(), 1, "{text}");
+        assert!(entered[0]["ms"].as_f64().unwrap() >= 150.0, "{text}");
+        assert_eq!(entered[0]["class"], "loading", "{text}");
+        assert_eq!(entered[0]["startup"], false, "{text}");
+
+        let watch = &app.stats.watch;
+        let transitions = |s: &super::hitch_watch::Seen| {
+            s.causes
+                .iter()
+                .find(|(k, _)| k == "scene transition")
+                .map_or(0, |(_, n)| *n)
+        };
+        assert_eq!(transitions(&watch.run.loading), 1, "{:?}", watch.run);
+        assert_eq!(transitions(&watch.run.all), 0, "{:?}", watch.run);
+        assert_eq!(app.stats.hitches.session().loading, 1);
+        let report = watch.report();
+        let line = report
+            .iter()
+            .find(|l| l.starts_with("[perf] loading hitches"))
+            .unwrap_or_else(|| panic!("{report:?}"));
+        assert!(
+            line.starts_with(&format!(
+                "[perf] loading hitches (scene loads behind a script's cover, not gated): {},",
+                watch.run.loading.hitches
+            )),
+            "{line}"
+        );
+        assert!(line.contains("causes: 1 scene transition"), "{line}");
+
+        // The game's count leaves it out: --max-hitches 0 holds, unless the
+        // machine itself hitched past the 60 ms floor, which isn't the load
+        match app.run_failure() {
+            None => {}
+            Some(why) => assert!(!why.contains("scene transition"), "{why}"),
+        }
+        // Asked for by name, it counts
+        app.gate_hitches(HitchGate {
+            max: Some(0),
+            max_startup: None,
+            of: HitchClass::Loading,
+        });
+        let why = app
+            .run_failure()
+            .expect("--max-hitches-of loading counts it");
+        assert!(
+            why.starts_with("1 loading hitch after the first 2 s, over --max-hitches 0"),
+            "{why}"
+        );
+        assert!(why.contains("scene transition"), "{why}");
     });
     let _ = std::fs::remove_file(&log);
 }

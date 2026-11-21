@@ -761,8 +761,9 @@ impl super::PlayerApp {
                     break;
                 }
                 // A screenshot's or the F2 overlay's own cost (#1129) is
-                // not the game's hitch: a capture of it shows nothing
-                if h.cause.is_tooling() {
+                // not the game's hitch: a capture of it shows nothing. Nor
+                // is a load behind a script's fade (#1125): it shows the fade
+                if !h.is_game() {
                     continue;
                 }
                 if !captures.on_hitch_startup && h.game_time < STARTUP_SECS {

@@ -174,12 +174,13 @@ mod graph {
             let first = ring.partition_point(|f| f.end() < horizon);
             let oldest = ring.get(first).map_or(0, |f| f.index);
             // Both run oldest first, so one walk marks every hitch.
-            // The tools' own hitches (#1129) stand as tall bars with no mark:
-            // the counters leave them out, so the marks do too
+            // The tools' own hitches (#1129) and a covered load's (#1125)
+            // stand as tall bars with no mark: the counters leave them out,
+            // so the marks do too
             let mut hitches = detector
                 .hitches()
                 .iter()
-                .filter(|h| !h.cause.is_tooling())
+                .filter(|h| h.is_game())
                 .map(|h| h.index)
                 .skip_while(|&i| i < oldest)
                 .peekable();
@@ -208,6 +209,7 @@ mod graph {
                 worst_ms: s.worst_ms,
                 since_last_secs: s.since_last_secs,
                 last: self.last_of.map(|_| self.last.as_str()),
+                loading: s.loading,
             }
         }
     }
@@ -224,6 +226,9 @@ mod graph {
         // The tools' own cost (#1129): named, and said not to count
         if h.cause.is_tooling() {
             out.push_str(", not counted");
+        } else if h.loading {
+            // Under a script's fade (#1125): counted, as `loading`
+            out.push_str(", behind a cover");
         }
     }
 }
@@ -669,6 +674,7 @@ mod tests {
                 gpu_ms: None,
                 refreshes: Some(3),
                 cause,
+                loading: false,
                 notes,
             }
         }
@@ -802,6 +808,7 @@ mod tests {
                 gpu_ms: None,
                 refreshes: None,
                 cause: Cause::Tooling { tool_ms: 104.0 },
+                loading: false,
                 notes: vec![HitchNote {
                     note: FrameNote::new(NoteKind::StatsOverlay, "opened", Some(104.0)),
                     frame_before: false,

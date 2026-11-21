@@ -118,6 +118,10 @@ pub(crate) struct Frame {
     /// hitch detector passes over it, so a capture isn't counted as the
     /// hitch it may cause.
     pub capturing: bool,
+    /// A scene was loaded in it behind a script's cover (#1125,
+    /// [`FrameHistory::loading_behind_cover`]): its hitch, and the next
+    /// frame's, are counted as `loading`.
+    pub behind_cover: bool,
 }
 
 impl Frame {
@@ -380,6 +384,14 @@ impl FrameHistory {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // desktop only
     pub(crate) fn capturing(&mut self) {
         self.under_way.capturing = true;
+    }
+
+    /// The frame under way loads a scene behind a script's cover (#1125):
+    /// the transition's Exiting fade ended with `complete_transition()`, so
+    /// the load's long frame is drawn under it. A hitch on it, or on the
+    /// frame after, is the detector's `loading`, not the game's.
+    pub(crate) fn loading_behind_cover(&mut self) {
+        self.under_way.behind_cover = true;
     }
 
     /// The number the frame under way will have once it closes.

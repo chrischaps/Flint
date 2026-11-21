@@ -7,7 +7,10 @@
 //! hears what it found, once a frame, right after. A hitch in the first
 //! [`STARTUP_SECS`] of game time (loading's last uploads, the first
 //! pipeline compiles) is counted apart as `startup` and is held against
-//! `--max-hitches-startup` only.
+//! `--max-hitches-startup` only. A hitch of a scene loaded behind a
+//! script's cover (`Hitch::loading`, #1125) is tallied as `loading` alone,
+//! said on its own `[perf] loading hitches` line, and held against a limit
+//! only with `--max-hitches-of loading`.
 //!
 //! A log line waits for the [`AROUND`] frames after its hitch, so it shows
 //! the frames either side; it is written once they have closed, about
@@ -28,16 +31,23 @@ const CAUSES_NAMED: usize = 4;
 
 /// The hitches of one part of the run (the start, or after it), all of
 /// them and each class's apart, so a gate narrowed to one class names
-/// that class's worst and causes (#1130).
+/// that class's worst and causes (#1130). A scene loaded behind a
+/// script's cover (#1125) is `loading` alone: in neither `all` nor its
+/// player/elsewhere class, since the player saw none of it.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) struct Tally {
     pub all: Seen,
     pub player: Seen,
     pub elsewhere: Seen,
+    pub loading: Seen,
 }
 
 impl Tally {
     fn add(&mut self, h: &Hitch) {
+        if h.loading {
+            self.loading.add(h);
+            return;
+        }
         self.all.add(h);
         match h.cause {
             Cause::Player { .. } => self.player.add(h),
@@ -53,6 +63,7 @@ impl Tally {
             HitchClass::All => &self.all,
             HitchClass::Player => &self.player,
             HitchClass::Elsewhere => &self.elsewhere,
+            HitchClass::Loading => &self.loading,
         }
     }
 }
@@ -127,8 +138,9 @@ struct LogLine {
     median_ms: f64,
     /// Under vsync, the refreshes it ran past its one; `null` without.
     missed_refreshes: Option<u32>,
-    /// `player`, `elsewhere` or `tooling` (the player's own screenshot or
-    /// F2 overlay, #1129).
+    /// `player`, `elsewhere`, `tooling` (the player's own screenshot or
+    /// F2 overlay, #1129) or `loading` (a scene loaded behind a script's
+    /// cover, #1125; `phase` and `script` still say whose work it was).
     class: &'static str,
     /// In the first [`STARTUP_SECS`] of game time.
     startup: bool,
@@ -225,7 +237,7 @@ impl LogLine {
             judged_ms: r2(h.judged_ms),
             median_ms: r2(h.median_ms),
             missed_refreshes: h.refreshes.map(|r| r.saturating_sub(1)),
-            class: h.cause.label(),
+            class: h.class(),
             startup,
             player_ms: r2(h.player_ms),
             phase,
@@ -479,6 +491,29 @@ impl HitchWatch {
                 s.worst_and_causes()
             ));
         }
+        // Said only when there were any: most runs load no scene behind a
+        // fade (#1125). The start's are the start's, said beside them
+        let (l, ls) = (&self.run.loading, &self.startup.loading);
+        if l.hitches + ls.hitches > 0 {
+            let gated = match self.gate {
+                Some(g) if g.of == HitchClass::Loading => "--max-hitches-of loading",
+                _ => "not gated",
+            };
+            let start = if ls.hitches > 0 {
+                format!(" (and {} in the start)", ls.hitches)
+            } else {
+                String::new()
+            };
+            let worst = if l.hitches > 0 {
+                format!(", {}", l.worst_and_causes())
+            } else {
+                String::new()
+            };
+            lines.push(format!(
+                "[perf] loading hitches (scene loads behind a script's cover, {gated}): {}{start}{worst}",
+                l.hitches
+            ));
+        }
         // Said only when there were any: most runs take no screenshot
         let t = &self.tooling;
         if t.hitches > 0 {
@@ -536,9 +571,9 @@ impl HitchReadout {
         let horizon = history.frames().back().map_or(0.0, |f| f.end() - secs);
         let mut window = 0;
         let mut worst: Option<&Hitch> = None;
-        // The game's, not its tools' (#1129): the run's count leaves them out
-        // too
-        let game = detector.hitches().iter().filter(|h| !h.cause.is_tooling());
+        // The game's, not its tools' (#1129) nor a covered load's (#1125):
+        // the run's count leaves them out too
+        let game = detector.hitches().iter().filter(|h| h.is_game());
         for h in game.filter(|h| h.at >= horizon) {
             window += 1;
             if worst.is_none_or(|w| h.ms > w.ms) {

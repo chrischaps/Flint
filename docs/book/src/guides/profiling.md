@@ -744,7 +744,7 @@ The perf line's count includes the start's hitches; the exit report below sets t
 | `wall_time` | when it began, seconds since recording began |
 | `ms`, `judged_ms`, `median_ms` | its wall time, the time it was judged by (paced under vsync) and the median it stood out from |
 | `missed_refreshes` | under vsync, the refreshes it ran past its one; `null` without vsync |
-| `class` | `player`, `elsewhere`, or `tooling` (the player's own screenshot or F2 overlay; see the notes above) |
+| `class` | `player`, `elsewhere`, `tooling` (the player's own screenshot or F2 overlay; see the notes above), or `loading` (a scene loaded behind a script's fade; below) |
 | `startup` | it came in the first two seconds of game time |
 | `player_ms` | the player's own work in it, every phase but `acquire` and `present` |
 | `phase`, `phase_ms` | the phase that grew most, and by how much (`player` only) |
@@ -773,6 +773,14 @@ Hitches in the first two seconds of game time (loading's last uploads, the first
 [perf] tooling hitches (screenshots, the F2 overlay, the trace ring; never gated): 4, worst 219.8 ms at t=9.62 s (screenshot shots/look_0003.png, 192.4 ms); causes: 4 screenshot
 ```
 
+**How loads are counted.** A scene transition takes its whole load in one frame: 40 to 150 ms in a release build, more on a fresh procgen cache. A game that covers it draws a fade during the transition's exiting phase and calls `complete_transition()` once the screen is black, as the showcase's zone doors do after 1.5 s. The load's long frame then stands behind the fade, and the player sees none of it. Such a hitch, on the load's frame or the frame after it (the new scene's first draws, still under the fade), is classed **`loading`**. It keeps its cause, usually `scene transition <scene>, 151.2 ms`, and is logged like any other. It is counted apart from the game's hitches: the graph's count, the perf line, the exit report's counts and `--capture-on-hitch` leave it out, and so do `--max-hitches` and `--max-hitches-startup` unless `--max-hitches-of loading` names it. A chunk loaded or a model built on that frame is part of the same covered frame. The graph's counters add `+N loading` and its last line ends `, behind a cover`. The exit report gives loads a line of their own when there were any. This one is from a scene whose next scene's `on_init` takes 150 ms:
+
+```text
+[perf] loading hitches (scene loads behind a script's cover, not gated): 1, worst 159.6 ms at t=3.05 s (scene transition b.scene.toml, 159.0 ms); causes: 1 scene transition
+```
+
+A transition no script covers is the game's hitch, since the player sees the stall. That is a scene whose scripts never call `complete_transition()`, so the load runs on the next frame, or a fade that hit the ten-second timeout without saying it was drawn. A game that wants its loads gated as gameplay leaves out the cover call, or gates them by name.
+
 **Gate it.** `--max-hitches N` makes the run exit non-zero when it had more than N hitches after the start, the way `--strict-scripts` does for script errors, so a scripted run can fail:
 
 ```sh
@@ -780,7 +788,7 @@ flint-player levels/demo.scene.toml --frame-step 0.0166667 --input-script route.
   --exit-after 30 --hitch-log hitches.jsonl --max-hitches 0
 ```
 
-Startup hitches never count against `--max-hitches`, and `tooling` hitches count against no gate, so a run validated with `--screenshot-every` isn't failed by its own screenshots. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. The failure line's worst hitch and causes are that class's too. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
+Startup hitches never count against `--max-hitches`, and `tooling` hitches count against no gate, so a run validated with `--screenshot-every` isn't failed by its own screenshots. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, `--max-hitches-of elsewhere` only the time spent outside it, and `--max-hitches-of loading` only the scene loads drawn behind a fade, which the other three leave out. The failure line's worst hitch and causes are that class's too. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
 
 **Look inside it.** The log says which phase and which script, and what the engine was doing. To see what happened inside a slow phase, build with the `profile` feature and open the frame in Tracy (above). To see inside a scope, sample it ([When scopes aren't enough](#when-scopes-arent-enough)).
 
