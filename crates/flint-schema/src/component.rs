@@ -10,7 +10,7 @@
 //! | `f32`, `f64` | a number (an integer is taken) |
 //! | `string` | a string |
 //! | `entity` | the name of an entity in the scene; `""` is "not set" |
-//! | `asset` | the name of a file of `kind`, found by the project's asset search; `""` is "not set" |
+//! | `asset` | the name of a file of `kind`, found by the project's asset search, or one of `builtins`; `""` is "not set" |
 //! | `vec2`, `vec3`, `vec4` | exactly that many numbers (`vec3` also `{ x, y, z }`) |
 //! | `color` | `[r, g, b]` or `[r, g, b, a]` |
 //! | `transform` | a table of `position`, `rotation`, `scale` |
@@ -42,7 +42,8 @@ pub const TYPE_NAMES: &[(&str, &str)] = &[
     (
         "asset",
         "the name of a file of `kind` (a kind of `flint asset where`, or a list of them), \
-         checked through the project's asset search; \"\" is not set",
+         checked through the project's asset search, or one of `builtins` (names its reader \
+         takes with no file: a built-in palette, `none`); \"\" is not set",
     ),
     ("vec2", "exactly 2 numbers"),
     ("vec3", "exactly 3 numbers, or { x, y, z }"),
@@ -106,10 +107,14 @@ pub enum FieldType {
     /// `kinds` (ADR 0114). Validated as a string here; `flint_scene::diagnose`
     /// runs the search (`missing-asset`, with the paths tried). An empty
     /// string is "not set". `unless` names a sibling `bool` field that, when
-    /// true, says no file is looked for (`model.runtime`).
+    /// true, says no file is looked for (`model.runtime`). `builtins` are
+    /// the names its reader takes with no file (#1063): a built-in palette
+    /// or glyph set, `"none"` for a paper image. None is looked for (a file
+    /// of the name, which the loader would take first, needs no check).
     Asset {
         kinds: Vec<AssetKind>,
         unless: Option<String>,
+        builtins: Vec<String>,
     },
     /// Exactly 2 numbers.
     Vec2,
@@ -170,14 +175,22 @@ impl FieldType {
     }
 
     /// The type as a person reads it: `enum[a, b]`, `array<vec3>`,
-    /// `asset<models|specs>`, `table{xy, xz}`. What `flint schema` prints.
+    /// `asset<models|specs>`, `asset<papers> or none`, `table{xy, xz}`.
+    /// What `flint schema` prints.
     pub fn describe(&self) -> String {
         match self {
             FieldType::Enum { values } => format!("enum[{}]", values.join(", ")),
             FieldType::Array { element } => format!("array<{}>", element.describe()),
-            FieldType::Asset { kinds, .. } => {
+            FieldType::Asset {
+                kinds, builtins, ..
+            } => {
                 let labels: Vec<&str> = kinds.iter().map(|k| k.label()).collect();
-                format!("asset<{}>", labels.join("|"))
+                let asset = format!("asset<{}>", labels.join("|"));
+                if builtins.is_empty() {
+                    asset
+                } else {
+                    format!("{asset} or {}", builtins.join(", "))
+                }
             }
             FieldType::Fields { fields } => {
                 let mut names: Vec<&str> = fields.keys().map(String::as_str).collect();
@@ -305,6 +318,7 @@ pub const FIELD_KEYS: &[&str] = &[
     "element",
     "kind",
     "unless",
+    "builtins",
     "fields",
     "panel",
 ];
@@ -360,6 +374,9 @@ pub struct DetailedFieldSchema {
     /// An asset's sibling `bool` field that turns the search off.
     #[serde(default)]
     pub unless: Option<String>,
+    /// The names an asset field takes with no file (#1063).
+    #[serde(default)]
+    pub builtins: Option<Vec<String>>,
     /// A table's own fields.
     #[serde(default)]
     pub fields: Option<HashMap<String, FieldSchemaDefinition>>,
@@ -449,6 +466,7 @@ fn parse_field_type(type_str: &str, detail: Option<&DetailedFieldSchema>) -> Fie
                 })
                 .unwrap_or_default(),
             unless: detail.and_then(|d| d.unless.clone()),
+            builtins: detail.and_then(|d| d.builtins.clone()).unwrap_or_default(),
         },
         Some("vec2") => FieldType::Vec2,
         Some("vec3") => FieldType::Vec3,
@@ -567,7 +585,8 @@ mod tests {
             parsed("type = \"asset\"\nkind = \"models\"").field_type,
             FieldType::Asset {
                 kinds: vec![AssetKind::Models],
-                unless: None
+                unless: None,
+                builtins: vec![],
             }
         );
         assert_eq!(
@@ -575,7 +594,8 @@ mod tests {
                 .field_type,
             FieldType::Asset {
                 kinds: vec![AssetKind::Models, AssetKind::Specs],
-                unless: Some("runtime".into())
+                unless: Some("runtime".into()),
+                builtins: vec![],
             }
         );
         // A kind that is none is dropped; `lint` reports it
@@ -583,9 +603,21 @@ mod tests {
             parsed("type = \"asset\"\nkind = \"modles\"").field_type,
             FieldType::Asset {
                 kinds: vec![],
-                unless: None
+                unless: None,
+                builtins: vec![],
             }
         );
+        // #1063: names the reader takes with no file
+        let paper = parsed("type = \"asset\"\nkind = \"papers\"\nbuiltins = [\"none\"]");
+        assert_eq!(
+            paper.field_type,
+            FieldType::Asset {
+                kinds: vec![AssetKind::Papers],
+                unless: None,
+                builtins: vec!["none".into()],
+            }
+        );
+        assert_eq!(paper.field_type.describe(), "asset<papers> or none");
     }
 
     #[test]

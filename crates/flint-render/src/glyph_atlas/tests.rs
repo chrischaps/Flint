@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu_counts::CountedDevice;
 use flint_core::bundle::{Bundle, BundleManifest};
 use flint_core::project::AssetScope;
 use flint_core::vfs::{self, MemorySource};
@@ -779,7 +780,7 @@ fn the_atlas_uploads_and_reads_back() {
     assert_eq!(gpu.size, atlas.size());
     let [w, h] = gpu.size;
     let padded = w.div_ceil(256) * 256;
-    let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+    let buffer = ctx.device.create_buffer_counted(&wgpu::BufferDescriptor {
         label: Some("glyph readback"),
         size: (padded * h) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,

@@ -362,7 +362,8 @@ pub struct CpuFrame {
     pub scripts_ms: BTreeMap<String, f32>,
     pub present_ms: Option<f32>,
     pub fixed_steps: u32,
-    /// The GPU time read back during it (a frame or two old).
+    /// The GPU's busy time on its own work (#1104); `None` when it wasn't
+    /// timed or its read-back hadn't come back when the capture was made.
     pub gpu_ms: Option<f32>,
     /// What the engine did in it (#1077).
     pub notes: Vec<CpuNote>,

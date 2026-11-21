@@ -135,39 +135,15 @@ fn carry(stack: &mut Vec<UndoCommand>, old: &FlintWorld, new: &FlintWorld, side:
                 Side::Undo => (&action.new_value, &action.old_value),
                 Side::Redo => (&action.old_value, &action.new_value),
             };
-            let holds = there.as_ref().is_some_and(|v| same_value(v, left));
+            let holds = there
+                .as_ref()
+                .is_some_and(|v| flint_core::toml_util::reads_same(v, left));
             *there = holds.then(|| before.clone());
             action.entity_id = id;
             holds
         });
     }
     stack.retain(|cmd| !cmd.actions.is_empty());
-}
-
-/// Whether two field values say the same, as the file reads them back: an
-/// integer is its float (`1` is `1.0`), and a float within a hair of
-/// another is it (a gizmo's f32 written as f64 and read back).
-fn same_value(a: &toml::Value, b: &toml::Value) -> bool {
-    use toml::Value::*;
-    let num = |v: &toml::Value| match v {
-        Integer(i) => Some(*i as f64),
-        Float(f) => Some(*f),
-        _ => None,
-    };
-    match (a, b) {
-        (Array(x), Array(y)) => {
-            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| same_value(p, q))
-        }
-        (Table(x), Table(y)) => {
-            x.len() == y.len()
-                && x.iter()
-                    .all(|(k, v)| y.get(k).is_some_and(|w| same_value(v, w)))
-        }
-        _ => match (num(a), num(b)) {
-            (Some(x), Some(y)) => (x - y).abs() <= 1e-6 * x.abs().max(y.abs()).max(1.0),
-            _ => a == b,
-        },
-    }
 }
 
 #[cfg(test)]

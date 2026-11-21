@@ -10,8 +10,10 @@ for block in re.split(r'^--- ', log, flags=re.M)[1:]:
     gpu = dict(re.findall(r'(Grass|Shadows|Scene|Style mask|SSAO|Bloom|Composite|ASCII|ASCII edges|UI|[A-Z][\w ]*?) ([\d.]+)(?:,| \|)', line.split('gpu ')[-1].split('|')[0] + ' |'))
     rows.append(dict(scene=scene, s=int(sample), p50=float(frame[0]), p90=float(frame[1]), p99=float(frame[2]),
                      cpu=float(g(r'cpu ([\d.]+) ms')), gputot=float(g(r'gpu ([\d.]+) ms')),
-                     passes=float(g(r'pass ([\d.]+)')), bg=float(g(r'bindgroup ([\d.]+)')), gpu=gpu, t=g(r't=(\d+)s')))
+                     passes=float(g(r'pass ([\d.]+)')), bg=float(g(r'bindgroup ([\d.]+)')), gpu=gpu, t=g(r't=(\d+)s'),
+                     # the window's mean frame and whether it read GPU-bound (#1318)
+                     mean=g(r'mean ([\d.]+) ms a frame'), gpu_bound='GPU-bound' in line))
 for r in rows:
-    print(f"{r['scene']:22} s{r['s']} t={r['t']:>3} p50 {r['p50']:5.1f} p90 {r['p90']:5.1f} p99 {r['p99']:5.1f} cpu {r['cpu']:5.2f} gpu {r['gputot']:5.2f} pass {r['passes']:4.1f} bg {r['bg']} | " +
+    print(f"{r['scene']:22} s{r['s']} t={r['t']:>3} p50 {r['p50']:5.1f} p90 {r['p90']:5.1f} p99 {r['p99']:5.1f} cpu {r['cpu']:5.2f} mean {r['mean'] or '-':>6}{'*' if r['gpu_bound'] else ' '} gpu {r['gputot']:5.2f} pass {r['passes']:4.1f} bg {r['bg']} | " +
           ' '.join(f"{k}={v}" for k, v in r['gpu'].items()))
 json.dump(rows, open(sys.argv[2], 'w'), indent=1)

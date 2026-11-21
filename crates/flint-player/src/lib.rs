@@ -6,12 +6,16 @@
 pub mod capture_args;
 pub mod extension;
 pub mod hitch_args;
+// `--load-report` (#1092)
+pub mod load_args;
 // Everything the player says, through tracing, as text or JSON lines (#716)
 pub mod logging;
 #[cfg(feature = "music")]
 mod music;
 // `--skip-pass` / `--repeat-pass` (#1317)
 pub mod pass_knob_args;
+// `--perf-report FILE` (#1093)
+pub mod perf_report_args;
 mod player_app;
 // The desktop launch, shared by `flint play` and `flint-player` (#705)
 pub mod player_args;
@@ -39,7 +43,9 @@ pub use flint_render::{
 pub use flint_script::{Projector, ScreenPoint, View};
 pub use flint_terrain::{GrassConfig, GroundField, Heightmap};
 pub use hitch_args::{HitchArgs, HitchClass, HitchGate};
+pub use load_args::LoadReportArgs;
 pub use pass_knob_args::PassKnobArgs;
+pub use perf_report_args::PerfReportArgs;
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};

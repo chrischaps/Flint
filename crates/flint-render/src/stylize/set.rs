@@ -60,6 +60,15 @@ pub struct StyleSet {
 }
 
 impl StyleSet {
+    /// The glyph atlases the built styles hold, bytes (#1091).
+    pub fn glyph_atlas_bytes(&self) -> u64 {
+        self.slots
+            .values()
+            .filter_map(|s| s.built.as_ref())
+            .map(|p| p.glyph_atlas_bytes())
+            .sum()
+    }
+
     /// The draw every stage runs after a style whose `blend` is under 1
     /// (#369); hand it to [`run_stage`].
     pub(crate) fn blend_pass(&self) -> &blend::BlendPass {

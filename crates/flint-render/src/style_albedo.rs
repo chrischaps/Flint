@@ -21,6 +21,7 @@
 //!
 //! [`StyleDescriptor::uses_albedo`]: crate::stylize::StyleDescriptor::uses_albedo
 
+use crate::gpu_counts::CountedDevice;
 use crate::TrustedShader;
 /// The albedo's name in the post chain's style targets.
 pub(crate) const ALBEDO_TARGET: &str = "style albedo";
@@ -84,7 +85,7 @@ fn pipeline(
         bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -210,7 +211,7 @@ impl StyleAlbedoPass {
                 .as_ref()
                 .is_some_and(|(_, _, w, h, s)| (*w, *h, *s) == size);
             if !fits {
-                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
                     label: Some("Style Albedo MSAA"),
                     size: wgpu::Extent3d {
                         width: target.width,

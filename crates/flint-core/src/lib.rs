@@ -30,6 +30,7 @@ pub mod frame_notes;
 mod hash;
 mod id;
 pub mod ik;
+pub mod load_report;
 pub mod profile;
 pub mod project;
 pub mod projection;

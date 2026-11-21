@@ -17,6 +17,7 @@
 
 use super::SceneRenderer;
 use crate::camera::Camera;
+use crate::gpu_counts::CountedDevice;
 use crate::panels::{panel_camera, PanelCompositor, PanelLayout, PanelRect};
 use crate::postprocess::{PostProcessConfig, PostProcessResources};
 use std::collections::HashMap;
@@ -335,7 +336,7 @@ impl SceneRenderer {
             height: size.1,
             depth_or_array_layers: 1,
         };
-        let color = device.create_texture(&wgpu::TextureDescriptor {
+        let color = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Panel Picture"),
             size: extent,
             mip_level_count: 1,
@@ -349,7 +350,7 @@ impl SceneRenderer {
             view_formats: &[],
         });
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
-        let depth = device.create_texture(&wgpu::TextureDescriptor {
+        let depth = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Panel Depth"),
             size: extent,
             mip_level_count: 1,

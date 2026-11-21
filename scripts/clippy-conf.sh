@@ -7,7 +7,9 @@
 # check's from the root's plus scripts/wasm-clippy/wasm-only.toml, so no rule
 # is written twice.
 #
-#   scripts/clippy-conf.sh             write each tool crate's clippy.toml
+#   scripts/clippy-conf.sh             write each tool crate's clippy.toml, and
+#                                      flint-render's (the root list plus
+#                                      scripts/clippy-render.toml, #1091)
 #   scripts/clippy-conf.sh --check     exit 1 when one is stale (scripts/ci.sh runs it)
 #   scripts/clippy-conf.sh --wasm DIR  write DIR/clippy.toml, for CLIPPY_CONF_DIR
 #                                      (scripts/wasm-check.sh)
@@ -31,6 +33,10 @@ TOOL_CRATES=(
 
 ROOT=clippy.toml
 WASM_ONLY=scripts/wasm-clippy/wasm-only.toml
+# The renderer's own rules (#1091): every GPU object it makes is counted, so
+# flint-render reads the whole root list plus these, as its own clippy.toml.
+RENDER_ONLY=scripts/clippy-render.toml
+RENDER_CRATE=crates/flint-render
 
 # The lines between `# >>> <group>` and `# <<< <group>` in a file.
 group() {
@@ -65,6 +71,18 @@ tool_conf() {
         "]"
 }
 
+render_conf() {
+    printf '%s\n' \
+        "# Written by scripts/clippy-conf.sh (#761, #1091) from the root clippy.toml's" \
+        "# list and scripts/clippy-render.toml's; edit those and rerun the script," \
+        "# never this one. The renderer counts every GPU object it makes" \
+        "# (flint_render::gpu_counts), so the bare calls are refused here alone." \
+        "disallowed-methods = [" \
+        "$(entries "$ROOT")" \
+        "$(entries "$RENDER_ONLY")" \
+        "]"
+}
+
 wasm_conf() {
     printf '%s\n' \
         "# Written by scripts/clippy-conf.sh --wasm (#761): the root clippy.toml's" \
@@ -90,6 +108,7 @@ case "${1:-}" in
     for c in "${TOOL_CRATES[@]}"; do
         write "$c/clippy.toml" "$(tool_conf)"
     done
+    write "$RENDER_CRATE/clippy.toml" "$(render_conf)"
     ;;
 --check)
     want="$(tool_conf)"
@@ -100,11 +119,15 @@ case "${1:-}" in
             stale=1
         fi
     done
+    if [ ! -f "$RENDER_CRATE/clippy.toml" ] || [ "$(tr -d '\r' <"$RENDER_CRATE/clippy.toml")" != "$(render_conf)" ]; then
+        echo "clippy-conf: $RENDER_CRATE/clippy.toml is not the root list plus $RENDER_ONLY" >&2
+        stale=1
+    fi
     if [ "$stale" = 1 ]; then
         echo "clippy-conf: run 'bash scripts/clippy-conf.sh' and commit what it writes" >&2
         exit 1
     fi
-    echo "clippy-conf: ${#TOOL_CRATES[@]} tool crates hold the root list's every-crate group"
+    echo "clippy-conf: ${#TOOL_CRATES[@]} tool crates hold the root list's every-crate group, $RENDER_CRATE the root list and its own"
     ;;
 --wasm)
     dir="${2:?--wasm needs a directory}"

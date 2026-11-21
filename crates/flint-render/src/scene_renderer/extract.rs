@@ -14,6 +14,7 @@ use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInst
 use crate::bitmap_font::{
     anchor_origin, apply_fill, FILL_DIRECTIONS, SCREEN_ANCHORS, SPRITE_MODES, TEXT_ALIGNS,
 };
+use crate::gpu_counts::CountedDevice;
 use crate::pipeline::{BlendMode, MaterialUniforms, TransformUniforms};
 use crate::primitives::{
     create_box_mesh, create_wireframe_box_mesh, generate_normal_arrows,
@@ -25,7 +26,6 @@ use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::{ComponentView, FlintWorld};
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 impl SceneRenderer {
     /// The colour that replaces a model entity's base colour, from its
@@ -533,11 +533,12 @@ impl SceneRenderer {
                 if wire_indices.is_empty() {
                     (None, 0)
                 } else {
-                    let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Skinned Wireframe Index Buffer"),
-                        contents: bytemuck::cast_slice(&wire_indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
+                    let buf =
+                        device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                            label: Some("Skinned Wireframe Index Buffer"),
+                            contents: bytemuck::cast_slice(&wire_indices),
+                            usage: wgpu::BufferUsages::INDEX,
+                        });
                     (Some(buf), wire_indices.len() as u32)
                 }
             } else {
@@ -1082,19 +1083,20 @@ impl SceneRenderer {
             _pad1: 0.0,
         };
 
-        let billboard_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Billboard Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[billboard_uniforms]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let billboard_buffer =
+            device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                label: Some("Billboard Uniform Buffer"),
+                contents: bytemuck::cast_slice(&[billboard_uniforms]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
-        let sprite_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let sprite_buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some("Sprite Instance Buffer"),
             contents: bytemuck::cast_slice(&[sprite_instance]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let billboard_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let billboard_bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: &bp.billboard_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -1120,7 +1122,7 @@ impl SceneRenderer {
             &tex_cache.default_white,
         );
 
-        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let texture_bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: &bp.texture_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -1591,20 +1593,22 @@ impl SceneRenderer {
                 .map(|(_, _, inst)| *inst)
                 .collect();
 
-            let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Sprite2D Instance Buffer"),
-                contents: bytemuck::cast_slice(&instances),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+            let instance_buffer =
+                device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Sprite2D Instance Buffer"),
+                    contents: bytemuck::cast_slice(&instances),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
 
-            let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &sp.instance_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buffer.as_entire_binding(),
-                }],
-                label: Some("Sprite2D Instance Bind Group"),
-            });
+            let instance_bind_group =
+                device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    layout: &sp.instance_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: instance_buffer.as_entire_binding(),
+                    }],
+                    label: Some("Sprite2D Instance Bind Group"),
+                });
 
             // Resolve texture
             let (tex_view, tex_sampler, _) = Self::resolve_texture(
@@ -1617,7 +1621,7 @@ impl SceneRenderer {
                 &tex_cache.default_white,
             );
 
-            let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let texture_bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 layout: &sp.texture_bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {

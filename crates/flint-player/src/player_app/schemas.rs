@@ -6,10 +6,22 @@
 //! read, the registry already held stays in use, so a scene never loads
 //! with an empty one: its archetype and schema defaults would vanish with
 //! nothing said.
+//!
+//! What is wrong with a game's own schema files (`old-type-name`,
+//! `unknown-type`, `ignored-schema-key`: `SchemaRegistry::game_lints`) is
+//! said when a registry is first held, each file's through the summary a
+//! scene load prints (#1064), and never twice: a transition that reads no
+//! new directory says nothing, and one that adds directories says only what
+//! their files add.
 
+use flint_core::diagnostic::{self, Diagnostic};
 use flint_schema::SchemaRegistry;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// The command a schema lint's summary points to: what prints every one.
+const FULL_LIST: &str = "flint check";
 
 /// See the module docs. `PlayerApp::set_schemas` fills it; a host that only
 /// named directories (`set_schema_dirs`, `set_schema_paths`) has them read
@@ -21,14 +33,30 @@ pub(super) struct HeldSchemas {
     dirs: Vec<PathBuf>,
     /// How many times a directory list was read from the file source.
     reads: usize,
+    /// Every game schema lint said so far, as its one line: kept across
+    /// registries (and `forget`), so the same mistake is said once a run.
+    said: HashSet<String>,
 }
 
 impl HeldSchemas {
     /// Hold `registry`, which the host read from `dirs` (possibly over
-    /// schemas of its own, as the web player's compiled-in engine set).
+    /// schemas of its own, as the web player's compiled-in engine set), and
+    /// say the game lints of it not said before.
     pub(super) fn set(&mut self, registry: SchemaRegistry, dirs: &[PathBuf]) {
+        let lints = self.unsaid(&registry);
+        say(&lints);
         self.registry = Some(Arc::new(registry));
         self.dirs = dirs.to_vec();
+    }
+
+    /// The game lints of `registry` no registry held before had, marked
+    /// said.
+    fn unsaid(&mut self, registry: &SchemaRegistry) -> Vec<Diagnostic> {
+        registry
+            .game_lints()
+            .into_iter()
+            .filter(|d| self.said.insert(d.one_line()))
+            .collect()
     }
 
     /// The host named new directories without a registry for them: what is
@@ -128,6 +156,34 @@ fn shown(path: &Path) -> String {
     flint_core::project::shown(path)
 }
 
+/// `lints` as a scene load says its diagnostics, one summary a schema file
+/// (in the order the files were loaded), so each line names its file.
+fn say(lints: &[Diagnostic]) {
+    let mut files: Vec<(Option<&Path>, Vec<Diagnostic>)> = Vec::new();
+    for lint in lints {
+        let file = lint.file.as_deref();
+        match files.iter_mut().find(|(f, _)| *f == file) {
+            Some((_, list)) => list.push(lint.clone()),
+            None => files.push((file, vec![lint.clone()])),
+        }
+    }
+    for (file, list) in files {
+        // A schema read from text (no file) is the host's own
+        let subject = file.map_or_else(|| "schemas".to_string(), |f| shown(&from_here(f)));
+        diagnostic::log_summary_of(&subject, FULL_LIST, &list);
+    }
+}
+
+/// `path` from the working directory when it is under it, as `flint check`
+/// spells its files: a manifest's directories are joined to the project's
+/// root, which is absolute.
+fn from_here(path: &Path) -> PathBuf {
+    std::env::current_dir()
+        .ok()
+        .and_then(|here| path.strip_prefix(here).ok().map(Path::to_path_buf))
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +276,112 @@ mod tests {
             let reads = held.reads();
             assert!(held.for_dirs(&list).get_component("lamp").is_some());
             assert_eq!(held.reads(), reads);
+        });
+    }
+
+    /// What `run` logged at warn and above, without the subscriber's
+    /// decoration.
+    fn warned(run: impl FnOnce()) -> String {
+        use std::sync::Mutex;
+        #[derive(Clone, Default)]
+        struct Captured(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Captured {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let log = Captured::default();
+        let writer = log.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .without_time()
+            .with_target(false)
+            .with_level(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, run);
+        let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+        text
+    }
+
+    const OLD_TORCH: &str = "[component.torch.fields]\nwatts = { type = \"float\" }\n";
+    const OLD_SAIL: &str = "[component.sail.fields]\nfurled = { type = \"boolean\" }\n";
+
+    /// The ticket's box (#1064): a game whose schema spells a type the old
+    /// way is told at start, once, naming the file and the field, and a
+    /// transition that reads no new directory says nothing.
+    #[test]
+    fn a_games_schema_lint_is_said_once_at_start() {
+        let game = [("schemas/components/torch.toml", OLD_TORCH)];
+        vfs::scoped(files(&game), || {
+            let list = dirs(&["engine/schemas", "schemas"]);
+            let mut held = HeldSchemas::default();
+            let start =
+                warned(|| held.set(SchemaRegistry::load_from_directories(&list).unwrap(), &list));
+            assert_eq!(
+                start.lines().map(str::trim).collect::<Vec<_>>(),
+                [
+                    "schemas/components/torch.toml: 1 warning (the full list: flint check)",
+                    "warning[old-type-name] torch.watts: `float` is an old spelling of `f32` \
+                     (write type = \"f32\"; `float` still loads)",
+                ],
+                "{start}"
+            );
+            let transition = warned(|| {
+                held.for_dirs(&list);
+                held.held_or_read(&list);
+            });
+            assert_eq!(transition, "", "no new directory, nothing said");
+        });
+    }
+
+    /// A list that grows says what the added directory's files add, not
+    /// again what was said at start; a host that names only directories is
+    /// told on the first read.
+    #[test]
+    fn a_grown_list_says_only_its_new_files_lints() {
+        let game = [
+            ("schemas/components/torch.toml", OLD_TORCH),
+            ("boat/schemas/components/sail.toml", OLD_SAIL),
+        ];
+        vfs::scoped(files(&game), || {
+            let list = dirs(&["engine/schemas", "schemas"]);
+            let mut held = HeldSchemas::default();
+            let first = warned(|| {
+                held.held_or_read(&list);
+            });
+            assert!(first.contains("schemas/components/torch.toml"), "{first}");
+            let grown = warned(|| {
+                held.for_dirs(&dirs(&["engine/schemas", "schemas", "boat/schemas"]));
+            });
+            assert!(
+                grown.contains("boat/schemas/components/sail.toml: 1 warning")
+                    && grown.contains("sail.furled"),
+                "{grown}"
+            );
+            assert!(!grown.contains("torch"), "said at start already: {grown}");
+        });
+    }
+
+    /// The engine's own files are rewritten rather than warned about (ADR
+    /// 0115 decision 3): a lint in an engine checkout is not the game's.
+    #[test]
+    fn an_engine_files_lint_is_not_said() {
+        let engine = [
+            ("engine/crates/flint-core/Cargo.toml", ""),
+            ("engine/schemas/components/torch.toml", OLD_TORCH),
+        ];
+        vfs::scoped(files(&engine), || {
+            let list = dirs(&["engine/schemas"]);
+            let mut held = HeldSchemas::default();
+            let said =
+                warned(|| held.set(SchemaRegistry::load_from_directories(&list).unwrap(), &list));
+            assert_eq!(said, "");
         });
     }
 

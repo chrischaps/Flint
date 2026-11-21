@@ -34,6 +34,7 @@
 //! opaque one already. The veil is single-sample, like the style veil.
 
 use super::{Blend, Draw, SceneRenderer};
+use crate::gpu_counts::CountedDevice;
 use crate::TrustedShader;
 
 /// The veil's format: blendable everywhere, with half floats' precision on
@@ -114,7 +115,7 @@ fn pipeline(
         bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {

@@ -569,6 +569,13 @@ pub struct MeasureArgs {
     #[arg(long)]
     pub frame_capture: Option<String>,
 
+    /// Time the load (#1092): the scene read, the GPU device, the
+    /// renderer, every model, texture, pipeline and script, up to the first
+    /// capture. Prints a table of each stage's ms, share and count and the
+    /// five slowest assets by name; `--report json` carries it as `load`
+    #[arg(long)]
+    pub load_report: bool,
+
     /// `--skip-pass LABEL` and `--repeat-pass LABEL:N` (#1317): draw a
     /// part of the frame not at all, or N times, by its `--gpu-time` name,
     /// so its cost shows on a GPU whose timestamps can't be read; with

@@ -60,6 +60,10 @@ pub(crate) const MEDIAN_FRAMES: usize = 120;
 pub(crate) const WARM_FRAMES: usize = 30;
 /// How many hitches are kept to look back at; the counts go on past them.
 pub(crate) const HITCHES_KEPT: usize = 256;
+/// How many frames after a hitch its GPU time is still looked for on its
+/// record (#1104): a read-back is a frame or two late, and the timer has
+/// three in flight at most.
+pub(crate) const GPU_LATE_FRAMES: u64 = 8;
 /// The share of a hitch's excess the player's work must account for to be
 /// the player's.
 const PLAYER_SHARE: f32 = 0.5;
@@ -167,9 +171,10 @@ pub(crate) struct Hitch {
     pub median_ms: f32,
     /// The player's work in it (every phase but `acquire` and `present`).
     pub player_ms: f32,
-    /// The GPU's busy time read back during it ([`Frame::gpu_ms`]: a frame
-    /// or two old), so a reader can tell a wait on the GPU from one on the
-    /// compositor; `None` while the GPU isn't timed.
+    /// The GPU's busy time on its own work ([`Frame::gpu_ms`]), so a reader
+    /// can tell a wait on the GPU from one on the compositor; `None` while
+    /// the GPU isn't timed. It comes back a frame or two after the hitch is
+    /// judged, and [`HitchDetector::observe`] fills it in then (#1104).
     pub gpu_ms: Option<f32>,
     /// Under vsync, how many refreshes it stood for (1 is on time).
     pub refreshes: Option<u32>,
@@ -232,7 +237,11 @@ impl Hitch {
         if top.is_empty() {
             return false;
         }
-        if top.iter().any(|n| n.note.ms.is_none()) {
+        // An untimed load explains the hitch; a count (#1091) never does
+        if top
+            .iter()
+            .any(|n| n.note.ms.is_none() && !n.note.kind.is_count())
+        {
             return true;
         }
         let ms: f32 = top.iter().filter_map(|n| n.note.ms).sum();
@@ -472,6 +481,18 @@ impl HitchDetector {
         let Some(newest) = frames.back() else {
             return 0;
         };
+        // A hitch is judged before its GPU time is back: picked up from its
+        // record once it is (#1104)
+        for h in self
+            .hitches
+            .iter_mut()
+            .rev()
+            .take_while(|h| newest.index.saturating_sub(h.index) <= GPU_LATE_FRAMES)
+        {
+            if h.gpu_ms.is_none() {
+                h.gpu_ms = history.frame(h.index).and_then(|f| f.gpu_ms);
+            }
+        }
         if newest.index < self.next {
             return 0;
         }
@@ -1139,7 +1160,9 @@ mod tests {
                 history.mark(phase);
             }
             history.fixed_steps(1);
-            history.gpu_ms(None);
+            // The read-back of two frames ago, onto its record
+            let late = history.under_way_index().checked_sub(2);
+            history.gpu_time(late, 1.5);
         };
         // Warm: the ring full and the detector judging.
         for _ in 0..2 * HISTORY_FRAMES {
@@ -1168,7 +1191,7 @@ mod tests {
                 off.mark(phase);
             }
             off.fixed_steps(1);
-            off.gpu_ms(None);
+            off.gpu_time(off.gpu_frame_index(), 1.5);
             std::hint::black_box(&mut off);
         }
         let off_us = began.elapsed().as_secs_f64() * 1e6 / frames as f64;
@@ -1385,6 +1408,27 @@ mod tests {
     /// A note that does account for its hitch is still the cause: a model
     /// load of 70 ms in a frame 83 ms over, a transition of 90 ms. A note
     /// of the frame before that doesn't is named after, marked so.
+    #[test]
+    fn a_frame_that_made_gpu_objects_is_named_beside_the_cause_never_as_it() {
+        // #1091: an untimed load is named as the cause, but a count of GPU
+        // objects is evidence, not a measured cost
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        frame_notes::note(NoteKind::GpuObjects, || "40 bind groups".into(), None);
+        let stall = F {
+            render: 62.0,
+            ..steady(HZ60_MS + 60.0)
+        };
+        assert_eq!(run.frame(stall), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "render +60.0 ms (also: gpu objects)");
+        assert_eq!(h.cause_key(), "render");
+        assert_eq!(h.likely_cause(), "gpu objects 40 bind groups");
+        frame_notes::listen(false);
+    }
+
     #[test]
     fn a_note_that_covers_half_the_hitch_is_its_cause() {
         use flint_core::frame_notes::{self, NoteKind};

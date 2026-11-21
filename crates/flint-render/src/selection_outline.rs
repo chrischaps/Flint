@@ -28,6 +28,7 @@
 //! With nothing selected nothing here runs, and the frame is the frame
 //! without it, byte for byte.
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
@@ -172,7 +173,7 @@ fn mask_pipeline(
         bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -334,32 +335,33 @@ impl SelectionOutline {
             bind_group_layouts: &[Some(&outline_bgl)],
             immediate_size: 0,
         });
-        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Selection Outline"),
-            layout: Some(&outline_layout),
-            vertex: wgpu::VertexState {
-                module: &outline_shader,
-                entry_point: Some("vs_fullscreen"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &outline_shader,
-                entry_point: Some("fs_outline"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: outline_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-        let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
+        let outline_pipeline =
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
+                label: Some("Selection Outline"),
+                layout: Some(&outline_layout),
+                vertex: wgpu::VertexState {
+                    module: &outline_shader,
+                    entry_point: Some("vs_fullscreen"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &outline_shader,
+                    entry_point: Some("fs_outline"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: outline_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+        let uniforms = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Selection Outline Uniforms"),
             size: std::mem::size_of::<OutlineUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -393,7 +395,7 @@ impl SelectionOutline {
     /// first frame at that size.
     pub fn ensure_mask(&mut self, device: &wgpu::Device, size: (u32, u32)) {
         if self.target.as_ref().is_none_or(|t| t.size != size) {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
+            let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
                 label: Some("Selection Mask"),
                 size: wgpu::Extent3d {
                     width: size.0.max(1),
@@ -409,7 +411,7 @@ impl SelectionOutline {
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let outline_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let outline_bind = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Selection Outline"),
                 layout: &self.outline_bgl,
                 entries: &[
@@ -466,7 +468,7 @@ impl SelectionOutline {
             reach,
             _pad: 0,
         };
-        queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
+        queue.write_buffer_counted(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Selection Outline"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

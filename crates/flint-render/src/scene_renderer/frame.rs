@@ -780,7 +780,7 @@ impl SceneRenderer {
                         0,
                         &[crate::bind_cache::Bound::View(scene_target_view)],
                         || {
-                            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                                 layout: &op.blit_bind_group_layout,
                                 entries: &[
                                     wgpu::BindGroupEntry {
@@ -1115,8 +1115,23 @@ impl SceneRenderer {
     /// recorded: the grass count's read-back and, once
     /// [`encode_gpu_timings`](Self::encode_gpu_timings) resolved them, the
     /// GPU timer's. Call once that frame is submitted.
+    ///
+    /// It also closes the frame's GPU count (#1091): what the process's
+    /// renderers created and wrote since the last call
+    /// ([`frame_gpu_calls`](Self::frame_gpu_calls)), and a
+    /// `gpu objects` frame note when it created any.
     pub fn frame_submitted(&mut self) {
         flint_core::scope!("frame_submitted");
+        let now = crate::gpu_counts::totals();
+        self.frame_gpu_calls = now.since(&self.gpu_calls_at);
+        self.gpu_calls_at = now;
+        let calls = self.frame_gpu_calls;
+        self.gpu_frames.0 += 1;
+        if calls.created() > 0 {
+            self.gpu_frames.1 += 1;
+            use flint_core::frame_notes::{note, NoteKind};
+            note(NoteKind::GpuObjects, || calls.created_line(), None);
+        }
         if std::mem::take(&mut self.grass.readback_due) {
             if let Some(readback) = &mut self.grass.count_readback {
                 readback.start_map();

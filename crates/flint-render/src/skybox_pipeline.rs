@@ -3,6 +3,7 @@
 //! Renders a fullscreen triangle at the far plane, sampling a 2D panorama
 //! texture with equirectangular projection.  No vertex buffers required.
 
+use crate::gpu_counts::CountedDevice;
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
@@ -76,7 +77,7 @@ impl SkyboxPipeline {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
             label: Some("Skybox Render Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {

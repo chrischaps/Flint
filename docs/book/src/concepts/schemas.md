@@ -26,7 +26,7 @@ open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 | `f32`, `f64` | a number; an integer is taken | `3.14` |
 | `string` | text | `"hello"` |
 | `entity` | the name of another entity in the scene, **checked to exist**; `""` means "not set" | `"left_hand"` |
-| `asset` | the name of a file of a `kind`, **checked through the project's asset search**; `""` means "not set" | `"barrel"` |
+| `asset` | the name of a file of a `kind`, **checked through the project's asset search**, or one of its `builtins`; `""` means "not set" | `"barrel"` |
 | `vec2`, `vec3`, `vec4` | exactly that many numbers (`vec3` also takes `{ x, y, z }`) | `[1.0, 2.0, 3.0]` |
 | `color` | `[r, g, b]` or `[r, g, b, a]`, and nothing else: a `{ r, g, b }` table or a `0xRRGGBB` integer is `bad-type`, as no reader takes either, and the error writes the array for you | `[1.0, 0.8, 0.6]` |
 | `transform` | a table of `position`, `rotation` and `scale` | see [Transform](#transform) |
@@ -48,6 +48,12 @@ shot   = { type = "asset", kind = "audio" }
 
 - `entity`: the name must be an entity of the scene, after prefabs are expanded (a prefab writes `"${PREFIX}_hand"`). An empty string is "not set", for a reference a script fills while the game runs. An entity's own `parent = "..."` is checked the same way.
 - `asset`: `kind` is one of the kinds `flint asset where` takes (`models`, `textures`, `audio`, `scripts`, `files`, ...; [Assets](assets.md) has the table), or a list of them when a name may be either: a model may be a file or a procgen spec of that name. The name goes through the same search the engine loads with, so the error lists every path tried. `unless` names a sibling `bool` field that turns the search off when it is `true` (`model.runtime`: a mesh code uploads has no file). An empty string is "not set". An asset the scene declares with an `asset_def` of the same `name` passes: `flint asset resolve` makes it. So does a model or texture the project's [asset catalog](assets.md#asset-catalog) registers in `assets/*.asset.toml` with its content in the store, as the player loads it from there first. A particle effect (`kind = "particles"`) or a sequence (`kind = "sequences"`) is found by the `name` its file states, as the engine registers it, not by the file's stem: `effect = "campfire"` is any visible `particles/*.particles.toml` with `name = "campfire"` (or, stating none, the one called `campfire.particles.toml`).
+- `builtins` lists the names an `asset` field's reader takes with no file, which are never looked for: the built-in palettes of `ascii_style.palette` (`amber`, `cga`, ...), the built-in glyph set `builtin` of `ascii_style.font` and `ui_text.font`, and `"none"` for a style's `paper_image` or `stroke_image` (draw the procedural paper, the drawn strokes). Any other name is searched for as a file, and a miss's hint names the nearest built-in: `palette = "ambr"` is a `missing-asset` error, "palette 'ambr' not found", whose hint asks whether you meant `amber` and lists the built-ins ahead of the paths tried. A file of a built-in's name still loads ahead of it, as the engine's search finds it first.
+
+  ```toml
+  palette = { type = "asset", kind = "palettes", builtins = ["cga", "amber", "mono"] }
+  paper   = { type = "asset", kind = "papers", builtins = ["none"] }
+  ```
 
 Both are errors ([`unknown-entity`, `missing-asset`](#diagnostic-codes)), and the player says them at load as it says the rest.
 
@@ -229,7 +235,14 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `two-forms` | warning | a value written in two forms of which one is read, such as a spot's `inner_angle` (radians) beside `inner_angle_deg`; the degrees win. Raised while the game runs |
 | `shadow-cap` | warning | a light's `cast_shadows` the renderer can't honour: a second spot asking (one spot casts, the first by name), a point light asking (none casts yet), or the strongest directional light saying `false` (it casts the cascades whatever it says). The light still lights. Raised while the game runs ([Lighting](lighting.md#spot-light-shadows)) |
 
-`old-type-name`, `unknown-type`, `ignored-schema-key` and `bad-panel` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
+`old-type-name`, `unknown-type`, `ignored-schema-key` and `bad-panel` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. The player says them too, once, when it first reads the schemas (`flint play` and `flint-player` at start, and a transition only for a directory it had not read), as the summary a scene load prints:
+
+```text
+WARN schemas/components/lantern.toml: 1 warning (the full list: flint check)
+WARN   warning[old-type-name] lantern.brightness: `float` is an old spelling of `f32` (write type = "f32"; `float` still loads)
+```
+
+A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
 
 `flint check` adds the codes of the project around the scene:
 
@@ -579,7 +592,7 @@ flint schema light --format json     # one component or archetype
 flint schema --format json           # everything: every field's type, default, range, values
 ```
 
-`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields), `fields`, and, when it was read from a file, `declared_in` (that file) and `extended_by` (each file that added fields to it, in load order); a field has `type`, `required`, `file` (the file that declared it, beside `declared_in`), and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds` and `unless` (an asset) and `fields` (a table). A component with an [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) has `panel`: its `title` and its `rows` in the panel's order, each with `field`, `role` and `label` (the default spelled out), and the keys that say more than the defaults: `labels`, `press` (a trigger's), `step`, `min`, `max`, `slider` and `presets` (a tune row's), `format`, `scale`, `unset`, `from`, and `commit` when it is `false`. An archetype has `kind`, `description`, `components` (names, in order), `defaults` (a table per component) and `visual` when it gives one, and, when it was read from a file, `declared_in`, `extended_by`, `component_files` (the file that listed each component) and `default_files` (the file that gave each default, by component, then field).
+`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields), `fields`, and, when it was read from a file, `declared_in` (that file) and `extended_by` (each file that added fields to it, in load order); a field has `type`, `required`, `file` (the file that declared it, beside `declared_in`), and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds`, `unless` and `builtins` (an asset) and `fields` (a table). A component with an [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) has `panel`: its `title` and its `rows` in the panel's order, each with `field`, `role` and `label` (the default spelled out), and the keys that say more than the defaults: `labels`, `press` (a trigger's), `step`, `min`, `max`, `slider` and `presets` (a tune row's), `format`, `scale`, `unset`, `from`, and `commit` when it is `false`. An archetype has `kind`, `description`, `components` (names, in order), `defaults` (a table per component) and `visual` when it gives one, and, when it was read from a file, `declared_in`, `extended_by`, `component_files` (the file that listed each component) and `default_files` (the file that gave each default, by component, then field).
 
 ### Editor completion: a JSON Schema for scenes
 

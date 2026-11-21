@@ -3,6 +3,8 @@
 //! These need a GPU adapter with timestamp queries. Without one each test
 //! prints a note and passes.
 
+#![allow(clippy::disallowed_methods)] // the test's own targets and read-backs, not the renderer's, so uncounted (#1091)
+
 use flint_ecs::FlintWorld;
 use flint_render::{Camera, RendererConfig, SceneRenderer};
 
@@ -155,6 +157,27 @@ fn a_renderer_times_its_phases_once_asked() {
     assert!(ui.min <= ui.p50 && ui.p50 <= ui.p90 && ui.p90 <= ui.max);
     timer.record(false);
     assert!(timer.recorded().is_empty());
+
+    // Each frame's busy time comes back under the index the host gave the
+    // frame it timed (#1104), not the frame it arrives in.
+    let _ = renderer.take_gpu_frame_times().count();
+    for n in 100..103u64 {
+        renderer.gpu_timer_mut().unwrap().set_frame_index(Some(n));
+        timed(&mut renderer);
+    }
+    renderer.gpu_timer_mut().unwrap().set_frame_index(None);
+    timed(&mut renderer);
+    renderer.gpu_timer_mut().unwrap().flush(&device);
+    let mut times: Vec<_> = renderer.take_gpu_frame_times().collect();
+    assert_eq!(times.len(), 4, "every frame came back: {times:?}");
+    times.sort_by_key(|t| t.index);
+    let indices: Vec<Option<u64>> = times.iter().map(|t| t.index).collect();
+    assert_eq!(indices, [None, Some(100), Some(101), Some(102)]);
+    assert!(
+        times.iter().all(|t| t.ms > 0.0 && t.ms < 1000.0),
+        "{times:?}"
+    );
+    assert_eq!(renderer.take_gpu_frame_times().count(), 0, "taken once");
 
     // Off again: the times go with the timer.
     assert!(!renderer.set_gpu_timing(&device, &queue, false));

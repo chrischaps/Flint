@@ -5,7 +5,9 @@
 //   flint perf · <game> · t=31s | Chrome 156 · <adapter> | 1920x1080 DPR 1 |
 //   scene 1920x1080 scale 1 | frame p50 16.7 p90 16.8 p99 17.1 max 18.0 ms (600 frames/10s) |
 //   cpu 1.20 ms: ... | gpu 2.31 ms: Scene 0.80, SSAO 0.91, ASCII 0.11 |
-//   41 draws 120.3k tris | webgpu/frame submit 2.0 pass 20.0 bindgroup 3.0 write 31.0 (12.1 KB) buffer 0.0 | ...
+//   41 draws 120.3k tris | webgpu/frame submit 2.0 pass 20.0 bindgroup 3.0 write 31.0 (12.1 KB) buffer 0.0 |
+//   gpu/frame create 0.0 (buffer 0.0 bindgroup 0.0 texture 0.0 pipeline 0.0) in 0 frames write 17.0 (27.4 KB) |
+//   gpu mem textures 102.1 MB (scene 8.2 style 8.5 shadow 64.0 model 21.3 glyph 0.0) meshes 6.3 MB | ...
 
 const num = (s) => (s === undefined ? undefined : Number(s));
 
@@ -26,6 +28,11 @@ export function parsePerfLine(line) {
       out.scale = num(m[3]);
     } else if ((m = /^frame p50 ([\d.]+) p90 ([\d.]+) p99 ([\d.]+) max ([\d.]+) ms \((\d+) frames\/(\d+)s\)$/.exec(part))) {
       out.frame = { p50: num(m[1]), p90: num(m[2]), p99: num(m[3]), max: num(m[4]), frames: num(m[5]), secs: num(m[6]) };
+    } else if ((m = /^mean ([\d.]+) ms a frame(?:, GPU-bound \(guess: unpaced, player ([\d.]+) ms, (?:refresh ([\d.]+) ms|no vsync)\))?$/.exec(part))) {
+      // since #1318: the window's span over its frames, which doesn't snap to
+      // refreshes, and whether it reads as the GPU's ms a frame
+      out.throughput = { ms: num(m[1]), gpuBound: m[2] !== undefined };
+      if (m[2] !== undefined) out.throughput.guess = { player: num(m[2]), refresh: m[3] === undefined ? null : num(m[3]) };
     } else if ((m = /^hitches (\d+) in (\d+)s \((\d+) in run\)(?:, worst ([\d.]+) ms: (.*))?$/.exec(part))) {
       // since #1079: the window's hitches, the run's, and the worst one's cause
       out.hitches = { window: num(m[1]), secs: num(m[2]), run: num(m[3]) };
@@ -51,9 +58,17 @@ export function parsePerfLine(line) {
       }
     } else if (part === 'gpu off' || part === 'gpu untimed') {
       out.gpu = { frame: null, passes: {}, note: part };
+    } else if (part.startsWith('GPU pass times unavailable')) {
+      // The adapter's timestamps read zero (#1316): no passes to list
+      out.gpu = { frame: null, passes: {}, note: part, unavailable: true };
     } else if ((m = /^(\d+) draws ([\d.]+\w?) tris$/.exec(part))) {
       out.draws = num(m[1]);
       out.tris = m[2];
+    } else if ((m = /^gpu\/frame create ([\d.]+) \(buffer ([\d.]+) bindgroup ([\d.]+) texture ([\d.]+) pipeline ([\d.]+)\) in (\d+) frames write ([\d.]+) \(([\d.]+) KB\)$/.exec(part))) {
+      // The renderer's own count (#1091), beside the page's webgpu/frame
+      out.created = { objects: num(m[1]), buffers: num(m[2]), bindGroups: num(m[3]), textures: num(m[4]), pipelines: num(m[5]), framesCreating: num(m[6]), writes: num(m[7]), writeKB: num(m[8]) };
+    } else if ((m = /^gpu mem textures ([\d.]+) MB \(scene ([\d.]+) style ([\d.]+) shadow ([\d.]+) model ([\d.]+) glyph ([\d.]+)\) meshes ([\d.]+) MB(?: device ([\d.]+)\/([\d.]+) MB)?$/.exec(part))) {
+      out.memory = { texturesMB: num(m[1]), sceneMB: num(m[2]), styleMB: num(m[3]), shadowMB: num(m[4]), modelMB: num(m[5]), glyphMB: num(m[6]), meshesMB: num(m[7]), deviceBuffersMB: num(m[8]), deviceTexturesMB: num(m[9]) };
     } else if ((m = /^webgpu\/frame submit ([\d.]+) pass ([\d.]+) bindgroup ([\d.]+) write ([\d.]+) \(([\d.]+) KB\) buffer ([\d.]+)$/.exec(part))) {
       out.webgpu = { submits: num(m[1]), passes: num(m[2]), bindGroups: num(m[3]), writes: num(m[4]), writeKB: num(m[5]), buffers: num(m[6]) };
     } else if (out.browser === undefined && / · /.test(part)) {

@@ -1,10 +1,10 @@
 //! GPU texture cache — uploads imported textures and provides default fallbacks
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use flint_core::vfs;
 use flint_import::ImportedTexture;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use wgpu::util::DeviceExt;
 
 pub use flint_pixels::{memoize_mip_chains, mip_chain};
 
@@ -30,7 +30,12 @@ fn texture_with_data(
     data: &[u8],
 ) -> (wgpu::Texture, bool) {
     let make = || {
-        device.create_texture_with_data(queue, desc, wgpu::util::TextureDataOrder::LayerMajor, data)
+        device.create_texture_with_data_counted(
+            queue,
+            desc,
+            wgpu::util::TextureDataOrder::LayerMajor,
+            data,
+        )
     };
     if !crate::pipeline_cache::enabled() {
         return (make(), false);
@@ -96,6 +101,19 @@ pub struct TextureCache {
 }
 
 impl TextureCache {
+    /// Every texture held, bytes, mips included (#1091). One kept with
+    /// other renderers on the device ([`texture_with_data`]) counts in each.
+    pub fn bytes(&self) -> u64 {
+        use crate::gpu_counts::bytes_of;
+        self.textures
+            .values()
+            .map(|t| bytes_of(&t.texture))
+            .sum::<u64>()
+            + bytes_of(&self.default_white.texture)
+            + bytes_of(&self.default_normal.texture)
+            + bytes_of(&self.default_metallic_roughness.texture)
+    }
+
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let default_white = Self::create_1x1(device, queue, [255, 255, 255, 255], "Default White");
         let default_normal =
@@ -120,7 +138,7 @@ impl TextureCache {
         color: [u8; 4],
         label: &str,
     ) -> GpuTexture {
-        let texture = device.create_texture_with_data(
+        let texture = device.create_texture_with_data_counted(
             queue,
             &wgpu::TextureDescriptor {
                 label: Some(label),
@@ -387,7 +405,7 @@ impl TextureCache {
             wgpu::TextureFormat::Rgba8UnormSrgb
         };
 
-        let texture = device.create_texture_with_data(
+        let texture = device.create_texture_with_data_counted(
             queue,
             &wgpu::TextureDescriptor {
                 label: Some(name),
@@ -450,7 +468,7 @@ impl TextureCache {
     /// Update an existing texture's pixel data in-place on the GPU.
     ///
     /// The texture must already exist and the data must match its dimensions.
-    /// Uses `queue.write_texture()` — no bind group rebuild needed.
+    /// Uses `queue.write_texture_counted()` — no bind group rebuild needed.
     pub fn update_rgba(&self, queue: &wgpu::Queue, name: &str, data: &[u8]) -> Result<(), String> {
         let tex = self
             .textures
@@ -490,7 +508,7 @@ impl TextureCache {
         let (mut w, mut h, mut offset) = (tex.width, tex.height, 0usize);
         for level in 0..levels {
             let len = (w * h * 4) as usize;
-            queue.write_texture(
+            queue.write_texture_counted(
                 wgpu::TexelCopyTextureInfo {
                     texture: &tex.texture,
                     mip_level: level,

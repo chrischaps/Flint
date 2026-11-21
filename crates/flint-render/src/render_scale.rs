@@ -8,6 +8,7 @@
 //! [`DepthUpscale`] copies it into the caller's surface-sized depth view,
 //! nearest texel, so the overlays drawn against it still are.
 
+use crate::gpu_counts::CountedDevice;
 use crate::TrustedShader;
 /// The smallest scale [`SceneRenderer::set_render_scale`] accepts.
 ///
@@ -45,7 +46,7 @@ pub(crate) struct ScaledDepth {
 
 impl ScaledDepth {
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Scaled Scene Depth"),
             size: wgpu::Extent3d {
                 width,
@@ -99,7 +100,7 @@ impl DepthUpscale {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
             label: Some("Depth Upscale Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
@@ -126,7 +127,7 @@ impl DepthUpscale {
             multiview_mask: None,
             cache: None,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             label: Some("Depth Upscale Bind Group"),
             layout: &layout,
             entries: &[wgpu::BindGroupEntry {

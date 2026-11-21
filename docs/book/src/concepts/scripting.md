@@ -168,6 +168,16 @@ Every number in the Entity API takes an integer as well as a float: `set_positio
 
 Any other transform field goes through `set_field`, e.g. `set_field(id, "transform", "scale", [2.0, 1.0, 2.0])`; `set_position`, `set_rotation` and `set_scale` are that with the numbers checked for you.
 
+An entity a script spawns draws its model. Give it one in the same callback as the spawn and the player loads it at the end of that frame, after `on_draw_ui`, through the same search a scene's models use (the asset catalog, then a procgen spec of that name, then the file), with its textures and, for a skinned model, its skeleton:
+
+```rhai
+let bolt = spawn_entity("bolt_" + count);
+set_position(bolt, x, 1.0, z);
+set_field(bolt, "model", "asset", "bolt");
+```
+
+The file is read once. A later spawn of the same asset draws the mesh already loaded, and a model of several nodes gives each new entity its own children from the import it kept. A name the search can't find is warned about once a scene, not once a spawn. Only the frame an entity is spawned on counts: a `model` set on an entity spawned in an earlier frame, or an `asset` changed later, is not loaded. The player does this (`flint play`, `flint-player`, the web); a `flint render --scripts` capture draws only the models its scene loaded.
+
 A function given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and every function with an entity parameter (the Entity API, `play_clip` and the rest of the Animation API, `audio_position`, `set_velocity_2d`, `get_velocity_2d`, `move_character`, `get_collider_extents`, `camera_follow`, the Sprite API, the screen-UI setters `set_text`, `set_text_color`, `set_fill`, `set_anchor` and `set_anchor_offset`, the particle emitter calls, the Style API's entity functions and the Spline API) given it, or a despawned id, logs a warning the first time for each script and function: `seeded_stars.rhai: line 17: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. A setter that queues work for the engine, like `set_velocity_2d`, `emit_burst` or `set_entity_style`, queues nothing. A getter returns its empty value as well (`#{}`, `()`, `""`, `false`, `0`; `get_parent` gives `-1`, `audio_position` `-1.0` and `distance` the largest float), and warns too. `entity_exists(id)` never warns: test with it where a missing entity is expected.
 
 #### Lists come in name order
@@ -862,6 +872,8 @@ Large 2D worlds stream in `.chunk.toml` files at runtime:
 | `is_chunk_loaded(chunk_id: str)` | `bool`: false too while its load is still queued | Whether a chunk is loaded under this id. |
 
 <!-- script-api:end -->
+
+A chunk is a scene file whose entities join the world, each name prefixed with the chunk's id (`cave_card`) and moved by the offset. Its models, textures, colliders and scripts load with it, on the frame `load_chunk` is carried out: a model the scene never used is read then, found by the scene's search (the asset catalog, a procgen spec, then the file), and that frame's record says so (`model load models/card.glb`, inside its `chunk load`; see [Profiling](../guides/profiling.md)). A model the scene already loaded is drawn from what it loaded, with no read. `unload_chunk` despawns the chunk's entities and everything under them.
 
 ### Spline API
 

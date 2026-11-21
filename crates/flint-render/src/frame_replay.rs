@@ -30,6 +30,7 @@
 //!
 //! [`SceneRenderer::capture_replay_state`]: crate::SceneRenderer::capture_replay_state
 
+use crate::gpu_counts::CountedDevice;
 use flint_ecs::FlintWorld;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -277,7 +278,7 @@ impl ReplayStateCapture {
         if !source.usage().contains(wgpu::BufferUsages::COPY_SRC) {
             return;
         }
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Frame Capture Bones"),
             size: source.size(),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,

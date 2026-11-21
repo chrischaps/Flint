@@ -9,8 +9,8 @@ pub mod frame_graph;
 
 pub use curve::{CurveEditor, CurveResponse, GradientEditor};
 pub use frame_graph::{
-    band_legend, hitch_counters, Band, FrameGraph, GraphFrame, GraphLayout, HitchCounters, Placed,
-    BANDS, HITCH_COLOR,
+    band_legend, band_legend_of, hitch_counters, Band, FrameGraph, GraphFrame, GraphLayout,
+    HitchCounters, Placed, BANDS, HITCH_COLOR,
 };
 
 /// Single labeled drag value. Returns true if the value changed.

@@ -10,11 +10,11 @@
 //! of the same texture rather than a texture of its own so that every lit
 //! shader reads it through the binding it already has.
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::primitives::{SkinnedVertex, Vertex};
 use crate::wooze_pipeline::ShallowWoozeUniforms;
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
 
 /// Number of shadow cascades
 pub const CASCADE_COUNT: usize = 3;
@@ -187,7 +187,7 @@ impl ShadowPass {
             });
 
         let make_shadow = |label: &str, cull_mode: Option<wgpu::Face>| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&shadow_pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -254,7 +254,7 @@ impl ShadowPass {
             });
 
         let make_skinned_shadow = |label: &str, cull_mode: Option<wgpu::Face>| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&skinned_shadow_pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -296,7 +296,7 @@ impl ShadowPass {
 
         // Create shadow depth texture array (one layer per cascade, then the
         // spot's)
-        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let shadow_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Shadow Map Array"),
             size: wgpu::Extent3d {
                 width: resolution,
@@ -345,11 +345,12 @@ impl ShadowPass {
 
         // Shadow uniforms for the main shader (cascade matrices + splits)
         let shadow_uniforms = ShadowUniforms::default();
-        let shadow_uniforms_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Shadow Uniforms Buffer"),
-            contents: bytemuck::cast_slice(&[shadow_uniforms]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let shadow_uniforms_buffer =
+            device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                label: Some("Shadow Uniforms Buffer"),
+                contents: bytemuck::cast_slice(&[shadow_uniforms]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         let (draw_buffer, draw_bind_group) = Self::create_draw_buffer(
             device,
@@ -387,13 +388,13 @@ impl ShadowPass {
         layout: &wgpu::BindGroupLayout,
         capacity: u32,
     ) -> (wgpu::Buffer, wgpu::BindGroup) {
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Shadow Draw Uniforms (all draws)"),
             size: SHADOW_DRAW_STRIDE * capacity as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -460,7 +461,7 @@ impl ShadowPass {
                 bind_group_layouts: &groups.iter().copied().map(Some).collect::<Vec<_>>(),
                 immediate_size: 0,
             });
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -539,7 +540,7 @@ impl ShadowPass {
         layout: &wgpu::BindGroupLayout,
         buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
+        device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -578,7 +579,7 @@ impl ShadowPass {
             let at = *slot as usize * stride + past;
             bytes[at..at + src.len()].copy_from_slice(src);
         }
-        queue.write_buffer(&self.draw_buffer, 0, &bytes);
+        queue.write_buffer_counted(&self.draw_buffer, 0, &bytes);
     }
 
     /// Upload uniforms that turn shadows off in every shader that samples
@@ -589,7 +590,7 @@ impl ShadowPass {
             return;
         }
         let off = ShadowUniforms::default();
-        queue.write_buffer(
+        queue.write_buffer_counted(
             &self.shadow_uniforms_buffer,
             0,
             bytemuck::cast_slice(&[off]),

@@ -7,6 +7,7 @@
 //!
 //! `steady_frame_allocations` prints the count a frame with no knobs makes,
 //! the figure #1317 compared with main's binary.
+#![allow(clippy::disallowed_methods)] // the test's own targets, not the renderer's, so uncounted (#1091)
 
 mod shared_gpu;
 

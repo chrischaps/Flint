@@ -548,6 +548,14 @@ the page's `#perf` panel):
   `requestAnimationFrame` loop of the page's own, timed by rAF's
   timestamps. Timing the player's callbacks instead showed jitter that no
   one sees (p99 23 ms where rAF said 16.8).
+- **mean** (#1318): the window's span over its frames, which doesn't snap to
+  refreshes, marked `GPU-bound` with its inputs when the page is unpaced
+  (`fps=native`), the player's work is under half the frame and the frames
+  miss the refresh (read from the same rAF intervals,
+  `frame_rate::estimate_refresh`). Then it is the GPU's ms a frame, the
+  number #568 counted submissions for: Float with Kuwahara at 3840x2160 in
+  Chrome read p50 33.4 and mean 38.4 against timestamps of 38.2 to 39.1
+  (`tools/web-perf/README.md`, "GPU-bound pages").
 - **worst**: the longest gap between the player's frames, and how much of
   it was the player's own work. A long frame with little work in it is the
   browser's, not ours.

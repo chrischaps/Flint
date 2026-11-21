@@ -101,7 +101,7 @@ The viewer renders scenes with the same PBR pipeline used by the player:
 - glTF mesh rendering with material support
 - The scene's `[post_process]` block, applied on load
 - Live particles: `particle_emitter` and `particle_effect` entities simulate in the viewer, so inspector edits show immediately
-- Render stats overlay (**F2**)
+- Render stats overlay (**F2**), with the [frame-time graph](../guides/profiling.md#the-frame-time-graph) above it
 - Normal arrows (**F3**)
 - The Rendering & Effects menu (**F4**)
 - Fullscreen toggle (**F11**)

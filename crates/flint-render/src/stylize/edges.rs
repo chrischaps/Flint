@@ -33,6 +33,7 @@
 use super::kit;
 use super::targets::StyleTexture;
 use super::StyleFrame;
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 
@@ -146,17 +147,19 @@ impl EdgePass {
         };
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
         let uniform_bg = frame.uniform("Style Edges Uniform BG", &self.uniform_bgl, &self.uniforms);
         let depth_bg = frame.depth_bind("Style Edges Depth BG", 0, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Style Edges Depth BG"),
-                layout: &self.depth_bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(frame.depth),
-                }],
-            })
+            frame
+                .device
+                .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    label: Some("Style Edges Depth BG"),
+                    layout: &self.depth_bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(frame.depth),
+                    }],
+                })
         });
         kit::fullscreen_pass_in(
             encoder,

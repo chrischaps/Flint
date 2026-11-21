@@ -22,6 +22,7 @@
 //! points: on a 2x display it takes one more level, so the halo keeps its
 //! size against the glyph cells beside it.
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use super::kit;
 use super::{
     StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleParam, StylePass,
@@ -130,7 +131,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             None,
             &[&uniform_bgl, &sampled_bgl, &sampled_bgl],
         ),
-        uniforms: device.create_buffer(&wgpu::BufferDescriptor {
+        uniforms: device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Display Bloom Uniforms"),
             size: SLOTS as u64 * SLOT_STRIDE,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -236,11 +237,11 @@ impl StylePass for DisplayBloom {
             put(levels + i, texel(mips[i + 1].width, mips[i + 1].height));
         }
         put(composite_slot, texel(width, height));
-        frame.queue.write_buffer(&self.uniforms, 0, &slots);
+        frame.queue.write_buffer_counted(&self.uniforms, 0, &slots);
 
         let uniform = |slot: usize| {
             frame.bind("display_bloom.uniform", slot as u64, || {
-                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("Display Bloom Uniform BG"),
                     layout: &self.uniform_bgl,
                     entries: &[wgpu::BindGroupEntry {
@@ -261,7 +262,7 @@ impl StylePass for DisplayBloom {
         // its targets
         let mip = |i: usize| {
             frame.bind("display_bloom.mip", i as u64, || {
-                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("Display Bloom Mip BG"),
                     layout: &self.sampled_bgl,
                     entries: &[

@@ -64,6 +64,7 @@ impl TrustedShader for wgpu::Device {
         // loop bounding off has no loop that never ends. This takes only
         // Flint's own WGSL, whose loops #945 audited (each has a constant or
         // clamped bound); bounds and division checks stay on.
+        crate::gpu_counts::count_shader_module();
         unsafe { self.create_shader_module_trusted(desc, built_in_checks()) }
     }
 }

@@ -6,6 +6,7 @@
 //! the history in them, carry on, and HDR-stage ones are remade at the
 //! scene's new size the next time they're asked for.
 
+use crate::gpu_counts::CountedDevice;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -62,7 +63,7 @@ impl StyleTargets {
                 t.height
             );
         }
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some(name),
             size: wgpu::Extent3d {
                 width,
