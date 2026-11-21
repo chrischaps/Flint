@@ -220,13 +220,11 @@ impl SceneRenderer {
             if depth > 32 || found.is_full() {
                 break;
             }
-            if let Some(v) = world
-                .get_components(id)
-                .and_then(|c| c.get(comp::MATERIAL_OVERRIDES))
-                .and_then(|m| m.get(material_name))
-            {
-                found.fill_from(v, gltf_alpha);
-            }
+            found.fill_from(
+                &world.view(id, comp::MATERIAL_OVERRIDES),
+                material_name,
+                gltf_alpha,
+            );
             cur = world.get_parent(id);
             depth += 1;
         }

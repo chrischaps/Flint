@@ -10,6 +10,11 @@ description = "Geometry above the core: the Gerstner ocean surface, spline paths
 
 [dependencies]
 flint-core = { workspace = true }
+# The `ocean` component is read through the typed view (ADR 0115, #1068),
+# so a wrong type is reported. Every crate that links this one already
+# links flint-ecs (procgen through flint-scene), so this adds no edge to
+# any build but this crate's own.
+flint-ecs = { workspace = true }
 toml = { workspace = true }
 # A `.spline.toml` is read through serde, so a mistake carries its line
 # and column (#750)

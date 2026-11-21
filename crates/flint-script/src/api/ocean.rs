@@ -24,11 +24,8 @@ pub(crate) fn scene_ocean(world: &FlintWorld) -> Option<OceanParams> {
         .iter()
         .next()
         .copied()?;
-    let component = world
-        .get_components(id)?
-        .get(flint_geometry::components::OCEAN)?
-        .clone();
-    Some(OceanParams::from_component(&component))
+    let view = world.view(id, flint_geometry::components::OCEAN);
+    view.exists().then(|| OceanParams::from_component(&view))
 }
 
 /// `f` of the spectrum for `params`, made again only when they changed.
