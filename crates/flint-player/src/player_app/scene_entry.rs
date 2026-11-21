@@ -136,6 +136,9 @@ impl PlayerApp {
     /// is one (a headless test has none). The renderer and its context are
     /// taken off `self` for the call and put back.
     fn stage_scene_in_renderer(&mut self) -> Option<LoadedGrassInfo> {
+        // What spawns from here on is late, and its models load on their
+        // own (#1107); what the staging spawns is the scene's
+        self.late_models.enter_scene(&self.core.world);
         let context = self.render_context.take();
         let mut renderer = self.scene_renderer.take();
         let gpu = context.as_ref().map(|c| (&c.device, &c.queue));
@@ -147,6 +150,7 @@ impl PlayerApp {
         };
         self.render_context = context;
         self.scene_renderer = renderer;
+        self.late_models.skip_to(&self.core.world);
         grass
     }
 
@@ -221,6 +225,7 @@ impl PlayerApp {
         );
         register_skeletal_data(&load_result, &mut self.core.animation);
         register_node_animation_data(&load_result, &mut self.core.animation);
+        self.late_models.remember_expanded(&load_result);
         self.skeletal_entity_assets = load_result.skinned_entities;
 
         // Meshes swept along the scene's splines (#750), each with its

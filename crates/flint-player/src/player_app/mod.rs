@@ -68,6 +68,9 @@ pub mod input_script;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod inspect;
 mod key_note;
+mod late_models;
+#[cfg(test)]
+mod late_models_tests;
 #[cfg(feature = "living")]
 mod living_ab;
 #[cfg(feature = "living")]
@@ -217,6 +220,10 @@ pub struct CaptureConfig {
     /// GPU frame times summed over frames that had one (ADR 0108)
     pub(crate) perf_gpu_ms: f64,
     pub(crate) perf_gpu_frames: u64,
+    /// The GPU objects and writes the renderer counted over the same
+    /// frames, and how many of them created any (#1091)
+    pub(crate) perf_gpu_calls: flint_render::gpu_counts::GpuCalls,
+    pub(crate) perf_gpu_creating: u64,
     /// The same frames' dt and present-to-present times, reported as a
     /// spread so uneven pacing shows at an even mean.
     pub(crate) perf_pacing: pacing::Pacing,
@@ -424,6 +431,9 @@ pub struct PlayerApp {
 
     // Chunk streaming: chunk_id → spawned entity IDs
     loaded_chunks: HashMap<String, Vec<flint_core::EntityId>>,
+    /// The models of entities spawned after their scene: a chunk's, a
+    /// script's (#1107)
+    late_models: late_models::LateModels,
 
     // Android gamepad tracking (maps winit DeviceId to InputState gamepad slots)
     #[cfg(target_os = "android")]

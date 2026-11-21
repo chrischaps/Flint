@@ -9,6 +9,8 @@
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
+#![allow(clippy::disallowed_methods)] // the test's own targets and read-backs, not the renderer's, so uncounted (#1091)
+
 mod shared_gpu;
 
 use flint_ecs::FlintWorld;
@@ -2334,4 +2336,135 @@ fn a_sculpted_terrain_reloads_its_chunks() {
         gpu.centre_pixel(),
         "a reloaded terrain draws as a full load of the same heights"
     );
+}
+
+#[test]
+fn a_spawned_entity_creates_gpu_objects_that_frame_and_none_after() {
+    // #1091. Alone: the counts are the process's, and a test beside this
+    // one would make objects in its frames
+    let gpu = gpu_or_skip!(alone);
+    let mut renderer = gpu.renderer();
+    let mut world = FlintWorld::new();
+    let (vertices, indices) = square(1.0, [0.6, 0.6, 0.6, 1.0]);
+    renderer.load_procedural_mesh(
+        gpu.device,
+        "tile",
+        &vertices,
+        &indices,
+        ImportedMaterial::vertex_colored("tile"),
+    );
+    spawn(&mut world, "first", "tile", [0.0; 3]);
+    let camera = Camera::default();
+    // Every frame's objects, printed at the end: the series #1091's
+    // presentation charts
+    let mut series: Vec<u64> = Vec::new();
+    fn step(gpu: &Gpu, r: &mut SceneRenderer, w: &FlintWorld, c: &Camera, s: &mut Vec<u64>) {
+        gpu.frame(r, w, c);
+        s.push(r.frame_gpu_calls().created());
+    }
+
+    // The first frames build what the frame draws with: targets, pipelines,
+    // the transform arena's page and the first entity's binds
+    step(&gpu, &mut renderer, &world, &camera, &mut series);
+    let first = renderer.frame_gpu_calls();
+    eprintln!("first frame: {}", first.created_line());
+    assert!(
+        first.created() > 0,
+        "the first frame makes what it draws with"
+    );
+    for _ in 0..4 {
+        step(&gpu, &mut renderer, &world, &camera, &mut series);
+    }
+
+    // Steady: nothing made, every frame, though each still writes
+    for n in 0..30 {
+        step(&gpu, &mut renderer, &world, &camera, &mut series);
+        let calls = renderer.frame_gpu_calls();
+        assert_eq!(
+            calls.created(),
+            0,
+            "steady frame {n} made {}",
+            calls.created_line()
+        );
+        assert!(calls.writes > 0, "a frame writes its uniforms");
+    }
+
+    // An entity spawned mid-run: its binds are made the frame it first draws
+    spawn(&mut world, "second", "tile", [1.5, 0.0, 0.0]);
+    step(&gpu, &mut renderer, &world, &camera, &mut series);
+    let spawned = renderer.frame_gpu_calls();
+    eprintln!("spawn frame: {}", spawned.created_line());
+    assert!(
+        spawned.created() > 0,
+        "the spawned entity's frame made nothing: the count missed it"
+    );
+    assert_eq!(renderer.collect_stats().entity_draws, 2);
+    // RenderStats carries the same frame's count
+    assert_eq!(renderer.collect_stats().gpu_calls, spawned);
+
+    // And back to zero the frame after
+    for n in 0..5 {
+        step(&gpu, &mut renderer, &world, &camera, &mut series);
+        let calls = renderer.frame_gpu_calls();
+        assert_eq!(
+            calls.created(),
+            0,
+            "frame {n} after the spawn made {}",
+            calls.created_line()
+        );
+    }
+
+    // A new mesh is buffers too: one vertex and one index buffer
+    let (vertices, indices) = square(0.5, [0.2, 0.8, 0.2, 1.0]);
+    renderer.load_procedural_mesh(
+        gpu.device,
+        "small",
+        &vertices,
+        &indices,
+        ImportedMaterial::vertex_colored("small"),
+    );
+    spawn(&mut world, "third", "small", [-1.5, 0.0, 0.0]);
+    step(&gpu, &mut renderer, &world, &camera, &mut series);
+    let loaded = renderer.frame_gpu_calls();
+    eprintln!("load frame: {}", loaded.created_line());
+    assert!(
+        loaded.buffers >= 2,
+        "the mesh's vertex and index buffers: {loaded:?}"
+    );
+    step(&gpu, &mut renderer, &world, &camera, &mut series);
+    assert_eq!(renderer.frame_gpu_calls().created(), 0);
+    eprintln!("objects a frame: {series:?}");
+}
+
+#[test]
+fn the_renderer_knows_the_memory_it_holds_by_class() {
+    // #1091: the walk over the renderer's own fields
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    let mut world = FlintWorld::new();
+    let (vertices, indices) = square(1.0, [0.6, 0.6, 0.6, 1.0]);
+    renderer.load_procedural_mesh(
+        gpu.device,
+        "tile",
+        &vertices,
+        &indices,
+        ImportedMaterial::vertex_colored("tile"),
+    );
+    spawn(&mut world, "tile", "tile", [0.0; 3]);
+    gpu.frame(&mut renderer, &world, &Camera::default());
+    let m = renderer.gpu_memory();
+    eprintln!(
+        "{m:?}, device {:?}",
+        flint_render::gpu_counts::device_memory(gpu.device)
+    );
+    // The HDR buffer alone at 64x64 in Rgba16Float
+    assert!(m.scene_targets >= 64 * 64 * 8, "scene targets: {m:?}");
+    assert!(m.shadow_maps > 0, "the shadow cascades: {m:?}");
+    // The texture cache's three 1x1 defaults at least
+    assert!(m.model_textures >= 12, "model textures: {m:?}");
+    // The tile's 4 vertices and 12 indices
+    let vertex = std::mem::size_of::<Vertex>() as u64;
+    assert!(m.mesh_buffers >= 4 * vertex + 12 * 4, "mesh buffers: {m:?}");
+    assert_eq!(m.glyph_atlases, 0, "no glyph style is on");
+    assert_eq!(renderer.collect_stats().gpu_memory, m);
 }

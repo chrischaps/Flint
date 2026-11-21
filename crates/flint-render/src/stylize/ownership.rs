@@ -30,6 +30,7 @@
 use super::kit;
 use super::variant_table::{storage_entry, GrowingStorage};
 use super::{SnappedOwnership, StyleFrame, StyleInput};
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use bytemuck::{Pod, Zeroable};
 use std::sync::Mutex;
 
@@ -105,7 +106,7 @@ impl OwnershipPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let cells_bgl = kit::uniform_layout(device, "Style Ownership Cells BGL");
         let cells = kit::uniform_buffer::<CellsUniform>(device, "Style Ownership Cells");
-        let cells_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let cells_bg = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             label: Some("Style Ownership Cells BG"),
             layout: &cells_bgl,
             entries: &[wgpu::BindGroupEntry {
@@ -225,14 +226,16 @@ impl OwnershipPass {
             }
             let buffer = owners.buffer();
             frame.bind(OWNERS_BG, owners.generation(), || {
-                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(OWNERS_BG),
-                    layout: &self.owners_bgl,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buffer.as_entire_binding(),
-                    }],
-                })
+                frame
+                    .device
+                    .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                        label: Some(OWNERS_BG),
+                        layout: &self.owners_bgl,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buffer.as_entire_binding(),
+                        }],
+                    })
             })
         };
         let snapped = frame.snapped_ownership;
@@ -242,7 +245,7 @@ impl OwnershipPass {
             if written.as_ref() != Some(&cells) {
                 frame
                     .queue
-                    .write_buffer(&self.cells, 0, bytemuck::bytes_of(&cells));
+                    .write_buffer_counted(&self.cells, 0, bytemuck::bytes_of(&cells));
                 *written = Some(cells);
             }
         }

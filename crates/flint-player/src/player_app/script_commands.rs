@@ -158,8 +158,10 @@ impl ScriptHost for PlayerApp {
         match &self.transition_phase {
             TransitionPhase::Exiting { target_scene, .. } => {
                 let target = target_scene.clone();
+                // The script says its cover is drawn (#1125)
                 self.transition_phase = TransitionPhase::Loading {
                     target_scene: target,
+                    covered: true,
                 };
             }
             TransitionPhase::Entering { .. } => {

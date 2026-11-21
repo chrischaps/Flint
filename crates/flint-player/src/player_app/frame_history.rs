@@ -7,11 +7,14 @@
 //! A frame is the time from one `begin_frame` to the next (one
 //! `RedrawRequested` to the next; on the web one `requestAnimationFrame` to
 //! the next). Inside it the player marks where each [`Phase`] of its own
-//! work ends, says when `present()` returned, how many physics steps ran
-//! and what the GPU last read back. The clock's view of a frame comes one
-//! tick later: the tick at the next frame's start measures the interval
-//! just closed, so [`FrameHistory::clock_ticked`] fills in the newest
-//! record rather than the one under way.
+//! work ends, says when `present()` returned and how many physics steps
+//! ran. The clock's view of a frame comes one tick later: the tick at the
+//! next frame's start measures the interval just closed, so
+//! [`FrameHistory::clock_ticked`] fills in the newest record rather than
+//! the one under way. The GPU's comes later still, a frame or two and not
+//! always in order: each read-back carries the number of the frame it
+//! timed, and [`FrameHistory::gpu_time`] writes it onto that record
+//! (#1104).
 //!
 //! Once the ring is full a closed frame takes the oldest record's place,
 //! script buffer and all, so recording allocates nothing per frame once
@@ -101,8 +104,10 @@ pub(crate) struct Frame {
     pub present_ms: Option<f32>,
     /// The fixed physics steps that ran in it.
     pub fixed_steps: u32,
-    /// The GPU's busy time of the newest frame read back during it (a
-    /// frame or two old); `None` with GPU timing off or nothing read back.
+    /// The GPU's busy time of this frame's own work, unsmoothed (#1104).
+    /// Its read-back comes a frame or two after the frame closes, so the
+    /// newest records are still `None`; so is every frame with GPU timing
+    /// off, or one the timer had no free read-back for.
     pub gpu_ms: Option<f32>,
     /// What the engine did in it, in the order the work began
     /// (`flint_core::frame_notes`, #1077).
@@ -113,6 +118,10 @@ pub(crate) struct Frame {
     /// hitch detector passes over it, so a capture isn't counted as the
     /// hitch it may cause.
     pub capturing: bool,
+    /// A scene was loaded in it behind a script's cover (#1125,
+    /// [`FrameHistory::loading_behind_cover`]): its hitch, and the next
+    /// frame's, are counted as `loading`.
+    pub behind_cover: bool,
 }
 
 impl Frame {
@@ -307,11 +316,43 @@ impl FrameHistory {
         }
     }
 
-    /// The GPU time read back during the frame under way, if any.
-    pub(crate) fn gpu_ms(&mut self, ms: Option<f32>) {
-        if ms.is_some() {
-            self.under_way.gpu_ms = ms;
+    /// A GPU time read back for the frame numbered `index` (the
+    /// [`under_way_index`](Self::under_way_index) it was resolved in,
+    /// #1104): onto that frame's record, which is a frame or two back by
+    /// the time it comes, or the frame under way's. A frame the ring no
+    /// longer holds, one not begun yet, or no index at all (the frame was
+    /// resolved while the history wasn't recording) drops it. Returns
+    /// whether it landed.
+    pub(crate) fn gpu_time(&mut self, index: Option<u64>, ms: f32) -> bool {
+        let Some(index) = index else {
+            return false;
+        };
+        let frame = if index == self.under_way_index() {
+            Some(&mut self.under_way)
+        } else {
+            self.frame_mut(index)
+        };
+        match frame {
+            Some(f) => {
+                f.gpu_ms = Some(ms);
+                true
+            }
+            None => false,
         }
+    }
+
+    /// The kept record numbered `index`: records are numbered without
+    /// gaps, so it is found by its distance from the oldest.
+    pub(crate) fn frame(&self, index: u64) -> Option<&Frame> {
+        let oldest = self.frames.front()?.index;
+        self.frames
+            .get(usize::try_from(index.checked_sub(oldest)?).ok()?)
+    }
+
+    fn frame_mut(&mut self, index: u64) -> Option<&mut Frame> {
+        let oldest = self.frames.front()?.index;
+        self.frames
+            .get_mut(usize::try_from(index.checked_sub(oldest)?).ok()?)
     }
 
     /// The clock has ticked for the frame under way, so it has measured
@@ -345,8 +386,15 @@ impl FrameHistory {
         self.under_way.capturing = true;
     }
 
+    /// The frame under way loads a scene behind a script's cover (#1125):
+    /// the transition's Exiting fade ended with `complete_transition()`, so
+    /// the load's long frame is drawn under it. A hitch on it, or on the
+    /// frame after, is the detector's `loading`, not the game's.
+    pub(crate) fn loading_behind_cover(&mut self) {
+        self.under_way.behind_cover = true;
+    }
+
     /// The number the frame under way will have once it closes.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // desktop only
     pub(crate) fn under_way_index(&self) -> u64 {
         self.frames.back().map_or(0, |f| f.index + 1)
     }
@@ -386,7 +434,7 @@ mod tests {
         h.mark_at(Phase::Scripts, t + ms(4.0));
         h.fixed_steps(2);
         h.presented_at(t + ms(10.0));
-        h.gpu_ms(Some(3.5));
+        assert!(h.gpu_time(Some(h.under_way_index()), 3.5));
         h.begin_frame_at(t + ms(16.0));
         h.presented_at(t + ms(27.0));
         let f = h.newest().unwrap();
@@ -402,6 +450,56 @@ mod tests {
         assert_eq!(f.index, 1);
         assert!((f.present_ms.unwrap() - 17.0).abs() < 1e-3);
         assert_eq!(f.fixed_steps, 0, "a new frame starts empty");
+    }
+
+    #[test]
+    fn each_gpu_time_lands_on_the_frame_it_timed_whatever_order_it_comes_in() {
+        let mut h = FrameHistory::new(4);
+        let mut t = h.start;
+        // Frame n's GPU work took n + 0.5 ms. Each frame is resolved under
+        // its own number; the read-backs come back two or three frames
+        // later, and out of order.
+        let back_in: [(u64, &[u64]); 8] = [
+            (0, &[]),
+            (1, &[]),
+            (2, &[1, 0]),
+            (3, &[]),
+            (4, &[2, 3]),
+            (5, &[]),
+            (6, &[5, 4]),
+            (7, &[6]),
+        ];
+        for (frame, arrivals) in back_in {
+            h.begin_frame_at(t);
+            assert_eq!(h.under_way_index(), frame);
+            for &n in arrivals {
+                assert!(h.gpu_time(Some(n), n as f32 + 0.5), "frame {n} is kept");
+            }
+            t += ms(16.0);
+        }
+        h.begin_frame_at(t);
+        // A ring of 4 holds frames 4..=7: each with its own time but the
+        // newest, whose read-back hasn't come yet.
+        let gpu: Vec<(u64, Option<f32>)> = h.frames().iter().map(|f| (f.index, f.gpu_ms)).collect();
+        assert_eq!(
+            gpu,
+            [(4, Some(4.5)), (5, Some(5.5)), (6, Some(6.5)), (7, None)]
+        );
+        assert_eq!(h.frame(6).unwrap().gpu_ms, Some(6.5));
+        // It comes now, a frame late, and lands on 7, not on the frame
+        // under way (8).
+        assert!(h.gpu_time(Some(7), 7.5));
+        assert_eq!(h.newest().unwrap().gpu_ms, Some(7.5));
+        h.begin_frame_at(t + ms(16.0));
+        assert_eq!(h.newest().unwrap().index, 8);
+        assert_eq!(h.newest().unwrap().gpu_ms, None);
+        // A frame the ring let go of, one not begun, and no number at all
+        // are dropped, and touch no record.
+        assert!(!h.gpu_time(Some(1), 99.0));
+        assert!(!h.gpu_time(Some(40), 99.0));
+        assert!(!h.gpu_time(None, 99.0));
+        assert!(h.frames().iter().all(|f| f.gpu_ms != Some(99.0)));
+        assert!(h.frame(1).is_none() && h.frame(40).is_none());
     }
 
     #[test]

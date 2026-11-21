@@ -1,6 +1,7 @@
 //! The glyph atlas on the GPU: one `R8Unorm` texture, uploaded once.
 
 use super::GlyphAtlas;
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 
 /// A [`GlyphAtlas`] as a coverage texture: sample `.r` for ink (0..1). Cells
 /// sit at [`GlyphAtlas::cell_origin`] with a one-pixel gutter, so nearest or
@@ -31,7 +32,7 @@ impl GpuGlyphAtlas {
             height,
             depth_or_array_layers: 1,
         };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some(label),
             size: extent,
             mip_level_count: 1,
@@ -43,7 +44,7 @@ impl GpuGlyphAtlas {
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        queue.write_texture(
+        queue.write_texture_counted(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
@@ -126,7 +127,7 @@ impl GpuGlyphStack {
             height,
             depth_or_array_layers: 1,
         };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some(label),
             size: extent,
             mip_level_count: 1,
@@ -138,7 +139,7 @@ impl GpuGlyphStack {
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        queue.write_texture(
+        queue.write_texture_counted(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,

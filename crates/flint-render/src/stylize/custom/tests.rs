@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu_counts::CountedDevice;
 
 fn source(toml_text: &str, file: &str) -> Result<StyleSource, String> {
     let def: ShaderStyleDef = toml::from_str(toml_text).map_err(|e| e.to_string())?;
@@ -1749,7 +1750,7 @@ fn a_mipped_image_uploads_its_chain() {
     assert_eq!(chain.mip_level_count(), 3, "4x4, 2x2, 1x1");
     // Read the 1x1 level and a texel of level 0 back
     let read = |level: u32| -> [u8; 4] {
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: None,
             size: 256,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,

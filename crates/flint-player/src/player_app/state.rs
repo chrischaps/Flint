@@ -410,6 +410,12 @@ pub(super) struct Stats {
     /// What the run keeps of them (#1079): the hitch log, the exit
     /// report's counts and the `--max-hitches` gate.
     pub(super) watch: hitch_watch::HitchWatch,
+    /// The renderer's GPU-call reading at the last perf readout (#1091):
+    /// the next readout's window is the difference.
+    pub(super) gpu_calls_then: Option<perf::GpuCallsReading>,
+    /// The last frame F2 saw create GPU objects: its game time and what it
+    /// made, so a one-frame creation stays readable on the overlay.
+    pub(super) last_gpu_objects: Option<(f64, flint_render::gpu_counts::GpuCalls)>,
     /// Every load's report so far, the start-up first (#1092)
     pub(super) loads: Vec<flint_core::load_report::LoadReport>,
     /// The start-up's wait from `run_app` to the first `resumed`, timed
@@ -434,6 +440,8 @@ impl Default for Stats {
             // `FLINT_HITCH_FACTOR` / `FLINT_HITCH_FLOOR_MS`, read once.
             hitches: hitch::HitchDetector::new(hitch::HitchThresholds::from_env()),
             watch: Default::default(),
+            gpu_calls_then: None,
+            last_gpu_objects: None,
             loads: Vec::new(),
             awaiting_window: None,
             report: None,

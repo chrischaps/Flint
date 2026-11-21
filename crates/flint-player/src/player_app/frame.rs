@@ -276,6 +276,11 @@ impl PlayerApp {
                     &place,
                 );
             }
+            // Its GPU time comes back under its number in the history, to
+            // be laid on its own record a frame or two on (#1104)
+            if let Some(timer) = renderer.gpu_timer_mut() {
+                timer.set_frame_index(self.stats.perf.gpu_frame_index());
+            }
             renderer.encode_gpu_timings(&context.device, &mut encoder);
             {
                 flint_core::scope!("submit");
@@ -296,8 +301,11 @@ impl PlayerApp {
             ) {
                 trace.tracks.gpu(timer.take_traced(), timer.timestamps());
             }
-            // The GPU time read back this frame, for the frame history
-            self.stats.perf.gpu_ms(renderer.take_gpu_frame_ms());
+            // The GPU times read back this frame, each onto the frame it
+            // timed in the history
+            for time in renderer.take_gpu_frame_times() {
+                self.stats.perf.gpu_time(time.index, time.ms);
+            }
             #[cfg(not(target_arch = "wasm32"))]
             {
                 if let Some(info) = &capture_adapter {
@@ -405,6 +413,10 @@ impl PlayerApp {
                         self.capture.perf_gpu_ms += stats.gpu_frame_ms as f64;
                         self.capture.perf_gpu_frames += 1;
                     }
+                    self.capture.perf_gpu_calls += stats.gpu_calls;
+                    if stats.gpu_calls.created() > 0 {
+                        self.capture.perf_gpu_creating += 1;
+                    }
                 }
             }
             // A shot that's due but failed waits for its retries (#639).
@@ -452,6 +464,15 @@ impl PlayerApp {
             });
             for line in n.lines(&note) {
                 tracing::info!(target: "report", "{line}");
+            }
+            // The GPU memory the renderer holds as the run ends (#1091)
+            if let (Some(r), Some(ctx)) = (&self.scene_renderer, &self.render_context) {
+                let device = flint_render::gpu_counts::device_memory(&ctx.device);
+                tracing::info!(target: "report",
+                    "[perf] GPU memory at exit: {}",
+                    super::perf::gpu_memory_part(&r.gpu_memory(), device)
+                        .trim_start_matches("gpu mem ")
+                );
             }
             // That GPU total leaves out the scopes that read zero (#1316)
             if n.gpu.is_some() {
@@ -1060,12 +1081,24 @@ impl PlayerApp {
                 stats.frame_time_ms = (avg_dt * 1000.0) as f32;
                 if let Some(ctx) = &self.render_context {
                     stats.resolution = [ctx.config.width, ctx.config.height];
+                    stats.device_memory = flint_render::gpu_counts::device_memory(&ctx.device);
+                }
+                // A frame that made GPU objects is one frame of the
+                // overlay: keep it, so the row can say it (#1091)
+                if stats.gpu_calls.created() > 0 {
+                    self.stats.last_gpu_objects =
+                        Some((self.core.clock.total_time, stats.gpu_calls));
                 }
                 stats
             })
         } else {
             None
         };
+        let last_gpu_objects = self
+            .stats
+            .last_gpu_objects
+            .filter(|_| show_stats)
+            .map(|(at, calls)| (self.core.clock.total_time - at, calls));
         // Each style texture's row (#561), only while the full overlay
         // shows: closed, nothing is read or allocated
         let style_target_rows = match (&stats_data, self.scene_renderer.as_ref()) {
@@ -1180,6 +1213,7 @@ impl PlayerApp {
                     (super::StatsView::Full, Some(stats)) => render_stats_overlay(
                         ctx,
                         stats,
+                        last_gpu_objects,
                         &style_target_rows,
                         &gpu_label,
                         graph.as_mut(),
@@ -1565,6 +1599,10 @@ impl super::game_core::FrameHost for PlayerApp {
         }
     }
 
+    fn late_models(&mut self) {
+        self.load_late_models();
+    }
+
     fn bones_posed(&mut self) {
         // Push skeletal bone matrices to GPU
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
@@ -1683,6 +1721,7 @@ fn render_graph_overlay(ctx: &egui::Context, graph: Option<&mut OverlayGraph>, r
 fn render_stats_overlay(
     ctx: &egui::Context,
     stats: &flint_render::RenderStats,
+    last_gpu_objects: Option<(f64, flint_render::gpu_counts::GpuCalls)>,
     style_targets: &[String],
     gpu: &str,
     graph: Option<&mut OverlayGraph>,
@@ -1725,6 +1764,19 @@ fn render_stats_overlay(
             });
             ui.label(format!("Draw Calls: {}", stats.draw_calls));
             ui.label(format!("Triangles: {}", format_count(stats.triangles)));
+
+            ui.separator();
+
+            // GPU objects created this frame (#1091): zero on a steady
+            // frame, amber when not, and the last frame that made any
+            for row in super::stats_view::gpu_alloc_rows(stats, last_gpu_objects) {
+                let color = match row.tone {
+                    super::stats_view::Tone::Calm => egui::Color32::from_gray(200),
+                    super::stats_view::Tone::Quiet => egui::Color32::from_gray(136),
+                    super::stats_view::Tone::Alert => egui::Color32::from_rgb(245, 166, 35),
+                };
+                ui.colored_label(color, row.text);
+            }
 
             ui.separator();
 

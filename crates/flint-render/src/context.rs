@@ -1,5 +1,6 @@
 //! wgpu render context setup
 
+use crate::gpu_counts::CountedDevice;
 use std::sync::Arc;
 use thiserror::Error;
 use winit::window::Window;
@@ -247,7 +248,7 @@ impl RenderContext {
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
 
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let staging = self.device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Surface Readback Buffer"),
             size: (padded_bytes_per_row * height) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -428,7 +429,7 @@ fn create_depth_texture(
         view_formats: &[],
     };
 
-    let texture = device.create_texture(&desc);
+    let texture = device.create_texture_counted(&desc);
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     (texture, view)

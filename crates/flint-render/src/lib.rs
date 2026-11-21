@@ -21,6 +21,7 @@ pub mod frame_replay;
 mod frame_taps;
 pub mod frustum;
 pub mod glyph_atlas;
+pub mod gpu_counts;
 pub mod gpu_labels;
 mod gpu_mesh;
 pub mod gpu_select;
@@ -81,8 +82,8 @@ pub use glyph_atlas::{
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache, KEPT_GEOMETRY_LABEL};
 pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
 pub use gpu_timer::{
-    GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread, TimestampHealth,
-    TracedGpuFrame, TracedPass, TIMESTAMPS_UNAVAILABLE,
+    GpuFrameTime, GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread,
+    TimestampHealth, TracedGpuFrame, TracedPass, TIMESTAMPS_UNAVAILABLE,
 };
 pub use gpu_wait::{gpu_wait_timeout, wait_for_gpu};
 pub use grass_pipeline::{GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu};

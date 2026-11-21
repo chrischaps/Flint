@@ -1,6 +1,7 @@
 //! The ASCII passes' uniform blocks, edge formats and layouts (moved from
 //! `ascii.rs`, #742).
 
+use crate::gpu_counts::CountedDevice;
 use super::*;
 
 #[repr(C)]
@@ -395,7 +396,7 @@ impl Owned {
         let size = [size[0].max(1), size[1].max(1)];
         if slot.as_ref().is_none_or(|o| o.size != size) {
             let generation = slot.as_ref().map_or(0, |o| o.generation + 1);
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
+            let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
                     width: size[0],
@@ -415,7 +416,7 @@ impl Owned {
                 view_formats: &[],
             });
             let view = texture.create_view(&Default::default());
-            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout,
                 entries: &[wgpu::BindGroupEntry {

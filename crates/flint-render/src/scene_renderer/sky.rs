@@ -6,6 +6,7 @@
 
 use super::helpers::identity_matrix;
 use crate::camera::{mat4_inverse, mat4_mul, Camera};
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::pipeline::{DirectionalLight, LightUniforms};
 use crate::sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};
 use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
@@ -13,7 +14,6 @@ use crate::texture_cache::open_image;
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use std::path::Path;
-use wgpu::util::DeviceExt;
 
 /// The procedural sky's uniforms and the scene's `sky` values, and the
 /// texture skybox's binds when one is loaded.
@@ -40,13 +40,13 @@ impl SkyRenderer {
     pub(crate) fn new(device: &wgpu::Device, pipeline: Option<&SkyPipeline>) -> Self {
         let (uniform_buffer, uniform_bind_group) = match pipeline {
             Some(pipeline) => {
-                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
                     label: Some("Sky Uniform Buffer"),
                     size: std::mem::size_of::<SkyUniformsGpu>() as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     layout: &pipeline.uniform_bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
@@ -158,7 +158,7 @@ impl SkyRenderer {
                     cloud_drift_y: p.cloud_drift_y,
                     time: (time % 100_000.0) as f32,
                 };
-                queue.write_buffer(ub, 0, bytemuck::cast_slice(&[uniforms]));
+                queue.write_buffer_counted(ub, 0, bytemuck::cast_slice(&[uniforms]));
 
                 render_pass.set_pipeline(&sp.pipeline);
                 render_pass.set_bind_group(0, ubg, &[]);
@@ -182,7 +182,7 @@ impl SkyRenderer {
                 let vp = mat4_mul(&proj, &view_rot_only);
                 let inv_vp = mat4_inverse(&vp);
 
-                queue.write_buffer(
+                queue.write_buffer_counted(
                     &skybox.uniform_buffer,
                     0,
                     bytemuck::cast_slice(&[SkyboxUniforms {
@@ -241,7 +241,7 @@ impl SkyRenderer {
             height,
             depth_or_array_layers: 1,
         };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Skybox Panorama Texture"),
             size: texture_size,
             mip_level_count: 1,
@@ -252,7 +252,7 @@ impl SkyRenderer {
             view_formats: &[],
         });
 
-        queue.write_texture(
+        queue.write_texture_counted(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
@@ -281,7 +281,7 @@ impl SkyRenderer {
         });
 
         // Create uniform buffer
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let uniform_buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some("Skybox Uniform Buffer"),
             contents: bytemuck::cast_slice(&[SkyboxUniforms {
                 inv_view_proj: identity_matrix(),
@@ -290,7 +290,7 @@ impl SkyRenderer {
         });
 
         // Create bind groups
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let uniform_bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: &skybox_pipeline.uniform_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -299,7 +299,7 @@ impl SkyRenderer {
             label: Some("Skybox Uniform Bind Group"),
         });
 
-        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let texture_bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: &skybox_pipeline.texture_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
