@@ -210,6 +210,16 @@ Under vsync the GPU finishes a frame and then waits for the display, and a GPU t
 
 Here the frame read 3.9 ms against 2.8 unlocked, about 1.4x; in #270 (DX12, 1080p) SSAO read 4.4 ms under vsync against 0.80 without, about 5x. To compare passes, take them with `FLINT_VSYNC=0` or with `flint render --gpu-time`, which presents nothing. The share is the GPU's frame time over the mean time between frames, not the median: under Fifo on a hybrid-GPU laptop frames come in bursts (see Frame pacing below), and the median frame there was 5 ms at a 60 fps mean.
 
+#### When the adapter's timestamps read zero
+
+Some GPUs write timestamps that carry no time. On the Pixel 8 Pro (Mali-G715, Chrome) every scope after `Scene` reads exactly zero ticks, frame after frame, and a list of `0.00`s looks like an answer: #378 lost a run reading one. So the timer checks its raw read-backs, a window of 60 frames at a time (`GpuTimer::timestamps`, `RenderStats::gpu_timestamps`): when at least two scopes, and at least half of them, read exactly zero ticks in every frame of a window, the times are called unusable, and each reader says so in place of the list. The F2 overlay's GPU section, `?perf=1`'s panel and the copied line say `GPU pass times unavailable on this adapter` with the count behind it:
+
+```text
+… | worst scripts: … | GPU pass times unavailable on this adapter (5 of 7 scopes read 0 ticks for 60 frames) | 8 draws 90.9K tris
+```
+
+A trace's `gpu` track then holds one mark of that name instead of the zero spans, and its header a `gpu_pass_times` line; `--exit-after` adds a warning under its `[perf] avg GPU` line, since that total counts only the scopes that read. A real pass is never exactly zero ticks for a whole window: an empty one is about 2 µs, and a browser that rounds timestamps to 100 µs still reads a small pass as a step on some frames, so desktop GPUs and browsers keep their lists. Each window is judged afresh. To cost passes on such a GPU, count GPU-bound frames instead (`tools/phone-perf/submits.mjs` at `?scale=1`, #568).
+
 ### From a game
 
 Timing belongs to the renderer, which an extension reaches through `ExtensionCtx::gpu`:
