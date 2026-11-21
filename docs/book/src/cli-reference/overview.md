@@ -1048,8 +1048,13 @@ flint edit flint-examples/stylize_props.scene.toml --render props.png --no-grid 
 
 A texture generator's or a texture pipeline's still is its output maps side by
 side, in the order the editor's tabs list them, and the command prints that
-order. The track editor's spline handles are drawn by its panels, so its still
-is the scene from the editor's camera.
+order. The track editor's still is the scene from the editor's camera with the
+spline over it, as the window draws it: the curve, the thin polygon joining
+its control points, and each point as a numbered white disc.
+
+```bash
+flint edit flint-examples/sweep_garden.scene.toml --spline --render track.png  # the track and its handles
+```
 
 ### GPU Selection
 

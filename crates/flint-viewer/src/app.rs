@@ -1802,19 +1802,8 @@ impl ViewerApp {
             // View orientation gizmo (always visible)
             gizmo_action = view_gizmo.draw(ctx, &cam_view, ui.available_rect_before_wrap());
 
-            // Draw spline overlay on the central area (editor mode)
-            if let Some(ed) = editor.as_ref() {
-                let screen_rect = ctx.content_rect();
-                let painter = ctx.layer_painter(egui::LayerId::new(
-                    egui::Order::Foreground,
-                    egui::Id::new("spline_overlay"),
-                ));
-                ed.draw_overlay(
-                    &painter,
-                    camera,
-                    [screen_rect.width(), screen_rect.height()],
-                );
-            }
+            // The track editor's spline is the host's overlay (`overlay`,
+            // #1154), so a --render still shows it too
 
             // Render stats overlay (F2 toggle)
             if let Some(ref s) = overlay_stats {
@@ -2781,6 +2770,19 @@ impl Editor for ViewerApp {
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.frame_ui(ui);
+    }
+
+    /// The track editor's spline, its control polygon and its points, over
+    /// the view in the window and in a `--render` still alike (#1154).
+    fn overlay(&mut self, ctx: &egui::Context) {
+        if let Some(ed) = &self.editor {
+            let screen = ctx.content_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("spline_overlay"),
+            ));
+            ed.draw_overlay(&painter, &self.camera, [screen.width(), screen.height()]);
+        }
     }
 }
 
