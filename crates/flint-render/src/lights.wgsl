@@ -21,7 +21,8 @@ struct PointLight {
     intensity: f32,
     // Physical source radius (world units); 0 = punctual (ADR 0056).
     source_radius: f32,
-    _pad0: f32,
+    // 1.0 on the point light whose cube shadow map is drawn (#1112)
+    shadow: f32,
     _pad1: f32,
     _pad2: f32,
 };
@@ -69,4 +70,11 @@ struct ShadowUniforms {
     // (near, far, tan of the half-angle, 1 when drawn); w = 0 -> no spot shadow.
     spot_view_proj: mat4x4<f32>,
     spot: vec4<f32>,
+    // The point light's cube (#1112): world to each face's clip space (+X,
+    // -X, +Y, -Y, +Z, -Z; face f at column f % 3, row f / 3 of layer 4),
+    // (near, far, tan of a face's half-angle, 1 when drawn), and (a face's
+    // width as a share of the layer, its width in texels, -, -).
+    point_view_proj: array<mat4x4<f32>, 6>,
+    point: vec4<f32>,
+    point_atlas: vec4<f32>,
 };

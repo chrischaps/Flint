@@ -151,6 +151,10 @@ pub struct ReplayRenderer {
     pub part_softness: BTreeMap<String, Vec<f32>>,
     /// The entities whose echoes may only add light.
     pub echo_lighten: Vec<String>,
+    /// Each style's frame-to-frame history (#1136): its parts, their keys
+    /// and the files under `replay/` that hold their textures
+    /// ([`crate::stylize::history`]).
+    pub style_history: Vec<crate::stylize::history::StyleHistoryState>,
 }
 
 /// A palette copied in the frame's encoder, not yet read.
@@ -165,21 +169,27 @@ pub struct ReplayStateCapture {
     /// Everything but `skinning`, which [`read`](Self::read) fills.
     pub renderer: ReplayRenderer,
     staged: Vec<Staged>,
+    /// The styles' history textures (#1136), copied beside the palettes.
+    history: Vec<crate::stylize::history::StagedHistory>,
     mapped: Arc<AtomicUsize>,
     failed: Arc<AtomicBool>,
     mapping: bool,
 }
 
-/// The palettes read back: `skinning.bin`'s bytes and its index.
+/// The palettes read back: `skinning.bin`'s bytes and its index; and the
+/// styles' history textures (#1136), each file under `replay/` with its
+/// bytes (`history/ascii.tone.cells.bin`).
 pub struct ReadPalettes {
     pub index: Vec<PaletteEntry>,
     pub bytes: Vec<u8>,
+    pub history: Vec<(String, Vec<u8>)>,
 }
 
 impl ReplayStateCapture {
     /// Bytes held in staging until read.
     pub fn staging_bytes(&self) -> u64 {
-        self.staged.iter().map(|s| s.buffer.size()).sum()
+        self.staged.iter().map(|s| s.buffer.size()).sum::<u64>()
+            + self.history.iter().map(|s| s.buffer.size()).sum::<u64>()
     }
 
     /// Ask for every palette to be mapped. Call once the frame is submitted.
@@ -188,9 +198,14 @@ impl ReplayStateCapture {
             return;
         }
         self.mapping = true;
-        for s in &self.staged {
+        let buffers = self
+            .staged
+            .iter()
+            .map(|s| &s.buffer)
+            .chain(self.history.iter().map(|s| &s.buffer));
+        for buffer in buffers {
             let (mapped, failed) = (self.mapped.clone(), self.failed.clone());
-            s.buffer
+            buffer
                 .slice(..)
                 .map_async(wgpu::MapMode::Read, move |result| {
                     if result.is_err() {
@@ -203,7 +218,8 @@ impl ReplayStateCapture {
 
     /// Whether every palette is mapped.
     pub fn ready(&self) -> bool {
-        self.mapping && self.mapped.load(Ordering::Acquire) == self.staged.len()
+        self.mapping
+            && self.mapped.load(Ordering::Acquire) == self.staged.len() + self.history.len()
     }
 
     /// Run the device's callbacks without waiting; whether it's ready.
@@ -248,9 +264,27 @@ impl ReplayStateCapture {
             s.buffer.unmap();
             index.push(entry);
         }
+        let mut history = Vec::with_capacity(self.history.len());
+        for s in self.history {
+            let data = s
+                .buffer
+                .slice(..)
+                .get_mapped_range()
+                .map_err(|e| format!("style history {}: {e}", s.file))?;
+            history.push((s.file.clone(), s.unpadded(&data)));
+            drop(data);
+            s.buffer.unmap();
+        }
         let mut renderer = self.renderer;
         renderer.skinning = index.clone();
-        Ok((renderer, ReadPalettes { index, bytes }))
+        Ok((
+            renderer,
+            ReadPalettes {
+                index,
+                bytes,
+                history,
+            },
+        ))
     }
 }
 
@@ -260,10 +294,23 @@ impl ReplayStateCapture {
         Self {
             renderer,
             staged: Vec::new(),
+            history: Vec::new(),
             mapped: Arc::new(AtomicUsize::new(0)),
             failed: Arc::new(AtomicBool::new(false)),
             mapping: false,
         }
+    }
+
+    /// Keep the styles' history (#1136): their states, written into
+    /// `inputs.json`, and the copies of their textures staged in the
+    /// frame's encoder.
+    pub(crate) fn stage_history(
+        &mut self,
+        states: Vec<crate::stylize::history::StyleHistoryState>,
+        staged: Vec<crate::stylize::history::StagedHistory>,
+    ) {
+        self.renderer.style_history = states;
+        self.history = staged;
     }
 
     /// Copy `source` into a staging buffer of its own in `encoder`, as
@@ -765,13 +812,8 @@ pub fn fresh_only(renderer: &crate::SceneRenderer, world: &FlintWorld) -> Vec<St
         if !style.enabled {
             continue;
         }
-        if name == "ascii" {
-            out.push("ascii: temporal history (#1136)".to_string());
-        } else if renderer.styles().is_user_style(name) {
-            out.push(format!(
-                "{name}: a user style's history targets, if it keeps any"
-            ));
-        }
+        // A style's frame-to-frame history (ASCII's, a user style's
+        // targets) is captured since #1136: `renderer.style_history`
         if !style.reveal.is_empty() {
             out.push(format!("{name}: its reveal region (recorded as text only)"));
         }
@@ -869,6 +911,34 @@ pub fn hash_file(path: &std::path::Path) -> Option<(String, u64)> {
             b.len() as u64,
         )
     })
+}
+
+/// The styles' history a capture holds (#1136), read from its `replay/`
+/// folder for [`SceneRenderer::import_style_history`](crate::SceneRenderer::import_style_history):
+/// each of `states` with its textures' bytes. A file that doesn't read is
+/// left out and named, a line each (that part then draws fresh, and says
+/// so).
+pub fn read_style_history(
+    replay_dir: &std::path::Path,
+    states: &[crate::stylize::history::StyleHistoryState],
+) -> (Vec<crate::stylize::history::ImportedHistory>, Vec<String>) {
+    let mut said = Vec::new();
+    let histories = states
+        .iter()
+        .map(|state| {
+            let mut data = BTreeMap::new();
+            for t in state.parts.iter().flat_map(|p| &p.textures) {
+                match flint_core::vfs::read(replay_dir.join(&t.file)) {
+                    Ok(bytes) => {
+                        data.insert(t.file.clone(), Arc::new(bytes));
+                    }
+                    Err(e) => said.push(format!("replay/{}: {e}", t.file)),
+                }
+            }
+            crate::stylize::history::ImportedHistory::new(state.clone(), data)
+        })
+        .collect();
+    (histories, said)
 }
 
 /// An entity's name, or `#<id>` for one without (a capture names by name).

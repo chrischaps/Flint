@@ -827,6 +827,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         atlas_bgl,
         fonts: Mutex::new(Fonts::default()),
         history: Mutex::new(History::default()),
+        imported: Default::default(),
     })
 }
 

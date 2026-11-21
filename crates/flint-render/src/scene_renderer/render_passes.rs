@@ -143,8 +143,42 @@ pub(super) const SHADOW_PASS_LABELS: [&str; crate::shadow::SHADOW_LAYERS] = {
     labels[1] = "Shadow cascade 1";
     labels[2] = "Shadow cascade 2";
     labels[crate::shadow::SPOT_SHADOW_LAYER] = "Spot shadow";
+    labels[crate::shadow::POINT_SHADOW_LAYER] = "Point shadow";
     labels
 };
+
+/// One shadow map layer a frame draws, and the views it is drawn through:
+/// one for a cascade or the spot, six for a point light's cube (#1112), each
+/// face into its own square of the layer.
+struct ShadowLayerDraw {
+    layer: usize,
+    views: Vec<ShadowView>,
+}
+
+struct ShadowView {
+    view_proj: [[f32; 4]; 4],
+    frustum: crate::frustum::Frustum,
+    /// x, y, size in texels; `None` is the whole layer.
+    viewport: Option<[u32; 3]>,
+}
+
+impl ShadowLayerDraw {
+    fn whole(layer: usize, view_proj: [[f32; 4]; 4]) -> Self {
+        Self {
+            layer,
+            views: vec![ShadowView {
+                view_proj,
+                frustum: crate::frustum::Frustum::from_view_projection(&view_proj),
+                viewport: None,
+            }],
+        }
+    }
+
+    /// Whether any of the layer's views sees `caster`.
+    fn sees(&self, caster: &Caster<'_>) -> bool {
+        self.views.iter().any(|v| caster.visible(&v.frustum))
+    }
+}
 
 /// The draw-list layer a pass is drawing, held open as a debug group
 /// (#1083) until a draw of another layer or [`leave`](Self::leave).
@@ -247,7 +281,7 @@ impl SceneRenderer {
     fn log_shadow_layers(
         &self,
         pass: &mut crate::frame_capture::LoggedPass,
-        layers: &[(usize, [[f32; 4]; 4])],
+        layers: &[ShadowLayerDraw],
         grass_casts: bool,
     ) {
         pass.writes(&["shadow_map"]);
@@ -255,8 +289,8 @@ impl SceneRenderer {
             .shadow_pass
             .as_ref()
             .is_some_and(|sp| sp.wooze.is_some());
-        for &(layer, vp) in layers {
-            let frustum = crate::frustum::Frustum::from_view_projection(&vp);
+        for drawn in layers {
+            let layer = drawn.layer;
             let mut logged = crate::frame_capture::LoggedPass::default();
             logged.pass.name = SHADOW_PASS_LABELS[layer].to_string();
             logged.pass.ran = true;
@@ -268,7 +302,7 @@ impl SceneRenderer {
             for (item, caster) in shadow_casters(&self.draws, &self.terrain.draws) {
                 let woozy = item.wooze().is_some() && woozy_pass;
                 let name = caster_pipeline_name(&caster, woozy);
-                if !caster.visible(&frustum) {
+                if !drawn.sees(&caster) {
                     logged
                         .culled
                         .push(self.logged_draw(item, Some("outside the layer"), name));
@@ -284,8 +318,9 @@ impl SceneRenderer {
         }
     }
 
-    /// Render depth from light perspective for cascaded shadow mapping, and
-    /// from the casting spot's for its layer (#504).
+    /// Render depth from light perspective for cascaded shadow mapping, from
+    /// the casting spot's for its layer (#504), and from the casting point
+    /// light's six faces for theirs (#1112).
     pub(super) fn render_shadow_pass(
         &mut self,
         device: &wgpu::Device,
@@ -299,14 +334,19 @@ impl SceneRenderer {
         // The frame's description (#1084): the pass `encode_to` opened
         let mut logged = log.and_then(|l| l.named("Shadows"));
         // Off, forbidden by the scene, or no sun that gives any light (#627)
-        // and no spot that casts (#504): nothing to draw
+        // and no spot or point light that casts (#504, #1112): nothing to draw
         let sun_drawn = self.shadows_drawn();
         let spot = self
             .spot_shadow_drawn()
             .then(|| self.lights.shadow_spot().copied())
             .flatten();
+        let point = self
+            .point_shadow_drawn()
+            .then(|| self.lights.shadow_point().copied())
+            .flatten();
+        let nothing = !sun_drawn && spot.is_none() && point.is_none();
         if let Some(pass) = logged.as_deref_mut() {
-            if !sun_drawn && spot.is_none() {
+            if nothing {
                 pass.drew_nothing(self.shadows_off_reason());
             }
         }
@@ -315,7 +355,7 @@ impl SceneRenderer {
             None => return,
         };
 
-        if !sun_drawn && spot.is_none() {
+        if nothing {
             // The shaders sample the maps whatever this pass does, so a pass
             // turned off at runtime would leave the last frame's shadows
             // standing (FlintKart#55). Zero splits read as "no shadows".
@@ -350,34 +390,49 @@ impl SceneRenderer {
             0
         };
         shadow_pass.update_spot(spot.as_ref());
+        let cube = shadow_pass.update_point(point.as_ref());
 
-        // The layers drawn, each with the matrix it is drawn through: the
-        // cascades, then the spot's (#504). Grass casts into the nearest
-        // cascades only: it takes no spot light.
-        let mut layers: Vec<(usize, [[f32; 4]; 4])> = (0..cascades)
+        // The layers drawn, each with the matrices it is drawn through: the
+        // cascades, the spot's (#504), the point light's six faces (#1112).
+        // Grass casts into the nearest cascades only: it takes no spot or
+        // point light.
+        let mut layers: Vec<ShadowLayerDraw> = (0..cascades)
             .map(|cascade| {
-                (
+                ShadowLayerDraw::whole(
                     cascade,
                     shadow_pass.shadow_uniforms().cascade_view_proj[cascade],
                 )
             })
             .collect();
         if spot.is_some() {
-            layers.push((
+            layers.push(ShadowLayerDraw::whole(
                 crate::shadow::SPOT_SHADOW_LAYER,
                 shadow_pass.shadow_uniforms().spot_view_proj,
             ));
         }
+        if let Some(cube) = &cube {
+            layers.push(ShadowLayerDraw {
+                layer: crate::shadow::POINT_SHADOW_LAYER,
+                views: cube
+                    .faces
+                    .iter()
+                    .map(|face| ShadowView {
+                        view_proj: face.view_proj,
+                        frustum: crate::frustum::Frustum::from_view_projection(&face.view_proj),
+                        viewport: Some(face.viewport),
+                    })
+                    .collect(),
+            });
+        }
 
         // A replay stepping one layer's casters (#1204): those past its limit
         // are set aside from that layer alone, counted as its log lists them
-        for &(layer, vp) in &layers {
-            let stepped = SteppedPass::Shadow(layer);
+        for drawn in &layers {
+            let stepped = SteppedPass::Shadow(drawn.layer);
             if self.draws.limit_of(stepped).is_some() {
-                let frustum = crate::frustum::Frustum::from_view_projection(&vp);
                 let terrain = &self.terrain.draws;
                 self.draws.cut_pass(stepped, |item| {
-                    shadow_caster(item, terrain).is_some_and(|c| c.visible(&frustum))
+                    shadow_caster(item, terrain).is_some_and(|c| drawn.sees(&c))
                 });
             }
         }
@@ -398,21 +453,22 @@ impl SceneRenderer {
         let mut draw_uniforms: Vec<ShadowDrawUniforms> = Vec::new();
         // Shallow wooze's drift, for the slots whose casters have any (#215).
         let mut draw_wooze = Vec::new();
-        for &(layer, cascade_vp) in &layers {
-            let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
-            for (item, caster) in shadow_casters(&self.draws, &self.terrain.draws) {
-                if !caster.visible(&cascade_frustum)
-                    || !self.draws.within(item, SteppedPass::Shadow(layer))
-                {
-                    continue;
+        for drawn in &layers {
+            for view in &drawn.views {
+                for (item, caster) in shadow_casters(&self.draws, &self.terrain.draws) {
+                    if !caster.visible(&view.frustum)
+                        || !self.draws.within(item, SteppedPass::Shadow(drawn.layer))
+                    {
+                        continue;
+                    }
+                    if let Some(wooze) = item.wooze() {
+                        draw_wooze.push((draw_uniforms.len() as u32, *wooze));
+                    }
+                    draw_uniforms.push(ShadowDrawUniforms {
+                        light_view_proj: view.view_proj,
+                        model: caster.model(),
+                    });
                 }
-                if let Some(wooze) = item.wooze() {
-                    draw_wooze.push((draw_uniforms.len() as u32, *wooze));
-                }
-                draw_uniforms.push(ShadowDrawUniforms {
-                    light_view_proj: cascade_vp,
-                    model: caster.model(),
-                });
             }
         }
         shadow_pass.ensure_draw_capacity(device, draw_uniforms.len() as u32);
@@ -464,12 +520,14 @@ impl SceneRenderer {
         // draws plain.
         let shadow_wooze = shadow_pass.wooze.as_ref();
 
-        // Render each layer: the cascades, then the spot's. A GPU debugger
-        // sees each as a pass of its own name, its casters grouped by the
-        // draw list's layer and, with draw markers on, named (#1083).
+        // Render each layer: the cascades, the spot's, the point's. A GPU
+        // debugger sees each as a pass of its own name, its casters grouped
+        // by the draw list's layer and, with draw markers on, named (#1083).
+        // The point's six faces are one pass, a viewport each.
         let marks = crate::gpu_labels::draws();
         let mut draw_label = DrawLabel::default();
-        for &(cascade, cascade_vp) in &layers {
+        for drawn in &layers {
+            let cascade = drawn.layer;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(SHADOW_PASS_LABELS[cascade]),
                 color_attachments: &[],
@@ -485,83 +543,89 @@ impl SceneRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            // Same per-cascade test as the uniform gather above, so the slots
-            // line up.
-            let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
             let stepped = SteppedPass::Shadow(cascade);
-            let casts = |item: &DrawItem, caster: &Caster<'_>| {
-                caster.visible(&cascade_frustum) && self.draws.within(item, stepped)
-            };
             let mut bound = BoundPipeline::default();
-            let mut casters = shadow_casters(&self.draws, &self.terrain.draws).peekable();
-            let mut group = LayerGroup::default();
-            // The terrain's chunks come first in the list; grass casts after them
-            while casters
-                .peek()
-                .is_some_and(|(item, _)| item.layer() == super::Layer::Terrain)
-            {
-                let (item, caster) = casters.next().expect("peeked");
-                if casts(item, &caster) {
-                    group.enter(&mut pass, Layer::Terrain);
-                    if marks {
-                        self.draws.mark(&mut pass, &mut draw_label, item);
+            for view in &drawn.views {
+                if let Some([x, y, size]) = view.viewport {
+                    let (x, y, size) = (x as f32, y as f32, size as f32);
+                    pass.set_viewport(x, y, size, size, 0.0, 1.0);
+                    pass.set_scissor_rect(x as u32, y as u32, size as u32, size as u32);
+                }
+                // Same per-view test as the uniform gather above, so the slots
+                // line up.
+                let casts = |item: &DrawItem, caster: &Caster<'_>| {
+                    caster.visible(&view.frustum) && self.draws.within(item, stepped)
+                };
+                let mut casters = shadow_casters(&self.draws, &self.terrain.draws).peekable();
+                let mut group = LayerGroup::default();
+                // The terrain's chunks come first in the list; grass casts after them
+                while casters
+                    .peek()
+                    .is_some_and(|(item, _)| item.layer() == super::Layer::Terrain)
+                {
+                    let (item, caster) = casters.next().expect("peeked");
+                    if casts(item, &caster) {
+                        group.enter(&mut pass, Layer::Terrain);
+                        if marks {
+                            self.draws.mark(&mut pass, &mut draw_label, item);
+                        }
+                        draw_caster(
+                            &mut pass,
+                            &mut bound,
+                            &mut next_slot,
+                            shadow_pass,
+                            None,
+                            &caster,
+                        );
                     }
-                    draw_caster(
-                        &mut pass,
-                        &mut bound,
-                        &mut next_slot,
-                        shadow_pass,
-                        None,
-                        &caster,
-                    );
                 }
-            }
 
-            // Render grass into shadow cascade (nearest 2 only)
-            if grass_casts && cascade < GRASS_SHADOW_CASCADES {
-                if let (Some(gp), Some(render_bg), Some(instance_bg), Some(args)) = (
-                    &self.pipelines.grass,
-                    &self.grass.render_uniform_bind_group,
-                    &self.grass.render_instance_bind_group,
-                    &self.grass.draw_args_buffer,
-                ) {
-                    group.leave(&mut pass);
-                    let grass_group = PassGroup::open(&mut pass, "Grass");
-                    let grass_shadow_bind = &self.grass.shadow_binds[cascade].1;
-                    bound.set(&mut pass, &gp.shadow_pipeline);
-                    pass.set_bind_group(0, grass_shadow_bind, &[]);
-                    pass.set_bind_group(1, render_bg, &[]);
-                    pass.set_bind_group(2, &gp.shadow_dummy_bind_group, &[]);
-                    pass.set_bind_group(3, instance_bg, &[]);
-                    pass.set_vertex_buffer(0, gp.blade_vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        gp.blade_index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint16,
-                    );
-                    // The count is the compute pass's (ADR 0092)
-                    pass.draw_indexed_indirect(args, 0);
-                    grass_group.close(&mut pass);
-                }
-            }
-
-            for (item, caster) in casters {
-                if casts(item, &caster) {
-                    group.enter(&mut pass, item.layer());
-                    if marks {
-                        self.draws.mark(&mut pass, &mut draw_label, item);
+                // Render grass into shadow cascade (nearest 2 only)
+                if grass_casts && cascade < GRASS_SHADOW_CASCADES {
+                    if let (Some(gp), Some(render_bg), Some(instance_bg), Some(args)) = (
+                        &self.pipelines.grass,
+                        &self.grass.render_uniform_bind_group,
+                        &self.grass.render_instance_bind_group,
+                        &self.grass.draw_args_buffer,
+                    ) {
+                        group.leave(&mut pass);
+                        let grass_group = PassGroup::open(&mut pass, "Grass");
+                        let grass_shadow_bind = &self.grass.shadow_binds[cascade].1;
+                        bound.set(&mut pass, &gp.shadow_pipeline);
+                        pass.set_bind_group(0, grass_shadow_bind, &[]);
+                        pass.set_bind_group(1, render_bg, &[]);
+                        pass.set_bind_group(2, &gp.shadow_dummy_bind_group, &[]);
+                        pass.set_bind_group(3, instance_bg, &[]);
+                        pass.set_vertex_buffer(0, gp.blade_vertex_buffer.slice(..));
+                        pass.set_index_buffer(
+                            gp.blade_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint16,
+                        );
+                        // The count is the compute pass's (ADR 0092)
+                        pass.draw_indexed_indirect(args, 0);
+                        grass_group.close(&mut pass);
                     }
-                    let woozy = item.wooze().and(shadow_wooze);
-                    draw_caster(
-                        &mut pass,
-                        &mut bound,
-                        &mut next_slot,
-                        shadow_pass,
-                        woozy,
-                        &caster,
-                    );
                 }
+
+                for (item, caster) in casters {
+                    if casts(item, &caster) {
+                        group.enter(&mut pass, item.layer());
+                        if marks {
+                            self.draws.mark(&mut pass, &mut draw_label, item);
+                        }
+                        let woozy = item.wooze().and(shadow_wooze);
+                        draw_caster(
+                            &mut pass,
+                            &mut bound,
+                            &mut next_slot,
+                            shadow_pass,
+                            woozy,
+                            &caster,
+                        );
+                    }
+                }
+                group.leave(&mut pass);
             }
-            group.leave(&mut pass);
         }
         if let Some(pass) = logged {
             self.log_shadow_layers(pass, &layers, grass_casts);

@@ -1,5 +1,6 @@
-// Shadows every lit surface takes (#738): the sun's cascades (`shadow_factor`)
-// and the casting spot's map (`spot_shadow_factor`). Needs `light_bindings.wgsl`.
+// Shadows every lit surface takes (#738): the sun's cascades (`shadow_factor`),
+// the casting spot's map (`spot_shadow_factor`) and the casting point light's
+// cube (`point_shadow_factor`, #1112). Needs `light_bindings.wgsl`.
 // Terrain took the cascades without the normal offset until #738, and the
 // ocean without PCSS; both read this one now.
 
@@ -272,4 +273,142 @@ fn spot_shadow_factor(world_pos: vec3<f32>, N: vec3<f32>, light_pos: vec3<f32>, 
         raw_shadow = shadow_sum / 9.0;
     }
     return mix(1.0, raw_shadow, edge_fade);
+}
+
+// The point light's shadow (#1112, ADR 0132): a cube of six perspective maps
+// from the point light that `cast_shadows` chose, side by side in layer 4 of
+// the shadow map array, three across and two down. A fragment reads the face
+// its direction from the lamp leans on most; each face reaches a little past
+// 45 degrees (`point.z`), so a soft kernel near a seam still finds real
+// depths on the face it started on, and is held inside that face's square.
+// Softened by `source_radius` as the spot is (PCSS), with the same slope
+// hold; 0 is a 3x3 PCF. Returns 1.0 (lit) to 0.0 (shadowed).
+const POINT_SHADOW_LAYER: i32 = 4;
+
+// A depth from a cube face back to metres along its axis
+fn point_linear_depth(d: f32) -> f32 {
+    let near = shadow.point.x;
+    let far = shadow.point.y;
+    return near * far / max(far - d * (far - near), 1e-6);
+}
+
+// Metres along a face's axis back to its map's depth
+fn point_map_depth(z: f32) -> f32 {
+    let near = shadow.point.x;
+    let far = shadow.point.y;
+    return far * (z - near) / ((far - near) * max(z, 1e-6));
+}
+
+// The cube face a direction from the lamp falls on: its dominant axis, in the
+// order +X, -X, +Y, -Y, +Z, -Z, x before y before z on a tie
+// (`shadow::point_shadow_cube` draws them in that order)
+fn point_face(d: vec3<f32>) -> i32 {
+    let a = abs(d);
+    if (a.x >= a.y && a.x >= a.z) {
+        return select(1, 0, d.x > 0.0);
+    }
+    if (a.y >= a.z) {
+        return select(3, 2, d.y > 0.0);
+    }
+    return select(5, 4, d.z > 0.0);
+}
+
+fn point_shadow_factor(world_pos: vec3<f32>, N: vec3<f32>, light_pos: vec3<f32>, source_radius: f32, frag_xy: vec2<f32>) -> f32 {
+    if (shadow.point.w <= 0.0) {
+        return 1.0;
+    }
+    let near = shadow.point.x;
+    let tan_half = shadow.point.z;
+    // A face's width in the layer's UV, and one texel in the face's own
+    let tile = shadow.point_atlas.x;
+    let face_texel = 1.0 / max(shadow.point_atlas.y, 1.0);
+    var texel_size = shadow.cascade_splits.w;
+    if (texel_size <= 0.0) {
+        texel_size = 1.0 / 2048.0;
+    }
+
+    // Normal offset by ~1.5 texels as wide as the face is at this depth
+    let a = abs(world_pos - light_pos);
+    let z_axis = max(max(max(a.x, a.y), a.z), near);
+    let texel_world = 2.0 * z_axis * tan_half * face_texel;
+    let biased_pos = world_pos + N * texel_world * 1.5;
+
+    let face = point_face(biased_pos - light_pos);
+    let clip = shadow.point_view_proj[face] * vec4<f32>(biased_pos, 1.0);
+    if (clip.w <= near) {
+        return 1.0; // inside the lamp's near plane
+    }
+    let proj = clip.xyz / clip.w;
+    let face_uv = proj.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+    let depth = proj.z;
+    if (depth >= 1.0) {
+        return 1.0; // past the light's range, which it doesn't reach
+    }
+    // The face's square of the layer, half a texel in: no tap leaves it
+    let origin = vec2<f32>(f32(face % 3), f32(face / 3)) * tile;
+    let lo = origin + vec2<f32>(0.5 * texel_size);
+    let hi = origin + vec2<f32>(tile - 0.5 * texel_size);
+    let shadow_uv = origin + face_uv * tile;
+
+    var raw_shadow = 1.0;
+    if (source_radius > 0.0) {
+        // The spot's PCSS in a face's terms: radii in the face's UV, then
+        // `tile` of the layer's per unit
+        let z_r = point_linear_depth(depth);
+        let cos_l = max(dot(N, normalize(light_pos - world_pos)), 0.05);
+        let slope = min(sqrt(1.0 - cos_l * cos_l) / cos_l, 8.0);
+        let world_per_uv = 2.0 * z_r * tan_half;
+        // Inside the band past the face's edge (25 texels at tan 1.08)
+        let max_radius_uv = 24.0 * face_texel;
+        let resolution = 1.0 / texel_size;
+        let max_coord = i32(resolution) - 1;
+        let spin = 6.2831853 * fract(52.9829189 * fract(dot(frag_xy, vec2<f32>(0.06711056, 0.00583715))));
+        let search_uv = clamp(
+            source_radius * (z_r - near) / (z_r * 2.0 * near * tan_half),
+            face_texel, max_radius_uv);
+        var blocker_sum = 0.0;
+        var blocker_count = 0.0;
+        for (var i = 0; i < 16; i = i + 1) {
+            let r = sqrt((f32(i) + 0.5) / 16.0);
+            let theta = f32(i) * 2.39996 + spin;
+            let tap_uv = clamp(shadow_uv + vec2<f32>(cos(theta), sin(theta)) * r * search_uv * tile,
+                lo, hi);
+            let coords = clamp(vec2<i32>(tap_uv * resolution),
+                vec2<i32>(0), vec2<i32>(max_coord));
+            let z_d = point_linear_depth(textureLoad(shadow_maps, coords, POINT_SHADOW_LAYER, 0));
+            if (z_d < z_r - r * search_uv * world_per_uv * slope - texel_world) {
+                blocker_sum += z_d;
+                blocker_count += 1.0;
+            }
+        }
+        if (blocker_count > 0.0) {
+            let z_b = max(blocker_sum / blocker_count, near);
+            let penumbra_world = source_radius * max(z_r - z_b, 0.0) / z_b;
+            let filter_uv = clamp(penumbra_world / world_per_uv, face_texel, max_radius_uv);
+            var shadow_sum = 0.0;
+            for (var i = 0; i < 32; i = i + 1) {
+                let r = sqrt((f32(i) + 0.5) / 32.0);
+                let theta = f32(i) * 2.39996 + spin;
+                let offset = vec2<f32>(cos(theta), sin(theta)) * r * filter_uv * tile;
+                let tap_depth = point_map_depth(max(z_r - r * filter_uv * world_per_uv * slope, near));
+                shadow_sum += textureSampleCompareLevel(
+                    shadow_maps, shadow_sampler, clamp(shadow_uv + offset, lo, hi),
+                    POINT_SHADOW_LAYER, tap_depth);
+            }
+            raw_shadow = shadow_sum / 32.0;
+        }
+        // No blockers found -> fully lit
+    } else {
+        var shadow_sum = 0.0;
+        for (var y = -1; y <= 1; y = y + 1) {
+            for (var x = -1; x <= 1; x = x + 1) {
+                let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+                shadow_sum += textureSampleCompareLevel(
+                    shadow_maps, shadow_sampler, clamp(shadow_uv + offset, lo, hi),
+                    POINT_SHADOW_LAYER, depth);
+            }
+        }
+        raw_shadow = shadow_sum / 9.0;
+    }
+    return raw_shadow;
 }

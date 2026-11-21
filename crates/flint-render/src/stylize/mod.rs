@@ -97,6 +97,7 @@ pub mod custom;
 pub mod dev_shader;
 pub mod edges;
 mod fade;
+pub mod history;
 pub mod images;
 pub mod kit;
 pub mod ownership;

@@ -441,9 +441,49 @@ impl SceneRenderer {
             part_tints: by_entity(&skinning.part_tints, &name),
             part_softness: by_entity(&skinning.part_softness, &name),
             echo_lighten,
+            // Below, from the styles
+            style_history: Vec::new(),
         };
         capture.renderer = renderer;
+        // Each style's frame-to-frame history (#1136): the textures it read
+        // as last frame's, which the frame left as they were
+        if let Some(pp) = &self.postprocess_pipeline {
+            let frame = self
+                .style_frame_serial
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .wrapping_sub(1);
+            let (states, staged) = pp.styles.export_history(device, encoder, frame);
+            capture.stage_history(states, staged);
+        }
         capture
+    }
+}
+
+impl SceneRenderer {
+    /// Hand each style its history taken from a capture (#1136,
+    /// [`crate::stylize::history`]; read with
+    /// [`read_style_history`](crate::frame_replay::read_style_history)):
+    /// each keeps its own until the next frame it draws, and draws that
+    /// frame from it where the frame's key is the captured one. Call after
+    /// [`reset_style_history`](Self::reset_style_history), which a taken
+    /// history overrides. What the styles did with it is
+    /// [`take_style_history_notes`](Self::take_style_history_notes)'s.
+    pub fn import_style_history(
+        &mut self,
+        histories: Vec<crate::stylize::history::ImportedHistory>,
+    ) {
+        if let Some(pp) = &mut self.postprocess_pipeline {
+            pp.styles.import_history(histories);
+        }
+    }
+
+    /// What the styles said of the history handed to them since the last
+    /// call, a line each: taken, or why it was drawn fresh.
+    pub fn take_style_history_notes(&mut self) -> Vec<String> {
+        self.postprocess_pipeline
+            .as_mut()
+            .map(|pp| pp.styles.take_history_notes())
+            .unwrap_or_default()
     }
 }
 
