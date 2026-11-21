@@ -306,7 +306,7 @@ $ flint validate scenes/road.scene.toml
 scenes/road.scene.toml: 1 warning (2 allowed by flint.toml)
 ```
 
-With `--format json` (and `flint check --json`) the count is `allowed`. An allowed error no longer fails the scene. A code that is none of the table's is refused when the manifest is read, with the nearest code (`project.diagnostics.allow[0]`: `unknown-feild` is no diagnostic code (did you mean `unknown-field`?)), and so are the codes that mean the file did not load at all (`toml-parse`, `file-unreadable`, `scene-load`, `bad-manifest`, `bad-prefab`), since nothing behind them was checked.
+With `--format json` (and `flint check --json`) the count is `allowed`. An allowed error no longer fails the scene. `flint bundle` reads the list from the `flint.toml` it packs and leaves out the same diagnostics `flint check` does, so a bundle refuses only what the check reports; it counts them too (`check: no problems (1 allowed by flint.toml)`, and `allowed` in `flint --json bundle`). A code that is none of the table's is refused when the manifest is read, with the nearest code (`project.diagnostics.allow[0]`: `unknown-feild` is no diagnostic code (did you mean `unknown-field`?)), and so are the codes that mean the file did not load at all (`toml-parse`, `file-unreadable`, `scene-load`, `bad-manifest`, `bad-prefab`), since nothing behind them was checked.
 
 ### A component only scripts read
 
@@ -545,7 +545,7 @@ flint schema light --schemas engine/schemas --schemas schemas
 
 With no `--schemas`, `flint schema` reads the directories the project's `flint.toml` names, or `schemas/` in the working directory when there is no manifest ([Which directories load](#which-directories-load)).
 
-`flint schema <name>` prints the fields, types, defaults and ranges; a table that declares fields of its own (a `[[wooze.zone]]`) has them listed beneath it. It names the file the component was declared in, and when a later layer [extended](#adding-a-field-to-an-engine-component) it, numbers the files and ends each field's line with the number of the one that declared it. A component whose fields put it on an [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) has a line for it under the header, its title and each role's fields in the panel's order, with a label where the panel calls a field something other than its name read as words (`end_now`'s "End now" is not repeated): `Panel "Dead calm": status phase, calm, next_in_s · trigger trigger_calm "Calm now", end_now`. A name that is no component, scene table or archetype is an error (exit code 1) with the nearest name as a suggestion.
+`flint schema <name>` prints the fields, types, defaults and ranges; a table that declares fields of its own (a `[[wooze.zone]]`) has them listed beneath it. It names the file the component was declared in, and when a later layer [extended](#adding-a-field-to-an-engine-component) it, numbers the files and ends each field's line with the number of the one that declared it. A component whose fields put it on an [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) has a line for it under the header, its title and each role's fields in the panel's order, with a label where the panel calls a field something other than its name read as words (`end_now`'s "End now" is not repeated): `Panel "Dead calm": status phase, calm, next_in_s · trigger trigger_calm "Calm now", end_now`. An archetype prints its components and defaults the same way: the file that declared it, and when a later layer [extended](#adding-a-component-to-an-engine-archetype) it, the numbered files with each component and each default ending in its file's number. A name that is no component, scene table or archetype is an error (exit code 1) with the nearest name as a suggestion.
 
 ### Schemas as data
 
@@ -555,7 +555,7 @@ flint schema light --format json     # one component or archetype
 flint schema --format json           # everything: every field's type, default, range, values
 ```
 
-`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields), `fields`, and, when it was read from a file, `declared_in` (that file) and `extended_by` (each file that added fields to it, in load order); a field has `type`, `required`, `file` (the file that declared it, beside `declared_in`), and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds` and `unless` (an asset) and `fields` (a table). A component with an [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) has `panel`: its `title` and its `rows` in the panel's order, each with `field`, `role` and `label` (the default spelled out), and the keys that say more than the defaults: `labels`, `press` (a trigger's), `step`, `min`, `max`, `slider` and `presets` (a tune row's), `format`, `scale`, `unset`, `from`, and `commit` when it is `false`.
+`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields), `fields`, and, when it was read from a file, `declared_in` (that file) and `extended_by` (each file that added fields to it, in load order); a field has `type`, `required`, `file` (the file that declared it, beside `declared_in`), and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds` and `unless` (an asset) and `fields` (a table). A component with an [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) has `panel`: its `title` and its `rows` in the panel's order, each with `field`, `role` and `label` (the default spelled out), and the keys that say more than the defaults: `labels`, `press` (a trigger's), `step`, `min`, `max`, `slider` and `presets` (a tune row's), `format`, `scale`, `unset`, `from`, and `commit` when it is `false`. An archetype has `kind`, `description`, `components` (names, in order), `defaults` (a table per component) and `visual` when it gives one, and, when it was read from a file, `declared_in`, `extended_by`, `component_files` (the file that listed each component) and `default_files` (the file that gave each default, by component, then field).
 
 ### Editor completion: a JSON Schema for scenes
 
@@ -657,7 +657,7 @@ Games can define their own schemas that extend or override the engine's built-in
 schemas = ["engine/schemas", "schemas"]
 ```
 
-Here `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition replaces the engine's whole, unless the game's says `extend = true` (next section).
+Here `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition replaces the engine's whole, unless the game's says `extend = true` (next section). Archetypes work the same way: [Adding a component to an engine archetype](#adding-a-component-to-an-engine-archetype).
 
 ### Adding a field to an engine component
 
@@ -699,6 +699,56 @@ Fields:
 ```
 
 The same works for a scene-level table: `[table.<name>]` with `extend = true` under the game's `scene/`.
+
+### Adding a component to an engine archetype
+
+An archetype extends the same way. A game whose player needs a `stamina` the engine's `player` doesn't carry, and a faster walk, lists only what it adds:
+
+```toml
+# schemas/archetypes/player.toml, in the game
+[archetype.player]
+extend = true
+components = ["stamina"]
+
+[archetype.player.defaults.stamina]
+max = 120.0
+
+[archetype.player.defaults.character_controller]
+move_speed = 7.5
+```
+
+Every `archetype = "player"` entity now gets the engine's `transform`, `collider`, `rigidbody` and `character_controller` with their defaults, and the game's `stamina` with `max = 120`; its controller has the engine's `jump_force = 6` and the game's `move_speed = 7.5`. What an archetype extension does:
+
+- **Appends components** to the earlier layer's list, in the order written; one already listed is not listed twice.
+- **Merges defaults key by key**: each `[archetype.<name>.defaults.<component>]` adds its keys to the earlier layer's table for that component, and a key named again takes the extension's value. The engine's other keys stay.
+- **Replaces the `visual`** when it gives one ([the placeholder box](#an-archetypes-placeholder-box)); without one the earlier layer's stays.
+- **Keeps the earlier description.** A `description` beside `extend = true` is ignored, and `flint validate` says so (`ignored-schema-key`), as it does for any key an archetype doesn't hold (`extned = true` is named, with `extend` as the suggestion: misspelt, it would replace the archetype whole).
+- **Waits for its directory and is an error when nothing earlier declares the name**, as a component's extension does: `archetype 'playr' says extend = true, and no earlier schema declares an archetype of that name to add its components to: did you mean player?`
+
+Without `extend`, a later layer's `[archetype.player]` replaces the engine's whole: its components and defaults are the whole archetype. `flint schema player` shows which file each component and each default came from:
+
+```text
+Archetype: player
+Description: A player-controlled character with physics and first-person camera
+Declared in: [1] engine/schemas/archetypes/player.toml
+Extended by: [2] schemas/archetypes/player.toml
+
+Components:
+  - transform   [1]
+  - collider   [1]
+  - rigidbody   [1]
+  - character_controller   [1]
+  - stamina   [2]
+
+Defaults:
+  [character_controller]
+    camera_mode = "first_person"   [1]
+    height = 1.8   [1]
+    jump_force = 6   [1]
+    move_speed = 7.5   [2]
+    radius = 0.3   [1]
+  ...
+```
 
 ### Which directories load
 

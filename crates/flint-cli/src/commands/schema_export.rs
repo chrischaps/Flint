@@ -8,8 +8,8 @@
 //! layer over it.
 
 use flint_schema::{
-    ArchetypeSchema, ComponentSchema, FieldSchema, FieldType, PanelRole, PanelSpec, SchemaOrigin,
-    SchemaRegistry, OLD_TYPE_NAMES, TYPE_NAMES,
+    ArchetypeOrigin, ArchetypeSchema, ComponentSchema, FieldSchema, FieldType, PanelRole,
+    PanelSpec, SchemaOrigin, SchemaRegistry, OLD_TYPE_NAMES, TYPE_NAMES,
 };
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -192,8 +192,11 @@ pub fn panel_json(panel: &PanelSpec) -> Value {
     json!({ "title": panel.title, "rows": rows })
 }
 
-/// One archetype: its components, and the defaults it gives them.
-pub fn archetype_json(archetype: &ArchetypeSchema) -> Value {
+/// One archetype: its components, and the defaults it gives them. Read
+/// from files (`origin`, #1054), it also names `declared_in`, `extended_by`,
+/// the file that listed each component (`component_files`) and the one
+/// that gave each default (`default_files`, by component, then field).
+pub fn archetype_json(archetype: &ArchetypeSchema, origin: Option<&ArchetypeOrigin>) -> Value {
     let defaults: Map<String, Value> = sorted(&archetype.defaults)
         .into_iter()
         .map(|(component, table)| (component.clone(), to_json(table)))
@@ -212,6 +215,36 @@ pub fn archetype_json(archetype: &ArchetypeSchema) -> Value {
             .color
             .map(|c| c.to_string().parse::<f64>().unwrap_or(c.into()));
         out["visual"] = json!({ "color": color, "wireframe": visual.wireframe });
+    }
+    if let Some(origin) = origin {
+        out["declared_in"] = json!(origin.declared_in.as_deref().map(shown_file));
+        out["extended_by"] = json!(origin
+            .extended_by
+            .iter()
+            .map(|file| shown_file(file))
+            .collect::<Vec<_>>());
+        let components: Map<String, Value> = archetype
+            .components
+            .iter()
+            .filter_map(|c| Some((c.clone(), json!(shown_file(origin.component_file(c)?)))))
+            .collect();
+        out["component_files"] = Value::Object(components);
+        let defaults: Map<String, Value> = sorted(&archetype.defaults)
+            .into_iter()
+            .map(|(component, table)| {
+                let fields: Map<String, Value> = table
+                    .as_table()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|(field, _)| {
+                        let file = origin.default_file(component, field)?;
+                        Some((field.clone(), json!(shown_file(file))))
+                    })
+                    .collect();
+                (component.clone(), Value::Object(fields))
+            })
+            .collect();
+        out["default_files"] = Value::Object(defaults);
     }
     out
 }
@@ -241,7 +274,12 @@ pub fn registry_json(registry: &SchemaRegistry, dirs: &[String]) -> Value {
     let archetypes: Map<String, Value> = registry
         .archetypes()
         .into_iter()
-        .map(|a| (a.name.clone(), archetype_json(a)))
+        .map(|a| {
+            (
+                a.name.clone(),
+                archetype_json(a, registry.archetype_origin(&a.name)),
+            )
+        })
         .collect();
     let types: Vec<Value> = TYPE_NAMES
         .iter()
