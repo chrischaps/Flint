@@ -172,8 +172,7 @@ impl PlayerApp {
             &self.core.project,
             &self.core.scene_path,
             &self.core.world,
-            self.assets.catalog.as_ref(),
-            self.assets.content_store.as_ref(),
+            self.assets.of(&self.core.project),
         );
 
         // What the scene says about living props, for the props procgen
