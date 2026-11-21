@@ -116,7 +116,7 @@ pub use reveal::{RevealShape, StyleReveal};
 pub use spec::{
     apply_style_spec, apply_style_specs, check_style_specs, style_spec_help, StyleSpec,
 };
-pub use targets::{StyleTargets, StyleTexture, TargetEntry, TargetSummary};
+pub use targets::{HeldTargets, StyleTargets, StyleTexture, TargetEntry, TargetSummary};
 pub use text::{GlyphCell, GlyphText};
 
 use crate::bind_cache::BindCache;

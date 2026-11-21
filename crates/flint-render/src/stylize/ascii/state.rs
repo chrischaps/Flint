@@ -158,6 +158,9 @@ pub(super) struct Ascii {
     /// Last frame's edge cells and slots, copied before this frame's
     /// passes write theirs, and whether they follow on (#477).
     pub(super) edge_past: Mutex<EdgePast>,
+    /// The textures above as a frame capture reads them (#1161), noted
+    /// after the pass that writes each.
+    pub(super) held: crate::stylize::HeldTargets,
     pub(super) edge_thin_uniforms: wgpu::Buffer,
     /// The glyph grid as text (#317): `fs_text` in ascii.wgsl, drawn only
     /// while `capture` is on, into `text` and copied to its read-back.

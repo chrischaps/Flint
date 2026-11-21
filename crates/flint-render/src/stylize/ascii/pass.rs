@@ -601,6 +601,18 @@ impl Ascii {
             &self.edge_corner_pipeline,
             &[&thin.bind, &edge_cells.bind, &thin_uniform, &past_slots.bind],
         );
+        // For a frame capture (#1161): what the edge passes wrote, and the
+        // history they read when it followed on
+        if let Some(target) = outlines {
+            self.held.note("ascii.edge_outlines", &target.texture);
+        }
+        self.held.note("ascii.edge_cells", &edge_cells.texture);
+        self.held.note("ascii.edge_thin", &thin.texture);
+        self.held.note("ascii.edge_slots", &edge_slots.texture);
+        if history {
+            self.held.note("ascii.edge_cells.past", &past_cells.texture);
+            self.held.note("ascii.edge_slots.past", &past_slots.texture);
+        }
     }
 
     /// The edge debug view (#349): the edge pixels by source and each
@@ -734,6 +746,9 @@ impl Ascii {
             &self.stats_resolve_pipeline,
             &[uniform, &rows.bind],
         );
+        self.held.note("ascii.stats.runs", &runs.texture);
+        self.held.note("ascii.stats.rows", &rows.texture);
+        self.held.note("ascii.stats", &stats.texture);
     }
 
     /// The picture and (while any per-entity variant is drawn) the mask,
@@ -865,6 +880,12 @@ impl StylePass for Ascii {
     /// draw, so a second draw in one frame isn't a repeat (#1317)
     fn keeps_history(&self) -> bool {
         true
+    }
+
+    /// Its edge cells and their history, tone statistics, variant cells,
+    /// snap owners and dissolve state, which it holds itself (#1161)
+    fn held_targets(&self) -> Option<&crate::stylize::HeldTargets> {
+        Some(&self.held)
     }
 
     fn glyph_atlas_bytes(&self) -> u64 {
@@ -1291,6 +1312,8 @@ impl StylePass for Ascii {
                 &[&uniform, &self.picture_bind(frame, input, true)],
                 Some(&rects),
             );
+            self.held.note("ascii.variant_cells.a", &variant_cells[0].texture);
+            self.held.note("ascii.variant_cells.b", &variant_cells[1].texture);
         }
 
         // Snap owners (#929): which snapping variant holds each cell of each
@@ -1315,6 +1338,7 @@ impl StylePass for Ascii {
                 &[&uniform, &self.picture_bind(frame, input, true)],
                 &draws,
             );
+            self.held.note("ascii.snap_owners", &snap_owners.texture);
         }
 
         // The dissolve (#398): each dissolving variant's cells' order, then
@@ -1353,6 +1377,8 @@ impl StylePass for Ascii {
                 &self.dissolve_rank_pipeline,
                 &[&uniform, &dissolve_order.bind],
             );
+            self.held.note("ascii.dissolve.order", &dissolve_order.texture);
+            self.held.note("ascii.dissolve.ranks", &dissolve_ranks.texture);
         }
 
         // Glyph pass: draw the cells

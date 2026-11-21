@@ -72,6 +72,15 @@ pub trait StylePass: Send + Sync {
     /// style that keeps none (the default) adds nothing.
     fn export_history(&self, _out: &mut history::HistoryExport<'_>) {}
 
+    /// Where this style notes the textures it draws into that it holds
+    /// itself, outside [`StyleTargets`] (#1161), for a frame capture to read
+    /// after its part: [`HeldTargets::note`] each one after the pass that
+    /// writes it. `None`, the default, for a style whose every target is
+    /// [`StyleFrame::target`]'s (those are read without it).
+    fn held_targets(&self) -> Option<&HeldTargets> {
+        None
+    }
+
     /// Keep `history`, taken from a capture (#1136), until the next frame
     /// this style draws, and draw that frame from it where its key is the
     /// frame's. The default keeps no history and says so.
