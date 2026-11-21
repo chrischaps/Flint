@@ -403,6 +403,9 @@ pub(super) struct Stats {
     /// What the run keeps of them (#1079): the hitch log, the exit
     /// report's counts and the `--max-hitches` gate.
     pub(super) watch: hitch_watch::HitchWatch,
+    /// `--perf-report FILE` (#1093): where the exit report's JSON goes and
+    /// the run's phase and script totals it is built from.
+    pub(super) report: Option<super::perf_report::ReportTo>,
 }
 
 impl Default for Stats {
@@ -419,6 +422,7 @@ impl Default for Stats {
             // `FLINT_HITCH_FACTOR` / `FLINT_HITCH_FLOOR_MS`, read once.
             hitches: hitch::HitchDetector::new(hitch::HitchThresholds::from_env()),
             watch: Default::default(),
+            report: None,
         }
     }
 }

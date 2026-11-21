@@ -93,6 +93,10 @@ impl PlayerApp {
         if let Some(failure) = self.trace_failure() {
             return Some(failure);
         }
+        // `--perf-report` that couldn't be written (#1093)
+        if let Some(failure) = self.perf_report_failure() {
+            return Some(failure);
+        }
         // `--max-hitches` and `--max-hitches-startup` (#1079)
         self.stats.watch.failure()
     }

@@ -50,7 +50,27 @@ fn main() {
     std::fs::write(dest, out).unwrap();
     subsystems();
     commit();
+    profile();
     main_thread_stack();
+}
+
+/// `ENGINE_BUILD_PROFILE`: the Cargo profile this crate was built under
+/// (`dev` is said `debug`, as its folder is; `release`, `profiling`,
+/// `web-release`...), and `ENGINE_BUILD_OPT_LEVEL`, for a perf report
+/// (#1093): a debug and a release frame time are never comparable. Cargo's
+/// `PROFILE` names only `debug` or `release`, so the profile is the folder
+/// `OUT_DIR` is under: `<target>/[<triple>/]<profile>/build/<pkg>/out`.
+fn profile() {
+    let out = std::env::var("OUT_DIR").unwrap_or_default();
+    let named = Path::new(&out)
+        .ancestors()
+        .nth(3)
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned());
+    let profile = named.unwrap_or_else(|| std::env::var("PROFILE").unwrap_or_default());
+    let opt = std::env::var("OPT_LEVEL").unwrap_or_default();
+    println!("cargo:rustc-env=ENGINE_BUILD_PROFILE={profile}");
+    println!("cargo:rustc-env=ENGINE_BUILD_OPT_LEVEL={opt}");
 }
 
 /// The stack `link.exe` (`/STACK`) or MinGW's `ld` (`--stack`) reserves for

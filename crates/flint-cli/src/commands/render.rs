@@ -1046,36 +1046,31 @@ fn spread_json(
     (scene_width, scene_height): (u32, u32),
     adapter: &wgpu::AdapterInfo,
 ) -> serde_json::Value {
-    let pass = |p: &flint_render::PassSpread| {
-        serde_json::json!({
-            "label": p.name(),
-            "frames": p.samples.len(),
-            "min_ms": p.min,
-            "p50_ms": p.p50,
-            "p90_ms": p.p90,
-            "max_ms": p.max,
-            "mean_ms": p.mean,
-            "samples_ms": p.samples,
-        })
-    };
-    serde_json::json!({
+    // The passes in the shape `flint-player --perf-report` writes them too,
+    // so `scripts/perf-compare.py` reads both (#1093)
+    let mut doc = spread.to_json(true);
+    let more = serde_json::json!({
+        "format": "flint-gpu-time",
+        "version": 1,
         "adapter": {
             "name": adapter.name,
             "backend": format!("{:?}", adapter.backend),
             "driver": adapter.driver,
             "driver_info": adapter.driver_info,
         },
+        "build_profile": flint_player::provenance::BUILD_PROFILE,
+        "engine_commit": flint_player::provenance::BUILD_COMMIT,
         "width": width,
         "height": height,
         "scene_width": scene_width,
         "scene_height": scene_height,
         "frames_drawn": frames.max(1),
         "frames_timed": spread.frames + spread.dropped,
-        "frames_dropped": spread.dropped,
-        "frames_kept": spread.frames,
-        "passes": spread.passes.iter().map(pass).collect::<Vec<_>>(),
-        "frame": spread.frame.as_ref().map(pass),
-    })
+    });
+    if let (Some(doc), serde_json::Value::Object(more)) = (doc.as_object_mut(), more) {
+        doc.extend(more);
+    }
+    doc
 }
 
 /// One still frame, read back: under `config` when given (a sweep column,

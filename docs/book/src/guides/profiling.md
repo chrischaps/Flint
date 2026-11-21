@@ -81,7 +81,7 @@ The first tenth of the frames (at most 30) are dropped while pipelines and the G
 
 Read p50 to compare two builds and p90 for how far one run can be trusted: two runs whose p50s are closer than their p90 − p50 haven't shown a difference. A machine whose GPU is shared with other work shows it here: a contended run has a wide p90 and max, and every pass reads high at once, including passes the change doesn't touch. `min` is the closest one run gets to the uncontended cost.
 
-`--gpu-time-json <file>` also writes it as JSON for tools: the adapter (`name`, `backend`, `driver`), the sizes, `frames_drawn` / `frames_timed` / `frames_dropped` / `frames_kept`, and for each pass and the `frame` total its `min_ms`, `p50_ms`, `p90_ms`, `max_ms`, `mean_ms` and `samples_ms`, each kept frame's raw time in order. A host can do the same through `GpuTimer::record(true)`, `flush` and `flint_render::gpu_timer::spread`.
+`--gpu-time-json <file>` also writes it as JSON for tools: `format` (`flint-gpu-time`) and `version`, the adapter (`name`, `backend`, `driver`), `build_profile` and `engine_commit`, the sizes, `frames_drawn` / `frames_timed` / `frames_dropped` / `frames_kept`, and for each pass and the `frame` total its `min_ms`, `p50_ms`, `p90_ms`, `max_ms`, `mean_ms` and `samples_ms`, each kept frame's raw time in order. Those pass fields are the ones `flint-player --perf-report` writes too, so `scripts/perf-compare.py` reads both ([Comparing two runs](#comparing-two-runs)). A host can do the same through `GpuTimer::record(true)`, `flush` and `flint_render::gpu_timer::spread`.
 
 A scope covers the GPU's time on the work inside it, plus any time the GPU sat idle inside it waiting for the CPU's next submission. `Shadows` and each post-process effect are several submissions, so on a CPU-bound frame they read a little high. Under vsync the GPU also waits for the window's next image before the first pass that draws into it. That pass is timed inside its own submission, so the wait falls between scopes and is in none of them: with vsync on or off, the figures are the GPU's own.
 
@@ -243,6 +243,44 @@ renderer.finish_gpu_timings(&device, &queue); // after the frame's last timed su
 `begin_submit` and `end_submit` put the timestamps in submissions of their own, for work that makes its own encoders. A frame holds up to 32 scopes; past that, scopes time nothing.
 
 To have the scope show up in a GPU debugger too, open it with `flint_render::gpu_labels::begin(renderer.gpu_timer_mut(), &mut encoder, "My pass")` and close it with `gpu_labels::end`. Each call opens a debug group of the same name (next section) and, when the renderer is timing, the timer's scope inside it. Without timing, they open only the group.
+
+## Comparing two runs
+
+The `[perf]` lines are prose. To ask "did this change make the frame slower" of a script rather than by eye, write the same numbers as data and compare two files (#1093).
+
+`--perf-report <file.json>` beside `--exit-after` writes, when the run ends, what the `[perf]` lines print: the run's frames and mean (`run`), the present-to-present spread (`frame`) and the clock's (`dt`), each as `p50_ms`, `p90_ms`, `p99_ms`, `max_ms`, `mean_ms` and `frames`; the draws; each phase's and script callback's mean and max over every frame after the first 2 s (`cpu`); the GPU's passes as spreads (`gpu`, each pass with the fields `--gpu-time-json` gives it, above); the hitch counts; and the machine: adapter, backend, driver, present mode, window and scene size, render scale, build profile and opt-level, engine commit. The lines are printed from the same numbers the file is written from, so the two can't disagree. A report records every frame, times every script callback and turns GPU timing on where the adapter has it, as `--hitch-log` and `--perf` do, so a run with a report is a run that measures itself a little: compare reports with reports.
+
+```bash
+flint play flint-examples/phase4_runtime.scene.toml --exit-after 12 --perf-report a.json
+```
+
+`scripts/perf-run.sh` is the method below as one command: it runs the release player N times (default 5) with `FLINT_VSYNC=0`, each a fresh process, and keeps the run with the least frame p50, since noise on a busy machine only ever adds time. It writes every run's numbers beside it, so the compare can measure each metric's run-to-run range. Flags after `--` go to the player.
+
+```bash
+bash scripts/perf-run.sh tests/fixtures/scenes/ascii_entities.scene.toml --out base.json -- --width 1280 --height 720
+bash scripts/perf-run.sh tests/fixtures/scenes/ascii_entities.scene.toml --out ascii.json -- --width 1280 --height 720 --style ascii:scope=screen
+python scripts/perf-compare.py base.json ascii.json --metric gpu.frame.p50_ms --metric gpu.passes.ASCII.p50_ms
+```
+
+`scripts/perf-compare.py` prints a row for each metric that changed past the noise floor, and exits 1 when a gated metric (`--metric`, by default `frame.p50_ms`) is worse by more than `--tolerance` (default 10%) and by more than the floor. The run above, on the RTX 4070 laptop (Vulkan, release):
+
+```text
+noise floor: the largest of 5% (--noise), 0.01 ms or one hitch, each metric's run-to-run range
+  metric                               base        new     change        %
+  gpu.frame.p50_ms                    1.096      1.166     +0.071    +6.4%  slower *
+  gpu.passes.Style edges.p50_ms       0.023      0.041     +0.018   +81.8%  slower
+  gpu.passes.ASCII.p50_ms             0.166      0.218     +0.052   +31.5%  slower *
+  ... and 78 within noise or a single worst frame (--all shows them)
+
+ok gpu.frame.p50_ms: slower +6.4%, within the 10% tolerance
+REGRESSION gpu.passes.ASCII.p50_ms: 0.166 -> 0.218 (+31.5%), past the 10% tolerance and the 0.010 noise floor
+```
+
+At 600 fps that scene's frame is the CPU's, so `frame.p50_ms` didn't move (`within noise`): a GPU change is gated on a GPU metric. A whole-screen Kuwahara in the same place took the frame from 1.25 to 3.18 ms p50 and failed the default gate.
+
+**The noise floor** is the largest of `--noise` (5%), 0.01 ms (or one hitch, for a count), each metric's run-to-run range over the quieter half of a set's runs, and the change of `--control <metric>`, a metric the change can't touch (a pass it doesn't draw): a change under it is said `within noise`. The 5% is measured: two sets of five runs of one binary on that scene read frame p50 1.254 and 1.318 ms, 5.1% apart, while each set's quiet runs agreed to 0.04 ms. A set drifts more than a run does, so take the base and the change in turns (base, change, base) when the difference you're after is small. A run whose pick metric reads 1.5x its set's least was disturbed (another build, a sleep): it is left out of every metric and named in a warning. A worst frame (`max_ms`) is one frame, listed only with `--all`. Each value is the least of its set's runs (the most, for fps), metric by metric, as the method below takes the least of five.
+
+It refuses (exit 2) reports whose adapter, backend, resolution or build profile differ, and a player report against a `--gpu-time-json` file, which time different frames; `--force` compares them anyway. It reads `--gpu-time-json` files too, so two headless timings compare the same way (the run above read +6.7% for the frame and +48% for ASCII that way, in a debug build). `--json` prints one document. It is not a CI gate: CI has only WARP, and wall-clock numbers there are noise.
 
 ## Capturing a frame in RenderDoc
 

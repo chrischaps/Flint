@@ -85,6 +85,7 @@ mod loopback;
 mod missing_features;
 mod pacing;
 mod perf;
+mod perf_report;
 mod persist;
 pub mod playtest;
 pub mod playtest_warnings;
