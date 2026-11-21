@@ -421,14 +421,24 @@ fn collect_under(root: &Path, rules: &Rules) -> Result<Vec<String>> {
 /// player will read them: every scene loads from the bundle with its
 /// prefabs and its archetypes known, every file and asset a scene, prefab,
 /// particle effect, glyph set, chunk, user style or script names is packed,
-/// and the user styles and looks load ([`Checks::BUNDLE`]).
+/// and the user styles and looks load ([`Checks::BUNDLE`]). The packed
+/// `flint.toml`'s `[project.diagnostics] allow` (#795) leaves out what it
+/// names, from the reference pass as from each scene's check (#1060), so
+/// a bundle refuses what `flint check` reports and nothing more.
 pub fn check_packed(files: &BTreeMap<String, Vec<u8>>, schemas: &[String]) -> check::Report {
     let source: MemorySource = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
-    let subject = Subject::packed(
+    let mut subject = Subject::packed(
         files.keys().cloned().collect(),
         Schemas::Listed(schemas.to_vec()),
     );
-    vfs::scoped(Arc::new(source), || check::run(&subject, Checks::BUNDLE))
+    vfs::scoped(Arc::new(source), || {
+        // A manifest that doesn't read was refused when the pack read its
+        // name and start scene; with none packed, nothing is allowed
+        if let Ok(project) = Project::for_path(Path::new(".")) {
+            subject.allow = project.allow;
+        }
+        check::run(&subject, Checks::BUNDLE)
+    })
 }
 
 /// Add to `files` the guarded module of every packed user style's pass
@@ -514,6 +524,9 @@ pub struct Packed {
     pub files: Vec<(String, u64)>,
     /// Where they went.
     pub out_dir: PathBuf,
+    /// How many diagnostics `[project.diagnostics] allow` left out of the
+    /// check, counted as `flint check` counts them (#1060).
+    pub allowed: usize,
 }
 
 pub fn run(args: BundleArgs) -> Result<()> {
@@ -527,6 +540,7 @@ pub fn run(args: BundleArgs) -> Result<()> {
             "scene": packed.scene,
             "out_dir": packed.out_dir.display().to_string().replace('\\', "/"),
             "dry_run": dry_run,
+            "allowed": packed.allowed,
             "files": packed.files.iter().map(|(file, bytes)| {
                 serde_json::json!({ "file": file, "bytes": bytes })
             }).collect::<Vec<_>>(),
@@ -1148,6 +1162,9 @@ fn write(gathered: Gathered, list: bool, dry_run: bool) -> Result<Packed> {
     written.insert(0, (file_name(&None), main.len(), bytes));
 
     crate::output::say!("{name}: starts {scene}; schemas {}", schemas.join(", "));
+    if report.allowed > 0 {
+        crate::output::say!("  check: {}", report.counts());
+    }
     for (file, count, bytes) in &written {
         crate::output::say!(
             "  {:<32} {:>4} files  {:>9}",
@@ -1163,6 +1180,7 @@ fn write(gathered: Gathered, list: bool, dry_run: bool) -> Result<Packed> {
             .map(|(file, _, bytes)| (file.clone(), bytes.len() as u64))
             .collect(),
         out_dir: out_dir.clone(),
+        allowed: report.allowed,
     };
     if dry_run {
         crate::output::say!("(dry run: nothing written)");

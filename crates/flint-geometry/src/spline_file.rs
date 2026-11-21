@@ -31,6 +31,7 @@ use std::fmt;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use flint_core::toml_util::line_column;
 use flint_core::{vfs, Vec3};
 use serde::Deserialize;
 use toml::Spanned;
@@ -280,17 +281,6 @@ impl SplineFile {
     }
 }
 
-/// The line and column (both from 1, the column in characters) of byte
-/// `offset` in `text`.
-fn line_column(text: &str, offset: usize) -> (usize, usize) {
-    let offset = offset.min(text.len());
-    let before = &text[..offset];
-    let line = before.matches('\n').count() + 1;
-    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
-    let column = text[line_start..offset].chars().count() + 1;
-    (line, column)
-}
-
 /// A message on one line: toml's run over several only for its snippet,
 /// which the line and column replace.
 fn one_line(message: &str) -> String {
@@ -475,10 +465,5 @@ attrs = { speed = 1 }
         assert!(err
             .to_string()
             .starts_with("no/such/dir/x.spline.toml: cannot be read"));
-    }
-
-    #[test]
-    fn columns_count_characters() {
-        assert_eq!(line_column("ab\ncé x", 7), (2, 4));
     }
 }

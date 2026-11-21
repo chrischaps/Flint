@@ -7,8 +7,8 @@
 
 use crate::widgets::drag_f32;
 use crate::DebugPanel;
-use flint_core::toml_util::{toml_color, toml_f32};
 use flint_core::world_line::WorldLine;
+use flint_ecs::ComponentView;
 use flint_geometry::ocean::{OceanParams, WaveSpectrum};
 use flint_scene::SceneDocument;
 use std::path::PathBuf;
@@ -98,11 +98,13 @@ pub struct OceanPanelConfig {
 }
 
 impl OceanPanelConfig {
-    /// Parse from the `ocean` component TOML (missing fields keep defaults).
-    pub fn from_component(value: &toml::Value) -> Self {
-        let p = OceanParams::from_component(value);
-        let f = |name: &str, dv: f32| value.get(name).and_then(toml_f32).unwrap_or(dv);
-        let c = |name: &str, dv: [f32; 4]| value.get(name).and_then(toml_color).unwrap_or(dv);
+    /// Seed the editors from the `ocean` component through the typed view
+    /// (ADR 0115, #1068): a missing field keeps its default, and one of the
+    /// wrong type keeps it too and is reported once.
+    pub fn from_component(view: &ComponentView<'_>) -> Self {
+        let p = OceanParams::from_component(view);
+        let f = |name: &str, dv: f32| view.f32(name, dv);
+        let c = |name: &str, dv: [f32; 4]| view.color(name, dv);
         Self {
             seed: p.seed,
             num_waves: p.num_waves as i64,
@@ -255,7 +257,7 @@ impl OceanDebugPanel {
     /// the shader have diverged and nothing that floats can be trusted.
     pub fn probe_lines(
         &mut self,
-        ocean: &toml::Value,
+        ocean: &ComponentView<'_>,
         time: f64,
         camera_pos: [f32; 3],
         camera_forward: [f32; 3],
@@ -685,8 +687,20 @@ impl DebugPanel for OceanDebugPanel {
 #[cfg(test)]
 mod probe_tests {
     use super::*;
+    use flint_ecs::FlintWorld;
 
-    fn panel(ocean: &toml::Value) -> OceanDebugPanel {
+    /// A world holding one `ocean` component, on the entity `ocean`.
+    fn sea(text: &str) -> (FlintWorld, flint_core::EntityId) {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("ocean").unwrap();
+        let data: toml::Value = toml::from_str(text).unwrap();
+        world
+            .set_component(id, flint_geometry::components::OCEAN, data)
+            .unwrap();
+        (world, id)
+    }
+
+    fn panel(ocean: &ComponentView<'_>) -> OceanDebugPanel {
         OceanDebugPanel::new(
             OceanPanelConfig::from_component(ocean),
             PathBuf::from("scene.toml"),
@@ -696,7 +710,8 @@ mod probe_tests {
 
     #[test]
     fn the_probe_is_off_until_ticked() {
-        let ocean: toml::Value = toml::from_str("amplitude = 0.8").unwrap();
+        let (world, id) = sea("amplitude = 0.8");
+        let ocean = world.view(id, flint_geometry::components::OCEAN);
         let mut p = panel(&ocean);
         assert!(p
             .probe_lines(&ocean, 3.0, [0.0, 2.0, 0.0], [0.0, 0.0, -1.0])
@@ -704,8 +719,34 @@ mod probe_tests {
     }
 
     #[test]
+    fn a_wrong_field_seeds_its_default_and_is_reported_once() {
+        let (world, id) = sea("amplitude = \"high\"\ndeep_color = 3\nfoam_glow = 2");
+        let ocean = world.view(id, flint_geometry::components::OCEAN);
+        let config = OceanPanelConfig::from_component(&ocean);
+        let again = OceanPanelConfig::from_component(&ocean);
+        assert_eq!(config, again);
+        assert_eq!(config.amplitude, OceanParams::default().amplitude);
+        assert_eq!(config.deep_color, [0.055, 0.22, 0.53, 1.0]);
+        assert_eq!(config.foam_glow, 2.0);
+        let fields: Vec<String> = world
+            .read_reports()
+            .snapshot()
+            .iter()
+            .map(|d| {
+                format!(
+                    "{}.{}",
+                    d.entity.as_deref().unwrap(),
+                    d.field.as_deref().unwrap()
+                )
+            })
+            .collect();
+        assert_eq!(fields, ["ocean.amplitude", "ocean.deep_color"]);
+    }
+
+    #[test]
     fn the_probe_crosses_at_the_cpu_height_ahead_of_the_camera() {
-        let ocean: toml::Value = toml::from_str("amplitude = 0.8\nseed = 4").unwrap();
+        let (world, id) = sea("amplitude = 0.8\nseed = 4");
+        let ocean = world.view(id, flint_geometry::components::OCEAN);
         let mut p = panel(&ocean);
         p.set_probe_shown(true);
         let t = 7.25;
@@ -727,8 +768,8 @@ mod probe_tests {
     #[test]
     fn the_probe_is_not_a_scene_edit() {
         // The component no longer has show_probe, and ticking it commits nothing
-        let ocean: toml::Value = toml::from_str("amplitude = 0.8").unwrap();
-        let p = panel(&ocean);
+        let (world, id) = sea("amplitude = 0.8");
+        let p = panel(&world.view(id, flint_geometry::components::OCEAN));
         assert!(p
             .config()
             .to_fields()

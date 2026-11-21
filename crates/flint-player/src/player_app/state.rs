@@ -10,10 +10,12 @@
 use super::input_config::{InputConfigPaths, PendingRebind};
 use super::{camera_cut, expression_feed, fonts, hitch, hitch_watch, perf};
 use super::{egui_input, render_scale, text_halo, world_text};
-use flint_asset::{AssetCatalog, ContentStore};
+use flint_asset::HeldAssets;
+use flint_core::project::Project;
 use flint_runtime::{InputConfig, SaveDebounce};
 use flint_script::context::DrawItem;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// When the player generates a scene's procgen assets (`LaunchOptions::procgen_mode`).
@@ -549,19 +551,31 @@ pub(super) struct QualityState {
     pub(super) script_request: Option<flint_core::quality::QualitySettings>,
 }
 
-/// The asset catalog and content store, for content-addressed asset
-/// resolution (both optional).
+/// The project's asset catalog and content store, for content-addressed
+/// asset resolution (#1065): `<root>/assets` and `<root>/.flint/assets`,
+/// the ones `flint validate` and `flint check` ask
+/// ([`HeldAssets::of`]), wherever the player was started from. Read on
+/// first use and kept for that project root and file source, so a
+/// transition into another project, or the web's bundle installed after
+/// the app was made, reads again.
+#[derive(Default)]
 pub(super) struct AssetSources {
-    pub(super) catalog: Option<AssetCatalog>,
-    pub(super) content_store: Option<ContentStore>,
+    /// The root and `vfs::generation` read for, and what was found there
+    /// (`None`: that project has no catalog).
+    read: Option<(PathBuf, u64, Option<HeldAssets>)>,
 }
 
 impl AssetSources {
-    /// The working directory's `assets/` catalog and `.flint/assets` store.
-    pub(super) fn from_working_dir() -> Self {
-        Self {
-            catalog: AssetCatalog::load_from_directory("assets").ok(),
-            content_store: Some(ContentStore::new(".flint/assets")),
+    /// `project`'s catalog and store, read now unless they are held.
+    pub(super) fn of(&mut self, project: &Project) -> Option<&HeldAssets> {
+        let generation = flint_core::vfs::generation();
+        let held = matches!(&self.read,
+            Some((root, read_at, _)) if *root == project.root && *read_at == generation);
+        if !held {
+            self.read = Some((project.root.clone(), generation, HeldAssets::of(project)));
         }
+        self.read
+            .as_ref()
+            .and_then(|(_, _, assets)| assets.as_ref())
     }
 }

@@ -112,6 +112,9 @@ fn list_json_names_every_component_and_archetype() {
         serde_json::json!([
             "friction",
             "is_sensor",
+            "layer",
+            "mask",
+            "model",
             "offset",
             "restitution",
             "rotation",
@@ -306,6 +309,72 @@ blend_mode = "additive"
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&written).unwrap(),
         schema
+    );
+}
+
+/// #1062: what taplo (Even Better TOML's engine) needs of the schema
+/// beyond a validator's. Its completion follows a `$ref` by setting the
+/// schema URL's fragment and reading it as a JSON pointer (taplo-common
+/// `reference_url` / `resolve_schema`), so every `$ref` is a local pointer
+/// that leads to a schema. It inserts a field's `default` as written, so a
+/// default is the decimal the schema meant, never an f32 widened
+/// (`0.03999999910593033` for 0.04).
+#[test]
+fn the_json_schema_is_one_taplo_can_follow() {
+    let schema = json(&flint(&["schema", "--format", "json-schema"]));
+    fn walk<'a>(
+        v: &'a serde_json::Value,
+        at: String,
+        out: &mut Vec<(String, &'a serde_json::Value)>,
+    ) {
+        match v {
+            serde_json::Value::Object(map) => {
+                for (k, x) in map {
+                    walk(x, format!("{at}/{k}"), out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (i, x) in items.iter().enumerate() {
+                    walk(x, format!("{at}/{i}"), out);
+                }
+            }
+            _ => out.push((at, v)),
+        }
+    }
+    let mut leaves = Vec::new();
+    walk(&schema, String::new(), &mut leaves);
+
+    let refs: Vec<&str> = leaves
+        .iter()
+        .filter(|(at, _)| at.ends_with("/$ref"))
+        .filter_map(|(_, v)| v.as_str())
+        .collect();
+    assert!(refs.len() > 20, "only {} refs", refs.len());
+    for r in refs {
+        let pointer = r
+            .strip_prefix('#')
+            .unwrap_or_else(|| panic!("{r} is not local"));
+        assert!(
+            schema.pointer(pointer).is_some_and(|s| s.is_object()),
+            "{r} leads to no schema"
+        );
+    }
+
+    let noisy: Vec<String> = leaves
+        .iter()
+        .filter(|(at, _)| at.contains("/default"))
+        .filter_map(|(at, v)| v.as_f64().map(|n| (at, n)))
+        .filter(|(_, n)| n.to_string().len() > (*n as f32).to_string().len())
+        .map(|(at, n)| format!("{at} = {n}"))
+        .collect();
+    assert!(
+        noisy.is_empty(),
+        "defaults widened from f32:\n{}",
+        noisy.join("\n")
+    );
+    assert_eq!(
+        schema["definitions"]["tables"]["post_process"]["properties"]["bloom_intensity"]["default"],
+        serde_json::json!(0.04)
     );
 }
 
@@ -510,6 +579,100 @@ fn a_game_adds_one_field_to_an_engine_component() {
     assert_eq!(
         material["fields"]["roughness"]["file"],
         material["declared_in"]
+    );
+}
+
+/// #1054: a game adds a component and its defaults to the engine's
+/// `player` archetype with a file of a few lines, and an entity of the
+/// archetype gets the engine's components and defaults and the game's.
+#[test]
+fn a_game_adds_a_component_to_an_engine_archetype() {
+    let game = Game::new(
+        "extend_archetype",
+        &[
+            ("flint.toml", "[project]\nid = \"run\"\n"),
+            (
+                "schemas/components/stamina.toml",
+                "[component.stamina]\ndescription = \"How long the player can sprint\"\n\n\
+                 [component.stamina.fields]\nmax = { type = \"f32\", default = 100.0, min = 0.0 }\n",
+            ),
+            (
+                "schemas/archetypes/player.toml",
+                "[archetype.player]\nextend = true\ncomponents = [\"stamina\"]\n\n\
+                 [archetype.player.defaults.stamina]\nmax = 120.0\n\n\
+                 [archetype.player.defaults.character_controller]\nmove_speed = 7.5\n",
+            ),
+            (
+                "scenes/run.scene.toml",
+                "[scene]\nname = \"Run\"\n\n[entities.hero]\narchetype = \"player\"\n",
+            ),
+        ],
+    );
+    let out = game.validate("scenes/run.scene.toml", &[]);
+    let text = stdout(&out);
+    assert!(out.status.success(), "{text}{}", stderr(&out));
+    assert!(text.starts_with("No problems found."), "{text}");
+
+    let out = game.flint(&["entity", "show", "hero", "--scene", "scenes/run.scene.toml"]);
+    let hero = json(&out);
+    let data = &hero["data"];
+    assert_eq!(
+        data["stamina"]["max"], 120.0,
+        "the game's component: {data}"
+    );
+    assert_eq!(
+        data["character_controller"]["move_speed"], 7.5,
+        "the game's default: {data}"
+    );
+    assert_eq!(
+        data["character_controller"]["jump_force"], 6.0,
+        "the engine's default beside it: {data}"
+    );
+    assert_eq!(
+        data["collider"]["shape"], "capsule",
+        "the engine's component: {data}"
+    );
+
+    let out = game.flint(&["schema", "player"]);
+    let text = stdout(&out);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        text.contains("\nExtended by: [2] schemas/archetypes/player.toml\n"),
+        "{text}"
+    );
+    assert!(text.contains("\n  - transform   [1]\n"), "{text}");
+    assert!(text.contains("\n  - stamina   [2]\n"), "{text}");
+    assert!(text.contains("\n    move_speed = 7.5   [2]\n"), "{text}");
+    assert!(text.contains("\n    jump_force = 6   [1]\n"), "{text}");
+
+    let out = game.flint(&["schema", "player", "--json"]);
+    let player = json(&out);
+    assert_eq!(
+        player["extended_by"],
+        serde_json::json!(["schemas/archetypes/player.toml"])
+    );
+    assert_eq!(
+        player["components"],
+        serde_json::json!([
+            "transform",
+            "collider",
+            "rigidbody",
+            "character_controller",
+            "stamina"
+        ])
+    );
+    assert_eq!(
+        player["component_files"]["stamina"],
+        "schemas/archetypes/player.toml"
+    );
+    assert_eq!(player["component_files"]["collider"], player["declared_in"]);
+    assert_eq!(
+        player["default_files"]["character_controller"]["move_speed"],
+        "schemas/archetypes/player.toml"
+    );
+    assert_eq!(
+        player["default_files"]["character_controller"]["jump_force"],
+        player["declared_in"]
     );
 }
 

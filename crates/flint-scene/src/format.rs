@@ -657,20 +657,64 @@ impl SceneFile {
     /// [`diagnose`](crate::diagnose) parse with.
     pub fn parse(text: &str) -> Result<Self, toml::de::Error> {
         let mut scene: SceneFile = toml::from_str(text)?;
-        if let Ok(mut doc) = toml::from_str::<toml::Table>(text) {
-            for name in Self::TYPED_TABLES {
-                if let Some(value) = doc.remove(*name) {
-                    scene.written.insert((*name).to_string(), value);
-                }
+        if let Ok(doc) = toml::from_str::<toml::Table>(text) {
+            scene.record_written(doc);
+        }
+        Ok(scene)
+    }
+
+    /// A scene [`parse`](Self::parse) refuses because a typed table
+    /// ([`TYPED_TABLES`](Self::TYPED_TABLES)) doesn't fit its type (#1061):
+    /// `[camera] fov = "wide"`. Each such table is left unset, and the rest
+    /// of the scene parsed as usual, with every typed table as written in
+    /// [`written`](Self::written), so [`diagnose`](crate::diagnose) can
+    /// hold it to its `[table.<name>]` schema and name the field. Beside
+    /// it, each refused table's name and what serde said of it.
+    ///
+    /// `None` when the text is not TOML, or when every typed table fits and
+    /// the refusal is elsewhere (`[scene]`, an entity): there is nothing
+    /// more to say than `parse`'s own error. Nothing loads a scene this way:
+    /// what a check reads.
+    pub fn parse_refusing(text: &str) -> Option<(Self, Vec<(&'static str, String)>)> {
+        let doc: toml::Table = toml::from_str(text).ok()?;
+        let mut rest = doc.clone();
+        let mut refused = Vec::new();
+        for name in Self::TYPED_TABLES {
+            let Some(value) = doc.get(*name) else {
+                continue;
+            };
+            let fits = match *name {
+                "camera" => value.clone().try_into::<CameraDef>().err(),
+                "environment" => value.clone().try_into::<EnvironmentDef>().err(),
+                _ => value.clone().try_into::<PostProcessDef>().err(),
+            };
+            if let Some(e) = fits {
+                rest.remove(*name);
+                refused.push((*name, e.message().trim_end().replace('\n', " ")));
             }
         }
-        if let Some(def) = &mut scene.post_process {
-            def.authored = match scene.written.get("post_process") {
+        if refused.is_empty() {
+            return None;
+        }
+        let mut scene: SceneFile = toml::Value::Table(rest).try_into().ok()?;
+        scene.record_written(doc);
+        Some((scene, refused))
+    }
+
+    /// Keep what the typed tables of `doc`, the whole file, wrote
+    /// ([`written`](Self::written), [`PostProcessDef::authored`]).
+    fn record_written(&mut self, mut doc: toml::Table) {
+        for name in Self::TYPED_TABLES {
+            if let Some(value) = doc.remove(*name) {
+                self.written.insert((*name).to_string(), value);
+            }
+        }
+        if let Some(def) = &mut self.post_process {
+            def.authored = match self.written.get("post_process") {
                 Some(toml::Value::Table(post)) => Some(post.clone()),
                 _ => None,
             };
         }
-        Ok(scene)
     }
 
     /// The scene-level table `name` as the file wrote it: one of
@@ -833,6 +877,69 @@ at = 12.5
             .unwrap_err()
             .to_string();
         assert!(err.contains("missing field `scene`"), "{err}");
+    }
+
+    /// #1061: a typed table that doesn't fit its type is set aside, each of
+    /// them, and the rest of the scene parsed, with the table as written
+    /// kept for the schema pass. A refusal elsewhere is `parse`'s alone.
+    #[test]
+    fn parse_refusing_sets_aside_each_table_that_does_not_fit() {
+        let text = "[scene]\nname = \"s\"\n\n[camera]\nfov = \"wide\"\n\n\
+                    [environment]\ndiffuse_wrap = \"soft\"\n\n\
+                    [post_process]\nexposure = 2.0\n\n[entities.rock]\n";
+        assert!(SceneFile::parse(text).is_err());
+        let (scene, refused) = SceneFile::parse_refusing(text).expect("the rest parses");
+        let names: Vec<&str> = refused.iter().map(|(name, _)| *name).collect();
+        assert_eq!(names, ["camera", "environment"]);
+        assert!(refused[0].1.contains("expected f32"), "{refused:?}");
+        assert!(scene.camera.is_none() && scene.environment.is_none());
+        let post = scene.post_process.as_ref().expect("the table that fits");
+        assert_eq!(post.exposure, 2.0);
+        assert!(post.authored.is_some());
+        assert_eq!(scene.written["camera"]["fov"].as_str(), Some("wide"));
+        assert!(scene.entities.contains_key("rock"));
+
+        // Not TOML, a refusal outside the typed tables, a scene that parses
+        assert!(SceneFile::parse_refusing("[scene\n").is_none());
+        assert!(SceneFile::parse_refusing("[camera]\nfov = 1.0\n").is_none());
+        assert!(SceneFile::parse_refusing("[scene]\nname = \"s\"\n").is_none());
+    }
+
+    /// ADR 0115 (#1061): `scene.version` is informational. The same scene
+    /// under any version, or none, reads the same: its tables, entities and
+    /// the one migration, `fold_legacy_style_keys`, which keys on what the
+    /// scene writes and never on the number. A migration list ordered by
+    /// version is for the day a change can't be told from the data; when
+    /// it comes, this test changes with it.
+    #[test]
+    fn the_version_changes_nothing_a_scene_reads_as() {
+        const BODY: &str = "\n[post_process]\nkuwahara_enabled = true\nkuwahara_radius = 4\n\n\
+                            [camera]\nfov = 50\n\n[weather]\nrain = 0.5\n\n\
+                            [entities.rock.transform]\nposition = [1, 2, 3]\n";
+        let read = |version: Option<&str>| {
+            let head = match version {
+                Some(v) => format!("[scene]\nname = \"v\"\nversion = \"{v}\"\n"),
+                None => "[scene]\nname = \"v\"\n".to_string(),
+            };
+            let scene = SceneFile::parse(&(head + BODY)).unwrap();
+            let styles = scene.post_process.as_ref().unwrap().style_tables();
+            assert_eq!(
+                styles["kuwahara"]["radius"].as_integer(),
+                Some(4),
+                "folded under {version:?}"
+            );
+            let mut unversioned = scene.clone();
+            unversioned.scene.version = String::new();
+            (
+                toml::to_string(&unversioned).unwrap(),
+                scene.scene_tables(),
+                format!("{styles:?}"),
+            )
+        };
+        let baseline = read(None);
+        for version in ["1.0", "0.1", "2.0", "anything"] {
+            assert_eq!(read(Some(version)), baseline, "version {version}");
+        }
     }
 }
 

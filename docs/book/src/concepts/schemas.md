@@ -101,25 +101,49 @@ fov = { type = "f32", description = "Field of view in degrees (perspective only)
 
 `flint schema --list` names them under **Scene tables**, and `flint schema post_process` prints one. A `[[wooze.zone]]` entry is the `zone` field of `[table.wooze]`: an array of tables with fields of their own.
 
-Every scene load and `flint validate` check them in the same pass as the entities ([Scene Diagnostics](#scene-diagnostics)):
+Every scene load and `flint validate` check them in the same pass as the entities ([Scene Diagnostics](#scene-diagnostics)). This scene has three mistakes in its tables:
+
+```toml
+[scene]
+name = "Hall"
+
+[camera]
+projection = "ortho"
+position = [0, 2, 8]
+
+[enviroment]
+ambient_sky = [0.2, 0.25, 0.3]
+
+[post_process]
+bloom_intesity = 0.4
+```
 
 ```text
 $ flint validate scenes/hall.scene.toml
 scenes/hall.scene.toml: 1 error, 2 warnings
 
-  error[bad-enum-value] [camera] projection: "ortho" is not a value of `projection`
+  error[bad-enum-value] 5:1 [camera] projection: "ortho" is not a value of `projection`
       hint: allowed values: orthographic, perspective
-  warning[unknown-table] [enviroment]: no scene table named `enviroment`, so nothing reads it
+  warning[unknown-table] 8:2 [enviroment]: no scene table named `enviroment`, so nothing reads it
       hint: did you mean `environment`?
-  warning[unknown-field] [post_process] bloom_intesity: `post_process` has no field `bloom_intesity`
+  warning[unknown-field] 12:1 [post_process] bloom_intesity: `post_process` has no field `bloom_intesity`
       hint: did you mean `bloom_intensity`?
 ```
+
+Each one is placed by the line and column of the key it names (`5:1` is `projection`), or, for a whole table, of its name in the header (`8:2` is the `enviroment` in `[enviroment]`). A missing field is placed at its table's header. JSON has them as `line` and `column`.
 
 - A top-level table **no schema declares** is `unknown-table`, a warning: nothing reads it, and the scene plays as if it were not written. `--strict` makes it an error, as it does an unknown field.
 - A key a declared table doesn't declare is `unknown-field`, with the nearest name.
 - A value of the wrong type, out of range or outside an enum is an error, and an `entity` or `asset` field is looked up (`[environment] skybox` is an `asset` of kind `files`).
 
-The tables the engine reads into a Rust struct (`[camera]`, `[environment]`, `[post_process]`, and `[living]` and `[wooze]`) are stricter about one thing: a value of the wrong TOML type there stops the file from parsing, as `toml-parse` with the line and column, before any schema is consulted.
+The tables the engine reads into a Rust struct (`[camera]`, `[environment]`, `[post_process]`, and `[living]` and `[wooze]`) are stricter about one thing: a value of the wrong TOML type there stops the scene from loading. `flint validate` and `flint check` say it once, by field, as the schema pass found it, and add why the scene is refused:
+
+```text
+  error[bad-type] 6:1 [camera] fov: expected f32, got string
+      hint: the scene does not load until the table fits
+```
+
+`[living]` and `[wooze]` also refuse a key they don't declare, so a misspelt key there is an `unknown-field` error with the same hint, and its line. Every such table is named, not only the first, and the rest of the scene is still checked. A command that loads the scene (`flint play`, `flint render`) stops with the parser's own message instead; for `[living]` and `[wooze]` the load's warning just before it has the line.
 
 ### A table of your own
 
@@ -259,7 +283,7 @@ A component or archetype is known when **any** loaded schema directory declares 
 
 ### Diagnostics while the game runs
 
-The pass above checks a scene file against the schemas. A value can still be wrong where no schema looks: a component whose schema is open, a field a script writes with `set_field`, an entity a script spawns. So the systems that read components check as they read. Physics, audio, animation (`animator`, its `layers`, `sprite_animator`, `ik_two_bone`), the renderer (`sprite`, `material`, `bounds`, `model`, `terrain` and its grass, `grass_ground`, `sky`, `ocean`, `water_body`, `spline`, `spline_mesh` and the 2D UI's `screen_anchor`, `parallax`, `ui_fill`, `ui_text`) and the script system (`script`, `interactable`, the sprite functions) read through a typed view of the component, and a value they cannot use is logged as a diagnostic of the same shape, then the default is used:
+The pass above checks a scene file against the schemas. A value can still be wrong where no schema looks: a component whose schema is open, a field a script writes with `set_field`, an entity a script spawns. So the systems that read components check as they read. Physics, audio, animation (`animator`, its `layers`, `sprite_animator`, `ik_two_bone`), the renderer (`sprite`, `material`, `bounds`, `model`, `material_overrides`, `terrain` and its grass, `grass_ground`, `sky`, `ocean` (its look and its waves), `water_body`, `spline`, `spline_mesh` and the 2D UI's `screen_anchor`, `parallax`, `ui_fill`, `ui_text`) the script system (`script`, `interactable`, `joint` for `get_joint_target`, the sprite and ocean functions) and the player (`camera_tuning`, `bone_probe` and the F3 panels' starting values) read through a typed view of the component, and a value they cannot use is logged as a diagnostic of the same shape, then the default is used:
 
 ```
 WARN error[bad-enum-value] entity 'crate' rigidbody.body_type: "dynamc" is not a value of `body_type` (did you mean `dynamic`? allowed values: static, dynamic, kinematic, kinematic_position, kinematic_velocity; the default "static" is used)
@@ -268,7 +292,7 @@ WARN warning[needs-component] entity 'wall' component 'collider': a collider wit
 WARN error[bad-enum-value] entity 'hero' animator.layers[1].mode: "overide" is not a value of `mode` (did you mean `override`? allowed values: additive, override, replace; the layer is additive)
 ```
 
-An entry of an array of tables is named by its index (`animator.layers[1].mode`).
+An entry of an array of tables is named by its index (`animator.layers[1].mode`), and a table inside a component by its key (`material_overrides.Glass.emissive`).
 
 Each (entity, component, field) is reported **once**, however many frames read it, and again after the scene is reloaded. The codes are `bad-type` and `bad-enum-value`, as at load, and `needs-component`. An integer where a number is read (`move_speed = 8`) is not a mistake and is not reported. These are log lines only: `flint validate` does not run the game, so it does not print them. The one it can see without running, a collider on an entity with no rigidbody, it reports before the game starts as well.
 
@@ -312,7 +336,7 @@ $ flint validate scenes/road.scene.toml
 scenes/road.scene.toml: 1 warning (2 allowed by flint.toml)
 ```
 
-With `--format json` (and `flint check --json`) the count is `allowed`. An allowed error no longer fails the scene. A code that is none of the table's is refused when the manifest is read, with the nearest code (`project.diagnostics.allow[0]`: `unknown-feild` is no diagnostic code (did you mean `unknown-field`?)), and so are the codes that mean the file did not load at all (`toml-parse`, `file-unreadable`, `scene-load`, `bad-manifest`, `bad-prefab`), since nothing behind them was checked.
+With `--format json` (and `flint check --json`) the count is `allowed`. An allowed error no longer fails the scene. `flint bundle` reads the list from the `flint.toml` it packs and leaves out the same diagnostics `flint check` does, so a bundle refuses only what the check reports; it counts them too (`check: no problems (1 allowed by flint.toml)`, and `allowed` in `flint --json bundle`). A code that is none of the table's is refused when the manifest is read, with the nearest code (`project.diagnostics.allow[0]`: `unknown-feild` is no diagnostic code (did you mean `unknown-field`?)), and so are the codes that mean the file did not load at all (`toml-parse`, `file-unreadable`, `scene-load`, `bad-manifest`, `bad-prefab`), since nothing behind them was checked.
 
 ### A component only scripts read
 
@@ -551,7 +575,7 @@ flint schema light --schemas engine/schemas --schemas schemas
 
 With no `--schemas`, `flint schema` reads the directories the project's `flint.toml` names, or `schemas/` in the working directory when there is no manifest ([Which directories load](#which-directories-load)).
 
-`flint schema <name>` prints the fields, types, defaults and ranges; a table that declares fields of its own (a `[[wooze.zone]]`) has them listed beneath it. It names the file the component was declared in, and when a later layer [extended](#adding-a-field-to-an-engine-component) it, numbers the files and ends each field's line with the number of the one that declared it. A component whose fields put it on an [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) has a line for it under the header, its title and each role's fields in the panel's order, with a label where the panel calls a field something other than its name read as words (`end_now`'s "End now" is not repeated): `Panel "Dead calm": status phase, calm, next_in_s · trigger trigger_calm "Calm now", end_now`. A name that is no component, scene table or archetype is an error (exit code 1) with the nearest name as a suggestion.
+`flint schema <name>` prints the fields, types, defaults and ranges; a table that declares fields of its own (a `[[wooze.zone]]`) has them listed beneath it. It names the file the component was declared in, and when a later layer [extended](#adding-a-field-to-an-engine-component) it, numbers the files and ends each field's line with the number of the one that declared it. A component whose fields put it on an [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) has a line for it under the header, its title and each role's fields in the panel's order, with a label where the panel calls a field something other than its name read as words (`end_now`'s "End now" is not repeated): `Panel "Dead calm": status phase, calm, next_in_s · trigger trigger_calm "Calm now", end_now`. An archetype prints its components and defaults the same way: the file that declared it, and when a later layer [extended](#adding-a-component-to-an-engine-archetype) it, the numbered files with each component and each default ending in its file's number. A name that is no component, scene table or archetype is an error (exit code 1) with the nearest name as a suggestion.
 
 ### Schemas as data
 
@@ -561,7 +585,7 @@ flint schema light --format json     # one component or archetype
 flint schema --format json           # everything: every field's type, default, range, values
 ```
 
-`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields), `fields`, and, when it was read from a file, `declared_in` (that file) and `extended_by` (each file that added fields to it, in load order); a field has `type`, `required`, `file` (the file that declared it, beside `declared_in`), and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds`, `unless` and `builtins` (an asset) and `fields` (a table). A component with an [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) has `panel`: its `title` and its `rows` in the panel's order, each with `field`, `role` and `label` (the default spelled out), and the keys that say more than the defaults: `labels`, `press` (a trigger's), `step`, `min`, `max`, `slider` and `presets` (a tune row's), `format`, `scale`, `unset`, `from`, and `commit` when it is `false`.
+`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields), `fields`, and, when it was read from a file, `declared_in` (that file) and `extended_by` (each file that added fields to it, in load order); a field has `type`, `required`, `file` (the file that declared it, beside `declared_in`), and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds`, `unless` and `builtins` (an asset) and `fields` (a table). A component with an [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) has `panel`: its `title` and its `rows` in the panel's order, each with `field`, `role` and `label` (the default spelled out), and the keys that say more than the defaults: `labels`, `press` (a trigger's), `step`, `min`, `max`, `slider` and `presets` (a tune row's), `format`, `scale`, `unset`, `from`, and `commit` when it is `false`. An archetype has `kind`, `description`, `components` (names, in order), `defaults` (a table per component) and `visual` when it gives one, and, when it was read from a file, `declared_in`, `extended_by`, `component_files` (the file that listed each component) and `default_files` (the file that gave each default, by component, then field).
 
 ### Editor completion: a JSON Schema for scenes
 
@@ -569,7 +593,9 @@ flint schema --format json           # everything: every field's type, default, 
 flint schema --format json-schema --output scene.schema.json
 ```
 
-writes a JSON Schema (draft-07) for a `.scene.toml` under the schemas of your project: each entity takes `archetype` (one of the loaded archetypes), `parent`, and a table per component, with every field typed, described and given its default, range and enum values. [Taplo](https://taplo.tamasfe.dev/) and the Even Better TOML extension for VS Code read it, and give completion and inline errors while you type. Point a scene at it with a first line:
+writes a JSON Schema (draft-07) for a `.scene.toml` under the schemas of your project: each entity takes `archetype` (one of the loaded archetypes), `parent`, and a table per component, with every field typed, described and given its default, range and enum values. [Taplo](https://taplo.tamasfe.dev/) reads it, and so does the Even Better TOML extension for VS Code, which runs taplo. Under `[entities.<name>]` it offers the components, `archetype` and `parent`; under a component, its fields, a field's default filled in; for an enum field, its values. A wrong enum value or a vec3 of two numbers is marked where it stands (the vec3's message is a JSON Schema `anyOf`'s: valid under none of the forms).
+
+Point a scene at it with a `#:schema` line before its first table (comments may come before it):
 
 ```toml
 #:schema ../scene.schema.json
@@ -578,7 +604,9 @@ writes a JSON Schema (draft-07) for a `.scene.toml` under the schemas of your pr
 name = "Hall"
 ```
 
-or for every scene at once, in a `.taplo.toml` at the project root:
+The path is relative to the scene file: `../` for a scene in `levels/` with the schema at the project root. A full path is written as a URL, `file:///C:/games/hall/scene.schema.json`: taplo reads `C:\...` as a URL whose scheme is `c`.
+
+Or point every scene at it at once, with a `.taplo.toml` at the project root:
 
 ```toml
 [[rule]]
@@ -586,8 +614,13 @@ include = ["**/*.scene.toml"]
 
 [rule.schema]
 path = "./scene.schema.json"
-enabled = true
 ```
+
+Taplo finds `.taplo.toml` in the folder it runs from or the nearest parent folder that has one. But it reads the `include` patterns and the schema `path` against the folder it runs from, not the one that holds the file: in VS Code that is the workspace folder, and for `taplo lint` the working directory. So open the project folder itself in VS Code, not a folder above it, and run `taplo lint` from the project root. Run from `levels/`, the same file looks for `levels/scene.schema.json`. A `#:schema` line takes precedence over a rule and is relative to the scene wherever taplo runs.
+
+Taplo keeps a schema it has read for a minute in memory, and for up to ten where it keeps a cache on disk. After writing the file again, reload the editor window to see the new fields at once.
+
+These rules come from taplo 0.10.0's source (#1062); nobody has yet tried this setup in an editor.
 
 What it holds to, and what it leaves to `flint validate`:
 
@@ -654,7 +687,7 @@ Games can define their own schemas that extend or override the engine's built-in
 schemas = ["engine/schemas", "schemas"]
 ```
 
-Here `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition replaces the engine's whole, unless the game's says `extend = true` (next section).
+Here `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition replaces the engine's whole, unless the game's says `extend = true` (next section). Archetypes work the same way: [Adding a component to an engine archetype](#adding-a-component-to-an-engine-archetype).
 
 ### Adding a field to an engine component
 
@@ -696,6 +729,56 @@ Fields:
 ```
 
 The same works for a scene-level table: `[table.<name>]` with `extend = true` under the game's `scene/`.
+
+### Adding a component to an engine archetype
+
+An archetype extends the same way. A game whose player needs a `stamina` the engine's `player` doesn't carry, and a faster walk, lists only what it adds:
+
+```toml
+# schemas/archetypes/player.toml, in the game
+[archetype.player]
+extend = true
+components = ["stamina"]
+
+[archetype.player.defaults.stamina]
+max = 120.0
+
+[archetype.player.defaults.character_controller]
+move_speed = 7.5
+```
+
+Every `archetype = "player"` entity now gets the engine's `transform`, `collider`, `rigidbody` and `character_controller` with their defaults, and the game's `stamina` with `max = 120`; its controller has the engine's `jump_force = 6` and the game's `move_speed = 7.5`. What an archetype extension does:
+
+- **Appends components** to the earlier layer's list, in the order written; one already listed is not listed twice.
+- **Merges defaults key by key**: each `[archetype.<name>.defaults.<component>]` adds its keys to the earlier layer's table for that component, and a key named again takes the extension's value. The engine's other keys stay.
+- **Replaces the `visual`** when it gives one ([the placeholder box](#an-archetypes-placeholder-box)); without one the earlier layer's stays.
+- **Keeps the earlier description.** A `description` beside `extend = true` is ignored, and `flint validate` says so (`ignored-schema-key`), as it does for any key an archetype doesn't hold (`extned = true` is named, with `extend` as the suggestion: misspelt, it would replace the archetype whole).
+- **Waits for its directory and is an error when nothing earlier declares the name**, as a component's extension does: `archetype 'playr' says extend = true, and no earlier schema declares an archetype of that name to add its components to: did you mean player?`
+
+Without `extend`, a later layer's `[archetype.player]` replaces the engine's whole: its components and defaults are the whole archetype. `flint schema player` shows which file each component and each default came from:
+
+```text
+Archetype: player
+Description: A player-controlled character with physics and first-person camera
+Declared in: [1] engine/schemas/archetypes/player.toml
+Extended by: [2] schemas/archetypes/player.toml
+
+Components:
+  - transform   [1]
+  - collider   [1]
+  - rigidbody   [1]
+  - character_controller   [1]
+  - stamina   [2]
+
+Defaults:
+  [character_controller]
+    camera_mode = "first_person"   [1]
+    height = 1.8   [1]
+    jump_force = 6   [1]
+    move_speed = 7.5   [2]
+    radius = 0.3   [1]
+  ...
+```
 
 ### Which directories load
 

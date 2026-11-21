@@ -8,12 +8,15 @@
 //! The panel is created only when the component exists.
 
 use crate::DebugPanel;
-use flint_core::toml_util::toml_f32;
+use flint_ecs::ComponentView;
 use flint_scene::SceneDocument;
 use std::path::PathBuf;
 
 /// The engine component this panel tunes (`schemas/components/camera_tuning.toml`).
 pub const CAMERA_TUNING: &str = "camera_tuning";
+
+/// `camera_tuning.fov_deg` when it isn't written (the schema's default).
+const DEFAULT_FOV_DEG: f32 = 65.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CameraPanelConfig {
@@ -21,9 +24,12 @@ pub struct CameraPanelConfig {
 }
 
 impl CameraPanelConfig {
-    pub fn from_component(value: &toml::Value) -> Self {
+    /// Seed the slider from a `camera_tuning` component through the typed
+    /// view (ADR 0115, #1068): a `fov_deg` of the wrong type is 65 and is
+    /// reported once.
+    pub fn from_component(view: &ComponentView<'_>) -> Self {
         Self {
-            fov_deg: value.get("fov_deg").and_then(toml_f32).unwrap_or(65.0),
+            fov_deg: view.f32("fov_deg", DEFAULT_FOV_DEG),
         }
     }
 

@@ -97,10 +97,31 @@ pub fn toml_to_vec3(v: &toml::Value) -> Option<Vec3> {
     None
 }
 
+/// The line and column (both from 1, the column in characters) of byte
+/// `offset` in `text`: where a span a TOML parser hands back stands, as a
+/// diagnostic names it (`Diagnostic::at`).
+pub fn line_column(text: &str, offset: usize) -> (usize, usize) {
+    let mut offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    let before = &text[..offset];
+    let line = before.matches('\n').count() + 1;
+    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+    let column = text[line_start..offset].chars().count() + 1;
+    (line, column)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use toml::Value;
+
+    #[test]
+    fn columns_count_characters() {
+        assert_eq!(line_column("ab\ncé x", 7), (2, 4));
+        assert_eq!(line_column("ab", 99), (1, 3), "past the end is the end");
+    }
 
     #[test]
     fn f64_from_float() {
