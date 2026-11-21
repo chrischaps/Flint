@@ -516,7 +516,7 @@ impl SceneRenderer {
                 .get_skinned(asset)
                 .and_then(|meshes| meshes.first())
             {
-                queue.write_buffer(&mesh.bone_buffer, 0, bytemuck::cast_slice(m));
+                queue.write_buffer_counted(&mesh.bone_buffer, 0, bytemuck::cast_slice(m));
             }
         }
         for (name, tints) in &state.part_tints {

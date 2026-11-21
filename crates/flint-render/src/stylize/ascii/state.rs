@@ -1,6 +1,7 @@
 //! The style's state: ramps, fonts, palettes, the text capture and each
 //! variant's row (moved from `ascii.rs`, #742).
 
+use crate::gpu_counts::CountedDevice;
 use super::*;
 
 /// Up to [`MAX_RAMP`] steps of `ramp`, evenly resampled when longer: each
@@ -190,7 +191,7 @@ pub(super) struct TextCapture {
 
 impl TextCapture {
     pub(super) fn new(device: &wgpu::Device, grid: [u32; 2]) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("ASCII Text"),
             size: wgpu::Extent3d {
                 width: grid[0].max(1),
@@ -207,7 +208,7 @@ impl TextCapture {
         let view = texture.create_view(&Default::default());
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let row_bytes = (grid[0].max(1) * TEXT_TEXEL_BYTES).div_ceil(align) * align;
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("ASCII Text Read-back"),
             size: (row_bytes * grid[1].max(1)) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -533,7 +534,7 @@ pub(super) fn cells_bind(
     variant: u64,
 ) -> Arc<wgpu::BindGroup> {
     frame.bind(name, variant, || {
-        frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             label: Some(name),
             layout,
             entries: &[wgpu::BindGroupEntry {

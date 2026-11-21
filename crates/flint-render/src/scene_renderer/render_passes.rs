@@ -7,6 +7,7 @@ use super::{Blend, Draw, DrawItem, DrawList, Layer, SceneRenderer, SteppedPass};
 use crate::billboard_pipeline::BillboardUniforms;
 use crate::camera::Camera;
 use crate::debug::DebugMode;
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::gpu_labels::{DrawLabel, PassGroup};
 use crate::particle_pipeline::ParticleUniforms;
 use crate::pipeline::TransformUniforms;
@@ -382,7 +383,7 @@ impl SceneRenderer {
         }
 
         // Write shadow uniforms
-        queue.write_buffer(
+        queue.write_buffer_counted(
             &shadow_pass.shadow_uniforms_buffer,
             0,
             bytemuck::cast_slice(&[*shadow_pass.shadow_uniforms()]),
@@ -423,13 +424,13 @@ impl SceneRenderer {
         let grass_casts = self.grass.drawing && self.pipelines.grass.is_some();
         if grass_casts {
             while self.grass.shadow_binds.len() < GRASS_SHADOW_CASCADES {
-                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
                     label: Some("Grass Shadow Transform"),
                     size: std::mem::size_of::<TransformUniforms>() as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bind = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     layout: &self.layouts.transform_bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
@@ -454,7 +455,7 @@ impl SceneRenderer {
                     camera_pos: [0.0; 3],
                     _pad: 0.0,
                 };
-                queue.write_buffer(buffer, 0, bytemuck::cast_slice(&[uniforms]));
+                queue.write_buffer_counted(buffer, 0, bytemuck::cast_slice(&[uniforms]));
             }
         }
         let mut next_slot: u32 = 0;
@@ -648,7 +649,7 @@ impl SceneRenderer {
                     draw.material_buffer
                         .write_flags(queue, debug_mode_u32, tonemapping_u32)
                 }
-                Draw::Billboard(draw) => queue.write_buffer(
+                Draw::Billboard(draw) => queue.write_buffer_counted(
                     &draw.billboard_buffer,
                     0,
                     bytemuck::cast_slice(&[billboard_uniforms]),
@@ -656,7 +657,7 @@ impl SceneRenderer {
                 Draw::Terrain(n) => {
                     if let Some(chunk) = self.terrain.draws.get(*n as usize) {
                         let uniforms = transform(chunk.model, chunk.model_inv_transpose);
-                        queue.write_buffer(
+                        queue.write_buffer_counted(
                             &chunk.transform_buffer,
                             0,
                             bytemuck::cast_slice(&[uniforms]),
@@ -677,13 +678,13 @@ impl SceneRenderer {
                 camera_pos,
                 _pad: 0.0,
             };
-            queue.write_buffer(buf, 0, bytemuck::cast_slice(&[uniforms]));
+            queue.write_buffer_counted(buf, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
         // Update terrain material buffer (tonemapping flag)
         if let Some(buf) = &self.terrain.material_buffer {
             // enable_tonemapping is at byte offset 12 (texture_tile(4) + metallic(4) + roughness(4))
-            queue.write_buffer(buf, 12, bytemuck::cast_slice(&[tonemapping_u32]));
+            queue.write_buffer_counted(buf, 12, bytemuck::cast_slice(&[tonemapping_u32]));
         }
 
         // Update ocean uniforms (wave phases in f64, grid follows the camera).
@@ -726,7 +727,7 @@ impl SceneRenderer {
                     camera_up: cam_up,
                     _pad1: 0.0,
                 };
-                queue.write_buffer(
+                queue.write_buffer_counted(
                     &pp.uniform_buffer,
                     0,
                     bytemuck::cast_slice(&[particle_uniforms]),
@@ -738,7 +739,7 @@ impl SceneRenderer {
         if let Some(sp) = &self.pipelines.sprite2d {
             if !self.sprite2d_batches.is_empty() {
                 let sprite2d_uniforms = Sprite2dUniforms { view_proj };
-                queue.write_buffer(
+                queue.write_buffer_counted(
                     &sp.uniform_buffer,
                     0,
                     bytemuck::cast_slice(&[sprite2d_uniforms]),

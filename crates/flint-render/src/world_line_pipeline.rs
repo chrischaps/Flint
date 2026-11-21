@@ -12,6 +12,7 @@
 //! FXAA. Colours are display-space (sRGB), as the HUD's are, so a ring keeps
 //! the colour it had as a HUD line. Fog, bloom and tonemapping don't touch it.
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 use flint_core::world_line::WorldLine;
@@ -206,7 +207,7 @@ impl WorldLinePipeline {
             bind_group_layouts: &[],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
             label: Some("World Line Pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
@@ -269,7 +270,7 @@ impl WorldLinePipeline {
         }
         if self.capacity < self.vertices.len() {
             let capacity = self.vertices.len().next_power_of_two();
-            self.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            self.buffer = Some(device.create_buffer_counted(&wgpu::BufferDescriptor {
                 label: Some("World Line Vertices"),
                 size: (capacity * std::mem::size_of::<WorldLineVertex>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
@@ -278,7 +279,7 @@ impl WorldLinePipeline {
             self.capacity = capacity;
         }
         let buffer = self.buffer.as_ref().expect("allocated above");
-        queue.write_buffer(buffer, 0, bytemuck::cast_slice(&self.vertices));
+        queue.write_buffer_counted(buffer, 0, bytemuck::cast_slice(&self.vertices));
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("World Lines"),

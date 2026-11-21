@@ -1,5 +1,6 @@
 //! Render pipeline for skinned meshes with bone matrix storage buffer
 
+use crate::gpu_counts::CountedDevice;
 use crate::primitives::SkinnedVertex;
 use crate::TrustedShader;
 
@@ -77,7 +78,7 @@ impl SkinnedPipeline {
         });
 
         let make_opaque = |label: &str, cull_mode: Option<wgpu::Face>| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -140,7 +141,7 @@ impl SkinnedPipeline {
                                 fragment: &str,
                                 blend: wgpu::BlendState,
                                 depth_write: bool| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -218,7 +219,7 @@ impl SkinnedPipeline {
 
         // Transparent additive pipeline for skinned meshes
         let transparent_additive_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                 label: Some("Skinned Transparent Additive Pipeline"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -263,7 +264,7 @@ impl SkinnedPipeline {
 
         // Transparent multiply pipeline for skinned meshes
         let transparent_multiply_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                 label: Some("Skinned Transparent Multiply Pipeline"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -310,48 +311,49 @@ impl SkinnedPipeline {
         // path as the scene's, drawn as edge lines (LessEqual, unbiased:
         // WebGPU and wgpu 29+ reject a bias on lines, #944) so they follow
         // the animated pose and sit on the solid surface.
-        let wire_line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Skinned Wireframe Line Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &wire_shader,
-                entry_point: Some("vs_skinned_wire"),
-                buffers: &[Some(SkinnedVertex::desc())],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &wire_shader,
-                entry_point: Some("fs_wire"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview_mask: None,
-            cache: None,
-        });
+        let wire_line_pipeline =
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
+                label: Some("Skinned Wireframe Line Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &wire_shader,
+                    entry_point: Some("vs_skinned_wire"),
+                    buffers: &[Some(SkinnedVertex::desc())],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &wire_shader,
+                    entry_point: Some("fs_wire"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview_mask: None,
+                cache: None,
+            });
 
         Self {
             pipeline,

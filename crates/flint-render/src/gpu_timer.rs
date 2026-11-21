@@ -18,6 +18,7 @@
 //! scopes its own phases; hosts add theirs through
 //! [`SceneRenderer::gpu_timer_mut`](crate::SceneRenderer::gpu_timer_mut).
 
+use crate::gpu_counts::CountedDevice;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
@@ -266,7 +267,7 @@ impl GpuTimer {
             ty: wgpu::QueryType::Timestamp,
             count: queries,
         });
-        let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+        let resolve = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("GPU Timer Resolve"),
             size,
             usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
@@ -274,7 +275,7 @@ impl GpuTimer {
         });
         let readbacks = (0..READBACKS)
             .map(|_| Readback {
-                buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                buffer: device.create_buffer_counted(&wgpu::BufferDescriptor {
                     label: Some("GPU Timer Read-back"),
                     size,
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,

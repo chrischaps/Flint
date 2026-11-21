@@ -60,6 +60,15 @@ pub struct RenderStats {
     /// a style keeps of its own (watercolor's two washes), and FXAA's
     /// intermediate. The chain and FXAA together hold two at most.
     pub full_size_targets: u32,
+    /// What the last frame created and wrote on the GPU (#1091,
+    /// `gpu_counts`): zero objects on a steady frame.
+    pub gpu_calls: crate::gpu_counts::GpuCalls,
+    /// Texture memory the renderer knows it holds, by class, and its mesh
+    /// buffers (#1091).
+    pub gpu_memory: crate::gpu_counts::GpuMemory,
+    /// The device's live `(buffers, textures)` bytes, where wgpu tracks
+    /// them (set by the caller, `gpu_counts::device_memory`).
+    pub device_memory: Option<(u64, u64)>,
     // Screen info (set by caller)
     pub resolution: [u32; 2],
     /// The size the 3D scene is drawn at: `resolution` at render scale 1

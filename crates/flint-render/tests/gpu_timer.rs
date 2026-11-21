@@ -3,6 +3,8 @@
 //! These need a GPU adapter with timestamp queries. Without one each test
 //! prints a note and passes.
 
+#![allow(clippy::disallowed_methods)] // the test's own targets and read-backs, not the renderer's, so uncounted (#1091)
+
 use flint_ecs::FlintWorld;
 use flint_render::{Camera, RendererConfig, SceneRenderer};
 

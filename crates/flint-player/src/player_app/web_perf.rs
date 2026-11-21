@@ -204,6 +204,9 @@ impl PlayerApp {
         };
         let frames_begun = self.stats.perf.frames_begun;
         context.webgpu = calls_per_frame(frames_begun);
+        // The renderer's own count beside the page's (#1091): two readings
+        // of the same frames, which should agree in kind
+        context.gpu_calls = self.window_gpu_calls();
         if let Some((frames, secs)) = raf_frames() {
             summary.frames = frames;
             summary.secs = secs;

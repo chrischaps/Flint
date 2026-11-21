@@ -16,6 +16,7 @@
 //! render modes' looks (matrix, blood, tron) tear into the frame now.
 
 use super::{kit, StyleFrame, StyleInput};
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use bytemuck::{Pod, Zeroable};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -93,13 +94,13 @@ impl TearBlend {
                         count: None,
                     }],
                 });
-            let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            let uniform = device.create_buffer_counted(&wgpu::BufferDescriptor {
                 label: Some("Style Tear Blend Uniforms"),
                 size: TEAR_SLOTS * TEAR_SLOT,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let uniform_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let uniform_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Style Tear Blend Uniform Group"),
                 layout: &uniform_layout,
                 entries: &[wgpu::BindGroupEntry {
@@ -201,7 +202,7 @@ impl TearBlend {
         };
         let pipeline = self.pipeline(frame.device, frame.format);
         let shared = self.shared(frame.device);
-        frame.queue.write_buffer(
+        frame.queue.write_buffer_counted(
             &shared.uniform,
             slot * TEAR_SLOT,
             bytemuck::bytes_of(&uniform),

@@ -27,6 +27,7 @@
 //! [`SceneRenderer::capture_next_frame`]: crate::SceneRenderer::capture_next_frame
 
 use crate::frame_capture::{ImageDescription, LoggedPass};
+use crate::gpu_counts::CountedDevice;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use web_time::Instant;
@@ -226,7 +227,7 @@ impl FrameTaps {
         let row = width * texel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_row = row.div_ceil(align) * align;
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Frame Capture Tap"),
             size: u64::from(padded_row) * u64::from(height),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,

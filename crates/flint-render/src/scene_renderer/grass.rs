@@ -214,7 +214,7 @@ impl SceneRenderer {
         if width == 0 || height == 0 {
             return Ok(());
         }
-        queue.write_texture(
+        queue.write_texture_counted(
             wgpu::TexelCopyTextureInfo {
                 texture: mask,
                 mip_level: 0,
@@ -267,7 +267,7 @@ impl SceneRenderer {
             (max_instances as u64) * std::mem::size_of::<GrassInstanceGpu>() as u64;
 
         // Instance storage buffer (compute writes, render reads)
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let instance_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Grass Instance Buffer"),
             size: instance_buffer_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -278,21 +278,22 @@ impl SceneRenderer {
         let counter_buffer = create_grass_draw_args_buffer(device);
 
         // Compute uniform buffer
-        let compute_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let compute_uniform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Grass Compute Uniform Buffer"),
             size: std::mem::size_of::<GrassComputeUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let compute_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.compute_uniform_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: compute_uniform_buffer.as_entire_binding(),
-            }],
-            label: Some("Grass Compute Uniform Bind Group"),
-        });
+        let compute_uniform_bind_group =
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                layout: &grass_pipeline.compute_uniform_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: compute_uniform_buffer.as_entire_binding(),
+                }],
+                label: Some("Grass Compute Uniform Bind Group"),
+            });
 
         // Heightmap uses nearest (non-filtering) sampler since R32Float is not filterable
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -309,68 +310,71 @@ impl SceneRenderer {
             ..Default::default()
         });
 
-        let compute_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.compute_texture_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(hm_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&nearest_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(splat_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&linear_sampler),
-                },
-            ],
-            label: Some("Grass Compute Texture Bind Group"),
-        });
+        let compute_texture_bind_group =
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                layout: &grass_pipeline.compute_texture_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(hm_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&nearest_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(splat_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Sampler(&linear_sampler),
+                    },
+                ],
+                label: Some("Grass Compute Texture Bind Group"),
+            });
 
         // Render uniform buffer
-        let render_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let render_uniform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Grass Render Uniform Buffer"),
             size: std::mem::size_of::<GrassRenderUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let render_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.render_grass_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: render_uniform_buffer.as_entire_binding(),
-            }],
-            label: Some("Grass Render Uniform Bind Group"),
-        });
+        let render_uniform_bind_group =
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                layout: &grass_pipeline.render_grass_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: render_uniform_buffer.as_entire_binding(),
+                }],
+                label: Some("Grass Render Uniform Bind Group"),
+            });
 
         // Entity positions buffer
-        let entity_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let entity_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Grass Entity Buffer"),
             size: (MAX_GRASS_ENTITIES * std::mem::size_of::<GrassEntityPosition>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let render_instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.render_instance_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: entity_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("Grass Render Instance Bind Group"),
-        });
+        let render_instance_bind_group =
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                layout: &grass_pipeline.render_instance_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: instance_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: entity_buffer.as_entire_binding(),
+                    },
+                ],
+                label: Some("Grass Render Instance Bind Group"),
+            });
 
         // Store everything
         self.grass.instance_buffer = Some(instance_buffer);
@@ -398,13 +402,13 @@ impl SceneRenderer {
         self.grass.mask = None;
         self.grass.needs_realloc = false;
         if self.grass.transform_bind_group.is_none() {
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
                 label: Some("Grass Transform Buffer"),
                 size: std::mem::size_of::<TransformUniforms>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 layout: &self.layouts.transform_bind_group_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
@@ -461,7 +465,7 @@ impl SceneRenderer {
             return Vec::new();
         };
         let read = |buffer: &wgpu::Buffer, offset: u64, size: u64| -> Vec<u8> {
-            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            let staging = device.create_buffer_counted(&wgpu::BufferDescriptor {
                 label: Some("Grass Blade Read-back"),
                 size,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
@@ -528,7 +532,7 @@ impl SceneRenderer {
             (max_instances as u64) * std::mem::size_of::<GrassInstanceGpu>() as u64;
 
         // Reallocate instance buffer
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let instance_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Grass Instance Buffer"),
             size: instance_buffer_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -544,20 +548,21 @@ impl SceneRenderer {
             .entity_buffer
             .as_ref()
             .expect("grass entity buffer");
-        let render_instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.render_instance_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: entity_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("Grass Render Instance Bind Group"),
-        });
+        let render_instance_bind_group =
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                layout: &grass_pipeline.render_instance_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: instance_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: entity_buffer.as_entire_binding(),
+                    },
+                ],
+                label: Some("Grass Render Instance Bind Group"),
+            });
 
         // Update stored state
         // Note: grass_compute_texture_bind_group, compute_uniform_bind_group,
@@ -604,7 +609,7 @@ impl SceneRenderer {
         };
         if !fits {
             let capacity = groups.next_power_of_two();
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
                 label: Some("Grass Group Slots"),
                 size: capacity as u64 * 4,
                 usage: wgpu::BufferUsages::STORAGE,
@@ -613,8 +618,8 @@ impl SceneRenderer {
             self.grass.group_slots = Some((buffer, capacity));
         }
         let (slots, _) = self.grass.group_slots.as_ref().expect("grass group slots");
-        self.grass.compute_storage_bind_group =
-            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.grass.compute_storage_bind_group = Some(device.create_bind_group_counted(
+            &wgpu::BindGroupDescriptor {
                 layout: &grass_pipeline.compute_storage_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -631,7 +636,8 @@ impl SceneRenderer {
                     },
                 ],
                 label: Some("Grass Compute Storage Bind Group"),
-            }));
+            },
+        ));
     }
 
     /// Read-only access to the current grass config (if loaded).
@@ -650,7 +656,7 @@ impl SceneRenderer {
         self.grass.entity_count = count as u32;
         if let Some(buf) = &self.grass.entity_buffer {
             if count > 0 {
-                queue.write_buffer(buf, 0, bytemuck::cast_slice(&positions[..count]));
+                queue.write_buffer_counted(buf, 0, bytemuck::cast_slice(&positions[..count]));
             }
         }
         // Note: entity_count is written to the render uniform buffer in dispatch_grass_compute,
@@ -724,7 +730,7 @@ impl SceneRenderer {
         let Some(draw_args) = &self.grass.draw_args_buffer else {
             return;
         };
-        queue.write_buffer(draw_args, 0, bytemuck::bytes_of(&GrassDrawArgs::RESET));
+        queue.write_buffer_counted(draw_args, 0, bytemuck::bytes_of(&GrassDrawArgs::RESET));
 
         // Only the blades in view are drawn. The planes are pushed out by the
         // tallest blade, and with shadows on by how far its shadow reaches,
@@ -771,7 +777,7 @@ impl SceneRenderer {
         };
 
         if let Some(buf) = &self.grass.compute_uniform_buffer {
-            queue.write_buffer(buf, 0, bytemuck::cast_slice(&[uniforms]));
+            queue.write_buffer_counted(buf, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
         // Update render uniforms (wind, colors, etc.)
@@ -810,7 +816,7 @@ impl SceneRenderer {
         };
 
         if let Some(buf) = &self.grass.render_uniform_buffer {
-            queue.write_buffer(buf, 0, bytemuck::cast_slice(&[render_uniforms]));
+            queue.write_buffer_counted(buf, 0, bytemuck::cast_slice(&[render_uniforms]));
         }
 
         // Compute dispatch over the window (none when the camera is out of reach;
@@ -845,7 +851,7 @@ impl SceneRenderer {
 /// The grass draw's indirect arguments (ADR 0092): the compute pass writes
 /// the instance count, and the draws read the buffer as `INDIRECT`.
 fn create_grass_draw_args_buffer(device: &wgpu::Device) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
         label: Some("Grass Draw Args"),
         contents: bytemuck::bytes_of(&GrassDrawArgs::RESET),
         usage: wgpu::BufferUsages::STORAGE
@@ -874,7 +880,7 @@ fn upload_grass_texture(
         height,
         depth_or_array_layers: 1,
     };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
         label: Some(label),
         size,
         mip_level_count: 1,
@@ -884,7 +890,7 @@ fn upload_grass_texture(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    queue.write_texture(
+    queue.write_texture_counted(
         wgpu::TexelCopyTextureInfo {
             texture: &texture,
             mip_level: 0,
