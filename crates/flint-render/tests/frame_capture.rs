@@ -289,6 +289,14 @@ fn each_pass_names_the_images_it_wrote_at_their_sizes() {
     // The last surface image is the frame's output, exactly
     let last = images.iter().rfind(|i| i.target == "surface").unwrap();
     assert_eq!(frame.image(last).unwrap().bytes, pixels);
+
+    // A device that can't time copies untimed and says so with None (#1160;
+    // the timed side is tests/gpu_timer.rs, on a device made to time)
+    if !flint_render::GpuTimer::supported(gpu.device) {
+        assert_eq!(frame.gpu_copy_ms, None);
+        assert_eq!(frame.gpu_copies_timed, 0);
+        assert!(frame.images.iter().all(|i| i.gpu_ms.is_none()));
+    }
 }
 
 #[test]

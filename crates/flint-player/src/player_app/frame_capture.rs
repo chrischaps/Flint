@@ -943,9 +943,14 @@ fn write(job: Job) -> Result<Written, String> {
         .iter()
         .filter(|p| !p.images.is_empty())
         .count();
+    // What the copies took on the GPU (#1160), when the adapter could time
+    let copies = description
+        .capture
+        .as_ref()
+        .map_or(String::new(), |c| c.gpu_copy_words());
     Ok(Written {
         line: format!(
-            "wrote {shown}: {} images from {passes} passes, {:.1} MB",
+            "wrote {shown}: {} images from {passes} passes, {:.1} MB{copies}",
             written.images,
             written.file_bytes as f64 / 1e6
         ),

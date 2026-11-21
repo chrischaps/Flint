@@ -137,6 +137,12 @@ pub fn write_capture_on(
 ) -> io::Result<WrittenCapture> {
     prepare_dir(dir)?;
     let started = Instant::now();
+    // Each image's copy time on the GPU (#1160), on its description
+    description.each_pass_mut(&mut |pass| {
+        for described in &mut pass.images {
+            described.gpu_copy_ms = frame.image(described).and_then(|i| i.gpu_ms);
+        }
+    });
     let jobs: Vec<(PathBuf, &CapturedImage)> = description
         .images()
         .into_iter()
@@ -178,6 +184,8 @@ pub fn write_capture_on(
         file_bytes,
         untapped: frame.untapped.clone(),
         record_ms: frame.record_ms,
+        gpu_copy_ms: frame.gpu_copy_ms,
+        gpu_copies_timed: frame.gpu_copies_timed,
         wait_ms: frame.wait_ms,
         copy_out_ms: frame.copy_out_ms,
         encode_ms: started.elapsed().as_secs_f64() * 1000.0,
@@ -379,6 +387,8 @@ mod tests {
             width: 2,
             height: 1,
             bytes,
+            // Each copy's GPU time, told apart by its tap (#1160)
+            gpu_ms: Some(0.5 * (tap + 1) as f64),
         }
     }
 
@@ -409,6 +419,8 @@ mod tests {
                 ),
             ],
             untapped: vec!["Grass: grass_instances (a buffer, not a texture)".into()],
+            gpu_copy_ms: Some(3.0),
+            gpu_copies_timed: 3,
             record_ms: 0.1,
             wait_ms: Some(1.0),
             copy_out_ms: 0.2,
@@ -471,10 +483,18 @@ mod tests {
             manifest["passes"][1]["images"][0]["file"],
             "targets/01-surface.png"
         );
+        // Each image carries its own copy's GPU time, the capture the sum
+        assert_eq!(manifest["passes"][0]["images"][0]["gpu_copy_ms"], 0.5);
+        assert_eq!(manifest["passes"][0]["images"][1]["gpu_copy_ms"], 1.5);
+        assert_eq!(manifest["passes"][1]["images"][0]["gpu_copy_ms"], 1.0);
+        assert_eq!(manifest["capture"]["gpu_copy_ms"], 3.0);
+        assert_eq!(manifest["capture"]["gpu_copies_timed"], 3);
         // A second capture into the folder replaces the first
         let again = CapturedFrame {
             images: vec![image(0, wgpu::TextureFormat::R8Unorm, vec![7, 8])],
             untapped: vec![],
+            gpu_copy_ms: None,
+            gpu_copies_timed: 0,
             record_ms: 0.0,
             wait_ms: None,
             copy_out_ms: 0.0,
@@ -494,6 +514,8 @@ mod tests {
             CapturedFrame {
                 images: vec![],
                 untapped: vec![],
+                gpu_copy_ms: None,
+                gpu_copies_timed: 0,
                 record_ms: 0.0,
                 wait_ms: None,
                 copy_out_ms: 0.0,

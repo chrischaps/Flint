@@ -560,6 +560,10 @@ pub struct ImageDescription {
     /// (depth or a 32-bit float, ZIP), `exr-u32` or `raw` (the texels as
     /// copied, for a format nothing else holds).
     pub stored: String,
+    /// What copying it out took on the GPU, ms (#1160): from a timestamp
+    /// before the copy to one after, on the capture's own query set. `None`
+    /// when the adapter can't time.
+    pub gpu_copy_ms: Option<f64>,
     /// The read-back this came from, while the capture is in memory.
     #[serde(skip)]
     pub(crate) tap: Option<usize>,
@@ -581,13 +585,41 @@ pub struct CaptureDescription {
     pub untapped: Vec<String>,
     /// Recording the copies into the frame's encoder, on the frame thread, ms.
     pub record_ms: f64,
-    /// Waiting for the GPU to finish the frame and its copies, ms (headless
-    /// only: a window polls and never waits, ADR 0126 decision 5).
+    /// The copies on the GPU, ms (#1160): every image's `gpu_copy_ms`
+    /// together, timed on the capture's own query set, so the frame's own
+    /// timer keeps its scopes for the passes. `None` when the adapter
+    /// can't time. Bloom's step copies sit inside its timer scope, so on a
+    /// captured frame Bloom's `gpu_ms` holds them too.
+    pub gpu_copy_ms: Option<f64>,
+    /// How many copies `gpu_copy_ms` holds: all of them where the adapter
+    /// can time, up to `frame_taps::MAX_TIMED_COPIES` (256).
+    pub gpu_copies_timed: u32,
+    /// Waiting for the copies to be mapped, ms, on the CPU (headless only:
+    /// a window polls and never waits, ADR 0126 decision 5). Anything still
+    /// on the GPU is in it; `flint render` waits only after the frame's own
+    /// pixels are read back, so there it is mapping alone.
     pub wait_ms: Option<f64>,
     /// Copying out of mapped memory, ms.
     pub copy_out_ms: f64,
     /// Encoding and writing the files, ms (on the writer's threads).
     pub encode_ms: f64,
+}
+
+impl CaptureDescription {
+    /// What the copies took on the GPU, as a clause for a host's line
+    /// (#1160): `, copied in 4.3 ms on the GPU`, with `(20 of 24 timed)`
+    /// when some weren't; empty when none was timed.
+    pub fn gpu_copy_words(&self) -> String {
+        let Some(ms) = self.gpu_copy_ms else {
+            return String::new();
+        };
+        let some = if self.gpu_copies_timed < self.images {
+            format!(" ({} of {} timed)", self.gpu_copies_timed, self.images)
+        } else {
+            String::new()
+        };
+        format!(", copied in {ms:.2} ms on the GPU{some}")
+    }
 }
 
 /// One draw.

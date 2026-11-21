@@ -264,7 +264,7 @@ impl SceneRenderer {
             **log = Default::default();
         }
         // and a captured one its copies (#1085)
-        self.reset_frame_taps();
+        self.reset_frame_taps(queue);
         self.take_inputs(queue, inputs);
         self.update_from_world(world, device);
         match inputs.particles {

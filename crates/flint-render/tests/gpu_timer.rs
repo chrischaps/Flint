@@ -184,3 +184,89 @@ fn a_renderer_times_its_phases_once_asked() {
     frame(&mut renderer);
     assert!(renderer.collect_stats().gpu_passes.is_empty());
 }
+
+/// [`target`]'s texture, which the capture can read (`COPY_SRC`).
+fn tapped(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+#[test]
+fn a_captures_copies_are_timed_on_their_own_queries() {
+    // #1160: every copy a capture makes is timed on the capture's own query
+    // set, so the frame's timer still times every pass it did before
+    let Some((device, queue)) = timing_device() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter with timestamp queries");
+        return;
+    };
+    let mut renderer = SceneRenderer::new_headless(
+        &device,
+        &queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let color = tapped(&device, FORMAT);
+    let depth = tapped(&device, wgpu::TextureFormat::Depth32Float);
+    let (color_view, depth_view) = (
+        color.create_view(&Default::default()),
+        depth.create_view(&Default::default()),
+    );
+    let world = FlintWorld::new();
+    let camera = Camera::default();
+    assert!(renderer.set_gpu_timing(&device, &queue, true));
+    renderer.gpu_timer_mut().unwrap().record(true);
+    renderer.capture_next_frame(flint_render::frame_capture::CaptureTargets {
+        surface: Some(color.clone()),
+        depth: Some(depth.clone()),
+    });
+    renderer.prepare(
+        &device,
+        &queue,
+        &world,
+        &flint_render::FrameInputs::default(),
+    );
+    renderer.render_to(&device, &queue, &depth_view, &camera, &color_view);
+    renderer.finish_gpu_timings(&device, &queue);
+    let mut capture = renderer.take_frame_capture().expect("a capture was asked");
+    capture.wait(&device);
+    let frame = capture.read().expect("the copies read back");
+
+    // Every copy timed, and the capture's figure is theirs together
+    assert!(!frame.images.is_empty());
+    assert_eq!(frame.gpu_copies_timed as usize, frame.images.len());
+    let each: Vec<f64> = frame
+        .images
+        .iter()
+        .map(|i| i.gpu_ms.expect("every copy timed"))
+        .collect();
+    assert!(each.iter().all(|ms| (0.0..1000.0).contains(ms)), "{each:?}");
+    let total = frame.gpu_copy_ms.expect("timed");
+    assert!((total - each.iter().sum::<f64>()).abs() < 1e-9);
+
+    // The frame's own timer kept its scopes for the passes: the same
+    // labels a frame nobody captures times
+    let timer = renderer.gpu_timer_mut().unwrap();
+    timer.flush(&device);
+    let labels: Vec<&str> = timer.recorded()[0]
+        .passes
+        .iter()
+        .map(|p| p.label)
+        .collect();
+    assert_eq!(labels, ["Shadows", "Scene", "SSAO", "Bloom", "Composite"]);
+}
