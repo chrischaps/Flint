@@ -774,18 +774,19 @@ impl<E: Editor> Host<E> {
                 match key.physical_key {
                     PhysicalKey::Code(KeyCode::KeyO) => {
                         orbit.auto_orbit = !orbit.auto_orbit;
-                        println!(
+                        tracing::info!(
+                            target: "viewer",
                             "Auto-orbit: {}",
                             if orbit.auto_orbit { "ON" } else { "OFF" }
                         );
                     }
                     PhysicalKey::Code(KeyCode::BracketRight) => {
                         orbit.adjust_auto_orbit_speed(1.5);
-                        println!("Auto-orbit speed: {:.2} rad/s", orbit.auto_orbit_speed);
+                        tracing::info!(target: "viewer", "Auto-orbit speed: {:.2} rad/s", orbit.auto_orbit_speed);
                     }
                     PhysicalKey::Code(KeyCode::BracketLeft) => {
                         orbit.adjust_auto_orbit_speed(1.0 / 1.5);
-                        println!("Auto-orbit speed: {:.2} rad/s", orbit.auto_orbit_speed);
+                        tracing::info!(target: "viewer", "Auto-orbit speed: {:.2} rad/s", orbit.auto_orbit_speed);
                     }
                     _ => {}
                 }

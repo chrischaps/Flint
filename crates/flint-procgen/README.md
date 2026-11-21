@@ -268,12 +268,12 @@ Only when `pattern` is `voronoi_brick` or `perlin_organic` or `tiling_grid`:
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `base_color` | hex colour | `"#735A47"` | Albedo of the cells (stones, tiles, bands), sRGB hex; each cell gets its own shade of it |
+| `base_color` | hex colour | `"#B3A090"` | Albedo of the cells (stones, tiles, bands), sRGB hex; each cell gets its own shade of it |
 | `color_variation` | number ≥ 0 | `0.06` | How far each cell's lightness strays from base_color (saturation moves by half that; hue stays) |
 | `detail_octaves` | integer ≥ 1 | `4` | Octaves in the detail field, each twice as fine; any finer than 4 px are dropped |
 | `detail_scale` | number ≥ 0 | `8.0` | Detail lattice cells across the texture width (first octave) |
 | `detail_strength` | number ≥ 0 | `0.1` | RMS brightness change in the albedo (0.1 = 10%); also scales the detail's relief and roughness |
-| `mortar_color` | hex colour | `"#40382E"` | Albedo in the grooves between cells (strata lines on perlin_organic), sRGB hex |
+| `mortar_color` | hex colour | `"#898176"` | Albedo in the grooves between cells (strata lines on perlin_organic), sRGB hex |
 | `mortar_threshold` | number ≥ 0 |  | distance_to_edge below which mortar colour and roughness blend in; default 0.5 (half the groove) for voronoi_brick and tiling_grid, 0.05 (strata lines) for perlin_organic |
 | `normal_strength` | number ≥ 0 | `1.0` | Depth of the normal map's relief; 0 is flat |
 | `roughness_base` | number 0–1 | `0.75` | Roughness of the cells' faces |
@@ -284,7 +284,7 @@ Only when `pattern` is `voronoi_brick` or `tiling_grid`:
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `height_variation` | number 0–1 | `0.3` | Per-cell random height, 0 flat to 1 the most; shows in the normal map |
+| `height_variation` | number 0–1 |  | Per-cell random height, 0 flat to 1 the most; shows in the normal map. Default 0.3 for voronoi_brick, 0.2 for tiling_grid |
 
 ### `tree_v1` (mesh, written as GLB)
 
@@ -475,7 +475,7 @@ Reads `cell_id`; writes `r`, `g`, `b`.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `base_color` | hex colour | `"#735947"` | Albedo of the cells, hex; each cell gets its own shade of it |
+| `base_color` | hex colour | `"#B3A090"` | Albedo of the cells, hex; each cell gets its own shade of it |
 | `variation` | number 0–1 | `0.12` | How far each cell's lightness strays (saturation by half that; hue stays) |
 
 ### `mortar_color` (Mortar Color)
@@ -486,7 +486,7 @@ Reads `edge_dist`; modifies `r`, `g`, `b`.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `color` | hex colour | `"#40382E"` | Albedo of the mortar, hex |
+| `color` | hex colour | `"#898176"` | Albedo of the mortar, hex |
 | `threshold` | number 0–1 | `0.06` | The edge_dist below which the mortar colour blends in |
 
 ### `derive_normal` (Derive Normal)
