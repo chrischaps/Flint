@@ -18,8 +18,13 @@ pub(super) enum TransitionPhase {
     Idle,
     /// Playing exit transition — scripts draw fade-out visuals
     Exiting { target_scene: String, elapsed: f32 },
-    /// Loading the new scene (synchronous, happens in one frame)
-    Loading { target_scene: String },
+    /// Loading the new scene (synchronous, happens in one frame).
+    /// `covered`: a script ended the Exiting phase with
+    /// `complete_transition()`, so the load's long frame is drawn under its
+    /// fade and its hitch is counted as `loading` (#1125). A transition no
+    /// script covers (it goes straight through) or one the timeout ended
+    /// is not: the player may see the stall.
+    Loading { target_scene: String, covered: bool },
     /// Playing enter transition — scripts draw fade-in visuals
     Entering { elapsed: f32 },
 }
@@ -71,8 +76,11 @@ impl PlayerApp {
                 if over {
                     // Loaded this frame, as a script's complete_transition
                     // last frame would have it
+                    // No cover: nothing drew one, or nothing said it was
+                    // drawn
                     self.transition_phase = TransitionPhase::Loading {
                         target_scene: target,
+                        covered: false,
                     };
                     self.advance_transition();
                 } else {
@@ -82,8 +90,14 @@ impl PlayerApp {
                     };
                 }
             }
-            TransitionPhase::Loading { target_scene } => {
+            TransitionPhase::Loading {
+                target_scene,
+                covered,
+            } => {
                 let target = target_scene.clone();
+                if *covered {
+                    self.stats.perf.loading_behind_cover();
+                }
                 // Either way the scripts fade back in: over the new scene,
                 // or over this one when the next didn't load (#723)
                 self.execute_scene_transition(&target);

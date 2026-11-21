@@ -311,6 +311,9 @@ pub(crate) struct Hitches {
     pub secs: f64,
     pub startup: u64,
     pub tooling: u64,
+    /// Scene loads behind a script's cover, start and after (#1125): in
+    /// none of the counts above
+    pub loading: u64,
     pub worst_ms: Option<f32>,
     pub worst_at_s: Option<f64>,
     pub worst_cause: Option<String>,
@@ -336,6 +339,7 @@ impl Hitches {
             secs,
             startup: watch.startup.all.hitches,
             tooling: watch.tooling.hitches,
+            loading: watch.run.loading.hitches + watch.startup.loading.hitches,
             worst_ms,
             worst_at_s,
             worst_cause,
@@ -686,6 +690,7 @@ mod tests {
             "hitches.secs",
             "hitches.startup",
             "hitches.tooling",
+            "hitches.loading",
             "hitches.worst_ms",
             "hitches.worst_at_s",
             "hitches.worst_cause",
