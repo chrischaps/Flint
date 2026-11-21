@@ -1,6 +1,31 @@
 # Profiling
 
-Two tools say where a frame's time goes. **GPU timing** shows how long the GPU spends on each phase of the frame, in the F2 overlay and in `RenderStats`. The **`profile` feature** sends the frame loop's CPU time to [Tracy](https://github.com/wolfpld/tracy), scope by scope. Both are off until asked for, and a build without the feature carries none of the profiler. For what a frame drew and with which GPU state, [capture it in RenderDoc or PIX](#capturing-a-frame-in-renderdoc), where Flint's frames are named part by part. Below the scopes, [a sampling profiler](#when-scopes-arent-enough) sees what no scope covers: wgpu, the driver, Rapier, Rhai.
+Two tools say where a frame's time goes. **GPU timing** shows how long the GPU spends on each phase of the frame, in the F2 overlay and in `RenderStats`. The **`profile` feature** sends the frame loop's CPU time to [Tracy](https://github.com/wolfpld/tracy), scope by scope. Both are off until asked for, and a build without the feature carries none of the profiler. For what a frame drew and with which GPU state, [capture it in RenderDoc or PIX](#capturing-a-frame-in-renderdoc), where Flint's frames are named part by part. Below the scopes, [a sampling profiler](#when-scopes-arent-enough) sees what no scope covers: wgpu, the driver, Rapier, Rhai. On a phone, start with [the next section](#profiling-on-a-phone): there most GPU times read zero.
+
+## Profiling on a phone
+
+On a phone most of this page reads wrong or not at all, and the two obvious fallbacks measure nothing. This is what works in the web player on a Pixel 8 Pro (Mali-G715, Chrome), learned in #378 and #568. The drivers are in [`tools/phone-perf/`](https://github.com/chrischaps/Flint/blob/main/tools/phone-perf/README.md), which says how to build the site and bundle and reach the phone over adb.
+
+- **The GPU list is empty past `Scene`.** Chrome offers `timestamp-query` on the phone, but Mali reads 0.00 ms for every pass after `Scene`: SSAO, Bloom, Composite and ASCII alike. `?perf=1`, F2 and traces are good there for `Grass`, `Shadows` and `Scene` only.
+- **Make the page GPU-bound and count frames.** One frame's time snaps to whole refreshes, so a pass that costs 2 ms reads as nothing or as half the frame rate, depending on where the frame sat. At `?scale=1` (the scene at the canvas's full size) even a no-style control takes about 30 ms on the Pixel. With frames unpaced (`fps=native`) every page is then GPU-bound, and 10 000 / frames in 10 s is the GPU's milliseconds a frame. [`submits.mjs`](https://github.com/chrischaps/Flint/blob/main/tools/phone-perf/submits.mjs) counts the player's submissions in the page (one a frame) and the render passes between them, a round at a time:
+
+  ```bash
+  # items split on ';'; 12 s warm-up a page; 5 rounds, each playing every item once
+  BASE='&scale=1' node tools/phone-perf/submits.mjs <out> \
+    "ascii_none;ascii_none+style=ascii;ascii_none+style=ascii:edges=0" 12 5
+  ```
+
+- **Bisect by removing one pass.** The wasm holds each shader's WGSL as written, so a copy of the site whose wasm has one shader's text swapped for text of the same length that returns early behind a runtime test (`if in.position.x > -1.0 { return ..; }`) keeps that pass's pipeline and drops its work. An item `dir/scene` plays the copy in `dir/` ([the README](https://github.com/chrischaps/Flint/blob/main/tools/phone-perf/README.md#a-passs-cost-submitsmjs-568) has the details). That is how #568 found the shared edge pass was three quarters of ASCII's cost. Try a shader idea this way before a trunk build: a patch needs no build, and #568's trunk build took sixteen minutes. Skipping a pass by its label, on any GPU and without a patch, is #1317.
+- **Heat moves every number.** On the charger the phone reaches thermal status 1--2 within minutes and drops from 120 to 60 Hz. Play five or six rounds, read each page against its own round's control, and keep the thermal state the drivers log with each load.
+- **One run at a time.** The phone is shared between sessions: take the pixel lock first (the README says how), check that nobody is using the phone, and close stray localhost tabs. A driver killed by a timeout leaves its page drawing, and two live tabs made #568's control wander from 28 to 41 ms.
+
+What doesn't work, each tried in #568:
+
+- **Perfetto.** `gpu.renderstages` isn't on a user build: `perfetto --query` lists only `android.gpu.memory`, even after `setprop debug.graphics.gpu.profiler.perfetto 1` and a Chrome restart.
+- **`onSubmittedWorkDone`.** From `queue.submit` to the promise was about 24 ms on every page, the control included. It measures Chrome's latency, not the GPU's work.
+- **Paced frame times.** The phone's default, `fps=auto`, holds a steady rate and hides what a scene costs, and a frame count near the refresh isn't linear in cost.
+
+The measurements are in `docs/design/web.md`: [On a phone (#378)](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#on-a-phone-378), [The pass: the shared edges (#568)](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#the-pass-the-shared-edges-568), [Frame rate on phones (#140)](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#frame-rate-on-phones-140) and [The shipped games on a phone (#134)](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#the-shipped-games-on-a-phone-134). Getting a game onto the phone at all is [Playing on Mobile](playing-on-mobile.md).
 
 ## GPU timing
 
