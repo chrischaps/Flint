@@ -195,6 +195,46 @@ fn on_update() {
 A one-shot change (a style switched on at 5 s) goes through a step number
 kept in a component on the script's entity, so it is applied on the frame
 the step starts and not again; see [`flint-examples/film/scripts/02_type.rhai`](https://github.com/chrischaps/flint-examples/blob/main/film/scripts/02_type.rhai).
+The camera rig's `shot` does the same without the component (next section).
+
+### The camera rig
+
+A beat that flies, banks, shakes and cuts needs no camera maths of its own:
+the `camera_rig` module ([Scripting → Camera Rig
+API](../concepts/scripting.md#camera-rig-api)) has a path through a list of
+points, a bank into its turns, a shake in the camera's own frame, a
+hand-held camera and a shot list, all on game time. This beat flies a
+banked arc round the still life, kicks the camera on each cut, and hands
+the second shot to an operator on foot:
+
+```rust
+const ARC = [[0.0, 2.2, 7.0], [5.5, 2.8, 3.0], [4.0, 3.4, -4.0], [-3.0, 2.6, -5.0]];
+const WALK = [[-4.0, 1.7, 3.0], [-1.5, 1.6, 4.5], [1.5, 1.7, 5.0]];
+
+fn on_update() {
+    let s = shot(total_time(), [0.0, 6.0, 10.0]);
+    if s.index == 0 {
+        set_camera_on_path(global::ARC, film::ease(s.u), #{ bank: 6.0, look_at: [0.0, 0.8, 0.0] });
+    } else {
+        set_camera_on_path(global::WALK, s.u, #{ look_at: [0.0, 0.9, 0.0] });
+    }
+    if s.first { shake_view(0.12, 14.0, 4.0); set_hand_held(if s.index == 1 { 1.0 } else { 0.0 }, #{ steps: 1.8 }); }
+}
+```
+
+- `u` is distance along the path, so a path with uneven points still moves
+  at an even speed; ease it (`film::ease(s.u)`) for a start and a landing at
+  rest.
+- `bank: 6.0` leans 45 degrees in a 6 m turn, eased in and out of each one.
+- The shake and the hand-held drift are laid over the camera after every
+  script has set it, so they ride on `film::orbit` and `film::dolly` too:
+  call `shake_view` once and keep placing the camera as before.
+- `s.first` is true on the frame each shot begins, once, so the kick and
+  the hand change on the cut and not again.
+
+`flint capture --verify` holds a rigged beat to the same frames twice like
+any other: the shake and the hand are seeded noise of game time, never of
+the frame's step.
 
 Everything a beat does comes from game time. Never wall time, never an
 entity id (ids differ between runs; seed from names), and one directional

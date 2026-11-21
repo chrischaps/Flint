@@ -449,6 +449,7 @@ impl ScriptEngine {
         c.style_field.clear();
         c.clip_stack.clear();
         c.ui_system.clear();
+        c.camera_rig.clear();
     }
 }
 
