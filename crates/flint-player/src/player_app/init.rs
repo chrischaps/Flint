@@ -641,7 +641,7 @@ impl PlayerApp {
     ) -> Result<()> {
         use flint_core::load_report::{self, Stage};
         self.camera.aspect = render_context.aspect_ratio();
-        let scene_renderer = load_report::timed(Stage::Renderer, String::new, || {
+        let mut scene_renderer = load_report::timed(Stage::Renderer, String::new, || {
             SceneRenderer::new(
                 &render_context,
                 flint_render::RendererConfig {
@@ -650,6 +650,11 @@ impl PlayerApp {
                 },
             )
         });
+        // Parts skipped or repeated by label (#1317)
+        if let Some(knobs) = &self.launch.pass_knobs {
+            tracing::info!(target: "player", "pass knobs: {}", knobs.describe());
+            scene_renderer.set_pass_knobs(Some(knobs.clone()));
+        }
 
         // Gamepad backend and the egui overlay
         load_report::timed(Stage::Hud, String::new, || {

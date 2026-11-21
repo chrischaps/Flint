@@ -46,6 +46,11 @@ pub struct LaunchOptions {
     /// MSAA sample count for the scene renderer (1 = off, 4 = on; ADR 0058).
     /// Set from the --msaa CLI flag before the window/renderer exist.
     pub msaa_sample_count: u32,
+    /// Parts of the frame skipped or drawn N times, by label (#1317:
+    /// `--skip-pass`, `--repeat-pass`, the page's `?skip_pass=` and
+    /// `?repeat_pass=`), handed to the renderer when it is made. `None`
+    /// draws every part once.
+    pub pass_knobs: Option<flint_render::PassKnobs>,
     /// When scene procgen assets are made (#32): during load, or behind
     /// placeholders on the frame-budgeted queue (`--procgen-defer`).
     pub procgen_mode: ProcGenMode,
@@ -145,6 +150,7 @@ impl Default for LaunchOptions {
             window_size: (1280, 720),
             window_options: crate::WindowArgs::default(),
             msaa_sample_count: 1,
+            pass_knobs: None,
             procgen_mode: ProcGenMode::Immediate,
             render_scale: Default::default(),
             procgen_disk_cache: cfg!(not(target_arch = "wasm32")),

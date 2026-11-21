@@ -120,6 +120,46 @@ With `--exit-after` and `--stats`, the player prints the average GPU frame time 
 [perf] avg GPU 2.73 ms/frame over 6692 timed frames no vsync
 ```
 
+### Costing a part without timestamps
+
+Some GPUs time nothing. On the Pixel 8 Pro's Mali every pass after `Scene` reads 0.00, so `?perf=1`, F2 and traces can't say which pass is slow. There the only way to cost a part is to take it away, or draw it more, and watch the frame time (#1317). Two knobs do that on any GPU. Each names a part by the label the rows above use, ignoring case:
+
+| Where | Skip a part | Draw it N times |
+|---|---|---|
+| `flint play`, `flint-player`, `flint render` | `--skip-pass "Style edges"` | `--repeat-pass "Style edges:4"` |
+| The web page | `?skip_pass=Style%20edges` | `?repeat_pass=Style%20edges:4` |
+
+Each takes several parts, comma separated or given again (`--skip-pass Bloom,SSAO`). A repeat is 1 to 256 times, and a later word for the same part replaces an earlier one. The player logs a `pass knobs:` line at start-up. A label that no part of the frame has gets one warning after the first frame, listing the parts drawn: `skip_pass / repeat_pass: no part of the frame is named `Edges` (yet); the parts drawn: Shadows, Scene, …`.
+
+- **Skip:** the part records no work. Its targets keep what they last held: zero (wgpu clears a texture when it makes it) when the part is skipped from the first frame, or else what it wrote before the skip began. Whatever reads those targets still runs, so the frame time drops by the part's own cost. A skipped part has no `--gpu-time` row and no F2 row, and a frame's description lists it as skipped with `skip_pass names it (#1317)`. A skipped `Style edges` still hands its target to the styles that read it, so ASCII, pencil and contour draw on edges that are empty or stale. That is what #568 did by hand when it stubbed `edges.wgsl` to return early. A skipped `Fog veil` keeps the composite's veiled path, a skipped `Grass` compute leaves the scene drawing the blades the last compute made, and a skipped `Composite` or `UI` leaves the window as it was.
+- **Repeat:** the part records its work N times inside its one timer scope and debug group, so its `--gpu-time` row reads N times its cost. The picture comes out the same, and a frame's description lists the part once. Only a part that redraws its targets whole each time can repeat. The rest draw once and print a warning, `repeat_pass: `ASCII` draws once: it keeps history from frame to frame, …`:
+  - `Grass` counts blades into draw arguments that reset once a frame.
+  - `World lines`, `Selection outline` and the player's `UI` blend over the finished picture.
+  - `ASCII`, and a user style with a `history` target, keep state from one frame to the next.
+
+  A style with a `reveal` or a tear blend has 16 uniform slots a frame. Repeated past that, its extra draws show it untorn.
+
+On the desktop the repeats grow in a straight line. The ASCII edges fixture at 1920x1080 on an RTX 4070 (Vulkan, debug build, `flint render tests/fixtures/scenes/ascii_edges.scene.toml --gpu-time 200`, p50 in ms), with `Scene` and `Style edges` repeated together:
+
+| N | `Scene` | `Style edges` | frame |
+|---|---|---|---|
+| 1 | 0.131 | 0.101 | 1.84 |
+| 2 | 0.220 | 0.179 | 1.83 |
+| 4 | 0.402 | 0.321 | 2.01 |
+| 8 | 0.801 | 0.643 | 2.73 |
+| 16 | 1.596 | 1.288 | 5.69 |
+
+That is about 0.10 ms a scene pass and 0.08 ms an edge pass. All five PNGs have the same bytes. The frame column grows more slowly than the two rows at small N because SSAO's spread is wider than what they add.
+
+On a phone the frame time is what changes. Run the page with `fps=native` and `?scale=1` so every frame is GPU-bound, and count frames, as `tools/phone-perf/submits.mjs` does. Each of its items is a scene and its query after a `+`, so spell a space in a label as `%20`:
+
+```bash
+BASE='&scale=1' node tools/phone-perf/submits.mjs out \
+  "ascii_none+style=ascii;ascii_none+style=ascii&skip_pass=Style%20edges" 12 5
+```
+
+The page that skips a part, run against the same page without the skip, gives that part's milliseconds. With `repeat_pass=<label>:4` instead, the page adds three more of the part's milliseconds. #568 needed a hand-patched wasm and a copy of the site for each pass to measure this.
+
 ### A frame's description
 
 `--gpu-time` says what each part cost. `--frame-dump <file.json>` says what each part did (#1084): which passes ran in the frame `flint render` drew, in the order they were recorded, and why the others didn't; what each read and wrote; and every draw, by the entity it draws.

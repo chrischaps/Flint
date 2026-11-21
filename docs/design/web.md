@@ -1102,6 +1102,20 @@ at the price of the line glyphs. A cheaper edge detector for phones
 (half resolution, the steps alone, or the flat test as its own small
 pass in front of the heavy one) is the follow-up.
 
+**Without the wasm patch (#1317).** The page now takes
+`?skip_pass=Style%20edges`, which leaves out the shared edge pass's
+work. Its readers still get the edge target, empty from the first frame,
+as the "returning at once" stub above left it. It also takes
+`?repeat_pass=<label>:<N>`, which draws a part N times. Both are keyed by
+the GPU rows' labels, so a site copy with a patched shader is needed only
+to cut part of a pass, as the "full path skipped" row did. The book's
+Profiling guide, "Costing a part without timestamps", says how. Checked
+in desktop Chrome 157 (RTX 4070, `tools/web-perf/run.mjs`, the ASCII
+edges fixture, 1920x1080, 2026-11-20) on the branch's Play-site build:
+the page recorded 27 render passes a frame, 26 with the skip (and no
+`Style edges` row), and 30 with `repeat_pass=Style%20edges:4`. The edge
+lines left the picture. The Pixel's figure is still to be taken.
+
 ## Touch (#132)
 
 A phone gets past Begin, and its fingers arrive as the engine's touches.
