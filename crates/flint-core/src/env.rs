@@ -147,6 +147,9 @@ pub struct Var {
     /// What it does, in a line.
     pub help: &'static str,
     pub group: Group,
+    /// The flag or quality key this switch is the alias of (#1149):
+    /// `--vsync`, `--quality lod_scale=`. Given, the flag or key wins.
+    pub alias_of: Option<&'static str>,
 }
 
 impl Var {
@@ -309,6 +312,7 @@ impl Var {
             accepts: self.kind.accepts(),
             default: self.default,
             help: self.help,
+            alias_of: self.alias_of,
             value,
             problem,
         }
@@ -324,6 +328,8 @@ pub struct Status {
     pub accepts: String,
     pub default: &'static str,
     pub help: &'static str,
+    /// The flag or quality key that wins over it, for an alias (#1149).
+    pub alias_of: Option<&'static str>,
     /// What it's set to (a secret's is `(set)`); `None` when unset.
     pub value: Option<String>,
     /// Why the value isn't used, when it isn't one it accepts.
@@ -345,8 +351,20 @@ fn warn_once(name: &'static str, warning: impl FnOnce() -> String) {
 
 const UNBOUNDED: f64 = f64::INFINITY;
 
+macro_rules! alias {
+    () => {
+        None
+    };
+    ($alias:literal) => {
+        Some($alias)
+    };
+}
+
+/// The words `FLINT_VSYNC` and `--vsync` take (`flint_render::Vsync`).
+pub const VSYNC_WORDS: [&str; 7] = ["1", "on", "fifo", "0", "off", "immediate", "mailbox"];
+
 macro_rules! vars {
-    ($($id:ident = $name:literal, $group:ident, $kind:expr, default $default:literal, $help:literal;)+) => {
+    ($($id:ident = $name:literal, $group:ident, $kind:expr, $(alias $alias:literal,)? default $default:literal, $help:literal;)+) => {
         $(
             #[doc = $help]
             pub static $id: Var = Var {
@@ -355,6 +373,7 @@ macro_rules! vars {
                 default: $default,
                 help: $help,
                 group: Group::$group,
+                alias_of: alias!($($alias)?),
             };
         )+
         /// Every switch, in the order `flint env` lists them.
@@ -364,24 +383,29 @@ macro_rules! vars {
 
 vars! {
     VSYNC = "FLINT_VSYNC", Window,
-        Kind::Choice(&["1", "on", "fifo", "0", "off", "immediate", "mailbox"]),
+        Kind::Choice(&VSYNC_WORDS),
+        alias "--vsync",
         default "vsync (fifo)",
         "How frames are presented: 1|on|fifo waits for vsync, 0|off|immediate is unlocked (real frame times for perf runs), mailbox renders uncapped and shows the newest frame each refresh";
     FRAME_LATENCY = "FLINT_FRAME_LATENCY", Window,
         Kind::Number { min: 1.0, max: 3.0, whole: true },
+        alias "--frame-latency",
         default "2",
         "Frames the CPU may queue ahead of the display";
     PACING = "FLINT_PACING", Window,
         Kind::Flag,
+        alias "--no-pacing",
         default "on",
         "Pace the game clock to the monitor's refresh when frames wait for vsync; 0 turns it off";
 
     LOD_SCALE = "FLINT_LOD_SCALE", Render,
         Kind::Number { min: 0.05, max: UNBOUNDED, whole: false },
+        alias "--quality lod_scale=",
         default "1",
         "Multiplies every LOD switch distance (under 1 drops to coarser levels sooner)";
     DRAW_DISTANCE_SCALE = "FLINT_DRAW_DISTANCE_SCALE", Render,
         Kind::Number { min: 0.05, max: UNBOUNDED, whole: false },
+        alias "--quality draw_distance_scale=",
         default "1",
         "Multiplies every entity's draw distance";
     STYLE_SCISSOR = "FLINT_STYLE_SCISSOR", Render,
@@ -423,12 +447,14 @@ vars! {
         "Also append each perf summary line to this file (Android sets it beside a perf profile)";
     SHADOWS = "FLINT_SHADOWS", Player,
         Kind::Flag,
+        alias "--quality shadows=",
         default "on",
-        "0 starts with the shadow pass off; the same as --quality shadows=off, which overrides it";
+        "0 starts with the shadow pass off";
     SHADOW_RES = "FLINT_SHADOW_RES", Player,
         Kind::Number { min: 256.0, max: 4096.0, whole: true },
+        alias "--quality shadow_resolution=",
         default "2048",
-        "Each shadow cascade's map, texels on a side; the same as --quality shadow_resolution=, which overrides it";
+        "Each shadow cascade's map, texels on a side";
     PROCGEN_CACHE = "FLINT_PROCGEN_CACHE", Player,
         Kind::PathOrOff,
         default ".flint/procgen-cache/ at the project root",
@@ -527,14 +553,23 @@ pub fn help_section(groups: &[Group]) -> String {
         "Environment (`flint env` lists every switch, what it accepts and its value now):\n",
     );
     for v in vars {
+        let alias = v
+            .alias_of
+            .map(|a| format!(" (alias of {a})"))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "  {:width$}  {}\n",
+            "  {:width$}  {}{alias}\n",
             v.name,
             first_clause(v.help),
             width = width
         ));
     }
     out
+}
+
+/// The line `flint env` and the book give an alias: what wins over it.
+pub fn alias_line(alias_of: &str) -> String {
+    format!("Alias of `{alias_of}`, which wins when given")
 }
 
 /// The help up to its first `:` or `;`, for a line of `--help`.
@@ -554,7 +589,10 @@ pub fn book_page() -> String {
          with each switch's value in this shell, and `flint env --json` as data.\n\n\
          A value a switch doesn't accept is said once, as a warning naming the forms it takes, \
          and the default is used: `FLINT_VSYNC=fasle` warns rather than measuring with vsync on. \
-         An empty value is the same as unset.\n",
+         An empty value is the same as unset.\n\n\
+         A switch that is the alias of a flag or a quality key (`FLINT_VSYNC` of `--vsync`, \
+         `FLINT_LOD_SCALE` of `--quality lod_scale=`) says so: the flag or key wins when given, \
+         and the variable is read only when it isn't.\n",
     );
     for group in Group::ALL {
         out.push_str(&format!("\n## {}\n\n", group.title()));
@@ -565,7 +603,11 @@ pub fn book_page() -> String {
                 v.name,
                 v.kind.accepts().replace('|', "\\|"),
                 v.default,
-                v.help.replace('|', "\\|")
+                match v.alias_of {
+                    Some(a) => format!("{}. {}", v.help, alias_line(a)),
+                    None => v.help.to_string(),
+                }
+                .replace('|', "\\|")
             ));
         }
     }
@@ -650,6 +692,54 @@ mod tests {
         assert!(!help.contains("FLINT_BLESS"));
         // A line each, cut at its first clause
         assert!(help.contains("How much of a frame is named for GPU debuggers (RenderDoc, PIX)\n"));
+    }
+
+    /// The issue's third box: every switch a flag or quality key took over
+    /// names it, in `--help` and the book, and the quality keys are real
+    #[test]
+    fn each_alias_names_its_flag_or_key() {
+        let aliases: Vec<(&str, &str)> = ALL
+            .iter()
+            .filter_map(|v| Some((v.name, v.alias_of?)))
+            .collect();
+        assert_eq!(
+            aliases,
+            [
+                ("FLINT_VSYNC", "--vsync"),
+                ("FLINT_FRAME_LATENCY", "--frame-latency"),
+                ("FLINT_PACING", "--no-pacing"),
+                ("FLINT_LOD_SCALE", "--quality lod_scale="),
+                (
+                    "FLINT_DRAW_DISTANCE_SCALE",
+                    "--quality draw_distance_scale="
+                ),
+                ("FLINT_SHADOWS", "--quality shadows="),
+                ("FLINT_SHADOW_RES", "--quality shadow_resolution="),
+            ]
+        );
+        let all_groups = [
+            Group::Window,
+            Group::Render,
+            Group::Player,
+            Group::Assets,
+            Group::Tests,
+        ];
+        let help = help_section(&all_groups);
+        let page = book_page();
+        for (name, alias) in aliases {
+            if let Some(key) = alias.strip_prefix("--quality ") {
+                let key = key.trim_end_matches('=');
+                assert!(
+                    crate::quality::QualitySettings::KEYS.contains(&key),
+                    "{name}: {key}"
+                );
+            }
+            let line = help.lines().find(|l| l.contains(name)).unwrap();
+            assert!(line.ends_with(&format!("(alias of {alias})")), "{line}");
+            let cell = format!("| `{name}` |");
+            let row = page.lines().find(|l| l.starts_with(&cell)).unwrap();
+            assert!(row.contains(&alias_line(alias)), "{row}");
+        }
     }
 
     #[test]

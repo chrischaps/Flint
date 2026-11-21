@@ -56,8 +56,9 @@ impl PlayerApp {
     pub(super) fn request_render_context(&mut self, window: Arc<Window>) {
         let slot = self.pending_render.clone();
         let proxy = self.event_proxy.clone();
+        let present = crate::present_args::present_options(&self.launch);
         wasm_bindgen_futures::spawn_local(async move {
-            let result = RenderContext::new(window.clone()).await;
+            let result = RenderContext::with_present(window.clone(), present).await;
             *slot.borrow_mut() = Some(result);
             let woke = proxy.is_some_and(|p| p.send_event(()).is_ok());
             if !woke {

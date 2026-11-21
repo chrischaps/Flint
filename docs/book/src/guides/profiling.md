@@ -275,7 +275,7 @@ Under vsync the GPU finishes a frame and then waits for the display, and a GPU t
 … | present fifo-relaxed | … | gpu 3.90 ms under vsync at idle clocks (23% busy, reads high; FLINT_VSYNC=0 for pass costs): Shadows 0.17, Scene 1.94, SSAO 0.76, Volumetric 0.89, … | …
 ```
 
-Here the frame read 3.9 ms against 2.8 unlocked, about 1.4x; in #270 (DX12, 1080p) SSAO read 4.4 ms under vsync against 0.80 without, about 5x. To compare passes, take them with `FLINT_VSYNC=0` or with `flint render --gpu-time`, which presents nothing. The share is the GPU's frame time over the mean time between frames, not the median: under Fifo on a hybrid-GPU laptop frames come in bursts (see Frame pacing below), and the median frame there was 5 ms at a 60 fps mean.
+Here the frame read 3.9 ms against 2.8 unlocked, about 1.4x; in #270 (DX12, 1080p) SSAO read 4.4 ms under vsync against 0.80 without, about 5x. To compare passes, take them with `--vsync off` (or `FLINT_VSYNC=0`) or with `flint render --gpu-time`, which presents nothing. The share is the GPU's frame time over the mean time between frames, not the median: under Fifo on a hybrid-GPU laptop frames come in bursts (see Frame pacing below), and the median frame there was 5 ms at a 60 fps mean.
 
 #### The mean frame, and when it is the GPU's
 
