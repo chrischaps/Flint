@@ -145,9 +145,9 @@ struct LogLine {
     /// and handing it back.
     acquire_ms: Option<f64>,
     present_ms: Option<f64>,
-    /// The GPU's busy time read back in it (a frame or two old), beside
-    /// the waits: a long acquire with a long GPU frame waited on the GPU,
-    /// one without on the compositor. `null` while the GPU isn't timed.
+    /// The GPU's busy time on its own work (#1104), beside the waits: a
+    /// long acquire with a long GPU frame waited on the GPU, one without on
+    /// the compositor. `null` while the GPU isn't timed.
     gpu_ms: Option<f64>,
     /// [`Hitch::cause_line`].
     cause: String,
@@ -369,6 +369,13 @@ impl HitchWatch {
                 if f.index > line.frame && line.after_ms.len() < AROUND {
                     line.after_ms.push(r2(f.ms));
                 }
+            }
+        }
+        // The hitch's own GPU time, back a frame or two after it (#1104):
+        // the line waits AROUND frames, so it is on the record by then
+        for line in &mut self.pending {
+            if line.gpu_ms.is_none() {
+                line.gpu_ms = history.frame(line.frame).and_then(|f| f.gpu_ms).map(r2);
             }
         }
     }
@@ -757,7 +764,9 @@ mod tests {
         watch.log_to("mem".into(), Box::new(log.clone()));
         let surface = Stalls(Cell::new(Duration::ZERO));
         let mut game = 3.0;
-        let mut frame = |stall: f64, gpu: Option<f32>| {
+        // Each frame's GPU time comes back two frames after it (#1104)
+        let mut in_flight = std::collections::VecDeque::new();
+        let mut frame = |stall: f64, gpu: f32| {
             // `tick`: the frame begins, and the clock measures the last
             perf.begin_frame();
             let last_ms = perf.frames().back().map_or(0.0, |f| f.ms);
@@ -778,19 +787,25 @@ mod tests {
             surface.0.set(Duration::from_secs_f64(stall / 1000.0));
             assert_eq!(perf.acquire(&surface).err(), Some(SurfaceError::Timeout));
             perf.mark(Phase::Render);
-            perf.gpu_ms(gpu);
+            in_flight.push_back((perf.gpu_frame_index(), gpu));
+            if in_flight.len() > 2 {
+                let (index, ms) = in_flight.pop_front().unwrap();
+                perf.gpu_time(index, ms);
+            }
             perf.mark(Phase::Hud);
             perf.presented_at(Instant::now());
             perf.mark(Phase::Present);
         };
         for _ in 0..60 {
-            frame(0.0, Some(1.5));
+            frame(0.0, 1.5);
         }
-        frame(STALL_MS, Some(1.5));
+        // The stalled frame's own GPU work was long: its time, not the
+        // 1.5 ms of the frame its read-back arrives in, is the line's
+        frame(STALL_MS, 9.0);
         // Its line waits for the frames after it; the next frame's start
         // closes the stalled one
         for _ in 0..=AROUND + 1 {
-            frame(0.0, Some(1.5));
+            frame(0.0, 1.5);
         }
         let lines = log.lines();
         let l = lines
@@ -801,7 +816,13 @@ mod tests {
         assert_eq!(l["phase"], serde_json::Value::Null);
         assert!(l["player_ms"].as_f64().unwrap() < 40.0, "{l}");
         assert!(l["present_ms"].as_f64().is_some(), "{l}");
-        assert_eq!(l["gpu_ms"], 1.5);
+        assert_eq!(l["gpu_ms"], 9.0, "the hitch's own GPU time: {l}");
+        let hitch = detector.last().unwrap();
+        assert_eq!(hitch.index, l["frame"].as_u64().unwrap());
+        assert_eq!(hitch.gpu_ms, Some(9.0), "filled in once it came back");
+        let record = perf.frame(hitch.index).unwrap();
+        assert_eq!(record.gpu_ms, Some(9.0));
+        assert_eq!(perf.frame(hitch.index + 1).unwrap().gpu_ms, Some(1.5));
         assert!(
             l["cause"]
                 .as_str()
