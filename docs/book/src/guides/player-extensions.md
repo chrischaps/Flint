@@ -338,15 +338,15 @@ let hp = ctx.world.view(id, "health").i64("max", 100);
 
 | Reader | Takes | With no default |
 |--------|-------|-----------------|
-| `f32(field, default)`, `f64` | an integer or a float | `opt_f32`, `opt_f64` |
-| `i64(field, default)` | an integer, or a float with no fraction (`3.0`) | `opt_i64` |
-| `bool(field, default)` | `true` or `false` | `opt_bool` |
-| `str(field, default)` | a string | `opt_str` |
-| `choice(field, &allowed, default)` | one of `allowed`; returns the entry from that list | `opt_choice` |
-| `vec3(field, default)` | `[x, y, z]`, or a table with any of `x`, `y`, `z` | `opt_vec3` |
-| `vec4(field, default)` | `[a, b, c, d]` | `opt_vec4` |
-| `color(field, default)` | `[r, g, b]` (alpha 1) or `[r, g, b, a]` | `opt_color` |
-| `tables(field)` | an array of tables; each entry is a view of its own, reported as `field[i].key` | (none: missing is no entries) |
+| `view.f32(field, default)`, `f64` | an integer or a float | `opt_f32`, `opt_f64` |
+| `view.i64(field, default)` | an integer, or a float with no fraction (`3.0`) | `opt_i64` |
+| `view.bool(field, default)` | `true` or `false` | `opt_bool` |
+| `view.str(field, default)` | a string | `opt_str` |
+| `view.choice(field, &allowed, default)` | one of `allowed`; returns the entry from that list | `opt_choice` |
+| `view.vec3(field, default)` | `[x, y, z]`, or a table with any of `x`, `y`, `z` | `opt_vec3` |
+| `view.vec4(field, default)` | `[a, b, c, d]` | `opt_vec4` |
+| `view.color(field, default)` | `[r, g, b]` (alpha 1) or `[r, g, b, a]` | `opt_color` |
+| `view.tables(field)` | an array of tables; each entry is a view of its own, reported as `field[i].key` | (none: missing is no entries) |
 
 A field that isn't written reads as the default, and so does every field of a component the entity doesn't have (`exists()` says which); neither is reported. A value of the wrong type, or a string that is none of a `choice`'s values, reads as the default too, and is **reported once** for that entity, component and field: a warning in the log with the entity's name, what was expected and, for a choice, the allowed values and the nearest one.
 
