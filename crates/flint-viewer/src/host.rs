@@ -730,9 +730,10 @@ impl<E: Editor> Host<E> {
         if let Some(paths) = self.watch.as_ref().and_then(FileWatch::take) {
             let editor = &self.editor;
             if batch_counts(&paths, |p| editor.file_change_counts(p)) {
+                tracing::debug!(?paths, "watched files changed");
                 self.editor.on_file_changed();
             } else {
-                tracing::debug!("{} changed path(s), none the editor counts", paths.len());
+                tracing::debug!(?paths, "watched files changed, none the editor counts");
             }
         }
         if let Some((camera, orbit)) = self.editor.orbit() {
