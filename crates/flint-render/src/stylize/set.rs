@@ -24,11 +24,158 @@ pub(super) struct BuiltSlot {
     pub(super) files: Vec<std::path::PathBuf>,
 }
 
+/// What a build hands back: the pass, or its panic, and the shader files
+/// it read under `FLINT_STYLE_SHADER_DIR` ([`dev_shader::build`]).
+type Made<T> = (std::thread::Result<T>, Vec<std::path::PathBuf>);
+
+/// A build running on a worker thread (#1121), which sends what it made
+/// once. A worker that couldn't start, or died, hangs up instead: the
+/// next [`StyleSet::ensure`] that needs it then builds it itself.
+type Arrival<T> = std::sync::mpsc::Receiver<Made<T>>;
+
+/// A style being built ahead of its first frame (#1121), by
+/// [`StyleSet::prepare`].
+pub(super) struct Preparing {
+    /// The install it is built from: another by the time it arrives, and
+    /// the pass is thrown away.
+    pub(super) from: Style,
+    pub(super) arrival: Arrival<Box<dyn StylePass>>,
+}
+
+/// Run `build` on a thread of its own and hand back where its result
+/// arrives. wgpu creates pipelines from any thread on one `Device`, and
+/// the frame goes on drawing meanwhile. On the web there are no threads:
+/// it builds now, so a game that prepares at a quiet moment pays there.
+fn off_thread<T: Send + 'static>(
+    what: &str,
+    build: impl FnOnce() -> Made<T> + Send + 'static,
+) -> Arrival<T> {
+    let (sent, arrival) = std::sync::mpsc::channel();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let started = std::thread::Builder::new()
+            .name(format!("style build {what}"))
+            .spawn(move || {
+                // Nobody waiting any more (the renderer went) is fine
+                let _ = sent.send(build());
+            });
+        if let Err(e) = started {
+            tracing::warn!(
+                "style {what}: no thread to build it ahead on ({e}); it builds when drawn"
+            );
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = what;
+        let _ = sent.send(build());
+    }
+    arrival
+}
+
+/// What arrived: `Some` once the worker has sent, `None` while it builds
+/// (unless `wait`) or after it hung up without sending.
+fn arrived<T>(arrival: &Arrival<T>, wait: bool) -> Option<Result<Made<T>, ()>> {
+    use std::sync::mpsc::TryRecvError;
+    if wait {
+        return Some(arrival.recv().map_err(|_| ()));
+    }
+    match arrival.try_recv() {
+        Ok(made) => Some(Ok(made)),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some(Err(())),
+    }
+}
+
+/// Build `style` at `format`: its `create` under its pipeline cache scope
+/// (#911), its shader files recorded (#418), a panic caught. The one body
+/// [`StyleSet::ensure`] and [`StyleSet::prepare`]'s workers both run.
+fn build_style(
+    device: &wgpu::Device,
+    style: &Style,
+    format: wgpu::TextureFormat,
+) -> Made<Box<dyn StylePass>> {
+    let descriptor = style.descriptor();
+    dev_shader::build(descriptor.name, || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // One install at one format builds the same layouts every
+            // time: what lets its pipelines be kept (#911)
+            let scope = (descriptor.name, descriptor.generation, format);
+            crate::pipeline_cache::in_scope(scope, || {
+                (descriptor.create)(&StyleDevice {
+                    device,
+                    descriptor,
+                    style,
+                    format,
+                })
+            })
+        }))
+    })
+}
+
+/// The format a style of `descriptor`'s stage draws in.
+fn stage_format(descriptor: &StyleDescriptor, surface: wgpu::TextureFormat) -> wgpu::TextureFormat {
+    match descriptor.stage {
+        StyleStage::Hdr => crate::postprocess::HDR_FORMAT,
+        StyleStage::Display => surface,
+    }
+}
+
+/// Put what a build made into its slot: the pass, or the failure, which
+/// goes onto `failed` for the renderer to say and switch off.
+fn install(
+    slot: &mut BuiltSlot,
+    made: std::thread::Result<Box<dyn StylePass>>,
+    files: Vec<std::path::PathBuf>,
+    text_capture: bool,
+    failed: &mut Vec<Style>,
+) {
+    slot.files = files;
+    match made {
+        Ok(pass) => {
+            pass.set_text_capture(text_capture);
+            slot.built = Some(pass);
+        }
+        Err(_) => {
+            slot.failed = true;
+            failed.push(slot.from.clone());
+        }
+    }
+}
+
+fn build_ownership(device: &wgpu::Device) -> Made<ownership::OwnershipPass> {
+    dev_shader::build("ownership", || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ownership::OwnershipPass::new(device)
+        }))
+    })
+}
+
+fn build_edges(device: &wgpu::Device) -> Made<edges::EdgePass> {
+    dev_shader::build("edges", || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::pipeline_cache::in_scope("Style Edges", || edges::EdgePass::new(device))
+        }))
+    })
+}
+
+fn build_fade(device: &wgpu::Device) -> Made<fade::FadePass> {
+    dev_shader::build("fade", || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fade::FadePass::new(device)))
+    })
+}
+
 /// The styles whose pipelines exist, by name. Lives on the post pipeline;
 /// nothing in it depends on the frame's size.
 #[derive(Default)]
 pub struct StyleSet {
     pub(super) slots: std::collections::HashMap<&'static str, BuiltSlot>,
+    /// Styles building on worker threads (#1121), by name.
+    pub(super) preparing: std::collections::HashMap<&'static str, Preparing>,
+    /// The shared passes building on worker threads (#1121).
+    pub(super) edges_preparing: Option<Arrival<edges::EdgePass>>,
+    pub(super) fade_preparing: Option<Arrival<fade::FadePass>>,
+    pub(super) ownership_preparing: Option<Arrival<ownership::OwnershipPass>>,
     /// The shared edge pass (#301), built the first time a style needs it.
     pub(super) edges: Option<edges::EdgePass>,
     /// The edge pass's creation panicked; the styles that need it draw
@@ -81,8 +228,16 @@ impl StyleSet {
         // lets go of its pass and of what it was built from
         self.slots
             .retain(|name, slot| styles.style(name).is_some_and(|s| s.same(&slot.from)));
+        self.preparing
+            .retain(|name, p| styles.style(name).is_some_and(|s| s.same(&p.from)));
         self.reload_changed_shaders();
         let mut failed = Vec::new();
+        // What the workers finished since the last frame goes in first
+        // (#1121), so a style prepared in time costs this frame nothing
+        let names: Vec<&'static str> = self.preparing.keys().copied().collect();
+        for name in names {
+            self.collect_prepared(name, false, &mut failed);
+        }
         for style in styles.styles() {
             let descriptor = style.descriptor();
             let slot = self
@@ -97,10 +252,22 @@ impl StyleSet {
             if slot.built.is_some() || slot.failed || !descriptor.is_on(config, ids) {
                 continue;
             }
-            let format = match descriptor.stage {
-                StyleStage::Hdr => crate::postprocess::HDR_FORMAT,
-                StyleStage::Display => surface_format,
+            // Still building ahead: waiting for it is never longer than
+            // building it again here
+            if self.preparing.contains_key(descriptor.name) {
+                let waited = flint_core::frame_notes::timed(
+                    flint_core::frame_notes::NoteKind::StyleBuild,
+                    || format!("{} (waited for its prepare)", descriptor.name),
+                    || self.collect_prepared(descriptor.name, true, &mut failed),
+                );
+                if waited {
+                    continue;
+                }
+            }
+            let Some(slot) = self.slots.get_mut(descriptor.name) else {
+                continue;
             };
+            let format = stage_format(descriptor, surface_format);
             // A frame note (#1077): a style switched on mid-game builds on
             // the frame that first draws it, and that frame says so
             let noted = || {
@@ -113,46 +280,21 @@ impl StyleSet {
             let (made, files) = flint_core::frame_notes::timed(
                 flint_core::frame_notes::NoteKind::StyleBuild,
                 noted,
-                || {
-                    dev_shader::build(descriptor.name, || {
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            // One install at one format builds the same
-                            // layouts every time: what lets its pipelines be
-                            // kept (#911)
-                            let scope = (descriptor.name, descriptor.generation, format);
-                            crate::pipeline_cache::in_scope(scope, || {
-                                (descriptor.create)(&StyleDevice {
-                                    device,
-                                    descriptor,
-                                    style,
-                                    format,
-                                })
-                            })
-                        }))
-                    })
-                },
+                || build_style(device, style, format),
             );
-            slot.files = files;
-            match made {
-                Ok(pass) => {
-                    pass.set_text_capture(self.text_capture);
-                    slot.built = Some(pass);
-                }
-                Err(_) => {
-                    slot.failed = true;
-                    failed.push(style.clone());
-                }
-            }
+            install(slot, made, files, self.text_capture, &mut failed);
         }
         if self.ownership.is_none()
             && !self.ownership_failed
             && self.slots.values().any(|s| s.built.is_some())
         {
-            let (made, files) = dev_shader::build("ownership", || {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    ownership::OwnershipPass::new(device)
-                }))
-            });
+            let (made, files) = match self.ownership_preparing.take() {
+                Some(arrival) => match arrived(&arrival, true) {
+                    Some(Ok(made)) => made,
+                    _ => build_ownership(device),
+                },
+                None => build_ownership(device),
+            };
             self.shared_files.extend(files);
             match made {
                 Ok(pass) => self.ownership = Some(pass),
@@ -171,11 +313,13 @@ impl StyleSet {
                 .iter()
                 .any(|d| d.needs_edges() && d.is_on(config, ids))
         {
-            let (made, files) = dev_shader::build("edges", || {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    crate::pipeline_cache::in_scope("Style Edges", || edges::EdgePass::new(device))
-                }))
-            });
+            let (made, files) = match self.edges_preparing.take() {
+                Some(arrival) => match arrived(&arrival, true) {
+                    Some(Ok(made)) => made,
+                    _ => build_edges(device),
+                },
+                None => build_edges(device),
+            };
             self.shared_files.extend(files);
             match made {
                 Ok(pass) => self.edges = Some(pass),
@@ -193,11 +337,13 @@ impl StyleSet {
                 .iter()
                 .any(|d| d.is_on(config, ids) && d.framework_fades(config, ids))
         {
-            let (made, files) = dev_shader::build("fade", || {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    fade::FadePass::new(device)
-                }))
-            });
+            let (made, files) = match self.fade_preparing.take() {
+                Some(arrival) => match arrived(&arrival, true) {
+                    Some(Ok(made)) => made,
+                    _ => build_fade(device),
+                },
+                None => build_fade(device),
+            };
             self.shared_files.extend(files);
             match made {
                 Ok(pass) => self.fade = Some(pass),
@@ -208,6 +354,115 @@ impl StyleSet {
             }
         }
         failed
+    }
+
+    /// Start building, on worker threads, every style `config` switches on
+    /// that isn't built or building yet, and the shared passes (edges,
+    /// cross-fade, ownership) they will need (#1121). Returns the names of
+    /// the styles started. The frame goes on drawing meanwhile; the first
+    /// [`ensure`](Self::ensure) after a worker finishes puts its pass in,
+    /// and one that needs a style still building waits for it, which is
+    /// never longer than building it would be. A host calls it ahead of a
+    /// look it will show: a scene's entry, a script's `prepare_look`.
+    /// Building twice is avoided both ways: what is built or building is
+    /// left alone, and `ensure` builds nothing a worker is on.
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        config: &PostProcessConfig,
+        ids: &StyleIds,
+        styles: &StyleRegistry,
+    ) -> Vec<&'static str> {
+        let mut started = Vec::new();
+        for style in styles.styles() {
+            let descriptor = style.descriptor();
+            if !descriptor.is_on(config, ids) || self.preparing.contains_key(descriptor.name) {
+                continue;
+            }
+            if self
+                .slots
+                .get(descriptor.name)
+                .is_some_and(|s| s.from.same(style) && (s.built.is_some() || s.failed))
+            {
+                continue;
+            }
+            let format = stage_format(descriptor, surface_format);
+            let (device, from) = (device.clone(), style.clone());
+            let building = style.clone();
+            let arrival = off_thread(descriptor.name, move || {
+                build_style(&device, &building, format)
+            });
+            self.preparing
+                .insert(descriptor.name, Preparing { from, arrival });
+            started.push(descriptor.name);
+        }
+        let any_on = styles.iter().any(|d| d.is_on(config, ids));
+        if any_on
+            && self.ownership.is_none()
+            && !self.ownership_failed
+            && self.ownership_preparing.is_none()
+        {
+            let device = device.clone();
+            self.ownership_preparing =
+                Some(off_thread("ownership", move || build_ownership(&device)));
+        }
+        let edges = styles
+            .iter()
+            .any(|d| d.needs_edges() && d.is_on(config, ids));
+        if edges && self.edges.is_none() && !self.edges_failed && self.edges_preparing.is_none() {
+            let device = device.clone();
+            self.edges_preparing = Some(off_thread("edges", move || build_edges(&device)));
+        }
+        let fades = styles
+            .iter()
+            .any(|d| d.is_on(config, ids) && d.framework_fades(config, ids));
+        if fades && self.fade.is_none() && !self.fade_failed && self.fade_preparing.is_none() {
+            let device = device.clone();
+            self.fade_preparing = Some(off_thread("fade", move || build_fade(&device)));
+        }
+        started
+    }
+
+    /// The styles building ahead on worker threads (#1121), by name.
+    pub fn preparing(&self) -> Vec<&'static str> {
+        let mut names: Vec<_> = self.preparing.keys().copied().collect();
+        names.sort_unstable();
+        names
+    }
+
+    /// Put in style `name`'s prepared pass if its worker has sent it
+    /// (waiting for it when `wait`). True when the slot is settled
+    /// (built, or failed and pushed onto `failed`); false while it
+    /// builds, or when the worker hung up and the caller must build.
+    fn collect_prepared(
+        &mut self,
+        name: &'static str,
+        wait: bool,
+        failed: &mut Vec<Style>,
+    ) -> bool {
+        let Some(preparing) = self.preparing.get(name) else {
+            return false;
+        };
+        let Some(result) = arrived(&preparing.arrival, wait) else {
+            return false;
+        };
+        let Preparing { from, .. } = self.preparing.remove(name).expect("just read");
+        let Ok((made, files)) = result else {
+            return false;
+        };
+        let slot = self.slots.entry(name).or_insert_with(|| BuiltSlot {
+            from: from.clone(),
+            built: None,
+            failed: false,
+            files: Vec::new(),
+        });
+        // Another install took the name meanwhile, or ensure built it
+        if !slot.from.same(&from) || slot.built.is_some() || slot.failed {
+            return slot.built.is_some() || slot.failed;
+        }
+        install(slot, made, files, self.text_capture, failed);
+        true
     }
 
     /// With `FLINT_STYLE_SHADER_DIR` set (#418), every

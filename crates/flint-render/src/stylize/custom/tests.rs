@@ -2332,3 +2332,95 @@ fn a_styles_files_are_named_with_forward_slashes() {
         assert!(e.starts_with("demo/styles/x.wgsl:2:"), "{given}: {e}");
     }
 }
+
+/// `path` spelled from the working directory, as a player run from a
+/// project's root spells its styles (`styles/x.shader.toml`): `same_path`
+/// does its disk work only for relative paths.
+fn from_cwd(path: &std::path::Path) -> std::path::PathBuf {
+    let cwd = std::env::current_dir().unwrap();
+    let mut up = std::path::PathBuf::new();
+    let mut base = cwd.as_path();
+    while !path.starts_with(base) {
+        up.push("..");
+        base = base.parent().expect("a common root");
+    }
+    up.join(path.strip_prefix(base).unwrap())
+}
+
+/// A vfs that counts what it is asked, over the disk.
+#[derive(Default)]
+struct Counting(std::sync::atomic::AtomicUsize);
+
+impl flint_core::vfs::FileSource for Counting {
+    fn read(&self, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        flint_core::vfs::DiskSource.read(path)
+    }
+    fn read_dir(&self, path: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        flint_core::vfs::DiskSource.read_dir(path)
+    }
+    fn kind(&self, path: &std::path::Path) -> Option<flint_core::vfs::EntryKind> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        flint_core::vfs::DiskSource.kind(path)
+    }
+}
+
+/// #1121: the user-style reload poll runs a few times a second on the
+/// frame thread. For styles it has loaded it asks the disk nothing beyond
+/// `file_watch` (the player's watcher thread answers that): it compares a
+/// listed file with the loaded ones by spelling before `same_path`, whose
+/// working out reads the working directory and stats it, and works out its
+/// style folders once a scope. In the looks tour, with relative paths, that
+/// working out took 16-37 ms a style when other threads were busy on
+/// files, and stopped the game 150-260 ms a poll. With the old
+/// `loaded_from` this test counts 2 vfs calls for each loaded style a
+/// listed file is compared with and passed over.
+#[test]
+fn the_reload_poll_asks_nothing_of_the_disk_for_styles_it_has() {
+    let root = std::env::temp_dir().join(format!("flint-user-1121-{}", std::process::id()));
+    let styles = root.join("styles");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&styles).unwrap();
+    std::fs::write(root.join("flint.toml"), "").unwrap();
+    std::fs::write(styles.join("poll.wgsl"), PASSTHROUGH).unwrap();
+    for name in [
+        "utest_poll_a",
+        "utest_poll_b",
+        "utest_poll_c",
+        "utest_poll_d",
+    ] {
+        std::fs::write(
+            styles.join(format!("{name}.shader.toml")),
+            format!("version = 1\nname = \"{name}\"\nshader = \"poll.wgsl\"\n"),
+        )
+        .unwrap();
+    }
+    let scope = AssetScope::for_dir(&from_cwd(&root));
+    let mut reg = super::super::StyleRegistry::new();
+    assert!(reg.load_for(&scope).is_empty());
+    assert_eq!(reg.users().count(), 4);
+    // The first poll works the folders out
+    assert!(!reg.reload_changed_for(&scope).changed());
+
+    let counting = std::sync::Arc::new(Counting::default());
+    let source: std::sync::Arc<dyn flint_core::vfs::FileSource> = counting.clone();
+    flint_core::vfs::scoped(source, || {
+        for _ in 0..10 {
+            assert!(!reg.reload_changed_for(&scope).changed());
+        }
+    });
+    let asked = counting.0.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(asked, 0, "10 polls asked the vfs {asked} times");
+
+    // And it still sees an edit
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(
+        styles.join("utest_poll_c.shader.toml"),
+        "version = 1\nname = \"utest_poll_c\"\nshader = \"poll.wgsl\"\n[params.k]\ndefault = 1\nmin = 0\nmax = 2\n",
+    )
+    .unwrap();
+    let reload = reg.reload_changed_for(&scope);
+    assert_eq!(reload.replaced, vec!["utest_poll_c".to_string()]);
+    let _ = std::fs::remove_dir_all(&root);
+}

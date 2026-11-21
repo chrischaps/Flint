@@ -204,6 +204,11 @@ pub struct StyleRegistry {
     /// The `.shader.toml`s that didn't load, by path (#425), until they do
     /// or are deleted.
     pub(crate) failed: std::collections::BTreeMap<std::path::PathBuf, custom::Failure>,
+    /// The style folders the reload poll last searched, and for which
+    /// scope (#1121): worked out once a scope, since working them out asks
+    /// the working directory and the disk (`Project::search_dirs`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) poll_dirs: Option<(flint_core::project::AssetScope, Vec<std::path::PathBuf>)>,
 }
 
 impl Default for StyleRegistry {
@@ -225,6 +230,7 @@ impl StyleRegistry {
             styles: super::builtins().iter().map(|d| Style::native(d)).collect(),
             game: Vec::new(),
             failed: Default::default(),
+            poll_dirs: None,
         }
     }
 
@@ -241,6 +247,7 @@ impl StyleRegistry {
                 .collect(),
             game: self.game.clone(),
             failed: Default::default(),
+            poll_dirs: None,
         }
     }
 

@@ -846,6 +846,7 @@ pub(crate) fn for_the_host(command: &ScriptCommand) -> bool {
         | C::Rumble { .. }
         | C::SetCameraCutDetection { .. }
         | C::SetLook { .. }
+        | C::PrepareLook { .. }
         | C::SetQuality { .. }
         | C::ResetPostStyle { .. }
         | C::LoadScene { .. }

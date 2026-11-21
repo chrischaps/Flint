@@ -209,6 +209,12 @@ impl ScriptHost for PlayerApp {
         }
     }
 
+    fn prepare_look(&mut self, name: String) {
+        if let Err(e) = PlayerApp::prepare_look(self, &name) {
+            tracing::warn!("prepare_look: {e}");
+        }
+    }
+
     fn set_quality(&mut self, settings: QualitySettings) {
         self.quality.script_request = Some(settings);
     }

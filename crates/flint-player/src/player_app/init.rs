@@ -408,12 +408,7 @@ impl PlayerApp {
     /// ([`current_look`](Self::current_look)); a later look, faded or cut,
     /// starts from wherever this fade has reached.
     pub fn fade_to_look(&mut self, look: Option<&str>, seconds: f64) -> Result<(), String> {
-        let base = match &self.scene.post_process {
-            Some(def) => def.clone(),
-            None => flint_scene::PostProcessDef::from_authored(toml::Table::new())
-                .map_err(|e| e.to_string())?,
-        };
-        let def = flint_render::look::resolve_in(&base, look, &self.asset_scope())?;
+        let def = self.look_def(look)?;
         self.scene.post_process = Some(def);
         // A fade's target is the look from its start, for get_look()
         self.publish_look();
@@ -443,6 +438,45 @@ impl PlayerApp {
         #[cfg(feature = "debug-hud")]
         self.refresh_style_panels_after_look();
         Ok(())
+    }
+
+    /// The scene's `[post_process]` with `look` laid under its keys, as
+    /// [`fade_to_look`](Self::fade_to_look) draws it.
+    fn look_def(&mut self, look: Option<&str>) -> Result<flint_scene::PostProcessDef, String> {
+        let base = match &self.scene.post_process {
+            Some(def) => def.clone(),
+            None => flint_scene::PostProcessDef::from_authored(toml::Table::new())
+                .map_err(|e| e.to_string())?,
+        };
+        flint_render::look::resolve_in(&base, look, &self.asset_scope())
+    }
+
+    /// Build `look`'s styles on worker threads now (#1121), so the
+    /// [`set_look`](Self::set_look) that shows it later costs its frame
+    /// nothing: the first ASCII look stopped the game 1.3 s (Vulkan) to
+    /// 1.7 s (DX12) while its 15 pipelines were built on that frame. The
+    /// look isn't shown and nothing a script reads changes. Returns the
+    /// styles started (none when every one is built or building, or there
+    /// is no renderer yet). A look the search can't find is an error, as
+    /// for `set_look`.
+    pub fn prepare_look(&mut self, look: &str) -> Result<Vec<&'static str>, String> {
+        let def = self.look_def(Some(look))?;
+        let config = self.post_config_of(Some(&def));
+        let device = self.render_context.as_ref().map(|c| &c.device);
+        #[cfg(test)]
+        let device = device.or(self.test_gpu.map(|g| &g.device));
+        let (Some(renderer), Some(device)) = (self.scene_renderer.as_mut(), device) else {
+            return Ok(Vec::new());
+        };
+        let started = renderer.prepare_styles(device, &config);
+        if !started.is_empty() {
+            tracing::debug!(
+                target: "player",
+                "prepare_look {look}: building {} ahead",
+                started.join(", ")
+            );
+        }
+        Ok(started)
     }
 
     /// Whether a look's cross-fade is under way (#496).
@@ -546,11 +580,17 @@ impl PlayerApp {
     /// the scene's own tables keep it, so a file the scene can see that
     /// takes the name over later brings it back.
     pub fn scene_post_config(&self) -> flint_render::PostProcessConfig {
+        self.post_config_of(self.scene.post_process.as_ref())
+    }
+
+    /// [`scene_post_config`](Self::scene_post_config) of `def` in place
+    /// of the scene's: a look about to be shown (#1121).
+    fn post_config_of(
+        &self,
+        def: Option<&flint_scene::PostProcessDef>,
+    ) -> flint_render::PostProcessConfig {
         let styles = &self.core.styles;
-        let mut config = self
-            .scene
-            .post_process
-            .as_ref()
+        let mut config = def
             .map(|def| scene_loading::post_process_config_from_def(def, styles))
             .unwrap_or_default();
         for e in

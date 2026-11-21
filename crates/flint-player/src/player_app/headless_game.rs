@@ -85,6 +85,9 @@ pub const PRESENTATION_ONLY: &[Skipped] = &[
     quiet("set_touch_controls"),
     quiet("set_cursor_captured"),
     quiet("rumble"),
+    // A capture builds what it draws before it draws it: no frame to keep
+    // from stopping
+    quiet("prepare_look"),
     noted(
         "set_time_scale",
         "the capture's clock is its own fixed step",
