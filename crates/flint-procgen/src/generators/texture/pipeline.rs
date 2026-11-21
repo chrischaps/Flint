@@ -1389,7 +1389,7 @@ octaves = 5
             }
         }
         assert!(md.contains("Each `[[params.ops.stops]]` entry:"));
-        assert!(md.contains("| `base_color` | hex colour | `\"#735947\"` |"));
+        assert!(md.contains("| `base_color` | hex colour | `\"#B3A090\"` |"));
     }
 
     #[test]
