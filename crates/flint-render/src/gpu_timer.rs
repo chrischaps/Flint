@@ -71,6 +71,108 @@ pub struct TracedPass {
 /// Traced frames kept for the host to take; more and the oldest go.
 const TRACED_KEPT: usize = 16;
 
+/// Frames read back before [`TimestampCheck`] gives a verdict, and again
+/// for each one after: a second at 60 fps.
+pub const TIMESTAMP_WINDOW: u32 = 60;
+
+/// Whether an adapter's timestamps read as pass times (#1316).
+///
+/// On the Pixel 8 Pro (Mali-G715, Chrome) every scope after `Scene` reads
+/// exactly zero ticks, frame after frame, so a readout would list zeros
+/// that look like an answer. A real pass is never exactly zero ticks for a
+/// whole window: an empty one is ~2 us (#507), thousands of ticks, and
+/// even a browser that rounds timestamps to 100 us reads a small pass as
+/// non-zero on the frames it straddles a step.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TimestampHealth {
+    /// Fewer than [`TIMESTAMP_WINDOW`] frames read back yet: the times are
+    /// shown as they are.
+    #[default]
+    Unchecked,
+    /// The last window's scopes read as times.
+    Usable,
+    /// In the last window, `zero` of its `scopes` read exactly zero ticks
+    /// in every frame that timed them: at least two, and at least half.
+    Unusable { zero: u32, scopes: u32 },
+}
+
+impl TimestampHealth {
+    /// Whether the pass times are known to be empty, so a reader should say
+    /// so instead of listing them.
+    pub fn unusable(self) -> bool {
+        matches!(self, TimestampHealth::Unusable { .. })
+    }
+
+    /// Why, for a reader with room for a clause: `None` while the times
+    /// can be shown.
+    pub fn why(self) -> Option<String> {
+        match self {
+            TimestampHealth::Unusable { zero, scopes } => Some(format!(
+                "{zero} of {scopes} scopes read 0 ticks for {TIMESTAMP_WINDOW} frames"
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// What every reader says in place of the pass times (#1316).
+pub const TIMESTAMPS_UNAVAILABLE: &str = "GPU pass times unavailable on this adapter";
+
+/// Judges [`TimestampHealth`] from the raw frames read back, a window of
+/// [`TIMESTAMP_WINDOW`] at a time; once warm it allocates nothing.
+#[derive(Debug, Clone, Default)]
+pub struct TimestampCheck {
+    /// Frames observed in the window under way.
+    frames: u32,
+    /// Each scope (label, which of that label in its frame) seen in the
+    /// window, and whether every frame that timed it read exactly zero.
+    scopes: Vec<(&'static str, usize, bool)>,
+    verdict: TimestampHealth,
+}
+
+impl TimestampCheck {
+    /// Fold in one frame as measured (unsmoothed: a smoothed time decays
+    /// toward zero but never reaches it). A frame's time is zero only when
+    /// its two ticks are the same, so this is a test on raw ticks.
+    pub fn observe(&mut self, frame: &GpuTimings) {
+        if frame.passes.is_empty() {
+            return;
+        }
+        for (i, pass) in frame.passes.iter().enumerate() {
+            let nth = frame.passes[..i]
+                .iter()
+                .filter(|p| p.label == pass.label)
+                .count();
+            let zero = pass.ms == 0.0;
+            match self
+                .scopes
+                .iter_mut()
+                .find(|(l, n, _)| *l == pass.label && *n == nth)
+            {
+                Some((_, _, all_zero)) => *all_zero &= zero,
+                None => self.scopes.push((pass.label, nth, zero)),
+            }
+        }
+        self.frames += 1;
+        if self.frames >= TIMESTAMP_WINDOW {
+            let scopes = self.scopes.len() as u32;
+            let zero = self.scopes.iter().filter(|s| s.2).count() as u32;
+            self.verdict = if zero >= 2 && zero * 2 >= scopes {
+                TimestampHealth::Unusable { zero, scopes }
+            } else {
+                TimestampHealth::Usable
+            };
+            self.frames = 0;
+            self.scopes.clear();
+        }
+    }
+
+    /// The last whole window's verdict.
+    pub fn verdict(&self) -> TimestampHealth {
+        self.verdict
+    }
+}
+
 /// A scope [`GpuTimer::begin`] opened, to hand back to [`GpuTimer::end`].
 /// One past the frame's capacity times nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +233,8 @@ pub struct GpuTimer {
     /// Frames read back while [`trace`](Self::trace) is on, until
     /// [`take_traced`](Self::take_traced) takes them.
     traced: Option<std::collections::VecDeque<TracedGpuFrame>>,
+    /// Whether the timestamps read as times at all (#1316).
+    check: TimestampCheck,
 }
 
 impl GpuTimer {
@@ -187,6 +291,7 @@ impl GpuTimer {
             latest_ms: None,
             frame_tag: 0,
             traced: None,
+            check: TimestampCheck::default(),
         })
     }
 
@@ -381,6 +486,13 @@ impl GpuTimer {
         &self.timings
     }
 
+    /// Whether those times can be read as pass times (#1316): a reader
+    /// says [`TIMESTAMPS_UNAVAILABLE`] in place of a list of zeros when
+    /// they can't.
+    pub fn timestamps(&self) -> TimestampHealth {
+        self.check.verdict()
+    }
+
     /// Fold in every read-back that has come in. Polls without blocking.
     fn poll(&mut self, device: &wgpu::Device) {
         if !self.readbacks.iter().any(|r| r.in_flight) {
@@ -414,6 +526,7 @@ impl GpuTimer {
                         });
                     }
                     let frame = frame_times(&readback.labels, &ticks, self.period_ns);
+                    self.check.observe(&frame);
                     self.latest_ms = Some(frame.frame_ms);
                     if let (Some(recorded), true) = (&mut self.recorded, readback.record) {
                         recorded.push(frame.clone());
@@ -716,6 +829,112 @@ mod tests {
         let spread = spread(&[timed(&[("a", 1.0)])], 5);
         assert_eq!((spread.frames, spread.dropped), (0, 1));
         assert!(spread.passes.is_empty() && spread.frame.is_none());
+    }
+
+    /// The Pixel 8 Pro's frames (#1316): Shadows and Scene take time, every
+    /// scope after them reads exactly zero ticks.
+    fn mali_frame(scene_ms: f32) -> GpuTimings {
+        timed(&[
+            ("Shadows", 0.8),
+            ("Scene", scene_ms),
+            ("Bloom", 0.0),
+            ("ASCII", 0.0),
+            ("Composite", 0.0),
+            ("World lines", 0.0),
+            ("UI", 0.0),
+        ])
+    }
+
+    fn checked(frames: impl IntoIterator<Item = GpuTimings>) -> TimestampHealth {
+        let mut check = TimestampCheck::default();
+        for frame in frames {
+            check.observe(&frame);
+        }
+        check.verdict()
+    }
+
+    #[test]
+    fn later_scopes_reading_zero_ticks_for_a_window_are_unusable() {
+        let window = TIMESTAMP_WINDOW as usize;
+        let mali = (0..window).map(|i| mali_frame(6.0 + i as f32 * 0.01));
+        assert_eq!(
+            checked(mali),
+            TimestampHealth::Unusable { zero: 5, scopes: 7 }
+        );
+        let early = (0..window - 1).map(|_| mali_frame(6.0));
+        assert_eq!(
+            checked(early),
+            TimestampHealth::Unchecked,
+            "no verdict before a whole window"
+        );
+        let why = TimestampHealth::Unusable { zero: 5, scopes: 7 }.why();
+        assert_eq!(
+            why.as_deref(),
+            Some("5 of 7 scopes read 0 ticks for 60 frames")
+        );
+        assert_eq!(TimestampHealth::Usable.why(), None);
+    }
+
+    #[test]
+    fn real_times_are_usable_even_with_tiny_or_rounded_scopes() {
+        let window = TIMESTAMP_WINDOW as usize;
+        // The test is on raw ticks: only equal ticks read zero, one tick
+        // apart does not
+        let one_tick = frame_times(&["a", "b"], &[10, 10, 20, 21], 1.0);
+        assert_eq!(one_tick.passes[0].ms, 0.0, "equal ticks read zero");
+        assert!(one_tick.passes[1].ms > 0.0, "one tick reads above zero");
+        // A desktop frame: an empty World lines pass is ~2 us
+        let desktop = (0..window).map(|_| {
+            timed(&[
+                ("Shadows", 0.31),
+                ("Scene", 1.92),
+                ("Bloom", 0.12),
+                ("Composite", 0.04),
+                ("World lines", 0.002),
+                ("UI", 0.05),
+            ])
+        });
+        assert_eq!(checked(desktop), TimestampHealth::Usable);
+
+        // A browser rounding to 100 us: the small scopes read 0 on most
+        // frames, but not on every one of them, and an always-zero one
+        // alone isn't most of the frame
+        let rounded = (0..window).map(|i| {
+            let step = |every: usize| if i % every == 0 { 0.1 } else { 0.0 };
+            timed(&[
+                ("Scene", 1.9),
+                ("Bloom", step(4)),
+                ("Composite", step(9)),
+                ("World lines", 0.0),
+                ("UI", step(3)),
+            ])
+        });
+        assert_eq!(checked(rounded), TimestampHealth::Usable);
+
+        // One non-zero read of the later scopes clears them for the window
+        let mut frames: Vec<GpuTimings> = (0..window).map(|_| mali_frame(6.0)).collect();
+        for p in &mut frames[30].passes[2..] {
+            p.ms = 0.05;
+        }
+        assert_eq!(checked(frames), TimestampHealth::Usable);
+    }
+
+    #[test]
+    fn each_window_judges_afresh() {
+        let window = TIMESTAMP_WINDOW as usize;
+        let mut check = TimestampCheck::default();
+        for _ in 0..window {
+            check.observe(&mali_frame(6.0));
+        }
+        assert!(check.verdict().unusable());
+        // The scene changes and the passes read as times again
+        for _ in 0..window {
+            check.observe(&timed(&[("Scene", 2.0), ("Composite", 0.1), ("UI", 0.2)]));
+        }
+        assert_eq!(check.verdict(), TimestampHealth::Usable);
+        // An untimed frame isn't counted
+        check.observe(&GpuTimings::default());
+        assert_eq!(check.frames, 0);
     }
 
     #[test]

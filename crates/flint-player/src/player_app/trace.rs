@@ -31,7 +31,7 @@ use flint_core::profile::{
     chrome::{Arg, ChromeTrace},
     ThreadScopes,
 };
-use flint_render::TracedGpuFrame;
+use flint_render::{TimestampHealth, TracedGpuFrame};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use web_time::Instant;
@@ -115,6 +115,9 @@ pub(crate) struct Tracks {
     frames: VecDeque<Span>,
     phases: VecDeque<(Phase, Span)>,
     gpu: VecDeque<TracedGpuFrame>,
+    /// Whether the GPU's timestamps read as times (#1316), as of the
+    /// newest frames handed over.
+    gpu_timestamps: TimestampHealth,
     /// The frame under way: when it began, and its index.
     began: Option<(u64, u32)>,
 }
@@ -152,9 +155,11 @@ impl Tracks {
         ));
     }
 
-    /// The GPU's frames read back this frame.
-    pub(crate) fn gpu(&mut self, frames: Vec<TracedGpuFrame>) {
+    /// The GPU's frames read back this frame, and whether the timer's
+    /// timestamps can be read as pass times (#1316).
+    pub(crate) fn gpu(&mut self, frames: Vec<TracedGpuFrame>, timestamps: TimestampHealth) {
         self.gpu.extend(frames);
+        self.gpu_timestamps = timestamps;
     }
 
     fn trim(&mut self, now_ns: u64) {
@@ -330,6 +335,9 @@ pub(crate) struct TraceJob {
     frames: Vec<Span>,
     phases: Vec<(Phase, Span)>,
     gpu: Vec<TracedGpuFrame>,
+    /// Why the GPU track holds no passes (#1316): the adapter's timestamps
+    /// read zero. `None` when they read as times.
+    gpu_unavailable: Option<String>,
     hitches: Vec<HitchMark>,
     notes: Vec<NoteMark>,
     header: Header,
@@ -444,7 +452,21 @@ impl TraceJob {
             );
         }
         let gpu = trace.track("gpu");
-        for g in &self.gpu {
+        if let Some(why) = &self.gpu_unavailable {
+            // Spans of 0 ms would read as passes that cost nothing (#1316):
+            // one mark says why the track is empty
+            let at = self
+                .frames
+                .first()
+                .map_or(self.header.from_ns.unwrap_or(0), |f| f.start_ns);
+            trace.instant(
+                gpu,
+                flint_render::TIMESTAMPS_UNAVAILABLE,
+                at,
+                &[("why", Arg::Str(why))],
+            );
+        }
+        for g in self.gpu.iter().filter(|_| self.gpu_unavailable.is_none()) {
             // The GPU's clock isn't the CPU's: each frame's scopes are laid
             // from its render phase's start, durations as the GPU measured
             let Some(base) = self.render_start(g.tag as u32) else {
@@ -525,6 +547,11 @@ impl TraceJob {
         let ring_bytes = (h.ring_capacity * RECORD_BYTES) as i64;
         let written_at = written_at.unwrap_or_default();
         let ms = |ns: u64| ns as f64 / 1e6;
+        // Only when the GPU track is empty for it (#1316)
+        let gpu_pass_times = self
+            .gpu_unavailable
+            .as_ref()
+            .map(|why| format!("{}: {why}", flint_render::TIMESTAMPS_UNAVAILABLE));
         let mut header = vec![
             ("format", Arg::Str("flint-trace")),
             ("version", Arg::Int(1)),
@@ -555,6 +582,9 @@ impl TraceJob {
                 Arg::Str("names only: scopes, scripts, assets and the scene by name, never their contents"),
             ),
         ];
+        if let Some(said) = &gpu_pass_times {
+            header.push(("gpu_pass_times", Arg::Str(said)));
+        }
         // The commit the binary was built from; none when the build didn't
         // know, which readers say as "unknown" (#1290)
         if let Some(commit) = &found.engine.commit {
@@ -901,6 +931,7 @@ impl PlayerApp {
             other => other.word().to_string(),
         };
         let tracks = &tracer.tracks;
+        let gpu_unavailable = tracks.gpu_timestamps.why();
         let frames: Vec<Span> = tracks
             .frames
             .iter()
@@ -959,6 +990,7 @@ impl PlayerApp {
             frames,
             phases,
             gpu,
+            gpu_unavailable,
             hitches,
             notes,
             header: Header {
@@ -1070,6 +1102,85 @@ mod tests {
         assert!(tracks.phases.len() <= 22, "{}", tracks.phases.len());
     }
 
+    /// The Pixel 8 Pro's zeros (#1316): a GPU track of 0 ms spans reads as
+    /// passes that cost nothing, so with unusable timestamps the track
+    /// holds one mark saying why and the header says it too. With real
+    /// times the track is as it was.
+    #[test]
+    fn a_gpu_track_of_unusable_timestamps_says_so_instead_of_spans() {
+        let frame = TracedGpuFrame {
+            tag: 7,
+            passes: vec![
+                flint_render::TracedPass {
+                    label: "Scene",
+                    start_ms: 0.0,
+                    ms: 6.0,
+                },
+                flint_render::TracedPass {
+                    label: "Composite",
+                    start_ms: 6.0,
+                    ms: 0.0,
+                },
+            ],
+        };
+        let job = |gpu_unavailable: Option<String>| TraceJob {
+            path: PathBuf::new(),
+            threads: Vec::new(),
+            frames: vec![Span {
+                start_ns: 1_000_000,
+                end_ns: 17_000_000,
+                frame: 7,
+            }],
+            phases: Vec::new(),
+            gpu: vec![frame.clone()],
+            gpu_unavailable,
+            hitches: Vec::new(),
+            notes: Vec::new(),
+            header: Header::default(),
+        };
+        let gpu_events = |doc: &serde_json::Value| -> Vec<serde_json::Value> {
+            let events = doc["traceEvents"].as_array().expect("traceEvents");
+            let tid = events
+                .iter()
+                .find(|e| {
+                    e["ph"] == "M" && e["name"] == "thread_name" && e["args"]["name"] == "gpu"
+                })
+                .and_then(|e| e["tid"].as_i64())
+                .expect("a gpu track");
+            events
+                .iter()
+                .filter(|e| e["tid"].as_i64() == Some(tid) && e["ph"] != "M")
+                .cloned()
+                .collect()
+        };
+        let read = |j: &TraceJob| -> serde_json::Value {
+            serde_json::from_str(&j.to_json(&Default::default(), None)).expect("the trace is JSON")
+        };
+
+        let real = read(&job(None));
+        let names: Vec<String> = gpu_events(&real)
+            .iter()
+            .map(|e| e["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(names, ["Scene", "Composite"]);
+        assert!(real["otherData"].get("gpu_pass_times").is_none());
+
+        let why = flint_render::TimestampHealth::Unusable { zero: 5, scopes: 7 }.why();
+        let zeros = read(&job(why));
+        let events = gpu_events(&zeros);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0]["ph"], "i");
+        assert_eq!(events[0]["name"], flint_render::TIMESTAMPS_UNAVAILABLE);
+        assert_eq!(
+            events[0]["args"]["why"],
+            "5 of 7 scopes read 0 ticks for 60 frames"
+        );
+        assert_eq!(
+            zeros["otherData"]["gpu_pass_times"],
+            "GPU pass times unavailable on this adapter: 5 of 7 scopes read 0 ticks for 60 frames"
+        );
+    }
+
     /// The header names the engine the binary was built from and the
     /// project's checkout apart (#1290), and says nothing of a commit it
     /// doesn't know rather than an empty one.
@@ -1081,6 +1192,7 @@ mod tests {
             frames: Vec::new(),
             phases: Vec::new(),
             gpu: Vec::new(),
+            gpu_unavailable: None,
             hitches: Vec::new(),
             notes: Vec::new(),
             header: Header::default(),
@@ -1161,6 +1273,7 @@ mod tests {
             frames: tracks.frames.iter().copied().collect(),
             phases: tracks.phases.iter().copied().collect(),
             gpu: Vec::new(),
+            gpu_unavailable: None,
             hitches: Vec::new(),
             notes: Vec::new(),
             header: Header::default(),
@@ -1223,6 +1336,7 @@ mod tests {
             frames,
             phases: Vec::new(),
             gpu: Vec::new(),
+            gpu_unavailable: None,
             hitches: Vec::new(),
             notes: Vec::new(),
             header: Header {
