@@ -4,6 +4,551 @@
 
 use super::*;
 
+/// What the dispatch hands the one-renderer still (#1145), worked out
+/// already, as [`StagedRender`] is for the stage path: the scene as it loaded,
+/// its binding and styles, every column's post-processing, and what was asked
+/// of the frame.
+pub(super) struct StillRender<'a> {
+    pub(super) world: flint_ecs::FlintWorld,
+    pub(super) scene_file: flint_scene::SceneFile,
+    /// The scene as the renderer binds it (#739).
+    pub(super) binding: &'a flint_render::SceneBinding,
+    /// The registry this render draws with (#742), the host's copy's twin.
+    pub(super) styles: flint_render::stylize::StyleRegistry,
+    pub(super) assets: flint_core::project::AssetScope,
+    pub(super) grid: Option<crate::commands::sweep::SweepGrid>,
+    /// The sweep's cells, a row at a time; one, `(0, 0)`, without a sweep.
+    pub(super) cells: Vec<(usize, usize)>,
+    /// A cell's each, as `cells`.
+    pub(super) configs: Vec<flint_render::PostProcessConfig>,
+    /// What a sweep's cell is of its frame (#358).
+    pub(super) view: crate::commands::sweep::CellView,
+    /// The frame's size in pixels.
+    pub(super) size: (u32, u32),
+    /// The scene's `[post_process]`, under its own look, for `--ai-refine`.
+    pub(super) scene_pp: Option<&'a flint_scene::PostProcessDef>,
+    pub(super) look: Option<crate::commands::look::Look>,
+    pub(super) reference: Option<crate::commands::look_measure::Reference>,
+    pub(super) camera_path: Option<crate::commands::frame_seq::CameraPath>,
+    /// `--mesh` (#222): a sequence a file a frame.
+    pub(super) meshes: Vec<crate::commands::mesh_seq::MeshBinding>,
+    /// `--ascii-text` / `--ascii-text-ansi`: the grid written beside the frame.
+    pub(super) wants_text: bool,
+    /// `--flip-stats` / `--flip-json`: a sequence's glyph flips counted.
+    pub(super) wants_flips: bool,
+    /// A reference grid scores frames by their glyphs: each grid is read.
+    pub(super) reads_glyphs: bool,
+}
+
+/// A render with no clocks (#1145): the scene drawn as authored on one
+/// renderer, a column's post-processing swapped in before each draw. A
+/// `--frames` / `--mesh` sequence and an `--ai-refine` go on from here, on the
+/// same renderer; under `--watch` the still stays, drawing again for each
+/// save a user style's pass needs to see.
+pub(super) fn render_still(
+    args: &RenderArgs,
+    host: &mut RenderHost,
+    watch: Option<&mut crate::commands::render_watch::Watch>,
+    still: StillRender,
+) -> Result<()> {
+    let StillRender {
+        mut world,
+        scene_file,
+        binding,
+        styles,
+        assets,
+        grid,
+        cells,
+        configs,
+        view,
+        size: (width, height),
+        scene_pp,
+        look,
+        reference,
+        camera_path,
+        meshes,
+        wants_text,
+        wants_flips,
+        reads_glyphs,
+    } = still;
+    // A still draws the scene as authored, before any script (#371): said, as
+    // the clocked path says it, since a look a script sets is otherwise missing
+    // from the picture with no word why
+    let scripted = named_with(&world, comp::SCRIPT);
+    if !scripted.is_empty() {
+        eprintln!("Warning: {}", scripts_not_run(&scripted));
+    }
+
+    let device = load_report::span(load_report::Stage::Device, String::new);
+    let ctx = host.context(width, height, &args.debug.gpu)?;
+    drop(device);
+
+    // Configure camera — scene-level first, then CLI overrides take precedence
+    let mut camera = Camera::new();
+    camera.aspect = ctx.aspect_ratio();
+
+    // Apply scene-level camera configuration
+    let mut scene_set_position = false;
+    if let Some(cam_def) = &scene_file.camera {
+        if cam_def.projection == "orthographic" {
+            camera.orthographic = true;
+            if cam_def.ortho_height > 0.0 {
+                camera.ortho_height = cam_def.ortho_height;
+            }
+        }
+        if let Some(pos) = cam_def.position {
+            camera.position = Vec3::new(pos[0], pos[1], pos[2]);
+            scene_set_position = true;
+        }
+        if let Some(target) = cam_def.target {
+            camera.target = Vec3::new(target[0], target[1], target[2]);
+        }
+        if let Some(fov) = cam_def.fov {
+            camera.fov = fov;
+        }
+        if let Some(near) = cam_def.near {
+            camera.near = near;
+        }
+        if let Some(far) = cam_def.far {
+            camera.far = far;
+        }
+    }
+
+    // Derive orbit parameters from position/target so update_orbit() is consistent
+    if scene_set_position {
+        let dir = camera.position - camera.target;
+        camera.distance = dir.length();
+        if camera.distance > 0.001 {
+            let n = dir * (1.0 / camera.distance);
+            camera.pitch = n.y.asin();
+            camera.yaw = n.x.atan2(n.z);
+        }
+    }
+
+    // CLI overrides take precedence
+    if let Some(d) = args.camera.distance {
+        camera.distance = d;
+    }
+    if let Some(y) = args.camera.yaw {
+        camera.yaw = y.to_radians();
+    }
+    if let Some(p) = args.camera.pitch {
+        camera.pitch = p.to_radians();
+    }
+    if let Some(t) = args.camera.target {
+        camera.target = Vec3::new(t[0], t[1], t[2]);
+    }
+    if let Some(f) = args.camera.fov {
+        camera.fov = f;
+    }
+    camera.update_orbit();
+
+    // Create scene renderer
+    let made = load_report::span(load_report::Stage::Renderer, String::new);
+    let mut renderer = SceneRenderer::new_headless(
+        &ctx.device,
+        &ctx.queue,
+        ctx.format,
+        ctx.width,
+        ctx.height,
+        RendererConfig {
+            show_grid: !args.camera.no_grid,
+            sample_count: args.shading.msaa,
+        },
+    );
+    drop(made);
+    // Parts skipped or repeated by label (#1317)
+    renderer.set_pass_knobs(args.measure.pass_knobs.knobs()?);
+
+    // The scene bound, its levers set (#739), as every stage does
+    bind_capture_scene(args, ctx, &mut renderer, &world, &scene_file, &binding);
+
+    // Load models and textures from the scene
+    let config = ModelLoadConfig::in_project(assets.project.clone(), &args.scene);
+    let models = model_loader::load_models_from_world(
+        &mut world,
+        &mut renderer,
+        &ctx.device,
+        &ctx.queue,
+        &config,
+    );
+
+    // Meshes swept along the scene's splines (#750); a still has no
+    // physics, so their colliders are dropped
+    flint_render::load_scene_splines(
+        &args.scene,
+        &mut world,
+        &mut renderer,
+        &ctx.device,
+        &ctx.queue,
+    );
+
+    // The debug views, shadows, post-processing (the first column's, the
+    // only one without --sweep), render scale and quality, as every stage
+    set_up_capture(
+        args,
+        ctx,
+        &mut renderer,
+        CaptureSetup {
+            scene_file: &scene_file,
+            config: configs[0].clone(),
+            text_capture: wants_text
+                || wants_flips
+                || args.measure.report.is_some()
+                || reads_glyphs,
+            first: true,
+        },
+    )?;
+    // Post time for grain/mode animation and animated styles. Headless
+    // renders leave this 0.0 so PNG snapshots stay deterministic;
+    // --style-time (or the older --grain-time) pins an explicit frame.
+    let time = still_time(args);
+    // Poses held on twos (#405) tick with the post time from the first
+    // frame, so a --frames sequence holds frame 0's pose through its tick
+    renderer.set_motion_time(time);
+
+    // Animation (#307), which runs IK after each step; without it, two-bone IK
+    // (ADR 0070) poses authored chains before the single frame.
+    let mut animation = pose_animation(args, &models, &config.project, &mut world, ANIM_DT, true);
+    match &animation {
+        Some(posed) => posed.upload(&mut renderer, &ctx.device, &ctx.queue),
+        None => flint_animation::IkPass::new().run(&mut world),
+    }
+
+    if let Some(name) = &args.camera.select {
+        let id = world
+            .get_id(name)
+            .with_context(|| format!("--select: no entity named '{name}'"))?;
+        renderer.set_selected_entity(Some(id));
+    }
+
+    // Particles (ADR 0068): fixed-step, fixed-seed simulation so a snapshot
+    // at a given --particle-time is reproducible run to run.
+    let mut particle_sim = None;
+    if let Some(seconds) = args.clock.particle_time {
+        use flint_runtime::RuntimeSystem;
+        let mut particles = flint_particles::ParticleSystem::new();
+        let project = &config.project;
+        flint_particles::load_particle_effects_from_world(project, &args.scene, &mut particles);
+        particles
+            .initialize(&mut world)
+            .context("Failed to initialize particles")?;
+        flint_render::load_scene_particle_textures(
+            &mut renderer,
+            &ctx.device,
+            &ctx.queue,
+            &particles.sync,
+            project,
+            Path::new(&args.scene).parent().unwrap_or(Path::new(".")),
+        );
+        particles.simulate_to(&world, seconds.max(0.0), 1.0 / 60.0);
+        particles.pack(Some(camera.position_array()));
+        say!(
+            "Particles: {} alive across {} emitter(s) at t = {:.2}s",
+            particles.sync.total_alive(),
+            particles.sync.emitter_count(),
+            seconds
+        );
+        particle_sim = Some(particles);
+    }
+
+    // The frame's inputs, and the world read into the draw lists (#739)
+    renderer.prepare(
+        &ctx.device,
+        &ctx.queue,
+        &world,
+        &FrameInputs {
+            particles: particle_sim.as_ref().map(|p| &p.sync),
+            ..still_inputs(args, &camera, time)
+        },
+    );
+
+    // GPU timing: the same frame many times, each pass's spread (#292)
+    if let Some(frames) = args.measure.gpu_time {
+        time_gpu(
+            ctx,
+            &mut renderer,
+            &camera,
+            frames,
+            args.measure.gpu_time_json.as_deref(),
+        )?;
+    }
+
+    let frames = match meshes.first() {
+        Some(first) => Some(first.files.len() as u32),
+        None => args.seq.frames,
+    };
+    if let Some(frames) = frames {
+        return render_sequence(
+            args,
+            SequenceRig {
+                ctx,
+                renderer: &mut renderer,
+                world: &mut world,
+                camera,
+                camera_path: camera_path.as_ref(),
+                particles: particle_sim.as_mut(),
+                animation: animation.as_mut(),
+                meshes: &meshes,
+                scene_name: &scene_file.scene.name,
+            },
+            frames,
+        );
+    }
+
+    if args.refine.ai_refine {
+        let look = look.expect("clap requires --look with --ai-refine");
+        let reference = reference.expect("clap requires --reference with --ai-refine");
+        return refine_look(args, look, reference, &mut |table| {
+            let def = crate::commands::look::overlay(scene_pp, table)?;
+            let config = post_process_config(args, Some(&def), renderer.styles())?;
+            let scale = reads_glyphs.then(|| ink_scale(args, &config));
+            let image = draw_frame(ctx, &mut renderer, &camera, Some(config), Some(&world))?;
+            let ink = scale.and_then(|s| frame_ink(&renderer, ctx, &s));
+            Ok(crate::commands::look_refine::Frame { image, ink })
+        });
+    }
+
+    // The load is up; its last stage is the first draw (#1092)
+    load_report::bring_up_done();
+    // Draw and write the still or sheet; under --watch again on this same
+    // renderer for each save of a user style's sources (#432). A redraw
+    // sets the first column's config too: the last draw left the last's.
+    let mut draw_and_write = |redraw: bool| -> Result<()> {
+        // Render each column (one without --sweep), reading each back
+        let mut frames = Vec::with_capacity(configs.len());
+        let mut texts = Vec::with_capacity(configs.len());
+        for (i, config) in configs.iter().enumerate() {
+            // The frame's description (#1084) and capture (#1085): the
+            // still's own frame
+            let dump = crate::commands::render_frame_dump::Wanted::of(args)
+                .filter(|_| i == 0)
+                .map(|wanted| {
+                    (
+                        wanted,
+                        crate::commands::render_frame_dump::arm(ctx, &mut renderer, wanted),
+                    )
+                });
+            let pixels = draw_pixels(
+                ctx,
+                &mut renderer,
+                &camera,
+                (i > 0 || redraw).then(|| config.clone()),
+                Some(&world),
+            )?;
+            first_capture_done();
+            if let Some((wanted, armed)) = dump {
+                let said = crate::commands::render_frame_dump::write(
+                    armed,
+                    ctx,
+                    &mut renderer,
+                    Some(&world),
+                    wanted,
+                    crate::commands::render_frame_dump::Origin {
+                        scene: &args.scene,
+                        game_time: None,
+                        written_by: "flint render",
+                        notes: Vec::new(),
+                    },
+                    Some(crate::commands::render_frame_dump::ReplayFacts {
+                        inputs: flint_render::frame_replay::FrameInputsState::of(
+                            &FrameInputs {
+                                particles: particle_sim.as_ref().map(|p| &p.sync),
+                                ..still_inputs(args, &camera, time)
+                            },
+                            &world,
+                        ),
+                        camera: &camera,
+                        particles: particle_sim.as_ref().map(|p| &p.sync),
+                    }),
+                )?;
+                for line in said {
+                    say!("{line}");
+                }
+            }
+            // The grid is read back once a frame: a second read finds nothing
+            let measured = args.measure.report.is_some() || reads_glyphs;
+            let text = (measured || wants_text)
+                .then(|| renderer.style_text(&ctx.device, "ascii"))
+                .flatten();
+            if measured {
+                texts.push(text.clone());
+            }
+            if wants_text {
+                write_ascii_text(
+                    args.out.ascii_text.as_deref(),
+                    args.out.ascii_text_ansi.as_deref(),
+                    text,
+                )?;
+            }
+            let mut img = image::RgbaImage::from_raw(width, height, pixels)
+                .context("Failed to create image from pixel data")?;
+            // The style mask view says which hue is which style (#309): in the
+            // terminal once, and on every frame's corner
+            if renderer.debug_state().mode == DebugMode::StyleMask && !args.no_postprocess {
+                let ids = renderer.style_ids();
+                if i == 0 {
+                    say!("{}", flint_render::style_mask::legend_line(ids));
+                }
+                crate::commands::style_sheet::draw_legend(
+                    &mut img,
+                    &flint_render::style_mask::legend(ids),
+                );
+            }
+            // The edge view says which colour is which source and decision
+            // (#349), and the thresholds it was drawn at
+            if renderer.debug_state().mode == DebugMode::StyleEdges && !args.no_postprocess {
+                let thresholds = flint_render::stylize::edge_view_thresholds(
+                    renderer.effective_post_process_config(),
+                );
+                if i == 0 {
+                    let names: Vec<&str> = flint_render::stylize::EDGE_VIEW_LEGEND
+                        .iter()
+                        .map(|(_, name)| *name)
+                        .collect();
+                    say!("ascii edges: {thresholds}");
+                    say!(
+                        "  pixels cyan/amber/magenta: {}; cells green/dashed/yellow/red/grey: {}",
+                        names[..3].join(", "),
+                        names[3..].join(", ")
+                    );
+                }
+                let mut rows: Vec<(Option<[f32; 3]>, String)> =
+                    flint_render::stylize::EDGE_VIEW_LEGEND
+                        .iter()
+                        .map(|(color, name)| (Some(*color), name.to_string()))
+                        .collect();
+                rows.extend(thresholds.split("; ").map(|t| (None, t.to_string())));
+                // Nine rows: half the mask legend's size, so the card leaves the
+                // scene readable
+                let scale = (img.width() / 1280).clamp(1, 3);
+                crate::commands::style_sheet::draw_card(&mut img, "ascii edges", &rows, scale);
+            }
+            if let Some(grid) = &grid {
+                let (c, r) = cells[i];
+                say!("  {}", grid.describe(c, r));
+            }
+            frames.push(img);
+        }
+
+        // A sweep whose neighbours drew the same showed nothing: say so (#216).
+        // Judged on the frames as drawn, before a crop could hide a difference.
+        if let Some(grid) = &grid {
+            for warning in grid.identical_warnings(&frames) {
+                eprintln!("Warning: {warning}");
+            }
+        }
+
+        // The pictures the sheet is made of: each frame as its cell shows it
+        // (cropped or shrunk under --sweep-crop / --sweep-scale, #358), and
+        // for a crop the first frame whole, to show where they sit (#501)
+        let locator = grid
+            .as_ref()
+            .and_then(|_| frames.first())
+            .and_then(|f| view.locator(f));
+        let pictures: Vec<image::RgbaImage> = match &grid {
+            Some(_) => frames.into_iter().map(|f| view.cell(f)).collect(),
+            None => frames,
+        };
+
+        // Measures (#357), from those same pixels. The ASCII section counts the
+        // whole drawn frame's grid, which a crop shows only part of.
+        let mut columns = Vec::new();
+        if args.measure.report.is_some() || reference.is_some() {
+            columns = measure_cells(
+                args,
+                &pictures,
+                &texts,
+                &configs,
+                reference.as_ref(),
+                grid.as_ref(),
+                &cells,
+            );
+        }
+        let nearest = crate::commands::look_measure::RenderReport::nearest_column(&columns);
+
+        let mut pictures = pictures;
+        let img = match &grid {
+            None => pictures.swap_remove(0),
+            Some(grid) => {
+                let over = match &look {
+                    Some(look) => format!("  over {}", look.name),
+                    None => String::new(),
+                };
+                // Only a sheet that isn't of small frames says how big they were
+                let scale = match view {
+                    crate::commands::sweep::CellView::Small => String::new(),
+                    _ => format!("  {}", view.describe(width, height)),
+                };
+                let reference_note = match &args.measure.reference {
+                    Some(r) => format!("  d = distance to {r}"),
+                    None => String::new(),
+                };
+                let subtitle = format!("sweep {}{over}{scale}{reference_note}", grid.name());
+                let label = |s: &crate::commands::sweep::Sweep| {
+                    (0..s.values.len()).map(|i| s.label(i)).collect()
+                };
+                match &grid.rows {
+                    None => {
+                        // With a reference, each label carries its distance and
+                        // the nearest is starred (#357)
+                        let labels = distance_labels(label(&grid.columns), &columns, nearest);
+                        let mut text = crate::commands::style_sheet::SheetText::new(
+                            scene_file.scene.name.clone(),
+                            subtitle,
+                            labels,
+                        );
+                        text.locator = locator;
+                        crate::commands::style_sheet::compose(&pictures, &text)
+                    }
+                    Some(rows) => crate::commands::style_sheet::compose_grid(
+                        &pictures,
+                        &crate::commands::style_sheet::GridText {
+                            title: scene_file.scene.name.clone(),
+                            subtitle,
+                            row_key: rows.name(),
+                            column_labels: label(&grid.columns),
+                            row_labels: label(rows),
+                            time: String::new(),
+                            locator,
+                        },
+                    ),
+                }
+            }
+        };
+        if let Some(path) = &args.measure.report {
+            write_measures(
+                args,
+                path,
+                look.as_ref(),
+                grid.as_ref(),
+                (width, height),
+                columns,
+                nearest,
+            )?;
+        }
+        img.save(&args.output)
+            .context(format!("Failed to save image to {}", args.output))?;
+
+        say!(
+            "Rendered {}x{} image to {}",
+            img.width(),
+            img.height(),
+            args.output
+        );
+
+        Ok(())
+    };
+    draw_and_write(false)?;
+    if let Some(watch) = watch {
+        // The renderer's user styles are shared with this copy, so a WGSL
+        // save it reloads is the pass's to see (#742)
+        let mut watched = styles.clone();
+        watch.redraws(&assets, &mut watched, || draw_and_write(true))?;
+    }
+    Ok(())
+}
+
 /// Frames `--gpu-time` leaves out at the start of `timed`: the first tenth,
 /// at most 30, while pipelines, caches and the GPU's clocks settle (#292).
 fn gpu_warmup(timed: usize) -> usize {
