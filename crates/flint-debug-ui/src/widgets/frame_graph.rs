@@ -475,14 +475,20 @@ pub fn hitch_counters(ui: &mut egui::Ui, c: &HitchCounters, compact: bool) {
 
 /// The bands' colours with their names, in one wrapping row.
 pub fn band_legend(ui: &mut egui::Ui) {
+    band_legend_of(ui, Band::ALL.map(|band| (band, band.label())));
+}
+
+/// The legend for a host that fills only some bands, each named in its own
+/// words (the scene viewer's `update` and `egui`, #1110), in the order given.
+pub fn band_legend_of<'a>(ui: &mut egui::Ui, bands: impl IntoIterator<Item = (Band, &'a str)>) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 1.0);
-        for band in Band::ALL {
+        for (band, label) in bands {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 3.0;
                 let (r, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                 ui.painter().rect_filled(r, 1.0, band.color());
-                ui.colored_label(Color32::from_gray(120), band.label());
+                ui.colored_label(Color32::from_gray(120), label);
             });
         }
     });

@@ -13,7 +13,7 @@ The debug keys are a table (#717): each belongs to an owner (the player, or a sc
 | Key | Action | What it does | Owner, and where it acts |
 |-----|--------|--------------|--------------------------|
 | `F1` | `keys` | This table, over the game | player, always |
-| `F2` | `stats` | The **stats overlay**: the [frame-time graph](profiling.md#the-frame-time-graph) and its hitch counters over the rendering stats; a second press shows the graph alone in a corner, a third closes it | player, always (the scene viewer's F2 shows its rendering stats alone) |
+| `F2` | `stats` | The **stats overlay**: the [frame-time graph](profiling.md#the-frame-time-graph) and its hitch counters over the rendering stats; a second press shows the graph alone in a corner, a third closes it | player, always (and the scene viewer: its F2 has the graph and hitch counters above its rendering stats, with bars split into `update`, `render`, `egui` and `elsewhere`; no compact form) |
 | `Shift+F2` | `capture_frame` | Capture the next frame for the frame debugger: a `.flintframe` folder in `captures/` ([Capturing from the running player](profiling.md#capturing-from-the-running-player)); the note at the top names it | player, always (desktop) |
 | `Shift+F3` | `save_trace` | Save the last seconds of the engine's scopes as a trace in `traces/` ([Recording a trace](profiling.md#recording-a-trace)); the first press starts the recorder when no flag did | player, always, in a build with the recorder (desktop) |
 | `F3` | `panels` | Every scene-component panel the current scene created (ocean, grass, camera, particles, styles, Living Props), a [panel for each component whose schema asks for one](#a-panel-from-a-schema), and every panel a game added | player, always |
