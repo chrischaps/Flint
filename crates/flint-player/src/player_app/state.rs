@@ -593,6 +593,9 @@ pub(super) struct StyleState {
     /// game time since it was asked; dropped at its end, a cut, or a
     /// scene's teardown.
     pub(super) look_fade: Option<LookFadeState>,
+    /// The scene's `preload_looks` as read at its entry (#1159), by name,
+    /// so a cut to one reads no file. Replaced at each scene's entry.
+    pub(super) preloaded_looks: std::collections::HashMap<String, flint_render::look::Look>,
 }
 
 /// A look's cross-fade under way in the player (#496, #1157).

@@ -192,8 +192,14 @@ pub struct StyleSet {
     /// Whether glyph styles keep their frame as text (#317), handed to
     /// each pass when it's built.
     pub(super) text_capture: bool,
-    /// The draw that shows a style's `blend` (#369), any style's.
-    pub(super) blend: blend::BlendPass,
+    /// The draw that shows a style's `blend` (#369), any style's. Shared
+    /// so [`prepare`](Self::prepare)'s worker can build its pipelines
+    /// ahead (#1159).
+    pub(super) blend: std::sync::Arc<blend::BlendPass>,
+    /// The draws a prepare has sent a worker to build, by format (#1159),
+    /// so the next asks only for the rest without touching the pass's
+    /// locks. Forgotten with the pass.
+    pub(super) blend_asked: Vec<(wgpu::TextureFormat, blend::Draws)>,
     /// The ownership pass (#384), built with the first style.
     pub(super) ownership: Option<ownership::OwnershipPass>,
     pub(super) ownership_failed: bool,
@@ -452,6 +458,11 @@ impl StyleSet {
     /// look it will show: a scene's entry, a script's `prepare_look`.
     /// Building twice is avoided both ways: what is built or building is
     /// left alone, and `ensure` builds nothing a worker is on.
+    ///
+    /// The stage's own draws come too (#1159): the blend, reveal and tear
+    /// pipelines each style's table asks for at its stage's format, which
+    /// a frame otherwise builds the first time a style's `reveal` lies
+    /// between 0 and 1, its `blend` drops under 1 or it follows the tear.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -460,6 +471,23 @@ impl StyleSet {
         ids: &StyleIds,
         styles: &StyleRegistry,
     ) -> Vec<&'static str> {
+        self.prepare_with(device, surface_format, config, ids, styles, &[])
+    }
+
+    /// [`prepare`](Self::prepare), with every stage draw (blend, reveal
+    /// and tear) built for the styles in `every_draw`, whatever their
+    /// tables say now: a scene's `preload_styles`, whose styles a script
+    /// will switch on, tween and tear later (#1159).
+    pub fn prepare_with(
+        &mut self,
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        config: &PostProcessConfig,
+        ids: &StyleIds,
+        styles: &StyleRegistry,
+        every_draw: &[&str],
+    ) -> Vec<&'static str> {
+        self.prepare_draws(device, surface_format, config, ids, styles, every_draw);
         let mut started = Vec::new();
         for style in styles.styles() {
             let descriptor = style.descriptor();
@@ -508,6 +536,74 @@ impl StyleSet {
             self.fade_preparing = Some(off_thread("fade", move || build_fade(&device)));
         }
         started
+    }
+
+    /// Start one worker building the blend, reveal and tear pipelines the
+    /// styles `config` switches on will draw (each style's from its
+    /// table, every one for a style in `every_draw`), at each stage's
+    /// format, that no earlier prepare asked for (#1159). It writes them
+    /// straight into the shared [`blend::BlendPass`], whose locks make a
+    /// frame that needs one meanwhile wait for it: nothing comes back to
+    /// collect, and a pipeline a frame built first is found there and not
+    /// built again. Returns whether it started one.
+    fn prepare_draws(
+        &mut self,
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        config: &PostProcessConfig,
+        ids: &StyleIds,
+        styles: &StyleRegistry,
+        every_draw: &[&str],
+    ) -> bool {
+        let mut wanted: Vec<(wgpu::TextureFormat, blend::Draws)> = Vec::new();
+        for descriptor in styles.iter() {
+            if !descriptor.is_on(config, ids) {
+                continue;
+            }
+            let draws = if every_draw.contains(&descriptor.name) {
+                blend::Draws::ALL
+            } else {
+                blend::Draws::of(config, descriptor.name)
+            };
+            let format = stage_format(descriptor, surface_format);
+            match wanted.iter_mut().find(|(f, _)| *f == format) {
+                Some((_, d)) => *d = d.or(draws),
+                None => wanted.push((format, draws)),
+            }
+        }
+        // What no earlier prepare asked for. Never the pass's own locks:
+        // a worker holds one while it builds, and asking would stall this
+        // thread for that build (190 ms at a scene's entry, measured)
+        let wanted: Vec<_> = wanted
+            .into_iter()
+            .map(|(format, draws)| {
+                let asked = match self.blend_asked.iter_mut().find(|(f, _)| *f == format) {
+                    Some((_, asked)) => asked,
+                    None => {
+                        self.blend_asked.push((format, blend::Draws::default()));
+                        &mut self.blend_asked.last_mut().expect("just pushed").1
+                    }
+                };
+                let new = draws.minus(*asked);
+                *asked = asked.or(draws);
+                (format, new)
+            })
+            .filter(|(_, draws)| draws.any())
+            .collect();
+        if wanted.is_empty() {
+            return false;
+        }
+        let (device, pass) = (device.clone(), self.blend.clone());
+        // Nobody waits on the arrival: the pass holds what it built
+        drop(off_thread("blend", move || {
+            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                for (format, draws) in wanted {
+                    pass.warm(&device, format, draws);
+                }
+            }));
+            (made, Vec::new())
+        }));
+        true
     }
 
     /// The styles building ahead on worker threads (#1121), by name.
@@ -588,7 +684,8 @@ impl StyleSet {
             self.shared_files.clear();
         }
         // The blend draw builds lazily, outside a build: always again
-        self.blend = blend::BlendPass::default();
+        self.blend = Default::default();
+        self.blend_asked.clear();
         let names: Vec<String> = changed
             .iter()
             .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))

@@ -293,6 +293,9 @@ impl PlayerApp {
         renderer.set_post_process_config(self.scene_post_config());
         renderer.ensure_style_resources(device);
         renderer.ensure_fxaa_resources(device);
+        // What a later frame would build on the frame it first shows:
+        // the stage draws, `preload_looks`, `preload_styles` (#1159)
+        self.preload_scene_styles(renderer, device);
         // Comic panels (#880, ADR 0120): the scene's [panels], or one view,
         // replacing the last scene's layout and its panels' views
         renderer.set_panels(

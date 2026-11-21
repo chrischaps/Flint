@@ -234,6 +234,19 @@ flint_schema::post_effects!(post_process_def {
     /// applies it; until then the struct holds the scene's keys alone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub look: Option<String>,
+    /// Looks the scene will cut or fade to later (#1159), named as
+    /// `look` is: a host builds their styles at the scene's entry, on
+    /// worker threads, so the frame a script's `set_look` shows one builds
+    /// nothing. The look itself isn't shown.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub preload_looks: Vec<String>,
+    /// Styles the scene will switch on later by name (#1159): a script's
+    /// `set_post_style`, a render mode's reality styles (`matrix`,
+    /// `tron`). Built at the scene's entry with every draw the stage gives
+    /// a style (blend, reveal, tear), so neither switching one on nor
+    /// tweening its reveal or tearing it builds on a frame.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub preload_styles: Vec<String>,
     /// The keys the scene's `[post_process]` wrote, as written (the loader
     /// records them), so a look goes under exactly those and a later
     /// `set_look` can re-lay a different one. `None` for a block built in
@@ -340,6 +353,8 @@ impl PostProcessDef {
         def.contour_boil = Some(0.0);
         def.styles.insert("_".into(), toml::Table::new());
         def.look = Some(String::new());
+        def.preload_looks = vec![String::new()];
+        def.preload_styles = vec![String::new()];
         let mut names: Vec<String> = toml::Table::try_from(&def)
             .map(|t| t.keys().cloned().collect())
             .unwrap_or_default();

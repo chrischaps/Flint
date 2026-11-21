@@ -603,6 +603,13 @@ impl RevealPass {
         pipeline
     }
 
+    /// Build the draw's pipeline at `format` now, if it isn't built
+    /// (#1159), so the first frame a reveal lies between 0 and 1 builds
+    /// nothing.
+    pub(super) fn warm(&self, device: &wgpu::Device, format: wgpu::TextureFormat) {
+        self.pipeline(device, format);
+    }
+
     /// The slot this draw writes, or `None` when the frame has used them
     /// all.
     fn slot(&self, frame: u64) -> Option<u64> {

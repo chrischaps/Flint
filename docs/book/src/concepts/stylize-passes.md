@@ -1254,6 +1254,18 @@ Nothing is shown and `get_look()` still answers the look drawn. Each style is bu
 
 On the web there are no threads, so `prepare_look` builds at the call: make it where a stop is hidden, behind a loading screen or a fade to black. A Rust host calls `SceneRenderer::prepare_styles(device, &config)` with the config it will show, or `PlayerApp::prepare_look(name)`.
 
+A scene can say the same in its file, and the player prepares them when the scene loads, before its first frame:
+
+```toml
+[post_process]
+preload_looks = ["graphite", "ink_wash", "watercolor"]   # looks a script will set_look
+preload_styles = ["matrix", "tron"]                      # styles a script will set_post_style
+```
+
+A style is more than its own pipelines. The stage draws a style's `blend`, its [reveal](#revealing-a-whole-frame-style) and its tear (`blend_source = "tear"`) with pipelines of its own, built the first time a frame needs each: the first frame a sheet waiting at `reveal = 0` starts to tear open used to stop for that build (92 ms in one film). Preparing builds those too: the ones a style's table asks for, and for a preloaded look or style every one of them, whatever its table says at load, since a fade blends a look in and a script may tween a reveal or tear a style in later. A scene's own styles get theirs at its entry with no key at all. `preload_styles` is for styles nothing switches on until a script does: the reality styles (`matrix`, `tron`) a render mode tears in, a `set_post_style` at a story beat. A name the search can't find is warned about at load and skipped. A preloaded look's file is read once, at load, so the cut reads nothing from the disk; edit one while the scene plays and the edit shows at its next load. Rust hosts pass the names to `SceneRenderer::prepare_styles_with(device, &config, &names)`.
+
+Measured on a bench that cuts through Kindling's four looks every 1.5 s (`graphite`, `ink_wash`, `watercolor`, `coloured_pencil`) in a debug build, Vulkan, RTX 4070, a fresh shader cache each run: without `preload_looks` the first cut took 750 to 1150 ms (pencil's pipelines) and watercolor's 102 to 228 ms over six runs; with it every one of the 24 cuts took 16.2 to 18.4 ms, a refresh, and no run had a hitch. Plaintext's beats (a pencil sheet tearing in, then `matrix` and `tron` switched on and torn in) hitched 61 to 92 ms at `matrix` in five runs out of five without `preload_styles`, and in none with it.
+
 **`--sweep KEY=V1,V2,...`** renders the same frame once per value and lays the frames out as one labelled contact sheet, four across, in the ASCII style's built-in glyphs. KEY can be:
 
 - any `--style` key, written `<style>.<key>`: `ascii.cell=6,8,12`, `ascii.ramp=classic,blocks`, `kuwahara.radius=2,4,6,8`. Values are checked against the style's range;
