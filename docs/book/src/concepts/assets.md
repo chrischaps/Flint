@@ -294,12 +294,14 @@ tags = ["furniture", "medieval"]
 
 ## Runtime Catalog Resolution
 
-The player can load the asset catalog at startup for name-based asset resolution. When an entity references an asset by name, the resolution chain is:
+The player reads the [project root](#the-project-root)'s catalog for name-based asset resolution, the one `flint validate` and `flint check` ask, wherever it was started from. When an entity references an asset by name, the resolution chain is:
 
-1. Look up the name in the `AssetCatalog`
+1. Look up the name in the `AssetCatalog` (`<root>/assets/*.asset.toml`)
 2. If found, resolve the content hash
-3. Load from the `ContentStore` path (`.flint/assets/<hash>`)
+3. Load from the `ContentStore` path (`<root>/.flint/assets/<hash>`)
 4. Fall back to file-based loading if not in the catalog
+
+A transition into a scene of another project reads that project's catalog.
 
 This allows scenes to reference both pre-imported and AI-generated assets by name without hardcoding file paths.
 

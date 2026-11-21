@@ -153,7 +153,7 @@ impl PlayerApp {
             frame_pacer: None,
             skeletal_entity_assets: HashMap::new(),
             hud: Default::default(),
-            assets: AssetSources::from_working_dir(),
+            assets: AssetSources::default(),
             focus: Default::default(),
             post: Default::default(),
             audio_vfs_generation: flint_core::vfs::generation(),
