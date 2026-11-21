@@ -6,7 +6,7 @@
 # The clearing is tests/fixtures/scenes/prefabs/stylize_props.prefab.toml.
 #
 #   cargo run --bin flint -- render tests/fixtures/scenes/stylize_props_tear.scene.toml --no-grid \
-#     --tear 0.5 --output props.png
+#     --set post.tear=0.5 --output props.png
 
 [scene]
 name = "Stylize Props (tear)"

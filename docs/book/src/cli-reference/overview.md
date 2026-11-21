@@ -963,7 +963,7 @@ flint render scene.toml -o painted.png --style kuwahara:radius=6 --style contour
 flint render scene.toml -o glyphs.png --style ascii:ramp=blocks,palette=phosphor,color=palette --set ascii.cell=12
 ```
 
-A key that turns an effect on is its own key: `post.fog_density` alone leaves fog off in a scene that has `fog_enabled = false`, and likewise bloom, dither, height fog and volumetric light. A colour in a `--style` word is `r/g/b` or `#rrggbb`, since commas separate its keys. `flint render --list-effects` lists every `[post_process]` key with its kind, default and tuned range, `--list-styles` every style's keys, `--look help` the looks, and `flint render --help` every flag by heading. The per-effect flags these replaced (`--bloom-intensity`, `--fog-density`, `--ascii-ramp`, `--contour-width`...) still work for one release and print their new spelling.
+A key that turns an effect on is its own key: `post.fog_density` alone leaves fog off in a scene that has `fog_enabled = false`, and likewise bloom, dither, height fog and volumetric light. A colour in a `--style` word is `r/g/b` or `#rrggbb`, since commas separate its keys. `flint render --list-effects` lists every `[post_process]` key with its kind, default and tuned range, `--list-styles` every style's keys, `--look help` the looks, and `flint render --help` every flag by heading. The per-effect flags these replaced went in #1144: given one, `flint render` stops with an unknown-flag error naming its `--set` or `--style` spelling.
 
 > **`flint render` runs no scripts unless you pass `--scripts` (or `--script-time <t>`),**
 > and a render of a scene with scripts says so on stderr, naming them. Without it,

@@ -405,9 +405,12 @@ fn parse_render(words: Vec<OsString>) -> Result<RenderArgs> {
     use clap::{Args, FromArgMatches};
     let command =
         RenderArgs::augment_args(clap::Command::new("flint render")).args_override_self(true);
+    let words: Vec<OsString> = std::iter::once(OsString::from("flint render"))
+        .chain(words)
+        .collect();
     let matches = command
-        .try_get_matches_from(std::iter::once(OsString::from("flint render")).chain(words))
-        .map_err(|e| anyhow!("{e}"))?;
+        .try_get_matches_from(&words)
+        .map_err(|e| anyhow!("{}", super::render_retired::explained(e, &words)))?;
     RenderArgs::from_arg_matches(&matches).map_err(|e| anyhow!("{e}"))
 }
 
@@ -782,11 +785,12 @@ mod tests {
 
     #[test]
     fn a_variant_is_a_label_and_its_flags() {
-        let v = parse_variant("full screen: --ascii-scope screen --style ascii:cell=12").unwrap();
+        let v =
+            parse_variant("full screen: --style ascii:scope=screen --set ascii.cell=12").unwrap();
         assert_eq!(v.label, "full screen");
         assert_eq!(
             v.flags,
-            ["--ascii-scope", "screen", "--style", "ascii:cell=12"]
+            ["--style", "ascii:scope=screen", "--set", "ascii.cell=12"]
         );
         // Flags alone label themselves; a bare label is the base command
         let v = parse_variant("--no-shadows").unwrap();
@@ -803,12 +807,12 @@ mod tests {
     fn words_split_on_spaces_outside_quotes_and_keep_backslashes() {
         assert_eq!(
             split_words(
-                r#"--ascii-palette palettes\warm.palette.toml --look 'a b' --x "say \"hi\"""#
+                r#"--style ascii:palette=palettes\warm.palette.toml --look 'a b' --x "say \"hi\"""#
             )
             .unwrap(),
             [
-                "--ascii-palette",
-                r"palettes\warm.palette.toml",
+                "--style",
+                r"ascii:palette=palettes\warm.palette.toml",
                 "--look",
                 "a b",
                 "--x",
@@ -848,7 +852,7 @@ mod tests {
     #[test]
     fn the_base_command_drops_this_commands_own_flags() {
         let base = base_words(&words(
-            "levels/a.scene.toml --variant 'x: --ascii' -o out.png --zoom 0,0,9,9 \
+            "levels/a.scene.toml --variant 'x: --style ascii' -o out.png --zoom 0,0,9,9 \
              --variants=v.toml --width 640 -oother.png --output=o.png --distance 5",
         ));
         assert_eq!(base, words("levels/a.scene.toml --width 640 --distance 5"));
@@ -856,8 +860,12 @@ mod tests {
 
     #[test]
     fn the_subcommand_words_skip_the_global_project() {
-        let argv = words("flint --project ../game render levels/a.scene.toml --project=x --ascii");
-        assert_eq!(subcommand_words(argv), words("levels/a.scene.toml --ascii"));
+        let argv =
+            words("flint --project ../game render levels/a.scene.toml --project=x --no-grid");
+        assert_eq!(
+            subcommand_words(argv),
+            words("levels/a.scene.toml --no-grid")
+        );
     }
 
     #[test]
@@ -895,7 +903,7 @@ mod tests {
             label = "authored"
             [[variant]]
             label = "full"
-            flags = "--ascii-scope screen"
+            flags = "--style ascii:scope=screen"
             [[variant]]
             label = "cells"
             flags = ["--style", "ascii:cell=12"]
@@ -906,9 +914,9 @@ mod tests {
         assert_eq!(loaded.zooms.len(), 1);
         assert_eq!(loaded.variants.len(), 3);
         assert!(loaded.variants[0].flags.is_empty());
-        assert_eq!(loaded.variants[1].flags, ["--ascii-scope", "screen"]);
+        assert_eq!(loaded.variants[1].flags, ["--style", "ascii:scope=screen"]);
         assert_eq!(loaded.variants[2].flags, ["--style", "ascii:cell=12"]);
-        assert!(parse_file("[[variant]]\nlabel = \"x\"\nflag = \"--ascii\"").is_err());
+        assert!(parse_file("[[variant]]\nlabel = \"x\"\nflag = \"--no-grid\"").is_err());
         assert!(parse_file("[[variant]]\nlabel = \"x\"\nflags = \"scene.toml\"").is_err());
     }
 

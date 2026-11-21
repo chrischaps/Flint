@@ -689,28 +689,6 @@ name = "contour-over-kuwahara"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=4", "--style", "contour:width=1.5"]
 
-# The old flags (hidden since #708, gone in the next release) are its
-# table's keys, as --set and --style are a post key's and a style's
-[[case]]
-name = "contour-flags-are-its-table"
-scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
-args = ["--no-grid", "--contour-width", "1.5", "--contour-color", "0.2,0.05,0.02"]
-matches = ["--no-grid", "--style", "contour:width=1.5,color=0.2/0.05/0.02"]
-
-# #708: the old post flags are --set, pixel for pixel
-[[case]]
-name = "post-flags-are-set"
-scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
-args = ["--no-grid", "--exposure", "1.4", "--fog-density", "0.05", "--grade-gain", "1.04,1,0.94", "--ssao-intensity", "0"]
-matches = ["--no-grid", "--set", "post.exposure=1.4", "--set", "post.fog_density=0.05", "--set", "post.fog_enabled=true", "--set", "post.grade_gain=1.04,1,0.94", "--set", "post.ssao_intensity=0", "--set", "post.ssao_enabled=false"]
-
-# #708: the old ASCII flags are --style and --set
-[[case]]
-name = "ascii-flags-are-style-and-set"
-scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
-args = ["--no-grid", "--ascii-scope", "screen", "--ascii-palette", "phosphor", "--ascii-cell", "12"]
-matches = ["--no-grid", "--style", "ascii:scope=screen,palette=phosphor,color=palette", "--set", "ascii.cell=12"]
-
 [[case]]
 name = "contour-blend-zero"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"

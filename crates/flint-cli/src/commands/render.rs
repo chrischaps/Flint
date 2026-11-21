@@ -302,7 +302,6 @@ pub(super) fn render(
         .check(&styles)
         .map_err(|e| anyhow::anyhow!("--style: {e}"))?;
     render_post::check(args, &styles)?;
-    render_post::warn_legacy(args);
     let look = args
         .look
         .as_deref()
@@ -1674,7 +1673,7 @@ fn write_ascii_text(
 ) -> Result<()> {
     let Some(text) = text else {
         anyhow::bail!(
-            "--ascii-text: the ASCII style didn't draw this frame; turn it on with --ascii, \
+            "--ascii-text: the ASCII style didn't draw this frame; turn it on with --style ascii, \
              a look, or the scene's [post_process.styles.ascii] / ascii_style entities"
         );
     };

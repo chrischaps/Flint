@@ -784,16 +784,16 @@ RTX 4070 laptop, release build, 1920x1080 output, `flint render
 | full screen at `--pixels-per-point 2` (16 px cells) | | 0.043 / 0.040 | |
 
 Re-measured for #337 after edges (#267) and tone normalisation (#289)
-were on by default and in the demo. Same machine, Vulkan, `--ascii-scope
-screen`, best of 3 alternated with main:
+were on by default and in the demo. Same machine, Vulkan, `--style
+ascii:scope=screen`, best of 3 alternated with main:
 
 | | main (b9aabc3) | #337 |
 |---|---|---|
 | edges on (default), no styled entities | 0.39--0.43 | 0.43 ms |
 | edges on, over the demo's props | 0.518 | 0.447 ms |
-| `--ascii-edges 0`, no styled entities | 0.049 | 0.048 ms |
-| `--ascii-edges 0`, over the props (barrel normalised) | 0.150 | 0.094 ms |
-| `--ascii-edges 0`, over the props, no `normalize` | 0.075 | 0.074 ms |
+| `--style ascii:edges=0`, no styled entities | 0.049 | 0.048 ms |
+| `--style ascii:edges=0`, over the props (barrel normalised) | 0.150 | 0.094 ms |
+| `--style ascii:edges=0`, over the props, no `normalize` | 0.075 | 0.074 ms |
 
 Most of the gap was the statistics: one fragment a lattice row walked
 320 samples, 180 threads in all, latency-bound. Summed in runs of 20,

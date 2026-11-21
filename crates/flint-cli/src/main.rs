@@ -198,6 +198,9 @@ fn main() -> std::process::ExitCode {
     let cli = match Cli::try_parse_from(&argv) {
         Ok(cli) => cli,
         Err(e) => {
+            // A per-effect flag `flint render` had until #1144 names its
+            // spelling
+            let e = commands::render_retired::explained(e, &argv);
             // A mistake on the command line under --json is still one
             // document on stdout; --help and --version print as always
             use clap::error::ErrorKind;

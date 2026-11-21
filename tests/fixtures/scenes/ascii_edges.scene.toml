@@ -2,7 +2,7 @@
 # with line glyphs along their edges.
 #
 #   cargo run --bin flint -- render tests/fixtures/scenes/ascii_edges.scene.toml --schemas schemas --output edges.png
-#   cargo run --bin flint -- render tests/fixtures/scenes/ascii_edges.scene.toml --schemas schemas --ascii-no-edges --output tone.png
+#   cargo run --bin flint -- render tests/fixtures/scenes/ascii_edges.scene.toml --schemas schemas --set ascii.edges=0 --output tone.png
 #
 # Luminance alone loses a silhouette wherever an object is as bright as
 # what's behind it; edges come from geometry instead (depth, normals

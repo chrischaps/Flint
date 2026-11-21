@@ -3108,7 +3108,7 @@ mod tests {
             "per-entity rows are found by mask id"
         );
 
-        // --ascii-no-edges in a scene with no style_mask: no mask
+        // ASCII's edges off in a scene with no style_mask: no mask
         let (none, _) = resolved(&empty, &config);
         assert!(!crate::stylize::StyleRegistry::new().any_uses_mask(&config, &none));
     }
