@@ -97,6 +97,34 @@ pub fn toml_to_vec3(v: &toml::Value) -> Option<Vec3> {
     None
 }
 
+/// Whether two values say the same, as a file reads them back: an integer
+/// is its float (`1` is `1.0`), a float within a hair of another is it (an
+/// f32 written as f64 and read back), and arrays and tables compare by
+/// element. What the viewer's undo (#1046) and `flint validate --fix`'s
+/// read-back of the file it wrote (#1116) both ask.
+pub fn reads_same(a: &toml::Value, b: &toml::Value) -> bool {
+    use toml::Value::*;
+    let num = |v: &toml::Value| match v {
+        Integer(i) => Some(*i as f64),
+        Float(f) => Some(*f),
+        _ => None,
+    };
+    match (a, b) {
+        (Array(x), Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| reads_same(p, q))
+        }
+        (Table(x), Table(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.get(k).is_some_and(|w| reads_same(v, w)))
+        }
+        _ => match (num(a), num(b)) {
+            (Some(x), Some(y)) => (x - y).abs() <= 1e-6 * x.abs().max(y.abs()).max(1.0),
+            _ => a == b,
+        },
+    }
+}
+
 /// The line and column (both from 1, the column in characters) of byte
 /// `offset` in `text`: where a span a TOML parser hands back stands, as a
 /// diagnostic names it (`Diagnostic::at`).
