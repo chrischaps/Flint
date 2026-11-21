@@ -1565,6 +1565,10 @@ impl super::game_core::FrameHost for PlayerApp {
         }
     }
 
+    fn late_models(&mut self) {
+        self.load_late_models();
+    }
+
     fn bones_posed(&mut self) {
         // Push skeletal bone matrices to GPU
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {

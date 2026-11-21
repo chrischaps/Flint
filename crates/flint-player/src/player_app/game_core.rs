@@ -255,6 +255,11 @@ pub(crate) trait FrameHost {
     /// HUD's draw lists, world lines and world text) is the host's.
     fn script_ui_drawn(&mut self) {}
 
+    /// The scripts are done with the frame's world: the models of the
+    /// entities spawned since the last frame (a script's `spawn_entity`)
+    /// load, before animation and the renderer's sync see them (#1107).
+    fn late_models(&mut self) {}
+
     /// The frame's sound, before animation moves on: its triggers from the
     /// game events, and the sources' update.
     fn sound(&mut self, _policy: &StateConfig, _events: &[GameEvent]) {}
@@ -387,6 +392,7 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     host.script_ui_drawn();
     host.phase_done(Phase::ScriptUi);
     run_stage(host, Stage::ScriptUi, Some(config));
+    host.late_models();
 
     // Sound triggers, animations + sprite-end callbacks, bone matrices,
     // bone probes, IK, particles
