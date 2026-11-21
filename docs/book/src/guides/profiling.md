@@ -615,12 +615,12 @@ A note made inside another, such as a model inside a transition or a pipeline in
 
 | Note | When |
 |---|---|
-| `model load` | a glTF file read, decoded and uploaded, at a scene's load or a procgen fallback |
+| `model load` | a glTF file read, decoded and uploaded: at a scene's load, a chunk's (inside its `chunk load`), the end of the frame a script spawned an entity with a model the scene hadn't loaded, or a procgen fallback |
 | `texture load` | a texture file decoded and uploaded the first time its name is asked for |
 | `pipeline build` | a pipeline built, by its label (the scene's at start, a style's on its first draw) |
 | `style build` | a post-process style's passes built, a user style marked so |
 | `scene transition` | a scene left and the next one entered |
-| `chunk load` | a chunk's entities spawned |
+| `chunk load` | a chunk's entities spawned, with their models, colliders and scripts |
 | `script load`, `script reload` | a script compiled at load, or a changed one swapped in |
 | `reload poll` | the hot-reload poll itself, when it took 1 ms or more |
 | `procgen` | procedural assets made at a scene's load or by the frame's queue |

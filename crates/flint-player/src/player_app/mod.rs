@@ -68,6 +68,9 @@ pub mod input_script;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod inspect;
 mod key_note;
+mod late_models;
+#[cfg(test)]
+mod late_models_tests;
 #[cfg(feature = "living")]
 mod living_ab;
 #[cfg(feature = "living")]
@@ -428,6 +431,9 @@ pub struct PlayerApp {
 
     // Chunk streaming: chunk_id → spawned entity IDs
     loaded_chunks: HashMap<String, Vec<flint_core::EntityId>>,
+    /// The models of entities spawned after their scene: a chunk's, a
+    /// script's (#1107)
+    late_models: late_models::LateModels,
 
     // Android gamepad tracking (maps winit DeviceId to InputState gamepad slots)
     #[cfg(target_os = "android")]
