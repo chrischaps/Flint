@@ -183,15 +183,14 @@ impl PlayerApp {
         let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
             return;
         };
-        let Some(ocean_comp) = self
+        let ocean = self
             .core
             .world
-            .get_components(entity_id)
-            .and_then(|comps| comps.get(flint_geometry::components::OCEAN).cloned())
-        else {
+            .view(entity_id, flint_geometry::components::OCEAN);
+        if !ocean.exists() {
             return;
-        };
-        let config = flint_debug_ui::OceanPanelConfig::from_component(&ocean_comp);
+        }
+        let config = flint_debug_ui::OceanPanelConfig::from_component(&ocean);
         let panel = flint_debug_ui::OceanDebugPanel::new(
             config,
             std::path::PathBuf::from(&self.core.scene_path),
@@ -270,15 +269,11 @@ impl PlayerApp {
         let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
             return;
         };
-        let Some(cam_comp) = self
-            .core
-            .world
-            .get_components(entity_id)
-            .and_then(|comps| comps.get(CAMERA_TUNING_COMPONENT).cloned())
-        else {
+        let tuning = self.core.world.view(entity_id, CAMERA_TUNING_COMPONENT);
+        if !tuning.exists() {
             return;
-        };
-        let config = flint_debug_ui::CameraPanelConfig::from_component(&cam_comp);
+        }
+        let config = flint_debug_ui::CameraPanelConfig::from_component(&tuning);
         let panel = flint_debug_ui::CameraDebugPanel::new(
             config,
             std::path::PathBuf::from(&self.core.scene_path),
@@ -303,10 +298,8 @@ impl PlayerApp {
         if let Some(fov) = self
             .core
             .world
-            .get_components(entity_id)
-            .and_then(|comps| comps.get(CAMERA_TUNING_COMPONENT))
-            .and_then(|c| c.get("fov_deg"))
-            .and_then(flint_core::toml_util::toml_f32)
+            .view(entity_id, CAMERA_TUNING_COMPONENT)
+            .opt_f32("fov_deg")
         {
             self.camera.fov = fov;
         }

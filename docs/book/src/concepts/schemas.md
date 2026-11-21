@@ -277,7 +277,7 @@ A component or archetype is known when **any** loaded schema directory declares 
 
 ### Diagnostics while the game runs
 
-The pass above checks a scene file against the schemas. A value can still be wrong where no schema looks: a component whose schema is open, a field a script writes with `set_field`, an entity a script spawns. So the systems that read components check as they read. Physics, audio, animation (`animator`, its `layers`, `sprite_animator`, `ik_two_bone`), the renderer (`sprite`, `material`, `bounds`, `model`, `terrain` and its grass, `grass_ground`, `sky`, `ocean`, `water_body`, `spline`, `spline_mesh` and the 2D UI's `screen_anchor`, `parallax`, `ui_fill`, `ui_text`) and the script system (`script`, `interactable`, the sprite functions) read through a typed view of the component, and a value they cannot use is logged as a diagnostic of the same shape, then the default is used:
+The pass above checks a scene file against the schemas. A value can still be wrong where no schema looks: a component whose schema is open, a field a script writes with `set_field`, an entity a script spawns. So the systems that read components check as they read. Physics, audio, animation (`animator`, its `layers`, `sprite_animator`, `ik_two_bone`), the renderer (`sprite`, `material`, `bounds`, `model`, `material_overrides`, `terrain` and its grass, `grass_ground`, `sky`, `ocean` (its look and its waves), `water_body`, `spline`, `spline_mesh` and the 2D UI's `screen_anchor`, `parallax`, `ui_fill`, `ui_text`) the script system (`script`, `interactable`, `joint` for `get_joint_target`, the sprite and ocean functions) and the player (`camera_tuning`, `bone_probe` and the F3 panels' starting values) read through a typed view of the component, and a value they cannot use is logged as a diagnostic of the same shape, then the default is used:
 
 ```
 WARN error[bad-enum-value] entity 'crate' rigidbody.body_type: "dynamc" is not a value of `body_type` (did you mean `dynamic`? allowed values: static, dynamic, kinematic, kinematic_position, kinematic_velocity; the default "static" is used)
@@ -286,7 +286,7 @@ WARN warning[needs-component] entity 'wall' component 'collider': a collider wit
 WARN error[bad-enum-value] entity 'hero' animator.layers[1].mode: "overide" is not a value of `mode` (did you mean `override`? allowed values: additive, override, replace; the layer is additive)
 ```
 
-An entry of an array of tables is named by its index (`animator.layers[1].mode`).
+An entry of an array of tables is named by its index (`animator.layers[1].mode`), and a table inside a component by its key (`material_overrides.Glass.emissive`).
 
 Each (entity, component, field) is reported **once**, however many frames read it, and again after the scene is reloaded. The codes are `bad-type` and `bad-enum-value`, as at load, and `needs-component`. An integer where a number is read (`move_speed = 8`) is not a mistake and is not reported. These are log lines only: `flint validate` does not run the game, so it does not print them. The one it can see without running, a collider on an entity with no rigidbody, it reports before the game starts as well.
 

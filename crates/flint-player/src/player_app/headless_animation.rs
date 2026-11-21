@@ -166,9 +166,8 @@ pub(super) fn publish_bone_probes(animation: &AnimationSystem, world: &mut Flint
         .collect();
     for id in probe_ids {
         let joint = world
-            .get_components(id)
-            .and_then(|c| c.get_field(comp::BONE_PROBE, "joint"))
-            .and_then(|v| v.as_str())
+            .view(id, comp::BONE_PROBE)
+            .opt_str("joint")
             .map(String::from);
         let Some(joint) = joint else {
             continue;

@@ -167,10 +167,18 @@ pub struct ComponentView<'a> {
     component: &'a str,
     data: Option<&'a toml::Value>,
     reports: &'a ReadReports,
-    /// For one entry of an array of tables ([`ComponentView::tables`]): the
-    /// array's field and the entry's index, so a report names
-    /// `layers[1].mode`.
-    within: Option<(&'a str, usize)>,
+    /// For a table inside the component: where it is, so a report names
+    /// `layers[1].mode` or `Glass.emissive`.
+    within: Option<Within<'a>>,
+}
+
+/// Where a nested view's table sits in its component.
+#[derive(Clone, Copy)]
+enum Within<'a> {
+    /// Entry `.1` of the array of tables `.0` ([`ComponentView::tables`]).
+    Entry(&'a str, usize),
+    /// The table field `.0` ([`ComponentView::table`]).
+    Key(&'a str),
 }
 
 impl FlintWorld {
@@ -370,7 +378,7 @@ impl<'a> ComponentView<'a> {
             .map(|(i, entry)| {
                 let view = ComponentView {
                     data: Some(entry),
-                    within: Some((field, i)),
+                    within: Some(Within::Entry(field, i)),
                     ..*self
                 };
                 if !entry.is_table() {
@@ -388,6 +396,28 @@ impl<'a> ComponentView<'a> {
             .collect()
     }
 
+    /// A table the component holds under `field` (`material_overrides.Glass`),
+    /// as a view of its own whose reports name it: `material_overrides`
+    /// `Glass.emissive`. Missing is a view that doesn't [`exist`](Self::exists),
+    /// in silence; a value that is not a table is the same, and reported.
+    ///
+    /// For a component's own field: a table inside an entry of
+    /// [`tables`](Self::tables), or inside another `table`, reports under
+    /// its own key alone.
+    pub fn table(&self, field: &'a str) -> ComponentView<'a> {
+        let value = self.raw(field);
+        if let Some(value) = value {
+            if !value.is_table() {
+                self.wrong_type(field, "a table", value, None);
+            }
+        }
+        ComponentView {
+            data: value.filter(|v| v.is_table()),
+            within: Some(Within::Key(field)),
+            ..*self
+        }
+    }
+
     // -- reporting -------------------------------------------------------
 
     /// Report something a reader found that no typed read covers (a value
@@ -399,11 +429,15 @@ impl<'a> ComponentView<'a> {
         let path;
         let field = match self.within {
             None => field,
-            Some((array, i)) => {
+            Some(within) => {
+                let at = match within {
+                    Within::Entry(array, i) => format!("{array}[{i}]"),
+                    Within::Key(key) => key.to_string(),
+                };
                 path = if field.is_empty() {
-                    format!("{array}[{i}]")
+                    at
                 } else {
-                    format!("{array}[{i}].{field}")
+                    format!("{at}.{field}")
                 };
                 path.as_str()
             }
@@ -875,6 +909,42 @@ mod tests {
         let (world, id) = world_with("hero", comp::ANIMATOR, "layers = \"wave\"");
         assert!(world.view(id, comp::ANIMATOR).tables("layers").is_empty());
         assert_eq!(world.read_reports().len(), 1);
+    }
+
+    #[test]
+    fn a_table_field_reports_by_its_key() {
+        let (world, id) = world_with(
+            "lamp",
+            comp::MATERIAL_OVERRIDES,
+            "Glass = { emissive = \"bright\", emissive_strength = 4 }\nRim = 3",
+        );
+        let view = world.view(id, comp::MATERIAL_OVERRIDES);
+        let glass = view.table("Glass");
+        assert!(glass.exists());
+        for _ in 0..3 {
+            assert_eq!(glass.opt_color("emissive"), None);
+            assert_eq!(glass.opt_f32("emissive_strength"), Some(4.0));
+        }
+        let rim = view.table("Rim");
+        assert!(!rim.exists(), "a value that is no table reads as no table");
+        assert_eq!(rim.opt_f32("emissive_strength"), None);
+        let absent = view.table("Steel");
+        assert!(!absent.exists());
+        let lines: Vec<String> = world
+            .read_reports()
+            .snapshot()
+            .iter()
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "error[bad-type] entity 'lamp' material_overrides.Glass.emissive: expected a \
+                 colour, [r, g, b] or [r, g, b, a], got string \"bright\"",
+                "error[bad-type] entity 'lamp' material_overrides.Rim: expected a table, got \
+                 integer 3",
+            ]
+        );
     }
 
     #[test]

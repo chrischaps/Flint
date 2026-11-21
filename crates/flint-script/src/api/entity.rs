@@ -508,9 +508,8 @@ pub(crate) fn register(api: &mut ScriptApi) {
         let colour = toml::Value::Array([r, g, b, a].into_iter().map(toml::Value::Float).collect());
         // An entry that already holds a light (a table) keeps it.
         let holds_light = world
-            .get_components(id)
-            .and_then(|c| c.get(comp::MATERIAL_OVERRIDES))
-            .and_then(|m| m.get(material.as_str()))
+            .view(id, comp::MATERIAL_OVERRIDES)
+            .raw(material.as_str())
             .is_some_and(|v| v.is_table());
         let table = holds_light
             .then(|| material_override_table(world, id, &material))
@@ -591,14 +590,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     m.func("get_joint_target", "The joint's motor target.")
         .arg("id", Entity)
         .returns(Num, "0 when it has none")
-        .run(|call, (id,)| {
-            Ok(call
-                .world()?
-                .get_components(id)
-                .and_then(|comps| comps.get_field(comp::JOINT, "motor_target"))
-                .and_then(flint_core::toml_util::toml_f64)
-                .unwrap_or(0.0))
-        });
+        .run(|call, (id,)| Ok(call.world()?.view(id, comp::JOINT).f64("motor_target", 0.0)));
 
     m.func(
         "get_joint_position",
@@ -687,17 +679,14 @@ fn set_material_emissive(
 
 /// The entity's own `material_overrides.<material>` as a table (#624): a
 /// table as is, a plain base colour array as `{ base_color = [...] }`,
-/// `None` when it has none.
+/// `None` when it has none. A writer's copy, so read as written (`raw`):
+/// the renderer's read of the same entry is the one that reports (#1068).
 fn material_override_table(
     world: &flint_ecs::FlintWorld,
     id: EntityId,
     material: &str,
 ) -> Option<toml::Table> {
-    match world
-        .get_components(id)?
-        .get(comp::MATERIAL_OVERRIDES)?
-        .get(material)?
-    {
+    match world.view(id, comp::MATERIAL_OVERRIDES).raw(material)? {
         toml::Value::Table(t) => Some(t.clone()),
         colour @ toml::Value::Array(_) => {
             let mut t = toml::Table::new();
