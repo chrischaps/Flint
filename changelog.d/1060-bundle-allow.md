@@ -1,3 +1,0 @@
-### `flint bundle` honours `[project.diagnostics] allow` everywhere (#1060)
-**What changed.** The allow list in the packed `flint.toml` now applies to everything the bundle's check finds, the references in scripts, prefabs and other files (`missing-file` and the rest) as well as each scene's diagnostics, so `flint bundle` refuses only what `flint check` reports. Before, a project that allowed a non-scene code passed `flint check` and was refused by `flint bundle`. The bundle says how many it left out (`  check: no problems (1 allowed by flint.toml)`), and its `--json` document has `allowed`.
-**What to do.** Nothing.
