@@ -425,6 +425,8 @@ impl PlayerApp {
         self.post.mode_shim.forget();
         // A look's fade eases toward this scene's config, not the next's
         self.style.look_fade = None;
+        // Its looks as read at its entry (#1159): the next scene reads its own
+        self.style.preloaded_looks.clear();
 
         // Clear all systems
         self.core.script.clear();
