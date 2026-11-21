@@ -59,9 +59,10 @@ Three constraints shaped the answer:
    `Answer`, `Report`, `document`, `failed` and `json`, re-exported from
    `flint_cli::extension`, and writes human lines with `extension::say`.
 5. **Names are checked, not overridden.** An extension's command or alias
-   that is the engine's (a subcommand, an alias, `help`) or an old name
-   `legacy_names` still routes (`play-chart`, `render-suite`, ...) is refused
-   before anything runs, and so is a name two extensions share. The message
+   that is the engine's (a subcommand, hidden ones included, an alias,
+   `help`) is refused before anything runs, and so is a name two
+   extensions share. (The old music names were reserved too until #1141
+   removed them from the engine.) The message
    names the command and whose it is. A player extension's function may
    replace the engine's (ADR 0071). A command that silently stopped being
    the engine's would break every script and doc that names it, and clap

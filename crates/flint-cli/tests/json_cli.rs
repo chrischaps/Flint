@@ -36,7 +36,6 @@ const WINDOWS: &[&str] = &[
     "music play",
     "music calibrate",
     "music chart play",
-    "spike-rumble",
     "prefab view",
     "frame open",
 ];

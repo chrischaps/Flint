@@ -7,7 +7,7 @@ Three mechanical checks, the ones a page drifts on without anyone noticing:
           code span) is one that command's `--help` lists, and every
           subcommand named is real. In docs/book/src/cli-reference/, a table
           row whose first cell is a `--flag`, under a heading that names a
-          command ("The `render` Command", "`flint play-chart`"), is checked
+          command ("The `render` Command", "`flint music chart play`"), is checked
           against that command too.
   styles  every `[post_process.styles.<name>]` names a registered style
           (`flint render --list-styles --json`).

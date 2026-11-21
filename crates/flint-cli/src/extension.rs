@@ -138,8 +138,8 @@ pub(crate) struct Added {
 
 impl Added {
     /// Collects every extension's commands, refusing a name that is the
-    /// engine's (`builtin`'s subcommands, their aliases, `help`, the old
-    /// names `legacy_names` routes) or an earlier extension's.
+    /// engine's (`builtin`'s subcommands, hidden ones included, their
+    /// aliases, `help`) or an earlier extension's.
     pub(crate) fn new(extensions: Vec<Box<dyn CliExtension>>, builtin: &Command) -> Result<Self> {
         let mut taken: BTreeMap<String, String> = BTreeMap::new();
         let engine = || "one of flint's own commands".to_string();
@@ -150,12 +150,6 @@ impl Added {
             }
         }
         taken.insert("help".into(), engine());
-        for (old, new) in crate::commands::legacy_names::MUSIC {
-            taken.insert(
-                old.to_string(),
-                format!("`flint {}`'s old name", new.join(" ")),
-            );
-        }
         let mut commands = Vec::new();
         let mut owner = BTreeMap::new();
         for (index, extension) in extensions.iter().enumerate() {
@@ -309,7 +303,8 @@ mod tests {
         for (name, why) in [
             ("render", "one of flint's own"),
             ("help", "one of flint's own"),
-            ("play-chart", "`flint music chart play`'s old name"),
+            // hidden from the help, still the engine's
+            ("serve", "one of flint's own"),
         ] {
             let Err(e) = Added::new(vec![Box::new(Named(name))], &builtin) else {
                 panic!("{name} was taken");

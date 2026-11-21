@@ -13,7 +13,7 @@ The usual order is: validate the suite, play it raw to hear the stems, calibrate
 | `flint music chart replay <manifest> --chart <chart>` | Replay a session through judgment, headless |
 | `flint music render <manifest> -o out.wav` | Render a scripted session to WAV |
 
-Until #709 these were top-level commands: `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart` and `render-suite`. The old names still run for one release, each printing a note naming its new spelling on stderr, and are left out of `flint --help`. The rumble spike that sat beside them is an example program now ([below](#the-rumble-spike)).
+Until #709 these were top-level commands: `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart` and `render-suite`. The old names ran for one release, each printing its new spelling, and are unknown commands since #1141: write `flint music ...`. The rumble spike that sat beside them is an example program now ([below](#the-rumble-spike)).
 
 Every command takes `--base-dir <path>`: the directory the manifest's file paths are relative to (default: the current directory). Reports and logs land under that directory's `logs/`.
 
@@ -125,7 +125,7 @@ flint music chart replay music/prototype.suite.toml --chart music/prototype.char
 
 ## `flint music render`
 
-Golden image suites (`*.goldens.toml`) have their own command, `flint goldens`; see [Golden Suites](../guides/headless-rendering.md#golden-suites). The old `render-suite` given one still runs that command, as it did before #327, so the flags below are the music suite's only.
+Golden image suites (`*.goldens.toml`) have their own command, `flint goldens`; see [Golden Suites](../guides/headless-rendering.md#golden-suites). The flags below are the music suite's only.
 
 Render a scripted suite session to a 32-bit float stereo WAV, offline and deterministic. The event script schedules bus gain, low-pass and detune changes on bars or beats, so a whole arrangement can be auditioned or diffed without playing it.
 
@@ -149,7 +149,7 @@ flint music render music/prototype.suite.toml -o out/full.wav --duration-bars 32
 
 Fire the gamepad's force-feedback motors, time the command paths, and write the report beside the audio-latency and input-granularity spikes in `logs/latency/`. Used to characterise a controller before enabling haptics ([ADR 0025](https://github.com/chrischaps/Flint/blob/main/docs/adr/0025-rumble-through-direct-xinput.md)).
 
-It is an experiment rather than a tool a game needs, so since #709 it is an example program in `flint-input-capture`, run from the engine checkout (`flint spike-rumble` still runs it for one release):
+It is an experiment rather than a tool a game needs, so since #709 it is an example program in `flint-input-capture`, run from the engine checkout (the old `spike-rumble` command, which ran it for one release, is gone since #1141):
 
 ```bash
 cargo run -p flint-input-capture --example spike_rumble

@@ -639,6 +639,6 @@ The game's commands parse with the engine's in one parser, so they behave as the
 - The global `--project` is applied before the command runs: `flint_core::project::Project::current()` returns it.
 - A failure is an `Err`, never `std::process::exit`. A report that is a failure (`Answer::failed_if(true)`) prints, then exits 1. Any other error prints on stderr, and under `--json` as an `{"error": ...}` document. A mistake on the command line is clap's exit 2, with the usage in the error document.
 
-A name the engine already has (`render`, `help`, an old name such as `play-chart`) is refused before anything runs, and so is a name two extensions share: a game's command never replaces the engine's. For anything a derived enum doesn't fit, implement `flint_cli::CliExtension` (`commands`, `run`, `opens_window`) yourself.
+A name the engine already has (`render`, `help`, a hidden command such as `serve`) is refused before anything runs, and so is a name two extensions share: a game's command never replaces the engine's. For anything a derived enum doesn't fit, implement `flint_cli::CliExtension` (`commands`, `run`, `opens_window`) yourself.
 
 The game's binary links its own 8 MB main-thread stack on Windows, with the `build.rs` in [A Game Binary](#a-game-binary). Each of a command's flags costs the debug parser about 8 KB of stack, so keep an `Args` struct to a dozen or so flags. Since `flint capture` and `flint goldens` run the binary they're in, in a game's binary they run the game's.

@@ -8,8 +8,8 @@
 //! ```
 //!
 //! An experiment, not a tool a game needs, so it lives here rather than as
-//! a `flint` command (#709; it was `flint spike-rumble`, kept as a hidden
-//! alias for one release). The report is `rumble-<host>-<epoch>.toml`, the
+//! a `flint` command (#709; it was `flint spike-rumble`, a hidden alias
+//! for one release until #1141). The report is `rumble-<host>-<epoch>.toml`, the
 //! naming every report in `logs/latency/` has (the name sorts newest last).
 #![allow(clippy::disallowed_methods)] // an example: writes its report to the disk, not a runtime read
 

@@ -2,8 +2,9 @@
 //!
 //! Each was its own top-level command until #709 (`validate-suite`,
 //! `play-suite`, `render-suite`, `calibrate`, `play-chart`,
-//! `replay-chart`); those spellings still run, rewritten onto these by
-//! [`super::legacy_names::route`] before clap parses, for one release.
+//! `replay-chart`). Those spellings ran for one release, rewritten onto
+//! these before clap parsed; #1141 retired them, so each is an unknown
+//! command now.
 
 use anyhow::Result;
 use clap::Subcommand;

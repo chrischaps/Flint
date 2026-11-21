@@ -54,7 +54,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint music render <manifest>` | Render a music `.suite.toml` to WAV, offline and deterministically |
 | `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
 
-The music commands are documented on their own page: [Music Commands](music.md). Until #709 they were top-level (`validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart`, `render-suite`); those names still run for one release, printing their new spelling, and the rumble spike is an example program now.
+The music commands are documented on their own page: [Music Commands](music.md). Until #709 they were top-level (`validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart`, `render-suite`); those names ran for one release and are gone since #1141, as is `spike-rumble`: the rumble spike is an example program now.
 
 ## Machine-readable output
 
