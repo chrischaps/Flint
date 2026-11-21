@@ -205,18 +205,19 @@ impl SceneRenderer {
         encoder: &mut wgpu::CommandEncoder,
         run: &mut dyn FnMut(&mut wgpu::CommandEncoder),
         dst: Option<&str>,
+        refuse_repeat: Option<&str>,
     ) {
         if scopes.taps.is_none() {
-            scopes.run(label, encoder, run);
+            scopes.run_refusing(label, encoder, run, refuse_repeat);
             return;
         }
         let Some(resources) = &self.postprocess_resources else {
-            scopes.run(label, encoder, run);
+            scopes.run_refusing(label, encoder, run, refuse_repeat);
             return;
         };
         // What the part asks for, from here
         resources.styles.take_touched();
-        scopes.run(label, encoder, run);
+        scopes.run_refusing(label, encoder, run, refuse_repeat);
         let touched = resources.styles.take_touched();
         if let Some(dst) = dst {
             scopes.note(label, |p| {

@@ -110,6 +110,16 @@ impl EdgePass {
         }
     }
 
+    /// The chain's edge target at the depth's size, made the first time:
+    /// what [`encode`](Self::encode) draws into, and what readers get as it
+    /// was last drawn while a pass knob skips the pass (#1317).
+    pub(crate) fn target(frame: &StyleFrame<'_>) -> Arc<StyleTexture> {
+        let [w, h] = frame.depth_size;
+        frame
+            .targets
+            .get(frame.device, EDGE_TARGET, EDGE_FORMAT, w, h)
+    }
+
     /// Draw this frame's edges from `frame`'s depth and camera into the
     /// chain's edge target, and return it: with the creases, or (`creases`
     /// false, every reader's need [`StyleNeed::EdgeSteps`]) the depth steps
@@ -127,9 +137,7 @@ impl EdgePass {
         rect: Option<kit::PixelRect>,
     ) -> Arc<StyleTexture> {
         let [w, h] = frame.depth_size;
-        let target = frame
-            .targets
-            .get(frame.device, EDGE_TARGET, EDGE_FORMAT, w, h);
+        let target = Self::target(frame);
         let uniforms = EdgeUniforms {
             inv_view_proj: frame.camera.inv_view_proj,
             camera_pos: frame.camera.position,

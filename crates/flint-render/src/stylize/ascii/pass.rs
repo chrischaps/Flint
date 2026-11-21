@@ -839,6 +839,12 @@ impl Ascii {
 }
 
 impl StylePass for Ascii {
+    /// Its cells' tone and edge history (#277, #477) advance a frame each
+    /// draw, so a second draw in one frame isn't a repeat (#1317)
+    fn keeps_history(&self) -> bool {
+        true
+    }
+
     fn glyph_atlas_bytes(&self) -> u64 {
         // `try_lock`: a frame encoding on another thread holds it, and a
         // report never waits for a frame (a missed reading counts 0)
