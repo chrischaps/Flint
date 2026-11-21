@@ -81,7 +81,7 @@ The binary lists the keys, so this page doesn't:
 | `flint render --style help` | Every style and its keys |
 | `flint render --help` | Every flag, grouped by heading |
 
-The per-effect flags these replaced (`--bloom-intensity`, `--fog-density`, `--kuwahara-radius`, `--ascii-ramp`...) still work for one release, and each prints its new spelling.
+The per-effect flags these replaced went in #1144: given one, `flint render` stops with an unknown-flag error naming its `--set` or `--style` spelling.
 
 The flags that are not `[post_process]` keys:
 

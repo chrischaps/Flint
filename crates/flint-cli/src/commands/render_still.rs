@@ -851,7 +851,7 @@ pub(super) fn write_ascii_text(
 ) -> Result<()> {
     let Some(text) = text else {
         anyhow::bail!(
-            "--ascii-text: the ASCII style didn't draw this frame; turn it on with --ascii, \
+            "--ascii-text: the ASCII style didn't draw this frame; turn it on with --style ascii, \
              a look, or the scene's [post_process.styles.ascii] / ascii_style entities"
         );
     };

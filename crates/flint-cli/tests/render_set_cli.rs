@@ -1,11 +1,9 @@
 //! `flint render --set` and the per-effect flags it replaced (#708), through
-//! the real binary: an old flag still draws, and says what it is now; a
-//! `--set` that names no key, or a value of the wrong kind, fails before any
-//! GPU work; and `--help` is grouped, the old flags hidden from it. That the
-//! two spellings draw the same pixels is the goldens' `matches` cases
-//! (`post-flags-are-set`, `ascii-flags-are-style-and-set`,
-//! `contour-flags-are-its-table`); that they make the same config is
-//! `render_post`'s unit tests.
+//! the real binary: an old flag is an unknown-flag error naming what to
+//! write (#1144); a `--set` that names no key, or a value of the wrong kind,
+//! fails before any GPU work; and `--help` is grouped, with no old flag in
+//! it. That each old flag's spelling parses and builds a config is
+//! `render_retired`'s unit tests.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -39,19 +37,36 @@ fn stderr(o: &Output) -> String {
 }
 
 #[test]
-fn an_old_flag_says_what_it_is_now() {
+fn an_old_flag_is_an_error_naming_what_to_write() {
+    let o = render(&["--exposure", "1"], "exposure.png");
+    assert_eq!(o.status.code(), Some(2), "clap's exit for an unknown flag");
+    let err = stderr(&o);
+    assert!(err.contains("unexpected argument '--exposure'"), "{err}");
+    assert!(err.contains("--set post.exposure=1"), "{err}");
+    assert!(!out("exposure.png").exists(), "nothing is drawn");
+
+    // Every old flag on the line, in order
     let o = render(&["--fog-density", "0.05", "--ascii-cell", "12"], "old.png");
     let err = stderr(&o);
-    assert!(
-        err.contains(
-            "--fog-density 0.05 is `--set post.fog_density=0.05 --set post.fog_enabled=true` now"
-        ),
-        "{err}"
-    );
-    assert!(
-        err.contains("--ascii-cell 12 is `--set ascii.cell=12` now"),
-        "{err}"
-    );
+    let fog = err
+        .find("--fog-density 0.05  ->  --set post.fog_density=0.05 --set post.fog_enabled=true")
+        .unwrap_or_else(|| panic!("{err}"));
+    // (the old flags are a column, padded to the longest)
+    let cell = err
+        .find("--ascii-cell 12     ->  --set ascii.cell=12")
+        .unwrap_or_else(|| panic!("{err}"));
+    assert!(fog < cell, "{err}");
+
+    // Under --json, the error document carries it
+    let o = std::process::Command::new(FLINT)
+        .args(["--json", "render"])
+        .arg(scene())
+        .args(["--exposure", "1"])
+        .output()
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_slice(&o.stdout).expect("one document");
+    let usage = doc["error"]["usage"].as_str().unwrap_or_default();
+    assert!(usage.contains("--set post.exposure=1"), "{doc}");
 }
 
 #[test]

@@ -281,6 +281,8 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
 /// document on stdout; --help and --version print as always.
 fn parse_failed(e: clap::Error, argv: &[OsString]) -> ! {
     use clap::error::ErrorKind;
+    // A per-effect flag `flint render` had until #1144 names its spelling
+    let e = commands::render_retired::explained(e, argv);
     let help = matches!(
         e.kind(),
         ErrorKind::DisplayHelp
