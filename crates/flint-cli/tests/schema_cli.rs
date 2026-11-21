@@ -112,6 +112,9 @@ fn list_json_names_every_component_and_archetype() {
         serde_json::json!([
             "friction",
             "is_sensor",
+            "layer",
+            "mask",
+            "model",
             "offset",
             "restitution",
             "rotation",
@@ -510,6 +513,100 @@ fn a_game_adds_one_field_to_an_engine_component() {
     assert_eq!(
         material["fields"]["roughness"]["file"],
         material["declared_in"]
+    );
+}
+
+/// #1054: a game adds a component and its defaults to the engine's
+/// `player` archetype with a file of a few lines, and an entity of the
+/// archetype gets the engine's components and defaults and the game's.
+#[test]
+fn a_game_adds_a_component_to_an_engine_archetype() {
+    let game = Game::new(
+        "extend_archetype",
+        &[
+            ("flint.toml", "[project]\nid = \"run\"\n"),
+            (
+                "schemas/components/stamina.toml",
+                "[component.stamina]\ndescription = \"How long the player can sprint\"\n\n\
+                 [component.stamina.fields]\nmax = { type = \"f32\", default = 100.0, min = 0.0 }\n",
+            ),
+            (
+                "schemas/archetypes/player.toml",
+                "[archetype.player]\nextend = true\ncomponents = [\"stamina\"]\n\n\
+                 [archetype.player.defaults.stamina]\nmax = 120.0\n\n\
+                 [archetype.player.defaults.character_controller]\nmove_speed = 7.5\n",
+            ),
+            (
+                "scenes/run.scene.toml",
+                "[scene]\nname = \"Run\"\n\n[entities.hero]\narchetype = \"player\"\n",
+            ),
+        ],
+    );
+    let out = game.validate("scenes/run.scene.toml", &[]);
+    let text = stdout(&out);
+    assert!(out.status.success(), "{text}{}", stderr(&out));
+    assert!(text.starts_with("No problems found."), "{text}");
+
+    let out = game.flint(&["entity", "show", "hero", "--scene", "scenes/run.scene.toml"]);
+    let hero = json(&out);
+    let data = &hero["data"];
+    assert_eq!(
+        data["stamina"]["max"], 120.0,
+        "the game's component: {data}"
+    );
+    assert_eq!(
+        data["character_controller"]["move_speed"], 7.5,
+        "the game's default: {data}"
+    );
+    assert_eq!(
+        data["character_controller"]["jump_force"], 6.0,
+        "the engine's default beside it: {data}"
+    );
+    assert_eq!(
+        data["collider"]["shape"], "capsule",
+        "the engine's component: {data}"
+    );
+
+    let out = game.flint(&["schema", "player"]);
+    let text = stdout(&out);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        text.contains("\nExtended by: [2] schemas/archetypes/player.toml\n"),
+        "{text}"
+    );
+    assert!(text.contains("\n  - transform   [1]\n"), "{text}");
+    assert!(text.contains("\n  - stamina   [2]\n"), "{text}");
+    assert!(text.contains("\n    move_speed = 7.5   [2]\n"), "{text}");
+    assert!(text.contains("\n    jump_force = 6   [1]\n"), "{text}");
+
+    let out = game.flint(&["schema", "player", "--json"]);
+    let player = json(&out);
+    assert_eq!(
+        player["extended_by"],
+        serde_json::json!(["schemas/archetypes/player.toml"])
+    );
+    assert_eq!(
+        player["components"],
+        serde_json::json!([
+            "transform",
+            "collider",
+            "rigidbody",
+            "character_controller",
+            "stamina"
+        ])
+    );
+    assert_eq!(
+        player["component_files"]["stamina"],
+        "schemas/archetypes/player.toml"
+    );
+    assert_eq!(player["component_files"]["collider"], player["declared_in"]);
+    assert_eq!(
+        player["default_files"]["character_controller"]["move_speed"],
+        "schemas/archetypes/player.toml"
+    );
+    assert_eq!(
+        player["default_files"]["character_controller"]["jump_force"],
+        player["declared_in"]
     );
 }
 
