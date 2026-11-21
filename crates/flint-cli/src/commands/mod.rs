@@ -30,7 +30,6 @@ pub mod gif_writer;
 pub mod glyph_preview;
 pub mod golden_sheet;
 pub mod init;
-pub mod legacy_names;
 pub mod look;
 pub mod look_measure;
 pub mod look_refine;
@@ -61,7 +60,6 @@ pub mod schema;
 pub mod schema_export;
 pub mod script;
 pub mod spec_save;
-pub mod spike_rumble;
 pub mod spline_edit;
 pub mod style;
 pub mod style_sheet;
@@ -76,8 +74,9 @@ pub mod variants;
 /// Write a report into `<base_dir>/logs/latency/` as
 /// `<prefix>-<host>-<epoch>.toml` — the shared naming scheme the offset
 /// readers sort lexicographically (name embeds host + epoch, so max =
-/// newest). One writer for `music calibrate`, the old `spike-rumble` and
-/// the input spike (`music chart play --spike-input-secs`).
+/// newest). One writer for `music calibrate` and the input spike
+/// (`music chart play --spike-input-secs`); the rumble spike, an example
+/// of flint-input-capture since #709, writes its own.
 pub fn write_latency_report(
     base_dir: &std::path::Path,
     prefix: &str,

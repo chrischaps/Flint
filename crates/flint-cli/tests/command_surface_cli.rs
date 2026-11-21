@@ -1,6 +1,7 @@
 //! The command surface (#709): `flint --help` lists the general tools plus
-//! `music` and `goldens`; the six old music commands still run, as hidden
-//! aliases that say their new spelling; the rumble spike is an example.
+//! `music` and `goldens`; the six old music commands and `spike-rumble`
+//! are unknown (#1141, after a release as aliases); the rumble spike is an
+//! example.
 
 use std::process::{Command, Output};
 
@@ -53,41 +54,30 @@ fn music_holds_the_six_rhythm_tools() {
     );
 }
 
-/// Each old name prints its new command's help, and a note on stderr
-/// naming the new spelling.
+/// #1141: the old names ran for one release after #709 and are gone. Each
+/// is an unknown command, `--help` after it included, and a goldens
+/// manifest after `render-suite` (#327's spelling) is no exception.
 #[test]
-fn the_old_music_names_still_run_and_say_where_they_went() {
-    for (old, new) in [
-        ("validate-suite", "music validate"),
-        ("play-suite", "music play"),
-        ("render-suite", "music render"),
-        ("calibrate", "music calibrate"),
-        ("play-chart", "music chart play"),
-        ("replay-chart", "music chart replay"),
+fn the_old_names_are_unknown_commands() {
+    for old in [
+        &["validate-suite", "--help"][..],
+        &["play-suite", "--help"],
+        &["render-suite", "--help"],
+        &["render-suite", "s.goldens.toml"],
+        &["calibrate", "--help"],
+        &["play-chart", "--help"],
+        &["replay-chart", "--help"],
+        &["spike-rumble", "--help"],
     ] {
-        let out = flint(&[old, "--help"]);
-        let said = String::from_utf8_lossy(&out.stdout);
-        let note = String::from_utf8_lossy(&out.stderr);
-        assert!(out.status.success(), "{old}: {note}");
+        let out = flint(old);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{old:?} still runs");
         assert!(
-            said.contains(&format!("Usage: flint.exe {new} "))
-                || said.contains(&format!("Usage: flint {new} ")),
-            "{old} --help is {new}'s:\n{said}"
-        );
-        assert!(
-            note.contains(&format!("`flint {old}` is `flint {new}` now")),
-            "{old}: {note}"
+            err.contains(&format!("unrecognized subcommand '{}'", old[0])),
+            "{old:?}: {err}"
         );
     }
-}
-
-/// The spike is an example now; its old command still answers, hidden.
-#[test]
-fn spike_rumble_is_a_hidden_alias_of_the_example() {
-    let out = flint(&["spike-rumble", "--help"]);
-    assert!(out.status.success());
-    let said = String::from_utf8_lossy(&out.stdout);
-    assert!(said.contains("--example spike_rumble"), "{said}");
+    // The spike lives on as an example program
     let example = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../flint-input-capture/examples/spike_rumble.rs"
