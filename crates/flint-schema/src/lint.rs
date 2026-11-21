@@ -21,7 +21,8 @@
 //! [`SchemaRegistry`](crate::SchemaRegistry) runs it on every file it loads
 //! and keeps the result ([`SchemaRegistry::lints`](crate::SchemaRegistry::lints)).
 //! `flint validate` prints the ones about a game's files
-//! ([`SchemaRegistry::game_lints`](crate::SchemaRegistry::game_lints)); the
+//! ([`SchemaRegistry::game_lints`](crate::SchemaRegistry::game_lints)), and
+//! the player says them once as it reads its schemas (#1064); the
 //! engine's own files are held clean by `tests/engine_schemas.rs`.
 
 use crate::component::{
