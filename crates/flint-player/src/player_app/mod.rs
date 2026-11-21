@@ -81,6 +81,10 @@ mod living_subsystem;
 #[cfg(feature = "living")]
 pub(crate) mod living_tuning;
 #[cfg(test)]
+mod load_report_tests;
+// When a load report begins and ends, and what it says (#1092)
+mod load_timing;
+#[cfg(test)]
 mod look_read_tests;
 #[cfg(not(target_arch = "wasm32"))]
 mod loopback;

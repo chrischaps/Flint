@@ -1,6 +1,31 @@
 # Profiling
 
-Two tools say where a frame's time goes. **GPU timing** shows how long the GPU spends on each phase of the frame, in the F2 overlay and in `RenderStats`. The **`profile` feature** sends the frame loop's CPU time to [Tracy](https://github.com/wolfpld/tracy), scope by scope. Both are off until asked for, and a build without the feature carries none of the profiler. For what a frame drew and with which GPU state, [capture it in RenderDoc or PIX](#capturing-a-frame-in-renderdoc), where Flint's frames are named part by part. Below the scopes, [a sampling profiler](#when-scopes-arent-enough) sees what no scope covers: wgpu, the driver, Rapier, Rhai.
+Two tools say where a frame's time goes. **GPU timing** shows how long the GPU spends on each phase of the frame, in the F2 overlay and in `RenderStats`. The **`profile` feature** sends the frame loop's CPU time to [Tracy](https://github.com/wolfpld/tracy), scope by scope. Both are off until asked for, and a build without the feature carries none of the profiler. For what a frame drew and with which GPU state, [capture it in RenderDoc or PIX](#capturing-a-frame-in-renderdoc), where Flint's frames are named part by part. Below the scopes, [a sampling profiler](#when-scopes-arent-enough) sees what no scope covers: wgpu, the driver, Rapier, Rhai. On a phone, start with [the next section](#profiling-on-a-phone): there most GPU times read zero.
+
+## Profiling on a phone
+
+On a phone most of this page reads wrong or not at all, and the two obvious fallbacks measure nothing. This is what works in the web player on a Pixel 8 Pro (Mali-G715, Chrome), learned in #378 and #568. The drivers are in [`tools/phone-perf/`](https://github.com/chrischaps/Flint/blob/main/tools/phone-perf/README.md), which says how to build the site and bundle and reach the phone over adb.
+
+- **The GPU list is empty past `Scene`.** Chrome offers `timestamp-query` on the phone, but Mali reads 0.00 ms for every pass after `Scene`: SSAO, Bloom, Composite and ASCII alike. `?perf=1`, F2 and traces are good there for `Grass`, `Shadows` and `Scene` only.
+- **Make the page GPU-bound and count frames.** One frame's time snaps to whole refreshes, so a pass that costs 2 ms reads as nothing or as half the frame rate, depending on where the frame sat. At `?scale=1` (the scene at the canvas's full size) even a no-style control takes about 30 ms on the Pixel. With frames unpaced (`fps=native`) every page is then GPU-bound, and 10 000 / frames in 10 s is the GPU's milliseconds a frame. [`submits.mjs`](https://github.com/chrischaps/Flint/blob/main/tools/phone-perf/submits.mjs) counts the player's submissions in the page (one a frame) and the render passes between them, a round at a time:
+
+  ```bash
+  # items split on ';'; 12 s warm-up a page; 5 rounds, each playing every item once
+  BASE='&scale=1' node tools/phone-perf/submits.mjs <out> \
+    "ascii_none;ascii_none+style=ascii;ascii_none+style=ascii:edges=0" 12 5
+  ```
+
+- **Bisect by removing one pass.** The wasm holds each shader's WGSL as written, so a copy of the site whose wasm has one shader's text swapped for text of the same length that returns early behind a runtime test (`if in.position.x > -1.0 { return ..; }`) keeps that pass's pipeline and drops its work. An item `dir/scene` plays the copy in `dir/` ([the README](https://github.com/chrischaps/Flint/blob/main/tools/phone-perf/README.md#a-passs-cost-submitsmjs-568) has the details). That is how #568 found the shared edge pass was three quarters of ASCII's cost. Try a shader idea this way before a trunk build: a patch needs no build, and #568's trunk build took sixteen minutes. Skipping a pass by its label, on any GPU and without a patch, is #1317.
+- **Heat moves every number.** On the charger the phone reaches thermal status 1--2 within minutes and drops from 120 to 60 Hz. Play five or six rounds, read each page against its own round's control, and keep the thermal state the drivers log with each load.
+- **One run at a time.** The phone is shared between sessions: take the pixel lock first (the README says how), check that nobody is using the phone, and close stray localhost tabs. A driver killed by a timeout leaves its page drawing, and two live tabs made #568's control wander from 28 to 41 ms.
+
+What doesn't work, each tried in #568:
+
+- **Perfetto.** `gpu.renderstages` isn't on a user build: `perfetto --query` lists only `android.gpu.memory`, even after `setprop debug.graphics.gpu.profiler.perfetto 1` and a Chrome restart.
+- **`onSubmittedWorkDone`.** From `queue.submit` to the promise was about 24 ms on every page, the control included. It measures Chrome's latency, not the GPU's work.
+- **Paced frame times.** The phone's default, `fps=auto`, holds a steady rate and hides what a scene costs, and a frame count near the refresh isn't linear in cost.
+
+The measurements are in `docs/design/web.md`: [On a phone (#378)](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#on-a-phone-378), [The pass: the shared edges (#568)](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#the-pass-the-shared-edges-568), [Frame rate on phones (#140)](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#frame-rate-on-phones-140) and [The shipped games on a phone (#134)](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#the-shipped-games-on-a-phone-134). Getting a game onto the phone at all is [Playing on Mobile](playing-on-mobile.md).
 
 ## GPU timing
 
@@ -228,6 +253,16 @@ F2's overlay shows the same under the draw counts, for the frame just ended (the
 ```
 
 A frame that creates objects also leaves a `gpu objects` frame note (`2 buffers, 1 bind group`), so a hitch's line names it beside its cause (`render +60.0 ms (also: gpu objects)`). A count is evidence, not a measured time, so it never takes the blame by itself. A host reads the frame's count with `SceneRenderer::frame_gpu_calls()` and the memory with `gpu_memory()`; `RenderStats` carries both as `gpu_calls` and `gpu_memory`.
+
+#### When the adapter's timestamps read zero
+
+Some GPUs write timestamps that carry no time. On the Pixel 8 Pro (Mali-G715, Chrome) every scope after `Scene` reads exactly zero ticks, frame after frame, and a list of `0.00`s looks like an answer: #378 lost a run reading one. So the timer checks its raw read-backs, a window of 60 frames at a time (`GpuTimer::timestamps`, `RenderStats::gpu_timestamps`): when at least two scopes, and at least half of them, read exactly zero ticks in every frame of a window, the times are called unusable, and each reader says so in place of the list. The F2 overlay's GPU section, `?perf=1`'s panel and the copied line say `GPU pass times unavailable on this adapter` with the count behind it:
+
+```text
+… | worst scripts: … | GPU pass times unavailable on this adapter (5 of 7 scopes read 0 ticks for 60 frames) | 8 draws 90.9K tris
+```
+
+A trace's `gpu` track then holds one mark of that name instead of the zero spans, and its header a `gpu_pass_times` line; `--exit-after` adds a warning under its `[perf] avg GPU` line, since that total counts only the scopes that read. A real pass is never exactly zero ticks for a whole window: an empty one is about 2 µs, and a browser that rounds timestamps to 100 µs still reads a small pass as a step on some frames, so desktop GPUs and browsers keep their lists. Each window is judged afresh. To cost passes on such a GPU, count GPU-bound frames instead (`tools/phone-perf/submits.mjs` at `?scale=1`, #568).
 
 ### From a game
 
@@ -680,6 +715,42 @@ flint-player levels/demo.scene.toml --frame-step 0.0166667 --input-script route.
 Startup hitches never count against `--max-hitches`, and `tooling` hitches count against no gate, so a run validated with `--screenshot-every` isn't failed by its own screenshots. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. The failure line's worst hitch and causes are that class's too. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
 
 **Look inside it.** The log says which phase and which script, and what the engine was doing. To see what happened inside a slow phase, build with the `profile` feature and open the frame in Tracy (above). To see inside a scope, sample it ([When scopes aren't enough](#when-scopes-arent-enough)).
+
+## Load time
+
+The longest hitch in a game is usually a load: the start-up, a scene transition, a chunk streaming in. `--load-report` (and `--perf`, and the web page's `?perf=1`, which print it to the console) gives each load a table of where its time went:
+
+```bash
+flint play levels/tavern_hub.scene.toml --load-report --exit-after 1
+```
+
+```text
+load (transition) showcase_game/levels/tavern_hub.scene.toml: 1272.5 ms to the first frame
+  stage              ms   share  count
+  procgen        1088.7   85.6%      4
+  scripts          75.3    5.9%     15
+  models           39.0    3.1%      1
+  scene read       26.8    2.1%      1
+  first frame      10.1    0.8%      1
+  on_init           6.2    0.5%      1
+  ...
+  not named        21.8    1.7%
+  slowest:    466.8 ms  procgen asset tavern_wood_plank
+              458.7 ms  procgen asset tavern_stone
+              116.2 ms  procgen asset cracked_plaster
+               39.0 ms  model showcase_game/models/YBotWithIdle.glb
+               26.8 ms  scene read tavern_hub.scene.toml
+```
+
+A start-up runs from the process's start to its first frame on screen. A transition runs from the frame that asked for it to the new scene's first frame, and a chunk from its load to the next frame. The stages are what the engine already notes for hitches ([frame notes](#hitches)): every model, texture, pipeline, style and script load, plus the bring-up's own steps (scene read, window, GPU device, audio device, renderer, HUD, teardown, procgen, physics, audio, animation, particles, `on_init`). The first frame is what ran after the bring-up, less what it built on first sight: a pipeline built on its first draw counts as a pipeline. Each stage counts its own time **less what ran inside it**, so a model's row leaves out its textures and the rows add up to the measured time. What no stage named is a row of its own, `not named`. On the desktop it is usually under 2%. On the web it holds the page's fetches and the device's promise, which nothing times. The slowest list is by each item's whole time, so a model there includes its textures.
+
+`flint render` takes the flag too, for a load with no window: its table runs to the first capture, and `--report json` carries it as `load` (`kind`, `name`, `total_ms`, `stages` of `stage`/`ms`/`count`, `unnamed_ms`, `slowest` of `kind`/`name`/`ms`):
+
+```bash
+flint render levels/tavern_hub.scene.toml -o shot.png --load-report --report json
+```
+
+A headless render loads less than the player. It resolves procgen only for living props, opens no sound device and starts no scripts unless `--scripts` is given. So use it to measure what the renderer loads (models, textures, pipelines), and the player for a game's whole start-up. Time in other threads (a hot reload's compile, the frame-capture writer) never shows in a table: a load report is the frame thread's.
 
 ## When scopes aren't enough
 

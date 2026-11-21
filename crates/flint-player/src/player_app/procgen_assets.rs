@@ -176,6 +176,10 @@ pub fn resolve(
 ) -> Vec<(AssetRequest, Outcome)> {
     let mut outcomes = Vec::with_capacity(requests.len());
     for req in requests {
+        // Each asset by name in a load report (#1092)
+        let _span = flint_core::load_report::span(flint_core::load_report::Stage::Procgen, || {
+            req.name.clone()
+        });
         let outcome = resolve_one(req, resolver, sink, mode);
         log_outcome(req, &outcome);
         outcomes.push((req.clone(), outcome));
@@ -573,6 +577,9 @@ pub fn resolve_scene(
     } = core;
     let scene_path = scene_path.as_str();
     let started = web_time::Instant::now();
+    // The load report's procgen stage (#1092): the note below is made by
+    // hand once the time is known, which a load report doesn't hear
+    let _span = flint_core::load_report::span(flint_core::load_report::Stage::Procgen, String::new);
     discover_specs(resolver, &sink.config.project, scene_path);
     #[cfg(feature = "living")]
     super::living_props::resolve(world, sink.config, resolver, living_props, &mut sink, mode);

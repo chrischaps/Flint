@@ -47,6 +47,10 @@ pub struct RenderStats {
     pub gpu_passes: Vec<crate::gpu_timer::GpuPassTime>,
     /// From the frame's first timestamp to its last; 0 when untimed.
     pub gpu_frame_ms: f32,
+    /// Whether the adapter's timestamps read as pass times (#1316): when
+    /// they don't, a reader says so in place of `gpu_passes`.
+    #[serde(skip)]
+    pub gpu_timestamps: crate::gpu_timer::TimestampHealth,
     // Stylize memory (#302): the textures the style chain holds (pings,
     // the display stage's input, styles' own intermediates), made since
     // the last resize.

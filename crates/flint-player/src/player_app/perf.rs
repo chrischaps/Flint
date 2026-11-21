@@ -645,6 +645,10 @@ pub(crate) enum GpuSource {
         passes: Vec<(&'static str, f32)>,
         frame_ms: f32,
     },
+    /// Timestamp queries whose later scopes all read zero (#1316, the
+    /// Pixel 8 Pro's Mali): said, never listed. `why` is
+    /// [`flint_render::TimestampHealth::why`].
+    Unusable { why: String },
 }
 
 /// Under vsync, a GPU busy for less than this share of the wall clock
@@ -748,6 +752,10 @@ fn pixel_share(c: &PerfContext) -> f64 {
 fn count(n: u32) -> String {
     flint_render::format_count(n)
 }
+
+/// What the readout and the copied line say in place of pass times that
+/// read zero (#1316).
+const UNAVAILABLE: &str = flint_render::TIMESTAMPS_UNAVAILABLE;
 
 /// The readout, a line per row; the page sets it as the panel's text.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -895,6 +903,10 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
         GpuSource::Unsupported => {
             line("gpu ms   no timestamp-query here: cpu phases only".to_string())
         }
+        GpuSource::Unusable { why } => {
+            line(format!("gpu ms   {UNAVAILABLE}"));
+            line(format!("  ({why})"));
+        }
         GpuSource::Timed { passes, frame_ms } => {
             let vsync = if c.present.is_some_and(under_vsync) {
                 ", vsync"
@@ -980,6 +992,7 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
     match &c.gpu {
         GpuSource::Off => parts.push("gpu off".into()),
         GpuSource::Unsupported => parts.push("gpu untimed".into()),
+        GpuSource::Unusable { why } => parts.push(format!("{UNAVAILABLE} ({why})")),
         GpuSource::Timed { passes, frame_ms } => parts.push(format!(
             "gpu {frame_ms:.2} ms{}: {}",
             gpu_vsync_note(c.present, *frame_ms, mean_frame_ms(s)),
@@ -1037,6 +1050,8 @@ impl super::PlayerApp {
     /// submissions a frame, so `?perf=cpu` leaves it off.
     pub fn enable_perf(&mut self, gpu: bool) {
         self.stats.perf.show_readout(gpu);
+        // Each load says where its time went too (#1092)
+        self.launch.load_report = true;
         self.core.script.set_timing(true);
     }
 
@@ -1101,6 +1116,8 @@ impl super::PlayerApp {
             GpuSource::Off
         } else if !renderer.gpu_timing() {
             GpuSource::Unsupported
+        } else if let Some(why) = stats.gpu_timestamps.why() {
+            GpuSource::Unusable { why }
         } else {
             GpuSource::Timed {
                 passes: stats.gpu_passes.iter().map(|p| (p.label, p.ms)).collect(),
@@ -1754,6 +1771,45 @@ mod tests {
         };
         let line = summary_line(&s, &c);
         assert!(line.contains("at idle clocks (25% busy"), "{line}");
+    }
+
+    /// The Pixel 8 Pro (#1316): every pass after Scene read 0.00, and #378
+    /// read the list as an answer. Both forms say the times are missing
+    /// and list none of them.
+    #[test]
+    fn unusable_timestamps_are_said_not_listed() {
+        let (s, mut c) = sample();
+        let real_line = summary_line(&s, &c);
+        let real_text = readout(&s, &c);
+        c.gpu = GpuSource::Unusable {
+            why: flint_render::TimestampHealth::Unusable { zero: 5, scopes: 7 }
+                .why()
+                .unwrap(),
+        };
+        let line = summary_line(&s, &c);
+        assert!(
+            line.contains(
+                "| GPU pass times unavailable on this adapter (5 of 7 scopes read 0 ticks for 60 frames) |"
+            ),
+            "{line}"
+        );
+        assert!(
+            !line.contains("Scene 3.10") && !line.contains("gpu 3.90"),
+            "{line}"
+        );
+        let text = readout(&s, &c);
+        assert!(
+            text.contains("gpu ms   GPU pass times unavailable on this adapter\n  (5 of 7"),
+            "{text}"
+        );
+        assert!(!text.contains("timestamp-query ("), "{text}");
+        // Real times are as they were
+        assert!(real_line.contains("gpu 3.90 ms under vsync"), "{real_line}");
+        assert!(real_line.contains("Scene 3.10, SSAO 0.80"), "{real_line}");
+        assert!(
+            real_text.contains("timestamp-query (3.90 a frame, vsync)"),
+            "{real_text}"
+        );
     }
 
     #[test]

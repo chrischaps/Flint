@@ -293,7 +293,7 @@ impl PlayerApp {
                 self.stats.perf.trace.as_deref_mut(),
                 renderer.gpu_timer_mut(),
             ) {
-                trace.tracks.gpu(timer.take_traced());
+                trace.tracks.gpu(timer.take_traced(), timer.timestamps());
             }
             // The GPU time read back this frame, for the frame history
             self.stats.perf.gpu_ms(renderer.take_gpu_frame_ms());
@@ -366,6 +366,8 @@ impl PlayerApp {
             context.queue.present(output);
         }
         let presented = web_time::Instant::now();
+        // A load's first frame is on screen: its table (#1092)
+        self.frame_presented_for_loads();
         self.stats.perf.presented_at(presented);
         self.perf_mark(super::perf::Phase::Present);
         #[cfg(target_arch = "wasm32")]
@@ -485,6 +487,18 @@ impl PlayerApp {
                     "[perf] avg GPU {gpu_ms:.2} ms/frame over {gpu_frames} timed frames{}",
                     super::perf::gpu_vsync_note(present, gpu_ms as f32, avg_ms as f32)
                 );
+                // That total leaves out the scopes that read zero (#1316)
+                let timestamps = self
+                    .scene_renderer
+                    .as_ref()
+                    .map(|r| r.gpu_timestamps())
+                    .unwrap_or_default();
+                if let Some(why) = timestamps.why() {
+                    tracing::warn!(target: "report",
+                        "[perf] {}: {why}, so the GPU total counts only the scopes that read",
+                        flint_render::TIMESTAMPS_UNAVAILABLE
+                    );
+                }
             }
         }
         // The run's hitches (#1079): a mean hides the one long frame. The
@@ -1840,7 +1854,12 @@ fn render_stats_overlay(
             ui.colored_label(egui::Color32::from_gray(170), gpu);
 
             // GPU time per phase (ADR 0108), where the device can time
-            if !stats.gpu_passes.is_empty() {
+            if let (true, Some(why)) = (!stats.gpu_passes.is_empty(), stats.gpu_timestamps.why()) {
+                // Zeros that look like an answer are worse than none (#1316)
+                ui.label(flint_render::TIMESTAMPS_UNAVAILABLE);
+                ui.colored_label(egui::Color32::from_gray(170), format!("  {why}"));
+                ui.separator();
+            } else if !stats.gpu_passes.is_empty() {
                 ui.label(format!("GPU: {:.2}ms", stats.gpu_frame_ms));
                 for pass in &stats.gpu_passes {
                     ui.colored_label(

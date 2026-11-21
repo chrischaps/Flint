@@ -449,6 +449,7 @@ impl ApplicationHandler for PlayerApp {
             // on, so none of them waits on the disk in a frame (#633); a
             // no-op after `--no-hot-reload` (`file_watch::disable`)
             flint_core::file_watch::start();
+            self.window_resumed();
             // First launch — full initialization
             if let Err(e) = self.initialize(event_loop) {
                 tracing::error!("Failed to initialize player: {e:#}");
@@ -643,6 +644,8 @@ impl ApplicationHandler for PlayerApp {
         self.finish_frame_grabs();
         // `--trace FILE`, and any trace still on its way (#1097)
         self.finish_traces();
+        // A load that never reached a frame says how far it got (#1092)
+        self.finish_load_reports();
         self.flush_persistent_store(true, "exit");
     }
 }

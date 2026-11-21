@@ -584,7 +584,11 @@ impl Lookup<'_> {
                         codes::MISSING_ASSET,
                         format!("{} '{}' not found", asset_noun(kinds), reference.name),
                     )
-                    .hint(tried),
+                    .hint(with_builtins(
+                        &reference.name,
+                        &reference.builtins,
+                        tried,
+                    )),
                 )
             }
         }
@@ -649,6 +653,19 @@ impl Lookup<'_> {
         self.held
             .get_or_insert_with(|| HeldAssets::of(project))
             .as_ref()
+    }
+}
+
+/// A miss's hint for a field that also takes names with no file (#1063):
+/// the nearest of them, then all of them, then the paths tried.
+fn with_builtins(name: &str, builtins: &[String], tried: String) -> String {
+    if builtins.is_empty() {
+        return tried;
+    }
+    let listed = format!("built in: {}; {tried}", builtins.join(", "));
+    match diagnostic::did_you_mean(name, builtins.iter().map(String::as_str)) {
+        Some(nearest) => format!("{nearest} {listed}"),
+        None => listed,
     }
 }
 

@@ -729,11 +729,15 @@ impl GameCore {
         // Whether the queue made anything is known only after: timed by
         // hand, noted (#1077) when it did
         let began = frame_notes::listening().then(web_time::Instant::now);
+        // A load's procgen stage too (#1092), forgotten when nothing came
+        let span =
+            flint_core::load_report::span(flint_core::load_report::Stage::Procgen, String::new);
         let completed = self
             .procgen_resolver
             .process_frame(lent.camera.position_array());
         let failures = self.procgen_resolver.take_failures();
         if completed.is_empty() && failures.is_empty() {
+            span.discard();
             return;
         }
         let detail = began.map(|_| procgen_note(&completed, failures.len()));

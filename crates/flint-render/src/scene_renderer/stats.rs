@@ -149,6 +149,7 @@ impl SceneRenderer {
                 .gpu_timer
                 .as_ref()
                 .map_or(0.0, |t| t.timings().frame_ms),
+            gpu_timestamps: self.gpu_timestamps(),
             scene_resolution: self.scene_size().into(),
             style_targets: style_memory.count,
             style_target_bytes: style_memory.bytes,
@@ -236,6 +237,15 @@ impl SceneRenderer {
     /// Whether the frame's phases are being timed.
     pub fn gpu_timing(&self) -> bool {
         self.gpu_timer.is_some()
+    }
+
+    /// Whether the timer's timestamps read as pass times (#1316);
+    /// `Unchecked` while timing is off.
+    pub fn gpu_timestamps(&self) -> crate::gpu_timer::TimestampHealth {
+        self.gpu_timer
+            .as_ref()
+            .map(|t| t.timestamps())
+            .unwrap_or_default()
     }
 
     /// The newest frame's GPU busy time read back since the last call, ms,
