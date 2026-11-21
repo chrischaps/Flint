@@ -563,7 +563,7 @@ impl SchemaRegistry {
     /// repository, or the `engine/` subtree a game carries). The engine's own
     /// files are rewritten rather than warned about (ADR 0115 decision 3)
     /// and a test holds them, so a game is told only about what it can fix.
-    /// What `flint validate` prints.
+    /// What `flint validate` prints, and the player says once (#1064).
     pub fn game_lints(&self) -> Vec<Diagnostic> {
         self.lints
             .iter()

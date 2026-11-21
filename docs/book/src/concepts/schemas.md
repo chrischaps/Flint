@@ -205,7 +205,14 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `two-forms` | warning | a value written in two forms of which one is read, such as a spot's `inner_angle` (radians) beside `inner_angle_deg`; the degrees win. Raised while the game runs |
 | `shadow-cap` | warning | a light's `cast_shadows` the renderer can't honour: a second spot asking (one spot casts, the first by name), a point light asking (none casts yet), or the strongest directional light saying `false` (it casts the cascades whatever it says). The light still lights. Raised while the game runs ([Lighting](lighting.md#spot-light-shadows)) |
 
-`old-type-name`, `unknown-type`, `ignored-schema-key` and `bad-panel` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
+`old-type-name`, `unknown-type`, `ignored-schema-key` and `bad-panel` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. The player says them too, once, when it first reads the schemas (`flint play` and `flint-player` at start, and a transition only for a directory it had not read), as the summary a scene load prints:
+
+```text
+WARN schemas/components/lantern.toml: 1 warning (the full list: flint check)
+WARN   warning[old-type-name] lantern.brightness: `float` is an old spelling of `f32` (write type = "f32"; `float` still loads)
+```
+
+A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
 
 `flint check` adds the codes of the project around the scene:
 

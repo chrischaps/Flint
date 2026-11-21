@@ -716,13 +716,30 @@ pub fn counts_line(diagnostics: &[Diagnostic]) -> String {
 /// left out. Empty when there is nothing to say. `scene` names what was
 /// loaded.
 pub fn summary_lines(scene: &str, diagnostics: &[Diagnostic], limit: usize) -> Vec<String> {
+    summary_lines_of(
+        scene,
+        &format!("flint validate {scene}"),
+        diagnostics,
+        limit,
+    )
+}
+
+/// [`summary_lines`] about something other than a scene (a schema file the
+/// player read, #1064): `subject` names it, and `full_list` is the command
+/// that prints every diagnostic of it.
+pub fn summary_lines_of(
+    subject: &str,
+    full_list: &str,
+    diagnostics: &[Diagnostic],
+    limit: usize,
+) -> Vec<String> {
     if diagnostics.is_empty() {
         return Vec::new();
     }
     let mut ordered = diagnostics.to_vec();
     sort_errors_first(&mut ordered);
     let mut lines = vec![format!(
-        "{scene}: {} (the full list: flint validate {scene})",
+        "{subject}: {} (the full list: {full_list})",
         counts_line(diagnostics)
     )];
     for d in ordered.iter().take(limit) {
@@ -745,6 +762,13 @@ pub const SUMMARY_LIMIT: usize = 5;
 /// what every scene load does with what it found. The scene still loads.
 pub fn log_summary(scene: &str, diagnostics: &[Diagnostic]) {
     for line in summary_lines(scene, diagnostics, SUMMARY_LIMIT) {
+        tracing::warn!("{line}");
+    }
+}
+
+/// [`summary_lines_of`] through `tracing::warn!`, as [`log_summary`].
+pub fn log_summary_of(subject: &str, full_list: &str, diagnostics: &[Diagnostic]) {
+    for line in summary_lines_of(subject, full_list, diagnostics, SUMMARY_LIMIT) {
         tracing::warn!("{line}");
     }
 }
@@ -1055,6 +1079,13 @@ mod tests {
         assert_eq!(lines[2], "  warning[unknown-field]: w0");
         assert_eq!(lines[4], "  ... and 5 more");
         assert!(summary_lines("a", &[], 3).is_empty());
+        // Of a schema file (#1064): the same lines, another pointer
+        let of = summary_lines_of("schemas/components/a.toml", "flint check", &list, 3);
+        assert_eq!(
+            of[0],
+            "schemas/components/a.toml: 1 error, 7 warnings (the full list: flint check)"
+        );
+        assert_eq!(of[1..], lines[1..]);
     }
 
     #[test]
