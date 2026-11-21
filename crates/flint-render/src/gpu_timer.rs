@@ -28,6 +28,10 @@ pub const MAX_SCOPES: u32 = 32;
 /// timed, so the figures come from at most every frame but never stall.
 const READBACKS: usize = 3;
 
+/// Frames [`GpuTimer::tally`] keeps at most: an hour at 60 fps, about
+/// 80 MB at twenty scopes a frame.
+pub const TALLY_FRAMES: usize = 216_000;
+
 /// How much of each new frame's time goes into the smoothed figure.
 const SMOOTHING: f32 = 0.1;
 
@@ -202,6 +206,8 @@ struct Readback {
     /// Whether recording was on when this frame was resolved, so a frame
     /// drawn before [`GpuTimer::record`] and read back after isn't kept.
     record: bool,
+    /// The same for the run's tally ([`GpuTimer::tally`]).
+    tally: bool,
     /// The host's tag for the frame, and whether tracing was on when it
     /// was resolved.
     tag: u64,
@@ -225,6 +231,10 @@ pub struct GpuTimer {
     /// Every frame read back, raw, while [`record`](Self::record) is on
     /// (#292); `None` keeps nothing, so a long-running player doesn't grow.
     recorded: Option<Vec<GpuTimings>>,
+    /// Every frame read back while [`tally`](Self::tally) is on: a whole
+    /// run's, for a perf report (#1093). Apart from `recorded`, which a
+    /// frame capture turns on and off around its one frame.
+    tallied: Option<Vec<GpuTimings>>,
     /// The busy time of the last frame read back, unsmoothed, until
     /// [`take_latest_frame_ms`](Self::take_latest_frame_ms) takes it.
     latest_ms: Option<f32>,
@@ -274,6 +284,7 @@ impl GpuTimer {
                 count: 0,
                 in_flight: false,
                 record: false,
+                tally: false,
                 tag: 0,
                 trace: false,
                 state: Default::default(),
@@ -288,6 +299,7 @@ impl GpuTimer {
             timings: GpuTimings::default(),
             resolved: None,
             recorded: None,
+            tallied: None,
             latest_ms: None,
             frame_tag: 0,
             traced: None,
@@ -300,6 +312,24 @@ impl GpuTimer {
     /// spread, which [`spread`] makes of [`recorded`](Self::recorded).
     pub fn record(&mut self, on: bool) {
         self.recorded = on.then(Vec::new);
+    }
+
+    /// Keep every frame's raw times from now on for the run's tally, or
+    /// stop and drop them (#1093). Apart from [`record`](Self::record), so a
+    /// frame capture in the middle of a run neither clears nor joins it. At
+    /// most [`TALLY_FRAMES`] are kept; the frames after are left out.
+    pub fn tally(&mut self, on: bool) {
+        self.tallied = on.then(Vec::new);
+    }
+
+    /// Whether the run's tally is on.
+    pub fn tallying(&self) -> bool {
+        self.tallied.is_some()
+    }
+
+    /// The frames [`tally`](Self::tally) kept, oldest first.
+    pub fn tallied(&self) -> &[GpuTimings] {
+        self.tallied.as_deref().unwrap_or(&[])
     }
 
     /// Keep each frame read back from now on as a [`TracedGpuFrame`], for a
@@ -450,6 +480,7 @@ impl GpuTimer {
         readback.count = count;
         readback.in_flight = true;
         readback.record = self.recorded.is_some();
+        readback.tally = self.tallied.is_some();
         readback.tag = self.frame_tag;
         readback.trace = self.traced.is_some();
         readback.state.store(0, Ordering::Release);
@@ -530,6 +561,11 @@ impl GpuTimer {
                     self.latest_ms = Some(frame.frame_ms);
                     if let (Some(recorded), true) = (&mut self.recorded, readback.record) {
                         recorded.push(frame.clone());
+                    }
+                    if let (Some(tallied), true) = (&mut self.tallied, readback.tally) {
+                        if tallied.len() < TALLY_FRAMES {
+                            tallied.push(frame.clone());
+                        }
                     }
                     smooth(&mut self.timings, frame);
                 }
@@ -645,6 +681,28 @@ impl PassSpread {
     }
 }
 
+impl PassSpread {
+    /// The pass as JSON (#1093), the shape every Flint perf file shares
+    /// (`flint render --gpu-time-json`, `flint-player --perf-report`):
+    /// `label`, `frames`, `min_ms`, `p50_ms`, `p90_ms`, `max_ms`, `mean_ms`,
+    /// and with `samples` each frame's time as `samples_ms`.
+    pub fn to_json(&self, samples: bool) -> serde_json::Value {
+        let mut v = serde_json::json!({
+            "label": self.name(),
+            "frames": self.samples.len(),
+            "min_ms": self.min,
+            "p50_ms": self.p50,
+            "p90_ms": self.p90,
+            "max_ms": self.max,
+            "mean_ms": self.mean,
+        });
+        if samples {
+            v["samples_ms"] = serde_json::json!(self.samples);
+        }
+        v
+    }
+}
+
 /// Every scope's [`PassSpread`] over a run of frames, and the frame total's.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GpuSpread {
@@ -656,6 +714,19 @@ pub struct GpuSpread {
     pub passes: Vec<PassSpread>,
     /// Each frame's total ([`GpuTimings::frame_ms`]); `None` with no frames.
     pub frame: Option<PassSpread>,
+}
+
+impl GpuSpread {
+    /// The spread as JSON (#1093): `frames_kept`, `frames_dropped`,
+    /// `passes` (each [`PassSpread::to_json`]) and `frame`, the total's.
+    pub fn to_json(&self, samples: bool) -> serde_json::Value {
+        serde_json::json!({
+            "frames_kept": self.frames,
+            "frames_dropped": self.dropped,
+            "passes": self.passes.iter().map(|p| p.to_json(samples)).collect::<Vec<_>>(),
+            "frame": self.frame.as_ref().map(|f| f.to_json(samples)),
+        })
+    }
 }
 
 /// The spread of `frames` (raw, from [`GpuTimer::recorded`]) after leaving

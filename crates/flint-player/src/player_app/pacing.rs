@@ -43,6 +43,8 @@ pub(crate) struct Spread {
     pub p90: f32,
     pub p99: f32,
     pub max: f32,
+    /// The mean of the series (#1093's report; the line doesn't print it)
+    pub mean: f32,
     pub lumps: usize,
     pub frames: usize,
 }
@@ -61,6 +63,7 @@ impl Spread {
             p90: at(0.9),
             p99: at(0.99),
             max: sorted[sorted.len() - 1],
+            mean: (ms.iter().map(|&m| m as f64).sum::<f64>() / ms.len() as f64) as f32,
             lumps: ms.iter().filter(|&&m| m > p50 * 1.5).count(),
             frames: ms.len(),
         })

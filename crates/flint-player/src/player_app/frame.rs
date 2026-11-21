@@ -156,6 +156,7 @@ impl PlayerApp {
         if self.stats.view == super::StatsView::Full
             || (self.stats.perf.readout && self.stats.perf.gpu_wanted)
             || self.stats.perf.trace.is_some()
+            || self.stats.report.is_some()
         {
             if !renderer.gpu_timing() {
                 self.stats.gpu_timing =
@@ -377,6 +378,16 @@ impl PlayerApp {
 
         if let Some(exit_after) = self.capture.exit_after {
             if self.core.clock.total_time >= super::PERF_SKIP_SECS {
+                // `--perf-report`'s GPU passes: every frame from here (#1093)
+                if self.stats.report.is_some() {
+                    if let Some(timer) =
+                        self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut())
+                    {
+                        if !timer.tallying() {
+                            timer.tally(true);
+                        }
+                    }
+                }
                 self.capture.perf_frames += 1;
                 self.capture.perf_time += self.core.clock.delta_time;
                 self.capture
@@ -412,9 +423,10 @@ impl PlayerApp {
     pub(super) fn print_exit_report(&mut self) {
         // Headless perf figure: average frame time over the run, so a
         // scene change can be A/B'd without watching the overlay.
-        let frames = self.capture.perf_frames;
-        if frames > 0 {
-            let avg_ms = self.capture.perf_time * 1000.0 / frames as f64;
+        // The lines and `--perf-report`'s file both come from these (#1093)
+        let numbers = self.exit_numbers();
+        if let Some(n) = &numbers {
+            let (frames, avg_ms) = (n.frames, n.mean_ms());
             // The run's figures as fields too, for `--log-format json` (#716)
             tracing::info!(
                 target: "report",
@@ -422,49 +434,28 @@ impl PlayerApp {
                 avg_ms = (avg_ms * 100.0).round() / 100.0,
                 fps = (10_000.0 / avg_ms).round() / 10.0,
                 "[perf] {frames} frames over {:.2} s after t={:.0}: avg {avg_ms:.2} ms/frame ({:.1} fps)",
-                self.capture.perf_time,
+                n.secs,
                 super::PERF_SKIP_SECS,
                 1000.0 / avg_ms
             );
-            // How even they were: a mean hides bursts (#406).
-            if let Some(dt) = self.capture.perf_pacing.dt() {
-                tracing::info!(target: "report", "[perf] dt: {dt}");
+            // How even they were: a mean hides bursts (#406); the F2
+            // overlay's main figures, averaged, so a capture can compare
+            // draw counts and culling headlessly (H9); the GPU's time when
+            // the frames were timed (--stats, ADR 0108), which under vsync
+            // reads high on an idle GPU's clocks (#380)
+            let present = self
+                .render_context
+                .as_ref()
+                .map(|c| c.present_mode_in_use());
+            let note = n.gpu.map_or(String::new(), |g| {
+                super::perf::gpu_vsync_note(present, g.mean_ms as f32, avg_ms as f32)
+            });
+            for line in n.lines(&note) {
+                tracing::info!(target: "report", "{line}");
             }
-            if let Some(present) = self.capture.perf_pacing.present() {
-                tracing::info!(target: "report", "[perf] present to present: {present}");
-            }
-            // The F2 overlay's main figures, averaged, so a capture
-            // can compare draw counts and culling headlessly (H9).
-            let avg = |sum: u64| sum as f64 / frames as f64;
-            tracing::info!(target: "report",
-                "[perf] avg per frame: {:.0} draw calls ({:.0} entity draws, {:.0} culled, {:.0} of them by LOD), {:.0} triangles, {:.0} in shadows",
-                avg(self.capture.perf_draws),
-                avg(self.capture.perf_entity_draws),
-                avg(self.capture.perf_culled),
-                avg(self.capture.perf_lod_culled),
-                avg(self.capture.perf_triangles),
-                avg(self.capture.perf_shadow_triangles)
-            );
-            // GPU time, when the frames were timed (--stats, ADR 0108).
-            let gpu_frames = self.capture.perf_gpu_frames;
-            if gpu_frames > 0 {
-                let gpu_ms = self.capture.perf_gpu_ms / gpu_frames as f64;
-                // Under vsync an idle GPU clocks down and reads high (#380).
-                let present = self
-                    .render_context
-                    .as_ref()
-                    .map(|c| c.present_mode_in_use());
-                tracing::info!(target: "report",
-                    "[perf] avg GPU {gpu_ms:.2} ms/frame over {gpu_frames} timed frames{}",
-                    super::perf::gpu_vsync_note(present, gpu_ms as f32, avg_ms as f32)
-                );
-                // That total leaves out the scopes that read zero (#1316)
-                let timestamps = self
-                    .scene_renderer
-                    .as_ref()
-                    .map(|r| r.gpu_timestamps())
-                    .unwrap_or_default();
-                if let Some(why) = timestamps.why() {
+            // That GPU total leaves out the scopes that read zero (#1316)
+            if n.gpu.is_some() {
+                if let Some(why) = self.gpu_timestamps_unusable() {
                     tracing::warn!(target: "report",
                         "[perf] {}: {why}, so the GPU total counts only the scopes that read",
                         flint_render::TIMESTAMPS_UNAVAILABLE
@@ -481,6 +472,8 @@ impl PlayerApp {
                 tracing::info!(target: "report", "{line}");
             }
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.write_perf_report(numbers.as_ref());
         for line in self.subsystem_report() {
             tracing::info!(target: "report", "{line}");
         }
@@ -618,6 +611,12 @@ impl PlayerApp {
                 .clock_ticked(super::frame_history::ClockSample::of(&self.core.clock));
             self.stats.perf.game_time(self.core.clock.total_time);
             found = self.stats.hitches.observe(&self.stats.perf);
+            // `--perf-report`'s phase and script totals (#1093)
+            if let Some(report) = &mut self.stats.report {
+                report
+                    .totals
+                    .add_closed(&self.stats.perf, super::PERF_SKIP_SECS);
+            }
             // The hitch log, the exit report's counts and the gate (#1079)
             self.stats
                 .watch
