@@ -1172,7 +1172,7 @@ impl Editor for GenPreviewApp {
                 if let Some(renderer) = &mut self.scene_renderer {
                     let next = renderer.debug_state().mode.next();
                     renderer.set_debug_mode(next);
-                    println!("Debug mode: {}", next.label());
+                    tracing::info!(target: "viewer", "Debug mode: {}", next.label());
                     if let (Some(world), Some(context)) = (&self.last_world, &self.render_context) {
                         renderer.prepare(
                             &context.device,
@@ -1191,7 +1191,7 @@ impl Editor for GenPreviewApp {
                         DebugMode::WireframeOverlay
                     };
                     renderer.set_debug_mode(mode);
-                    println!("Debug mode: {}", mode.label());
+                    tracing::info!(target: "viewer", "Debug mode: {}", mode.label());
                     if let (Some(world), Some(context)) = (&self.last_world, &self.render_context) {
                         renderer.prepare(
                             &context.device,
@@ -1205,7 +1205,7 @@ impl Editor for GenPreviewApp {
             PhysicalKey::Code(KeyCode::F3) => {
                 if let Some(renderer) = &mut self.scene_renderer {
                     let on = renderer.toggle_normal_arrows();
-                    println!("Normal arrows: {}", if on { "ON" } else { "OFF" });
+                    tracing::info!(target: "viewer", "Normal arrows: {}", if on { "ON" } else { "OFF" });
                     if let (Some(world), Some(context)) = (&self.last_world, &self.render_context) {
                         renderer.prepare(
                             &context.device,
@@ -1219,7 +1219,7 @@ impl Editor for GenPreviewApp {
             PhysicalKey::Code(KeyCode::F4) => {
                 if let Some(renderer) = &mut self.scene_renderer {
                     let on = renderer.toggle_skeleton_overlay();
-                    println!("Skeleton overlay: {}", if on { "ON" } else { "OFF" });
+                    tracing::info!(target: "viewer", "Skeleton overlay: {}", if on { "ON" } else { "OFF" });
                 }
                 self.update_skeleton_overlay();
             }

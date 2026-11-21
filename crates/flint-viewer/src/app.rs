@@ -114,7 +114,7 @@ pub fn load_schemas(
 ) -> Result<(SchemaRegistry, ConstraintRegistry, SchemaDirs)> {
     let (registry, dirs) = SchemaRegistry::resolve(Some(Path::new(scene_path)), schemas)?;
     if dirs.dirs.is_empty() {
-        eprintln!("Warning: No schemas directories found");
+        tracing::warn!(target: "viewer", "No schemas directories found");
     }
     let mut constraints = ConstraintRegistry::new();
     for dir in &dirs.dirs {
@@ -124,7 +124,7 @@ pub fn load_schemas(
         // shows it in the status panel as an error
         match ConstraintRegistry::load_from_directory(dir) {
             Ok(loaded) => constraints.extend(loaded),
-            Err(e) => eprintln!("Warning: constraints not loaded: {e}"),
+            Err(e) => tracing::warn!(target: "viewer", "Constraints not loaded: {e}"),
         }
     }
     Ok((registry, constraints, dirs))
@@ -216,9 +216,8 @@ pub fn viewer(
     // Living props' tables: checked, and the preset [wooze] names filled in (#686)
     flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))
         .with_context(|| load_failed(scene_path))?;
-
-    eprintln!("Loaded scene: {}", scene_file.scene.name);
-    eprintln!("Entities: {}", world.entity_count());
+    // Its entities and files are said in one line once its models are
+    // loaded too (`say_loaded`, at the end of `initialize`)
 
     // Parse the scene file as an editable document for structure-preserving saves
     let scene_doc = SceneDocument::from_file(scene_path).ok();
@@ -240,7 +239,7 @@ pub fn viewer(
     }));
 
     let watch = watch.then(|| {
-        eprintln!("Watching for changes in scene and related assets...");
+        tracing::info!(target: "viewer", "Watching the scene and its files for changes");
         SceneWatch::new(scene_path, &schema_dirs.dirs)
     });
 
@@ -264,8 +263,6 @@ pub fn run_with_world(
     inspector: bool,
 ) -> Result<()> {
     let constraint_registry = ConstraintRegistry::default();
-
-    eprintln!("Entities: {}", world.entity_count());
 
     let state = Arc::new(Mutex::new(ViewerState {
         world,
@@ -317,9 +314,6 @@ pub fn track_editor(
     flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))
         .with_context(|| load_failed(scene_path))?;
 
-    eprintln!("Loaded scene: {}", scene_file.scene.name);
-    eprintln!("Entities: {}", world.entity_count());
-
     let state = Arc::new(Mutex::new(ViewerState {
         world,
         registry,
@@ -338,7 +332,7 @@ pub fn track_editor(
     }));
 
     let watch = watch.then(|| {
-        eprintln!("Watching for changes...");
+        tracing::info!(target: "viewer", "Watching the scene and its files for changes");
         SceneWatch::new(scene_path, &schema_dirs.dirs)
     });
 
@@ -493,6 +487,32 @@ pub struct ViewerApp {
     scene_binding: Option<SceneBinding>,
     /// What `--watch` asks the host to watch
     watch: Option<SceneWatch>,
+    /// How a load is counted and said (#1164)
+    load_summary: LoadSummary,
+}
+
+/// How the viewer says a scene came up (#1164). The viewer can't reach the
+/// player's log, so `flint edit` hands it the player's two calls
+/// (`flint_player::logging::begin_load_count` and `say_loaded`): one line
+/// for what the load read, how long it took and what went wrong on the way.
+/// The default says the entities alone.
+#[derive(Clone, Copy)]
+pub struct LoadSummary {
+    /// A load starts: count afresh (each hot reload)
+    pub begin: fn(),
+    /// The scene is up: say it, the scene as `flint_core::project::shown`
+    /// names its file
+    pub say: fn(scene: &str, entities: usize),
+}
+
+impl Default for LoadSummary {
+    fn default() -> Self {
+        fn begin() {}
+        fn say(scene: &str, entities: usize) {
+            tracing::info!(target: "load", scene = %scene, entities, "Loaded {scene}: {entities} entities");
+        }
+        Self { begin, say }
+    }
 }
 
 /// The style settings a scene authors: its `[post_process.styles]`, or
@@ -565,7 +585,7 @@ fn stage_scene(
 fn scene_binding(scene_path: &str) -> SceneBinding {
     let binding = SceneBinding::for_scene(Path::new(scene_path));
     for message in binding.style_messages() {
-        eprintln!("Warning: {message}");
+        tracing::warn!(target: "viewer", "{message}");
     }
     binding
 }
@@ -627,7 +647,7 @@ fn with_flags(
     styles: &flint_render::stylize::StyleRegistry,
 ) -> PostProcessConfig {
     for e in flint_render::stylize::apply_style_specs(&mut config, specs, styles) {
-        eprintln!("Warning: {e}");
+        tracing::warn!(target: "viewer", "{e}");
     }
     if let Some(rate) = motion_hold {
         config.motion_hold = rate;
@@ -649,7 +669,7 @@ fn with_look(
     match flint_render::look::resolve(&base, picked.as_deref(), scene_path) {
         Ok(out) => Some(out),
         Err(e) => {
-            eprintln!("look: {e}");
+            tracing::warn!(target: "viewer", "look: {e}");
             Some(flint_render::look::resolve_scene(&base, scene_path))
         }
     }
@@ -740,7 +760,21 @@ impl ViewerApp {
             frame_dt: 1.0 / 60.0,
             scene_binding: None,
             watch: None,
+            load_summary: LoadSummary::default(),
         }
+    }
+
+    /// Say each load's summary through `summary` (#1164): `flint edit`
+    /// hands over the player's, so the line is the one `flint play` says.
+    pub fn set_load_summary(&mut self, summary: LoadSummary) {
+        self.load_summary = summary;
+    }
+
+    /// The scene is up (a load or a hot reload): one `load` line
+    fn say_loaded(&self) {
+        let state = self.state.lock().unwrap();
+        let scene = flint_core::project::shown(Path::new(&state.scene_path));
+        (self.load_summary.say)(&scene, state.world.entity_count());
     }
 
     /// The track editor: the viewer with the inspector open and a spline
@@ -875,7 +909,8 @@ impl ViewerApp {
                     self.motion_hold,
                     scene_renderer.styles(),
                 ));
-                eprintln!(
+                tracing::info!(
+                    target: "viewer",
                     "Scene [post_process] applied (F4 > Authored post toggles scene/default)"
                 );
             } else if !self.style_specs.is_empty() || self.motion_hold.is_some() {
@@ -888,10 +923,13 @@ impl ViewerApp {
                 ));
             }
             if !self.style_specs.is_empty() {
-                eprintln!("--style applied: {}", self.style_specs.join(" "));
+                tracing::info!(target: "viewer", "--style applied: {}", self.style_specs.join(" "));
             }
             if let Some(rate) = self.motion_hold {
-                eprintln!("--motion-hold applied: the whole frame drawn {rate} times a second");
+                tracing::info!(
+                    target: "viewer",
+                    "--motion-hold applied: the whole frame drawn {rate} times a second"
+                );
             }
             // The F4 style editor marks edits against these (#268)
             self.render_panel.set_authored_styles(Some(authored_styles(
@@ -907,7 +945,7 @@ impl ViewerApp {
                 state.scene_post.as_ref().and_then(|d| d.look.as_deref()),
             );
             if let Some(look) = state.scene_post.as_ref().and_then(|d| d.look.as_deref()) {
-                eprintln!("Scene look: {look} (F4 -> Look switches it)");
+                tracing::info!(target: "viewer", "Scene look: {look} (F4 -> Look switches it)");
             }
             // ...and writes a style back into the file (#364)
             self.render_panel.set_scene_file(
@@ -930,6 +968,9 @@ impl ViewerApp {
 
         self.render_context = Some(render_context);
         self.scene_renderer = Some(scene_renderer);
+
+        // Its models, textures and particles are in: the load's one line
+        self.say_loaded();
 
         Ok(())
     }
@@ -1231,7 +1272,9 @@ impl ViewerApp {
         };
         let scene_post = self.state.lock().unwrap().scene_post.clone();
         match scene_post {
-            None => println!("Scene has no [post_process] block — nothing to toggle"),
+            None => {
+                tracing::info!(target: "viewer", "Scene has no [post_process] block — nothing to toggle")
+            }
             Some(def) if !self.scene_post_enabled => {
                 renderer.set_post_process_config(with_flags(
                     post_process_config_from_def(&def, renderer.styles()),
@@ -1240,7 +1283,7 @@ impl ViewerApp {
                     renderer.styles(),
                 ));
                 self.scene_post_enabled = true;
-                println!("Scene post-process: ON (authored)");
+                tracing::info!(target: "viewer", "Scene post-process: ON (authored)");
             }
             Some(_) => {
                 if let Some(default) = &self.default_post_config {
@@ -1252,7 +1295,7 @@ impl ViewerApp {
                     ));
                 }
                 self.scene_post_enabled = false;
-                println!("Scene post-process: OFF (viewer default)");
+                tracing::info!(target: "viewer", "Scene post-process: OFF (viewer default)");
             }
         }
     }
@@ -1271,15 +1314,18 @@ impl ViewerApp {
                 self.render_panel.pp.dof_strength = 0.5;
             }
             match self.dof_focus_entity {
-                Some(_) => println!(
+                Some(_) => tracing::info!(
+                    target: "viewer",
                     "DoF follow: ON — focus tracks the last selected entity \
                      (tune strength/range in the Rendering & Effects menu)"
                 ),
-                None => println!("DoF follow: ON — select an entity to set the focus target"),
+                None => {
+                    tracing::info!(target: "viewer", "DoF follow: ON — select an entity to set the focus target")
+                }
             }
         } else {
             self.restore_base_dof();
-            println!("DoF follow: OFF (base post-process DoF restored)");
+            tracing::info!(target: "viewer", "DoF follow: OFF (base post-process DoF restored)");
         }
     }
 
@@ -1328,11 +1374,11 @@ impl ViewerApp {
                             Some(&def),
                             renderer.styles(),
                         )));
-                        println!("Look: {}", rp.look.as_deref().unwrap_or("none"));
+                        tracing::info!(target: "viewer", "Look: {}", rp.look.as_deref().unwrap_or("none"));
                         state.scene_post = Some(def);
                         self.scene_post_enabled = true;
                     }
-                    Some(Err(e)) => eprintln!("look: {e}"),
+                    Some(Err(e)) => tracing::warn!(target: "viewer", "look: {e}"),
                     None => {}
                 }
             }
@@ -1971,7 +2017,7 @@ impl ViewerApp {
             }
             drop(st);
             self.refresh_dirty();
-            println!("Undo: {}", cmd.description);
+            tracing::info!(target: "viewer", "Undo: {}", cmd.description);
         }
     }
 
@@ -1990,7 +2036,7 @@ impl ViewerApp {
             }
             drop(st);
             self.refresh_dirty();
-            println!("Redo: {}", cmd.description);
+            tracing::info!(target: "viewer", "Redo: {}", cmd.description);
         }
     }
 
@@ -2040,7 +2086,7 @@ impl ViewerApp {
                 if !plan.written.is_empty() {
                     self.last_save_time = Some(Instant::now());
                     self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
-                    println!("Saved scene to {}", scene_path);
+                    tracing::info!(target: "viewer", "Saved scene to {}", scene_path);
                     self.log_edits(&plan, &scene_path);
                 }
                 let message = match plan.failed.first() {
@@ -2180,7 +2226,7 @@ impl ViewerApp {
                 None => Default::default(),
             };
             for message in &reload.messages {
-                eprintln!("Warning: {message}");
+                tracing::warn!(target: "viewer", "{message}");
             }
             needs_reload |= reload.changed();
         }
@@ -2190,6 +2236,8 @@ impl ViewerApp {
                 let mut state = self.state.lock().unwrap();
                 state.needs_reload = false;
             }
+            // The reload's summary holds what it read and raised alone
+            (self.load_summary.begin)();
             // The first reload after a Commit to scene is its own (#516)
             let own_commit = self
                 .own_commit_until
@@ -2211,7 +2259,6 @@ impl ViewerApp {
 
             match reload_result {
                 Ok((new_world, scene_file)) => {
-                    println!("Reloaded scene: {}", scene_file.scene.name);
                     // Its entities are new: the field's clocks start over
                     self.shallow_wooze = Default::default();
                     self.grass_wooze = Default::default();
@@ -2230,7 +2277,8 @@ impl ViewerApp {
                         // human's steps elsewhere to undo
                         let dropped = self.undo_stack.carry_over(&state.world, &new_world);
                         if dropped > 0 {
-                            println!(
+                            tracing::info!(
+                                target: "viewer",
                                 "Undo: {dropped} step(s) dropped, the reloaded file changed what they edited"
                             );
                         }
@@ -2304,7 +2352,7 @@ impl ViewerApp {
                         // would throw away every F4 tweak never written
                         // anywhere (bloom, fog, SSAO, another style's).
                         if own_commit {
-                            println!("Kept the F4 post-process: the reload was its own commit's");
+                            tracing::info!(target: "viewer", "Kept the F4 post-process: the reload was its own commit's");
                         } else if self.scene_post_enabled {
                             // --style keeps winning over the reloaded file (#328)
                             if let Some(def) = &state.scene_post {
@@ -2349,6 +2397,7 @@ impl ViewerApp {
                         let mut state = self.state.lock().unwrap();
                         state.scene_doc = SceneDocument::from_file(&scene_path).ok();
                     }
+                    self.say_loaded();
                 }
                 Err(e) => {
                     tracing::error!(
@@ -2584,7 +2633,8 @@ impl Editor for ViewerApp {
                         match code {
                             KeyCode::Tab if self.modifiers.is_empty() => {
                                 self.show_inspector = !self.show_inspector;
-                                println!(
+                                tracing::info!(
+                                    target: "viewer",
                                     "Inspector: {}",
                                     if self.show_inspector { "ON" } else { "OFF" }
                                 );
@@ -2691,7 +2741,7 @@ impl Editor for ViewerApp {
                     PhysicalKey::Code(KeyCode::F3) => {
                         if let Some(renderer) = &mut self.scene_renderer {
                             let on = renderer.toggle_normal_arrows();
-                            println!("Normal arrows: {}", if on { "ON" } else { "OFF" });
+                            tracing::info!(target: "viewer", "Normal arrows: {}", if on { "ON" } else { "OFF" });
                         }
                     }
                     // Rendering & Effects menu (ADR 0053): the one home

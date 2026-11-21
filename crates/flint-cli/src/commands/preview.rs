@@ -263,7 +263,8 @@ fn attach_sequence(
             .cloned()
             .unwrap_or(toml::Value::Table(Default::default())),
     };
-    crate::output::say!(
+    tracing::info!(
+        target: "viewer",
         "Sequence '{}': {:.2}s, {} events",
         ui.name,
         ui.duration,
@@ -648,7 +649,8 @@ fn register_animation_data(
                 }
                 for imported_clip in &import_result.skeletal_clips {
                     let clip = SkeletalClip::from_imported(imported_clip);
-                    crate::output::say!(
+                    tracing::info!(
+                        target: "viewer",
                         "  Skeletal clip: {} ({:.1}s, {} tracks)",
                         clip.name,
                         clip.duration,
@@ -676,7 +678,8 @@ fn register_animation_data(
         if let Some(ref import_result) = loaded.import_result {
             for imported_clip in &import_result.node_clips {
                 let clip = NodeClip::from_imported(imported_clip);
-                crate::output::say!(
+                tracing::info!(
+                    target: "viewer",
                     "  Node clip: {} ({:.1}s, {} tracks)",
                     clip.name,
                     clip.duration,
@@ -1051,16 +1054,19 @@ impl PreviewApp {
         self.apply_motion_hold();
 
         if let Some(info) = &self.anim_info {
-            crate::output::say!(
+            tracing::info!(
+                target: "viewer",
                 "Animation: {} clip(s) found — {}",
                 info.clip_names.len(),
                 info.clip_names.join(", ")
             );
-            crate::output::say!(
+            tracing::info!(
+                target: "viewer",
                 "  Tab=toggle UI  P=play/pause  ,/.=prev/next clip  +/-=speed  0=reset speed"
             );
             if self.args.sequence.is_some() {
-                crate::output::say!(
+                tracing::info!(
+                    target: "viewer",
                     "  R=restart sequence  Home=seek to 0  (Loop checkbox / --sequence-loop)"
                 );
             }
@@ -1123,7 +1129,8 @@ impl PreviewApp {
                         entity_id,
                         anim_time as f64,
                     );
-                    crate::output::say!(
+                    tracing::info!(
+                        target: "viewer",
                         "Sampled sequence '{}' at t={:.3}s ({} events fired)",
                         seq.name,
                         anim_time,
@@ -1137,7 +1144,7 @@ impl PreviewApp {
                         anim_time as f64,
                     );
                 }
-                crate::output::say!("Sampled animation at t={:.3}s", anim_time);
+                tracing::info!(target: "viewer", "Sampled animation at t={:.3}s", anim_time);
             }
 
             // Upload bone matrices
@@ -1306,9 +1313,10 @@ impl PreviewApp {
             window.set_title(&format!("Flint Preview \u{2014} {}", file_name));
         }
 
-        crate::output::say!("Loaded: {}", path.display());
+        tracing::info!(target: "viewer", "Loaded: {}", path.display());
         if let Some(info) = &self.anim_info {
-            crate::output::say!(
+            tracing::info!(
+                target: "viewer",
                 "Animation: {} clip(s) — {}",
                 info.clip_names.len(),
                 info.clip_names.join(", ")
@@ -1384,7 +1392,7 @@ impl PreviewApp {
         }
         self.camera.update_orbit();
 
-        crate::output::say!("Reloaded: {}", model_display);
+        tracing::info!(target: "viewer", "Reloaded: {}", model_display);
     }
 
     /// Set the previewed animator's speed from what it is now (the speed keys).
@@ -1434,7 +1442,7 @@ impl PreviewApp {
             }
         }
 
-        crate::output::say!("Switched to clip: {}", clip_name);
+        tracing::info!(target: "viewer", "Switched to clip: {}", clip_name);
     }
 
     /// Update the window title with animation playback info
@@ -3006,7 +3014,7 @@ impl Editor for PreviewApp {
         }
         let model = self.state.lock().ok().and_then(|s| s.model_path.clone());
         if model.is_some() {
-            crate::output::say!("Watching for changes...");
+            tracing::info!(target: "viewer", "Watching for changes...");
         }
         model.into_iter().collect()
     }
@@ -3068,7 +3076,7 @@ impl Editor for PreviewApp {
                     PhysicalKey::Code(KeyCode::KeyR) => {
                         if self.sequence.is_some() {
                             self.seek_sequence_to(0.0);
-                            crate::output::say!("Sequence restarted");
+                            tracing::info!(target: "viewer", "Sequence restarted");
                         }
                     }
                     PhysicalKey::Code(KeyCode::Home) => {
@@ -3132,7 +3140,7 @@ impl Editor for PreviewApp {
                     self.animation.advance_sequences(&mut state.world, dt_secs);
                 }
                 for cue in self.animation.drain_sequence_cues() {
-                    crate::output::say!("[sequence] cue '{}' at {:.2}s", cue.cue, cue.time);
+                    tracing::debug!(target: "viewer", "[sequence] cue '{}' at {:.2}s", cue.cue, cue.time);
                 }
             }
             if let Ok(state) = self.state.lock() {

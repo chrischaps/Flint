@@ -12,36 +12,15 @@ impl PlayerApp {
     /// Start a load's count afresh, so a transition's summary holds only
     /// what that transition loaded and raised
     pub(super) fn begin_load_count(&self) {
-        if let Some(tally) = crate::logging::installed_tally() {
-            tally.take();
-        }
+        crate::logging::begin_load_count();
     }
 
     /// The scene is up: its entities, each kind of file it loaded, how
-    /// long it took and the warnings on the way, as one `load` line. A
-    /// host with no tally installed (a game's own subscriber, the web)
-    /// gets the entities alone.
+    /// long it took and the warnings on the way, as one `load` line
+    /// (`logging::say_loaded`, which `flint edit` says too, #1164)
     pub(super) fn say_loaded(&self) {
         let scene = flint_core::project::shown(Path::new(&self.core.scene_path));
-        let entities = self.core.world.entity_count();
-        let Some(summary) = crate::logging::installed_tally().map(|t| t.take()) else {
-            tracing::info!(target: "load", scene = %scene, entities, "Loaded {scene}: {entities} entities");
-            return;
-        };
-        let loaded = summary.loaded();
-        let problems = summary.problems();
-        let ms = summary.ms.unwrap_or(0.0).round() as u64;
-        // The figures as fields for `--log-format json`; the sentence has
-        // each kind by name
-        tracing::info!(
-            target: "load",
-            scene = %scene,
-            entities,
-            warnings = summary.warnings,
-            errors = summary.errors,
-            ms,
-            "Loaded {scene}: {entities} entities, {loaded} in {ms} ms; {problems}"
-        );
+        crate::logging::say_loaded(&scene, self.core.world.entity_count());
     }
 
     /// The controls the scene binds, said at the start and again after a
