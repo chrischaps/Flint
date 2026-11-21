@@ -1,3 +1,0 @@
-### `persist_set` with the value a key already holds no longer rewrites the save file (#1119)
-**What changed.** Setting a `persist_*` key to the value it already holds is no change: the store stays clean and the save debounce doesn't start. A script that writes its state every frame (`persist_set("zone_unlocked", true)` in `on_update`) used to rewrite the save file once a second on the frame thread, 8 to 70 ms each, a hitch a second in `sync`. A value of another type (`1` after `1.0`) is still a change. A save that does happen now leaves a `save` frame note (detail: `debounce`, `persist_save`, `scene transition` or `exit`), so a hitch it causes names it in the hitch log, `--perf`, the F2 graph and traces instead of `sync +x ms`.
-**What to do.** Nothing.
