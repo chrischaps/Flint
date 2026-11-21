@@ -52,6 +52,7 @@ pub mod render_goldens;
 pub mod render_plan;
 pub mod render_post;
 pub mod render_report;
+pub mod render_retired;
 pub mod render_suite;
 pub mod render_watch;
 pub mod replay_chart;

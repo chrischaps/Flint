@@ -7,7 +7,7 @@
 #
 #   cargo run --bin flint -- render tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml --no-grid --output half.png
 #   cargo run --bin flint -- render tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml --no-grid \
-#     --tear 0.5 --output torn.png
+#     --set post.tear=0.5 --output torn.png
 
 [scene]
 name = "Stylize Props (pencil drawn on)"

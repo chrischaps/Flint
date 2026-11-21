@@ -317,7 +317,6 @@ pub(super) fn render(
         .check(&styles)
         .map_err(|e| anyhow::anyhow!("--style: {e}"))?;
     render_post::check(args, &styles)?;
-    render_post::warn_legacy(args);
     let look = args
         .look
         .as_deref()

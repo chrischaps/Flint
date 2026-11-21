@@ -734,7 +734,10 @@ fn render_in_process(
         std::iter::once(std::ffi::OsString::from("flint render")).chain(argv[1..].iter().cloned()),
     ) {
         Ok(cli) => cli,
-        Err(e) => return Ok(Rendered::Failed(e.to_string())),
+        Err(e) => {
+            let e = super::render_retired::explained(e, argv);
+            return Ok(Rendered::Failed(e.to_string()));
+        }
     };
     cli.args.command_line = argv[1..].to_vec();
     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

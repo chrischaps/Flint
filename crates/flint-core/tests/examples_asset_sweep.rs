@@ -173,8 +173,8 @@ fn styled_by(scene: &toml::Table) -> Vec<(AssetKind, String)> {
     out
 }
 
-/// What a stylize golden's flags name, by scene: `--look`, `--ascii-font`,
-/// `--ascii-palette`, the `--style` words and the `--sweep` keys.
+/// What a stylize golden's flags name, by scene: `--look`, the `--style`
+/// words and the `--sweep` keys.
 fn named_by_goldens(repo: &Path) -> Vec<(PathBuf, AssetKind, String)> {
     let manifest = repo.join("crates/flint-cli/tests/golden/stylize.goldens.toml");
     let doc: toml::Table = std::fs::read_to_string(manifest).unwrap().parse().unwrap();
@@ -193,8 +193,6 @@ fn named_by_goldens(repo: &Path) -> Vec<(PathBuf, AssetKind, String)> {
             let (flag, value) = (pair[0], pair[1]);
             match flag {
                 "--look" => named.push((AssetKind::Looks, value.to_string())),
-                "--ascii-font" => named.extend(style_setting("font", value)),
-                "--ascii-palette" => named.extend(style_setting("palette", value)),
                 "--style" => {
                     let settings = value.split_once(':').map(|(_, s)| s).unwrap_or("");
                     for (key, value) in settings.split(',').filter_map(|s| s.split_once('=')) {

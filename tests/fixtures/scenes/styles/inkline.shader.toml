@@ -5,7 +5,7 @@
 # reads them (edges_view, the next user style) share it.
 #
 #   flint render demo/pbr_test.scene.toml --no-grid --style inkline
-#   flint render demo/pbr_test.scene.toml --no-grid --style inkline --edge-normal 1.5
+#   flint render demo/pbr_test.scene.toml --no-grid --style inkline --set post.edge_normal=1.5
 version = 1
 name = "inkline"
 label = "Ink line"
