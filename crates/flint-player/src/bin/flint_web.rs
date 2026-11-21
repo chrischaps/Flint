@@ -238,6 +238,12 @@ mod web {
 
     async fn start() -> Result<(), String> {
         let args = WebArgs::from_query();
+        // `?perf=1`: the start-up's load report (#1092), from the page's
+        // first line here to the first frame, printed to the console. The
+        // fetches and the device's promise are waits no stage names.
+        if args.perf.is_some() {
+            flint_core::load_report::begin(flint_core::load_report::LoadKind::Start, "");
+        }
         // Before the renderer reads it
         if let Some(level) = args.gpu_labels {
             flint_render::gpu_labels::set_level(level);

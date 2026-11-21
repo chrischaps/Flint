@@ -366,6 +366,8 @@ impl PlayerApp {
             context.queue.present(output);
         }
         let presented = web_time::Instant::now();
+        // A load's first frame is on screen: its table (#1092)
+        self.frame_presented_for_loads();
         self.stats.perf.presented_at(presented);
         self.perf_mark(super::perf::Phase::Present);
         #[cfg(target_arch = "wasm32")]

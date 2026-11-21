@@ -568,6 +568,13 @@ pub struct MeasureArgs {
     /// Of a span, the last frame; not with a sweep or a sequence
     #[arg(long)]
     pub frame_capture: Option<String>,
+
+    /// Time the load (#1092): the scene read, the GPU device, the
+    /// renderer, every model, texture, pipeline and script, up to the first
+    /// capture. Prints a table of each stage's ms, share and count and the
+    /// five slowest assets by name; `--report json` carries it as `load`
+    #[arg(long)]
+    pub load_report: bool,
 }
 
 /// `--ai-refine`: a look refined toward a reference.
