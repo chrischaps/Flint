@@ -30,6 +30,7 @@
 //! first entity past it, kept in [`dropped`] for hosts to show
 //! (`flint render --report json`'s `style_drops`).
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use std::sync::Mutex;
 
 /// Entries a table starts with; it doubles past them.
@@ -88,7 +89,7 @@ impl GrowingStorage {
     }
 
     fn make(device: &wgpu::Device, label: &str, bytes: usize) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+        device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some(label),
             size: bytes as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
@@ -113,7 +114,7 @@ impl GrowingStorage {
         debug_assert!(bytes.len().is_multiple_of(self.stride));
         self.reserve(device, bytes.len() / self.stride);
         if !bytes.is_empty() {
-            queue.write_buffer(&self.buffer, 0, bytes);
+            queue.write_buffer_counted(&self.buffer, 0, bytes);
         }
     }
 
@@ -131,7 +132,7 @@ impl GrowingStorage {
         let mut all = Vec::with_capacity(self.capacity);
         all.extend_from_slice(words);
         all.resize(self.capacity, fill);
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&all));
+        queue.write_buffer_counted(&self.buffer, 0, bytemuck::cast_slice(&all));
     }
 
     pub fn buffer(&self) -> &wgpu::Buffer {

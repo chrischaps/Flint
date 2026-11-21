@@ -22,6 +22,7 @@
 
 use super::variant_table::{storage_entry, GrowingStorage};
 use super::{StyleDescriptor, StyleFrame, StyleInput};
+use crate::gpu_counts::CountedDevice;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -99,35 +100,41 @@ impl FadePass {
             owners.write_words(frame.device, frame.queue, &table, 0);
             let buffer = owners.buffer();
             frame.bind(OWNERS_BG, owners.generation(), || {
-                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(OWNERS_BG),
-                    layout: &self.owners_bgl,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buffer.as_entire_binding(),
-                    }],
-                })
+                frame
+                    .device
+                    .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                        label: Some(OWNERS_BG),
+                        layout: &self.owners_bgl,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buffer.as_entire_binding(),
+                        }],
+                    })
             })
         };
         let input_bind = frame.bind(INPUT_BG, input.id, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(INPUT_BG),
-                layout: &self.input_bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(input.view),
-                }],
-            })
+            frame
+                .device
+                .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    label: Some(INPUT_BG),
+                    layout: &self.input_bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(input.view),
+                    }],
+                })
         });
         let mask_bind = frame.bind(MASK_BG, 0, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(MASK_BG),
-                layout: &self.mask_bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(mask),
-                }],
-            })
+            frame
+                .device
+                .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    label: Some(MASK_BG),
+                    layout: &self.mask_bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(mask),
+                    }],
+                })
         });
         let pipeline = self.pipeline(frame.device, frame.format);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

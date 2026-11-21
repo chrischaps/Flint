@@ -113,6 +113,7 @@
 //! need a rest-pose position from the scene pass). The whole frame's row
 //! has no root, so a table's `local` is `world`.
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 pub use super::images::{names_image, NO_IMAGE};
 use super::images::{ImageStack, ImageUse, LayerInfo, Stacked, StackedImages, MAX_LAYERS};
 use super::kit;
@@ -400,7 +401,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         ],
     });
     // Bound while no entity asks for the style: one unstyled pixel
-    let no_mask = device.create_texture(&wgpu::TextureDescriptor {
+    let no_mask = device.create_texture_counted(&wgpu::TextureDescriptor {
         label: Some("Pencil No Mask"),
         size: wgpu::Extent3d {
             width: 1,
@@ -416,7 +417,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     });
     let no_mask_view = no_mask.create_view(&Default::default());
     // Bound while no row reads the light: one texel where no mesh was drawn
-    let no_albedo = device.create_texture(&wgpu::TextureDescriptor {
+    let no_albedo = device.create_texture_counted(&wgpu::TextureDescriptor {
         label: Some("Pencil No Albedo"),
         size: wgpu::Extent3d {
             width: 1,
@@ -432,7 +433,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     });
     let no_albedo_view = no_albedo.create_view(&Default::default());
     // Bound if the shared edge pass couldn't be built: one texel of no edge
-    let no_edges = device.create_texture(&wgpu::TextureDescriptor {
+    let no_edges = device.create_texture_counted(&wgpu::TextureDescriptor {
         label: Some("Pencil No Edges"),
         size: wgpu::Extent3d {
             width: 1,
@@ -904,7 +905,7 @@ impl Pencil {
         ];
         let variant = mask.is_some() as u64;
         frame.depth_bind_over("Pencil Geometry BG", variant, &over, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Pencil Geometry BG"),
                 layout: &self.geometry_bgl,
                 entries: &[
@@ -1056,7 +1057,7 @@ impl Pencil {
         table.upload(frame.device, frame.queue, rows, slots);
         let [rows, slots] = table.entries(1);
         frame.bind("Pencil Uniform BG", table.generation(), || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Pencil Uniform BG"),
                 layout: &self.uniform_bgl,
                 entries: &[
@@ -1132,7 +1133,7 @@ impl StylePass for Pencil {
         };
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
         let uniform = self.uniform_bind(frame, &rows, &slots);
         let input_bind = frame.sampled_input("Pencil Input BG", &self.input_bgl, input);
         let geometry = self.geometry_bind(frame, with_mask, &paper, &stroke);
@@ -1187,7 +1188,7 @@ impl StylePass for Pencil {
         });
         let flow_view = flow.as_ref().map_or(&prep.view, |f| &f.view);
         let prep_bind = frame.bind("Pencil Prep BG", flow.is_some() as u64, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Pencil Prep BG"),
                 layout: &self.prep_bgl,
                 entries: &[

@@ -14,6 +14,7 @@
 //! Normals aren't bent: at a few centimetres over a metre, it's about a degree or
 //! two of shading for three times the noise.
 
+use crate::gpu_counts::CountedDevice;
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
@@ -137,7 +138,7 @@ impl Stages<'_> {
         cull_mode: Option<wgpu::Face>,
         depth_write_enabled: bool,
     ) -> wgpu::RenderPipeline {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
             label: Some(self.label),
             layout: Some(self.layout),
             vertex: wgpu::VertexState {
@@ -418,7 +419,7 @@ mod tests {
                 .await
                 .ok()?;
             let target = |format, usage| {
-                device.create_texture(&wgpu::TextureDescriptor {
+                device.create_texture_counted(&wgpu::TextureDescriptor {
                     label: None,
                     size: wgpu::Extent3d {
                         width: SIZE,
@@ -474,7 +475,7 @@ mod tests {
             );
             let row = (SIZE * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
                 * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-            let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            let buffer = self.device.create_buffer_counted(&wgpu::BufferDescriptor {
                 label: None,
                 size: (row * SIZE) as u64,
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,

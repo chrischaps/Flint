@@ -392,6 +392,10 @@ impl PlayerApp {
                         self.capture.perf_gpu_ms += stats.gpu_frame_ms as f64;
                         self.capture.perf_gpu_frames += 1;
                     }
+                    self.capture.perf_gpu_calls += stats.gpu_calls;
+                    if stats.gpu_calls.created() > 0 {
+                        self.capture.perf_gpu_creating += 1;
+                    }
                 }
             }
             // A shot that's due but failed waits for its retries (#639).
@@ -443,6 +447,31 @@ impl PlayerApp {
                 avg(self.capture.perf_triangles),
                 avg(self.capture.perf_shadow_triangles)
             );
+            // What the renderer made and wrote on the GPU a frame (#1091):
+            // a steady run creates nothing
+            let g = self.capture.perf_gpu_calls;
+            let created = g.created();
+            tracing::info!(target: "report",
+                gpu_objects_per_frame = avg(created),
+                gpu_frames_creating = self.capture.perf_gpu_creating,
+                "[perf] avg GPU objects per frame: {:.2} ({:.2} buffers, {:.2} bind groups, {:.2} textures, {:.2} pipelines), in {} of {frames} frames; {:.1} writes ({:.1} KB)",
+                avg(created),
+                avg(g.buffers),
+                avg(g.bind_groups),
+                avg(g.textures),
+                avg(g.pipelines + g.shader_modules),
+                self.capture.perf_gpu_creating,
+                avg(g.writes + g.texture_writes),
+                avg(g.write_bytes + g.texture_write_bytes) / 1024.0
+            );
+            if let (Some(r), Some(ctx)) = (&self.scene_renderer, &self.render_context) {
+                let device = flint_render::gpu_counts::device_memory(&ctx.device);
+                tracing::info!(target: "report",
+                    "[perf] GPU memory at exit: {}",
+                    super::perf::gpu_memory_part(&r.gpu_memory(), device)
+                        .trim_start_matches("gpu mem ")
+                );
+            }
             // GPU time, when the frames were timed (--stats, ADR 0108).
             let gpu_frames = self.capture.perf_gpu_frames;
             if gpu_frames > 0 {
@@ -1047,12 +1076,24 @@ impl PlayerApp {
                 stats.frame_time_ms = (avg_dt * 1000.0) as f32;
                 if let Some(ctx) = &self.render_context {
                     stats.resolution = [ctx.config.width, ctx.config.height];
+                    stats.device_memory = flint_render::gpu_counts::device_memory(&ctx.device);
+                }
+                // A frame that made GPU objects is one frame of the
+                // overlay: keep it, so the row can say it (#1091)
+                if stats.gpu_calls.created() > 0 {
+                    self.stats.last_gpu_objects =
+                        Some((self.core.clock.total_time, stats.gpu_calls));
                 }
                 stats
             })
         } else {
             None
         };
+        let last_gpu_objects = self
+            .stats
+            .last_gpu_objects
+            .filter(|_| show_stats)
+            .map(|(at, calls)| (self.core.clock.total_time - at, calls));
         // Each style texture's row (#561), only while the full overlay
         // shows: closed, nothing is read or allocated
         let style_target_rows = match (&stats_data, self.scene_renderer.as_ref()) {
@@ -1167,6 +1208,7 @@ impl PlayerApp {
                     (super::StatsView::Full, Some(stats)) => render_stats_overlay(
                         ctx,
                         stats,
+                        last_gpu_objects,
                         &style_target_rows,
                         &gpu_label,
                         graph.as_mut(),
@@ -1675,6 +1717,7 @@ fn render_graph_overlay(ctx: &egui::Context, graph: Option<&mut OverlayGraph>, r
 fn render_stats_overlay(
     ctx: &egui::Context,
     stats: &flint_render::RenderStats,
+    last_gpu_objects: Option<(f64, flint_render::gpu_counts::GpuCalls)>,
     style_targets: &[String],
     gpu: &str,
     graph: Option<&mut OverlayGraph>,
@@ -1717,6 +1760,19 @@ fn render_stats_overlay(
             });
             ui.label(format!("Draw Calls: {}", stats.draw_calls));
             ui.label(format!("Triangles: {}", format_count(stats.triangles)));
+
+            ui.separator();
+
+            // GPU objects created this frame (#1091): zero on a steady
+            // frame, amber when not, and the last frame that made any
+            for row in super::stats_view::gpu_alloc_rows(stats, last_gpu_objects) {
+                let color = match row.tone {
+                    super::stats_view::Tone::Calm => egui::Color32::from_gray(200),
+                    super::stats_view::Tone::Quiet => egui::Color32::from_gray(136),
+                    super::stats_view::Tone::Alert => egui::Color32::from_rgb(245, 166, 35),
+                };
+                ui.colored_label(color, row.text);
+            }
 
             ui.separator();
 

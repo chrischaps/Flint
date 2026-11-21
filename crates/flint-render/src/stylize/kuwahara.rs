@@ -10,6 +10,7 @@
 //! strokes a little on each drawing of the field (the flat
 //! `[post_process] kuwahara_boil` before #599, folded in the same way).
 
+use crate::gpu_counts::CountedQueue;
 use super::kit;
 use super::{
     StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleParam, StylePass,
@@ -168,8 +169,8 @@ impl StylePass for Kuwahara {
                 _pad: [0.0; 2],
             };
             let bytes = bytemuck::cast_slice(std::slice::from_ref(&texel));
-            frame.queue.write_buffer(&self.tensor_uniforms, 0, bytes);
-            frame.queue.write_buffer(&self.blur_uniforms, 0, bytes);
+            frame.queue.write_buffer_counted(&self.tensor_uniforms, 0, bytes);
+            frame.queue.write_buffer_counted(&self.blur_uniforms, 0, bytes);
         }
         let tensor = frame.target("kuwahara tensor", HDR_FORMAT);
         let tensor_blur = frame.target("kuwahara tensor blur", HDR_FORMAT);
@@ -226,7 +227,7 @@ impl StylePass for Kuwahara {
         };
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
         kit::fullscreen_pass(
             encoder,
             "Kuwahara Pass",

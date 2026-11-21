@@ -210,6 +210,25 @@ Under vsync the GPU finishes a frame and then waits for the display, and a GPU t
 
 Here the frame read 3.9 ms against 2.8 unlocked, about 1.4x; in #270 (DX12, 1080p) SSAO read 4.4 ms under vsync against 0.80 without, about 5x. To compare passes, take them with `FLINT_VSYNC=0` or with `flint render --gpu-time`, which presents nothing. The share is the GPU's frame time over the mean time between frames, not the median: under Fifo on a hybrid-GPU laptop frames come in bursts (see Frame pacing below), and the median frame there was 5 ms at a 60 fps mean.
 
+#### GPU objects a frame, and memory
+
+A renderer that makes a buffer or a bind group for each entity every frame gets slow on the CPU long before the GPU is busy: removing such allocations took a 270-entity scene from about 17 ms to 4. The renderer counts every GPU object it creates and every byte it uploads (`flint_render::gpu_counts`), so a steady frame can be checked to create nothing. Two parts of the perf line say it, natively and in the browser:
+
+```text
+… | gpu/frame create 0.0 (buffer 0.0 bindgroup 0.0 texture 0.0 pipeline 0.0) in 0 frames write 17.0 (27.4 KB) | gpu mem textures 102.1 MB (scene 8.2 style 8.5 shadow 64.0 model 21.3 glyph 0.0) meshes 6.3 MB device 9.2/114.6 MB | …
+```
+
+`gpu/frame` is the window's mean a frame: objects created (buffers, bind groups, textures, and pipelines with shader modules), how many frames of the window created any, and the buffer and texture writes with their bytes. Writes are expected every frame (uniforms, bones); objects are not. `gpu mem` is the texture memory the renderer knows it holds, by class: the frame's own targets (HDR, SSAO, bloom, MSAA, render scale, the water's grab), the style chain's, the shadow maps, model and material textures and glyph atlases, then mesh buffers. `device` is the device's own live buffer and texture memory, as wgpu tracks it on Vulkan and DX12 (it includes egui's and the player's targets, and drivers pad); the web has no such total, so the part ends at `meshes`. In the browser the same line also carries the page's `webgpu/frame` part, which wraps WebGPU's calls in JavaScript: two counts of the same frames, which should agree.
+
+F2's overlay shows the same under the draw counts: `Alloc/frame: 0` in grey on a steady frame and in amber with what was made (`Alloc/frame: 3 (2 buffers, 1 bind group)`) on one that created anything, a dim `last 1.2s ago: …` row for ten seconds after, the frame's writes, and `GPU memory` by class with the device's totals. `--exit-after`'s report adds two lines:
+
+```text
+[perf] avg GPU objects per frame: 0.00 (0.00 buffers, 0.00 bind groups, 0.00 textures, 0.00 pipelines), in 0 of 600 frames; 17.0 writes (27.4 KB)
+[perf] GPU memory at exit: textures 102.1 MB (scene 8.2 style 8.5 shadow 64.0 model 21.3 glyph 0.0) meshes 6.3 MB device 9.2/114.6 MB
+```
+
+A frame that creates objects also leaves a `gpu objects` frame note (`2 buffers, 1 bind group`), so a hitch's line names it beside its cause (`render +60.0 ms (also: gpu objects)`). A count is evidence, not a measured time, so it never takes the blame by itself. A host reads the frame's count with `SceneRenderer::frame_gpu_calls()` and the memory with `gpu_memory()`; `RenderStats` carries both as `gpu_calls` and `gpu_memory`.
+
 ### From a game
 
 Timing belongs to the renderer, which an extension reaches through `ExtensionCtx::gpu`:

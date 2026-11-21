@@ -1,5 +1,6 @@
 //! Scene renderer - converts FlintWorld entities to GPU meshes
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 mod assets;
 mod binding;
 mod capture;
@@ -70,7 +71,6 @@ use pipelines::{Present, ScenePipelines};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 /// A scope and the `scene_dir` it was made for.
 type AssetScopeFor = (
@@ -281,7 +281,7 @@ impl TransformTarget {
     fn write(&self, queue: &wgpu::Queue, arena: &mut TransformArena, uniforms: &TransformUniforms) {
         match self {
             TransformTarget::Own(buffer) => {
-                queue.write_buffer(buffer, 0, bytemuck::bytes_of(uniforms));
+                queue.write_buffer_counted(buffer, 0, bytemuck::bytes_of(uniforms));
             }
             TransformTarget::Slot(slot) => arena.stage(*slot, bytemuck::bytes_of(uniforms)),
         }
@@ -331,7 +331,7 @@ impl MaterialBuffer {
     fn write_flags(&self, queue: &wgpu::Queue, debug_mode: u32, tonemapping: u32) {
         let want = (debug_mode as u64) << 32 | tonemapping as u64;
         if self.flags.swap(want, std::sync::atomic::Ordering::Relaxed) != want {
-            queue.write_buffer(
+            queue.write_buffer_counted(
                 &self.buffer,
                 28,
                 bytemuck::cast_slice(&[debug_mode, tonemapping]),
@@ -566,6 +566,12 @@ pub struct SceneRenderer {
     grass: grass::GrassRenderer,
     /// Times the frame's phases on the GPU, while timing is on (ADR 0108)
     gpu_timer: Option<crate::gpu_timer::GpuTimer>,
+    /// The process's GPU calls as `frame_submitted` last read them, and
+    /// what the frame it ended made (#1091, `gpu_counts`).
+    gpu_calls_at: crate::gpu_counts::GpuCalls,
+    frame_gpu_calls: crate::gpu_counts::GpuCalls,
+    /// Frames submitted, and of them those that created any GPU object.
+    gpu_frames: (u64, u64),
     /// The frame being described (#1084), only after `describe_next_frame`;
     /// `None` costs a frame nothing (`describe.rs`)
     frame_log: Option<Box<crate::frame_capture::FrameLog>>,
@@ -812,6 +818,9 @@ impl SceneRenderer {
             lod_settings: LodSettings::from_env(),
             lod_culled: 0,
             gpu_timer: None,
+            gpu_calls_at: crate::gpu_counts::totals(),
+            frame_gpu_calls: Default::default(),
+            gpu_frames: (0, 0),
             frame_log: None,
             frame_taps: None,
             panel_state: Default::default(),

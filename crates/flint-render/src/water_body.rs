@@ -15,9 +15,9 @@
 //! for a game's own mesh. Both draw after the sea, depth-tested, so a lake
 //! above sea level hides the sea under it.
 
+use crate::gpu_counts::CountedDevice;
 use bytemuck::{Pod, Zeroable};
 use flint_core::toml_util::toml_f32;
-use wgpu::util::DeviceExt;
 
 /// A water mesh vertex: where the surface rests, which way is up for it,
 /// and where the water there is going.
@@ -334,23 +334,23 @@ impl GpuWaterBody {
         mesh: &WaterBodyMesh,
         look: WaterBodyLook,
     ) -> Self {
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let vertex_buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("Water Body {label} Vertices")),
             contents: bytemuck::cast_slice(&mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let index_buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("Water Body {label} Indices")),
             contents: bytemuck::cast_slice(&mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some(&format!("Water Body {label} Uniforms")),
             size: std::mem::size_of::<WaterBodyUniformsGpu>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout,
             entries: &[
                 wgpu::BindGroupEntry {

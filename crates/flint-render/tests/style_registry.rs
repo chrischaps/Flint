@@ -6,6 +6,8 @@
 //!
 //! Needs a GPU adapter; without one the test prints a note and passes.
 
+#![allow(clippy::disallowed_methods)] // the test's own targets and read-backs, not the renderer's, so uncounted (#1091)
+
 mod shared_gpu;
 
 use flint_ecs::FlintWorld;

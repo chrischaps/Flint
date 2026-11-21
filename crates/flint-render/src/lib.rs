@@ -21,6 +21,7 @@ pub mod frame_replay;
 mod frame_taps;
 pub mod frustum;
 pub mod glyph_atlas;
+pub mod gpu_counts;
 pub mod gpu_labels;
 mod gpu_mesh;
 pub mod gpu_select;

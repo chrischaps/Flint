@@ -210,6 +210,10 @@ pub struct CaptureConfig {
     /// GPU frame times summed over frames that had one (ADR 0108)
     pub(crate) perf_gpu_ms: f64,
     pub(crate) perf_gpu_frames: u64,
+    /// The GPU objects and writes the renderer counted over the same
+    /// frames, and how many of them created any (#1091)
+    pub(crate) perf_gpu_calls: flint_render::gpu_counts::GpuCalls,
+    pub(crate) perf_gpu_creating: u64,
     /// The same frames' dt and present-to-present times, reported as a
     /// spread so uneven pacing shows at an even mean.
     pub(crate) perf_pacing: pacing::Pacing,

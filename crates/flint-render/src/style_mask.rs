@@ -120,6 +120,7 @@
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::postprocess::PostProcessConfig;
 use crate::stylize::{StyleDescriptor, StyleParam, StyleRegistry};
 use crate::TrustedShader;
@@ -1319,7 +1320,7 @@ fn veil_pipeline(
         bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -1491,7 +1492,7 @@ fn billboard_mask_pipeline(
 }
 
 fn mask_draw_buffer(device: &wgpu::Device, slots: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
+    device.create_buffer_counted(&wgpu::BufferDescriptor {
         label: Some("Style Mask Draws"),
         size: DRAW_STRIDE * slots as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1541,7 +1542,7 @@ fn mask_pipeline(
         bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -1691,31 +1692,32 @@ impl MsaaMask {
             bind_group_layouts: &[Some(&resolve_bgl)],
             immediate_size: 0,
         });
-        let resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Style Mask Resolve Pipeline"),
-            layout: Some(&resolve_layout),
-            vertex: wgpu::VertexState {
-                module: &resolve_shader,
-                entry_point: Some("vs_fullscreen"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &resolve_shader,
-                entry_point: Some("fs_resolve"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: STYLE_MASK_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let resolve_pipeline =
+            device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
+                label: Some("Style Mask Resolve Pipeline"),
+                layout: Some(&resolve_layout),
+                vertex: wgpu::VertexState {
+                    module: &resolve_shader,
+                    entry_point: Some("vs_fullscreen"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &resolve_shader,
+                    entry_point: Some("fs_resolve"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: STYLE_MASK_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
         Self {
             static_pipeline,
             skinned_pipeline,
@@ -1733,7 +1735,7 @@ impl MsaaMask {
         if matches!(&self.target, Some((_, w, h, _)) if (*w, *h) == (width, height)) {
             return;
         }
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Style Mask MSAA"),
             size: wgpu::Extent3d {
                 width,
@@ -1748,7 +1750,7 @@ impl MsaaMask {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             label: Some("Style Mask Resolve BG"),
             layout: &self.resolve_bgl,
             entries: &[wgpu::BindGroupEntry {
@@ -1833,7 +1835,7 @@ impl StyleMaskPass {
         );
         let draw_buffer = mask_draw_buffer(device, INITIAL_MASK_SLOTS);
         // Zeroed at creation: no shapes
-        let field_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let field_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Style Mask Field"),
             size: std::mem::size_of::<FieldUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1997,7 +1999,7 @@ impl StyleMaskPass {
             crate::bind_cache::Bound::View(veil),
         ];
         binds.get_over(depth_key, "Style Mask Draw BG", 0, &over, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Style Mask Draw BG"),
                 layout: &self.draw_bgl,
                 entries: &[
@@ -2145,7 +2147,7 @@ impl StyleMaskPass {
             crate::bind_cache::Bound::View(depth.view),
         ];
         binds.get_bound("Style Mask MSAA Draw BG", 0, &over, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Style Mask MSAA Draw BG"),
                 layout: &msaa.draw_bgl,
                 entries: &[
@@ -2223,12 +2225,12 @@ impl StyleMaskPass {
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
         }
         if !self.scratch.is_empty() {
-            queue.write_buffer(&self.draw_buffer, 0, &self.scratch);
+            queue.write_buffer_counted(&self.draw_buffer, 0, &self.scratch);
         }
         // The field (#859): written only when a draw reads it and it moved
         if follows_field && *field != self.field_written {
             let uniform = FieldUniform::of(field);
-            queue.write_buffer(&self.field_buffer, 0, bytemuck::bytes_of(&uniform));
+            queue.write_buffer_counted(&self.field_buffer, 0, bytemuck::bytes_of(&uniform));
             self.field_written.clone_from(field);
         }
 

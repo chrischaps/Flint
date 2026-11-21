@@ -1,0 +1,50 @@
+# Written by scripts/clippy-conf.sh (#761, #1091) from the root clippy.toml's
+# list and scripts/clippy-render.toml's; edit those and rerun the script,
+# never this one. The renderer counts every GPU object it makes
+# (flint_render::gpu_counts), so the bare calls are refused here alone.
+disallowed-methods = [
+    # >>> every-crate
+    # #944/#945: built-in WGSL goes through flint_render::TrustedShader, which
+    # is create_shader_module_trusted without loop bounding. User styles
+    # (stylize/custom.rs) keep the checked call.
+    { path = "wgpu::Device::create_shader_module", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module; user style WGSL keeps the checked call (#944)" },
+    { path = "wgpu::Device::create_shader_module_trusted", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module, the one place that picks the checks (#945)" },
+    { path = "wgpu::Device::create_shader_module_unchecked", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module; bounds and division checks stay on (#945)" },
+    # #944: wgpu 29 changed what this returns; flint_render::AcquireFrame is the one place that knows.
+    { path = "wgpu::Surface::get_current_texture", reason = "take the frame with flint_render::AcquireFrame::acquire (#944)" },
+    # #944: egui 0.36 asserts when a FullOutput drops with texture updates in it.
+    # Tests run frames with flint_debug_ui::run_headless_frame; a real frame
+    # uploads its deltas, clears them, and allows this.
+    # #948: wgpu 30 waits without a limit unless asked; flint_render::wait_for_gpu
+    # gives every wait FLINT_GPU_WAIT_TIMEOUT, so a hung GPU on CI fails fast.
+    { path = "wgpu_types::PollType::wait_indefinitely", reason = "block on the GPU with flint_render::wait_for_gpu, which takes FLINT_GPU_WAIT_TIMEOUT (#948)" },
+    { path = "egui::Context::run_ui", reason = "a test's frame is flint_debug_ui::run_headless_frame; a host that uploads its texture updates allows this (#944)" },
+    # <<< every-crate
+    # >>> runtime
+    # #685, ADR 0115: `as_float` reads a TOML integer as nothing, so
+    # `speed = 8` silently became the default. Read a component through
+    # `FlintWorld::view`, any other table through `flint_core::toml_util`.
+    { path = "toml::Value::as_float", reason = "reads an integer as nothing, so `speed = 8` falls back to the default; use FlintWorld::view / ComponentView for a component, flint_core::toml_util::toml_f64 otherwise (#685)" },
+    # #97: every runtime read goes through flint_core::vfs, which the web
+    # player and `flint-player --bundle` back with a bundle and a test with
+    # `vfs::scoped`. A read past it finds the disk, or nothing on wasm32.
+    { path = "std::fs::read", reason = "reads past the vfs, so a bundle or vfs::scoped never sees it and wasm32 has no disk; use flint_core::vfs::read (#97)" },
+    { path = "std::fs::read_to_string", reason = "reads past the vfs, so a bundle or vfs::scoped never sees it and wasm32 has no disk; use flint_core::vfs::read_to_string (#97)" },
+    { path = "std::fs::read_dir", reason = "reads past the vfs, so a bundle or vfs::scoped never sees it and wasm32 has no disk; use flint_core::vfs::read_dir (#97)" },
+    { path = "std::fs::File::open", reason = "reads past the vfs, so a bundle or vfs::scoped never sees it and wasm32 has no disk; read the bytes with flint_core::vfs::read (#97)" },
+    { path = "std::path::Path::exists", reason = "asks the disk, not the vfs, so a bundle or vfs::scoped never answers; use flint_core::vfs::exists (#97)" },
+    { path = "std::path::Path::is_file", reason = "asks the disk, not the vfs, so a bundle or vfs::scoped never answers; use flint_core::vfs::is_file (#97)" },
+    { path = "std::path::Path::is_dir", reason = "asks the disk, not the vfs, so a bundle or vfs::scoped never answers; use flint_core::vfs::is_dir (#97)" },
+    { path = "image::open", reason = "reads the disk past the vfs; use flint_render::open_image (#97)" },
+    { path = "gltf::import", reason = "reads the disk past the vfs; use flint_import::import_gltf (#97)" },
+    # <<< runtime
+    { path = "wgpu::Device::create_buffer", reason = "use gpu_counts::CountedDevice::create_buffer_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Device::create_bind_group", reason = "use gpu_counts::CountedDevice::create_bind_group_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Device::create_texture", reason = "use gpu_counts::CountedDevice::create_texture_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Device::create_render_pipeline", reason = "use gpu_counts::CountedDevice::create_render_pipeline_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Device::create_compute_pipeline", reason = "use gpu_counts::CountedDevice::create_compute_pipeline_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::util::DeviceExt::create_buffer_init", reason = "use gpu_counts::CountedDevice::create_buffer_init_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::util::DeviceExt::create_texture_with_data", reason = "use gpu_counts::CountedDevice::create_texture_with_data_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Queue::write_buffer", reason = "use gpu_counts::CountedQueue::write_buffer_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Queue::write_texture", reason = "use gpu_counts::CountedQueue::write_texture_counted, so F2 and --perf count it (#1091)" },
+]

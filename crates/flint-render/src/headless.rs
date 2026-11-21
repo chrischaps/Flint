@@ -1,6 +1,7 @@
 //! Headless rendering context for offscreen render-to-image
 
 use crate::context::RenderError;
+use crate::gpu_counts::CountedDevice;
 
 /// Offscreen wgpu context that renders to a texture instead of a window surface
 pub struct HeadlessContext {
@@ -97,7 +98,7 @@ impl HeadlessContext {
             height,
             depth_or_array_layers: 1,
         };
-        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let color_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Headless Color Texture"),
             size,
             mip_level_count: 1,
@@ -110,7 +111,7 @@ impl HeadlessContext {
             view_formats: &[format.remove_srgb_suffix()],
         });
         let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let depth_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Headless Depth Texture"),
             size,
             mip_level_count: 1,
@@ -135,7 +136,7 @@ impl HeadlessContext {
         let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
 
         let buffer_size = (padded_bytes_per_row * self.height) as u64;
-        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let staging_buffer = self.device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Pixel Readback Buffer"),
             size: buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
