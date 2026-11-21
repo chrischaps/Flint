@@ -157,8 +157,8 @@ jobs:
   # run since 2026-11-09 and a red run had stopped meaning anything. That
   # also let a real regression go unseen: from 16 Nov a tweened style param
   # kept a new bind group every frame (#507's band textures, fixed in
-  # #1240), and every run stayed green. The tests have passed on main on
-  # every run since 2026-11-18. A WARP-only quirk is fixed or its test
+  # #1240), and every run stayed green. The tests have passed on every main
+  # run that built since 2026-11-18. A WARP-only quirk is fixed or its test
   # dropped (the test-suite audit, #572 and #560), not hidden here again.
   gpu:
     name: GPU tests (WARP)
