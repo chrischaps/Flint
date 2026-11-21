@@ -95,25 +95,49 @@ fov = { type = "f32", description = "Field of view in degrees (perspective only)
 
 `flint schema --list` names them under **Scene tables**, and `flint schema post_process` prints one. A `[[wooze.zone]]` entry is the `zone` field of `[table.wooze]`: an array of tables with fields of their own.
 
-Every scene load and `flint validate` check them in the same pass as the entities ([Scene Diagnostics](#scene-diagnostics)):
+Every scene load and `flint validate` check them in the same pass as the entities ([Scene Diagnostics](#scene-diagnostics)). This scene has three mistakes in its tables:
+
+```toml
+[scene]
+name = "Hall"
+
+[camera]
+projection = "ortho"
+position = [0, 2, 8]
+
+[enviroment]
+ambient_sky = [0.2, 0.25, 0.3]
+
+[post_process]
+bloom_intesity = 0.4
+```
 
 ```text
 $ flint validate scenes/hall.scene.toml
 scenes/hall.scene.toml: 1 error, 2 warnings
 
-  error[bad-enum-value] [camera] projection: "ortho" is not a value of `projection`
+  error[bad-enum-value] 5:1 [camera] projection: "ortho" is not a value of `projection`
       hint: allowed values: orthographic, perspective
-  warning[unknown-table] [enviroment]: no scene table named `enviroment`, so nothing reads it
+  warning[unknown-table] 8:2 [enviroment]: no scene table named `enviroment`, so nothing reads it
       hint: did you mean `environment`?
-  warning[unknown-field] [post_process] bloom_intesity: `post_process` has no field `bloom_intesity`
+  warning[unknown-field] 12:1 [post_process] bloom_intesity: `post_process` has no field `bloom_intesity`
       hint: did you mean `bloom_intensity`?
 ```
+
+Each one is placed by the line and column of the key it names (`5:1` is `projection`), or, for a whole table, of its name in the header (`8:2` is the `enviroment` in `[enviroment]`). A missing field is placed at its table's header. JSON has them as `line` and `column`.
 
 - A top-level table **no schema declares** is `unknown-table`, a warning: nothing reads it, and the scene plays as if it were not written. `--strict` makes it an error, as it does an unknown field.
 - A key a declared table doesn't declare is `unknown-field`, with the nearest name.
 - A value of the wrong type, out of range or outside an enum is an error, and an `entity` or `asset` field is looked up (`[environment] skybox` is an `asset` of kind `files`).
 
-The tables the engine reads into a Rust struct (`[camera]`, `[environment]`, `[post_process]`, and `[living]` and `[wooze]`) are stricter about one thing: a value of the wrong TOML type there stops the file from parsing, as `toml-parse` with the line and column, before any schema is consulted.
+The tables the engine reads into a Rust struct (`[camera]`, `[environment]`, `[post_process]`, and `[living]` and `[wooze]`) are stricter about one thing: a value of the wrong TOML type there stops the scene from loading. `flint validate` and `flint check` say it once, by field, as the schema pass found it, and add why the scene is refused:
+
+```text
+  error[bad-type] 6:1 [camera] fov: expected f32, got string
+      hint: the scene does not load until the table fits
+```
+
+`[living]` and `[wooze]` also refuse a key they don't declare, so a misspelt key there is an `unknown-field` error with the same hint, and its line. Every such table is named, not only the first, and the rest of the scene is still checked. A command that loads the scene (`flint play`, `flint render`) stops with the parser's own message instead; for `[living]` and `[wooze]` the load's warning just before it has the line.
 
 ### A table of your own
 

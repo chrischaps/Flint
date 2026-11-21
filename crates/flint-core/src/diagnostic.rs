@@ -608,21 +608,23 @@ impl Diagnostic {
     }
 
     /// Where it is, without the file: `entity 'crate' collider.friction`,
-    /// or `[post_process] bloom_intensity` for a scene-level table. Empty
-    /// when the diagnostic is about the file as a whole.
+    /// or `[post_process] bloom_intensity` for a scene-level table, each
+    /// after its `line:column` when it has one (`5:1 [living] shadowz`,
+    /// #1061). Empty when the diagnostic is about the file as a whole.
     pub fn location(&self) -> String {
-        if let Some(table) = &self.table {
-            return match &self.field {
-                Some(field) => format!("[{table}] {field}"),
-                None => format!("[{table}]"),
-            };
-        }
         let mut parts = Vec::new();
         if let Some(line) = self.line {
             parts.push(match self.column {
                 Some(column) => format!("{line}:{column}"),
                 None => format!("line {line}"),
             });
+        }
+        if let Some(table) = &self.table {
+            parts.push(match &self.field {
+                Some(field) => format!("[{table}] {field}"),
+                None => format!("[{table}]"),
+            });
+            return parts.join(" ");
         }
         if let Some(entity) = &self.entity {
             parts.push(format!("entity '{entity}'"));

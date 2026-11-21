@@ -8,12 +8,13 @@ mod edit;
 mod format;
 mod loader;
 pub mod patcher;
+mod place;
 mod prefab;
 mod saver;
 
 pub use diagnose::{
     asset_references, declared_assets, diagnose, diagnose_all, diagnose_scene, diagnose_scene_in,
-    AssetReference, Located,
+    AssetReference, Located, REFUSES_THE_LOAD,
 };
 pub use edit::{SceneEdit, SceneScalar};
 pub use flint_core::diagnostic::{self, Diagnostic, Severity};
@@ -26,4 +27,5 @@ pub use loader::{
     load_scene_text, load_scene_text_diagnosed, reload_scene, reload_scene_string,
 };
 pub use patcher::{FieldHome, SceneDocument};
+pub use place::place_table_diagnostics;
 pub use saver::{save_scene, save_scene_string, update_scene_file};
