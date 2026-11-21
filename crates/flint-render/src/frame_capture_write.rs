@@ -49,9 +49,25 @@ pub struct ReplayFiles<'a> {
     pub skinning: &'a [u8],
     /// `particles.bin`: the packed stream `inputs.particles` indexes.
     pub particles: &'a [u8],
+    /// The styles' history textures (#1136), each a file under `replay/`
+    /// (`history/ascii.tone.cells.bin`) that `inputs.renderer.style_history`
+    /// names, with its bytes.
+    pub history: &'a [(String, Vec<u8>)],
 }
 
-/// The files [`write_replay`] writes, under the capture's folder.
+impl ReplayFiles<'_> {
+    /// Every file [`write_replay`] writes, under the capture's folder: the
+    /// four of [`REPLAY_FILES`], then each history file.
+    pub fn listed(&self) -> Vec<String> {
+        REPLAY_FILES
+            .iter()
+            .map(|f| f.to_string())
+            .chain(self.history.iter().map(|(f, _)| format!("replay/{f}")))
+            .collect()
+    }
+}
+
+/// The files [`write_replay`] always writes, under the capture's folder.
 pub const REPLAY_FILES: [&str; 4] = [
     "replay/world.toml",
     "replay/inputs.json",
@@ -62,6 +78,7 @@ pub const REPLAY_FILES: [&str; 4] = [
 /// Write `files` into `dir/replay/` (made if missing). The player (#1086)
 /// and `flint render --frame-capture` (#1089) both write through it, before
 /// [`write_capture`], which keeps the folder and writes the manifest last.
+/// A `history/` an earlier capture into the folder left is replaced.
 pub fn write_replay(dir: &Path, files: &ReplayFiles) -> io::Result<()> {
     let replay = dir.join("replay");
     std::fs::create_dir_all(&replay)?;
@@ -70,6 +87,28 @@ pub fn write_replay(dir: &Path, files: &ReplayFiles) -> io::Result<()> {
     std::fs::write(replay.join("inputs.json"), json)?;
     std::fs::write(replay.join("skinning.bin"), files.skinning)?;
     std::fs::write(replay.join("particles.bin"), files.particles)?;
+    let history = replay.join("history");
+    if history.is_dir() {
+        std::fs::remove_dir_all(&history)?;
+    }
+    for (file, bytes) in files.history {
+        // Only a plain name under `history/`: the states name their files
+        let name = Path::new(file);
+        let plain = name.starts_with("history")
+            && name
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)));
+        if !plain {
+            return Err(io::Error::other(format!(
+                "a style history file named {file:?} isn't under history/"
+            )));
+        }
+        let path = replay.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, bytes)?;
+    }
     Ok(())
 }
 

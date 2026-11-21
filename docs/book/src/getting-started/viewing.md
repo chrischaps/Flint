@@ -29,6 +29,8 @@ The viewer uses an orbit camera that rotates around a focus point. If the scene 
 
 Any manual orbit input cancels auto-orbit. Start in turntable mode with `--auto-orbit`.
 
+This is the same orbit camera every `flint edit` editor uses, with the same speeds: a model or terrain turns under the mouse just as a scene does. Dragging down tilts the view to look from higher up, and the view cube in the corner turns the same way when you drag it. Click one of its axes and the camera eases round to that side, orthographic; orbit again and it is perspective once more. A press on a gizmo handle moves the entity and never the camera, and a click selects only if the mouse stayed put: a drag to orbit selects nothing.
+
 ## The Selection Outline
 
 Whatever you pick, in the viewport or the scene tree, is outlined in selection yellow. The outline goes round the entity and everything under it in the hierarchy, so picking a parent with no mesh of its own (or a glTF model whose nodes were expanded into child entities) outlines the whole of it. It follows what was drawn: a skinned figure in its pose, a woozy prop where it has drifted to, a sprite by its cut-out, glass by its edge rather than filled. Where the selection is hidden behind something, its outline carries on through, fainter, so you can see where it is.

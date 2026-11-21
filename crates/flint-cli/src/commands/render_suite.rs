@@ -6,9 +6,7 @@
 //! `flint music render`, the old `render-suite` (#709).
 //!
 //! A `*.goldens.toml` (the programmatic eyes, #271) is `flint goldens`
-//! since #327; the old `render-suite` given one is routed there before
-//! parsing ([`super::legacy_names::route`]), so these flags are the music
-//! suite's alone.
+//! since #327, so these flags are the music suite's alone.
 
 use anyhow::{bail, Context, Result};
 use flint_music::event_script::EventScript;

@@ -168,6 +168,7 @@ mod tests {
             ("fn distribution_ggx(", "brdf.wgsl"),
             ("fn shadow_factor(", "shadows.wgsl"),
             ("fn spot_shadow_factor(", "shadows.wgsl"),
+            ("fn point_shadow_factor(", "shadows.wgsl"),
             ("fn direct_light(", "direct_light.wgsl"),
             ("fn point_light_at(", "local_lights.wgsl"),
             ("fn spot_light_at(", "local_lights.wgsl"),

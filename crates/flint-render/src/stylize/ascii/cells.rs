@@ -601,6 +601,40 @@ pub(super) struct History {
     pub(super) last: Option<(HistoryKey, u64)>,
     /// The camera the last frame drawn was seen from (#344).
     pub(super) last_view_proj: Option<[[f32; 4]; 4]>,
+    /// Whether the last frame drawn read its past, and the camera it took
+    /// as last frame's: what a frame capture hands out (#1136).
+    pub(super) used_past: bool,
+    pub(super) used_view_proj: [[f32; 4]; 4],
+}
+
+impl HistoryKey {
+    /// What a frame capture keys the tone history on (#1136): all of it
+    /// but the epoch, which is the capturing renderer's.
+    pub(super) fn exported(&self) -> serde_json::Value {
+        serde_json::json!({
+            "size": self.size,
+            "grid": self.grid,
+            "cell": self.cell.map(f32::from_bits),
+            "origin": self.origin.map(f32::from_bits),
+            "font": self.font,
+            "ramp": self.ramp,
+            "ramp_len": self.ramp_len,
+        })
+    }
+}
+
+impl EdgeKey {
+    /// What a frame capture keys the edge history on (#1136): all of it
+    /// but the epoch and the textures' generations, the capturing
+    /// renderer's.
+    pub(super) fn exported(&self) -> serde_json::Value {
+        serde_json::json!({
+            "size": self.size,
+            "depth_size": self.depth_size,
+            "cell": self.cell.map(f32::from_bits),
+            "origin": self.origin.map(f32::from_bits),
+        })
+    }
 }
 
 impl History {
@@ -661,6 +695,8 @@ pub(super) struct EdgePast {
     pub(super) cells: Option<Owned>,
     pub(super) slots: Option<Owned>,
     pub(super) last: Option<(EdgeKey, u64)>,
+    /// Whether the last frame drawn read them (#1136).
+    pub(super) used: bool,
 }
 
 impl EdgePast {

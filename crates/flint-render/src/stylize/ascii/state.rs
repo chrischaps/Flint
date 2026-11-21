@@ -118,6 +118,8 @@ pub(super) struct Ascii {
     pub(super) blit: kit::Blit,
     pub(super) fonts: Mutex<Fonts>,
     pub(super) history: Mutex<History>,
+    /// History taken from a frame capture (#1136), until the next frame.
+    pub(super) imported: crate::stylize::history::PendingHistory,
     /// The mask's outlines (#743, `ascii_edge_outline.wgsl`), a fragment a
     /// depth pixel into `outlines`, drawn only while the mask is bound.
     pub(super) outline_pipeline: std::sync::Arc<wgpu::RenderPipeline>,

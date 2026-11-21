@@ -6,8 +6,9 @@
 //! them hidden for a release. They are gone now: clap doesn't know them. This
 //! table is what's left, so that the first person to type one learns its
 //! spelling. [`explained`] turns clap's unknown-argument error for one into
-//! an error naming every old flag on the line with its new words, in `main`,
-//! a `--variant`'s line and a golden case's.
+//! an error naming every old flag on the line with its new words, for the
+//! command line (`lib.rs`'s `parse_failed`), a `--variant`'s line and a
+//! golden case's.
 //!
 //! The deprecated `--render-mode`, `--mode-mix` and `--mode-params` (#746)
 //! are still flags (`render_post::RenderModeArgs`); #1036 retires them with

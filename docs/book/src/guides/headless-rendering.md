@@ -533,7 +533,7 @@ Headless rendering works on machines without a display. On one without a GPU, it
 
 ## Golden Suites
 
-`flint goldens` renders a `*.goldens.toml`, a list of cases, as `flint render` would and compares each with a golden PNG (#271). Before #327 this was `flint render-suite <x>.goldens.toml`, which still runs the same command for one release (#709 moved the music half of `render-suite` to `flint music render`). It exits non-zero when any case moves past its tolerance, so it works as a gate in a script or a test:
+`flint goldens` renders a `*.goldens.toml`, a list of cases, as `flint render` would and compares each with a golden PNG (#271). Before #327 this was `render-suite <x>.goldens.toml`; that spelling ran for a release more and is gone since #1141 (#709 moved the music half of `render-suite` to `flint music render`). It exits non-zero when any case moves past its tolerance, so it works as a gate in a script or a test:
 
 ```bash
 flint goldens crates/flint-cli/tests/golden/stylize.goldens.toml

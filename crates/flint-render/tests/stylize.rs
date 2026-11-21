@@ -5191,6 +5191,123 @@ reads = ["acc"]
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #1136: a user style's history target handed out after a frame and taken
+/// back into a fresh renderer draws that frame again, and the frames after
+/// it as the first renderer does. A history whose key is another frame's
+/// (another size) is no past: that frame draws fresh and says why.
+#[test]
+fn a_history_target_handed_to_a_fresh_renderer_draws_the_captured_frame_again() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let (dir, registry) = user_style(
+        "history-1136",
+        &[
+            (
+                "utest_carry.shader.toml",
+                r#"version = 1
+name = "utest_carry"
+
+[[passes]]
+name = "acc"
+shader = "acc.wgsl"
+target = "acc"
+history = true
+reads = ["acc"]
+
+[[passes]]
+name = "show"
+shader = "show.wgsl"
+reads = ["acc"]
+"#,
+            ),
+            (
+                "acc.wgsl",
+                "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                 return vec4<f32>(flint_target_acc(p.uv).r + 0.125, flint.history, 0.0, 1.0);\n}\n",
+            ),
+            (
+                "show.wgsl",
+                "fn style(p: StylePixel) -> vec4<f32> {\n    \
+                 let a = flint_target_acc(p.uv);\n    \
+                 return vec4<f32>(a.r, a.g, 0.0, 1.0);\n}\n",
+            ),
+        ],
+    );
+    let world = box_world();
+    let value = |p: Vec<u8>| (p[0] as f32 / 255.0, p[1] as f32 / 255.0);
+    let close = |a: f32, b: f32| (a - b).abs() < 0.02;
+
+    // Two frames, then the second's history (the first frame's target, which
+    // the second read), as a capture of the second takes it
+    let mut first = style_on(&gpu, &registry, "utest_carry");
+    gpu.frame(&mut first, &world);
+    let (r2, h2) = value(gpu.frame(&mut first, &world));
+    assert!(close(r2, 0.25) && close(h2, 1.0), "frame 2: {r2} {h2}");
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    let mut state = first.capture_replay_state(gpu.device, &mut encoder, &world);
+    gpu.queue.submit(Some(encoder.finish()));
+    state.wait(gpu.device);
+    let (renderer_state, read) = state.read().unwrap();
+    let history = &renderer_state.style_history;
+    assert_eq!(history.len(), 1, "{history:?}");
+    let part = &history[0].parts[0];
+    assert_eq!(
+        (history[0].style.as_str(), part.name.as_str()),
+        ("utest_carry", "targets")
+    );
+    assert!(part.used, "the second frame read the first's");
+    assert_eq!(part.textures.len(), 1);
+    assert_eq!(read.history.len(), 1);
+    let imported = |state: &flint_render::stylize::history::StyleHistoryState| {
+        flint_render::stylize::history::ImportedHistory::new(
+            state.clone(),
+            read.history
+                .iter()
+                .map(|(f, b)| (f.clone(), std::sync::Arc::new(b.clone())))
+                .collect(),
+        )
+    };
+    // A fresh renderer given the history draws the captured frame again
+    let mut fresh = style_on(&gpu, &registry, "utest_carry");
+    fresh.import_style_history(vec![imported(&history[0])]);
+    let (r, h) = value(gpu.frame(&mut fresh, &world));
+    assert!(close(r, r2) && close(h, h2), "taken back: {r} {h}");
+    assert_eq!(
+        fresh.take_style_history_notes(),
+        ["utest_carry: history taken from the capture"]
+    );
+    // And goes on from it as the first renderer does
+    let (r3, _) = value(gpu.frame(&mut first, &world));
+    let (r, _) = value(gpu.frame(&mut fresh, &world));
+    assert!(
+        close(r3, 0.375) && close(r, r3),
+        "the frame after: {r} vs {r3}"
+    );
+
+    // Without it, a fresh renderer's frame is a first frame
+    let mut bare = style_on(&gpu, &registry, "utest_carry");
+    let (r, h) = value(gpu.frame(&mut bare, &world));
+    assert!(close(r, 0.125) && close(h, 0.0), "no history: {r} {h}");
+
+    // A key that isn't this frame's is no past
+    let mut other = history[0].clone();
+    other.parts[0].key["targets"][0]["size"] = serde_json::json!([3, 3]);
+    let mut keyed = style_on(&gpu, &registry, "utest_carry");
+    keyed.import_style_history(vec![imported(&other)]);
+    let (r, h) = value(gpu.frame(&mut keyed, &world));
+    assert!(close(r, 0.125) && close(h, 0.0), "another frame's: {r} {h}");
+    let notes = keyed.take_style_history_notes();
+    assert!(
+        notes.len() == 1 && notes[0].contains("another frame's") && notes[0].contains("size"),
+        "{notes:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// #544: `grid = "local"` lays pencil's strokes in the styled root's own
 /// space. Move a cube and the camera together, by a turn and a step, and
 /// the camera sees the same cube: its local strokes draw the same picture,

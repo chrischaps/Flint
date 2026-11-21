@@ -76,8 +76,10 @@ impl StyleTargets {
             format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                // Copied out by a frame capture (#1085)
-                | wgpu::TextureUsages::COPY_SRC,
+                // Copied out by a frame capture (#1085), and a style's
+                // history written back in by its replay (#1136)
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

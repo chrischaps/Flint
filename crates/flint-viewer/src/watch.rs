@@ -53,14 +53,19 @@ impl StyleSources {
 
     /// Whether `path` is a style's WGSL or description inside one of the
     /// style folders (at any depth: a description may name a shader in a
-    /// subfolder).
+    /// subfolder), or one of those folders itself. A folder is reported
+    /// changed when a file in it is added or removed (Windows sends it as a
+    /// batch of its own after a new WGSL's, #1153), and each such file comes
+    /// as its own event, which decides.
     pub fn owns(&self, path: &Path) -> bool {
-        if !is_style_source_name(path) {
-            return false;
+        let inside = |p: &PathBuf| self.dirs.iter().any(|dir| p.starts_with(dir));
+        if is_style_source_name(path) {
+            return spellings_of_file(path).iter().any(inside);
         }
-        spellings_of_file(path)
-            .iter()
-            .any(|p| self.dirs.iter().any(|dir| p.starts_with(dir)))
+        // The folder itself, or one under it that still exists
+        let spelled = spellings(path);
+        spelled.iter().any(|p| self.dirs.contains(p))
+            || (path.is_dir() && spelled.iter().any(inside))
     }
 
     /// Whether a batch of changed paths needs the scene parsed and built
@@ -168,6 +173,24 @@ mod tests {
         }
         // A batch with one scene edit among the style saves reloads
         assert!(sources.wants_scene_reload([wgsl.as_path(), scene.as_path()]));
+    }
+
+    #[test]
+    fn a_style_folders_own_change_reloads_nothing() {
+        let tmp = TempDir::new("folder");
+        let styles = tmp.0.join("styles");
+        let lib = styles.join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let sources = StyleSources::new([styles.clone()]);
+        // A new WGSL comes as the file, then (on Windows) its folder
+        assert!(sources.owns(&styles), "the style folder");
+        assert!(sources.owns(&lib), "a folder under it");
+        assert!(!sources.wants_scene_reload([styles.as_path(), lib.as_path()]));
+        // The scene's own folder, and a folder beside the styles, are not
+        assert!(!sources.owns(&tmp.0));
+        let models = tmp.0.join("models");
+        std::fs::create_dir_all(&models).unwrap();
+        assert!(!sources.owns(&models));
     }
 
     #[test]

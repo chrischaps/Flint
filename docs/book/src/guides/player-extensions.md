@@ -338,15 +338,15 @@ let hp = ctx.world.view(id, "health").i64("max", 100);
 
 | Reader | Takes | With no default |
 |--------|-------|-----------------|
-| `f32(field, default)`, `f64` | an integer or a float | `opt_f32`, `opt_f64` |
-| `i64(field, default)` | an integer, or a float with no fraction (`3.0`) | `opt_i64` |
-| `bool(field, default)` | `true` or `false` | `opt_bool` |
-| `str(field, default)` | a string | `opt_str` |
-| `choice(field, &allowed, default)` | one of `allowed`; returns the entry from that list | `opt_choice` |
-| `vec3(field, default)` | `[x, y, z]`, or a table with any of `x`, `y`, `z` | `opt_vec3` |
-| `vec4(field, default)` | `[a, b, c, d]` | `opt_vec4` |
-| `color(field, default)` | `[r, g, b]` (alpha 1) or `[r, g, b, a]` | `opt_color` |
-| `tables(field)` | an array of tables; each entry is a view of its own, reported as `field[i].key` | (none: missing is no entries) |
+| `view.f32(field, default)`, `f64` | an integer or a float | `opt_f32`, `opt_f64` |
+| `view.i64(field, default)` | an integer, or a float with no fraction (`3.0`) | `opt_i64` |
+| `view.bool(field, default)` | `true` or `false` | `opt_bool` |
+| `view.str(field, default)` | a string | `opt_str` |
+| `view.choice(field, &allowed, default)` | one of `allowed`; returns the entry from that list | `opt_choice` |
+| `view.vec3(field, default)` | `[x, y, z]`, or a table with any of `x`, `y`, `z` | `opt_vec3` |
+| `view.vec4(field, default)` | `[a, b, c, d]` | `opt_vec4` |
+| `view.color(field, default)` | `[r, g, b]` (alpha 1) or `[r, g, b, a]` | `opt_color` |
+| `view.tables(field)` | an array of tables; each entry is a view of its own, reported as `field[i].key` | (none: missing is no entries) |
 
 A field that isn't written reads as the default, and so does every field of a component the entity doesn't have (`exists()` says which); neither is reported. A value of the wrong type, or a string that is none of a `choice`'s values, reads as the default too, and is **reported once** for that entity, component and field: a warning in the log with the entity's name, what was expected and, for a choice, the allowed values and the nearest one.
 
@@ -590,3 +590,55 @@ projector.set_ground(Some(Arc::new(ground)));
 Then `Projector::screen_to_heightfield(x, y)` returns the world point where the ray through a screen point first comes down onto the ground, and `Projector::ground_height(x, z)` reads it; scripts have the same as `screen_to_heightfield(x, y)` and `ground_height(x, z)`. `View::screen_ray` and `View::screen_to_heightfield(x, y, &ground)` do it on a snapshot, and `GroundField::ray(origin, dir)` takes any ray, a camera rig's line to its target say.
 
 The ray is clipped to the field's box (its x/z extent and the range of its heights), then stepped one texel at a time over the ground and the crossing step bisected, so it can start anywhere and a hit lies on the ground. A ray that comes in through the field's side below the ground meets it at the edge. One that starts under the ground is reported where it next comes down onto it from above. A ridge thinner than a texel can be stepped over. `set_ground` again replaces the field (one built off the main thread, say), and `set_ground(None)` clears it. It survives scene changes: it's the game's, not the scene's. The editor's `ray_heightmap_intersect` uses the same march.
+
+## Commands of the Game's Own
+
+A game's tools (a nav-mesh bake, a level exporter, a balance report) can be `flint` commands, beside `render`, `check` and the rest, instead of a separate binary with flags of its own. flint-cli is a library as well as the `flint` binary: a game binary that calls `flint_cli::run_with` with its **CLI extensions** is the whole `flint` CLI plus the commands they add ([ADR 0133](https://github.com/chrischaps/Flint/blob/main/docs/adr/0133-a-game-binary-adds-cli-commands.md)). The stock `flint` is `run_with(Vec::new())`.
+
+The usual shape is a derived `clap::Subcommand` enum, one variant a command:
+
+```rust
+// src/bin/flint.rs in the game crate, with flint-cli as a dependency
+use flint_cli::extension::{self, Answer};
+
+#[derive(clap::Subcommand)]
+enum GameCommands {
+    /// Bake the level's navigation grid
+    BakeNav(BakeNavArgs),
+    /// Walk the level in a window, showing the grid
+    NavView(BakeNavArgs),
+}
+
+#[derive(clap::Args)]
+struct BakeNavArgs {
+    /// The level to bake
+    scene: String,
+}
+
+fn bake_nav(args: BakeNavArgs) -> anyhow::Result<()> {
+    let tiles = 42; // the game's own work
+    extension::emit(&Answer::new(
+        format!("baked {tiles} tiles of {}", args.scene),
+        serde_json::json!({ "scene": args.scene, "tiles": tiles }),
+    ))
+}
+
+fn main() -> std::process::ExitCode {
+    flint_cli::run_with(vec![extension::subcommands(|cmd: GameCommands| match cmd {
+        GameCommands::BakeNav(args) => bake_nav(args),
+        GameCommands::NavView(args) => todo!("open a window on {}", args.scene),
+    })
+    .opens_window_when(|cmd| matches!(cmd, GameCommands::NavView(_)))])
+}
+```
+
+The game's commands parse with the engine's in one parser, so they behave as the engine's do:
+
+- `flint --help` lists them, and `<command> --help` prints their own help.
+- The global `--json` reaches them. Under it, `extension::emit` prints the answer's JSON side as the one document on stdout. `extension::document(&value)` prints a document you build yourself, and `extension::say(line)` writes a human line (on stderr once stdout is the document). A command that `opens_window_when` says opens a window is refused under `--json`, as `flint play` is.
+- The global `--project` is applied before the command runs: `flint_core::project::Project::current()` returns it.
+- A failure is an `Err`, never `std::process::exit`. A report that is a failure (`Answer::failed_if(true)`) prints, then exits 1. Any other error prints on stderr, and under `--json` as an `{"error": ...}` document. A mistake on the command line is clap's exit 2, with the usage in the error document.
+
+A name the engine already has (`render`, `help`, a hidden command such as `serve`) is refused before anything runs, and so is a name two extensions share: a game's command never replaces the engine's. For anything a derived enum doesn't fit, implement `flint_cli::CliExtension` (`commands`, `run`, `opens_window`) yourself.
+
+The game's binary links its own 8 MB main-thread stack on Windows, with the `build.rs` in [A Game Binary](#a-game-binary). Each of a command's flags costs the debug parser about 8 KB of stack, so keep an `Args` struct to a dozen or so flags. Since `flint capture` and `flint goldens` run the binary they're in, in a game's binary they run the game's.

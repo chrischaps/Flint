@@ -4,10 +4,11 @@
 //! (`flint-player` through [`PlayerCli`], which adds `--bundle`), so a flag
 //! added here reaches both and a scene plays the same under either.
 //!
-//! The web player (`bin/flint_web.rs`, from its page's query) and Android
-//! (`flint-android`, from its profile) build their `PlayerApp` from their
-//! own sources; what they share with this is `PlayerApp::apply_scene_settings`
-//! and [`PlayerApp::step_frames`].
+//! The flags the web player (`bin/flint_web.rs`, from its page's query) and
+//! Android (`flint-android`, from its profile) offer too are read into a
+//! [`PlayOptions`](crate::PlayOptions) ([`PlayerArgs::options`]), as theirs
+//! are, and set on the app by the one `PlayOptions::apply` (#1142); what
+//! else the hosts share is `PlayerApp::apply_scene_settings`.
 
 use crate::PlayerApp;
 use anyhow::{Context, Result};
@@ -371,11 +372,7 @@ impl PlayerCli {
 /// through: it may be a user style the scene's `styles/` registers (#274),
 /// checked once those are loaded.
 fn parse_style_word(s: &str) -> Result<String, String> {
-    match flint_render::stylize::StyleSpec::parse(s, &flint_render::stylize::StyleRegistry::new()) {
-        Ok(_) => Ok(s.to_string()),
-        Err(e) if e.starts_with("unknown style") => Ok(s.to_string()),
-        Err(e) => Err(e),
-    }
+    crate::play_options::check_style_word(s).map(|()| s.to_string())
 }
 
 /// Play a scene from the disk: the flags' early switches (`--list-gpus`,
@@ -464,6 +461,45 @@ fn start(args: PlayerArgs, bundle: Option<&Path>) -> Result<()> {
 }
 
 impl PlayerArgs {
+    /// The flags' [`PlayOptions`](crate::PlayOptions): what they mean once
+    /// read, the same struct the web's query and Android's profile build
+    /// (#1142). A value that doesn't read is refused, naming its flag.
+    pub fn options(&self) -> Result<crate::PlayOptions> {
+        let mut options = crate::PlayOptions {
+            msaa: self.msaa,
+            styles: self.styles.clone(),
+            look: self.look.clone(),
+            style_time: self.style_time,
+            motion_hold: self.motion_hold,
+            touch_device: self.touch_device,
+            pixels_per_point: self.pixels_per_point,
+            strict_scripts: self.strict_scripts,
+            procgen_defer: self.procgen_defer,
+            save_dir: self.save_dir.clone(),
+            pass_knobs: self.pass_knobs.knobs()?,
+            frame_step: self.frame_step,
+            seed: self.seed,
+            perf: self.perf.then_some(true),
+            ..Default::default()
+        };
+        if let Some(value) = &self.render_scale {
+            options
+                .read_render_scale(crate::RenderScaleSetting::default(), value)
+                .map_err(|e| anyhow::anyhow!("--render-scale {e}"))?;
+        }
+        if let Some(quality) = &self.quality {
+            // Refuse a typo here rather than run with a setting silently dropped.
+            options
+                .read_quality(quality)
+                .map_err(|e| anyhow::anyhow!("--quality: {e}"))?;
+        }
+        options
+            .read_touch_controls(&self.touch_controls)
+            .map_err(|e| anyhow::anyhow!("--touch-controls: {e}"))?;
+        options.safe_area = self.safe_area.as_deref().map(parse_safe_area).transpose()?;
+        Ok(options)
+    }
+
     /// Everything before the window: the bundle (if any), the scene (the
     /// project's default when none is named), its schemas through the one
     /// resolver (ADR 0114), its user styles and the `--style` and `--look`
@@ -524,24 +560,9 @@ impl PlayerArgs {
                 .map_err(|e| anyhow::anyhow!("--look: {e}"))?;
             tracing::info!(target: "player", "Look: {} ({})", look.name, look.source);
         }
-        let render_scale = match &args.render_scale {
-            Some(value) => Some(
-                crate::RenderScaleSetting::default()
-                    .parse(value)
-                    .ok_or_else(|| anyhow::anyhow!("--render-scale {value}: a number or auto"))?,
-            ),
-            None => None,
-        };
-        if let Some(quality) = &args.quality {
-            // Refuse a typo here rather than run with a setting silently dropped.
-            let errors = flint_render::QualitySettings::default().apply_str(quality);
-            if let Some(e) = errors.first() {
-                anyhow::bail!("--quality: {e}");
-            }
-        }
-        let touch_mode = flint_runtime::TouchControlsMode::parse(&args.touch_controls)
-            .ok_or_else(|| anyhow::anyhow!("--touch-controls: auto, always or never"))?;
-        let safe_area = args.safe_area.as_deref().map(parse_safe_area).transpose()?;
+        // What the flags the web and Android share mean, each value read
+        // and a bad one refused here (#1142)
+        let options = args.options()?;
         let compare = args.compare.as_deref().map(parse_compare).transpose()?;
         let input_script = args
             .input_script
@@ -599,39 +620,22 @@ impl PlayerArgs {
             args.input_config.clone(),
             scene_file.scene.input_config.clone(),
         );
+        // Msaa, render scale, quality, styles, touch, frame step and seed,
+        // perf...: what the web and Android set through the same call
+        options.apply(&mut app);
+        // What only the desktop has: a window, sockets and files
         let launch = &mut app.launch;
-        launch.msaa_sample_count = args.msaa;
-        launch.save_dir = args.save_dir.clone();
         // A bundle's files aren't on the disk: nothing to key a disk cache by.
         launch.procgen_disk_cache = !from_bundle;
         launch.scene_file_writable = !from_bundle;
-        if args.procgen_defer {
-            launch.procgen_mode = crate::ProcGenMode::Deferred;
-        }
-        if let Some(scale) = render_scale {
-            launch.render_scale = scale;
-        }
-        if let Some(quality) = &args.quality {
-            launch.quality_overrides = quality.clone();
-        }
-        launch.safe_area = safe_area;
-        launch.touch_device = args.touch_device;
-        launch.strict_scripts = args.strict_scripts;
-        launch.pixels_per_point = args.pixels_per_point.filter(|p| *p > 0.0);
-        launch.look = args.look.clone();
-        launch.style_specs = args.styles.clone();
-        launch.style_time = args.style_time;
-        launch.motion_hold = args.motion_hold;
         launch.window_size = args.window.size();
         launch.window_options = args.window.clone();
-        launch.pass_knobs = args.pass_knobs.knobs()?;
         launch.expression_feed = expression_feed;
         #[cfg(not(target_arch = "wasm32"))]
         {
             launch.inspect = inspect;
             launch.world_dump = world_dump;
         }
-        app.input.touch_controls_mut().set_mode(touch_mode);
         args.hitches.apply(&mut app)?;
         args.perf_report.apply(&mut app, args.exit_after)?;
         args.frame_captures.apply(&mut app)?;
@@ -663,10 +667,6 @@ impl PlayerArgs {
                 "[living] --compare {a},{b}: this player is built without the `living` feature"
             );
         }
-        if args.perf {
-            app.enable_perf(true);
-        }
-        app.step_frames(args.frame_step, args.seed);
 
         // The game's buses (#730), then the flags over them: each scales
         // the volume its bus starts at (`--music-volume 0` mutes it)

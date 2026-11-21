@@ -4,11 +4,15 @@
 //! a depth texture array (one layer per cascade). The main shader samples
 //! this texture to compute shadow factors.
 //!
-//! The array's last layer, [`SPOT_SHADOW_LAYER`], is one spot light's
+//! After the cascades, [`SPOT_SHADOW_LAYER`] is one spot light's
 //! perspective shadow map (#504, ADR 0124): the spot that `cast_shadows`
 //! chose, drawn when it is chosen, whether or not a sun casts. It is a layer
 //! of the same texture rather than a texture of its own so that every lit
 //! shader reads it through the binding it already has.
+//!
+//! The last, [`POINT_SHADOW_LAYER`], is one point light's cube shadow map
+//! (#1112, ADR 0132): its six faces side by side in one layer, three across
+//! and two down, each a third of the layer wide ([`point_face_size`]).
 
 use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::primitives::{SkinnedVertex, Vertex};
@@ -23,8 +27,19 @@ pub const CASCADE_COUNT: usize = 3;
 /// after the cascades (#504). The WGSL says `3` where it reads it.
 pub const SPOT_SHADOW_LAYER: usize = CASCADE_COUNT;
 
-/// Layers of the shadow map array: the cascades, then the spot's.
-pub const SHADOW_LAYERS: usize = CASCADE_COUNT + 1;
+/// The layer of the shadow map array a point light's six cube faces are
+/// drawn into, after the spot's (#1112). The WGSL says `4` where it reads it.
+pub const POINT_SHADOW_LAYER: usize = CASCADE_COUNT + 1;
+
+/// Layers of the shadow map array: the cascades, the spot's, the point's.
+pub const SHADOW_LAYERS: usize = CASCADE_COUNT + 2;
+
+/// How far past 45 degrees each cube face's map reaches, as the tan of its
+/// half-angle (about 47.2 degrees). The lookup picks a face by the dominant
+/// axis, so the edge of a face is at tan 1; the band past it holds the
+/// texels a soft shadow's kernel reaches for near a seam, so a tap never
+/// leaves the face it started on.
+pub const POINT_FACE_TAN_HALF: f32 = 1.08;
 
 /// The widest cone a spot's shadow map covers, as a half-angle (80 degrees).
 /// A perspective map wider than that spends its texels on the rim; a spot
@@ -76,6 +91,17 @@ pub struct ShadowUniforms {
     /// map's half-angle, w = 1.0 when the spot map was drawn this frame.
     /// w = 0 lights every spot as before.
     pub spot: [f32; 4],
+    /// The point light's cube (#1112): world to each face's clip space, in
+    /// the order +X, -X, +Y, -Y, +Z, -Z. Face `f` is drawn at column `f % 3`,
+    /// row `f / 3` of [`POINT_SHADOW_LAYER`].
+    pub point_view_proj: [[[f32; 4]; 4]; 6],
+    /// x = near plane, y = far plane (the light's `range`), z = tan of each
+    /// face's half-angle ([`POINT_FACE_TAN_HALF`]), w = 1.0 when the cube was
+    /// drawn this frame. w = 0 lights every point light as before.
+    pub point: [f32; 4],
+    /// x = one face's width as a share of the layer, y = one face's width in
+    /// texels; zw unused.
+    pub point_atlas: [f32; 4],
 }
 
 impl Default for ShadowUniforms {
@@ -92,6 +118,9 @@ impl Default for ShadowUniforms {
             pcss: [0.0; 4],
             spot_view_proj: identity,
             spot: [0.0; 4],
+            point_view_proj: [identity; 6],
+            point: [0.0; 4],
+            point_atlas: [0.0; 4],
         }
     }
 }
@@ -110,7 +139,7 @@ pub struct ShadowPass {
     #[allow(dead_code)]
     pub shadow_texture: wgpu::Texture,
     pub shadow_view: wgpu::TextureView,
-    /// One view a layer, to draw into: the cascades, then the spot's.
+    /// One view a layer, to draw into: the cascades, the spot's, the point's.
     pub layer_views: Vec<wgpu::TextureView>,
     pub shadow_sampler: wgpu::Sampler,
     pub shadow_uniforms_buffer: wgpu::Buffer,
@@ -295,7 +324,7 @@ impl ShadowPass {
             make_skinned_shadow("Skinned Shadow Depth Pipeline (double-sided)", None);
 
         // Create shadow depth texture array (one layer per cascade, then the
-        // spot's)
+        // spot's, then the point's six faces in one)
         let shadow_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Shadow Map Array"),
             size: wgpu::Extent3d {
@@ -723,6 +752,34 @@ impl ShadowPass {
         }
     }
 
+    /// Aim the point layer's six faces at `point`, or turn it off with
+    /// `None` (#1112), and return the faces to draw.
+    pub fn update_point(
+        &mut self,
+        point: Option<&crate::pipeline::PointLight>,
+    ) -> Option<PointShadowCube> {
+        let cube = point.map(|p| point_shadow_cube(p, self.resolution));
+        let u = &mut self.shadow_uniforms;
+        match &cube {
+            Some(cube) => {
+                u.cascade_splits[3] = 1.0 / self.resolution as f32;
+                for (slot, face) in u.point_view_proj.iter_mut().zip(&cube.faces) {
+                    *slot = face.view_proj;
+                }
+                u.point = [cube.near, cube.far, POINT_FACE_TAN_HALF, 1.0];
+                let size = cube.faces[0].viewport[2];
+                u.point_atlas = [size as f32 / self.resolution as f32, size as f32, 0.0, 0.0];
+            }
+            None => {
+                let off = ShadowUniforms::default();
+                u.point_view_proj = off.point_view_proj;
+                u.point = off.point;
+                u.point_atlas = off.point_atlas;
+            }
+        }
+        cube
+    }
+
     pub fn shadow_uniforms(&self) -> &ShadowUniforms {
         &self.shadow_uniforms
     }
@@ -764,6 +821,66 @@ pub(crate) fn spot_shadow_frustum(spot: &crate::pipeline::SpotLight) -> SpotShad
         far,
         tan_half,
     }
+}
+
+/// One face of a point light's cube shadow map (#1112): its view and where
+/// in [`POINT_SHADOW_LAYER`] it is drawn.
+#[derive(Debug, Clone, Copy)]
+pub struct PointShadowFace {
+    pub view_proj: [[f32; 4]; 4],
+    /// x, y, width (= height) in texels
+    pub viewport: [u32; 3],
+}
+
+/// A point light's six faces, +X, -X, +Y, -Y, +Z, -Z, and the planes they
+/// share.
+#[derive(Debug, Clone, Copy)]
+pub struct PointShadowCube {
+    pub faces: [PointShadowFace; 6],
+    pub near: f32,
+    pub far: f32,
+}
+
+/// A cube face's width in texels at a layer of `resolution`: three faces go
+/// across the layer, two down.
+pub fn point_face_size(resolution: u32) -> u32 {
+    (resolution / 3).max(1)
+}
+
+/// The axis each cube face looks down, in the shader's order, and the up its
+/// view takes (any not along the axis does: the shader reads each face
+/// through its own matrix).
+const POINT_FACES: [([f32; 3], [f32; 3]); 6] = [
+    ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+    ([-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+    ([0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+    ([0.0, -1.0, 0.0], [0.0, 0.0, 1.0]),
+    ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
+    ([0.0, 0.0, -1.0], [0.0, 1.0, 0.0]),
+];
+
+/// The six perspectives a point light's cube is drawn from: from the light
+/// down each axis out to its `range`, a little wider than a quarter turn
+/// ([`POINT_FACE_TAN_HALF`]), with the near plane the spot's takes.
+pub(crate) fn point_shadow_cube(
+    point: &crate::pipeline::PointLight,
+    resolution: u32,
+) -> PointShadowCube {
+    let far = point.radius.max(0.1);
+    let near = (far * 0.004).clamp(0.02, 0.25);
+    let proj = perspective(POINT_FACE_TAN_HALF, near, far);
+    let size = point_face_size(resolution);
+    let eye = point.position;
+    let faces = std::array::from_fn(|f| {
+        let (axis, up) = POINT_FACES[f];
+        let target = [eye[0] + axis[0], eye[1] + axis[1], eye[2] + axis[2]];
+        let view = look_at_up(&eye, &target, &up);
+        PointShadowFace {
+            view_proj: mat4_mul(&proj, &view),
+            viewport: [(f as u32 % 3) * size, (f as u32 / 3) * size, size],
+        }
+    });
+    PointShadowCube { faces, near, far }
 }
 
 /// A square perspective projection, wgpu's depth: `near` to 0, `far` to 1
@@ -1067,6 +1184,137 @@ mod tests {
         };
         let tan_cap = SPOT_SHADOW_MAX_HALF_ANGLE.tan();
         assert!((spot_shadow_frustum(&wide).tan_half - tan_cap).abs() < 1e-4);
+    }
+
+    /// The face the shader picks for a direction from the light: the
+    /// dominant axis, x before y before z on a tie (`point_face` in
+    /// `shadows.wgsl`).
+    fn shader_face(d: [f32; 3]) -> usize {
+        let a = [d[0].abs(), d[1].abs(), d[2].abs()];
+        if a[0] >= a[1] && a[0] >= a[2] {
+            if d[0] > 0.0 {
+                0
+            } else {
+                1
+            }
+        } else if a[1] >= a[2] {
+            if d[1] > 0.0 {
+                2
+            } else {
+                3
+            }
+        } else if d[2] > 0.0 {
+            4
+        } else {
+            5
+        }
+    }
+
+    fn face_uv(m: &[[f32; 4]; 4], p: [f32; 3]) -> (f32, f32, f32, f32) {
+        let clip: Vec<f32> = (0..4)
+            .map(|row| m[0][row] * p[0] + m[1][row] * p[1] + m[2][row] * p[2] + m[3][row])
+            .collect();
+        let (x, y, z) = (clip[0] / clip[3], clip[1] / clip[3], clip[2] / clip[3]);
+        (x * 0.5 + 0.5, -y * 0.5 + 0.5, z, clip[3])
+    }
+
+    #[test]
+    fn every_direction_lands_inside_the_face_the_shader_picks() {
+        let light = crate::pipeline::PointLight {
+            position: [0.5, 1.2, -0.7],
+            radius: 8.0,
+            intensity: 3.0,
+            shadow: 1.0,
+            ..crate::pipeline::PointLight::default()
+        };
+        let cube = point_shadow_cube(&light, 2048);
+        // The edge of a face (tan 1) sits this far in from the map's edge,
+        // the band a soft kernel may reach into
+        let band = 0.5 * (1.0 - 1.0 / POINT_FACE_TAN_HALF);
+        let mut seen = [false; 6];
+        // A spiral of directions over the sphere, and the axes and the
+        // cube's corners, where three faces meet
+        let mut dirs: Vec<[f32; 3]> = (0..400)
+            .map(|i| {
+                let t = (i as f32 + 0.5) / 400.0;
+                let z = 1.0 - 2.0 * t;
+                let r = (1.0 - z * z).sqrt();
+                let a = i as f32 * 2.39996;
+                [r * a.cos(), z, r * a.sin()]
+            })
+            .collect();
+        for (axis, _) in POINT_FACES {
+            dirs.push(axis);
+        }
+        for x in [-1.0, 1.0] {
+            for y in [-1.0, 1.0] {
+                for z in [-1.0, 1.0] {
+                    dirs.push([x, y, z]);
+                }
+            }
+        }
+        for d in dirs {
+            let f = shader_face(d);
+            seen[f] = true;
+            let dist = 3.0;
+            let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            let p = [
+                light.position[0] + d[0] / len * dist,
+                light.position[1] + d[1] / len * dist,
+                light.position[2] + d[2] / len * dist,
+            ];
+            let (u, v, depth, w) = face_uv(&cube.faces[f].view_proj, p);
+            assert!(w > 0.0, "{d:?} is in front of face {f}");
+            assert!(
+                (band - 1e-4..=1.0 - band + 1e-4).contains(&u)
+                    && (band - 1e-4..=1.0 - band + 1e-4).contains(&v),
+                "{d:?} on face {f} at ({u}, {v}), outside its quarter turn"
+            );
+            assert!(depth > 0.0 && depth < 1.0, "{d:?}: depth {depth}");
+        }
+        assert!(seen.iter().all(|s| *s), "every face is picked: {seen:?}");
+    }
+
+    #[test]
+    fn a_point_cube_reaches_the_lights_range_and_tiles_one_layer() {
+        let light = crate::pipeline::PointLight {
+            position: [0.0, 2.0, 0.0],
+            radius: 6.0,
+            intensity: 3.0,
+            ..crate::pipeline::PointLight::default()
+        };
+        let cube = point_shadow_cube(&light, 2048);
+        for (f, (axis, _)) in POINT_FACES.iter().enumerate() {
+            let at = |d: f32| {
+                [
+                    light.position[0] + axis[0] * d,
+                    light.position[1] + axis[1] * d,
+                    light.position[2] + axis[2] * d,
+                ]
+            };
+            let (u, v, near, _) = face_uv(&cube.faces[f].view_proj, at(cube.near));
+            assert!((u - 0.5).abs() < 1e-4 && (v - 0.5).abs() < 1e-4, "face {f}");
+            assert!(near.abs() < 1e-4, "face {f}: near at {near}");
+            let (_, _, far, _) = face_uv(&cube.faces[f].view_proj, at(light.radius));
+            assert!((far - 1.0).abs() < 1e-4, "face {f}: range at {far}");
+        }
+        // Six tiles, three across and two down, none overlapping, all inside
+        let size = point_face_size(2048);
+        assert_eq!(size, 682);
+        let tiles: Vec<[u32; 3]> = cube.faces.iter().map(|f| f.viewport).collect();
+        for (i, a) in tiles.iter().enumerate() {
+            assert_eq!(a[2], size);
+            assert!(a[0] + size <= 2048 && a[1] + size <= 2048);
+            for b in &tiles[i + 1..] {
+                assert!(
+                    a[0] + size <= b[0]
+                        || b[0] + size <= a[0]
+                        || a[1] + size <= b[1]
+                        || b[1] + size <= a[1],
+                    "{a:?} overlaps {b:?}"
+                );
+            }
+        }
     }
 
     #[test]

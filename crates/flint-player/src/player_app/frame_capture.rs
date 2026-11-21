@@ -889,16 +889,16 @@ fn write(job: Job) -> Result<Written, String> {
         renderer,
         particles: particles.emitters,
     };
-    flint_render::frame_capture::write_replay(
-        &dir,
-        &flint_render::frame_capture::ReplayFiles {
-            world_toml: &world_toml,
-            inputs: &inputs,
-            skinning: &palettes.bytes,
-            particles: &particles.bytes,
-        },
-    )
-    .map_err(|e| fail("writing replay/", &e))?;
+    let files = flint_render::frame_capture::ReplayFiles {
+        world_toml: &world_toml,
+        inputs: &inputs,
+        skinning: &palettes.bytes,
+        particles: &particles.bytes,
+        history: &palettes.history,
+    };
+    flint_render::frame_capture::write_replay(&dir, &files)
+        .map_err(|e| fail("writing replay/", &e))?;
+    let listed = files.listed();
     let found = flint_render::frame_replay::hash_assets(assets, &config);
     if let Some(scene) = &mut description.scene {
         scene.sha256 = flint_render::frame_replay::hash_file(&scene_path).map(|(h, _)| h);
@@ -929,10 +929,7 @@ fn write(job: Job) -> Result<Written, String> {
     description.captured_at = Some(utc_now());
     description.replay = Some(ReplayDescription {
         available: true,
-        files: flint_render::frame_capture::REPLAY_FILES
-            .iter()
-            .map(|f| f.to_string())
-            .collect(),
+        files: listed,
         fresh_only,
         assets: found,
     });

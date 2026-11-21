@@ -140,8 +140,10 @@ pub enum SteppedPass {
     /// What follows the scene (the style mask and albedo, the fog veil, the
     /// selection) draws only what it drew.
     Scene,
-    /// A shadow map layer, by index: a cascade (0 to 2) or the casting
-    /// spot's ([`SPOT_SHADOW_LAYER`](crate::shadow::SPOT_SHADOW_LAYER)).
+    /// A shadow map layer, by index: a cascade (0 to 2), the casting
+    /// spot's ([`SPOT_SHADOW_LAYER`](crate::shadow::SPOT_SHADOW_LAYER)) or
+    /// the casting point light's six faces
+    /// ([`POINT_SHADOW_LAYER`](crate::shadow::POINT_SHADOW_LAYER)).
     /// Its casters in list order; the grass it casts isn't counted. The
     /// scene still reads the whole of every other layer.
     Shadow(usize),
@@ -903,6 +905,9 @@ impl SceneRenderer {
                     self.fog_veil.drawn = self.encode_fog_veil(device, encoder, depth_view);
                 }
                 scopes.end(encoder, scope);
+                if let Some(pass) = scopes.log().and_then(|l| l.named("Fog veil")) {
+                    self.log_fog_veil_draws(pass);
+                }
                 scopes.note("Fog veil", |p| {
                     p.reads(&[sd]).writes(&["fog_veil"]);
                 });
@@ -985,6 +990,12 @@ impl SceneRenderer {
                     self.encode_selection_mask(device, encoder, depth_view, &selection);
                 }
                 scopes.end(encoder, scope);
+                if let Some(pass) = scopes.log().and_then(|l| l.named("Selection mask")) {
+                    self.log_selection_draws(pass, &selection);
+                }
+                scopes.note("Selection mask", |p| {
+                    p.reads(&[sd]);
+                });
             }
         } else {
             scopes.skip("Selection mask", || "nothing selected".to_string());

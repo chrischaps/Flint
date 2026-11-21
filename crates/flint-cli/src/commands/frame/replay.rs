@@ -333,6 +333,10 @@ pub fn run(args: ReplayArgs) -> Result<()> {
             text.push_str(&format!("    {line}\n"));
         }
     }
+    // What each style did with the captured history (#1136)
+    for line in &host.history_notes {
+        text.push_str(&format!("  history: {line}\n"));
+    }
     let assets_ok = host.assets.iter().filter(|a| a.same_bytes()).count();
     if !host.assets.is_empty() {
         text.push_str(&format!(
@@ -368,6 +372,7 @@ pub fn run(args: ReplayArgs) -> Result<()> {
             && pass_match.as_ref().is_none_or(Match::identical),
         "gpu_ms": gpu,
         "fresh_only": host.fresh_only,
+        "history": host.history_notes,
         "assets": host.assets,
         "notes": host.notes,
         "refused": drawn.refused,

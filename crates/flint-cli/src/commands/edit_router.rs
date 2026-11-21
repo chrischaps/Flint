@@ -644,7 +644,7 @@ name = \"x\"
     /// #712's first done-when: one `initialize`. Every editor `flint edit`
     /// opens is a `flint_viewer::host::Editor`, and the host is the only
     /// place a window, a render context or egui's window state is made.
-    /// The play-chart window (`flint play-chart`) is no editor, and nor is
+    /// The play-chart window (`flint music chart play`) is no editor, and nor is
     /// the frame debugger (`flint frame open`, #1088): it edits nothing,
     /// orbits no camera and watches no file, and its `--screenshot` draws
     /// the egui window itself, where the host's still draws a scene (#1202).

@@ -301,7 +301,9 @@ pub struct PointLight {
     /// light, ADR 0056); 0 = punctual → verbatim legacy shading. Grew the
     /// struct 32 → 48 B — `lights.wgsl` declares it for every shader (#738).
     pub source_radius: f32,
-    pub _pad0: f32,
+    /// 1.0 on the point light whose cube shadow map is drawn (#1112): the
+    /// former `_pad0`, as the spot's mark is its old `_pad1`.
+    pub shadow: f32,
     pub _pad1: f32,
     pub _pad2: f32,
 }
@@ -314,7 +316,7 @@ impl Default for PointLight {
             color: [1.0, 1.0, 1.0],
             intensity: 0.0,
             source_radius: 0.0,
-            _pad0: 0.0,
+            shadow: 0.0,
             _pad1: 0.0,
             _pad2: 0.0,
         }

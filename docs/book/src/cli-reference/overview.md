@@ -54,7 +54,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint music render <manifest>` | Render a music `.suite.toml` to WAV, offline and deterministically |
 | `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
 
-The music commands are documented on their own page: [Music Commands](music.md). Until #709 they were top-level (`validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart`, `render-suite`); those names still run for one release, printing their new spelling, and the rumble spike is an example program now.
+The music commands are documented on their own page: [Music Commands](music.md). Until #709 they were top-level (`validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart`, `render-suite`); those names ran for one release and are gone since #1141, as is `spike-rumble`: the rumble spike is an example program now.
 
 ## Machine-readable output
 
@@ -299,7 +299,7 @@ The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, 
 
 ### `flint frame replay`
 
-`flint frame replay <capture>` draws a captured frame again ([Replaying a frame](../guides/frame-debugger.md#replaying-a-frame)): the authored scene loaded as `flint render` loads it, the captured world laid over it by entity name, the renderer's state put back, no game step run. It writes the replayed frame as a capture, which every other `frame` view reads, and says whether its final image and its scene pass's image are byte-identical with the captured ones, or in how many pixels they differ and what the capture draws fresh. Each asset is checked against its recorded hash; a missing or changed one is named and the frame still drawn. A capture with no `replay/` is refused, saying so. `--json` carries `identical`, `final` and `scene` (`pixels`, `differing`), `pass` (the stepped pass's own images, summed, when it isn't the scene's) and `pass_draws` (how many draws the capture's stepped pass has), `assets` (each `same`, `moved`, `changed` or `missing`), `notes`, `fresh_only`, `refused` and `skippable`.
+`flint frame replay <capture>` draws a captured frame again ([Replaying a frame](../guides/frame-debugger.md#replaying-a-frame)): the authored scene loaded as `flint render` loads it, the captured world laid over it by entity name, the renderer's state put back, no game step run. It writes the replayed frame as a capture, which every other `frame` view reads, and says whether its final image and its scene pass's image are byte-identical with the captured ones, or in how many pixels they differ and what the capture draws fresh. A style's history the capture holds (#1136) is handed back before the draw, and a `history:` line says, for each part, whether the style took it or drew fresh and why. Each asset is checked against its recorded hash; a missing or changed one is named and the frame still drawn. A capture with no `replay/` is refused, saying so. `--json` carries `identical`, `final` and `scene` (`pixels`, `differing`), `pass` (the stepped pass's own images, summed, when it isn't the scene's) and `pass_draws` (how many draws the capture's stepped pass has), `assets` (each `same`, `moved`, `changed` or `missing`), `notes`, `fresh_only`, `history` (those lines), `refused` and `skippable`.
 
 | Flag | What it does |
 |------|--------------|
@@ -1010,7 +1010,11 @@ flint edit fx/fire.particles.toml              # Particle effect editor (created
 
 Every editor runs in one host (`flint_viewer::host`, #712): it opens the
 window, the GPU and egui, feeds the orbit camera, watches the file and draws
-the `--render` still. A flag means the same in every editor that takes it,
+the `--render` still. The orbit camera is one controller for all of them, the
+scene viewer and track editor included (#1153), so a drag, a scroll, WASD/QE
+and the O turntable turn every 3D view at the same speeds. `--watch` is the
+host's too: the scene viewer asks it for the scene's folder and the schema
+folders with everything under them. A flag means the same in every editor that takes it,
 and one an editor doesn't take is an error that names the editors it applies
 to, before anything opens:
 
@@ -1203,8 +1207,8 @@ See the [Particle Editor guide](../guides/particle-editor.md).
 
 | Input | Action |
 |-------|--------|
-| Left-click | Select entity / pick gizmo axis |
-| Left-drag | Orbit camera (or drag gizmo if axis selected) |
+| Left-click | Select entity / pick gizmo axis (a press that moves more than a few pixels is a drag, and picks nothing) |
+| Left-drag | Orbit camera (or drag gizmo if axis selected; a press on a gizmo handle never orbits) |
 | Right-drag | Pan camera |
 | Scroll | Zoom |
 | W / A / S / D | Orbit camera (when no entity is selected) |
@@ -1235,6 +1239,7 @@ When an entity is selected, a **translate gizmo** appears with colored axis arro
 | Middle-drag | Orbit camera |
 | Right-drag | Pan camera |
 | Scroll | Zoom |
+| O, `[` / `]` | Toggle auto-orbit, slower / faster |
 | Tab / Shift+Tab | Cycle through control points |
 | I | Insert a new control point after selected |
 | Delete | Remove selected control point |
