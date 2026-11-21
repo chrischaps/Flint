@@ -1565,7 +1565,7 @@ impl SceneRenderer {
             let edges =
                 pp.styles
                     .encode_edges(&both, frame, encoder, &mut |label, encoder, run| {
-                        self.run_style_part(device, scopes, label, encoder, run, None)
+                        self.run_style_part(device, scopes, label, encoder, run, None, None)
                     });
             frame.edges = edges;
             scopes.note(crate::stylize::edges::EDGE_LABEL, |p| {
@@ -1601,7 +1601,8 @@ impl SceneRenderer {
                 pp.styles.fade(),
                 &mut |label, encoder, run| {
                     let dst = dst_of(&hdr_dsts, label);
-                    self.run_style_part(device, scopes, label, encoder, run, dst)
+                    let refuse = history_refusal(scopes.knobs.is_some(), &hdr_styles, label);
+                    self.run_style_part(device, scopes, label, encoder, run, dst, refuse)
                 },
             ),
             _ => None,
@@ -1700,35 +1701,41 @@ impl SceneRenderer {
             // A captured frame reads each step's mip as it's written (#1085):
             // the upsample writes over the downsample's
             flint_core::scope!("encode_part", "Bloom");
-            let scope = scopes.begin(encoder, "Bloom");
-            if scopes.taps.is_some() {
-                pp.run_bloom(
-                    queue,
-                    encoder,
-                    device,
-                    resources,
-                    config,
-                    &source,
-                    Some(&mut |encoder, mip, step| {
-                        let id = format!("bloom_mip_{mip}");
-                        self.tap_step(device, scopes, encoder, "Bloom", &id, step)
-                    }),
-                );
-            } else {
-                pp.run_bloom(queue, encoder, device, resources, config, &source, None);
+            // Each step overwrites its mip (the upsample adds into what
+            // the downsample just wrote), so a repeat is the same work
+            let bloom_times = scopes.times("Bloom");
+            if let Some(scope) = scopes.begin_times(encoder, "Bloom", bloom_times) {
+                scopes.repeat(bloom_times, |scopes| {
+                    if scopes.taps.is_some() {
+                        pp.run_bloom(
+                            queue,
+                            encoder,
+                            device,
+                            resources,
+                            config,
+                            &source,
+                            Some(&mut |encoder, mip, step| {
+                                let id = format!("bloom_mip_{mip}");
+                                self.tap_step(device, scopes, encoder, "Bloom", &id, step)
+                            }),
+                        );
+                    } else {
+                        pp.run_bloom(queue, encoder, device, resources, config, &source, None);
+                    }
+                });
+                scopes.end(encoder, scope);
+                let mips = resources.bloom_mips.len();
+                scopes.note("Bloom", |p| {
+                    p.reads(&[if from_style {
+                        hdr_result_id
+                    } else {
+                        "hdr_scene"
+                    }]);
+                    for i in 0..mips {
+                        p.writes(&[&format!("bloom_mip_{i}")]);
+                    }
+                });
             }
-            scopes.end(encoder, scope);
-            let mips = resources.bloom_mips.len();
-            scopes.note("Bloom", |p| {
-                p.reads(&[if from_style {
-                    hdr_result_id
-                } else {
-                    "hdr_scene"
-                }]);
-                for i in 0..mips {
-                    p.writes(&[&format!("bloom_mip_{i}")]);
-                }
-            });
         } else if config.enabled && config.bloom_enabled {
             scopes.skip("Bloom", || "no bloom mips at this size".to_string());
         } else {
@@ -1783,7 +1790,13 @@ impl SceneRenderer {
         // Composite: HDR + bloom + SSAO + volumetric + fog → tonemapped sRGB surface
         // (always runs — this is what converts Rgba16Float → surface format)
         let composite_timed = !fxaa_active && scopes.timer.is_some();
-        if let Some(log) = scopes.log() {
+        // It writes its target whole, so a repeat is the same work (#1317)
+        let composite_times = scopes.times("Composite");
+        if composite_times == 0 {
+            scopes.skip("Composite", || {
+                crate::frame_capture::SKIPPED_BY_KNOB.to_string()
+            });
+        } else if let Some(log) = scopes.log() {
             let pass = log.ran("Composite", composite_timed);
             pass.reads(&[hdr_result_id, sd]);
             if config.bloom_enabled && !resources.bloom_mips.is_empty() {
@@ -1829,8 +1842,11 @@ impl SceneRenderer {
             } else {
                 scopes.timer.as_mut()
             },
+            composite_times,
         );
-        self.tap_pass(device, scopes, encoder, "Composite");
+        if composite_times > 0 {
+            self.tap_pass(device, scopes, encoder, "Composite");
+        }
 
         if let (Some(frame), Some(input)) = (&mut style_frame, &display_in) {
             let display_dsts = style_dsts(
@@ -1864,7 +1880,8 @@ impl SceneRenderer {
                 pp.styles.fade(),
                 &mut |label, encoder, run| {
                     let dst = dst_of(&display_dsts, label);
-                    self.run_style_part(device, scopes, label, encoder, run, dst)
+                    let refuse = history_refusal(scopes.knobs.is_some(), &display_styles, label);
+                    self.run_style_part(device, scopes, label, encoder, run, dst, refuse)
                 },
             );
             log_style_steps(
@@ -1881,20 +1898,26 @@ impl SceneRenderer {
 
         if fxaa_active {
             let timed = scopes.timer.is_some();
-            if let Some(log) = scopes.log() {
-                log.ran("FXAA", timed)
-                    .reads(&["fxaa_in"])
-                    .writes(&["surface"]);
+            let fxaa_times = scopes.times("FXAA");
+            if fxaa_times == 0 {
+                scopes.skip("FXAA", || crate::frame_capture::SKIPPED_BY_KNOB.to_string());
+            } else {
+                if let Some(log) = scopes.log() {
+                    log.ran("FXAA", timed)
+                        .reads(&["fxaa_in"])
+                        .writes(&["surface"]);
+                }
+                pp.run_fxaa(
+                    queue,
+                    encoder,
+                    device,
+                    resources,
+                    target_view,
+                    scopes.timer.as_mut(),
+                    fxaa_times,
+                );
+                self.tap_pass(device, scopes, encoder, "FXAA");
             }
-            pp.run_fxaa(
-                queue,
-                encoder,
-                device,
-                resources,
-                target_view,
-                scopes.timer.as_mut(),
-            );
-            self.tap_pass(device, scopes, encoder, "FXAA");
         } else {
             scopes.skip("FXAA", || self.post_off_reason("fxaa"));
         }
@@ -1991,6 +2014,24 @@ fn style_dsts(
 /// The target `label`'s style writes, from [`style_dsts`].
 fn dst_of(dsts: &[(&'static str, &'static str)], label: &str) -> Option<&'static str> {
     dsts.iter().find(|(l, _)| *l == label).map(|(_, d)| *d)
+}
+
+/// Why the style drawn as `label` draws once whatever a pass knob's repeat
+/// asks (#1317): it keeps history from frame to frame. Asked only while a
+/// host has knobs on.
+fn history_refusal(
+    knobs_on: bool,
+    styles: &[(
+        &crate::stylize::StyleDescriptor,
+        &dyn crate::stylize::StylePass,
+    )],
+    label: &str,
+) -> Option<&'static str> {
+    (knobs_on
+        && styles
+            .iter()
+            .any(|(d, p)| d.label == label && p.keeps_history()))
+    .then_some(crate::pass_knobs::KEEPS_HISTORY)
 }
 
 /// A style stage's slot as the description names its target: the stage's

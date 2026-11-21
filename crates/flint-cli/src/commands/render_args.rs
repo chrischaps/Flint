@@ -568,6 +568,13 @@ pub struct MeasureArgs {
     /// Of a span, the last frame; not with a sweep or a sequence
     #[arg(long)]
     pub frame_capture: Option<String>,
+
+    /// `--skip-pass LABEL` and `--repeat-pass LABEL:N` (#1317): draw a
+    /// part of the frame not at all, or N times, by its `--gpu-time` name,
+    /// so its cost shows on a GPU whose timestamps can't be read; with
+    /// `--gpu-time`, a repeated part's row grows N-fold
+    #[command(flatten)]
+    pub pass_knobs: flint_player::PassKnobArgs,
 }
 
 /// `--ai-refine`: a look refined toward a reference.

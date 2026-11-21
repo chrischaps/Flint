@@ -528,6 +528,8 @@ pub(super) fn render(
             sample_count: args.shading.msaa,
         },
     );
+    // Parts skipped or repeated by label (#1317)
+    renderer.set_pass_knobs(args.measure.pass_knobs.knobs()?);
 
     // The scene bound, its levers set (#739), as every stage does
     bind_capture_scene(args, ctx, &mut renderer, &world, &scene_file, &binding);
@@ -2906,6 +2908,8 @@ impl Stage {
                 sample_count: args.shading.msaa,
             },
         );
+        // Parts skipped or repeated by label (#1317)
+        renderer.set_pass_knobs(args.measure.pass_knobs.knobs()?);
 
         // The scene bound, its levers set (#739), as the one-renderer path does
         bind_capture_scene(args, ctx, &mut renderer, &world, &scene_file, binding);

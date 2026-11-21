@@ -315,6 +315,11 @@ pub struct PlayerArgs {
     #[command(flatten)]
     pub trace: crate::TraceArgs,
 
+    /// `--skip-pass LABEL` and `--repeat-pass LABEL:N`: cost a part of the
+    /// frame on any GPU by taking it away or drawing it N times (#1317)
+    #[command(flatten)]
+    pub pass_knobs: crate::PassKnobArgs,
+
     /// `--log-format text|json` and `--quiet`: how and how much the player
     /// says, which its binary's `main` hands `logging::init` (#716)
     #[command(flatten)]
@@ -596,6 +601,7 @@ impl PlayerArgs {
         launch.motion_hold = args.motion_hold;
         launch.window_size = args.window.size();
         launch.window_options = args.window.clone();
+        launch.pass_knobs = args.pass_knobs.knobs()?;
         launch.expression_feed = expression_feed;
         #[cfg(not(target_arch = "wasm32"))]
         {

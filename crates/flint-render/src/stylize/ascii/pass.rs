@@ -838,6 +838,12 @@ impl Ascii {
 }
 
 impl StylePass for Ascii {
+    /// Its cells' tone and edge history (#277, #477) advance a frame each
+    /// draw, so a second draw in one frame isn't a repeat (#1317)
+    fn keeps_history(&self) -> bool {
+        true
+    }
+
     fn encode(
         &self,
         frame: &StyleFrame<'_>,

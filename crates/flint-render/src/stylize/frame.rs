@@ -29,6 +29,15 @@ pub trait StylePass: Send + Sync {
         None
     }
 
+    /// Whether the style keeps state from frame to frame that a second
+    /// draw in one frame would advance (ASCII's cell history, #277; a user
+    /// style's `history` target): such a style refuses a pass knob's
+    /// repeat (#1317) and draws once. False, the default, for a style whose
+    /// every draw is the same work.
+    fn keeps_history(&self) -> bool {
+        false
+    }
+
     /// The shared edges' pixels (at [`StyleFrame::depth_size`]) this
     /// style reads this frame (#743), when it reads them only near its
     /// entities: the edge pass draws the union of its readers' rects and

@@ -1094,6 +1094,15 @@ at the price of the line glyphs. A cheaper edge detector for phones
 (half resolution, the steps alone, or the flat test as its own small
 pass in front of the heavy one) is the follow-up.
 
+**Without the wasm patch (#1317).** The page now takes
+`?skip_pass=Style%20edges`, which leaves out the shared edge pass's
+work. Its readers still get the edge target, empty from the first frame,
+as the "returning at once" stub above left it. It also takes
+`?repeat_pass=<label>:<N>`, which draws a part N times. Both are keyed by
+the GPU rows' labels, so a site copy with a patched shader is needed only
+to cut part of a pass, as the "full path skipped" row did. The book's
+Profiling guide, "Costing a part without timestamps", says how.
+
 ## Touch (#132)
 
 A phone gets past Begin, and its fingers arrive as the engine's touches.

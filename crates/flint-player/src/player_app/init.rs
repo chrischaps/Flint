@@ -625,13 +625,18 @@ impl PlayerApp {
         render_context: RenderContext,
     ) -> Result<()> {
         self.camera.aspect = render_context.aspect_ratio();
-        let scene_renderer = SceneRenderer::new(
+        let mut scene_renderer = SceneRenderer::new(
             &render_context,
             flint_render::RendererConfig {
                 sample_count: self.launch.msaa_sample_count,
                 ..Default::default()
             },
         );
+        // Parts skipped or repeated by label (#1317)
+        if let Some(knobs) = &self.launch.pass_knobs {
+            tracing::info!(target: "player", "pass knobs: {}", knobs.describe());
+            scene_renderer.set_pass_knobs(Some(knobs.clone()));
+        }
 
         // Gamepad backend and the egui overlay
         self.init_egui(&window, &render_context);

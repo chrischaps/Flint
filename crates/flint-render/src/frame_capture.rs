@@ -783,7 +783,13 @@ pub(crate) struct FrameScopes {
     /// While the frame is captured (#1085): each pass's targets, copied as
     /// it ends (`SceneRenderer::tap_pass`).
     pub taps: Option<Box<crate::frame_taps::FrameTaps>>,
+    /// While a host skips or repeats parts by label (#1317): the knobs and
+    /// what they've said. `None` on every frame a game draws.
+    pub knobs: Option<Box<crate::pass_knobs::KnobRun>>,
 }
+
+/// Why a part a knob skipped didn't run, in a frame's description.
+pub(crate) const SKIPPED_BY_KNOB: &str = "skip_pass names it (#1317)";
 
 /// A part [`FrameScopes::begin`] opened.
 #[must_use = "a part of the frame is closed only by FrameScopes::end"]
@@ -804,19 +810,85 @@ impl FrameScopes {
         crate::gpu_labels::end(self.timer.as_mut(), encoder, scope.0);
     }
 
-    /// `run` inside the part named `label`.
+    /// `run` inside the part named `label`: once, or as the pass knobs
+    /// say (#1317).
     pub fn run(
         &mut self,
         label: &'static str,
         encoder: &mut wgpu::CommandEncoder,
         run: &mut dyn FnMut(&mut wgpu::CommandEncoder),
     ) {
+        self.run_refusing(label, encoder, run, None);
+    }
+
+    /// [`run`](Self::run), drawing once whatever a repeat asks when
+    /// `refuse` says why the part can't be repeated.
+    pub fn run_refusing(
+        &mut self,
+        label: &'static str,
+        encoder: &mut wgpu::CommandEncoder,
+        run: &mut dyn FnMut(&mut wgpu::CommandEncoder),
+        refuse: Option<&str>,
+    ) {
+        let n = self.times_refusing(label, refuse);
+        if n == 0 {
+            self.skip(label, || SKIPPED_BY_KNOB.to_string());
+            return;
+        }
         // The CPU's side of each post effect and style part, by its label:
         // a dozen a frame at most (#1096)
         flint_core::scope!("encode_part", label);
         let scope = self.begin(encoder, label);
-        run(encoder);
+        for _ in 0..n {
+            run(encoder);
+        }
         self.end(encoder, scope);
+    }
+
+    /// How many times the part named `label` records its work this frame
+    /// (#1317): 1 unless a pass knob skips (0) or repeats (N) it.
+    pub fn times(&mut self, label: &'static str) -> u32 {
+        self.times_refusing(label, None)
+    }
+
+    /// [`times`](Self::times), at most 1 when `refuse` says why the part
+    /// can't be repeated (said once).
+    pub fn times_refusing(&mut self, label: &'static str, refuse: Option<&str>) -> u32 {
+        match self.knobs.as_deref_mut() {
+            None => 1,
+            Some(knobs) => knobs.times(label, refuse),
+        }
+    }
+
+    /// Open the part named `label` for `n` recordings ([`times`](Self::times)):
+    /// `None`, logged as skipped, when a knob skips it.
+    pub fn begin_times(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        label: &'static str,
+        n: u32,
+    ) -> Option<ScopeGuard> {
+        if n == 0 {
+            self.skip(label, || SKIPPED_BY_KNOB.to_string());
+            return None;
+        }
+        Some(self.begin(encoder, label))
+    }
+
+    /// `work` `n` times, the log and taps set aside after the first, so a
+    /// repeated part is described and read once (#1317).
+    pub fn repeat(&mut self, n: u32, mut work: impl FnMut(&mut Self)) {
+        let mut held = None;
+        for i in 0..n {
+            if i == 1 {
+                held = Some((self.log.take(), self.taps.take()));
+            }
+            work(self);
+        }
+        if let Some((log, taps)) = held {
+            self.log = log;
+            self.taps = taps;
+        }
     }
 
     /// Log the part named `label` as skipped this frame, and why. `why`

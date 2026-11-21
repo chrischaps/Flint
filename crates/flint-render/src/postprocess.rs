@@ -1754,6 +1754,7 @@ impl PostProcessPipeline {
     /// Run the FXAA pass: sample the intermediate composite output and write
     /// the real target. Caller guarantees both `self.fxaa` and
     /// `resources.fxaa` exist (see SceneRenderer::ensure_fxaa_resources).
+    #[allow(clippy::too_many_arguments)]
     pub fn run_fxaa(
         &self,
         queue: &wgpu::Queue,
@@ -1762,6 +1763,8 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         target_view: &wgpu::TextureView,
         timer: Option<&mut crate::gpu_timer::GpuTimer>,
+        // Draws in its one scope: 1, or a pass knob's repeat (#1317)
+        times: u32,
     ) {
         let (Some(fxaa), Some(fxaa_res)) = (&self.fxaa, &resources.fxaa) else {
             return;
@@ -1804,14 +1807,16 @@ impl PostProcessPipeline {
 
         let mut timer = timer;
         let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, "FXAA");
-        fullscreen_pass(
-            encoder,
-            "FXAA Pass",
-            target_view,
-            Some(wgpu::Color::BLACK),
-            &fxaa.pipeline,
-            &[&uniform_bg, &texture_bg],
-        );
+        for _ in 0..times {
+            fullscreen_pass(
+                encoder,
+                "FXAA Pass",
+                target_view,
+                Some(wgpu::Color::BLACK),
+                &fxaa.pipeline,
+                &[&uniform_bg, &texture_bg],
+            );
+        }
         crate::gpu_labels::end(timer, encoder, scope);
     }
 
@@ -2300,7 +2305,13 @@ impl PostProcessPipeline {
         scene: &crate::stylize::StyleInput<'_>,
         fog_veil: Option<&FogVeilTargets>,
         timer: Option<&mut crate::gpu_timer::GpuTimer>,
+        // Draws in its one scope: 1, 0 skipped, or a pass knob's repeat
+        // (#1317)
+        times: u32,
     ) {
+        if times == 0 {
+            return;
+        }
         // SSAO: use blurred AO if enabled, white fallback otherwise
         let ssao_on = config.enabled && config.ssao_enabled;
         let ssao_view = if ssao_on {
@@ -2529,17 +2540,20 @@ impl PostProcessPipeline {
 
         let mut timer = timer;
         let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, "Composite");
-        fullscreen_pass(
-            encoder,
-            "Composite Pass",
-            target_view,
-            Some(wgpu::Color::BLACK),
-            match fog_veil {
-                Some(_) => self.composite_veiled(device),
-                None => &self.composite_pipeline,
-            },
-            &[&uniform_bg, &scene_bg, &bloom_bg, &ssao_depth_bg],
-        );
+        let pipeline = match fog_veil {
+            Some(_) => self.composite_veiled(device),
+            None => &self.composite_pipeline,
+        };
+        for _ in 0..times {
+            fullscreen_pass(
+                encoder,
+                "Composite Pass",
+                target_view,
+                Some(wgpu::Color::BLACK),
+                pipeline,
+                &[&uniform_bg, &scene_bg, &bloom_bg, &ssao_depth_bg],
+            );
+        }
         crate::gpu_labels::end(timer, encoder, scope);
     }
 }

@@ -308,6 +308,7 @@ impl SceneRenderer {
                 timer: None,
                 log: self.frame_log.take(),
                 taps: Some(taps),
+                knobs: None,
             };
             self.tap_pass(device, &mut scopes, encoder, "Panels");
             self.frame_log = scopes.log;

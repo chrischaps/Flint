@@ -1245,13 +1245,20 @@ impl PlayerApp {
 
         let mut egui_renderer = self.hud.egui_renderer.take().unwrap();
 
+        // A pass knob may skip the HUD's drawing (#1317); it blends over
+        // the frame, so it never repeats
+        let ui_times = self.scene_renderer.as_mut().map_or(1, |r| {
+            r.pass_times("UI", Some(flint_render::pass_knobs::DRAWS_OVER_THE_FRAME))
+        });
         // The HUD's GPU time, with the renderer's phases (ADR 0108), and its
         // debug group for GPU debuggers (#1083).
-        let ui_scope = flint_render::gpu_labels::begin(
-            self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut()),
-            encoder,
-            "UI",
-        );
+        let ui_scope = (ui_times > 0).then(|| {
+            flint_render::gpu_labels::begin(
+                self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut()),
+                encoder,
+                "UI",
+            )
+        });
 
         {
             flint_core::scope!("egui_upload", paint_jobs.len());
@@ -1271,7 +1278,7 @@ impl PlayerApp {
         }
 
         // World text goes under the HUD, against the scene's depth.
-        if !glyphs.is_empty() {
+        if !glyphs.is_empty() && ui_scope.is_some() {
             let pipeline = self.hud.world_text_pipeline.get_or_insert_with(|| {
                 super::world_text::WorldTextPipeline::new(&context.device, context.hud_format)
             });
@@ -1286,7 +1293,7 @@ impl PlayerApp {
             );
         }
 
-        {
+        if ui_scope.is_some() {
             let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("HUD Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1309,11 +1316,13 @@ impl PlayerApp {
             egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
         }
 
-        flint_render::gpu_labels::end(
-            self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut()),
-            encoder,
-            ui_scope,
-        );
+        if let Some(ui_scope) = ui_scope {
+            flint_render::gpu_labels::end(
+                self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut()),
+                encoder,
+                ui_scope,
+            );
+        }
 
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);

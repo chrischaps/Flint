@@ -10,6 +10,8 @@ pub mod hitch_args;
 pub mod logging;
 #[cfg(feature = "music")]
 mod music;
+// `--skip-pass` / `--repeat-pass` (#1317)
+pub mod pass_knob_args;
 mod player_app;
 // The desktop launch, shared by `flint play` and `flint-player` (#705)
 pub mod player_args;
@@ -37,6 +39,7 @@ pub use flint_render::{
 pub use flint_script::{Projector, ScreenPoint, View};
 pub use flint_terrain::{GrassConfig, GroundField, Heightmap};
 pub use hitch_args::{HitchArgs, HitchClass, HitchGate};
+pub use pass_knob_args::PassKnobArgs;
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};

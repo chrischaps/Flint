@@ -312,7 +312,9 @@ impl StyleSet {
         });
         self.edge_runs
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        made
+        // A pass knob that skips the edges (#1317) never called the scope:
+        // the readers still read the target, as it was last drawn
+        made.or_else(|| Some(edges::EdgePass::target(frame)))
     }
 
     /// The ownership pass (#384) [`run_stage`] draws after each style.
