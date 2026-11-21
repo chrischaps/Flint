@@ -65,7 +65,14 @@ fn direct_light(
         }
         let atten = attenuation(shade_dist, light.radius);
         let radiance = light.color * light.intensity * atten;
-        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness_l, n_dot_v, wrap, oren);
+        var contribution = evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness_l, n_dot_v, wrap, oren);
+        // The one point light whose cube map is drawn (#1112), where it
+        // gives light
+        if (light.shadow > 0.5 && atten > 0.0) {
+            contribution = contribution * point_shadow_factor(world_pos, geo_normal,
+                light.position, light.source_radius, frag_xy);
+        }
+        Lo += contribution;
     }
 
     // === Spot lights ===

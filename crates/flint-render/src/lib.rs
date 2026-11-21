@@ -438,12 +438,13 @@ mod tests {
     #[test]
     fn shadow_uniforms_layout() {
         // ShadowUniforms is declared once in WGSL, lights.wgsl (#738); the
-        // PCSS vec4 (ADR 0057) grew it 208 → 224 bytes, and the spot's
-        // matrix and vec4 (ADR 0124) to 304.
+        // PCSS vec4 (ADR 0057) grew it 208 → 224 bytes, the spot's
+        // matrix and vec4 (ADR 0124) to 304, and the point light's six face
+        // matrices and two vec4s (ADR 0132) to 720.
         let size = std::mem::size_of::<crate::shadow::ShadowUniforms>();
         assert_eq!(size % 16, 0, "ShadowUniforms not 16-byte aligned");
         assert_eq!(
-            size, 304,
+            size, 720,
             "ShadowUniforms size changed — update lights.wgsl"
         );
         assert_eq!(
@@ -451,6 +452,28 @@ mod tests {
             224,
             "the spot's fields follow `pcss`"
         );
+        assert_eq!(
+            std::mem::offset_of!(crate::shadow::ShadowUniforms, point_view_proj),
+            304,
+            "the point light's fields follow the spot's"
+        );
+    }
+
+    #[test]
+    fn shadow_uniforms_default_point_is_off() {
+        use bytemuck::Zeroable;
+        // point.w = 0 lights every point light as before (#1112)
+        assert_eq!(crate::shadow::ShadowUniforms::default().point, [0.0; 4]);
+        assert_eq!(crate::shadow::ShadowUniforms::zeroed().point, [0.0; 4]);
+    }
+
+    #[test]
+    fn point_shadow_mark_rides_the_old_pad() {
+        // `PointLight::shadow` is the former `_pad0`: the struct stays 48 bytes
+        use crate::pipeline::PointLight;
+        assert_eq!(std::mem::size_of::<PointLight>(), 48);
+        assert_eq!(std::mem::offset_of!(PointLight, shadow), 36);
+        assert_eq!(PointLight::default().shadow, 0.0);
     }
 
     #[test]

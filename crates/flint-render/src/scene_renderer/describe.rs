@@ -541,7 +541,7 @@ impl SceneRenderer {
         if !self.lights.scene_shadows() {
             return "the scene says [environment] shadows = false".into();
         }
-        "no sun gives light and no spot casts".into()
+        "no sun gives light and no spot or point light casts".into()
     }
 }
 
