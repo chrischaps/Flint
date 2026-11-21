@@ -301,3 +301,149 @@ fn a_perf_report_holds_the_numbers_the_lines_print() {
     assert!(!m["build_profile"].as_str().unwrap().is_empty(), "{m}");
     line("[perf] report:");
 }
+
+/// #1157's scene: it authors blueprint; its director cuts to graphite at
+/// 0.5 s and fades to ink wash over 2 s from 1 s, so 2 s is the fade's
+/// midpoint and three looks are in play
+const THREE_LOOKS_SCENE: &str = r#"
+[scene]
+name = "Three Looks"
+
+[camera]
+position = [0.0, 3.0, 4.0]
+target = [0.0, 0.0, 0.0]
+fov = 50.0
+
+[post_process]
+look = "blueprint"
+
+[entities.key.transform]
+position = [0.0, 2.0, 0.0]
+[entities.key.light]
+type = "point"
+intensity = 30.0
+range = 10.0
+
+[entities.floor.transform]
+position = [0.0, 0.0, 0.0]
+[entities.floor.bounds]
+min = [-5.0, -0.1, -5.0]
+max = [5.0, 0.0, 5.0]
+[entities.floor.material]
+color = [0.8, 0.8, 0.8, 1.0]
+
+[entities.director.script]
+source = "director.rhai"
+"#;
+
+const THREE_LOOKS_SCRIPT: &str = r#"
+let cut = false;
+let faded = false;
+fn on_update() {
+    let t = total_time();
+    if !cut && t >= 0.5 { set_look("graphite"); cut = true; }
+    if !faded && t >= 1.0 { set_look("ink_wash", 2.0); faded = true; }
+}
+"#;
+
+/// #1157: inside a look fade, `flint render --scripts --time` lays what the
+/// player draws at that game time: every `[post_process]` value and every
+/// style's blend in the two frame descriptions the same. The scene authors
+/// one look, cuts to a second and fades to a third, so a capture that faded
+/// from the authored look (blueprint) instead of the cut's (graphite) fails.
+/// A step of 1/16 s is exact in binary, so both clocks reach 2 s exactly.
+#[test]
+fn a_capture_inside_a_look_fade_lays_what_the_player_draws() {
+    let dir = scratch("look_fade");
+    if !has_gpu(&dir) {
+        return;
+    }
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::write(dir.join("looks.scene.toml"), THREE_LOOKS_SCENE).unwrap();
+    std::fs::write(dir.join("scripts/director.rhai"), THREE_LOOKS_SCRIPT).unwrap();
+    let schemas = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+    let schemas = schemas.to_str().unwrap();
+    let shared = ["--schemas", schemas, "--width", "160", "--height", "120"];
+    let step = ["--frame-step", "0.0625"];
+
+    let mut play = vec!["play", "looks.scene.toml", "--exit-after", "2.2"];
+    play.extend(step);
+    play.extend(shared);
+    play.extend([
+        "--capture-frame-at",
+        "2",
+        "--capture-dir",
+        "caps",
+        "--music-volume",
+        "0",
+        "--sfx-volume",
+        "0",
+        "--no-activate",
+    ]);
+    let run = flint_until_it_ends(&dir, &play);
+    assert!(
+        run.status.success(),
+        "flint play failed:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let mut render = vec![
+        "render",
+        "looks.scene.toml",
+        "--scripts",
+        "--time",
+        "2",
+        "-o",
+        "capture.png",
+        "--frame-dump",
+        "capture.json",
+    ];
+    render.extend(step);
+    render.extend(shared);
+    let o = flint(&dir, &render);
+    assert!(
+        o.status.success(),
+        "flint render failed:\n{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+
+    let read = |path: PathBuf| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    };
+    let player = read(dir.join("caps/looks-t2.000.flintframe/manifest.json"));
+    let capture = read(dir.join("capture.json"));
+    let (player, capture) = (&player["frame"], &capture["frame"]);
+    assert_eq!(player["game_time"], 2.0, "{player}");
+    assert_eq!(capture["game_time"], 2.0, "{capture}");
+    assert_eq!(
+        player["styles"], capture["styles"],
+        "the style blends differ mid-fade"
+    );
+    let (ours, theirs) = (
+        capture["post_process"].as_object().unwrap(),
+        player["post_process"].as_object().unwrap(),
+    );
+    let differ: Vec<_> = ours
+        .keys()
+        .chain(theirs.keys())
+        .filter(|k| ours.get(*k) != theirs.get(*k))
+        .map(|k| format!("{k}: capture {:?}, player {:?}", ours.get(k), theirs.get(k)))
+        .collect();
+    assert!(
+        differ.is_empty(),
+        "post values differ mid-fade:\n{}",
+        differ.join("\n")
+    );
+    // And it is mid-fade: a style on its way in or out at its middle
+    let blends: Vec<f64> = capture["styles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["blend"].as_f64())
+        .collect();
+    assert!(
+        blends.iter().any(|b| (b - 0.5).abs() < 1e-6),
+        "no style half way at the fade's midpoint: {}",
+        capture["styles"]
+    );
+}

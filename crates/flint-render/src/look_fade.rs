@@ -90,6 +90,23 @@ impl LookFade {
         }
     }
 
+    /// Put the fade `elapsed` seconds after it began (held to 0 and its
+    /// length). A host that keeps the game time a fade was asked at lays it
+    /// from that, so the player and a headless capture reach the same moment
+    /// of it at the same game time (#1157), whatever steps came between.
+    pub fn set_elapsed(&mut self, elapsed: f32) {
+        if elapsed.is_finite() {
+            self.elapsed = elapsed.clamp(0.0, self.seconds);
+        }
+    }
+
+    /// The fade as it was (or will be) `elapsed` seconds after it began.
+    pub fn at(&self, elapsed: f32) -> Self {
+        let mut fade = self.clone();
+        fade.set_elapsed(elapsed);
+        fade
+    }
+
     /// How far it has gone in time, 0 to 1 (1 for a fade of no length).
     pub fn progress(&self) -> f32 {
         if self.seconds <= 0.0 {

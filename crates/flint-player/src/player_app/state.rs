@@ -571,10 +571,27 @@ pub(super) struct StyleState {
     /// the seconds to fade to it over (#496; 0 cuts), laid under the
     /// scene's keys at the start of the next render.
     pub(super) pending_look: Option<(Option<String>, f64)>,
-    /// A cross-fade to a look in progress (#496) and the look it ends on,
-    /// stepped on game time each render; dropped at its end, a cut, or a
+    /// A cross-fade to a look in progress (#496), laid each render at the
+    /// game time since it was asked; dropped at its end, a cut, or a
     /// scene's teardown.
-    pub(super) look_fade: Option<(flint_render::look_fade::LookFade, Option<String>)>,
+    pub(super) look_fade: Option<LookFadeState>,
+}
+
+/// A look's cross-fade under way in the player (#496, #1157).
+pub(super) struct LookFadeState {
+    pub(super) fade: flint_render::look_fade::LookFade,
+    /// The look it ends on, for `look_faded`.
+    pub(super) look: Option<String>,
+    /// The game time it was asked at (`clock.total_time`): a render at game
+    /// time `t` lays it `t - at` seconds in, as a capture does.
+    pub(super) at: f64,
+}
+
+impl LookFadeState {
+    /// The fade `now - at` seconds in.
+    pub(super) fn at_time(&self, now: f64) -> flint_render::look_fade::LookFade {
+        self.fade.at((now - self.at) as f32)
+    }
 }
 
 /// The input config's layers (built-in, game, user overrides, CLI) and a

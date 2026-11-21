@@ -62,9 +62,10 @@ impl PlayerApp {
                 tracing::warn!("look: {e}");
             }
         }
-        // A look's cross-fade (#496) eases what the two looks differ in, on
-        // game time, under the scripts' overrides stamped below
-        self.step_look_fade(self.core.clock.delta_time);
+        // A look's cross-fade (#496) eases what the two looks differ in, at
+        // this frame's game time (#1157), under the scripts' overrides
+        // stamped below
+        self.lay_look_fade(self.core.clock.total_time);
         // The presented frame as a PNG (#583): a capture line on the
         // expression socket, `--record`. Nothing at all while neither asks
         #[cfg(not(target_arch = "wasm32"))]
