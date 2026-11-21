@@ -490,6 +490,11 @@ pub(crate) struct PerfContext {
     /// The hitches in the window and the run, and the window's worst with
     /// its cause (#1079); `None` while frames aren't judged.
     pub hitches: Option<super::hitch_watch::HitchReadout>,
+    /// The display's refresh period, ms, when it is known: the monitor's
+    /// under vsync on the desktop, the pacer's on the web, or read from an
+    /// unpaced page's rAF intervals (#1318). It tells a frame the display
+    /// holds from one the GPU holds.
+    pub refresh_ms: Option<f32>,
 }
 
 /// The mean frame's calls into WebGPU, counted by the page (`?perf`
@@ -696,6 +701,84 @@ fn mean_frame_ms(s: &PerfSummary) -> f32 {
     (s.secs * 1000.0 / s.frames.frames as f64) as f32
 }
 
+/// Frames this many refreshes apart or more, on average, don't hold the
+/// refresh: something other than the display decides when each is drawn.
+/// Under it, a frame is the display's, however light the rest (#1318).
+const MISSES_REFRESH: f32 = 1.15;
+
+/// The player's own work under this share of the frame interval leaves
+/// the frame waiting on something else (#1318).
+const LIGHT_WORK_SHARE: f32 = 0.5;
+
+/// The window's throughput (#1318): its frames and the mean time a frame,
+/// which, unlike one frame's time, doesn't snap to whole refreshes. When the
+/// GPU is what holds the frames back, this is the GPU's time a frame (#568
+/// found it by counting submissions, `tools/phone-perf/submits.mjs`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Throughput {
+    /// The mean time between frames, ms: the window's span over its frames.
+    pub ms: f32,
+    /// Set when the frames look GPU-bound, with what the guess was made from.
+    pub gpu_bound: Option<GpuBound>,
+}
+
+/// Why a window reads as GPU-bound: unpaced (no `?fps=` pacer), the
+/// player's own work (its phases but the swapchain's waits) under half the
+/// frame, and under vsync the frames missing the refresh. A guess from the
+/// CPU side alone: the compositor or the browser's own main-thread work can
+/// hold frames too, so the readout prints these beside it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct GpuBound {
+    /// The mean frame's own work, ms.
+    pub work_ms: f32,
+    /// The refresh the frames missed, ms; `None` without vsync, where the
+    /// display holds nothing.
+    pub refresh_ms: Option<f32>,
+}
+
+impl GpuBound {
+    /// `unpaced, player 2.10 ms, refresh 8.33 ms`: the inputs.
+    fn inputs(&self) -> String {
+        let display = match self.refresh_ms {
+            Some(r) => format!("refresh {r:.2} ms"),
+            None => "no vsync".to_string(),
+        };
+        format!("unpaced, player {:.2} ms, {display}", self.work_ms)
+    }
+}
+
+/// The window's throughput, and whether the GPU looks to be what holds it.
+pub(crate) fn throughput(s: &PerfSummary, c: &PerfContext) -> Option<Throughput> {
+    let ms = mean_frame_ms(s);
+    if !(ms > 0.0 && ms.is_finite()) {
+        return None;
+    }
+    let work_ms: f32 = s
+        .phases
+        .iter()
+        .filter(|p| !p.phase.is_wait())
+        .map(|p| p.mean)
+        .sum();
+    // A display that waits for vblank holds frames at its refresh; one that
+    // doesn't (immediate, mailbox) holds nothing
+    let vsync = c.present.is_none_or(under_vsync);
+    let display_free = match (vsync, c.refresh_ms) {
+        (false, _) => Some(None),
+        (true, Some(r)) if r > 0.0 && ms >= r * MISSES_REFRESH => Some(Some(r)),
+        (true, _) => None,
+    };
+    let gpu_bound = match display_free {
+        Some(refresh_ms) if c.pacing.is_none() && work_ms < ms * LIGHT_WORK_SHARE => {
+            Some(GpuBound {
+                work_ms,
+                refresh_ms,
+            })
+        }
+        _ => None,
+    };
+    Some(Throughput { ms, gpu_bound })
+}
+
 /// The share of the wall clock the GPU was busy, when its times were
 /// taken under vsync with headroom, so at idle clocks: they read higher
 /// than the passes cost at full clocks (#380). `None` without vsync, GPU
@@ -782,6 +865,17 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
         "       {} frames in {:.0} s, {} over 1.5x p50",
         f.frames, s.secs, f.lumps
     ));
+    // The mean frame, which doesn't snap to refreshes, and whether it's the
+    // GPU's (#1318)
+    if let Some(t) = throughput(s, c) {
+        match t.gpu_bound {
+            Some(g) => {
+                line(format!("mean   {:.2} ms a frame: GPU-bound, a guess", t.ms));
+                line(format!("       from {}", g.inputs()));
+            }
+            None => line(format!("mean   {:.2} ms a frame", t.ms)),
+        }
+    }
     if let Some(pacing) = &c.pacing {
         line(format!("pace   {pacing}"));
     }
@@ -972,8 +1066,22 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
                 .join(", ")
         ),
     ];
+    // After the frame times: their mean, and whether it's the GPU's (#1318)
+    if let Some(t) = throughput(s, c) {
+        parts.insert(
+            5,
+            match t.gpu_bound {
+                Some(g) => format!(
+                    "mean {:.2} ms a frame, GPU-bound (guess: {})",
+                    t.ms,
+                    g.inputs()
+                ),
+                None => format!("mean {:.2} ms a frame", t.ms),
+            },
+        );
+    }
     if let Some(pacing) = &c.pacing {
-        parts.insert(5, format!("pace {pacing}"));
+        parts.insert(parts.len() - 1, format!("pace {pacing}"));
     }
     // Beside the frame times: how many of them stood out, and why (#1079)
     if let Some(h) = &c.hitches {
@@ -1172,6 +1280,12 @@ impl super::PlayerApp {
                     perf,
                     WINDOW_SECS,
                 )),
+                // The monitor's under vsync (desktop), the pacer's (web)
+                refresh_ms: self
+                    .core
+                    .clock
+                    .vsync_period()
+                    .map(|secs| (secs * 1000.0) as f32),
             },
         ))
     }
@@ -1433,6 +1547,7 @@ mod tests {
                 run: 5,
                 worst: Some((84.2, "script whale.rhai:on_update 80.1 ms".into())),
             }),
+            refresh_ms: Some(1000.0 / 60.0),
             gpu_calls: Some(GpuCallsPerFrame {
                 buffers: 0.0,
                 bind_groups: 0.5,
@@ -1455,6 +1570,106 @@ mod tests {
             )),
         };
         (rec.summary().unwrap(), c)
+    }
+
+    /// 10 s of frames `frame_ms` apart, each with `work_ms` of the player's
+    /// own work and `acquire_ms` waiting for a swapchain image.
+    fn window_of(frame_ms: f64, work_ms: f64, acquire_ms: f64) -> PerfSummary {
+        let mut rec = PerfRecorder::new(false);
+        let mut t = rec.start;
+        let frames = (10_000.0 / frame_ms) as usize;
+        for _ in 0..frames {
+            rec.begin_frame_at(t);
+            rec.mark_at(Phase::Input, t + ms(work_ms / 2.0));
+            rec.mark_at(Phase::Acquire, t + ms(work_ms / 2.0 + acquire_ms));
+            rec.mark_at(Phase::Render, t + ms(work_ms + acquire_ms));
+            t += ms(frame_ms);
+        }
+        rec.begin_frame_at(t);
+        rec.summary().unwrap()
+    }
+
+    /// The phone #568 measured: unpaced (`fps=native`) at 120 Hz, the ASCII
+    /// page 340 frames in 10 s (29.4 ms a frame), 2 ms of the player's work.
+    fn phone() -> PerfContext {
+        PerfContext {
+            present: Some(wgpu::PresentMode::Fifo),
+            refresh_ms: Some(1000.0 / 120.0),
+            ..PerfContext::default()
+        }
+    }
+
+    /// #1318: unpaced, light on the CPU and missing the refresh, the mean
+    /// frame is the GPU's, and the line says what the guess was made from.
+    #[test]
+    fn an_unpaced_frame_light_on_the_cpu_reads_gpu_bound() {
+        let s = window_of(29.4, 2.0, 0.0);
+        let c = phone();
+        let t = throughput(&s, &c).unwrap();
+        assert!((t.ms - 29.4).abs() < 0.05, "{t:?}");
+        let g = t.gpu_bound.expect("GPU-bound");
+        assert!((g.work_ms - 2.0).abs() < 0.01);
+        let line = summary_line(&s, &c);
+        assert!(
+            line.contains(
+                " | mean 29.40 ms a frame, GPU-bound (guess: unpaced, player 2.00 ms, refresh 8.33 ms) | "
+            ),
+            "{line}"
+        );
+        let text = readout(&s, &c);
+        assert!(
+            text.contains(
+                "mean   29.40 ms a frame: GPU-bound, a guess\n       from unpaced, player 2.00 ms, refresh 8.33 ms"
+            ),
+            "{text}"
+        );
+    }
+
+    /// The desktop's GPU-bound frame waits in `acquire` for a free image: a
+    /// wait, not the player's work, so it doesn't make the frame CPU-bound.
+    /// Without vsync no refresh holds anything, so none is needed.
+    #[test]
+    fn a_wait_for_a_swapchain_image_is_not_the_players_work() {
+        let s = window_of(12.0, 1.0, 9.0);
+        let c = PerfContext {
+            present: Some(wgpu::PresentMode::Immediate),
+            ..PerfContext::default()
+        };
+        let line = summary_line(&s, &c);
+        assert!(
+            line.contains(
+                "mean 12.00 ms a frame, GPU-bound (guess: unpaced, player 1.00 ms, no vsync)"
+            ),
+            "{line}"
+        );
+    }
+
+    /// The flag is absent on a CPU-bound frame, a paced one, one that holds
+    /// the refresh, and under vsync with no refresh known; the mean stays.
+    #[test]
+    fn a_cpu_bound_paced_or_refresh_held_frame_has_no_flag() {
+        let bare = |s: &PerfSummary, c: &PerfContext| {
+            let line = summary_line(s, c);
+            assert!(!line.contains("GPU-bound"), "{line}");
+            assert!(!readout(s, c).contains("GPU-bound"));
+            line
+        };
+        // CPU-bound: 20 of the frame's 29.4 ms is the player's
+        let line = bare(&window_of(29.4, 20.0, 0.0), &phone());
+        assert!(line.contains(" | mean 29.40 ms a frame | "), "{line}");
+        // Paced (`?fps=auto` or a fixed rate) at 30 fps
+        let mut paced = phone();
+        paced.pacing = Some("30 fps, 1 in 4 of 120 Hz (auto)".into());
+        bare(&window_of(33.3, 2.0, 0.0), &paced);
+        // Holds 60 Hz: the display's frame, however light the GPU
+        let mut sixty = phone();
+        sixty.refresh_ms = Some(1000.0 / 60.0);
+        let line = bare(&window_of(1000.0 / 60.0, 2.0, 0.0), &sixty);
+        assert!(line.contains(" | mean 16.67 ms a frame | "), "{line}");
+        // Under vsync with the refresh unknown, there's nothing to judge by
+        let mut unknown = phone();
+        unknown.refresh_ms = None;
+        bare(&window_of(29.4, 2.0, 0.0), &unknown);
     }
 
     /// #1091: the renderer's own count beside the page's, in the copied

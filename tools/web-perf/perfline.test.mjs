@@ -79,6 +79,24 @@ test('the hitches part counts the window and the run, and names the worst (#1079
   assert.deepEqual(parsePerfLine('hitches 0 in 10s (0 in run)').hitches, { window: 0, secs: 10, run: 0 });
 });
 
+test('the mean frame says when it reads as the GPU\'s (#1318)', () => {
+  const p = parsePerfLine(
+    'frame p50 33.3 p90 33.4 p99 41.7 max 50.0 ms (340 frames/10s) | ' +
+      'mean 29.41 ms a frame, GPU-bound (guess: unpaced, player 2.10 ms, refresh 8.33 ms) | cpu 2.30 ms: input 0.10/0.4',
+  );
+  assert.deepEqual(p.throughput, { ms: 29.41, gpuBound: true, guess: { player: 2.1, refresh: 8.33 } });
+  assert.equal(p.frame.frames, 340);
+  assert.equal(p.cpu, 2.3);
+  assert.deepEqual(parsePerfLine('mean 12.00 ms a frame, GPU-bound (guess: unpaced, player 1.00 ms, no vsync)').throughput, {
+    ms: 12,
+    gpuBound: true,
+    guess: { player: 1, refresh: null },
+  });
+  // CPU-bound, paced or holding the refresh: the mean alone
+  assert.deepEqual(parsePerfLine('mean 16.67 ms a frame').throughput, { ms: 16.67, gpuBound: false });
+  assert.equal(parsePerfLine(REAL).throughput, undefined, 'a line from before #1318 has none');
+});
+
 test('a line without GPU timing says so', () => {
   assert.deepEqual(parsePerfLine('flint perf · x · t=3s | gpu off').gpu, { frame: null, passes: {}, note: 'gpu off' });
   assert.deepEqual(parsePerfLine(undefined), {});
