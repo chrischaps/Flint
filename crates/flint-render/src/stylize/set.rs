@@ -57,6 +57,11 @@ pub struct StyleSet {
     /// Something was built again from changed files since
     /// [`take_rebuilt`](Self::take_rebuilt) last asked.
     pub(super) rebuilt: bool,
+    /// History taken from a capture (#1136) for styles not built yet,
+    /// handed to each at the [`ensure`](Self::ensure) that builds it.
+    pub(super) pending_history: Vec<history::ImportedHistory>,
+    /// What the styles said of the history handed to them.
+    pub(super) history_notes: history::Notes,
 }
 
 impl StyleSet {
@@ -216,7 +221,79 @@ impl StyleSet {
                 }
             }
         }
+        self.hand_over_history();
         failed
+    }
+
+    /// Each built style's frame-to-frame history after the frame numbered
+    /// `frame` (#1136, [`history`]), in name order: their states, and the
+    /// copies staged in `encoder`.
+    pub(crate) fn export_history(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: u64,
+    ) -> (Vec<history::StyleHistoryState>, Vec<history::StagedHistory>) {
+        let mut names: Vec<&&'static str> = self.slots.keys().collect();
+        names.sort();
+        let (mut states, mut staged) = (Vec::new(), Vec::new());
+        for name in names {
+            let Some(pass) = self.slots[*name].built.as_deref() else {
+                continue;
+            };
+            let mut out = history::HistoryExport::new(device, encoder, name, frame);
+            pass.export_history(&mut out);
+            let (state, copies) = out.finish();
+            states.extend(state);
+            staged.extend(copies);
+        }
+        (states, staged)
+    }
+
+    /// Hand `histories` (taken from a capture, #1136) to their styles: each
+    /// keeps its own until the next frame it draws. A style not built yet
+    /// gets its own when it is.
+    pub(crate) fn import_history(&mut self, histories: Vec<history::ImportedHistory>) {
+        for mut h in histories {
+            h.notes = self.history_notes.clone();
+            self.pending_history
+                .retain(|p| p.state.style != h.state.style);
+            self.pending_history.push(h);
+        }
+        self.hand_over_history();
+    }
+
+    fn hand_over_history(&mut self) {
+        if self.pending_history.is_empty() {
+            return;
+        }
+        let slots = &self.slots;
+        self.pending_history.retain(|h| {
+            match slots
+                .get(h.state.style.as_str())
+                .and_then(|s| s.built.as_deref())
+            {
+                Some(pass) => {
+                    pass.import_history(h.clone());
+                    false
+                }
+                None => true,
+            }
+        });
+    }
+
+    /// What the styles said of the history handed to them since the last
+    /// call, and a line for each history no style drawn took.
+    pub(crate) fn take_history_notes(&mut self) -> Vec<String> {
+        let mut said =
+            std::mem::take(&mut *self.history_notes.lock().unwrap_or_else(|e| e.into_inner()));
+        said.extend(self.pending_history.iter().map(|h| {
+            format!(
+                "{}: the capture's history waits for a style the frame didn't draw",
+                h.state.style
+            )
+        }));
+        said
     }
 
     /// With `FLINT_STYLE_SHADER_DIR` set (#418), every

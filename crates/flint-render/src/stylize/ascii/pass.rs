@@ -361,6 +361,7 @@ impl Ascii {
         [table, edge_table]: [&wgpu::BindGroup; 2],
         variants: usize,
         [glyph_rect, edge_area]: [Option<kit::PixelRect>; 2],
+        imported: Option<&crate::stylize::history::ImportedHistory>,
     ) {
         let origin = grid_origin([frame.width, frame.height], cell);
         // What the glyph pass reads of the edges inside its rect (#385):
@@ -400,7 +401,28 @@ impl Ascii {
             origin: origin.map(f32::to_bits),
             textures: [edge_cells.generation, edge_slots.generation],
         };
+        // History a frame capture handed back (#1136): this frame's past
+        // when the key is the captured frame's. Written into this frame's
+        // textures, which the copy below takes as last frame's
+        if let Some((h, part)) = imported.and_then(|h| h.used_part("edges").map(|p| (h, p))) {
+            match crate::stylize::history::key_difference(&part.key, &key.exported()) {
+                Some(why) => h.say(format!(
+                    "ascii: the captured edge history was another frame's ({why}): edges drawn fresh"
+                )),
+                None => match h
+                    .write(frame.queue, part, "cells", &edge_cells.texture)
+                    .and_then(|()| h.write(frame.queue, part, "slots", &edge_slots.texture))
+                {
+                    Ok(()) => {
+                        past.last = Some((key.clone(), frame.frame.wrapping_sub(1)));
+                        h.say("ascii: edge history taken from the capture");
+                    }
+                    Err(why) => h.say(format!("ascii: edge history not taken: {why}")),
+                },
+            }
+        }
         let history = past.advance(key, frame.frame, frame.option("temporal") != "off");
+        past.used = history;
         let EdgePast { cells, slots, .. } = &mut *past;
         let past_cells = Owned::ensure(
             cells,
@@ -857,6 +879,8 @@ impl StylePass for Ascii {
         input: &StyleInput<'_>,
         output: &wgpu::TextureView,
     ) {
+        // History a frame capture handed back (#1136), for this frame only
+        let imported = self.imported.take();
         let mut fonts = self.fonts.lock().unwrap_or_else(|e| e.into_inner());
         let ramp_name = frame.option("ramp").to_string();
         self.refresh_fonts(frame, &mut fonts);
@@ -994,6 +1018,7 @@ impl StylePass for Ascii {
                 [&uniform, &edge_table],
                 variants.len(),
                 [glyph_rect, edge_area],
+                imported.as_ref(),
             );
         }
         if edge_view {
@@ -1035,8 +1060,38 @@ impl StylePass for Ascii {
         };
         let temporal = frame.option("temporal") != "off";
         let reproject = frame.option("temporal") == "reproject";
-        let past = history.advance(key, frame.frame, temporal) && !fresh;
+        // History a frame capture handed back (#1136): last frame's cells
+        // and depths, and its camera, when the key is the captured frame's
+        let mut taken = false;
+        if let Some((h, part)) = imported.as_ref().and_then(|h| h.used_part("tone").map(|p| (h, p))) {
+            let read = 1 - history.parity;
+            let cells = history.textures.as_ref().expect("adopted above")[read].clone();
+            let depth = history.depths.as_ref().expect("adopted above")[read].clone();
+            match crate::stylize::history::key_difference(&part.key, &key.exported()) {
+                Some(why) => h.say(format!(
+                    "ascii: the captured tone history was another frame's ({why}): drawn fresh"
+                )),
+                None => match h
+                    .write(frame.queue, part, "cells", &cells.texture)
+                    .and_then(|()| h.write(frame.queue, part, "depths", &depth.texture))
+                {
+                    Ok(()) => {
+                        history.last = Some((key.clone(), frame.frame.wrapping_sub(1)));
+                        if let Some(m) = part.values.get("view_proj").filter(|m| m.len() == 16) {
+                            history.last_view_proj =
+                                Some(std::array::from_fn(|c| std::array::from_fn(|r| m[c * 4 + r])));
+                        }
+                        taken = true;
+                        h.say("ascii: tone history taken from the capture");
+                    }
+                    Err(why) => h.say(format!("ascii: tone history not taken: {why}")),
+                },
+            }
+        }
+        let past = history.advance(key, frame.frame, temporal) && (!fresh || taken);
         let prev_view_proj = history.swap_view_proj(frame.camera.view_proj);
+        history.used_past = past;
+        history.used_view_proj = prev_view_proj;
         let (write, read) = (history.parity, 1 - history.parity);
         history.parity = read;
         let generation = history.generation;
@@ -1415,6 +1470,52 @@ impl StylePass for Ascii {
             r.rescaled(size, frame.depth_size)
                 .padded(2, frame.depth_size[0], frame.depth_size[1])
         })
+    }
+
+    /// The tone cells and their depths, and the edge cells and slots,
+    /// last frame's as the captured frame read them (#1136): textures the
+    /// frame read and never wrote, so after it they still hold its past.
+    fn export_history(&self, out: &mut crate::stylize::history::HistoryExport<'_>) {
+        let history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        if let (Some((key, drawn)), Some(cells), Some(depths)) =
+            (&history.last, &history.textures, &history.depths)
+        {
+            if *drawn == out.frame {
+                // The frame flipped the parity to the side it read
+                let read = history.parity;
+                let view_proj: Vec<f32> =
+                    history.used_view_proj.iter().flatten().copied().collect();
+                out.part(
+                    "tone",
+                    key.exported(),
+                    history.used_past,
+                    [("view_proj".to_string(), view_proj)].into(),
+                    &[
+                        ("cells", &cells[read].texture),
+                        ("depths", &depths[read].texture),
+                    ],
+                );
+            }
+        }
+        drop(history);
+        let past = self.edge_past.lock().unwrap_or_else(|e| e.into_inner());
+        if let (Some((key, drawn)), Some(cells), Some(slots)) =
+            (&past.last, &past.cells, &past.slots)
+        {
+            if *drawn == out.frame {
+                out.part(
+                    "edges",
+                    key.exported(),
+                    past.used,
+                    Default::default(),
+                    &[("cells", &cells.texture), ("slots", &slots.texture)],
+                );
+            }
+        }
+    }
+
+    fn import_history(&self, history: crate::stylize::history::ImportedHistory) {
+        self.imported.put(history);
     }
 
     fn set_text_capture(&self, on: bool) {

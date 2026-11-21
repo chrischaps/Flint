@@ -56,6 +56,20 @@ pub trait StylePass: Send + Sync {
     fn ownership_cells(&self, _frame: &StyleFrame<'_>) -> Option<OwnershipCells> {
         None
     }
+
+    /// Hand out the history this style keeps from frame to frame, after a
+    /// captured frame (#1136, [`history`]): a part each, with its key and
+    /// the textures it read as last frame's, staged in `out`'s encoder. A
+    /// style that keeps none (the default) adds nothing.
+    fn export_history(&self, _out: &mut history::HistoryExport<'_>) {}
+
+    /// Keep `history`, taken from a capture (#1136), until the next frame
+    /// this style draws, and draw that frame from it where its key is the
+    /// frame's. The default keeps no history and says so.
+    fn import_history(&self, history: history::ImportedHistory) {
+        let line = format!("{}: keeps no history to take back", history.state.style);
+        history.say(line);
+    }
 }
 
 /// A whole-frame grid the [`ownership`] cut snaps to (#534), in output
