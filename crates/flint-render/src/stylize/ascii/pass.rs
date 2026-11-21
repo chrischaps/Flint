@@ -1,5 +1,6 @@
 //! Drawing a frame: the passes in order (moved from `ascii.rs`, #742).
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use super::*;
 
 impl Ascii {
@@ -20,7 +21,7 @@ impl Ascii {
     ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
         let make = |mask: &wgpu::TextureView| {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII Entity BG"),
                 layout: &self.entity_bgl,
                 entries: &[
@@ -97,7 +98,7 @@ impl Ascii {
         // Every slot is written, so an id a past frame held reads 0 again
         table.upload(frame.device, frame.queue, rows, slots);
         let main = frame.bind("ASCII Table BG", table.generation(), || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII Table BG"),
                 layout: &self.table_bgl,
                 entries: &[
@@ -118,7 +119,7 @@ impl Ascii {
         });
         let edge_table = |name: &'static str, uniforms: &wgpu::Buffer| {
             frame.bind(name, table.generation(), || {
-                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some(name),
                     layout: &self.edge_bgl,
                     entries: &[
@@ -318,7 +319,7 @@ impl Ascii {
         // With and without the mask kept side by side: it comes and goes
         let variant = frame.mask.is_some() as u64;
         frame.depth_bind_over("ASCII Edge Source BG", variant, &over, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII Edge Source BG"),
                 layout: &self.source_bgl,
                 entries: &[
@@ -452,7 +453,7 @@ impl Ascii {
                 outlines.map_or(u64::MAX, |o| o.generation),
             ]),
             || {
-                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("ASCII Past Cells And Outlines BG"),
                     layout: &self.past_outline_bgl,
                     entries: &[
@@ -486,7 +487,7 @@ impl Ascii {
             smoothing: edge_smoothing(frame.param("smoothing"), frame.dt),
             _pad: 0,
         };
-        frame.queue.write_buffer(
+        frame.queue.write_buffer_counted(
             &self.edge_cell_uniforms,
             0,
             bytemuck::bytes_of(&cell_uniforms),
@@ -502,7 +503,7 @@ impl Ascii {
             size: [frame.width as f32, frame.height as f32],
             _pad: [0; 2],
         };
-        frame.queue.write_buffer(
+        frame.queue.write_buffer_counted(
             &self.edge_thin_uniforms,
             0,
             bytemuck::bytes_of(&thin_uniforms),
@@ -548,7 +549,7 @@ impl Ascii {
             "ASCII Edge Thin Inputs BG",
             bind_key(&[past_slots.generation, frame.mask.is_some() as u64]),
             || {
-                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("ASCII Edge Thin Inputs BG"),
                     layout: &self.thin_in_bgl,
                     entries: &[
@@ -614,7 +615,7 @@ impl Ascii {
         };
         frame
             .queue
-            .write_buffer(&self.edge_view_uniforms, 0, bytemuck::bytes_of(&uniforms));
+            .write_buffer_counted(&self.edge_view_uniforms, 0, bytemuck::bytes_of(&uniforms));
         let cells = frame.bind(
             "ASCII Edge View Cells BG",
             bind_key(&[
@@ -623,7 +624,7 @@ impl Ascii {
                 outlines.map_or(u64::MAX, |o| o.generation),
             ]),
             || {
-                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("ASCII Edge View Cells BG"),
                     layout: &self.edge_view_cells_bgl,
                     entries: &[
@@ -724,7 +725,7 @@ impl Ascii {
         let mask = frame.mask.filter(|_| with_mask);
         let key = input.id * 2 + mask.is_some() as u64;
         frame.bind("ASCII Stats In BG", key, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII Stats In BG"),
                 layout: &self.stats_in_bgl,
                 entries: &[
@@ -819,7 +820,7 @@ impl Ascii {
         if stale {
             let atlases: Vec<_> = in_use.sets.iter().map(|s| &**s.atlas()).collect();
             let gpu = GpuGlyphStack::upload(frame.device, frame.queue, &atlases, "ASCII Atlas");
-            let bind = frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind = frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII Atlas BG"),
                 layout: &self.atlas_bgl,
                 entries: &[wgpu::BindGroupEntry {
@@ -838,6 +839,23 @@ impl Ascii {
 }
 
 impl StylePass for Ascii {
+    /// Its cells' tone and edge history (#277, #477) advance a frame each
+    /// draw, so a second draw in one frame isn't a repeat (#1317)
+    fn keeps_history(&self) -> bool {
+        true
+    }
+
+    fn glyph_atlas_bytes(&self) -> u64 {
+        // `try_lock`: a frame encoding on another thread holds it, and a
+        // report never waits for a frame (a missed reading counts 0)
+        self.fonts.try_lock().ok().map_or(0, |fonts| {
+            fonts
+                .stack
+                .as_ref()
+                .map_or(0, |s| crate::gpu_counts::bytes_of(&s.gpu.texture))
+        })
+    }
+
     fn encode(
         &self,
         frame: &StyleFrame<'_>,
@@ -1119,7 +1137,7 @@ impl StylePass for Ascii {
         uniforms.dissolve[..dissolving.len()].copy_from_slice(&dissolving);
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
         let variant = |i: usize| generation * 2 + i as u64;
 
         // Tone statistics (#289): each slot's luminance range, from this
@@ -1140,7 +1158,7 @@ impl StylePass for Ascii {
         // Cell pass: each cell's colour and glyph, from the picture and
         // (when it follows on) last frame's cells
         let past_bind = frame.depth_bind("ASCII History BG", variant(read), || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII History BG"),
                 layout: &self.history_bgl,
                 entries: &[

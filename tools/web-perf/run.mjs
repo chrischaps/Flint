@@ -6,7 +6,7 @@
 //
 // usage: node tools/web-perf/run.mjs <site-dir|url> <bundle> <scene[+query],...> --out <dir>
 //          [--dpr 1,2] [--size 1920x1080] [--seconds 25] [--reads 2]
-//          [--query '&fps=native'] [--passes 'Style mask,ASCII'] [--begin auto|click]
+//          [--query '&fps=native'] [--passes 'Style mask,ASCII'] [--begin auto|click] [--rounds 1]
 //          [--port 9381] [--browser chrome|firefox] [--chrome <path>] [--firefox <path>] [--prefs k=v,...] [--trace]
 //
 // <site-dir> is served on 127.0.0.1 for the run; a URL is used as it is.
@@ -16,6 +16,9 @@
 // so the CSS size is size / dpr. Writes <out>/<scene>@dpr<d>.json and .png for
 // each page, and <out>/summary.json and <out>/table.md over them all. Exits 1
 // when a page never started or drew on another canvas size than asked.
+// --rounds N plays every scene once a round, N rounds, in one browser per DPR,
+// so heat or another job shows as a trend across rounds, not a step between
+// scenes (tools/phone-perf/submits.mjs's alternation, #568, #1318).
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -36,7 +39,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 const [site, bundle, sceneList] = positional;
 if (!site || !bundle || !sceneList || !flags.out) {
-  console.error('usage: node tools/web-perf/run.mjs <site-dir|url> <bundle> <scene,...> --out <dir> [--dpr 1,2] [--size 1920x1080] [--seconds 25] [--reads 2] [--query ...] [--passes ...] [--begin auto|click] [--port 9381] [--browser chrome|firefox] [--chrome <path>] [--firefox <path>] [--prefs k=v,...] [--trace]');
+  console.error('usage: node tools/web-perf/run.mjs <site-dir|url> <bundle> <scene,...> --out <dir> [--dpr 1,2] [--size 1920x1080] [--seconds 25] [--reads 2] [--query ...] [--passes ...] [--begin auto|click] [--rounds 1] [--port 9381] [--browser chrome|firefox] [--chrome <path>] [--firefox <path>] [--prefs k=v,...] [--trace]');
   process.exit(2);
 }
 const outDir = resolve(flags.out);
@@ -44,6 +47,7 @@ const dprs = (flags.dpr ?? '1').split(',').map(Number);
 const [width, height] = (flags.size ?? '1920x1080').split('x').map(Number);
 const warmSecs = Number(flags.seconds ?? 25);
 const reads = Math.max(1, Number(flags.reads ?? 2));
+const rounds = Math.max(1, Number(flags.rounds ?? 1));
 const extra = flags.query ?? '';
 const begin = flags.begin ?? 'auto';
 const trace = 'trace' in flags;
@@ -337,13 +341,14 @@ const urlFor = (scene, css) => {
     `${extra}${query.map((q) => '&' + q).join('')}`
   );
 };
-const labelFor = (scene, dpr) => `${scene.replace(/[^\w.=-]+/g, '_')}@dpr${dpr}`;
+const labelFor = (scene, dpr, round) =>
+  `${scene.replace(/[^\w.=-]+/g, '_')}@dpr${dpr}${rounds > 1 ? `-r${round + 1}` : ''}`;
 
-async function playPage({ navigate, evaluate, screenshot }, scene, dpr, css) {
-  const label = labelFor(scene, dpr);
+async function playPage({ navigate, evaluate, screenshot }, scene, dpr, css, round = 0) {
+  const label = labelFor(scene, dpr, round);
   const url = urlFor(scene, css);
   log(`${label}: ${url}`);
-  const result = { label, scene, dpr, css, url, reads: [] };
+  const result = { label, scene, dpr, round: round + 1, css, url, reads: [] };
   await navigate(url);
   // the gate lifts once the scene is loaded and the player is running
   const want = begin === 'auto' ? 'data-gone' : 'data-ready';
@@ -423,10 +428,14 @@ for (const dpr of dprs) {
     server?.close();
     process.exit(1);
   }
-  for (const scene of scenes) {
-    const result = await playPage(chrome, scene, dpr, css);
-    writeFileSync(join(outDir, `${result.label}.json`), JSON.stringify(result, null, 1));
-    pages.push(result);
+  // a round plays every scene once, so a scene is read against the others of
+  // its own round (#568's alternation)
+  for (let round = 0; round < rounds; round++) {
+    for (const scene of scenes) {
+      const result = await playPage(chrome, scene, dpr, css, round);
+      writeFileSync(join(outDir, `${result.label}.json`), JSON.stringify(result, null, 1));
+      pages.push(result);
+    }
   }
   await chrome.close();
 }
@@ -438,7 +447,7 @@ const passNames = flags.passes
   : [...new Set(pages.flatMap((p) => p.reads.flatMap((r) => Object.keys(r.parsed.gpu?.passes ?? {}))))];
 const over = (p, f) => p.reads.map((r) => f(r.parsed)).filter((v) => v !== undefined);
 const sizeOf = (p, f) => [...new Set(over(p, f).map((s) => s.join('x')))].join(', ');
-const head = ['page', 'canvas', 'scene', ...passNames.map((n) => `${n} ms`), 'GPU frame ms', 'GPU timed', 'bind groups a frame', 'passes a frame', 'frame p50 ms', ...(trace ? ['slow frames (spells, longest s)'] : [])];
+const head = ['page', 'canvas', 'scene', ...passNames.map((n) => `${n} ms`), 'GPU frame ms', 'GPU timed', 'bind groups a frame', 'passes a frame', 'frame p50 ms', 'mean ms a frame', 'GPU-bound', ...(trace ? ['slow frames (spells, longest s)'] : [])];
 // how the readout says its GPU times were taken (#380): under vsync an idle GPU
 // clocks down and its passes read high
 const timed = (p) => {
@@ -448,11 +457,19 @@ const timed = (p) => {
   const busy = g.map((x) => x.idleClocks).filter((x) => x !== undefined);
   return busy.length ? `vsync, idle clocks (${range(busy.map((b) => b * 100), 0)}% busy)` : 'vsync';
 };
+// how many reads said GPU-bound (#1318)
+const gpuBound = (p) => {
+  const t = p.reads.map((r) => r.parsed.throughput).filter(Boolean);
+  if (!t.length) return '';
+  const n = t.filter((x) => x.gpuBound).length;
+  return n === t.length ? 'yes' : n === 0 ? 'no' : `${n} of ${t.length} reads`;
+};
+const pageName = (p) => `DPR ${p.dpr}, ${p.scene}${rounds > 1 ? `, round ${p.round}` : ''}`;
 const rows = pages.map((p) =>
   p.error
-    ? [`DPR ${p.dpr}, ${p.scene}`, p.error, ...head.slice(2).map(() => '')]
+    ? [pageName(p), p.error, ...head.slice(2).map(() => '')]
     : [
-        `DPR ${p.dpr}, ${p.scene}`,
+        pageName(p),
         sizeOf(p, (x) => x.canvas) + (p.warning ? ' (!)' : ''),
         sizeOf(p, (x) => x.scene),
         ...passNames.map((n) => range(over(p, (x) => x.gpu?.passes?.[n]))),
@@ -461,13 +478,17 @@ const rows = pages.map((p) =>
         range(over(p, (x) => x.webgpu?.bindGroups), 1),
         range(over(p, (x) => x.webgpu?.passes), 1),
         range(over(p, (x) => x.frame?.p50), 1),
+        // the window's span over its frames, and how many reads called it the
+        // GPU's (#1318): unpaced and GPU-bound, it's the GPU's ms a frame
+        range(over(p, (x) => x.throughput?.ms)),
+        gpuBound(p),
         ...(trace ? [p.trace ? `${p.trace.slow} (${p.trace.spells.length}, ${Math.max(0, ...p.trace.spells.map((s) => s.lasts))})` : ''] : []),
       ],
 );
 const first = pages.find((p) => p.env)?.env;
 const adapter = pages.flatMap((p) => p.reads).find((r) => r.parsed.adapter)?.parsed.adapter;
 const table = [
-  `${browser === 'firefox' ? 'Firefox over WebDriver BiDi' : 'Chrome over CDP'}, ?perf=1, a ${width}x${height} device-pixel canvas, read ${reads}x from ${warmSecs} s after Begin, 10 s apart.`,
+  `${browser === 'firefox' ? 'Firefox over WebDriver BiDi' : 'Chrome over CDP'}, ?perf=1, a ${width}x${height} device-pixel canvas, read ${reads}x from ${warmSecs} s after Begin, 10 s apart${rounds > 1 ? `, ${rounds} rounds of every scene` : ''}.`,
   first ? `${first.ua.match(/Chrome\/[\d.]+/)?.[0] ?? first.ua}, adapter ${adapter ?? 'unread'}, timestamp-query ${first.timestampQuery ? 'on' : 'off'}.` : '',
   '',
   `| ${head.join(' | ')} |`,
@@ -477,7 +498,7 @@ const table = [
   '',
 ].join('\n');
 writeFileSync(join(outDir, 'table.md'), table);
-writeFileSync(join(outDir, 'summary.json'), JSON.stringify({ base, bundle, size: [width, height], dprs, warmSecs, reads, pages }, null, 1));
+writeFileSync(join(outDir, 'summary.json'), JSON.stringify({ base, bundle, size: [width, height], dprs, warmSecs, reads, rounds, pages }, null, 1));
 console.log('\n' + table);
 log(`wrote ${pages.length} pages to ${outDir}`);
 server?.close();

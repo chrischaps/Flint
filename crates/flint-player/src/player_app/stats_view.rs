@@ -174,12 +174,13 @@ mod graph {
             let first = ring.partition_point(|f| f.end() < horizon);
             let oldest = ring.get(first).map_or(0, |f| f.index);
             // Both run oldest first, so one walk marks every hitch.
-            // The tools' own hitches (#1129) stand as tall bars with no mark:
-            // the counters leave them out, so the marks do too
+            // The tools' own hitches (#1129) and a covered load's (#1125)
+            // stand as tall bars with no mark: the counters leave them out,
+            // so the marks do too
             let mut hitches = detector
                 .hitches()
                 .iter()
-                .filter(|h| !h.cause.is_tooling())
+                .filter(|h| h.is_game())
                 .map(|h| h.index)
                 .skip_while(|&i| i < oldest)
                 .peekable();
@@ -208,6 +209,7 @@ mod graph {
                 worst_ms: s.worst_ms,
                 since_last_secs: s.since_last_secs,
                 last: self.last_of.map(|_| self.last.as_str()),
+                loading: s.loading,
             }
         }
     }
@@ -224,6 +226,9 @@ mod graph {
         // The tools' own cost (#1129): named, and said not to count
         if h.cause.is_tooling() {
             out.push_str(", not counted");
+        } else if h.loading {
+            // Under a script's fade (#1125): counted, as `loading`
+            out.push_str(", behind a cover");
         }
     }
 }
@@ -276,6 +281,171 @@ pub(crate) fn style_target_rows(targets: &[flint_render::stylize::TargetEntry]) 
         ));
     }
     rows
+}
+
+/// How an overlay row reads: plain, dim, or the alert colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tone {
+    Calm,
+    Quiet,
+    Alert,
+}
+
+/// One row of the overlay's GPU section.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Row {
+    pub(crate) text: String,
+    pub(crate) tone: Tone,
+}
+
+/// How long the last frame that created GPU objects stays named under
+/// `Alloc/frame`, seconds of game time.
+pub(crate) const LAST_ALLOC_SECS: f64 = 10.0;
+
+/// The F2 overlay's GPU section (#1091): `Alloc/frame` (the objects this
+/// frame created, `Alert` when any, so a renderer that allocates every
+/// frame is never quiet), the last frame that made any while it is recent,
+/// the frame's writes, then the memory the renderer knows it holds by
+/// class and the device's own totals. Called only while the full overlay
+/// shows.
+pub(crate) fn gpu_alloc_rows(
+    stats: &flint_render::RenderStats,
+    last: Option<(f64, flint_render::gpu_counts::GpuCalls)>,
+) -> Vec<Row> {
+    use flint_render::gpu_counts::format_bytes as b;
+    let row = |text: String, tone| Row { text, tone };
+    let g = &stats.gpu_calls;
+    let created = g.created();
+    let mut rows = vec![row(
+        if created == 0 {
+            "Alloc/frame: 0".to_string()
+        } else {
+            format!("Alloc/frame: {created} ({})", g.created_line())
+        },
+        if created == 0 {
+            Tone::Calm
+        } else {
+            Tone::Alert
+        },
+    )];
+    if let Some((ago, calls)) = last.filter(|(ago, _)| created == 0 && *ago < LAST_ALLOC_SECS) {
+        // Two rows: a startup frame's list is wider than the overlay
+        rows.push(row(format!("  last {ago:.1}s ago:"), Tone::Quiet));
+        rows.push(row(format!("    {}", calls.created_line()), Tone::Quiet));
+    }
+    rows.push(row(
+        format!(
+            "Writes: {} ({})",
+            g.writes + g.texture_writes,
+            b(g.write_bytes + g.texture_write_bytes)
+        ),
+        Tone::Calm,
+    ));
+    let m = &stats.gpu_memory;
+    rows.push(row(
+        format!("GPU memory: {} textures", b(m.textures())),
+        Tone::Calm,
+    ));
+    rows.push(row(
+        format!(
+            "  scene {}  style {}",
+            b(m.scene_targets),
+            b(m.style_targets)
+        ),
+        Tone::Quiet,
+    ));
+    rows.push(row(
+        format!(
+            "  shadow {}  model {}",
+            b(m.shadow_maps),
+            b(m.model_textures)
+        ),
+        Tone::Quiet,
+    ));
+    if m.glyph_atlases > 0 {
+        rows.push(row(format!("  glyphs {}", b(m.glyph_atlases)), Tone::Quiet));
+    }
+    rows.push(row(format!("  meshes {}", b(m.mesh_buffers)), Tone::Quiet));
+    if let Some((buffers, textures)) = stats.device_memory {
+        rows.push(row(
+            format!("Device: {} buffers, {} textures", b(buffers), b(textures)),
+            Tone::Quiet,
+        ));
+    }
+    rows
+}
+
+#[cfg(test)]
+mod gpu_alloc_tests {
+    use super::*;
+    use flint_render::gpu_counts::{GpuCalls, GpuMemory};
+
+    fn stats(calls: GpuCalls) -> flint_render::RenderStats {
+        flint_render::RenderStats {
+            gpu_calls: calls,
+            gpu_memory: GpuMemory {
+                scene_targets: 40 << 20,
+                style_targets: 8 << 20,
+                shadow_maps: 16 << 20,
+                model_textures: 20 << 20,
+                glyph_atlases: 0,
+                mesh_buffers: 3 << 20,
+            },
+            device_memory: Some((12 << 20, 96 << 20)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_steady_frame_reads_zero_and_a_creating_one_is_the_alert() {
+        let steady = gpu_alloc_rows(
+            &stats(GpuCalls {
+                writes: 15,
+                ..Default::default()
+            }),
+            None,
+        );
+        assert_eq!(
+            steady[0],
+            Row {
+                text: "Alloc/frame: 0".into(),
+                tone: Tone::Calm
+            }
+        );
+        assert_eq!(steady[1].text, "Writes: 15 (0 KB)");
+        assert_eq!(steady[2].text, "GPU memory: 84.0 MB textures");
+        assert!(
+            steady.iter().all(|r| !r.text.contains("glyphs")),
+            "no atlas, no row"
+        );
+        assert_eq!(
+            steady.last().unwrap().text,
+            "Device: 12.0 MB buffers, 96.0 MB textures"
+        );
+
+        let spawned = GpuCalls {
+            buffers: 2,
+            bind_groups: 1,
+            ..Default::default()
+        };
+        let rows = gpu_alloc_rows(&stats(spawned), None);
+        assert_eq!(rows[0].text, "Alloc/frame: 3 (2 buffers, 1 bind group)");
+        assert_eq!(rows[0].tone, Tone::Alert);
+
+        // The frame after: zero, and the creation named while it is recent
+        let after = gpu_alloc_rows(&stats(GpuCalls::default()), Some((1.25, spawned)));
+        assert_eq!(after[0].tone, Tone::Calm);
+        assert_eq!(after[1].text, "  last 1.2s ago:");
+        assert_eq!(after[2].text, "    2 buffers, 1 bind group");
+        let later = gpu_alloc_rows(
+            &stats(GpuCalls::default()),
+            Some((LAST_ALLOC_SECS, spawned)),
+        );
+        assert!(
+            !later[1].text.contains("last"),
+            "forgotten after {LAST_ALLOC_SECS} s"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -504,6 +674,7 @@ mod tests {
                 gpu_ms: None,
                 refreshes: Some(3),
                 cause,
+                loading: false,
                 notes,
             }
         }
@@ -637,6 +808,7 @@ mod tests {
                 gpu_ms: None,
                 refreshes: None,
                 cause: Cause::Tooling { tool_ms: 104.0 },
+                loading: false,
                 notes: vec![HitchNote {
                     note: FrameNote::new(NoteKind::StatsOverlay, "opened", Some(104.0)),
                     frame_before: false,

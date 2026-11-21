@@ -2,6 +2,7 @@
 //! its helpers (moved from `stylize/mod.rs`, #742).
 
 use super::*;
+use crate::gpu_counts::CountedDevice;
 
 /// A style's GPU side: pipelines, layouts and uniform buffers, made once.
 pub trait StylePass: Send + Sync {
@@ -22,11 +23,26 @@ pub trait StylePass: Send + Sync {
     /// (#317). Only a style that draws glyphs does anything with it.
     fn set_text_capture(&self, _on: bool) {}
 
+    /// The glyph atlases this pass holds on the GPU, bytes (#1091), for
+    /// F2's memory line. Only a style that draws glyphs has any.
+    fn glyph_atlas_bytes(&self) -> u64 {
+        0
+    }
+
     /// The glyph grid the last frame encoded with capture on drew, once
     /// that frame's submission is done (this waits on the device). `None`
     /// from a style that draws no glyphs, or before such a frame.
     fn read_text(&self, _device: &wgpu::Device) -> Option<GlyphText> {
         None
+    }
+
+    /// Whether the style keeps state from frame to frame that a second
+    /// draw in one frame would advance (ASCII's cell history, #277; a user
+    /// style's `history` target): such a style refuses a pass knob's
+    /// repeat (#1317) and draws once. False, the default, for a style whose
+    /// every draw is the same work.
+    fn keeps_history(&self) -> bool {
+        false
     }
 
     /// The shared edges' pixels (at [`StyleFrame::depth_size`]) this
@@ -416,14 +432,15 @@ impl StyleFrame<'_> {
     ) -> Option<Arc<wgpu::BindGroup>> {
         let mask = self.mask?;
         Some(self.bind(name, 0, || {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(name),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(mask),
-                }],
-            })
+            self.device
+                .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    label: Some(name),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(mask),
+                    }],
+                })
         }))
     }
 
@@ -437,14 +454,15 @@ impl StyleFrame<'_> {
         let edges = self.edges.as_ref()?;
         let over = [crate::bind_cache::Bound::View(&edges.view)];
         Some(self.bind_over(name, 0, &over, || {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(name),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&edges.view),
-                }],
-            })
+            self.device
+                .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    label: Some(name),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&edges.view),
+                    }],
+                })
         }))
     }
 
@@ -704,14 +722,15 @@ impl StyleFrame<'_> {
         buffer: &wgpu::Buffer,
     ) -> Arc<wgpu::BindGroup> {
         self.bind(name, 0, || {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(name),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                }],
-            })
+            self.device
+                .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    label: Some(name),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                })
         })
     }
 
@@ -721,19 +740,20 @@ impl StyleFrame<'_> {
         layout: &wgpu::BindGroupLayout,
         view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(name),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(self.linear_sampler),
-                },
-            ],
-        })
+        self.device
+            .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                label: Some(name),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(self.linear_sampler),
+                    },
+                ],
+            })
     }
 }

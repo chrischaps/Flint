@@ -298,6 +298,11 @@ pub struct PlayerArgs {
     #[command(flatten)]
     pub hitches: crate::HitchArgs,
 
+    /// `--perf-report FILE`: the `--exit-after` report as JSON, for
+    /// `scripts/perf-compare.py` (#1093)
+    #[command(flatten)]
+    pub perf_report: crate::PerfReportArgs,
+
     /// `--capture-frame-at SECS` (repeatable), `--capture-on-hitch[=N]`
     /// (past the start; `--capture-on-hitch-startup` for the first 2 s too,
     /// #1207) and `--capture-dir DIR`: frames for the frame debugger, as
@@ -321,6 +326,11 @@ pub struct PlayerArgs {
     /// (#1092). --perf prints it too
     #[command(flatten)]
     pub loads: crate::LoadReportArgs,
+
+    /// `--skip-pass LABEL` and `--repeat-pass LABEL:N`: cost a part of the
+    /// frame on any GPU by taking it away or drawing it N times (#1317)
+    #[command(flatten)]
+    pub pass_knobs: crate::PassKnobArgs,
 
     /// `--log-format text|json` and `--quiet`: how and how much the player
     /// says, which its binary's `main` hands `logging::init` (#716)
@@ -614,6 +624,7 @@ impl PlayerArgs {
         launch.motion_hold = args.motion_hold;
         launch.window_size = args.window.size();
         launch.window_options = args.window.clone();
+        launch.pass_knobs = args.pass_knobs.knobs()?;
         launch.expression_feed = expression_feed;
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -622,6 +633,7 @@ impl PlayerArgs {
         }
         app.input.touch_controls_mut().set_mode(touch_mode);
         args.hitches.apply(&mut app)?;
+        args.perf_report.apply(&mut app, args.exit_after)?;
         args.frame_captures.apply(&mut app)?;
         args.record.apply(&mut app)?;
         args.trace.apply(&mut app)?;

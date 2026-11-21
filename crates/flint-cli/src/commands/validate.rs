@@ -178,6 +178,10 @@ struct Fixed {
     saved: bool,
     /// What a fix changed in the world and the file could not hold.
     not_written: Vec<String>,
+    /// The fixes (indices into `report.actions`) whose entity, read back
+    /// from the file as written, isn't what the fix left it (#1116): the
+    /// file still has what they fixed.
+    dropped: Vec<usize>,
     /// The file's diff, for `--output-diff`.
     diff: Option<String>,
 }
@@ -195,7 +199,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         warnings,
         violations: table_violations,
         mut diagnostics,
-        allowed,
+        mut allowed,
     } = Found::from(check::scene(
         Path::new(&args.scene),
         &schemas,
@@ -258,6 +262,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         },
         saved: false,
         not_written: Vec::new(),
+        dropped: Vec::new(),
         diff: None,
     };
     // What is wrong with the file as this run leaves it: a dry run leaves
@@ -281,9 +286,33 @@ pub fn run(args: ValidateArgs) -> Result<()> {
             if args.output_diff {
                 fixed.diff = Some(compute_scene_diff(&before_text, &doc.to_string()));
             }
+            // The file as written is what's left: read it back and judge
+            // that, not the world the fixes were made in (#1116). A fix it
+            // couldn't take is still wrong there, and an out-of-range value
+            // a fix put right is no longer an error
+            let again = Found::from(check::scene(
+                Path::new(&args.scene),
+                &schemas,
+                Checks::VALIDATE,
+                args.strict,
+                &script_api,
+            ));
+            diagnostics = again.diagnostics;
+            allowed = again.allowed;
+            let (written, _, _) = load_scene_diagnosed(&args.scene, &schemas.registry)?;
+            fixed.dropped = dropped_fixes(&fixed.report, &world, &fixed_world, &written);
+            let mut report =
+                ConstraintEvaluator::new(&written, &schemas.registry, &schemas.constraints)
+                    .validate();
+            // The constraints' count, as the fixer counts it, of the file
+            fixed.report.remaining_violations = report.violations.len();
+            report.violations.extend(again.violations);
+            report
+        } else {
+            evaluate(&fixed_world)
         }
-        evaluate(&fixed_world)
     };
+    let unwritten = !fixed.dropped.is_empty() || !fixed.not_written.is_empty();
 
     if json {
         print_json(report_json(&report, &diagnostics, allowed, Some(&fixed)));
@@ -298,11 +327,114 @@ pub fn run(args: ValidateArgs) -> Result<()> {
             println!();
             print_report_text(&args.scene, &report, &diagnostics, allowed, no_constraints);
         }
+        if unwritten {
+            // Last, so it's the line a run ends on (#1116)
+            eprintln!("\n{}", unwritten_line(&args.scene, &fixed));
+        }
     }
-    if !report.is_valid() || diagnostic::has_errors(&diagnostics) {
+    // A fix the file couldn't take is a fix `--fix` didn't make: the run
+    // fails, whatever the constraint's severity (#1116)
+    if unwritten || !report.is_valid() || diagnostic::has_errors(&diagnostics) {
         return Err(crate::output::failed());
     }
     Ok(())
+}
+
+/// The fixes the file, read back as `written`, doesn't hold: their entity
+/// is in `fixed` (the world the fixes were made in) and not in the file or
+/// the other way round, or something the fixes changed on it since `before`
+/// (its archetype, its parent, a field's value) reads back otherwise.
+/// Numbers compare as the file reads them back (`3` is `3.0`); only what
+/// changed is compared, so the defaults a load fills in (a component a fix
+/// added gets all of its schema's) don't count. A field a fix took away
+/// isn't compared here: `apply_world_diff` names one it couldn't take out.
+/// Indices into `report.actions`.
+fn dropped_fixes(
+    report: &FixReport,
+    before: &flint_ecs::FlintWorld,
+    fixed: &flint_ecs::FlintWorld,
+    written: &flint_ecs::FlintWorld,
+) -> Vec<usize> {
+    use flint_core::toml_util::reads_same;
+    use flint_ecs::FlintWorld;
+    let parent_of = |world: &FlintWorld, id| {
+        world
+            .get_parent(id)
+            .and_then(|p| world.get_name(p))
+            .map(str::to_string)
+    };
+    let holds = |name: &str| {
+        let (Some(id), Some(back)) = (fixed.get_id(name), written.get_id(name)) else {
+            return fixed.get_id(name).is_none() && written.get_id(name).is_none();
+        };
+        let was = before.get_id(name);
+        let then = was.and_then(|w| before.get_components(w));
+        let (now, read) = (fixed.get_components(id), written.get_components(back));
+        let archetype =
+            |c: Option<&flint_ecs::DynamicComponents>| c.and_then(|c| c.archetype.clone());
+        if archetype(now) != archetype(then) && archetype(now) != archetype(read) {
+            return false;
+        }
+        let parent = parent_of(fixed, id);
+        if was.map(|w| parent_of(before, w)) != Some(parent.clone())
+            && parent != parent_of(written, back)
+        {
+            return false;
+        }
+        let Some(now) = now else { return true };
+        now.data.iter().all(|(component, table)| {
+            let old = then.and_then(|c| c.data.get(component));
+            let back = read.and_then(|c| c.data.get(component));
+            match table.as_table() {
+                Some(fields) => fields.iter().all(|(field, value)| {
+                    let was = old.and_then(|t| t.get(field));
+                    let changed = !was.is_some_and(|w| reads_same(w, value));
+                    !changed
+                        || back
+                            .and_then(|t| t.get(field))
+                            .is_some_and(|b| reads_same(value, b))
+                }),
+                None => {
+                    old.is_some_and(|o| reads_same(o, table))
+                        || back.is_some_and(|b| reads_same(table, b))
+                }
+            }
+        })
+    };
+    report
+        .actions
+        .iter()
+        .enumerate()
+        .filter(|(_, action)| !holds(&action.entity_name))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The line a `--fix` that couldn't write everything ends on: how many of
+/// its fixes the file doesn't hold, and which entities they were for.
+fn unwritten_line(scene: &str, fixed: &Fixed) -> String {
+    let total = fixed.report.actions.len();
+    if fixed.dropped.is_empty() {
+        // Every fix reads back, but some change the fixes made had no home
+        return format!(
+            "{} change(s) the fixes made were not written to {scene} (above); \
+             every fix reads back from it",
+            fixed.not_written.len()
+        );
+    }
+    // Each entity once, in the order its first fix was made
+    let mut entities: Vec<&str> = Vec::new();
+    for &i in &fixed.dropped {
+        let name = fixed.report.actions[i].entity_name.as_str();
+        if !entities.contains(&name) {
+            entities.push(name);
+        }
+    }
+    format!(
+        "{} of {total} fix(es) not written to {scene}, which still has what they fixed: {}",
+        fixed.dropped.len(),
+        entities.join(", ")
+    )
 }
 
 /// What `--fix` or `--dry-run` did, as text.
@@ -506,6 +638,13 @@ fn report_json(
             "cycle_detected": fixed.report.cycle_detected,
             "saved": fixed.saved,
             "not_written": fixed.not_written,
+            // The fixes the file as written doesn't hold, as `actions` has
+            // them (#1116); any of these, or of `not_written`, fails the run
+            "dropped": fixed
+                .dropped
+                .iter()
+                .map(|&i| actions[i].clone())
+                .collect::<Vec<_>>(),
             "diff": fixed.diff,
         });
     }

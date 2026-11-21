@@ -2,6 +2,7 @@
 //! `custom.rs`, #742).
 
 use super::*;
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 
 // ---------------------------------------------------------------------------
 // The pass
@@ -183,7 +184,7 @@ pub(super) fn build(d: &StyleDevice) -> CustomPass {
         .as_ref()
         .filter(|_| !source.inputs.any())
         .map(|bgl| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("User Style Empty BG"),
                 layout: bgl,
                 entries: &[],
@@ -349,12 +350,13 @@ pub(super) fn pipeline(
     // User WGSL, so it keeps every runtime check wgpu has (loop bounding
     // included, after #945) and never goes through `TrustedShader` (#944).
     // The passthrough is composed from the user's source too.
+    crate::gpu_counts::count_shader_module();
     #[allow(clippy::disallowed_methods)]
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("User Style Shader"),
         source: wgpu::ShaderSource::Wgsl(text.into()),
     });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let pipeline = device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
         label: Some("User Style Pipeline"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
@@ -596,7 +598,7 @@ impl ImageSet {
                     ),
                 })
                 .collect();
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("User Style Images BG"),
                 layout,
                 entries: &entries,
@@ -655,8 +657,7 @@ pub(super) fn upload_texture(
     } else {
         (image.into_raw(), 1)
     };
-    let texture = wgpu::util::DeviceExt::create_texture_with_data(
-        device,
+    let texture = device.create_texture_with_data_counted(
         queue,
         &wgpu::TextureDescriptor {
             label: Some(&format!("User Style Image {name}")),
@@ -939,18 +940,20 @@ impl CustomPass {
         let table = self.table.lock().unwrap_or_else(|e| e.into_inner());
         let [rows, slots] = table.entries(1);
         frame.bind(name, table.generation(), || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(name),
-                layout: &self.frame_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.passes[i].frame_buffer.as_entire_binding(),
-                    },
-                    rows,
-                    slots,
-                ],
-            })
+            frame
+                .device
+                .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    label: Some(name),
+                    layout: &self.frame_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: self.passes[i].frame_buffer.as_entire_binding(),
+                        },
+                        rows,
+                        slots,
+                    ],
+                })
         })
     }
 
@@ -964,7 +967,7 @@ impl CustomPass {
     ) {
         let last = self.passes.len() - 1;
         let uniforms = self.uniforms(frame, last, [frame.width, frame.height], false);
-        frame.queue.write_buffer(
+        frame.queue.write_buffer_counted(
             &self.passes[last].frame_buffer,
             0,
             bytemuck::cast_slice(&[uniforms]),
@@ -981,6 +984,10 @@ impl CustomPass {
 }
 
 impl StylePass for CustomPass {
+    fn keeps_history(&self) -> bool {
+        self.loaded.source.has_history()
+    }
+
     fn encode(
         &self,
         frame: &StyleFrame<'_>,
@@ -1101,11 +1108,13 @@ impl StylePass for CustomPass {
                             resource: wgpu::BindingResource::TextureView(&edges.view),
                         });
                     }
-                    frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some(names.extra),
-                        layout: bgl,
-                        entries: &entries,
-                    })
+                    frame
+                        .device
+                        .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                            label: Some(names.extra),
+                            layout: bgl,
+                            entries: &entries,
+                        })
                 }))
             }
             Some(_) => {
@@ -1170,7 +1179,7 @@ impl StylePass for CustomPass {
                 .target
                 .map_or([frame.width, frame.height], |t| sizes[t]);
             let uniforms = self.uniforms(frame, i, size, trusted);
-            frame.queue.write_buffer(
+            frame.queue.write_buffer_counted(
                 &self.passes[i].frame_buffer,
                 0,
                 bytemuck::cast_slice(&[uniforms]),
@@ -1221,11 +1230,13 @@ impl StylePass for CustomPass {
                             ),
                         }
                     }));
-                    frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some(names.passes[i].targets),
-                        layout: bgl,
-                        entries: &entries,
-                    })
+                    frame
+                        .device
+                        .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                            label: Some(names.passes[i].targets),
+                            layout: bgl,
+                            entries: &entries,
+                        })
                 })
             });
             let images_bg: Option<&wgpu::BindGroup> = match (&targets_bg, images.as_mut()) {

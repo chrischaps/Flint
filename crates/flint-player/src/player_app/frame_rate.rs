@@ -110,8 +110,9 @@ impl Refresh {
 /// The slowest display rate whose whole multiples explain nine in ten of
 /// the intervals, ms. At 120 Hz frames 25, 33 and 42 ms apart are three,
 /// four and five refreshes; no rate slower than 120 explains them all.
-/// With no rate fitting, the shortest interval.
-fn estimate_refresh(intervals: &[f64]) -> Option<f64> {
+/// With no rate fitting, the shortest interval. The perf readout asks it
+/// of an unpaced page's rAF intervals too (#1318).
+pub(super) fn estimate_refresh(intervals: &[f64]) -> Option<f64> {
     if intervals.len() < 8 {
         return None;
     }

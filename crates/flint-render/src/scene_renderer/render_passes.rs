@@ -7,6 +7,7 @@ use super::{Blend, Draw, DrawItem, DrawList, Layer, SceneRenderer, SteppedPass};
 use crate::billboard_pipeline::BillboardUniforms;
 use crate::camera::Camera;
 use crate::debug::DebugMode;
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::gpu_labels::{DrawLabel, PassGroup};
 use crate::particle_pipeline::ParticleUniforms;
 use crate::pipeline::TransformUniforms;
@@ -437,7 +438,7 @@ impl SceneRenderer {
         }
 
         // Write shadow uniforms
-        queue.write_buffer(
+        queue.write_buffer_counted(
             &shadow_pass.shadow_uniforms_buffer,
             0,
             bytemuck::cast_slice(&[*shadow_pass.shadow_uniforms()]),
@@ -479,13 +480,13 @@ impl SceneRenderer {
         let grass_casts = self.grass.drawing && self.pipelines.grass.is_some();
         if grass_casts {
             while self.grass.shadow_binds.len() < GRASS_SHADOW_CASCADES {
-                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                let buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
                     label: Some("Grass Shadow Transform"),
                     size: std::mem::size_of::<TransformUniforms>() as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bind = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     layout: &self.layouts.transform_bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
@@ -510,7 +511,7 @@ impl SceneRenderer {
                     camera_pos: [0.0; 3],
                     _pad: 0.0,
                 };
-                queue.write_buffer(buffer, 0, bytemuck::cast_slice(&[uniforms]));
+                queue.write_buffer_counted(buffer, 0, bytemuck::cast_slice(&[uniforms]));
             }
         }
         let mut next_slot: u32 = 0;
@@ -712,7 +713,7 @@ impl SceneRenderer {
                     draw.material_buffer
                         .write_flags(queue, debug_mode_u32, tonemapping_u32)
                 }
-                Draw::Billboard(draw) => queue.write_buffer(
+                Draw::Billboard(draw) => queue.write_buffer_counted(
                     &draw.billboard_buffer,
                     0,
                     bytemuck::cast_slice(&[billboard_uniforms]),
@@ -720,7 +721,7 @@ impl SceneRenderer {
                 Draw::Terrain(n) => {
                     if let Some(chunk) = self.terrain.draws.get(*n as usize) {
                         let uniforms = transform(chunk.model, chunk.model_inv_transpose);
-                        queue.write_buffer(
+                        queue.write_buffer_counted(
                             &chunk.transform_buffer,
                             0,
                             bytemuck::cast_slice(&[uniforms]),
@@ -741,13 +742,13 @@ impl SceneRenderer {
                 camera_pos,
                 _pad: 0.0,
             };
-            queue.write_buffer(buf, 0, bytemuck::cast_slice(&[uniforms]));
+            queue.write_buffer_counted(buf, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
         // Update terrain material buffer (tonemapping flag)
         if let Some(buf) = &self.terrain.material_buffer {
             // enable_tonemapping is at byte offset 12 (texture_tile(4) + metallic(4) + roughness(4))
-            queue.write_buffer(buf, 12, bytemuck::cast_slice(&[tonemapping_u32]));
+            queue.write_buffer_counted(buf, 12, bytemuck::cast_slice(&[tonemapping_u32]));
         }
 
         // Update ocean uniforms (wave phases in f64, grid follows the camera).
@@ -790,7 +791,7 @@ impl SceneRenderer {
                     camera_up: cam_up,
                     _pad1: 0.0,
                 };
-                queue.write_buffer(
+                queue.write_buffer_counted(
                     &pp.uniform_buffer,
                     0,
                     bytemuck::cast_slice(&[particle_uniforms]),
@@ -802,7 +803,7 @@ impl SceneRenderer {
         if let Some(sp) = &self.pipelines.sprite2d {
             if !self.sprite2d_batches.is_empty() {
                 let sprite2d_uniforms = Sprite2dUniforms { view_proj };
-                queue.write_buffer(
+                queue.write_buffer_counted(
                     &sp.uniform_buffer,
                     0,
                     bytemuck::cast_slice(&[sprite2d_uniforms]),
@@ -1629,7 +1630,7 @@ impl SceneRenderer {
             let edges =
                 pp.styles
                     .encode_edges(&both, frame, encoder, &mut |label, encoder, run| {
-                        self.run_style_part(device, scopes, label, encoder, run, None)
+                        self.run_style_part(device, scopes, label, encoder, run, None, None)
                     });
             frame.edges = edges;
             scopes.note(crate::stylize::edges::EDGE_LABEL, |p| {
@@ -1665,7 +1666,8 @@ impl SceneRenderer {
                 pp.styles.fade(),
                 &mut |label, encoder, run| {
                     let dst = dst_of(&hdr_dsts, label);
-                    self.run_style_part(device, scopes, label, encoder, run, dst)
+                    let refuse = history_refusal(scopes.knobs.is_some(), &hdr_styles, label);
+                    self.run_style_part(device, scopes, label, encoder, run, dst, refuse)
                 },
             ),
             _ => None,
@@ -1764,35 +1766,41 @@ impl SceneRenderer {
             // A captured frame reads each step's mip as it's written (#1085):
             // the upsample writes over the downsample's
             flint_core::scope!("encode_part", "Bloom");
-            let scope = scopes.begin(encoder, "Bloom");
-            if scopes.taps.is_some() {
-                pp.run_bloom(
-                    queue,
-                    encoder,
-                    device,
-                    resources,
-                    config,
-                    &source,
-                    Some(&mut |encoder, mip, step| {
-                        let id = format!("bloom_mip_{mip}");
-                        self.tap_step(device, scopes, encoder, "Bloom", &id, step)
-                    }),
-                );
-            } else {
-                pp.run_bloom(queue, encoder, device, resources, config, &source, None);
+            // Each step overwrites its mip (the upsample adds into what
+            // the downsample just wrote), so a repeat is the same work
+            let bloom_times = scopes.times("Bloom");
+            if let Some(scope) = scopes.begin_times(encoder, "Bloom", bloom_times) {
+                scopes.repeat(bloom_times, |scopes| {
+                    if scopes.taps.is_some() {
+                        pp.run_bloom(
+                            queue,
+                            encoder,
+                            device,
+                            resources,
+                            config,
+                            &source,
+                            Some(&mut |encoder, mip, step| {
+                                let id = format!("bloom_mip_{mip}");
+                                self.tap_step(device, scopes, encoder, "Bloom", &id, step)
+                            }),
+                        );
+                    } else {
+                        pp.run_bloom(queue, encoder, device, resources, config, &source, None);
+                    }
+                });
+                scopes.end(encoder, scope);
+                let mips = resources.bloom_mips.len();
+                scopes.note("Bloom", |p| {
+                    p.reads(&[if from_style {
+                        hdr_result_id
+                    } else {
+                        "hdr_scene"
+                    }]);
+                    for i in 0..mips {
+                        p.writes(&[&format!("bloom_mip_{i}")]);
+                    }
+                });
             }
-            scopes.end(encoder, scope);
-            let mips = resources.bloom_mips.len();
-            scopes.note("Bloom", |p| {
-                p.reads(&[if from_style {
-                    hdr_result_id
-                } else {
-                    "hdr_scene"
-                }]);
-                for i in 0..mips {
-                    p.writes(&[&format!("bloom_mip_{i}")]);
-                }
-            });
         } else if config.enabled && config.bloom_enabled {
             scopes.skip("Bloom", || "no bloom mips at this size".to_string());
         } else {
@@ -1847,7 +1855,13 @@ impl SceneRenderer {
         // Composite: HDR + bloom + SSAO + volumetric + fog → tonemapped sRGB surface
         // (always runs — this is what converts Rgba16Float → surface format)
         let composite_timed = !fxaa_active && scopes.timer.is_some();
-        if let Some(log) = scopes.log() {
+        // It writes its target whole, so a repeat is the same work (#1317)
+        let composite_times = scopes.times("Composite");
+        if composite_times == 0 {
+            scopes.skip("Composite", || {
+                crate::frame_capture::SKIPPED_BY_KNOB.to_string()
+            });
+        } else if let Some(log) = scopes.log() {
             let pass = log.ran("Composite", composite_timed);
             pass.reads(&[hdr_result_id, sd]);
             if config.bloom_enabled && !resources.bloom_mips.is_empty() {
@@ -1893,8 +1907,11 @@ impl SceneRenderer {
             } else {
                 scopes.timer.as_mut()
             },
+            composite_times,
         );
-        self.tap_pass(device, scopes, encoder, "Composite");
+        if composite_times > 0 {
+            self.tap_pass(device, scopes, encoder, "Composite");
+        }
 
         if let (Some(frame), Some(input)) = (&mut style_frame, &display_in) {
             let display_dsts = style_dsts(
@@ -1928,7 +1945,8 @@ impl SceneRenderer {
                 pp.styles.fade(),
                 &mut |label, encoder, run| {
                     let dst = dst_of(&display_dsts, label);
-                    self.run_style_part(device, scopes, label, encoder, run, dst)
+                    let refuse = history_refusal(scopes.knobs.is_some(), &display_styles, label);
+                    self.run_style_part(device, scopes, label, encoder, run, dst, refuse)
                 },
             );
             log_style_steps(
@@ -1945,20 +1963,26 @@ impl SceneRenderer {
 
         if fxaa_active {
             let timed = scopes.timer.is_some();
-            if let Some(log) = scopes.log() {
-                log.ran("FXAA", timed)
-                    .reads(&["fxaa_in"])
-                    .writes(&["surface"]);
+            let fxaa_times = scopes.times("FXAA");
+            if fxaa_times == 0 {
+                scopes.skip("FXAA", || crate::frame_capture::SKIPPED_BY_KNOB.to_string());
+            } else {
+                if let Some(log) = scopes.log() {
+                    log.ran("FXAA", timed)
+                        .reads(&["fxaa_in"])
+                        .writes(&["surface"]);
+                }
+                pp.run_fxaa(
+                    queue,
+                    encoder,
+                    device,
+                    resources,
+                    target_view,
+                    scopes.timer.as_mut(),
+                    fxaa_times,
+                );
+                self.tap_pass(device, scopes, encoder, "FXAA");
             }
-            pp.run_fxaa(
-                queue,
-                encoder,
-                device,
-                resources,
-                target_view,
-                scopes.timer.as_mut(),
-            );
-            self.tap_pass(device, scopes, encoder, "FXAA");
         } else {
             scopes.skip("FXAA", || self.post_off_reason("fxaa"));
         }
@@ -2055,6 +2079,24 @@ fn style_dsts(
 /// The target `label`'s style writes, from [`style_dsts`].
 fn dst_of(dsts: &[(&'static str, &'static str)], label: &str) -> Option<&'static str> {
     dsts.iter().find(|(l, _)| *l == label).map(|(_, d)| *d)
+}
+
+/// Why the style drawn as `label` draws once whatever a pass knob's repeat
+/// asks (#1317): it keeps history from frame to frame. Asked only while a
+/// host has knobs on.
+fn history_refusal(
+    knobs_on: bool,
+    styles: &[(
+        &crate::stylize::StyleDescriptor,
+        &dyn crate::stylize::StylePass,
+    )],
+    label: &str,
+) -> Option<&'static str> {
+    (knobs_on
+        && styles
+            .iter()
+            .any(|(d, p)| d.label == label && p.keeps_history()))
+    .then_some(crate::pass_knobs::KEEPS_HISTORY)
 }
 
 /// A style stage's slot as the description names its target: the stage's

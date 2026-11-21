@@ -30,6 +30,7 @@
 //! a stroke strip's ink, so a light scan still draws a full-strength line.
 
 use crate::file_watch::FileStamps;
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::texture_cache::open_image;
 use bytemuck::{Pod, Zeroable};
 use flint_core::project::{shown, AssetKind, AssetScope};
@@ -254,7 +255,7 @@ fn upload(
         .map(|(l, _)| l.len() as u32)
         .max()
         .unwrap_or(1);
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
             width,
@@ -273,7 +274,7 @@ fn upload(
         layers[layer] = LayerInfo::of(*stats, chain);
         for (level, img) in chain.iter().enumerate() {
             let (lw, lh) = img.dimensions();
-            queue.write_texture(
+            queue.write_texture_counted(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
                     mip_level: level as u32,

@@ -18,6 +18,7 @@
 //! ([`Palette::table`](crate::palette::Palette::table)): CGA's black, or
 //! paper's cream as the lightest rung.
 
+use crate::gpu_counts::CountedQueue;
 use super::kit;
 use super::{
     StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam,
@@ -197,7 +198,7 @@ impl StylePass for PaletteStyle {
         );
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
         kit::fullscreen_pass(
             encoder,
             "Palette Pass",

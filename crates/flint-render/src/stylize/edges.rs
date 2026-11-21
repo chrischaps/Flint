@@ -33,6 +33,7 @@
 use super::kit;
 use super::targets::StyleTexture;
 use super::StyleFrame;
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 
@@ -109,6 +110,16 @@ impl EdgePass {
         }
     }
 
+    /// The chain's edge target at the depth's size, made the first time:
+    /// what [`encode`](Self::encode) draws into, and what readers get as it
+    /// was last drawn while a pass knob skips the pass (#1317).
+    pub(crate) fn target(frame: &StyleFrame<'_>) -> Arc<StyleTexture> {
+        let [w, h] = frame.depth_size;
+        frame
+            .targets
+            .get(frame.device, EDGE_TARGET, EDGE_FORMAT, w, h)
+    }
+
     /// Draw this frame's edges from `frame`'s depth and camera into the
     /// chain's edge target, and return it: with the creases, or (`creases`
     /// false, every reader's need [`StyleNeed::EdgeSteps`]) the depth steps
@@ -126,9 +137,7 @@ impl EdgePass {
         rect: Option<kit::PixelRect>,
     ) -> Arc<StyleTexture> {
         let [w, h] = frame.depth_size;
-        let target = frame
-            .targets
-            .get(frame.device, EDGE_TARGET, EDGE_FORMAT, w, h);
+        let target = Self::target(frame);
         let uniforms = EdgeUniforms {
             inv_view_proj: frame.camera.inv_view_proj,
             camera_pos: frame.camera.position,
@@ -138,17 +147,19 @@ impl EdgePass {
         };
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
         let uniform_bg = frame.uniform("Style Edges Uniform BG", &self.uniform_bgl, &self.uniforms);
         let depth_bg = frame.depth_bind("Style Edges Depth BG", 0, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Style Edges Depth BG"),
-                layout: &self.depth_bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(frame.depth),
-                }],
-            })
+            frame
+                .device
+                .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    label: Some("Style Edges Depth BG"),
+                    layout: &self.depth_bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(frame.depth),
+                    }],
+                })
         });
         kit::fullscreen_pass_in(
             encoder,

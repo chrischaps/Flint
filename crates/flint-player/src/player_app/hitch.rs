@@ -38,6 +38,15 @@
 //! (`HitchCounts::tooling`), so a tool never reports its own cost as the
 //! game's and no gate fails a run for its screenshots.
 //!
+//! A hitch is **loading** when a scene was loaded behind a script's cover
+//! on its frame or the frame before (#1125, `Frame::behind_cover`): the
+//! Exiting fade ended with `complete_transition()`, so the load's long
+//! frame stood under a black screen. It keeps its cause (the player's
+//! work, mostly the transition's notes) and is logged as any hitch, but is
+//! counted apart (`HitchCounts::loading`) and no gate counts it unless
+//! asked (`--max-hitches-of loading`). A transition nothing covers goes
+//! straight through and stays the game's: the player sees it.
+//!
 //! Whose time says nothing of why. A hitch also keeps the frame notes
 //! (#1077, `flint_core::frame_notes`) of its frame and the frame before,
 //! since GPU work lands a frame late: a model loaded, a pipeline built, a
@@ -60,6 +69,10 @@ pub(crate) const MEDIAN_FRAMES: usize = 120;
 pub(crate) const WARM_FRAMES: usize = 30;
 /// How many hitches are kept to look back at; the counts go on past them.
 pub(crate) const HITCHES_KEPT: usize = 256;
+/// How many frames after a hitch its GPU time is still looked for on its
+/// record (#1104): a read-back is a frame or two late, and the timer has
+/// three in flight at most.
+pub(crate) const GPU_LATE_FRAMES: u64 = 8;
 /// The share of a hitch's excess the player's work must account for to be
 /// the player's.
 const PLAYER_SHARE: f32 = 0.5;
@@ -167,13 +180,18 @@ pub(crate) struct Hitch {
     pub median_ms: f32,
     /// The player's work in it (every phase but `acquire` and `present`).
     pub player_ms: f32,
-    /// The GPU's busy time read back during it ([`Frame::gpu_ms`]: a frame
-    /// or two old), so a reader can tell a wait on the GPU from one on the
-    /// compositor; `None` while the GPU isn't timed.
+    /// The GPU's busy time on its own work ([`Frame::gpu_ms`]), so a reader
+    /// can tell a wait on the GPU from one on the compositor; `None` while
+    /// the GPU isn't timed. It comes back a frame or two after the hitch is
+    /// judged, and [`HitchDetector::observe`] fills it in then (#1104).
     pub gpu_ms: Option<f32>,
     /// Under vsync, how many refreshes it stood for (1 is on time).
     pub refreshes: Option<u32>,
     pub cause: Cause,
+    /// On a covered scene load's frame or the frame after (#1125): drawn
+    /// under the script's fade, so counted apart as `loading`. Never set
+    /// on a tooling hitch, which is the tools' first.
+    pub loading: bool,
     /// What the engine did in this frame and the one before it (#1077),
     /// this frame's first: the GPU's share of a frame's work lands a
     /// frame late, so a pipeline built or a texture uploaded the frame
@@ -197,6 +215,23 @@ const CAUSES_NAMED: usize = 3;
 
 // Read by the hitch log, the report and the readouts (#1079)
 impl Hitch {
+    /// Whether the player saw it as the game's: not its tools' (#1129),
+    /// not a load behind a cover (#1125). What the counts, rates, clean
+    /// stretches and the gates' default classes hold.
+    pub(crate) fn is_game(&self) -> bool {
+        !self.cause.is_tooling() && !self.loading
+    }
+
+    /// `player`, `elsewhere`, `tooling` or `loading`: the class a log line
+    /// and a tally file it under.
+    pub(crate) fn class(&self) -> &'static str {
+        if self.loading {
+            "loading"
+        } else {
+            self.cause.label()
+        }
+    }
+
     /// The notes that say what the engine was doing: not a clock stall or
     /// the physics steps, which are the long frame itself
     /// ([`NoteKind::is_symptom`](flint_core::frame_notes::NoteKind::is_symptom)).
@@ -232,7 +267,11 @@ impl Hitch {
         if top.is_empty() {
             return false;
         }
-        if top.iter().any(|n| n.note.ms.is_none()) {
+        // An untimed load explains the hitch; a count (#1091) never does
+        if top
+            .iter()
+            .any(|n| n.note.ms.is_none() && !n.note.kind.is_count())
+        {
             return true;
         }
         let ms: f32 = top.iter().filter_map(|n| n.note.ms).sum();
@@ -399,11 +438,15 @@ pub(crate) struct HitchCounts {
     pub frames: u64,
     /// The wall time they cover, seconds.
     pub secs: f64,
-    /// The game's hitches: the player's and elsewhere, not the tools'.
+    /// The game's hitches: the player's and elsewhere, not the tools' nor
+    /// a covered load's.
     pub hitches: u64,
     /// Hitches the player's own tools made ([`Cause::Tooling`]): counted
     /// here, and in nothing else (rates, clean stretches, since last).
     pub tooling: u64,
+    /// Hitches of a scene loaded behind a script's cover ([`Hitch::loading`],
+    /// #1125): counted here, and in nothing else, as the tools' are.
+    pub loading: u64,
     /// The longest judged frame's wall time, ms.
     pub worst_ms: f32,
     /// Seconds from the end of the last hitch to the end of the newest
@@ -472,6 +515,18 @@ impl HitchDetector {
         let Some(newest) = frames.back() else {
             return 0;
         };
+        // A hitch is judged before its GPU time is back: picked up from its
+        // record once it is (#1104)
+        for h in self
+            .hitches
+            .iter_mut()
+            .rev()
+            .take_while(|h| newest.index.saturating_sub(h.index) <= GPU_LATE_FRAMES)
+        {
+            if h.gpu_ms.is_none() {
+                h.gpu_ms = history.frame(h.index).and_then(|f| f.gpu_ms);
+            }
+        }
         if newest.index < self.next {
             return 0;
         }
@@ -522,6 +577,11 @@ impl HitchDetector {
             return false;
         }
         let cause = self.cause(history, at, before, judged - median);
+        // A load behind a cover lands on its frame, and what its first
+        // frames cost (the GPU's share) on the next, still under the fade
+        let covered =
+            frame.behind_cover || at.checked_sub(1).is_some_and(|b| frames[b].behind_cover);
+        let loading = covered && !cause.is_tooling();
         let notes = at
             .checked_sub(1)
             .map(|b| (&frames[b], true))
@@ -547,12 +607,16 @@ impl HitchDetector {
             gpu_ms: frame.gpu_ms,
             refreshes,
             cause,
+            loading,
         };
         let s = &mut self.session;
         if hitch.cause.is_tooling() {
             // The tools' cost: kept for the log and the graph's line, but
             // the game's stretch with no hitch goes on through it
             s.tooling += 1;
+        } else if hitch.loading {
+            // Under the script's fade: the same, the player saw none of it
+            s.loading += 1;
         } else {
             s.hitches += 1;
             s.longest_clean_secs = s.longest_clean_secs.max(hitch.at - clean_from);
@@ -654,9 +718,10 @@ impl HitchDetector {
         c
     }
 
-    /// The newest hitch that was the game's, not its tools'.
+    /// The newest hitch that was the game's, not its tools' nor a covered
+    /// load's.
     pub(crate) fn last_of_game(&self) -> Option<&Hitch> {
-        self.hitches.iter().rev().find(|h| !h.cause.is_tooling())
+        self.hitches.iter().rev().find(|h| h.is_game())
     }
 
     /// The counts over the frames `history` holds now (about the last ten
@@ -691,6 +756,10 @@ impl HitchDetector {
         for h in self.hitches.iter().filter(|h| h.at >= from) {
             if h.cause.is_tooling() {
                 c.tooling += 1;
+                continue;
+            }
+            if h.loading {
+                c.loading += 1;
                 continue;
             }
             c.hitches += 1;
@@ -1139,7 +1208,9 @@ mod tests {
                 history.mark(phase);
             }
             history.fixed_steps(1);
-            history.gpu_ms(None);
+            // The read-back of two frames ago, onto its record
+            let late = history.under_way_index().checked_sub(2);
+            history.gpu_time(late, 1.5);
         };
         // Warm: the ring full and the detector judging.
         for _ in 0..2 * HISTORY_FRAMES {
@@ -1168,7 +1239,7 @@ mod tests {
                 off.mark(phase);
             }
             off.fixed_steps(1);
-            off.gpu_ms(None);
+            off.gpu_time(off.gpu_frame_index(), 1.5);
             std::hint::black_box(&mut off);
         }
         let off_us = began.elapsed().as_secs_f64() * 1e6 / frames as f64;
@@ -1386,6 +1457,27 @@ mod tests {
     /// load of 70 ms in a frame 83 ms over, a transition of 90 ms. A note
     /// of the frame before that doesn't is named after, marked so.
     #[test]
+    fn a_frame_that_made_gpu_objects_is_named_beside_the_cause_never_as_it() {
+        // #1091: an untimed load is named as the cause, but a count of GPU
+        // objects is evidence, not a measured cost
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        frame_notes::note(NoteKind::GpuObjects, || "40 bind groups".into(), None);
+        let stall = F {
+            render: 62.0,
+            ..steady(HZ60_MS + 60.0)
+        };
+        assert_eq!(run.frame(stall), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "render +60.0 ms (also: gpu objects)");
+        assert_eq!(h.cause_key(), "render");
+        assert_eq!(h.likely_cause(), "gpu objects 40 bind groups");
+        frame_notes::listen(false);
+    }
+
+    #[test]
     fn a_note_that_covers_half_the_hitch_is_its_cause() {
         use flint_core::frame_notes::{self, NoteKind};
         frame_notes::listen(true);
@@ -1469,6 +1561,52 @@ mod tests {
         assert_eq!(run.frame(slow), 0, "the capture's own frame");
         assert_eq!(run.frame(slow), 1, "the same frame uncaptured is a hitch");
         assert_eq!(run.detector.session().hitches, 1);
+    }
+
+    /// #1125: a scene loaded behind a script's fade is judged and kept as
+    /// a hitch (its cause still the player's), but counted as `loading`,
+    /// and so is the frame after it; the next stall is the game's again.
+    #[test]
+    fn a_load_behind_a_cover_is_loading_and_the_frame_after_it_too() {
+        let mut run = Run::new(None);
+        for _ in 0..60 {
+            run.frame(steady(HZ60_MS));
+        }
+        let load = F {
+            input: 150.0,
+            ..steady(160.0)
+        };
+        run.history.loading_behind_cover();
+        assert_eq!(run.frame(load), 1);
+        let h = run.detector.last().unwrap().clone();
+        assert!(h.loading);
+        assert!(!h.is_game());
+        assert_eq!(h.class(), "loading");
+        assert_eq!(h.cause.label(), "player", "whose work it was is kept");
+        // Its first frame of drawing, still under the fade
+        let first_draw = F {
+            render: 90.0,
+            ..steady(100.0)
+        };
+        assert_eq!(run.frame(first_draw), 1);
+        assert!(run.detector.last().unwrap().loading);
+        for _ in 0..30 {
+            run.frame(steady(HZ60_MS));
+        }
+        // The same stall with no cover: the player sees it
+        assert_eq!(run.frame(load), 1);
+        let h = run.detector.last().unwrap();
+        assert!(!h.loading && h.is_game());
+        assert_eq!(h.class(), "player");
+
+        let s = run.detector.session();
+        assert_eq!((s.hitches, s.loading, s.tooling), (1, 2, 0));
+        let w = run.detector.window(&run.history);
+        assert_eq!((w.hitches, w.loading), (1, 2));
+        assert_eq!(
+            run.detector.last_of_game().map(|h| h.index),
+            run.detector.last().map(|h| h.index)
+        );
     }
 
     /// A screenshot's read-back lands in `present`, so its frame would read

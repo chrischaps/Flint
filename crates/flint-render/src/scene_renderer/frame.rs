@@ -452,6 +452,8 @@ impl SceneRenderer {
             timer: self.gpu_timer.take(),
             log: self.frame_log.take(),
             taps: self.frame_taps.take(),
+            // A host's skip and repeat knobs (#1317), else None
+            knobs: self.pass_knobs.take(),
         };
         self.begin_view_taps(&scopes);
         if let Some(log) = scopes.log() {
@@ -529,15 +531,22 @@ impl SceneRenderer {
         }
         if self.grass.config.as_ref().is_some_and(|c| c.enabled) {
             let grass_time = self.grass_time;
-            let scope = scopes.begin(encoder, "Grass");
-            self.dispatch_grass_compute(device, queue, encoder, camera, grass_time);
-            scopes.end(encoder, scope);
-            scopes.note("Grass", |p| {
-                p.writes(&["grass_instances"]);
-            });
-            self.tap_pass(device, &mut scopes, encoder, "Grass");
-            // Its count is read back once the frame is submitted
-            self.grass.readback_due = true;
+            // It counts blades into its draw arguments, which reset once a
+            // frame: a second run would double them (#1317)
+            let n = scopes.times_refusing("Grass", Some(crate::pass_knobs::ADDS_INTO_ITS_TARGET));
+            if let Some(scope) = scopes.begin_times(encoder, "Grass", n) {
+                self.dispatch_grass_compute(device, queue, encoder, camera, grass_time);
+                scopes.end(encoder, scope);
+                scopes.note("Grass", |p| {
+                    p.writes(&["grass_instances"]);
+                });
+                self.tap_pass(device, &mut scopes, encoder, "Grass");
+                // Its count is read back once the frame is submitted
+                self.grass.readback_due = true;
+            } else {
+                // Skipped: the scene draws the blades the last compute left
+                self.grass.drawing = self.grass.draw_args_buffer.is_some();
+            }
         } else {
             self.grass.instance_count = 0;
             let config = self.grass.config.is_some();
@@ -554,10 +563,14 @@ impl SceneRenderer {
         // Shadow pass: render depth from light perspective. It sees every
         // draw (culled per cascade), since a caster outside the view can
         // still shadow what's in it.
-        let scope = scopes.begin(encoder, "Shadows");
-        self.render_shadow_pass(device, queue, encoder, camera, camera_pos, scopes.log());
-        scopes.end(encoder, scope);
-        self.tap_pass(device, &mut scopes, encoder, "Shadows");
+        let n = scopes.times("Shadows");
+        if let Some(scope) = scopes.begin_times(encoder, "Shadows", n) {
+            scopes.repeat(n, |scopes| {
+                self.render_shadow_pass(device, queue, encoder, camera, camera_pos, scopes.log());
+            });
+            scopes.end(encoder, scope);
+            self.tap_pass(device, &mut scopes, encoder, "Shadows");
+        }
 
         // Set aside draws outside the camera frustum for the rest of the frame.
         self.cull_draws_to_camera();
@@ -655,7 +668,10 @@ impl SceneRenderer {
             (scene_target_view, None, depth_view)
         };
 
-        let scene_scope = scopes.begin(encoder, "Scene");
+        // Every scene pass clears what it draws into, so a repeat is the
+        // same work again (#1317)
+        let scene_times = scopes.times("Scene");
+        let scene_scope = scopes.begin_times(encoder, "Scene", scene_times);
         scopes.note("Scene", |p| {
             p.reads(&["shadow_map"]);
             if msaa_active {
@@ -671,219 +687,233 @@ impl SceneRenderer {
             ]);
         });
 
-        if !self.water.grab_this_frame {
-            // Single-pass path (unchanged for scenes without an ocean), split
-            // before the translucent draws while the fog veil is drawn.
-            scopes.note("Scene", |p| p.render_pass("Render Pass"));
-            let mut render_pass = scene_pass(
-                encoder,
-                "Render Pass",
-                pass_color_view,
-                pass_resolve_target,
-                pass_depth_view,
-                Some(clear_color),
-            );
-            self.render_main_pass(
-                &mut render_pass,
-                wireframe_only,
-                queue,
-                camera,
-                if fog_veiled {
-                    RenderPhase::OPAQUE_AND_OCEAN
-                } else {
-                    RenderPhase::ALL
-                },
-            );
-            drop(render_pass);
-            if fog_veiled {
-                self.copy_fog_veil_behind(encoder);
-                scopes.note("Scene", |p| {
-                    p.writes(&["fog_veil_behind"]);
-                    p.render_pass("Render Pass (translucent)");
-                });
+        scopes.repeat(scene_times, |scopes| {
+            if !self.water.grab_this_frame {
+                // Single-pass path (unchanged for scenes without an ocean), split
+                // before the translucent draws while the fog veil is drawn.
+                scopes.note("Scene", |p| p.render_pass("Render Pass"));
                 let mut render_pass = scene_pass(
                     encoder,
-                    "Render Pass (translucent)",
-                    pass_color_view,
-                    pass_resolve_target,
-                    pass_depth_view,
-                    None,
-                );
-                self.render_main_pass(
-                    &mut render_pass,
-                    wireframe_only,
-                    queue,
-                    camera,
-                    RenderPhase::REST,
-                );
-            }
-            if msaa_active {
-                self.msaa.resolve_depth_into(device, encoder, depth_view);
-            }
-        } else {
-            // ── Grab-pass split: opaque scene → snapshot → ocean + rest ──
-            // Pass A: sky + all opaque geometry (including the legs).
-            scopes.note("Scene", |p| {
-                p.writes(&["ocean_grab_color", "ocean_grab_depth"]);
-                p.render_pass("Render Pass A (pre-ocean)");
-                p.render_pass("Ocean Grab Blit");
-                p.render_pass("Render Pass B (ocean + transparents)");
-            });
-            {
-                let mut pass_a = scene_pass(
-                    encoder,
-                    "Render Pass A (pre-ocean)",
+                    "Render Pass",
                     pass_color_view,
                     pass_resolve_target,
                     pass_depth_view,
                     Some(clear_color),
                 );
                 self.render_main_pass(
-                    &mut pass_a,
-                    wireframe_only,
-                    queue,
-                    camera,
-                    RenderPhase::PRE_OCEAN,
-                );
-            }
-
-            // With MSAA, the grab blit below reads the caller's single-sample
-            // depth view — resolve the opaque depth into it first (ADR 0058).
-            if msaa_active {
-                self.msaa.resolve_depth_into(device, encoder, depth_view);
-            }
-
-            // Blit: snapshot opaque color + depth into sampleable copies.
-            {
-                let op = self.pipelines.ocean.as_deref().unwrap();
-                // The grab runs only into the HDR chain, so the bind group
-                // is the chain's to keep while the depth is its too (#139).
-                let resources = self.postprocess_resources.as_ref().unwrap();
-                let blit_bind_group = resources.binds.get_over(
-                    depth_key,
-                    "ocean grab blit",
-                    0,
-                    &[crate::bind_cache::Bound::View(scene_target_view)],
-                    || {
-                        device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            layout: &op.blit_bind_group_layout,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: wgpu::BindingResource::TextureView(scene_target_view),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::TextureView(depth_view),
-                                },
-                            ],
-                            label: Some("Grab Blit Bind Group"),
-                        })
-                    },
-                );
-                let grab_color_view = &self.water.grab.color.as_ref().unwrap().1;
-                let grab_depth_view = &self.water.grab.depth.as_ref().unwrap().1;
-                let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Ocean Grab Blit"),
-                    color_attachments: &[
-                        Some(wgpu::RenderPassColorAttachment {
-                            view: grab_color_view,
-                            resolve_target: None,
-                            depth_slice: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        }),
-                        Some(wgpu::RenderPassColorAttachment {
-                            view: grab_depth_view,
-                            resolve_target: None,
-                            depth_slice: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        }),
-                    ],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                blit_pass.set_pipeline(&op.blit_pipeline);
-                blit_pass.set_bind_group(0, &*blit_bind_group, &[]);
-                blit_pass.draw(0..3, 0..1);
-            }
-
-            // Pass B: ocean (sampling the snapshots) + transparents/particles,
-            // split after the ocean while the fog veil is drawn.
-            {
-                let mut pass_b = scene_pass(
-                    encoder,
-                    "Render Pass B (ocean + transparents)",
-                    pass_color_view,
-                    pass_resolve_target,
-                    pass_depth_view,
-                    None,
-                );
-                self.render_main_pass(
-                    &mut pass_b,
+                    &mut render_pass,
                     wireframe_only,
                     queue,
                     camera,
                     if fog_veiled {
-                        RenderPhase::OCEAN
+                        RenderPhase::OPAQUE_AND_OCEAN
                     } else {
-                        RenderPhase::POST_OCEAN
+                        RenderPhase::ALL
                     },
                 );
-            }
-            if fog_veiled {
-                self.copy_fog_veil_behind(encoder);
+                drop(render_pass);
+                if fog_veiled {
+                    self.copy_fog_veil_behind(encoder);
+                    scopes.note("Scene", |p| {
+                        p.writes(&["fog_veil_behind"]);
+                        p.render_pass("Render Pass (translucent)");
+                    });
+                    let mut render_pass = scene_pass(
+                        encoder,
+                        "Render Pass (translucent)",
+                        pass_color_view,
+                        pass_resolve_target,
+                        pass_depth_view,
+                        None,
+                    );
+                    self.render_main_pass(
+                        &mut render_pass,
+                        wireframe_only,
+                        queue,
+                        camera,
+                        RenderPhase::REST,
+                    );
+                }
+                if msaa_active {
+                    self.msaa.resolve_depth_into(device, encoder, depth_view);
+                }
+            } else {
+                // ── Grab-pass split: opaque scene → snapshot → ocean + rest ──
+                // Pass A: sky + all opaque geometry (including the legs).
                 scopes.note("Scene", |p| {
-                    p.writes(&["fog_veil_behind"]);
-                    p.render_pass("Render Pass C (transparents)");
+                    p.writes(&["ocean_grab_color", "ocean_grab_depth"]);
+                    p.render_pass("Render Pass A (pre-ocean)");
+                    p.render_pass("Ocean Grab Blit");
+                    p.render_pass("Render Pass B (ocean + transparents)");
                 });
-                let mut pass_c = scene_pass(
-                    encoder,
-                    "Render Pass C (transparents)",
-                    pass_color_view,
-                    pass_resolve_target,
-                    pass_depth_view,
-                    None,
-                );
-                self.render_main_pass(
-                    &mut pass_c,
-                    wireframe_only,
-                    queue,
-                    camera,
-                    RenderPhase::REST,
-                );
-            }
+                {
+                    let mut pass_a = scene_pass(
+                        encoder,
+                        "Render Pass A (pre-ocean)",
+                        pass_color_view,
+                        pass_resolve_target,
+                        pass_depth_view,
+                        Some(clear_color),
+                    );
+                    self.render_main_pass(
+                        &mut pass_a,
+                        wireframe_only,
+                        queue,
+                        camera,
+                        RenderPhase::PRE_OCEAN,
+                    );
+                }
 
-            // Final depth resolve so postprocess (SSAO/DoF/fog/volumetric)
-            // sees the complete frame's depth (ADR 0058).
-            if msaa_active {
-                self.msaa.resolve_depth_into(device, encoder, depth_view);
-            }
-        }
+                // With MSAA, the grab blit below reads the caller's single-sample
+                // depth view — resolve the opaque depth into it first (ADR 0058).
+                if msaa_active {
+                    self.msaa.resolve_depth_into(device, encoder, depth_view);
+                }
 
-        scopes.end(encoder, scene_scope);
-        if let Some(pass) = scopes.log().and_then(|l| l.named("Scene")) {
-            self.log_scene_draws(pass, camera_pos);
+                // Blit: snapshot opaque color + depth into sampleable copies.
+                {
+                    let op = self.pipelines.ocean.as_deref().unwrap();
+                    // The grab runs only into the HDR chain, so the bind group
+                    // is the chain's to keep while the depth is its too (#139).
+                    let resources = self.postprocess_resources.as_ref().unwrap();
+                    let blit_bind_group = resources.binds.get_over(
+                        depth_key,
+                        "ocean grab blit",
+                        0,
+                        &[crate::bind_cache::Bound::View(scene_target_view)],
+                        || {
+                            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                                layout: &op.blit_bind_group_layout,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: wgpu::BindingResource::TextureView(
+                                            scene_target_view,
+                                        ),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: wgpu::BindingResource::TextureView(depth_view),
+                                    },
+                                ],
+                                label: Some("Grab Blit Bind Group"),
+                            })
+                        },
+                    );
+                    let grab_color_view = &self.water.grab.color.as_ref().unwrap().1;
+                    let grab_depth_view = &self.water.grab.depth.as_ref().unwrap().1;
+                    let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Ocean Grab Blit"),
+                        color_attachments: &[
+                            Some(wgpu::RenderPassColorAttachment {
+                                view: grab_color_view,
+                                resolve_target: None,
+                                depth_slice: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            }),
+                            Some(wgpu::RenderPassColorAttachment {
+                                view: grab_depth_view,
+                                resolve_target: None,
+                                depth_slice: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            }),
+                        ],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    blit_pass.set_pipeline(&op.blit_pipeline);
+                    blit_pass.set_bind_group(0, &*blit_bind_group, &[]);
+                    blit_pass.draw(0..3, 0..1);
+                }
+
+                // Pass B: ocean (sampling the snapshots) + transparents/particles,
+                // split after the ocean while the fog veil is drawn.
+                {
+                    let mut pass_b = scene_pass(
+                        encoder,
+                        "Render Pass B (ocean + transparents)",
+                        pass_color_view,
+                        pass_resolve_target,
+                        pass_depth_view,
+                        None,
+                    );
+                    self.render_main_pass(
+                        &mut pass_b,
+                        wireframe_only,
+                        queue,
+                        camera,
+                        if fog_veiled {
+                            RenderPhase::OCEAN
+                        } else {
+                            RenderPhase::POST_OCEAN
+                        },
+                    );
+                }
+                if fog_veiled {
+                    self.copy_fog_veil_behind(encoder);
+                    scopes.note("Scene", |p| {
+                        p.writes(&["fog_veil_behind"]);
+                        p.render_pass("Render Pass C (transparents)");
+                    });
+                    let mut pass_c = scene_pass(
+                        encoder,
+                        "Render Pass C (transparents)",
+                        pass_color_view,
+                        pass_resolve_target,
+                        pass_depth_view,
+                        None,
+                    );
+                    self.render_main_pass(
+                        &mut pass_c,
+                        wireframe_only,
+                        queue,
+                        camera,
+                        RenderPhase::REST,
+                    );
+                }
+
+                // Final depth resolve so postprocess (SSAO/DoF/fog/volumetric)
+                // sees the complete frame's depth (ADR 0058).
+                if msaa_active {
+                    self.msaa.resolve_depth_into(device, encoder, depth_view);
+                }
+            }
+        });
+
+        if let Some(scene_scope) = scene_scope {
+            scopes.end(encoder, scene_scope);
+            if let Some(pass) = scopes.log().and_then(|l| l.named("Scene")) {
+                self.log_scene_draws(pass, camera_pos);
+            }
+            self.tap_pass(device, &mut scopes, encoder, "Scene");
         }
-        self.tap_pass(device, &mut scopes, encoder, "Scene");
 
         // The fog veil (#513): the translucent draws' weight, depth and
         // coverage, against the finished frame's single-sample depth
         if fog_veiled {
-            let scope = scopes.begin(encoder, "Fog veil");
-            self.fog_veil.drawn = self.encode_fog_veil(device, encoder, depth_view);
-            scopes.end(encoder, scope);
-            scopes.note("Fog veil", |p| {
-                p.reads(&[sd]).writes(&["fog_veil"]);
-            });
-            self.tap_pass(device, &mut scopes, encoder, "Fog veil");
+            let n = scopes.times("Fog veil");
+            if let Some(scope) = scopes.begin_times(encoder, "Fog veil", n) {
+                for _ in 0..n {
+                    self.fog_veil.drawn = self.encode_fog_veil(device, encoder, depth_view);
+                }
+                scopes.end(encoder, scope);
+                scopes.note("Fog veil", |p| {
+                    p.reads(&[sd]).writes(&["fog_veil"]);
+                });
+                self.tap_pass(device, &mut scopes, encoder, "Fog veil");
+            } else {
+                // Skipped (#1317): the composite still reads the veil, as
+                // the veil last left it, so its own cost stays the same
+                self.fog_veil.drawn = true;
+            }
         } else {
             scopes.skip("Fog veil", || {
                 if !has_postprocess {
@@ -900,17 +930,21 @@ impl SceneRenderer {
         // The entity style mask (#263): the styled entities' ids, drawn
         // against the frame's single-sample depth, while a style reads it.
         if has_postprocess && self.style_mask_wanted() {
-            let scope = scopes.begin(encoder, "Style mask");
-            self.encode_style_mask(device, queue, encoder, depth_view, depth_key);
-            scopes.end(encoder, scope);
-            if let Some(pass) = scopes.log().and_then(|l| l.named("Style mask")) {
-                self.log_style_mask_draws(pass);
+            let n = scopes.times("Style mask");
+            if let Some(scope) = scopes.begin_times(encoder, "Style mask", n) {
+                for _ in 0..n {
+                    self.encode_style_mask(device, queue, encoder, depth_view, depth_key);
+                }
+                scopes.end(encoder, scope);
+                if let Some(pass) = scopes.log().and_then(|l| l.named("Style mask")) {
+                    self.log_style_mask_draws(pass);
+                }
+                scopes.note("Style mask", |p| {
+                    p.reads(&[sd])
+                        .writes(&["style veil", crate::style_mask::MASK_TARGET]);
+                });
+                self.tap_pass(device, &mut scopes, encoder, "Style mask");
             }
-            scopes.note("Style mask", |p| {
-                p.reads(&[sd])
-                    .writes(&["style veil", crate::style_mask::MASK_TARGET]);
-            });
-            self.tap_pass(device, &mut scopes, encoder, "Style mask");
         } else {
             scopes.skip("Style mask", || {
                 "no style reads the entity mask".to_string()
@@ -924,16 +958,20 @@ impl SceneRenderer {
                 .styles
                 .any_uses_albedo(&self.postprocess_config, &self.style_mask.ids)
         {
-            let scope = scopes.begin(encoder, "Style albedo");
-            self.encode_style_albedo(device, encoder, depth_view);
-            scopes.end(encoder, scope);
-            if let Some(pass) = scopes.log().and_then(|l| l.named("Style albedo")) {
-                self.log_style_albedo_draws(pass);
+            let n = scopes.times("Style albedo");
+            if let Some(scope) = scopes.begin_times(encoder, "Style albedo", n) {
+                for _ in 0..n {
+                    self.encode_style_albedo(device, encoder, depth_view);
+                }
+                scopes.end(encoder, scope);
+                if let Some(pass) = scopes.log().and_then(|l| l.named("Style albedo")) {
+                    self.log_style_albedo_draws(pass);
+                }
+                scopes.note("Style albedo", |p| {
+                    p.reads(&[sd]).writes(&[crate::style_albedo::ALBEDO_TARGET]);
+                });
+                self.tap_pass(device, &mut scopes, encoder, "Style albedo");
             }
-            scopes.note("Style albedo", |p| {
-                p.reads(&[sd]).writes(&[crate::style_albedo::ALBEDO_TARGET]);
-            });
-            self.tap_pass(device, &mut scopes, encoder, "Style albedo");
         } else {
             scopes.skip("Style albedo", || "no style reads the albedo".to_string());
         }
@@ -943,9 +981,13 @@ impl SceneRenderer {
         let selection = self.selection_set();
         let outlining = !selection.is_empty();
         if outlining {
-            let scope = scopes.begin(encoder, "Selection mask");
-            self.encode_selection_mask(device, encoder, depth_view, &selection);
-            scopes.end(encoder, scope);
+            let n = scopes.times("Selection mask");
+            if let Some(scope) = scopes.begin_times(encoder, "Selection mask", n) {
+                for _ in 0..n {
+                    self.encode_selection_mask(device, encoder, depth_view, &selection);
+                }
+                scopes.end(encoder, scope);
+            }
         } else {
             scopes.skip("Selection mask", || "nothing selected".to_string());
         }
@@ -979,13 +1021,18 @@ impl SceneRenderer {
         // The selection outline, over the finished image: after every
         // style and the tonemap, so its colour is the one asked for (#602)
         if outlining {
-            let scope = scopes.begin(encoder, "Selection outline");
-            self.encode_selection_outline(queue, encoder, target_view);
-            scopes.end(encoder, scope);
-            scopes.note("Selection outline", |p| {
-                p.writes(&["surface"]);
-            });
-            self.tap_pass(device, &mut scopes, encoder, "Selection outline");
+            let n = scopes.times_refusing(
+                "Selection outline",
+                Some(crate::pass_knobs::DRAWS_OVER_THE_FRAME),
+            );
+            if let Some(scope) = scopes.begin_times(encoder, "Selection outline", n) {
+                self.encode_selection_outline(queue, encoder, target_view);
+                scopes.end(encoder, scope);
+                scopes.note("Selection outline", |p| {
+                    p.writes(&["surface"]);
+                });
+                self.tap_pass(device, &mut scopes, encoder, "Selection outline");
+            }
         } else {
             scopes.skip("Selection outline", || "nothing selected".to_string());
         }
@@ -995,20 +1042,23 @@ impl SceneRenderer {
         // is never resolved, so they're skipped there.
         let lines_drawable = has_postprocess || self.pipelines.samples() == 1;
         if !self.world_lines.is_empty() && lines_drawable {
-            let scope = scopes.begin(encoder, "World lines");
-            self.render_world_lines(
-                device,
-                queue,
-                encoder,
-                surface_depth_view,
-                target_view,
-                camera,
-            );
-            scopes.end(encoder, scope);
-            scopes.note("World lines", |p| {
-                p.reads(&["depth"]).writes(&["surface"]);
-            });
-            self.tap_pass(device, &mut scopes, encoder, "World lines");
+            let n =
+                scopes.times_refusing("World lines", Some(crate::pass_knobs::DRAWS_OVER_THE_FRAME));
+            if let Some(scope) = scopes.begin_times(encoder, "World lines", n) {
+                self.render_world_lines(
+                    device,
+                    queue,
+                    encoder,
+                    surface_depth_view,
+                    target_view,
+                    camera,
+                );
+                scopes.end(encoder, scope);
+                scopes.note("World lines", |p| {
+                    p.reads(&["depth"]).writes(&["surface"]);
+                });
+                self.tap_pass(device, &mut scopes, encoder, "World lines");
+            }
         } else {
             let none = self.world_lines.is_empty();
             scopes.skip("World lines", || {
@@ -1020,9 +1070,13 @@ impl SceneRenderer {
                 .to_string()
             });
         }
+        if let Some(knobs) = scopes.knobs.as_deref_mut() {
+            knobs.end_frame();
+        }
         self.gpu_timer = scopes.timer;
         self.frame_log = scopes.log;
         self.frame_taps = scopes.taps;
+        self.pass_knobs = scopes.knobs;
     }
 
     /// [`encode_to`](Self::encode_to) a second time in a frame, for the other
@@ -1063,8 +1117,23 @@ impl SceneRenderer {
     /// recorded: the grass count's read-back and, once
     /// [`encode_gpu_timings`](Self::encode_gpu_timings) resolved them, the
     /// GPU timer's. Call once that frame is submitted.
+    ///
+    /// It also closes the frame's GPU count (#1091): what the process's
+    /// renderers created and wrote since the last call
+    /// ([`frame_gpu_calls`](Self::frame_gpu_calls)), and a
+    /// `gpu objects` frame note when it created any.
     pub fn frame_submitted(&mut self) {
         flint_core::scope!("frame_submitted");
+        let now = crate::gpu_counts::totals();
+        self.frame_gpu_calls = now.since(&self.gpu_calls_at);
+        self.gpu_calls_at = now;
+        let calls = self.frame_gpu_calls;
+        self.gpu_frames.0 += 1;
+        if calls.created() > 0 {
+            self.gpu_frames.1 += 1;
+            use flint_core::frame_notes::{note, NoteKind};
+            note(NoteKind::GpuObjects, || calls.created_line(), None);
+        }
         if std::mem::take(&mut self.grass.readback_due) {
             if let Some(readback) = &mut self.grass.count_readback {
                 readback.start_map();

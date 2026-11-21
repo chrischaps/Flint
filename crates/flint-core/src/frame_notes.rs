@@ -81,6 +81,9 @@ pub enum NoteKind {
     PhysicsSteps,
     /// The clock saw a stall long enough that pacing passed it through.
     ClockStall,
+    /// The `persist_*` store written to its save file (#1119; `detail`:
+    /// why: `debounce`, `persist_save`, `scene transition`, `exit`).
+    Save,
     /// A screenshot read back and written (`--screenshot`; `detail`: its
     /// file). Tooling: see [`NoteKind::is_tooling`].
     Screenshot,
@@ -89,11 +92,15 @@ pub enum NoteKind {
     /// The scope recorder's ring grew to hold its look-back (#1288;
     /// `detail`: the thread and its new size). Tooling.
     TraceRing,
+    /// The renderer created GPU objects on the frame (#1091; `detail`:
+    /// what, `3 buffers, 2 bind groups`). A count, not a time: see
+    /// [`NoteKind::is_count`].
+    GpuObjects,
 }
 
 impl NoteKind {
     /// Every kind, in the order above.
-    pub const ALL: [NoteKind; 24] = [
+    pub const ALL: [NoteKind; 26] = [
         NoteKind::ModelLoad,
         NoteKind::TextureLoad,
         NoteKind::PipelineBuild,
@@ -115,9 +122,11 @@ impl NoteKind {
         NoteKind::SurfaceReconfigure,
         NoteKind::PhysicsSteps,
         NoteKind::ClockStall,
+        NoteKind::Save,
         NoteKind::Screenshot,
         NoteKind::StatsOverlay,
         NoteKind::TraceRing,
+        NoteKind::GpuObjects,
     ];
 
     /// The words a log line or an overlay names it by.
@@ -144,10 +153,22 @@ impl NoteKind {
             NoteKind::SurfaceReconfigure => "surface reconfigure",
             NoteKind::PhysicsSteps => "physics steps",
             NoteKind::ClockStall => "clock stall",
+            NoteKind::Save => "save",
             NoteKind::Screenshot => "screenshot",
             NoteKind::StatsOverlay => "stats overlay",
             NoteKind::TraceRing => "trace ring",
+            NoteKind::GpuObjects => "gpu objects",
         }
+    }
+
+    /// Whether a note of this kind counts what the frame did rather than
+    /// timing it (#1091: the GPU objects the renderer created). It has no
+    /// `ms`, and unlike an untimed load it never explains a hitch on its
+    /// own: a hitch names it beside whatever it does blame (`also: gpu
+    /// objects`), since a frame that allocates is evidence, not a cost
+    /// measured.
+    pub fn is_count(self) -> bool {
+        matches!(self, NoteKind::GpuObjects)
     }
 
     /// Whether the work was the player's own tools looking at the game (a

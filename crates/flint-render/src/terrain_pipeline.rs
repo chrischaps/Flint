@@ -1,5 +1,6 @@
 //! Terrain rendering pipeline — splat-map blended PBR terrain
 
+use crate::gpu_counts::CountedDevice;
 use crate::primitives::Vertex;
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
@@ -100,7 +101,7 @@ impl TerrainPipeline {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
             label: Some("Terrain Render Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {

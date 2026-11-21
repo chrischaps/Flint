@@ -5,6 +5,8 @@
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
+#![allow(clippy::disallowed_methods)] // the test's own targets and read-backs, not the renderer's, so uncounted (#1091)
+
 mod shared_gpu;
 
 use flint_ecs::FlintWorld;
@@ -567,4 +569,103 @@ fn a_replays_draw_limit_on_a_shadow_layer_steps_its_casters_and_no_other_pass() 
     );
     assert_eq!(SteppedPass::from_name("Bloom"), None);
     assert_eq!(step(1).limit_of(SteppedPass::Scene), None);
+}
+
+/// A renderer whose frames skip or repeat parts by label (#1317).
+fn knobbed(gpu: &Gpu, skip: &str, repeat: &str) -> SceneRenderer {
+    let mut knobs = flint_render::PassKnobs::new();
+    knobs.skip_list(skip);
+    knobs.repeat_list(repeat).unwrap();
+    let mut renderer = gpu.renderer();
+    renderer.set_pass_knobs(Some(knobs));
+    renderer
+}
+
+#[test]
+fn a_skipped_part_records_nothing_and_is_described_as_skipped() {
+    let gpu = gpu_or_skip!();
+    let world = world();
+    let mut plain = gpu.renderer();
+    gpu.frame(&mut plain, &world);
+    let lit = gpu.frame(&mut plain, &world);
+
+    // Skipped from the first frame, the shadow map is never drawn (the
+    // fixture's crate casts beside the tile, so no pixel shows it)
+    let mut skipping = knobbed(&gpu, "shadows", "");
+    gpu.frame(&mut skipping, &world);
+    // describe() holds the timed passes to the timer's scopes: a skipped
+    // part opens none
+    let d = describe(&gpu, &mut skipping, &world);
+    let shadows = d.pass("Shadows").unwrap();
+    assert!(!shadows.ran && !shadows.timed);
+    assert_eq!(
+        shadows.skipped.as_deref(),
+        Some("skip_pass names it (#1317)")
+    );
+    assert!(shadows.passes.is_empty(), "a skipped part drew its layers");
+    // Everything else ran as ever
+    assert!(d.pass("Scene").unwrap().ran);
+    assert!(d.pass("Composite").unwrap().ran);
+
+    // Skipping the scene pass leaves the HDR target as wgpu made it, and
+    // the composite still runs over it
+    let mut no_scene = knobbed(&gpu, "Scene", "");
+    let d = describe(&gpu, &mut no_scene, &world);
+    assert!(!d.pass("Scene").unwrap().ran);
+    assert!(d.pass("Composite").unwrap().ran);
+    assert_ne!(gpu.frame(&mut no_scene, &world), lit);
+}
+
+#[test]
+fn a_repeated_part_draws_the_same_picture_and_is_described_once() {
+    let gpu = gpu_or_skip!();
+    let world = world();
+    let mut plain = gpu.renderer();
+    gpu.frame(&mut plain, &world);
+    let once = gpu.frame(&mut plain, &world);
+    let d_once = describe(&gpu, &mut plain, &world);
+
+    // Every part here redraws its targets whole, so three times over is
+    // the same picture: only the work grows
+    let mut thrice = knobbed(&gpu, "", "Scene:3,Shadows:3,SSAO:3,Bloom:3,Composite:3");
+    gpu.frame(&mut thrice, &world);
+    assert_eq!(gpu.frame(&mut thrice, &world), once);
+    let d = describe(&gpu, &mut thrice, &world);
+    let names = |d: &FrameDescription| -> Vec<String> {
+        d.all_passes().into_iter().map(|p| p.name.clone()).collect()
+    };
+    assert_eq!(
+        names(&d),
+        names(&d_once),
+        "a repeat changed the passes listed"
+    );
+    assert_eq!(
+        scene_draws(&d),
+        scene_draws(&d_once),
+        "the scene's draws were listed again"
+    );
+    assert_eq!(casters(&d), casters(&d_once));
+    assert_eq!(
+        d.pass("Shadows").unwrap().passes.len(),
+        d_once.pass("Shadows").unwrap().passes.len()
+    );
+}
+
+#[test]
+fn knobs_set_and_cleared_leave_a_renderer_as_it_was() {
+    let gpu = gpu_or_skip!();
+    let world = world();
+    let mut plain = gpu.renderer();
+    gpu.frame(&mut plain, &world);
+    let once = gpu.frame(&mut plain, &world);
+
+    let mut r = knobbed(&gpu, "Scene", "");
+    assert_eq!(r.pass_knobs().map(|k| k.times("scene")), Some(0));
+    gpu.frame(&mut r, &world);
+    // Empty knobs are none
+    r.set_pass_knobs(Some(flint_render::PassKnobs::new()));
+    assert!(r.pass_knobs().is_none());
+    assert_eq!(r.pass_times("UI", None), 1);
+    gpu.frame(&mut r, &world);
+    assert_eq!(gpu.frame(&mut r, &world), once);
 }

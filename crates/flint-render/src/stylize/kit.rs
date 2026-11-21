@@ -6,6 +6,7 @@
 use super::dev_shader;
 pub(crate) use super::dev_shader::wgsl;
 pub use super::dev_shader::Wgsl;
+use crate::gpu_counts::CountedDevice;
 use crate::TrustedShader;
 
 /// A fragment-stage uniform buffer at binding 0.
@@ -259,7 +260,7 @@ fn build_fullscreen(
         bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -401,7 +402,7 @@ pub fn shader(device: &wgpu::Device, label: &str, source: impl Into<Wgsl>) -> Sh
 
 /// A uniform buffer the size of `T`, written with `queue.write_buffer`.
 pub fn uniform_buffer<T>(device: &wgpu::Device, label: &str) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
+    device.create_buffer_counted(&wgpu::BufferDescriptor {
         label: Some(label),
         size: std::mem::size_of::<T>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,

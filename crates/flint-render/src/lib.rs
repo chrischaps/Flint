@@ -21,6 +21,7 @@ pub mod frame_replay;
 mod frame_taps;
 pub mod frustum;
 pub mod glyph_atlas;
+pub mod gpu_counts;
 pub mod gpu_labels;
 mod gpu_mesh;
 pub mod gpu_select;
@@ -38,6 +39,7 @@ pub mod orbit_controller;
 pub mod palette;
 pub mod panels;
 pub(crate) mod particle_pipeline;
+pub mod pass_knobs;
 mod pipeline;
 pub mod pipeline_cache;
 pub mod post_style;
@@ -81,8 +83,8 @@ pub use glyph_atlas::{
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache, KEPT_GEOMETRY_LABEL};
 pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
 pub use gpu_timer::{
-    GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread, TimestampHealth,
-    TracedGpuFrame, TracedPass, TIMESTAMPS_UNAVAILABLE,
+    GpuFrameTime, GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread,
+    TimestampHealth, TracedGpuFrame, TracedPass, TIMESTAMPS_UNAVAILABLE,
 };
 pub use gpu_wait::{gpu_wait_timeout, wait_for_gpu};
 pub use grass_pipeline::{GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu};
@@ -91,6 +93,7 @@ pub use headless::HeadlessContext;
 pub use ocean_pipeline::{OceanTint, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
 pub use particle_pipeline::{ParticleBlendMode, ParticleDrawData, ParticleInstance};
+pub use pass_knobs::PassKnobs;
 pub use pipeline::LightUniforms;
 pub use postprocess::{post_process_config_from_def, PostProcessConfig, HDR_FORMAT};
 pub use primitives::{

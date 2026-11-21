@@ -6,6 +6,7 @@
 //! game-side time-of-day controller — sunrise blends to noon to starfield
 //! continuously.
 
+use crate::gpu_counts::CountedDevice;
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
@@ -133,7 +134,7 @@ impl SkyPipeline {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
             label: Some("Sky Render Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {

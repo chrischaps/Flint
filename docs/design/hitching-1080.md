@@ -22,7 +22,13 @@ what a player would feel:
 3. **A look's first use stops the game for 1.3 s (Vulkan) to 1.7 s (DX12)**
    (#1121) while the ASCII style's 15 pipelines are built, one after another.
 4. **The hot-reload poll** sometimes takes 1 to 35 ms on the frame thread
-   (#1122), with no script changed and even with none watched.
+   (#1122), with no script changed and even with none watched. *Fixed by
+   #1122:* every poll worked out the script search's `lib/` folders afresh,
+   and that walk stats the disk (each level's directory key, the engine
+   mount). Traced in the tavern (release, 30 s): that one step was 0.19 ms of
+   the poll's 0.21 ms median and 116 of 1,796 polls took 1 ms or more (worst
+   14.2 ms); worked out once when the search is set, the whole poll is
+   0.018 ms median and 0.076 ms worst.
 5. **Scene transitions** take 40 to 150 ms (release) and 105 to 320 ms (debug)
    in one frame, but the showcase hides them behind a 1.5 s fade. They count
    as hitches anyway (#1125, a tool issue).

@@ -5,6 +5,7 @@
 //! sRGB surface with exposure, ACES tonemapping, gamma, and vignette.
 
 use crate::camera::Camera;
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
@@ -388,7 +389,7 @@ impl FogVeilTargets {
             depth_or_array_layers: 1,
         };
         let texture = |label, format, usage| {
-            device.create_texture(&wgpu::TextureDescriptor {
+            device.create_texture_counted(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size,
                 mip_level_count: 1,
@@ -440,7 +441,7 @@ impl FxaaResources {
         height: u32,
         format: wgpu::TextureFormat,
     ) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("FXAA Intermediate Texture"),
             size: wgpu::Extent3d {
                 width: width.max(1),
@@ -527,7 +528,7 @@ impl FxaaPipeline {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
             label: Some("FXAA Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
@@ -556,7 +557,7 @@ impl FxaaPipeline {
             cache: None,
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("FXAA Uniform Buffer"),
             size: std::mem::size_of::<FxaaUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -886,7 +887,7 @@ impl PostProcessPipeline {
             },
         );
 
-        let composite_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let composite_uniform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("PostProcess Uniform Buffer"),
             size: std::mem::size_of::<PostProcessUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -949,7 +950,7 @@ impl PostProcessPipeline {
             "post: bloom_threshold_pipeline",
             surface_format,
             || {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                     label: Some("Bloom Threshold Pipeline"),
                     layout: Some(&bloom_pipeline_layout),
                     vertex: wgpu::VertexState {
@@ -985,7 +986,7 @@ impl PostProcessPipeline {
             "post: bloom_downsample_pipeline",
             surface_format,
             || {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                     label: Some("Bloom Downsample Pipeline"),
                     layout: Some(&bloom_pipeline_layout),
                     vertex: wgpu::VertexState {
@@ -1022,7 +1023,7 @@ impl PostProcessPipeline {
             "post: bloom_upsample_pipeline",
             surface_format,
             || {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                     label: Some("Bloom Upsample Pipeline"),
                     layout: Some(&bloom_pipeline_layout),
                     vertex: wgpu::VertexState {
@@ -1065,7 +1066,7 @@ impl PostProcessPipeline {
         );
 
         // A slot per bloom step (`run_bloom`)
-        let bloom_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let bloom_uniform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Bloom Uniform Buffer"),
             size: 2 * MAX_BLOOM_MIPS as u64 * BLOOM_SLOT_STRIDE,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1073,7 +1074,7 @@ impl PostProcessPipeline {
         });
 
         // 1x1 black texture for when bloom is disabled
-        let black_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let black_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Black Texture"),
             size: wgpu::Extent3d {
                 width: 1,
@@ -1114,7 +1115,7 @@ impl PostProcessPipeline {
 
         // Generate and upload 4x4 noise texture (random rotation vectors)
         let noise_data = generate_ssao_noise();
-        let ssao_noise_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let ssao_noise_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("SSAO Noise Texture"),
             size: wgpu::Extent3d {
                 width: 4,
@@ -1128,7 +1129,7 @@ impl PostProcessPipeline {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        queue.write_texture(
+        queue.write_texture_counted(
             wgpu::TexelCopyTextureInfo {
                 texture: &ssao_noise_texture,
                 mip_level: 0,
@@ -1151,7 +1152,7 @@ impl PostProcessPipeline {
             ssao_noise_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // 1x1 white R8Unorm fallback for when SSAO is disabled
-        let white_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let white_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("SSAO White Texture"),
             size: wgpu::Extent3d {
                 width: 1,
@@ -1165,7 +1166,7 @@ impl PostProcessPipeline {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        queue.write_texture(
+        queue.write_texture_counted(
             wgpu::TexelCopyTextureInfo {
                 texture: &white_texture,
                 mip_level: 0,
@@ -1265,7 +1266,7 @@ impl PostProcessPipeline {
 
         let ssao_pipeline =
             crate::pipeline_cache::shared(device, "post: ssao_pipeline", surface_format, || {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                     label: Some("SSAO Pipeline"),
                     layout: Some(&ssao_pipeline_layout),
                     vertex: wgpu::VertexState {
@@ -1295,7 +1296,7 @@ impl PostProcessPipeline {
                 })
             });
 
-        let ssao_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let ssao_uniform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("SSAO Uniform Buffer"),
             size: std::mem::size_of::<SsaoUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1360,7 +1361,7 @@ impl PostProcessPipeline {
             "post: ssao_blur_pipeline",
             surface_format,
             || {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                     label: Some("SSAO Blur Pipeline"),
                     layout: Some(&ssao_blur_pipeline_layout),
                     vertex: wgpu::VertexState {
@@ -1391,7 +1392,7 @@ impl PostProcessPipeline {
             },
         );
 
-        let ssao_blur_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let ssao_blur_uniform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("SSAO Blur Uniform Buffer"),
             size: std::mem::size_of::<SsaoBlurUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1510,7 +1511,7 @@ impl PostProcessPipeline {
             "post: volumetric_pipeline",
             surface_format,
             || {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                     label: Some("Volumetric Pipeline"),
                     layout: Some(&volumetric_pipeline_layout),
                     vertex: wgpu::VertexState {
@@ -1541,7 +1542,7 @@ impl PostProcessPipeline {
             },
         );
 
-        let volumetric_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let volumetric_uniform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Volumetric Uniform Buffer"),
             size: std::mem::size_of::<VolumetricUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1628,7 +1629,7 @@ impl PostProcessPipeline {
             "post: volumetric_blur_pipeline",
             surface_format,
             || {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
                     label: Some("Volumetric Blur Pipeline"),
                     layout: Some(&volumetric_blur_pipeline_layout),
                     vertex: wgpu::VertexState {
@@ -1659,15 +1660,16 @@ impl PostProcessPipeline {
             },
         );
 
-        let volumetric_blur_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Volumetric Blur Uniform Buffer"),
-            size: std::mem::size_of::<VolumetricBlurUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let volumetric_blur_uniform_buffer =
+            device.create_buffer_counted(&wgpu::BufferDescriptor {
+                label: Some("Volumetric Blur Uniform Buffer"),
+                size: std::mem::size_of::<VolumetricBlurUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
 
         // 1x1 black HDR fallback for when volumetric is disabled
-        let volumetric_black_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let volumetric_black_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Volumetric Black Texture"),
             size: wgpu::Extent3d {
                 width: 1,
@@ -1686,7 +1688,7 @@ impl PostProcessPipeline {
 
         // 1x1 clear ground fog map (zero-initialised) for when none is set
         let ground_fog_empty_view = device
-            .create_texture(&wgpu::TextureDescriptor {
+            .create_texture_counted(&wgpu::TextureDescriptor {
                 label: Some("Ground Fog Empty Map"),
                 size: wgpu::Extent3d {
                     width: 1,
@@ -1754,6 +1756,7 @@ impl PostProcessPipeline {
     /// Run the FXAA pass: sample the intermediate composite output and write
     /// the real target. Caller guarantees both `self.fxaa` and
     /// `resources.fxaa` exist (see SceneRenderer::ensure_fxaa_resources).
+    #[allow(clippy::too_many_arguments)]
     pub fn run_fxaa(
         &self,
         queue: &wgpu::Queue,
@@ -1762,6 +1765,8 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         target_view: &wgpu::TextureView,
         timer: Option<&mut crate::gpu_timer::GpuTimer>,
+        // Draws in its one scope: 1, or a pass knob's repeat (#1317)
+        times: u32,
     ) {
         let (Some(fxaa), Some(fxaa_res)) = (&self.fxaa, &resources.fxaa) else {
             return;
@@ -1772,11 +1777,11 @@ impl PostProcessPipeline {
                 texel_size: [1.0 / resources.width as f32, 1.0 / resources.height as f32],
                 _pad: [0.0; 2],
             };
-            queue.write_buffer(&fxaa.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+            queue.write_buffer_counted(&fxaa.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
         let uniform_bg = resources.binds.get("fxaa uniform", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("FXAA Uniform BG"),
                 layout: &fxaa.uniform_bgl,
                 entries: &[wgpu::BindGroupEntry {
@@ -1786,7 +1791,7 @@ impl PostProcessPipeline {
             })
         });
         let texture_bg = resources.binds.get("fxaa texture", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("FXAA Texture BG"),
                 layout: &fxaa.texture_bgl,
                 entries: &[
@@ -1804,14 +1809,16 @@ impl PostProcessPipeline {
 
         let mut timer = timer;
         let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, "FXAA");
-        fullscreen_pass(
-            encoder,
-            "FXAA Pass",
-            target_view,
-            Some(wgpu::Color::BLACK),
-            &fxaa.pipeline,
-            &[&uniform_bg, &texture_bg],
-        );
+        for _ in 0..times {
+            fullscreen_pass(
+                encoder,
+                "FXAA Pass",
+                target_view,
+                Some(wgpu::Color::BLACK),
+                &fxaa.pipeline,
+                &[&uniform_bg, &texture_bg],
+            );
+        }
         crate::gpu_labels::end(timer, encoder, scope);
     }
 
@@ -1870,11 +1877,11 @@ impl PostProcessPipeline {
         for i in 0..mips - 1 {
             put(mips + i, texel(&resources.bloom_mips[i + 1]));
         }
-        queue.write_buffer(&self.bloom_uniform_buffer, 0, &slots);
+        queue.write_buffer_counted(&self.bloom_uniform_buffer, 0, &slots);
 
         let uniform_bg = |slot: usize| {
             resources.binds.get("bloom uniform", slot as u64, || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("Bloom Uniform BG"),
                     layout: &self.bloom_uniform_bgl,
                     entries: &[wgpu::BindGroupEntry {
@@ -1894,7 +1901,7 @@ impl PostProcessPipeline {
         // under its own name, keyed by the input's id
         let source_bg = |name: &'static str, variant: u64, view: &wgpu::TextureView| {
             resources.binds.get(name, variant, || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("Bloom Source BG"),
                     layout: &self.bloom_texture_bgl,
                     entries: &[
@@ -1998,14 +2005,14 @@ impl PostProcessPipeline {
             far: camera.far,
             sample_count: config.ssao_samples.clamp(1, SSAO_KERNEL_SIZE as u32) as f32,
         };
-        queue.write_buffer(
+        queue.write_buffer_counted(
             &self.ssao_uniform_buffer,
             0,
             bytemuck::cast_slice(&[ssao_uniforms]),
         );
 
         let uniform_bg = resources.binds.get("ssao uniform", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("SSAO Uniform BG"),
                 layout: &self.ssao_uniform_bgl,
                 entries: &[wgpu::BindGroupEntry {
@@ -2017,7 +2024,7 @@ impl PostProcessPipeline {
         let depth_bg = resources
             .binds
             .get_over(depth_key, "ssao depth", 0, &[], || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("SSAO Depth BG"),
                     layout: &self.ssao_depth_bgl,
                     entries: &[
@@ -2033,7 +2040,7 @@ impl PostProcessPipeline {
                 })
             });
         let noise_bg = resources.binds.get("ssao noise", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("SSAO Noise BG"),
                 layout: &self.ssao_noise_bgl,
                 entries: &[
@@ -2065,14 +2072,14 @@ impl PostProcessPipeline {
                 texel_size: [1.0 / resources.width as f32, 1.0 / resources.height as f32],
                 _pad: [0.0; 2],
             };
-            queue.write_buffer(
+            queue.write_buffer_counted(
                 &self.ssao_blur_uniform_buffer,
                 0,
                 bytemuck::cast_slice(&[blur_uniforms]),
             );
         }
         let blur_uniform_bg = resources.binds.get("ssao blur uniform", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("SSAO Blur Uniform BG"),
                 layout: &self.ssao_blur_uniform_bgl,
                 entries: &[wgpu::BindGroupEntry {
@@ -2082,7 +2089,7 @@ impl PostProcessPipeline {
             })
         });
         let blur_texture_bg = resources.binds.get("ssao blur texture", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("SSAO Blur Texture BG"),
                 layout: &self.ssao_blur_texture_bgl,
                 entries: &[
@@ -2140,14 +2147,14 @@ impl PostProcessPipeline {
             far: camera.far,
             _pad: [0.0; 3],
         };
-        queue.write_buffer(
+        queue.write_buffer_counted(
             &self.volumetric_uniform_buffer,
             0,
             bytemuck::cast_slice(&[uniforms]),
         );
 
         let uniform_bg = resources.binds.get("volumetric uniform", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Volumetric Uniform BG"),
                 layout: &self.volumetric_uniform_bgl,
                 entries: &[wgpu::BindGroupEntry {
@@ -2159,7 +2166,7 @@ impl PostProcessPipeline {
         let depth_bg = resources
             .binds
             .get_over(depth_key, "volumetric depth", 0, &[], || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("Volumetric Depth BG"),
                     layout: &self.volumetric_depth_bgl,
                     entries: &[
@@ -2186,7 +2193,7 @@ impl PostProcessPipeline {
         let shadow_bg = resources
             .binds
             .get_bound("volumetric shadow", 0, &over, || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("Volumetric Shadow BG"),
                     layout: &self.volumetric_shadow_bgl,
                     entries: &[
@@ -2227,14 +2234,14 @@ impl PostProcessPipeline {
                 depth_threshold: 0.01,
                 _pad: 0.0,
             };
-            queue.write_buffer(
+            queue.write_buffer_counted(
                 &self.volumetric_blur_uniform_buffer,
                 0,
                 bytemuck::cast_slice(&[blur_uniforms]),
             );
         }
         let blur_uniform_bg = resources.binds.get("volumetric blur uniform", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Volumetric Blur Uniform BG"),
                 layout: &self.volumetric_blur_uniform_bgl,
                 entries: &[wgpu::BindGroupEntry {
@@ -2247,7 +2254,7 @@ impl PostProcessPipeline {
             resources
                 .binds
                 .get_over(depth_key, "volumetric blur texture", 0, &[], || {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                         label: Some("Volumetric Blur Texture BG"),
                         layout: &self.volumetric_blur_texture_bgl,
                         entries: &[
@@ -2300,7 +2307,13 @@ impl PostProcessPipeline {
         scene: &crate::stylize::StyleInput<'_>,
         fog_veil: Option<&FogVeilTargets>,
         timer: Option<&mut crate::gpu_timer::GpuTimer>,
+        // Draws in its one scope: 1, 0 skipped, or a pass knob's repeat
+        // (#1317)
+        times: u32,
     ) {
+        if times == 0 {
+            return;
+        }
         // SSAO: use blurred AO if enabled, white fallback otherwise
         let ssao_on = config.enabled && config.ssao_enabled;
         let ssao_view = if ssao_on {
@@ -2331,7 +2344,7 @@ impl PostProcessPipeline {
             variant,
             &[crate::bind_cache::Bound::View(fog_map)],
             || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("Composite SSAO+Depth+Volumetric BG"),
                     layout: &self.composite_ssao_bgl,
                     entries: &[
@@ -2465,14 +2478,14 @@ impl PostProcessPipeline {
             _pad6: 0.0,
         };
 
-        queue.write_buffer(
+        queue.write_buffer_counted(
             &self.composite_uniform_buffer,
             0,
             bytemuck::cast_slice(&[uniforms]),
         );
 
         let uniform_bg = resources.binds.get("composite uniform", 0, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Composite Uniform BG"),
                 layout: &self.composite_uniform_bgl,
                 entries: &[wgpu::BindGroupEntry {
@@ -2485,7 +2498,7 @@ impl PostProcessPipeline {
         // The scene: the HDR buffer, or the HDR styles' result (#262)
         let scene_view = scene.view;
         let scene_bg = resources.binds.get("composite scene", scene.id, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Composite Scene BG"),
                 layout: &self.composite_scene_bgl,
                 entries: &[
@@ -2511,7 +2524,7 @@ impl PostProcessPipeline {
         let bloom_bg = resources
             .binds
             .get("composite bloom", u64::from(bloom_on), || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                     label: Some("Composite Bloom BG"),
                     layout: &self.composite_bloom_bgl,
                     entries: &[
@@ -2529,17 +2542,20 @@ impl PostProcessPipeline {
 
         let mut timer = timer;
         let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, "Composite");
-        fullscreen_pass(
-            encoder,
-            "Composite Pass",
-            target_view,
-            Some(wgpu::Color::BLACK),
-            match fog_veil {
-                Some(_) => self.composite_veiled(device),
-                None => &self.composite_pipeline,
-            },
-            &[&uniform_bg, &scene_bg, &bloom_bg, &ssao_depth_bg],
-        );
+        let pipeline = match fog_veil {
+            Some(_) => self.composite_veiled(device),
+            None => &self.composite_pipeline,
+        };
+        for _ in 0..times {
+            fullscreen_pass(
+                encoder,
+                "Composite Pass",
+                target_view,
+                Some(wgpu::Color::BLACK),
+                pipeline,
+                &[&uniform_bg, &scene_bg, &bloom_bg, &ssao_depth_bg],
+            );
+        }
         crate::gpu_labels::end(timer, encoder, scope);
     }
 }
@@ -2579,7 +2595,7 @@ fn composite_pipeline(
     layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
@@ -2651,11 +2667,36 @@ pub(crate) fn fullscreen_pass(
 }
 
 impl PostProcessResources {
+    /// What the frame's own targets here hold, bytes (#1091): the HDR
+    /// buffer, bloom's mips, SSAO's and the volumetrics' pairs, FXAA's
+    /// intermediate and the fog veil. The style chain's are counted apart
+    /// ([`StyleTargets::summary`](crate::stylize::StyleTargets::summary)).
+    pub fn scene_target_bytes(&self) -> u64 {
+        use crate::gpu_counts::bytes_of;
+        let mut bytes = bytes_of(&self.hdr_texture)
+            + bytes_of(&self.ssao_texture)
+            + bytes_of(&self.ssao_blur_texture)
+            + bytes_of(&self.volumetric_texture)
+            + bytes_of(&self.volumetric_blur_texture);
+        bytes += self
+            .bloom_mips
+            .iter()
+            .map(|m| bytes_of(&m.texture))
+            .sum::<u64>();
+        if let Some(f) = &self.fxaa {
+            bytes += bytes_of(&f.texture);
+        }
+        if let Some(v) = &self.fog_veil {
+            bytes += bytes_of(&v.behind) + bytes_of(&v.veil);
+        }
+        bytes
+    }
+
     /// Create HDR buffer and bloom mip chain for the given dimensions.
     /// Stylize targets are made on first use, so a style that is off
     /// allocates nothing.
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
-        let hdr_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let hdr_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("HDR Scene Texture"),
             size: wgpu::Extent3d {
                 width: width.max(1),
@@ -2686,7 +2727,7 @@ impl PostProcessResources {
         let mut mip_h = (height / 2).max(1);
 
         for i in 0..bloom_mip_count {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
+            let texture = device.create_texture_counted(&wgpu::TextureDescriptor {
                 label: Some(&format!("Bloom Mip {}", i)),
                 size: wgpu::Extent3d {
                     width: mip_w,
@@ -2717,7 +2758,7 @@ impl PostProcessResources {
         }
 
         // SSAO textures (full resolution, R8Unorm)
-        let ssao_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let ssao_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("SSAO Texture"),
             size: wgpu::Extent3d {
                 width: width.max(1),
@@ -2736,7 +2777,7 @@ impl PostProcessResources {
         });
         let ssao_view = ssao_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let ssao_blur_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let ssao_blur_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("SSAO Blur Texture"),
             size: wgpu::Extent3d {
                 width: width.max(1),
@@ -2759,7 +2800,7 @@ impl PostProcessResources {
         let half_w = (width / 2).max(1);
         let half_h = (height / 2).max(1);
 
-        let volumetric_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let volumetric_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Volumetric Texture"),
             size: wgpu::Extent3d {
                 width: half_w,
@@ -2779,7 +2820,7 @@ impl PostProcessResources {
         let volumetric_view =
             volumetric_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let volumetric_blur_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let volumetric_blur_texture = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Volumetric Blur Texture"),
             size: wgpu::Extent3d {
                 width: half_w,

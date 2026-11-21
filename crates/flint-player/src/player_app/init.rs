@@ -93,6 +93,10 @@ impl PlayerApp {
         if let Some(failure) = self.trace_failure() {
             return Some(failure);
         }
+        // `--perf-report` that couldn't be written (#1093)
+        if let Some(failure) = self.perf_report_failure() {
+            return Some(failure);
+        }
         // `--max-hitches` and `--max-hitches-startup` (#1079)
         self.stats.watch.failure()
     }
@@ -184,6 +188,7 @@ impl PlayerApp {
             particles_render_enabled: true,
             stats: Default::default(),
             loaded_chunks: HashMap::new(),
+            late_models: Default::default(),
             #[cfg(target_os = "android")]
             android_gamepad: AndroidGamepadTracker::new(),
             #[cfg(target_os = "android")]
@@ -636,7 +641,7 @@ impl PlayerApp {
     ) -> Result<()> {
         use flint_core::load_report::{self, Stage};
         self.camera.aspect = render_context.aspect_ratio();
-        let scene_renderer = load_report::timed(Stage::Renderer, String::new, || {
+        let mut scene_renderer = load_report::timed(Stage::Renderer, String::new, || {
             SceneRenderer::new(
                 &render_context,
                 flint_render::RendererConfig {
@@ -645,6 +650,11 @@ impl PlayerApp {
                 },
             )
         });
+        // Parts skipped or repeated by label (#1317)
+        if let Some(knobs) = &self.launch.pass_knobs {
+            tracing::info!(target: "player", "pass knobs: {}", knobs.describe());
+            scene_renderer.set_pass_knobs(Some(knobs.clone()));
+        }
 
         // Gamepad backend and the egui overlay
         load_report::timed(Stage::Hud, String::new, || {

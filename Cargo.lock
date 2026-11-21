@@ -2202,6 +2202,7 @@ dependencies = [
  "flint-particles",
  "flint-procgen",
  "flint-render",
+ "flint-runtime",
  "flint-scene",
  "flint-schema",
  "flint-wooze",

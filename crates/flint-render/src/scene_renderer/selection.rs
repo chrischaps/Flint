@@ -3,6 +3,7 @@
 //! pipelines, the mask and the outline pass are `crate::selection_outline`.
 
 use super::{Draw, SceneRenderer};
+use crate::gpu_counts::CountedDevice;
 use crate::selection_outline::{OutlineLayouts, SelectionOutline};
 use flint_core::EntityId;
 use std::collections::HashSet;
@@ -75,7 +76,7 @@ impl SceneRenderer {
         let mask_view = outline.mask_view();
         // One bind group a frame over the depth, and only while something
         // is selected: the editor's, never a game's
-        let depth_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let depth_bind = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             label: Some("Selection Mask Depth"),
             layout: &outline.depth_bgl,
             entries: &[wgpu::BindGroupEntry {

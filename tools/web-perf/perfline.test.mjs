@@ -79,6 +79,24 @@ test('the hitches part counts the window and the run, and names the worst (#1079
   assert.deepEqual(parsePerfLine('hitches 0 in 10s (0 in run)').hitches, { window: 0, secs: 10, run: 0 });
 });
 
+test('the mean frame says when it reads as the GPU\'s (#1318)', () => {
+  const p = parsePerfLine(
+    'frame p50 33.3 p90 33.4 p99 41.7 max 50.0 ms (340 frames/10s) | ' +
+      'mean 29.41 ms a frame, GPU-bound (guess: unpaced, player 2.10 ms, refresh 8.33 ms) | cpu 2.30 ms: input 0.10/0.4',
+  );
+  assert.deepEqual(p.throughput, { ms: 29.41, gpuBound: true, guess: { player: 2.1, refresh: 8.33 } });
+  assert.equal(p.frame.frames, 340);
+  assert.equal(p.cpu, 2.3);
+  assert.deepEqual(parsePerfLine('mean 12.00 ms a frame, GPU-bound (guess: unpaced, player 1.00 ms, no vsync)').throughput, {
+    ms: 12,
+    gpuBound: true,
+    guess: { player: 1, refresh: null },
+  });
+  // CPU-bound, paced or holding the refresh: the mean alone
+  assert.deepEqual(parsePerfLine('mean 16.67 ms a frame').throughput, { ms: 16.67, gpuBound: false });
+  assert.equal(parsePerfLine(REAL).throughput, undefined, 'a line from before #1318 has none');
+});
+
 test('a line without GPU timing says so', () => {
   assert.deepEqual(parsePerfLine('flint perf · x · t=3s | gpu off').gpu, { frame: null, passes: {}, note: 'gpu off' });
   assert.deepEqual(parsePerfLine(undefined), {});
@@ -89,4 +107,19 @@ test('a range is one number when the reads agree', () => {
   assert.equal(range([0.02, 0.021]), '0.02');
   assert.equal(range([undefined, 3], 1), '3.0');
   assert.equal(range([]), '');
+});
+
+test("the renderer's own GPU count and memory are read (#1091)", () => {
+  const p = parsePerfLine([
+    'flint perf · fixtures · t=20s',
+    'webgpu/frame submit 1.0 pass 14.0 bindgroup 0.0 write 17.0 (27.4 KB) buffer 0.0',
+    'gpu/frame create 0.5 (buffer 0.0 bindgroup 0.5 texture 0.0 pipeline 0.0) in 2 frames write 15.0 (4.0 KB)',
+    'gpu mem textures 84.0 MB (scene 40.0 style 8.0 shadow 16.0 model 20.0 glyph 0.0) meshes 3.0 MB device 12.0/96.0 MB',
+  ].join(' | '));
+  assert.deepEqual(p.created, { objects: 0.5, buffers: 0, bindGroups: 0.5, textures: 0, pipelines: 0, framesCreating: 2, writes: 15, writeKB: 4 });
+  assert.deepEqual(p.memory, { texturesMB: 84, sceneMB: 40, styleMB: 8, shadowMB: 16, modelMB: 20, glyphMB: 0, meshesMB: 3, deviceBuffersMB: 12, deviceTexturesMB: 96 });
+  assert.equal(p.gpu, undefined, "'gpu mem' is not the GPU time part");
+  // The web has no device memory to say
+  const web = parsePerfLine('gpu mem textures 1.0 MB (scene 1.0 style 0.0 shadow 0.0 model 0.0 glyph 0.0) meshes 0.5 MB');
+  assert.equal(web.memory.deviceTexturesMB, undefined);
 });

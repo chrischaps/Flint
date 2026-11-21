@@ -4,6 +4,7 @@
 //! the lighting levers a scene's `[environment]` sets (ambient, diffuse
 //! wrap, Oren-Nayar, sheen, shadows, default lights).
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::motion_hold::MotionHold;
 use crate::pipeline::{
     DirectionalLight, LightUniforms, PointLight, SceneLayouts, SpotLight, MAX_DIRECTIONAL_LIGHTS,
@@ -14,7 +15,6 @@ use flint_core::components as comp;
 use flint_core::diagnostic::{self, codes, Diagnostic};
 use flint_ecs::{ComponentView, FlintWorld};
 use std::collections::BTreeSet;
-use wgpu::util::DeviceExt;
 
 /// Snapshot of the runtime lighting levers (ambient hemisphere, diffuse
 /// wrap, Oren-Nayar blend, sheen). Values are the active overrides when set,
@@ -128,7 +128,7 @@ impl LightState {
     /// them when they fit) and write this frame's uniforms to the buffer.
     pub(crate) fn upload(&mut self, queue: &wgpu::Queue, camera_pos: [f32; 3]) {
         self.place(camera_pos);
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniforms]));
+        queue.write_buffer_counted(&self.buffer, 0, bytemuck::cast_slice(&[self.uniforms]));
     }
 
     /// The scene's `[environment] shadows` (#627).
@@ -176,13 +176,13 @@ impl LightState {
         uniforms: &LightUniforms,
         shadow_pass: &ShadowPass,
     ) -> (wgpu::Buffer, wgpu::BindGroup) {
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some("Light Uniform Buffer"),
             contents: bytemuck::cast_slice(&[*uniforms]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: &layouts.light_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {

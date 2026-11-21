@@ -32,6 +32,7 @@
 //!
 //! [`PostProcessResources`]: crate::postprocess::PostProcessResources
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -433,7 +434,7 @@ impl TransformArena {
             if self.pages.is_empty() || self.tail == PAGE_SLOTS {
                 let size = PAGE_SLOTS as u64 * SLOT_STRIDE;
                 self.pages.push(Page {
-                    buffer: Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+                    buffer: Arc::new(device.create_buffer_counted(&wgpu::BufferDescriptor {
                         label: Some("Transform Arena Page"),
                         size,
                         usage: wgpu::BufferUsages::UNIFORM
@@ -485,7 +486,7 @@ impl TransformArena {
         for page in &mut self.pages {
             if let Some((a, b)) = page.dirty.take() {
                 let (from, to) = (a as u64 * SLOT_STRIDE, b as u64 * SLOT_STRIDE);
-                queue.write_buffer(
+                queue.write_buffer_counted(
                     &page.buffer,
                     from,
                     &page.staging[from as usize..to as usize],
@@ -532,7 +533,7 @@ mod tests {
     }
 
     fn read(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u8> {
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        let staging = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: None,
             size: buffer.size(),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
@@ -608,7 +609,7 @@ mod tests {
             entries: &[],
         });
         let group = || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &layout,
                 entries: &[],
@@ -671,7 +672,7 @@ mod tests {
 
     fn depth_view(device: &wgpu::Device) -> wgpu::TextureView {
         device
-            .create_texture(&wgpu::TextureDescriptor {
+            .create_texture_counted(&wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
                     width: 4,
@@ -690,7 +691,7 @@ mod tests {
     }
 
     fn uniform(device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+        device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: None,
             size: 256,
             usage: wgpu::BufferUsages::UNIFORM,
@@ -713,7 +714,7 @@ mod tests {
             entries: &[],
         });
         let group = || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &layout,
                 entries: &[],

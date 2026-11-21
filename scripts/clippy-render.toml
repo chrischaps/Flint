@@ -1,0 +1,23 @@
+# The rules flint-render alone holds (#1091). scripts/clippy-conf.sh adds
+# them to the root clippy.toml's list as crates/flint-render/clippy.toml, so
+# the renderer reads every root rule plus these; no other crate sees them.
+#
+# Every GPU object the renderer makes and every byte it uploads is counted
+# (flint_render::gpu_counts), so F2 and --perf can say a steady frame makes
+# nothing: per-frame allocations are the renderer's CPU cliff
+# (crates/flint-render/CLAUDE.md). A bare call would make an object the count
+# never sees and read as a false all-clear, so each is refused here and goes
+# through gpu_counts::CountedDevice / CountedQueue instead. Shader modules are
+# counted inside TrustedShader and the user-style path, which the root list
+# already holds. The counted calls themselves allow these.
+disallowed-methods = [
+    { path = "wgpu::Device::create_buffer", reason = "use gpu_counts::CountedDevice::create_buffer_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Device::create_bind_group", reason = "use gpu_counts::CountedDevice::create_bind_group_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Device::create_texture", reason = "use gpu_counts::CountedDevice::create_texture_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Device::create_render_pipeline", reason = "use gpu_counts::CountedDevice::create_render_pipeline_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Device::create_compute_pipeline", reason = "use gpu_counts::CountedDevice::create_compute_pipeline_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::util::DeviceExt::create_buffer_init", reason = "use gpu_counts::CountedDevice::create_buffer_init_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::util::DeviceExt::create_texture_with_data", reason = "use gpu_counts::CountedDevice::create_texture_with_data_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Queue::write_buffer", reason = "use gpu_counts::CountedQueue::write_buffer_counted, so F2 and --perf count it (#1091)" },
+    { path = "wgpu::Queue::write_texture", reason = "use gpu_counts::CountedQueue::write_texture_counted, so F2 and --perf count it (#1091)" },
+]

@@ -3,6 +3,7 @@
 //! Renders camera-facing quads for Doom-style sprite entities.
 //! Uses a dedicated pipeline separate from PBR to keep things clean.
 
+use crate::gpu_counts::CountedDevice;
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
@@ -138,7 +139,7 @@ impl BillboardPipeline {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
             label: Some("Billboard Render Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
@@ -183,11 +184,12 @@ impl BillboardPipeline {
 
         // Shared quad index buffer: 2 triangles = 6 indices
         let quad_indices: [u32; 6] = [0, 1, 2, 2, 1, 3];
-        let quad_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Billboard Quad Index Buffer"),
-            contents: bytemuck::cast_slice(&quad_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let quad_index_buffer =
+            device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                label: Some("Billboard Quad Index Buffer"),
+                contents: bytemuck::cast_slice(&quad_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
 
         Self {
             pipeline,
@@ -197,5 +199,3 @@ impl BillboardPipeline {
         }
     }
 }
-
-use wgpu::util::DeviceExt;

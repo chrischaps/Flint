@@ -20,6 +20,7 @@
 
 use super::kit;
 use super::{StyleDevice, StyleFrame, StyleInput, StylePass};
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use bytemuck::{Pod, Zeroable};
 
 /// Where the reality styles stand in the display chain (their
@@ -156,22 +157,24 @@ impl StylePass for RealityPass {
         let u = uniforms(frame, (self.fill)(frame));
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&u));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::bytes_of(&u));
         let depth = frame.depth_bind("Reality Depth BG", 0, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Reality Depth BG"),
-                layout: &self.depth_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(frame.depth),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
-                    },
-                ],
-            })
+            frame
+                .device
+                .create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    label: Some("Reality Depth BG"),
+                    layout: &self.depth_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(frame.depth),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
+                        },
+                    ],
+                })
         });
         kit::fullscreen_pass(
             encoder,

@@ -43,6 +43,14 @@ pub const BUILD_COMMIT: Option<&str> = non_empty(env!("ENGINE_BUILD_COMMIT"));
 /// its root (`engine/`).
 pub const BUILD_SUBDIR: Option<&str> = non_empty(env!("ENGINE_BUILD_SUBDIR"));
 
+/// The Cargo profile flint-player was built under (`debug`, `release`,
+/// `profiling`...), from `build.rs` (#1093). A perf report names it, since
+/// a debug build's frame times compare with nothing but a debug build's.
+pub const BUILD_PROFILE: &str = env!("ENGINE_BUILD_PROFILE");
+
+/// The `opt-level` flint-player itself was built at (`0`..`3`, `s`, `z`).
+pub const BUILD_OPT_LEVEL: &str = env!("ENGINE_BUILD_OPT_LEVEL");
+
 const fn non_empty(s: &'static str) -> Option<&'static str> {
     if s.is_empty() {
         None

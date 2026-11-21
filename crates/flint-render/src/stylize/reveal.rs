@@ -30,6 +30,7 @@
 //! edge.
 
 use super::{kit, StyleFrame, StyleInput, StyleStage};
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use std::sync::{Mutex, OnceLock};
 
 /// What shape the revealed region grows in.
@@ -538,13 +539,13 @@ impl RevealPass {
                         count: None,
                     }],
                 });
-            let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            let uniform = device.create_buffer_counted(&wgpu::BufferDescriptor {
                 label: Some("Style Reveal Uniforms"),
                 size: SLOTS * SLOT,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let uniform_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let uniform_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Style Reveal Uniform Group"),
                 layout: &uniform_layout,
                 entries: &[wgpu::BindGroupEntry {
@@ -652,9 +653,11 @@ impl RevealPass {
         );
         let pipeline = self.pipeline(frame.device, frame.format);
         let shared = self.shared(frame.device);
-        frame
-            .queue
-            .write_buffer(&shared.uniform, slot * SLOT, bytemuck::bytes_of(&uniform));
+        frame.queue.write_buffer_counted(
+            &shared.uniform,
+            slot * SLOT,
+            bytemuck::bytes_of(&uniform),
+        );
         let group = frame.sampled_input(BIND, &shared.input_layout, input);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Style Reveal Pass"),

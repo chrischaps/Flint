@@ -548,6 +548,14 @@ the page's `#perf` panel):
   `requestAnimationFrame` loop of the page's own, timed by rAF's
   timestamps. Timing the player's callbacks instead showed jitter that no
   one sees (p99 23 ms where rAF said 16.8).
+- **mean** (#1318): the window's span over its frames, which doesn't snap to
+  refreshes, marked `GPU-bound` with its inputs when the page is unpaced
+  (`fps=native`), the player's work is under half the frame and the frames
+  miss the refresh (read from the same rAF intervals,
+  `frame_rate::estimate_refresh`). Then it is the GPU's ms a frame, the
+  number #568 counted submissions for: Float with Kuwahara at 3840x2160 in
+  Chrome read p50 33.4 and mean 38.4 against timestamps of 38.2 to 39.1
+  (`tools/web-perf/README.md`, "GPU-bound pages").
 - **worst**: the longest gap between the player's frames, and how much of
   it was the player's own work. A long frame with little work in it is the
   browser's, not ours.
@@ -1093,6 +1101,20 @@ of the control). `edges = 0` in a scene's
 at the price of the line glyphs. A cheaper edge detector for phones
 (half resolution, the steps alone, or the flat test as its own small
 pass in front of the heavy one) is the follow-up.
+
+**Without the wasm patch (#1317).** The page now takes
+`?skip_pass=Style%20edges`, which leaves out the shared edge pass's
+work. Its readers still get the edge target, empty from the first frame,
+as the "returning at once" stub above left it. It also takes
+`?repeat_pass=<label>:<N>`, which draws a part N times. Both are keyed by
+the GPU rows' labels, so a site copy with a patched shader is needed only
+to cut part of a pass, as the "full path skipped" row did. The book's
+Profiling guide, "Costing a part without timestamps", says how. Checked
+in desktop Chrome 157 (RTX 4070, `tools/web-perf/run.mjs`, the ASCII
+edges fixture, 1920x1080, 2026-11-20) on the branch's Play-site build:
+the page recorded 27 render passes a frame, 26 with the skip (and no
+`Style edges` row), and 30 with `repeat_pass=Style%20edges:4`. The edge
+lines left the picture. The Pixel's figure is still to be taken.
 
 ## Touch (#132)
 

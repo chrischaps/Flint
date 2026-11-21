@@ -424,7 +424,16 @@ impl PlayerApp {
             self.core.store.mark_clean();
             return;
         }
-        match self.core.store.save() {
+        // The write is on the frame thread (temp file, `sync_all`, rename:
+        // 4 to 70 ms here), so a hitch it makes names it (#1119)
+        let saved = {
+            let _note =
+                flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::Save, || {
+                    reason.to_string()
+                });
+            self.core.store.save()
+        };
+        match saved {
             Ok(place) => {
                 self.saves.error = None;
                 tracing::info!(
@@ -456,8 +465,15 @@ impl PlayerApp {
         if self.core.store.is_dirty() {
             self.saves.debounce.note_dirty(now);
         }
-        let force = force || self.core.store.take_flush_request();
-        if self.saves.debounce.should_flush(now, force) {
+        let asked = self.core.store.take_flush_request();
+        // A script's `persist_save()` is named as such, in the log line and
+        // the frame note, rather than as the debounce it rode in on
+        let reason = if asked && !force {
+            "persist_save"
+        } else {
+            reason
+        };
+        if self.saves.debounce.should_flush(now, force || asked) {
             self.save_persistent_store(reason);
         }
     }
@@ -1203,6 +1219,78 @@ fn on_init() {
                     "gold = 0\n\n[meta]\nversion = 2\n".to_string()
                 ),
             ]
+        );
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    /// #1119: a script that sets a key to the value it holds every frame
+    /// (the Ruins' `zone_*_unlocked`) leaves the store clean, so nothing is
+    /// written, not even by a forced flush; a save that does happen leaves
+    /// a `save` frame note naming why, with its time.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
+    fn re_setting_a_key_every_frame_writes_nothing_and_a_save_says_so() {
+        use flint_core::frame_notes::{self, NoteKind};
+        if flint_core::project::overridden().is_some() {
+            return;
+        }
+        let (root, user) = project_on_disk(
+            "reset_1119",
+            &[
+                ("flint.toml", "[project]\nid = \"kart\"\n"),
+                ("scenes/menu.scene.toml", SCENE),
+            ],
+        );
+        let saves = user.join("kart").join("saves");
+        std::fs::create_dir_all(&saves).unwrap();
+        let file = saves.join("default.toml");
+        std::fs::write(&file, "coins = 7\nunlocked = true\n").unwrap();
+        let written = || std::fs::metadata(&file).unwrap().modified().unwrap();
+        let before = written();
+
+        let mut app = app_at(&root.join("scenes/menu.scene.toml"), &user);
+        app.load_persistent_store();
+        let _log = attach_recording_script(
+            &mut app,
+            "reset_1119",
+            r#"
+fn on_update() {
+    persist_set("unlocked", true);
+    persist_set("coins", 7);
+}
+"#,
+        );
+        for _ in 0..30 {
+            app.tick();
+        }
+        assert!(!app.core.store.is_dirty(), "the same values are no change");
+        assert!(!app.saves.debounce.is_pending(), "no save is waiting");
+        // A frame's own begin sets listening by the recorder: listen after
+        let mut notes = Vec::new();
+        frame_notes::listen(true);
+        app.flush_persistent_store(true, "transition");
+        frame_notes::take(&mut notes);
+        assert!(
+            notes.iter().all(|n| n.kind != NoteKind::Save),
+            "nothing was saved: {notes:?}"
+        );
+        assert_eq!(written(), before, "the file was not written");
+
+        set_coins(&mut app, 8);
+        app.flush_persistent_store(true, "transition");
+        frame_notes::take(&mut notes);
+        frame_notes::listen(false);
+        let saves_noted: Vec<_> = notes.iter().filter(|n| n.kind == NoteKind::Save).collect();
+        assert_eq!(saves_noted.len(), 1, "{notes:?}");
+        assert_eq!(saves_noted[0].detail, "transition");
+        assert!(saves_noted[0].ms.is_some(), "the write is timed");
+        assert_eq!(
+            saves_noted[0].to_string().split(',').next(),
+            Some("save transition")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "coins = 8\nunlocked = true\n"
         );
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }

@@ -317,6 +317,107 @@ pub fn load_models_from_world(
     config: &ModelLoadConfig,
 ) -> ModelLoadResult {
     flint_core::scope!("load_models");
+    let ids: Vec<EntityId> = world.all_entities().iter().map(|e| e.id).collect();
+    let mut imports = HashMap::new();
+    let result = load_models(
+        world,
+        &ids,
+        renderer,
+        device,
+        queue,
+        config,
+        &|_| true,
+        &mut imports,
+    );
+    load_textures_from_world(world, renderer, device, queue, config);
+    result
+}
+
+/// What a host keeps between [`load_models_of`] calls in one scene: which
+/// assets expanded into nodes, and the import each expanded from, so the
+/// next entity of the asset gets children of its own without its file
+/// being read again (#1107). Forget it when the scene goes.
+#[derive(Default)]
+pub struct Expansions {
+    expanded: std::collections::HashSet<String>,
+    imports: HashMap<String, ImportResult>,
+}
+
+impl Expansions {
+    /// The assets `loaded` expanded (a scene entry's load, say).
+    pub fn remember(&mut self, loaded: &ModelLoadResult) {
+        for model in loaded.models.iter().filter(|m| m.was_expanded) {
+            self.expanded.insert(model.asset_name.clone());
+        }
+    }
+
+    /// Forget every asset and import.
+    pub fn clear(&mut self) {
+        self.expanded.clear();
+        self.imports.clear();
+    }
+}
+
+/// Load the models and textures of the entities `ids` alone: those that
+/// arrived after the scene did, from a chunk or a script's `spawn_entity`
+/// (#1107). Nothing else in the world is looked at.
+///
+/// A model whose mesh is already in the renderer's cache is drawn from it.
+/// One that expanded into nodes expands again for the new entity: from the
+/// import `expansions` holds, else its file is read once more and the
+/// import kept. A scene entry ([`load_models_from_world`]) reads every
+/// cached file again to see whether it expands; a chunk or a spawn, which
+/// may come every frame, reads only what [`Expansions`] says expanded.
+pub fn load_models_of(
+    world: &mut FlintWorld,
+    ids: &[EntityId],
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    config: &ModelLoadConfig,
+    expansions: &mut Expansions,
+) -> ModelLoadResult {
+    flint_core::scope!("load_models_of", ids.len());
+    let Expansions { expanded, imports } = expansions;
+    let recheck = |asset: &str| expanded.contains(asset);
+    let result = load_models(
+        world, ids, renderer, device, queue, config, &recheck, imports,
+    );
+    expansions.remember(&result);
+    load_textures_of(world, ids, renderer, device, queue, config);
+    result
+}
+
+/// The asset each of `ids` names in its `model`, unless the mesh is made
+/// at run time (`runtime = true`): what [`load_models_of`] would load.
+/// Empty for entities with no model, which is most of what a game spawns.
+pub fn model_assets_of(world: &FlintWorld, ids: &[EntityId]) -> Vec<(EntityId, String)> {
+    ids.iter()
+        .filter_map(|&id| {
+            // Through the typed view (ADR 0115): a wrong type is reported once
+            let model = world.view(id, comp::MODEL);
+            (!model.bool("runtime", false))
+                .then(|| model.opt_str("asset").map(|a| (id, a.to_string())))
+                .flatten()
+        })
+        .collect()
+}
+
+/// The models of `ids`, each found, imported, expanded and uploaded. A
+/// cached mesh's file is read again, to see whether it expands, only when
+/// `recheck(asset)` says so. `expansion_cache` holds the import of each
+/// asset that expanded, by name, for the next entity of it.
+#[allow(clippy::too_many_arguments)]
+fn load_models(
+    world: &mut FlintWorld,
+    ids: &[EntityId],
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    config: &ModelLoadConfig,
+    recheck: &dyn Fn(&str) -> bool,
+    expansion_cache: &mut HashMap<String, ImportResult>,
+) -> ModelLoadResult {
     let mut result = ModelLoadResult {
         models: Vec::new(),
         skinned_entities: HashMap::new(),
@@ -324,23 +425,14 @@ pub fn load_models_from_world(
 
     // Pass 1: Collect entity-model pairs (can't mutate world while iterating)
     // Also collect whether each entity has an animator component (for animated expansion)
-    let entity_models: Vec<(EntityId, String, String, bool)> = world
-        .all_entities()
-        .iter()
-        .filter_map(|e| {
-            // Through the typed view (ADR 0115): a wrong type is reported once
-            let model = world.view(e.id, comp::MODEL);
-            let model_asset = (!model.bool("runtime", false))
-                .then(|| model.opt_str("asset").map(String::from))
-                .flatten();
-            let has_animator = world.get_component(e.id, comp::ANIMATOR).is_some();
-            model_asset.map(|asset| (e.id, e.name.clone(), asset, has_animator))
+    let entity_models: Vec<(EntityId, String, String, bool)> = model_assets_of(world, ids)
+        .into_iter()
+        .filter_map(|(id, asset)| {
+            let name = world.get_name(id)?.to_string();
+            let has_animator = world.get_component(id, comp::ANIMATOR).is_some();
+            Some((id, name, asset, has_animator))
         })
         .collect();
-
-    // Cache import results for multi-node GLBs so subsequent entities
-    // referencing the same asset can be expanded into their own children.
-    let mut expansion_cache: HashMap<String, ImportResult> = HashMap::new();
 
     // Pass 2: Load and expand
     for (entity_id, entity_name, asset_name, has_animator) in &entity_models {
@@ -384,6 +476,7 @@ pub fn load_models_from_world(
             // figure vanish (#331).
             let file = if renderer.mesh_cache().is_procedural(asset_name)
                 || renderer.mesh_cache().contains_skinned(asset_name)
+                || !recheck(asset_name)
             {
                 None
             } else {
@@ -573,9 +666,6 @@ pub fn load_models_from_world(
         }
     }
 
-    // Load textures
-    load_textures_from_world(world, renderer, device, queue, config);
-
     result
 }
 
@@ -587,23 +677,36 @@ pub fn load_textures_from_world(
     queue: &wgpu::Queue,
     config: &ModelLoadConfig,
 ) {
+    let ids: Vec<EntityId> = world.all_entities().iter().map(|e| e.id).collect();
+    load_textures_of(world, &ids, renderer, device, queue, config);
+}
+
+/// [`load_textures_from_world`] for the entities `ids` alone (#1107).
+pub fn load_textures_of(
+    world: &FlintWorld,
+    ids: &[EntityId],
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    config: &ModelLoadConfig,
+) {
     let mut loaded = std::collections::HashSet::new();
 
-    for entity in world.all_entities() {
+    for &id in ids {
         let mut tex_names = Vec::new();
 
         // Through the typed view (ADR 0115): a name that is no string is
         // reported once, as the frame's own reads of it are
-        if let Some(tex) = world.view(entity.id, comp::MATERIAL).opt_str("texture") {
+        if let Some(tex) = world.view(id, comp::MATERIAL).opt_str("texture") {
             tex_names.push(tex.to_string());
         }
-        let sprite_texture = world.view(entity.id, comp::SPRITE).str("texture", "");
+        let sprite_texture = world.view(id, comp::SPRITE).str("texture", "");
         if !sprite_texture.is_empty() {
             tex_names.push(sprite_texture.to_string());
         }
         // Fonts ui_text names: built into glyph atlases and uploaded
         // here, so extraction only lays text out (ADR 0113)
-        let font = world.view(entity.id, comp::UI_TEXT).str("font", "");
+        let font = world.view(id, comp::UI_TEXT).str("font", "");
         if !font.is_empty() {
             let scope = flint_core::project::AssetScope::new(
                 config.project.clone(),

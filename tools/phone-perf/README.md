@@ -54,6 +54,14 @@ A nearly free scene (`BASE='&scale=0.25&quality=ssao=0,bloom=0,shadows=0'`)
 shows the opposite: there everything holds the refresh, so the display
 stage's passes fit in what the scene leaves.
 
+The readout now does this count itself (#1318): `?perf=1&fps=native` shows
+a `mean N ms a frame` row, marked `GPU-bound` with the inputs it judged by
+when the page is unpaced, the player's work is under half the frame and the
+frames miss the refresh. `phoneperf.mjs`'s `?perf=1` rows carry it, and
+`perfline.mjs` parses it as `throughput`. How the guess is made and where it
+goes wrong: `../web-perf/README.md`, "GPU-bound pages". `submits.mjs` stays
+the independent count, from outside the player.
+
 ## Notes
 
 - ASCII's `edges` defaults to 1, so `ascii_variants.py`'s `_edges` scenes

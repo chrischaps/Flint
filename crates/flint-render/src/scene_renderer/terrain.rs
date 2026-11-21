@@ -9,6 +9,7 @@
 //! draws in [`TerrainRenderer::upload_chunks`] (#918).
 
 use super::helpers::mat4_inv_transpose;
+use crate::gpu_counts::CountedDevice;
 use crate::pipeline::TransformUniforms;
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 use crate::texture_cache::TextureCache;
@@ -16,7 +17,6 @@ use flint_core::project::AssetScope;
 use flint_core::vfs;
 use flint_core::Transform;
 use std::path::Path;
-use wgpu::util::DeviceExt;
 
 /// The texture cache's name for the terrain's splat map.
 const SPLAT: &str = "terrain_splat";
@@ -183,7 +183,7 @@ impl TerrainRenderer {
             roughness,
             enable_tonemapping: 0, // Updated per frame
         };
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some("Terrain Uniform Buffer"),
             contents: bytemuck::cast_slice(&[uniforms]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -211,7 +211,7 @@ impl TerrainRenderer {
                 resource: wgpu::BindingResource::Sampler(&tex.sampler),
             });
         }
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: &pipeline.material_bind_group_layout,
             entries: &entries,
             label: Some("Terrain Material Bind Group"),
@@ -248,17 +248,19 @@ impl TerrainRenderer {
                 })
                 .collect();
 
-            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Terrain Chunk Vertex Buffer"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+            let vertex_buffer =
+                device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Terrain Chunk Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
 
-            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Terrain Chunk Index Buffer"),
-                contents: bytemuck::cast_slice(&chunk.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+            let index_buffer =
+                device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Terrain Chunk Index Buffer"),
+                    contents: bytemuck::cast_slice(&chunk.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
 
             let transform_uniforms = TransformUniforms {
                 view_proj: [[0.0; 4]; 4], // Updated per frame
@@ -268,20 +270,22 @@ impl TerrainRenderer {
                 _pad: 0.0,
             };
 
-            let transform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Terrain Chunk Transform Buffer"),
-                contents: bytemuck::cast_slice(&[transform_uniforms]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+            let transform_buffer =
+                device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Terrain Chunk Transform Buffer"),
+                    contents: bytemuck::cast_slice(&[transform_uniforms]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
-            let transform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: transform_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: transform_buffer.as_entire_binding(),
-                }],
-                label: Some("Terrain Chunk Transform Bind Group"),
-            });
+            let transform_bind_group =
+                device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                    layout: transform_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: transform_buffer.as_entire_binding(),
+                    }],
+                    label: Some("Terrain Chunk Transform Bind Group"),
+                });
 
             self.draws.push(TerrainDrawCall {
                 vertex_buffer,

@@ -60,6 +60,15 @@ pub struct StyleSet {
 }
 
 impl StyleSet {
+    /// The glyph atlases the built styles hold, bytes (#1091).
+    pub fn glyph_atlas_bytes(&self) -> u64 {
+        self.slots
+            .values()
+            .filter_map(|s| s.built.as_ref())
+            .map(|p| p.glyph_atlas_bytes())
+            .sum()
+    }
+
     /// The draw every stage runs after a style whose `blend` is under 1
     /// (#369); hand it to [`run_stage`].
     pub(crate) fn blend_pass(&self) -> &blend::BlendPass {
@@ -312,7 +321,9 @@ impl StyleSet {
         });
         self.edge_runs
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        made
+        // A pass knob that skips the edges (#1317) never called the scope:
+        // the readers still read the target, as it was last drawn
+        made.or_else(|| Some(edges::EdgePass::target(frame)))
     }
 
     /// The ownership pass (#384) [`run_stage`] draws after each style.

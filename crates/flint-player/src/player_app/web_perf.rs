@@ -85,20 +85,19 @@ pub(super) fn record_frame(t: f64) {
     });
 }
 
-/// The rAF intervals in the window, and the seconds they cover.
-fn raf_frames() -> Option<(Spread, f64)> {
+/// The rAF intervals in the window, the seconds they cover, and the
+/// refresh they fall on, ms (`frame_rate::estimate_refresh`).
+fn raf_frames() -> Option<(Spread, f64, Option<f32>)> {
     RAF.with(|r| {
         let r = r.borrow();
-        let ms: Vec<f32> = r
-            .iter()
-            .zip(r.iter().skip(1))
-            .map(|(a, b)| (b - a) as f32)
-            .collect();
+        let ms: Vec<f64> = r.iter().zip(r.iter().skip(1)).map(|(a, b)| b - a).collect();
         let secs = match (r.front(), r.back()) {
             (Some(a), Some(b)) => (b - a) / 1000.0,
             _ => 0.0,
         };
-        Spread::of(&ms).map(|s| (s, secs))
+        let refresh = super::frame_rate::estimate_refresh(&ms).map(|p| p as f32);
+        let ms: Vec<f32> = ms.iter().map(|&m| m as f32).collect();
+        Spread::of(&ms).map(|s| (s, secs, refresh))
     })
 }
 
@@ -204,9 +203,15 @@ impl PlayerApp {
         };
         let frames_begun = self.stats.perf.frames_begun;
         context.webgpu = calls_per_frame(frames_begun);
-        if let Some((frames, secs)) = raf_frames() {
+        // The renderer's own count beside the page's (#1091): two readings
+        // of the same frames, which should agree in kind
+        context.gpu_calls = self.window_gpu_calls();
+        if let Some((frames, secs, refresh_ms)) = raf_frames() {
             summary.frames = frames;
             summary.secs = secs;
+            // Unpaced, nothing measured the refresh: read it from the same
+            // intervals, which fall on the display's frames (#1318)
+            context.refresh_ms = context.refresh_ms.or(refresh_ms);
         }
         let _ = panel.remove_attribute("hidden");
         let (touch_rows, touch_part) = TOUCHES.with(|t| {
