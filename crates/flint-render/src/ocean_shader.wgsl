@@ -581,7 +581,7 @@ fn fs_main(in: VertexOutput,
     var local_sss = vec3<f32>(0.0);
     var local_glint = vec3<f32>(0.0);
     for (var i = 0u; i < lights.point_count; i = i + 1u) {
-        let l = point_light_at(i, in.world_pos);
+        let l = point_light_at(i, in.world_pos, in.rest_normal, in.clip_position.xy);
         local_scatter += water_local_scatter(l, N);
         local_sss += water_local_sss(l, V, rim);
         local_glint += water_local_glint(l, N, V);

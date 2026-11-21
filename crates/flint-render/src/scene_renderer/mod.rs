@@ -1227,15 +1227,32 @@ impl SceneRenderer {
         self.shadows_enabled() && self.lights.scene_shadows() && self.lights.shadow_spot().is_some()
     }
 
+    /// Whether this frame draws a point light's cube shadow map (#1112), as
+    /// [`Self::spot_shadow_drawn`] says for the spot's: a point light with
+    /// `cast_shadows = true` that gives light is among those uploaded.
+    pub fn point_shadow_drawn(&self) -> bool {
+        self.shadows_enabled()
+            && self.lights.scene_shadows()
+            && self.lights.shadow_point().is_some()
+    }
+
     /// The shadow map layers this frame draws: the cascades if a sun casts,
-    /// and the spot's if a spot does.
+    /// the spot's if a spot does, the point's if a point light does.
     pub fn shadow_layers_drawn(&self) -> u32 {
         let cascades = match &self.shadow_pass {
             Some(sp) if self.shadows_drawn() => sp.cascades() as u32,
             _ => 0,
         };
         let spot = (self.shadow_pass.is_some() && self.spot_shadow_drawn()) as u32;
-        cascades + spot
+        let point = (self.shadow_pass.is_some() && self.point_shadow_drawn()) as u32;
+        cascades + spot + point
+    }
+
+    /// The views the shadow layers are drawn through this frame: one a
+    /// layer, but six for a point light's cube, each a draw of its casters.
+    pub(crate) fn shadow_views_drawn(&self) -> u32 {
+        let point = (self.shadow_pass.is_some() && self.point_shadow_drawn()) as u32;
+        self.shadow_layers_drawn() + 5 * point
     }
 
     /// Current shadow map resolution per cascade

@@ -3,9 +3,10 @@
 // declared the lights and never read them, so a lantern's pool stopped at the
 // grass line and the waterline. Each function gives the light at a point,
 // the way to it and the radiance arriving, with the falloff, area-source
-// distance, cone and casting spot's shadow `direct_light` gives a mesh; what
-// the surface does with it is its own. Needs `brdf.wgsl` (`attenuation`,
-// `spot_cone_factor`) and `shadows.wgsl` (`spot_shadow_factor`).
+// distance, cone and casting spot's and point light's shadows `direct_light`
+// gives a mesh; what the surface does with it is its own. Needs `brdf.wgsl`
+// (`attenuation`, `spot_cone_factor`) and `shadows.wgsl`
+// (`spot_shadow_factor`, `point_shadow_factor`).
 
 struct LocalLight {
     // Toward the light, normalized
@@ -15,12 +16,19 @@ struct LocalLight {
 };
 
 // Point light `i`. The shading distance never falls inside the source
-// (ADR 0056), as on meshes; a punctual light's is the distance itself.
-fn point_light_at(i: u32, world_pos: vec3<f32>) -> LocalLight {
+// (ADR 0056), as on meshes; a punctual light's is the distance itself. The
+// point light whose cube map is drawn (#1112) shadows where it gives light;
+// `geo_normal` and `frag_xy` as for `spot_light_at`.
+fn point_light_at(i: u32, world_pos: vec3<f32>, geo_normal: vec3<f32>, frag_xy: vec2<f32>) -> LocalLight {
     let light = lights.point_lights[i];
     let light_vec = light.position - world_pos;
     let atten = attenuation(max(length(light_vec), light.source_radius), light.radius);
-    return LocalLight(normalize(light_vec), light.color * light.intensity * atten);
+    var radiance = light.color * light.intensity * atten;
+    if (light.shadow > 0.5 && atten > 0.0) {
+        radiance = radiance * point_shadow_factor(world_pos, geo_normal,
+            light.position, light.source_radius, frag_xy);
+    }
+    return LocalLight(normalize(light_vec), radiance);
 }
 
 // Spot light `i`: the cone takes light-to-fragment (#500, #682), and the

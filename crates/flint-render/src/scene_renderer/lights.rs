@@ -163,6 +163,13 @@ impl LightState {
         casting_spot(&self.uniforms.spot_lights[..count])
     }
 
+    /// The point light whose cube shadow map this camera draws (#1112), as
+    /// [`Self::shadow_spot`] finds the spot's. Read after [`Self::upload`].
+    pub(crate) fn shadow_point(&self) -> Option<&PointLight> {
+        let count = (self.uniforms.point_count as usize).min(MAX_POINT_LIGHTS);
+        casting_point(&self.uniforms.point_lights[..count])
+    }
+
     fn bind(
         device: &wgpu::Device,
         layouts: &SceneLayouts,
@@ -385,7 +392,7 @@ impl LightState {
             if out.contains(&p.name.as_str()) {
                 left.push(("point", p.name.clone()));
             } else {
-                kept.push(("point", p.name.clone(), false));
+                kept.push(("point", p.name.clone(), p.light.shadow > 0.5));
             }
         }
         let (_, _, out) = nearest::<_, MAX_SPOT_LIGHTS>(&self.spots, self.placed_for);
@@ -496,8 +503,10 @@ pub(crate) fn gather(world: &FlintWorld, motion_hold: &mut MotionHold) -> Gather
     });
 
     let mut found = Gathered::default();
-    // The first spot by name that asks casts (#504); the rest are said once
+    // The first spot by name that asks casts (#504), and the first point
+    // light (#1112); the rest are said once
     let mut spot_casts = None::<String>;
+    let mut point_casts = None::<String>;
     for entity_id in light_entities {
         let light = world.view(entity_id, comp::LIGHT);
         // A component that is no table has no fields (the view said so)
@@ -529,9 +538,12 @@ pub(crate) fn gather(world: &FlintWorld, motion_hold: &mut MotionHold) -> Gather
         let cast_shadows = light.opt_bool("cast_shadows");
         let spot_shadow = kind == "spot"
             && cast_shadows == Some(true)
-            && spot_casts_first(&light, &name, &mut spot_casts);
-        if kind != "spot" {
-            say_shadow_not_taken(&light, kind, cast_shadows);
+            && casts_first(&light, "spot", &name, &mut spot_casts);
+        let point_shadow = kind == "point"
+            && cast_shadows == Some(true)
+            && casts_first(&light, "point", &name, &mut point_casts);
+        if kind == "directional" {
+            say_shadow_not_taken(&light, cast_shadows);
         }
 
         match kind {
@@ -564,7 +576,7 @@ pub(crate) fn gather(world: &FlintWorld, motion_hold: &mut MotionHold) -> Gather
                     color,
                     intensity,
                     source_radius,
-                    _pad0: 0.0,
+                    shadow: if point_shadow { 1.0 } else { 0.0 },
                     _pad1: 0.0,
                     _pad2: 0.0,
                 },
@@ -602,9 +614,23 @@ pub(crate) fn casting_spot(uploaded: &[SpotLight]) -> Option<&SpotLight> {
         .find(|spot| spot.shadow > 0.5 && spot.intensity > 0.0)
 }
 
-/// Whether this spot is the one that casts: the first by name to ask. A
-/// later one is said once, naming the spot that does (#504).
-fn spot_casts_first(light: &ComponentView<'_>, name: &str, first: &mut Option<String>) -> bool {
+/// Of the point lights a camera's frame uploaded, the one whose cube map is
+/// drawn (#1112): the one marked (there is one at most) when it gives light.
+pub(crate) fn casting_point(uploaded: &[PointLight]) -> Option<&PointLight> {
+    uploaded
+        .iter()
+        .find(|point| point.shadow > 0.5 && point.intensity > 0.0)
+}
+
+/// Whether this light is the one of its `kind` (spot or point) that casts:
+/// the first by name to ask. A later one is said once, naming the light that
+/// does (#504, #1112).
+fn casts_first(
+    light: &ComponentView<'_>,
+    kind: &str,
+    name: &str,
+    first: &mut Option<String>,
+) -> bool {
     let Some(caster) = first.as_deref() else {
         *first = Some(name.to_string());
         return true;
@@ -613,32 +639,24 @@ fn spot_casts_first(light: &ComponentView<'_>, name: &str, first: &mut Option<St
         Diagnostic::warning(
             codes::SHADOW_CAP,
             format!(
-                "one spot light casts a shadow, the first by name: '{caster}' does, \
+                "one {kind} light casts a shadow, the first by name: '{caster}' does, \
                  so this one lights without one"
             ),
         )
-        .hint("keep `cast_shadows` on the key light alone")
+        .hint(if kind == "spot" {
+            "keep `cast_shadows` on the key light alone"
+        } else {
+            "keep `cast_shadows` on the lamp whose shadow matters most"
+        })
     });
     false
 }
 
-/// A `cast_shadows` the renderer can't honour on a point or directional
-/// light is said once, not passed over (#504): a point light casts no shadow
-/// yet, and the strongest directional light casts the cascades whatever it
-/// says.
-fn say_shadow_not_taken(light: &ComponentView<'_>, kind: &str, cast_shadows: Option<bool>) {
-    match (kind, cast_shadows) {
-        ("point", Some(true)) => light.report("cast_shadows", || {
-            Diagnostic::warning(
-                codes::SHADOW_CAP,
-                "a point light casts no shadow yet (#1112), so this one lights without one",
-            )
-            .hint(
-                "a spot light with `cast_shadows = true` aimed at what should be shadowed \
-                 casts one",
-            )
-        }),
-        ("directional", Some(false)) => light.report("cast_shadows", || {
+/// A `false` on the strongest directional light is said once, not passed
+/// over (#504): it casts the cascades whatever it says.
+fn say_shadow_not_taken(light: &ComponentView<'_>, cast_shadows: Option<bool>) {
+    if cast_shadows == Some(false) {
+        light.report("cast_shadows", || {
             Diagnostic::warning(
                 codes::SHADOW_CAP,
                 "the strongest directional light casts the cascades whatever \
@@ -648,8 +666,7 @@ fn say_shadow_not_taken(light: &ComponentView<'_>, kind: &str, cast_shadows: Opt
                 "`material.cast_shadows = false` on what shouldn't cast, or \
                  `[environment] shadows = false` for none at all",
             )
-        }),
-        _ => {}
+        });
     }
 }
 
@@ -950,29 +967,73 @@ mod tests {
             ("lamp", "type = \"point\"\ncast_shadows = false", ""),
         ]);
         gather(&world, &mut MotionHold::default());
-        let mut said = said(&world);
-        said.sort();
-        assert_eq!(said.len(), 2, "{said:?}");
+        let said = said(&world);
+        // A point light that asks casts since #1112: only the sun is said
+        assert_eq!(said.len(), 1, "{said:?}");
         assert!(
-            said[0].contains("entity 'bulb' light.cast_shadows"),
+            said[0].contains("entity 'sun' light.cast_shadows"),
             "{}",
             said[0]
         );
         assert!(
-            said[0].contains("a point light casts no shadow yet"),
+            said[0].contains("whatever `cast_shadows` says"),
+            "{}",
+            said[0]
+        );
+    }
+
+    #[test]
+    fn the_first_point_by_name_that_asks_casts_and_the_next_is_said() {
+        let world = world_of(&[
+            ("b_lantern", "type = \"point\"\ncast_shadows = true", ""),
+            ("a_candle", "type = \"point\"", ""),
+            ("c_lamp", "type = \"point\"\ncast_shadows = true", ""),
+            // A spot that asks casts too: the two kinds don't share one
+            ("d_key", "type = \"spot\"\ncast_shadows = true", ""),
+        ]);
+        let found = gather(&world, &mut MotionHold::default());
+        let shadow: Vec<(&str, f32)> = found
+            .points
+            .iter()
+            .map(|f| (f.name.as_str(), f.light.shadow))
+            .collect();
+        assert_eq!(
+            shadow,
+            [("a_candle", 0.0), ("b_lantern", 1.0), ("c_lamp", 0.0)]
+        );
+        assert_eq!(found.spots[0].light.shadow, 1.0);
+        gather(&world, &mut MotionHold::default());
+        let said = said(&world);
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(
+            said[0].contains("warning[shadow-cap] entity 'c_lamp' light.cast_shadows"),
             "{}",
             said[0]
         );
         assert!(
-            said[1].contains("entity 'sun' light.cast_shadows"),
+            said[0].contains("one point light casts a shadow, the first by name: 'b_lantern' does"),
             "{}",
-            said[1]
+            said[0]
         );
+    }
+
+    #[test]
+    fn the_casting_point_is_the_marked_one_that_gives_light() {
+        let lit = PointLight {
+            intensity: 5.0,
+            ..PointLight::default()
+        };
+        let marked = PointLight { shadow: 1.0, ..lit };
+        let dark = PointLight {
+            intensity: 0.0,
+            ..marked
+        };
+        assert_eq!(casting_point(&[lit, marked]).map(|p| p.shadow), Some(1.0));
         assert!(
-            said[1].contains("whatever `cast_shadows` says"),
-            "{}",
-            said[1]
+            casting_point(&[lit, dark]).is_none(),
+            "a dark lamp casts nothing"
         );
+        assert!(casting_point(&[lit]).is_none());
     }
 
     #[test]

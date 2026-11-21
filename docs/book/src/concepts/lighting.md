@@ -63,7 +63,7 @@ outer_angle_deg = 23
 | `outer_angle_deg` | spot | f32 | about 28.6 | Cone edge half-angle, degrees (0 to 90). Wins over `outer_angle` |
 | `inner_angle` | spot | f32 | `0.3` | The older form, radians; read when `inner_angle_deg` is unset |
 | `outer_angle` | spot | f32 | `0.5` | The older form, radians; read when `outer_angle_deg` is unset |
-| `cast_shadows` | spot | bool | `false` | The spot casts a shadow from a shadow map of its own, softened by `source_radius`; one spot casts, the first by name that asks ([Spot light shadows](#spot-light-shadows)) |
+| `cast_shadows` | spot, point | bool | `false` | The light casts a shadow from a shadow map of its own (a cube of six for a point light), softened by `source_radius`; one spot and one point light cast, the first of each by name that asks ([Spot light shadows](#spot-light-shadows), [Point light shadows](#point-light-shadows)) |
 | `volumetric_intensity` | directional | f32 | `0.0` | God-ray strength for this light; see [Post-Processing](post-processing.md#volumetric-lighting-god-rays) |
 | `volumetric_color` | directional | [f32; 3] | light color | Tint of the shafts |
 
@@ -160,7 +160,40 @@ cast_shadows = true
 - **What it shadows**: meshes, skinned meshes, terrain, grass and the ocean receive it (grass and water since #1048, [Grass and water](#grass-and-water)); grass doesn't cast into it.
 - **Off** the same ways as every shadow: `--no-shadows`, F4, `[environment] shadows = false`, the quality tier's `shadows`. `material.cast_shadows = false` keeps a mesh out of the spot's map as it does out of the cascades.
 - **Cost**: one more depth pass over the casters in the spot's view, the filter on the pixels the spot lights (it is skipped outside the cone and past `range`), and one more layer of the texture (16 MB at the default 2048 texels, allocated whether or not a scene uses it). [`flint-examples/spot_shadow.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/spot_shadow.scene.toml) at 1920 x 1080 on an RTX 4070 (debug build, `--gpu-time 240`, p50): the depth pass 0.024 ms, the scene pass 0.075 ms without the shadow and 0.316 ms with it, so about 0.26 ms a frame. A scene with no spot asking draws exactly what it drew before.
-- **Point lights cast no shadow yet.** A point light with `cast_shadows = true` lights without one and says so; cube shadow maps are #1112. The strongest directional light casts the cascades whatever `cast_shadows` says, and a `false` on it is said once too.
+- **Point lights cast too**, from a cube ([Point light shadows](#point-light-shadows), next). The strongest directional light casts the cascades whatever `cast_shadows` says, and a `false` on it is said once.
+
+### Point light shadows
+
+A point light with **`cast_shadows = true`** casts a shadow every way at once (#1112, [ADR 0132](https://github.com/chrischaps/Flint/blob/main/docs/adr/0132-one-point-light-shadow-as-a-cube-atlas-layer.md)): a lantern on a table throws the table's shadow onto the floor on every side of it, and the cup beside the lantern throws its own across the tabletop. A spot can't stand in for that: whatever falls outside its cone goes unlit.
+
+```toml
+[entities.lantern_light.transform]
+position = [0.0, 0.94, 0.0]
+
+[entities.lantern_light.light]
+type = "point"
+color = [1.0, 0.72, 0.42]
+intensity = 9.0
+range = 9.0
+source_radius = 0.03     # a small flame: sharp near what casts, softer further off
+cast_shadows = true
+
+# The lantern's own glass and cap would shadow the whole room: keep them out
+[entities.lantern_cap.material]
+cast_shadows = false
+```
+
+![A lantern on a table, its light thrown onto the floor everywhere but under the table, and a cup's shadow across the top](../images/point-shadow.png)
+
+*A lantern on a table, with and without `cast_shadows`: the table top hides the floor around it on every side; the stool, in the table's shadow line, goes dark; the crate's top, just outside it, stays lit.*
+
+- **One point light casts**: the first by entity name that asks. Another point light that asks lights without a shadow and says so once (`shadow-cap`). It is a budget of its own: one spot and one point light can both cast. It must be among the 16 point lights the frame draws, and give light.
+- **The lamp's own body casts too.** A light inside a mesh (a lantern's glass, a bulb's shade) is shadowed by it everywhere. Give those parts `material.cast_shadows = false`; what's within a few centimetres of the light (its near plane, `range * 0.004`, at least 2 cm) is never drawn into the map.
+- **Six faces in one layer.** The map is a cube, one perspective down each axis out to the light's `range`, laid side by side in one more layer of the shadow texture, each face a third of `shadow_resolution` wide (682 texels at the default 2048). Each face reaches a little past its quarter turn, so a soft shadow that crosses from one face to the next has no seam.
+- **Softness is `source_radius`**, as for a spot: PCSS, the kernel turned a little each pixel; `0` is a hard 3x3 PCF shadow.
+- **What it shadows**: meshes, skinned meshes, terrain, grass and the ocean receive it; grass doesn't cast into it.
+- **Off** the same ways as every shadow: `--no-shadows`, F4, `[environment] shadows = false`, the quality tier's `shadows`.
+- **Cost**: one more pass over the casters near the lamp, each drawn once for each face it falls in, the filter on the pixels inside the light's `range`, and one more layer of the texture (16 MB at the default 2048 texels, allocated whether or not a scene uses it). The lantern above at 1920 x 1080 on an RTX 4070 (debug build, `--gpu-time 240`, p50): the depth pass 0.011 ms, the scene pass 0.089 ms without the shadow and 0.518 ms with it, about 0.43 ms a frame, since every pixel is within the lamp's `range` (a spot's filter runs only inside its cone). A scene with no point light asking draws exactly what it drew before.
 
 ## The `[environment]` Block
 
