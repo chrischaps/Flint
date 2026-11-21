@@ -665,6 +665,8 @@ impl FrameHost for CaptureFrame<'_> {
                 s.draw_distance_scale = draw.unwrap_or(s.draw_distance_scale);
                 renderer.set_lod_settings(s);
                 s = renderer.lod_settings();
+                // The quality keys they are (#1149), for get_quality()
+                game.core.script.set_quality_state(*renderer.quality());
             }
             game.core
                 .script

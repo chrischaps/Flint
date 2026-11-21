@@ -28,6 +28,9 @@ pub const MAX_SHADOW_DISTANCE: f32 = 500.0;
 /// The reach before quality settings existed: the cascades covered 0.1 to
 /// 200 m of view depth.
 pub const DEFAULT_SHADOW_DISTANCE: f32 = 200.0;
+/// The smallest LOD and draw-distance scale: zero would draw only a model's
+/// last level and nothing with a draw distance (#56).
+pub const MIN_DISTANCE_SCALE: f32 = 0.05;
 
 /// The renderer's load levers; see the module docs.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +63,12 @@ pub struct QualitySettings {
     pub ssao_samples: u32,
     pub fog: bool,
     pub volumetric: bool,
+    /// Multiplies every LOD switch distance, at least 0.05 (#56): under 1
+    /// a model drops to its simpler levels sooner, 1000 holds full detail.
+    pub lod_scale: f32,
+    /// Multiplies every entity's draw distance, at least 0.05: under 1 far
+    /// things stop drawing sooner.
+    pub draw_distance_scale: f32,
 }
 
 impl Default for QualitySettings {
@@ -80,6 +89,8 @@ impl Default for QualitySettings {
             ssao_samples: 64,
             fog: true,
             volumetric: true,
+            lod_scale: 1.0,
+            draw_distance_scale: 1.0,
         }
     }
 }
@@ -179,7 +190,7 @@ fn nearest_power_of_two(n: f64, lo: u32, hi: u32) -> u32 {
 
 impl QualitySettings {
     /// Every key, in the order [`Self::entries`] lists them.
-    pub const KEYS: [&'static str; 13] = [
+    pub const KEYS: [&'static str; 15] = [
         "render_scale",
         "render_scale_auto",
         "msaa",
@@ -193,7 +204,32 @@ impl QualitySettings {
         "ssao_samples",
         "fog",
         "volumetric",
+        "lod_scale",
+        "draw_distance_scale",
     ];
+
+    /// The defaults under the environment's aliases for four keys (#1149):
+    /// `FLINT_SHADOWS` (`shadows`), `FLINT_SHADOW_RES`
+    /// (`shadow_resolution`), `FLINT_LOD_SCALE` (`lod_scale`) and
+    /// `FLINT_DRAW_DISTANCE_SCALE` (`draw_distance_scale`). A host starts
+    /// from this and lays `--quality` over it, so the key wins.
+    pub fn from_env() -> Self {
+        use crate::env;
+        let mut q = Self::default();
+        if let Some(on) = env::SHADOWS.flag() {
+            q.shadows = on;
+        }
+        if let Some(res) = env::SHADOW_RES.u32() {
+            q.shadow_resolution = res;
+        }
+        if let Some(v) = env::LOD_SCALE.f32() {
+            q.lod_scale = v;
+        }
+        if let Some(v) = env::DRAW_DISTANCE_SCALE.f32() {
+            q.draw_distance_scale = v;
+        }
+        q.clamped()
+    }
 
     /// Clamp every value to what the renderer draws.
     pub fn clamped(mut self) -> Self {
@@ -216,6 +252,15 @@ impl QualitySettings {
             DEFAULT_SHADOW_DISTANCE
         };
         self.ssao_samples = self.ssao_samples.clamp(1, 64);
+        let scale = |v: f32| {
+            if v.is_finite() {
+                v.max(MIN_DISTANCE_SCALE)
+            } else {
+                1.0
+            }
+        };
+        self.lod_scale = scale(self.lod_scale);
+        self.draw_distance_scale = scale(self.draw_distance_scale);
         self
     }
 
@@ -243,6 +288,8 @@ impl QualitySettings {
             "ssao_samples" => self.ssao_samples = whole(num()?),
             "fog" => self.fog = flag()?,
             "volumetric" => self.volumetric = flag()?,
+            "lod_scale" => self.lod_scale = num()? as f32,
+            "draw_distance_scale" => self.draw_distance_scale = num()? as f32,
             _ => return Err(QualityError::UnknownKey(key.to_string())),
         }
         *self = self.clamped();
@@ -258,7 +305,7 @@ impl QualitySettings {
     }
 
     /// Every key and its value, in [`Self::KEYS`] order.
-    pub fn entries(&self) -> [(&'static str, QualityValue); 13] {
+    pub fn entries(&self) -> [(&'static str, QualityValue); 15] {
         use QualityValue::{Bool, Float, Int};
         [
             ("render_scale", Float(f32_to_f64(self.render_scale))),
@@ -274,6 +321,11 @@ impl QualitySettings {
             ("ssao_samples", Int(self.ssao_samples as i64)),
             ("fog", Bool(self.fog)),
             ("volumetric", Bool(self.volumetric)),
+            ("lod_scale", Float(f32_to_f64(self.lod_scale))),
+            (
+                "draw_distance_scale",
+                Float(f32_to_f64(self.draw_distance_scale)),
+            ),
         ]
     }
 
@@ -414,6 +466,30 @@ mod tests {
         assert_eq!(q.shadow_distance, MIN_SHADOW_DISTANCE);
         q.set("ssao_samples", QualityValue::Int(1000)).unwrap();
         assert_eq!(q.ssao_samples, 64);
+        q.set("lod_scale", QualityValue::Float(0.0)).unwrap();
+        assert_eq!(q.lod_scale, MIN_DISTANCE_SCALE);
+        q.set("lod_scale", QualityValue::Int(1000)).unwrap();
+        assert_eq!(q.lod_scale, 1000.0, "no ceiling: 1000 holds full detail");
+        q.set("draw_distance_scale", QualityValue::Float(-2.0))
+            .unwrap();
+        assert_eq!(q.draw_distance_scale, MIN_DISTANCE_SCALE);
+        assert!(q.set("lod_scale", QualityValue::Bool(true)).is_err());
+    }
+
+    /// The issue's second box, as a string: both distance levers are keys
+    #[test]
+    fn the_distance_levers_are_quality_keys() {
+        let mut q = QualitySettings::default();
+        assert!(q
+            .apply_str("lod_scale=0.5,draw_distance_scale=2")
+            .is_empty());
+        assert_eq!((q.lod_scale, q.draw_distance_scale), (0.5, 2.0));
+        assert!(q
+            .to_query()
+            .ends_with("lod_scale=0.5,draw_distance_scale=2"));
+        let mut back = QualitySettings::default();
+        assert!(back.apply_str(&q.to_query()).is_empty());
+        assert_eq!(back, q);
     }
 
     #[test]

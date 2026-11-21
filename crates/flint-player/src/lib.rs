@@ -14,6 +14,7 @@ pub mod logging;
 mod music;
 // `--skip-pass` / `--repeat-pass` (#1317)
 pub mod pass_knob_args;
+pub mod present_args;
 // `--perf-report FILE` (#1093)
 pub mod perf_report_args;
 // What a launch's options mean, whichever host read them (#1142)
@@ -101,6 +102,7 @@ pub use player_app::ProcGenMode;
 pub use player_app::StatsView;
 pub use player_app::{CaptureConfig, GameCore, LaunchOptions, PlayerApp, SceneSettings};
 pub use player_args::{launch, launch_bundle, PlayerArgs, PlayerCli, Prepared};
+pub use present_args::PresentArgs;
 #[cfg(not(target_arch = "wasm32"))]
 pub use provenance::git_state;
 pub use provenance::Provenance;

@@ -734,11 +734,16 @@ fn set_up_capture(
     // Quality settings over the flags above: the renderer's own state is the
     // starting point, so `--quality` names only what it changes.
     if let Some(quality) = &args.shading.quality {
+        let lod = renderer.lod_settings();
         let mut q = flint_render::QualitySettings {
             render_scale: renderer.render_scale(),
             msaa: renderer.msaa(),
             shadows: renderer.shadows_enabled(),
             shadow_resolution: renderer.shadow_resolution(),
+            // FLINT_LOD_SCALE / FLINT_DRAW_DISTANCE_SCALE, as the renderer
+            // started (#1149)
+            lod_scale: lod.lod_scale,
+            draw_distance_scale: lod.draw_distance_scale,
             ..Default::default()
         };
         if let Some(e) = q.apply_str(quality).first() {

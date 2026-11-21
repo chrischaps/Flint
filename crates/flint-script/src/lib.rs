@@ -32,6 +32,7 @@ pub mod projector;
 pub mod random;
 #[cfg(not(target_arch = "wasm32"))]
 mod reload_worker;
+pub mod rig;
 pub mod style_reader;
 pub mod sync;
 pub mod testing;
