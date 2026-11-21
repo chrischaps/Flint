@@ -280,7 +280,7 @@ F2's overlay shows the same under the draw counts, for the frame just ended (the
 [perf] GPU memory at exit: textures 102.1 MB (scene 8.2 style 8.5 shadow 64.0 model 21.3 glyph 0.0) meshes 6.3 MB device 9.2/114.6 MB
 ```
 
-A frame that creates objects also leaves a `gpu objects` frame note (`2 buffers, 1 bind group`), so a hitch's line names it beside its cause (`render +60.0 ms (also: gpu objects)`). A count is evidence, not a measured time, so it never takes the blame by itself. A host reads the frame's count with `SceneRenderer::frame_gpu_calls()` and the memory with `gpu_memory()`; `RenderStats` carries both as `gpu_calls` and `gpu_memory`.
+A frame that creates objects also leaves a `gpu objects` frame note (`2 buffers, 1 bind group`), so a hitch's line names it beside its cause (`render +60.0 ms (also: gpu objects)`). A count is evidence, not a measured time, so it never takes the blame by itself. A host reads the frame's count with `SceneRenderer::frame_gpu_calls()` and the memory with `SceneRenderer::gpu_memory()`; `RenderStats` carries both as `gpu_calls` and `gpu_memory`.
 
 #### When the adapter's timestamps read zero
 

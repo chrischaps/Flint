@@ -100,7 +100,7 @@ pub enum NoteKind {
 
 impl NoteKind {
     /// Every kind, in the order above.
-    pub const ALL: [NoteKind; 25] = [
+    pub const ALL: [NoteKind; 26] = [
         NoteKind::ModelLoad,
         NoteKind::TextureLoad,
         NoteKind::PipelineBuild,
