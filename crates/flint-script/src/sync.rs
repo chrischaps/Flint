@@ -30,6 +30,12 @@ pub struct ScriptSync {
     file_timestamps: HashMap<PathBuf, SystemTime>,
     /// Where scripts are looked for
     search: Option<ScriptSearch>,
+    /// Every `lib/` folder of the search, worked out when it is set: the
+    /// walk stats the disk (each level's directory key, the engine mount),
+    /// which on the frame thread cost every poll 0.2-0.3 ms and a busy
+    /// disk's frame 1-35 ms (#1122). The folders don't change while the
+    /// search doesn't; what is in them is `file_watch`'s.
+    lib_dirs: Vec<PathBuf>,
     /// The file each script was loaded from, and the nearer places it
     /// wasn't found: a file that appears in one of them takes over.
     located: HashMap<EntityId, Located>,
@@ -69,6 +75,7 @@ impl ScriptSync {
             discovered: HashSet::new(),
             file_timestamps: HashMap::new(),
             search: None,
+            lib_dirs: Vec::new(),
             located: HashMap::new(),
             lib_timestamps: BTreeMap::new(),
             to_reload: Vec::new(),
@@ -96,6 +103,7 @@ impl ScriptSync {
         self.discovered.clear();
         self.file_timestamps.clear();
         self.search = None;
+        self.lib_dirs.clear();
         self.located.clear();
         self.lib_timestamps.clear();
         self.to_reload.clear();
@@ -112,18 +120,30 @@ impl ScriptSync {
     /// a host with its own layout). A scene's scripts go through
     /// [`Self::set_search`].
     pub fn set_scripts_dir(&mut self, dir: PathBuf) {
-        self.search = Some(ScriptSearch::Dir(dir));
-        self.located.clear();
-        self.lib_timestamps = self.scan_libs();
+        self.set(ScriptSearch::Dir(dir));
     }
 
     /// Look for scripts where the project's one asset search does
     /// (`AssetKind::Scripts`, ADR 0114): `scripts/` beside the scene, in
     /// each directory above it up to the project root, then in the engine.
     pub fn set_search(&mut self, project: Project, scene_dir: PathBuf) {
-        self.search = Some(ScriptSearch::Project { project, scene_dir });
+        self.set(ScriptSearch::Project { project, scene_dir });
+    }
+
+    /// Set the search and work out its `lib/` folders: the one time hot
+    /// reload walks the search, which asks the disk (#1122).
+    fn set(&mut self, search: ScriptSearch) {
+        self.lib_dirs = match &search {
+            ScriptSearch::Dir(dir) => vec![dir.join("lib")],
+            ScriptSearch::Project { project, scene_dir } => project
+                .search_dirs(AssetKind::Scripts, scene_dir)
+                .into_iter()
+                .map(|dir| dir.join("lib"))
+                .collect(),
+        };
+        self.search = Some(search);
         self.located.clear();
-        self.lib_timestamps = self.scan_libs();
+        self.lib_timestamps = scan_dirs(&self.lib_dirs);
     }
 
     /// What `import` resolves against, once a search is set: the same
@@ -139,17 +159,9 @@ impl ScriptSync {
     }
 
     /// Every `lib/` folder an `import` can be answered from, nearest first
-    /// (whether or not it exists yet).
-    pub fn lib_dirs(&self) -> Vec<PathBuf> {
-        match &self.search {
-            None => Vec::new(),
-            Some(ScriptSearch::Dir(dir)) => vec![dir.join("lib")],
-            Some(ScriptSearch::Project { project, scene_dir }) => project
-                .search_dirs(AssetKind::Scripts, scene_dir)
-                .into_iter()
-                .map(|dir| dir.join("lib"))
-                .collect(),
-        }
+    /// (whether or not it exists yet), as found when the search was set.
+    pub fn lib_dirs(&self) -> &[PathBuf] {
+        &self.lib_dirs
     }
 
     /// The file a script component's `source` names, from `from_dir` (the
@@ -318,19 +330,22 @@ impl ScriptSync {
     fn poll_hot_reload(&mut self, engine: &mut ScriptEngine, world: &mut FlintWorld) {
         let worker = self.reload_worker();
         if worker {
+            flint_core::scope!("script::poll_take_finished");
             self.take_finished(engine, world);
         }
 
         // A script that didn't compile at load, saved since: discovered
         // afresh by the `discover_and_load` that follows (#693)
-        let saved: Vec<EntityId> = self
-            .failed_at_load
-            .iter()
-            .filter(|(_, (path, then))| {
-                file_watch::modified(path).is_some_and(|now| then.is_none_or(|t| now > t))
-            })
-            .map(|(id, _)| *id)
-            .collect();
+        let saved: Vec<EntityId> = {
+            flint_core::scope!("script::poll_failed_at_load", self.failed_at_load.len());
+            self.failed_at_load
+                .iter()
+                .filter(|(_, (path, then))| {
+                    file_watch::modified(path).is_some_and(|now| then.is_none_or(|t| now > t))
+                })
+                .map(|(id, _)| *id)
+                .collect()
+        };
         for entity_id in saved {
             if let Some((path, _)) = self.failed_at_load.remove(&entity_id) {
                 engine.file_reloaded(&crate::errors::shown_file(&path));
@@ -340,7 +355,10 @@ impl ScriptSync {
 
         // A changed shared module invalidates every importer: drop the
         // resolver cache and recompile every script.
-        let lib_now = self.scan_libs();
+        let lib_now = {
+            flint_core::scope!("script::poll_scan_libs", self.lib_dirs.len());
+            scan_dirs(&self.lib_dirs)
+        };
         if lib_now != self.lib_timestamps {
             let files: Vec<PathBuf> = lib_now.keys().cloned().collect();
             self.lib_timestamps = lib_now;
@@ -351,45 +369,48 @@ impl ScriptSync {
             }
         }
 
-        for (entity_id, script) in &engine.scripts {
-            // A script a test or a host added by hand is located now.
-            if !self.located.contains_key(entity_id) {
-                match self.locate(&script.source_path, None) {
-                    Ok(located) => drop(self.located.insert(*entity_id, located)),
-                    Err(_) => continue,
-                }
-            }
-            // A file of this name has appeared somewhere nearer than the one
-            // loaded: the search now answers with it, so it takes over.
-            let nearer = self.located[entity_id]
-                .nearer
-                .iter()
-                .any(|path| file_watch::stamp(path).is_some());
-            if nearer {
-                let from = self.located[entity_id].from_dir.clone();
-                if let Ok(now) = self.locate(&script.source_path, from.as_deref()) {
-                    if now.path != self.located[entity_id].path {
-                        tracing::info!(target: "script",
-                            "[script] {} is now {}",
-                            script.source_path,
-                            flint_core::project::shown(&now.path)
-                        );
-                        Self::queue(&mut self.to_reload, *entity_id, now.path.clone());
+        {
+            flint_core::scope!("script::poll_each_script", engine.scripts.len());
+            for (entity_id, script) in &engine.scripts {
+                // A script a test or a host added by hand is located now.
+                if !self.located.contains_key(entity_id) {
+                    match self.locate(&script.source_path, None) {
+                        Ok(located) => drop(self.located.insert(*entity_id, located)),
+                        Err(_) => continue,
                     }
-                    self.located.insert(*entity_id, now);
                 }
-            }
-            let script_path = self.located[entity_id].path.clone();
-            // Hot reload watches the disk (a memory source has no mtimes).
-            let changed = match file_watch::modified(&script_path) {
-                Some(current) => self
-                    .file_timestamps
-                    .get(&script_path)
-                    .is_none_or(|last| current > *last),
-                None => false,
-            };
-            if changed {
-                Self::queue(&mut self.to_reload, *entity_id, script_path);
+                // A file of this name has appeared somewhere nearer than the one
+                // loaded: the search now answers with it, so it takes over.
+                let nearer = self.located[entity_id]
+                    .nearer
+                    .iter()
+                    .any(|path| file_watch::stamp(path).is_some());
+                if nearer {
+                    let from = self.located[entity_id].from_dir.clone();
+                    if let Ok(now) = self.locate(&script.source_path, from.as_deref()) {
+                        if now.path != self.located[entity_id].path {
+                            tracing::info!(target: "script",
+                                "[script] {} is now {}",
+                                script.source_path,
+                                flint_core::project::shown(&now.path)
+                            );
+                            Self::queue(&mut self.to_reload, *entity_id, now.path.clone());
+                        }
+                        self.located.insert(*entity_id, now);
+                    }
+                }
+                let script_path = self.located[entity_id].path.clone();
+                // Hot reload watches the disk (a memory source has no mtimes).
+                let changed = match file_watch::modified(&script_path) {
+                    Some(current) => self
+                        .file_timestamps
+                        .get(&script_path)
+                        .is_none_or(|last| current > *last),
+                    None => false,
+                };
+                if changed {
+                    Self::queue(&mut self.to_reload, *entity_id, script_path);
+                }
             }
         }
 
@@ -429,15 +450,6 @@ impl ScriptSync {
                 Self::queue(&mut self.to_reload, *entity_id, located.path.clone());
             }
         }
-    }
-
-    /// Every `.rhai` under every `lib/` the search can see, with its stamp.
-    fn scan_libs(&self) -> BTreeMap<PathBuf, file_watch::Stamp> {
-        let mut out = BTreeMap::new();
-        for lib in self.lib_dirs() {
-            out.extend(scan_lib(&lib));
-        }
-        out
     }
 
     /// Swap a compiled script in (or keep the old one on an error), and
@@ -582,6 +594,15 @@ impl ScriptSync {
 /// [`file_watch`].
 fn scan_lib(lib: &Path) -> BTreeMap<PathBuf, file_watch::Stamp> {
     file_watch::tree(lib, "rhai")
+}
+
+/// [`scan_lib`] over each of `libs`, into one snapshot.
+fn scan_dirs(libs: &[PathBuf]) -> BTreeMap<PathBuf, file_watch::Stamp> {
+    let mut out = BTreeMap::new();
+    for lib in libs {
+        out.extend(scan_lib(lib));
+    }
+    out
 }
 
 /// Where a [`ScriptSync`] looks for scripts.
