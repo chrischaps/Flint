@@ -11,7 +11,7 @@
 //! without the panels. A fix to resizing, surface loss, DPI or the camera
 //! flags is made here once, for all of them.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -277,6 +277,20 @@ pub trait Editor {
         Vec::new()
     }
 
+    /// Folders watched with everything under them, the same way (the scene
+    /// viewer's `--watch`: the scene's folder and the schema folders).
+    fn watched_folders(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
+    /// Whether a change to `path` counts. A debounced batch of changes none
+    /// of which counts calls nothing (#429: the scene viewer leaves a user
+    /// style's WGSL and description to the style's own reload). Asked on
+    /// the frame's thread, so it may read the editor.
+    fn file_change_counts(&self, _path: &Path) -> bool {
+        true
+    }
+
     /// A watched file changed on disk.
     fn on_file_changed(&mut self) {}
 
@@ -494,39 +508,68 @@ impl FrameTimer {
     }
 }
 
-/// A debounced watch on the editor's files, raising a flag the frame reads.
+/// A debounced watch on the editor's files and folders, keeping the paths
+/// that changed for the frame to hand to [`Editor::file_change_counts`].
 struct FileWatch {
+    /// Set with each batch, so a frame with nothing new takes no lock
     changed: Arc<AtomicBool>,
+    paths: Arc<std::sync::Mutex<Vec<PathBuf>>>,
     _debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
 }
 
 impl FileWatch {
-    fn new(files: &[PathBuf]) -> Result<Self> {
+    fn new(files: &[PathBuf], folders: &[PathBuf]) -> Result<Self> {
         use notify_debouncer_mini::notify::RecursiveMode;
         let changed = Arc::new(AtomicBool::new(false));
-        let flag = Arc::clone(&changed);
+        let paths = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (flag, sink) = (Arc::clone(&changed), Arc::clone(&paths));
         let mut debouncer = notify_debouncer_mini::new_debouncer(
             Duration::from_millis(400),
             move |result: notify_debouncer_mini::DebounceEventResult| match result {
-                Ok(_) => flag.store(true, Ordering::Release),
+                Ok(events) => {
+                    if let Ok(mut paths) = sink.lock() {
+                        paths.extend(events.into_iter().map(|e| e.path));
+                    }
+                    flag.store(true, Ordering::Release);
+                }
                 Err(e) => tracing::warn!("Watch error: {:?}", e),
             },
         )?;
-        for file in files {
+        let watched = files
+            .iter()
+            .map(|f| (f, RecursiveMode::NonRecursive))
+            .chain(folders.iter().map(|d| (d, RecursiveMode::Recursive)));
+        for (path, mode) in watched {
             debouncer
                 .watcher()
-                .watch(file, RecursiveMode::NonRecursive)
-                .with_context(|| format!("can't watch {}", file.display()))?;
+                .watch(path, mode)
+                .with_context(|| format!("can't watch {}", path.display()))?;
         }
         Ok(Self {
             changed,
+            paths,
             _debouncer: debouncer,
         })
     }
 
-    fn take(&self) -> bool {
-        self.changed.swap(false, Ordering::AcqRel)
+    /// The paths changed since the last take, if any batch came.
+    fn take(&self) -> Option<Vec<PathBuf>> {
+        if !self.changed.swap(false, Ordering::AcqRel) {
+            return None;
+        }
+        Some(
+            self.paths
+                .lock()
+                .map(|mut p| std::mem::take(&mut *p))
+                .unwrap_or_default(),
+        )
     }
+}
+
+/// Whether a batch of changed paths calls [`Editor::on_file_changed`]:
+/// any one that counts does.
+fn batch_counts(paths: &[PathBuf], counts: impl Fn(&Path) -> bool) -> bool {
+    paths.iter().any(|p| counts(p))
 }
 
 struct Host<E: Editor> {
@@ -575,9 +618,9 @@ impl<E: Editor> Host<E> {
         })?;
         lay_camera(&mut self.editor, &self.options, &gpu);
 
-        let files = self.editor.watched_files();
-        if !files.is_empty() {
-            self.watch = Some(FileWatch::new(&files)?);
+        let (files, folders) = (self.editor.watched_files(), self.editor.watched_folders());
+        if !files.is_empty() || !folders.is_empty() {
+            self.watch = Some(FileWatch::new(&files, &folders)?);
         }
 
         self.egui_winit = Some(egui_winit::State::new(
@@ -684,8 +727,13 @@ impl<E: Editor> Host<E> {
         if let Some(done) = self.timer.begin(self.clock.last, timed, refresh) {
             self.editor.frame_timed(&done);
         }
-        if self.watch.as_ref().is_some_and(FileWatch::take) {
-            self.editor.on_file_changed();
+        if let Some(paths) = self.watch.as_ref().and_then(FileWatch::take) {
+            let editor = &self.editor;
+            if batch_counts(&paths, |p| editor.file_change_counts(p)) {
+                self.editor.on_file_changed();
+            } else {
+                tracing::debug!("{} changed path(s), none the editor counts", paths.len());
+            }
         }
         if let Some((camera, orbit)) = self.editor.orbit() {
             orbit.update(camera, tick.dt);
@@ -977,6 +1025,49 @@ mod tests {
         assert!(timer.open.is_none());
         let next = timer.begin(t1 + Duration::from_millis(51), true, None);
         assert_eq!(next, None, "a frame after a closed one starts afresh");
+    }
+
+    /// What a watch hands the frame within `secs`, polled as a frame would.
+    fn changes_within(watch: &FileWatch, secs: u64) -> Vec<PathBuf> {
+        let until = Instant::now() + Duration::from_secs(secs);
+        let mut seen = Vec::new();
+        while Instant::now() < until {
+            if let Some(paths) = watch.take() {
+                seen.extend(paths);
+            }
+            if !seen.is_empty() {
+                // One more debounce window, for a second batch
+                std::thread::sleep(Duration::from_millis(600));
+                seen.extend(watch.take().unwrap_or_default());
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        seen
+    }
+
+    #[test]
+    fn a_watched_folder_sees_a_file_deep_inside_it_and_the_editor_filters() {
+        let dir = std::env::temp_dir().join(format!("flint-host-watch-{}", std::process::id()));
+        let deep = dir.join("styles").join("lib");
+        std::fs::create_dir_all(&deep).unwrap();
+        let watch = FileWatch::new(&[], std::slice::from_ref(&dir)).unwrap();
+        assert!(watch.take().is_none(), "nothing changed yet");
+
+        let wgsl = deep.join("noise.wgsl");
+        std::fs::write(&wgsl, "// one").unwrap();
+        let paths = changes_within(&watch, 10);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let named = |p: &PathBuf| p.file_name().is_some_and(|n| n == "noise.wgsl");
+        assert!(paths.iter().any(named), "{paths:?}");
+        // A filter that leaves WGSL out counts none of the batch; one that
+        // takes everything counts it
+        let not_wgsl = |p: &Path| p.extension().is_none_or(|e| e != "wgsl");
+        let only_wgsl: Vec<PathBuf> = paths.iter().filter(|p| named(p)).cloned().collect();
+        assert!(!batch_counts(&only_wgsl, not_wgsl));
+        assert!(batch_counts(&only_wgsl, |_| true));
+        assert!(!batch_counts(&[], |_| true), "an empty batch calls nothing");
     }
 
     #[test]
