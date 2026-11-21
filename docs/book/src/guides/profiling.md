@@ -210,6 +210,33 @@ Under vsync the GPU finishes a frame and then waits for the display, and a GPU t
 
 Here the frame read 3.9 ms against 2.8 unlocked, about 1.4x; in #270 (DX12, 1080p) SSAO read 4.4 ms under vsync against 0.80 without, about 5x. To compare passes, take them with `FLINT_VSYNC=0` or with `flint render --gpu-time`, which presents nothing. The share is the GPU's frame time over the mean time between frames, not the median: under Fifo on a hybrid-GPU laptop frames come in bursts (see Frame pacing below), and the median frame there was 5 ms at a 60 fps mean.
 
+#### The mean frame, and when it is the GPU's
+
+One frame's time snaps to whole refreshes under vsync: a frame whose GPU work takes 38 ms is shown at 33 or 50 ms, and the p50 says 33.4. The line's `mean` part doesn't snap. It is the window's span over its frames, and when the GPU is what holds the frames back, it is the GPU's time a frame. The line then says `GPU-bound`, with what it judged from:
+
+```text
+… | frame p50 33.4 p90 50.0 p99 50.1 max 50.1 ms (260 frames/10s) | mean 38.40 ms a frame, GPU-bound (guess: unpaced, player 2.48 ms, refresh 16.67 ms) | …
+```
+
+It is a guess from the CPU side, so it names its inputs. All three must hold:
+
+- **unpaced**: the web player has no `?fps=` pacer (`fps=native`). A paced frame waits for the pacer, so `?fps=60` or the phone's default `auto` never says GPU-bound.
+- **the player's work**, every phase but the swapchain's `acquire` and `present` waits, is under half the frame. A GPU-bound desktop frame spends its time in `acquire`, waiting for a free image, and that wait isn't counted as work.
+- **under vsync, the frames miss the refresh**: the mean is at least 1.15 refreshes. A frame that holds the refresh is the display's, however light its GPU. The refresh is the monitor's on the desktop and the pacer's on the web. An unpaced page reads it from the same frame intervals. With `FLINT_VSYNC=0` nothing holds the frames but the GPU, and the line says `no vsync` instead.
+
+Otherwise the part is just `mean 16.67 ms a frame`. Measured on an RTX 4070 laptop:
+
+| run | frame p50 | mean | GPU timestamps | flag |
+|---|---|---|---|---|
+| Chrome 157, Float + `style=kuwahara`, 3840x2160, `fps=native` | 33.4 | 38.40–38.78 | 38.2–39.1 | GPU-bound |
+| the same page, `fps=60` | 33.4 | 38.40–38.85 | 37.9–38.6 | none (paced) |
+| Chrome, Float, 3840x2160, `fps=native` | 16.7 | 16.67–16.75 | 7.5–8.8 | none (holds 60 Hz) |
+| `flint-player`, tavern, 3840x2160, vsync | 28.2 | 28.19 | 28.38 | GPU-bound |
+| `flint-player`, tavern, 1920x1080, `FLINT_VSYNC=0` | 6.8 | 7.13 | 6.83 | GPU-bound |
+| `flint-player`, a script busy 8 ms a frame, `FLINT_VSYNC=0` | 9.2 | 11.94 | 2.37 | none (player 11.6 ms) |
+
+In the browser the page also counted 258 to 261 submissions between two reads 10 s apart, one a frame, which is 38.3 to 38.8 ms a frame. A hitch in the window lengthens the mean: the 1080p tavern's other window held a 389 ms hitch and read 7.79 ms against 6.98. A frame held by the browser's own main thread or the compositor reads as GPU-bound too, so check a flagged window against the GPU times where the adapter has them. Where it doesn't, as on the Pixel 8 Pro whose Mali reads 0 for every pass after Scene, this is the number to read: `?perf=1&fps=native&scale=1` makes every page GPU-bound, and `tools/web-perf/run.mjs --rounds N` (or `tools/phone-perf/submits.mjs` on the phone) plays the pages in turns, so each is read against its own round's control.
+
 ### From a game
 
 Timing belongs to the renderer, which an extension reaches through `ExtensionCtx::gpu`:
