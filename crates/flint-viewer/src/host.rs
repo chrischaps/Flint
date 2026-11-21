@@ -152,6 +152,38 @@ pub struct Tick {
     pub fps: f32,
 }
 
+/// One frame's phases as the host timed them (#1110), for an editor that
+/// asks ([`Editor::times_frames`]). Handed over when the next frame begins,
+/// since a frame's wall time runs to there. Times are ms.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FrameTimes {
+    /// When it began, seconds since the host first timed a frame
+    pub at: f64,
+    /// Its begin to the next frame's begin
+    pub wall_ms: f32,
+    /// The file watch, the orbit camera and [`Editor::update`]
+    pub update_ms: f32,
+    /// The wait for a swapchain image (under vsync, often the display's)
+    pub acquire_ms: f32,
+    /// [`Editor::draw`]: the scene drawn and submitted
+    pub draw_ms: f32,
+    /// egui: [`Editor::ui`] run, tessellated, painted and submitted
+    pub ui_ms: f32,
+    /// Handing the frame to the swapchain
+    pub present_ms: f32,
+    /// The display's refresh period, if its monitor says
+    pub refresh_ms: Option<f32>,
+}
+
+impl FrameTimes {
+    /// The wall time no phase accounts for: the event loop, the OS, the
+    /// driver, the compositor.
+    pub fn unaccounted_ms(&self) -> f32 {
+        let phases = self.update_ms + self.acquire_ms + self.draw_ms + self.ui_ms + self.present_ms;
+        (self.wall_ms - phases).max(0.0)
+    }
+}
+
 /// What an editor did with an event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Flow {
@@ -265,6 +297,16 @@ pub trait Editor {
     /// Advance the editor's state for this frame.
     fn update(&mut self, _tick: Tick) {}
 
+    /// Whether the host times this frame's phases for
+    /// [`Editor::frame_timed`]. Asked once a frame; while it says no, the
+    /// host takes no time and keeps nothing for it.
+    fn times_frames(&self) -> bool {
+        false
+    }
+
+    /// The last frame's phases, as a frame the host timed begins.
+    fn frame_timed(&mut self, _times: &FrameTimes) {}
+
     /// Draw the editor's view into the target.
     fn draw(&mut self, target: &Target);
 
@@ -310,6 +352,8 @@ pub fn run(editor: impl Editor, options: HostOptions) -> Result<()> {
         egui_winit: None,
         egui_renderer: None,
         clock: FrameClock::new(),
+        timer: FrameTimer::default(),
+        refresh_ms: None,
         watch: None,
         error: None,
     };
@@ -401,6 +445,55 @@ impl FrameClock {
     }
 }
 
+/// The phases of frames an editor asked to have timed (#1110). Holds a
+/// frame only while it is being timed: one the editor didn't ask for opens
+/// nothing, and each [`lap`](Self::lap) on it is one branch.
+#[derive(Default)]
+struct FrameTimer {
+    /// The first timed frame's begin, the epoch of every `at`
+    epoch: Option<Instant>,
+    /// The frame under way: its times so far and the last lap's end
+    open: Option<(FrameTimes, Instant)>,
+}
+
+impl FrameTimer {
+    /// A frame begins at `now`, timed if `timed`. Returns the frame before,
+    /// closed at `now`, when it was timed and this one is too (an editor
+    /// that stopped asking is handed nothing more).
+    fn begin(&mut self, now: Instant, timed: bool, refresh_ms: Option<f32>) -> Option<FrameTimes> {
+        let last = self.open.take();
+        if !timed {
+            return None;
+        }
+        let epoch = *self.epoch.get_or_insert(now);
+        let at = now.duration_since(epoch).as_secs_f64();
+        let times = FrameTimes {
+            at,
+            refresh_ms,
+            ..Default::default()
+        };
+        self.open = Some((times, now));
+        last.map(|(mut done, _)| {
+            done.wall_ms = ((at - done.at) * 1000.0) as f32;
+            done
+        })
+    }
+
+    /// The time since the last lap, added to the open frame's `phase`.
+    fn lap(&mut self, phase: fn(&mut FrameTimes) -> &mut f32) {
+        if let Some((times, last)) = &mut self.open {
+            let now = Instant::now();
+            *phase(times) += now.duration_since(*last).as_secs_f32() * 1000.0;
+            *last = now;
+        }
+    }
+
+    /// The frame drew nothing (its surface was lost): it is not handed on.
+    fn abandon(&mut self) {
+        self.open = None;
+    }
+}
+
 /// A debounced watch on the editor's files, raising a flag the frame reads.
 struct FileWatch {
     changed: Arc<AtomicBool>,
@@ -446,6 +539,11 @@ struct Host<E: Editor> {
     egui_winit: Option<egui_winit::State>,
     egui_renderer: Option<egui_wgpu::Renderer>,
     clock: FrameClock,
+    /// The phases of frames the editor asked to have timed
+    timer: FrameTimer,
+    /// The window's monitor's refresh period, ms, once asked; forgotten
+    /// when the window moves, so it is asked of the monitor it moved to
+    refresh_ms: Option<Option<f32>>,
     watch: Option<FileWatch>,
     /// Why the editor couldn't open, returned from [`run`]
     error: Option<anyhow::Error>,
@@ -563,8 +661,29 @@ impl<E: Editor> Host<E> {
         }
     }
 
+    /// The window's monitor's refresh period, ms, asked of the monitor
+    /// once and again after the window moves.
+    fn refresh_ms(&mut self) -> Option<f32> {
+        if self.refresh_ms.is_none() {
+            let mhz = self
+                .window
+                .as_ref()
+                .and_then(|w| w.current_monitor())
+                .and_then(|m| m.refresh_rate_millihertz())
+                .filter(|&mhz| mhz > 0);
+            self.refresh_ms = Some(mhz.map(|mhz| 1_000_000.0 / mhz as f32));
+        }
+        self.refresh_ms.flatten()
+    }
+
     fn frame(&mut self) {
         let tick = self.clock.tick();
+        // The last frame's phases for an editor that times them (F2's graph)
+        let timed = self.editor.times_frames();
+        let refresh = if timed { self.refresh_ms() } else { None };
+        if let Some(done) = self.timer.begin(self.clock.last, timed, refresh) {
+            self.editor.frame_timed(&done);
+        }
         if self.watch.as_ref().is_some_and(FileWatch::take) {
             self.editor.on_file_changed();
         }
@@ -572,9 +691,10 @@ impl<E: Editor> Host<E> {
             orbit.update(camera, tick.dt);
         }
         self.editor.update(tick);
+        self.timer.lap(|t| &mut t.update_ms);
 
         let (Some(context), Some(gpu)) = (&self.context, &self.gpu) else {
-            return;
+            return self.timer.abandon();
         };
         let output = match context.surface.acquire() {
             Ok(output) => output,
@@ -582,13 +702,14 @@ impl<E: Editor> Host<E> {
                 // Configure the surface again at its size; the next frame draws
                 let size = context.size;
                 self.resize(size);
-                return;
+                return self.timer.abandon();
             }
             Err(e) => {
                 tracing::warn!("Surface error: {:?}", e);
-                return;
+                return self.timer.abandon();
             }
         };
+        self.timer.lap(|t| &mut t.acquire_ms);
         // The scene into the sRGB view, egui into the plain one, as the
         // player does (#428)
         let view = context.frame_view(&output.texture);
@@ -598,12 +719,15 @@ impl<E: Editor> Host<E> {
             depth: context.depth_target(),
             gpu,
         });
+        self.timer.lap(|t| &mut t.draw_ms);
         if self.editor.show_ui() {
             self.paint_ui(&hud_view);
         }
+        self.timer.lap(|t| &mut t.ui_ms);
         if let Some(context) = &self.context {
             context.queue.present(output);
         }
+        self.timer.lap(|t| &mut t.present_ms);
     }
 
     /// Run the editor's panels and paint them over the frame.
@@ -705,6 +829,10 @@ impl<E: Editor> ApplicationHandler for Host<E> {
             WindowEvent::CloseRequested => return event_loop.exit(),
             WindowEvent::Resized(size) => return self.resize(*size),
             WindowEvent::RedrawRequested => return self.frame(),
+            // Perhaps onto another monitor, with another refresh
+            WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                self.refresh_ms = None;
+            }
             WindowEvent::KeyboardInput { event: key, .. } => {
                 // WASD/QE held for the keyboard orbit, whatever the editor does
                 if let Some((_, orbit)) = self.editor.orbit() {
@@ -811,6 +939,44 @@ mod tests {
         assert_eq!(camera.distance, 9.0);
         assert_eq!(camera.yaw, 0.25, "a flag left out keeps the editor's");
         assert!((camera.pitch - 30f32.to_radians()).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_frame_nobody_asked_to_time_keeps_nothing() {
+        let mut timer = FrameTimer::default();
+        let t0 = Instant::now();
+        assert_eq!(timer.begin(t0, false, None), None);
+        timer.lap(|t| &mut t.update_ms);
+        assert!(timer.open.is_none() && timer.epoch.is_none());
+    }
+
+    #[test]
+    fn a_timed_frame_is_handed_on_with_its_wall_time_when_the_next_begins() {
+        let mut timer = FrameTimer::default();
+        let t0 = Instant::now();
+        assert_eq!(timer.begin(t0, true, Some(16.7)), None, "nothing before it");
+        timer.lap(|t| &mut t.update_ms);
+        timer.lap(|t| &mut t.draw_ms);
+        let t1 = t0 + Duration::from_millis(20);
+        let done = timer.begin(t1, true, Some(16.7)).expect("the first frame");
+        assert_eq!(done.at, 0.0);
+        assert!((done.wall_ms - 20.0).abs() < 1e-3, "{}", done.wall_ms);
+        assert_eq!(done.refresh_ms, Some(16.7));
+        assert!(done.update_ms + done.draw_ms <= done.wall_ms + 1.0);
+        assert!(done.unaccounted_ms() >= 0.0);
+        // An abandoned frame isn't handed on; nor is one once F2 closes
+        timer.abandon();
+        assert_eq!(
+            timer.begin(t1 + Duration::from_millis(17), true, None),
+            None
+        );
+        assert_eq!(
+            timer.begin(t1 + Duration::from_millis(34), false, None),
+            None
+        );
+        assert!(timer.open.is_none());
+        let next = timer.begin(t1 + Duration::from_millis(51), true, None);
+        assert_eq!(next, None, "a frame after a closed one starts afresh");
     }
 
     #[test]

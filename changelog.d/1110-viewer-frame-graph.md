@@ -1,0 +1,3 @@
+### `flint edit <scene>`: F2 shows the frame-time graph (#1110)
+**What changed.** The scene viewer's F2 overlay now opens with the player's frame-time graph and hitch counters above its rendering stats, each bar split into `update`, `render`, `egui` and `elsewhere`. The viewer times its frames only while F2 is open; closed, it records nothing (it used to keep a second of frame times all the time for its FPS row). An editor built on `flint_viewer::host` can ask for its frames' phases the same way, through `Editor::times_frames` and `Editor::frame_timed(&FrameTimes)`. `GameClock::advance_wall(secs)` paces a wall time the caller measured itself.
+**What to do.** Nothing.

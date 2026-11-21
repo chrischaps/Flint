@@ -5,7 +5,7 @@ use crate::edits::FieldEdits;
 use crate::host::{self, Editor, Flow, Gpu, HostOptions, InitCx, Target, Tick};
 use crate::panels::transform_gizmo::apply_gizmo_delta;
 use crate::panels::{
-    CameraView, DiagnosticsPanel, EntityInspector, GizmoAction, GizmoMode, RenderStats, SceneTree,
+    CameraView, DiagnosticsPanel, EntityInspector, FrameStats, GizmoAction, GizmoMode, SceneTree,
     SplinePanelAction, TransformGizmo, ViewGizmo,
 };
 use crate::picking::{build_pick_targets, pick_entity};
@@ -382,7 +382,8 @@ pub struct ViewerApp {
     // Panel state
     scene_tree: SceneTree,
     entity_inspector: EntityInspector,
-    render_stats: RenderStats,
+    /// F2's frame history and graph, fed only while F2 is open (#1110)
+    frame_stats: FrameStats,
     show_stats: bool,
     view_gizmo: ViewGizmo,
     transform_gizmo: TransformGizmo,
@@ -719,7 +720,7 @@ impl ViewerApp {
             show_inspector,
             scene_tree: SceneTree::new(),
             entity_inspector: EntityInspector::new(),
-            render_stats: RenderStats::new(),
+            frame_stats: FrameStats::new(),
             show_stats: false,
             view_gizmo: ViewGizmo::new(),
             transform_gizmo: TransformGizmo::new(),
@@ -789,7 +790,7 @@ impl ViewerApp {
             show_inspector: true,
             scene_tree: SceneTree::new(),
             entity_inspector: EntityInspector::new(),
-            render_stats: RenderStats::new(),
+            frame_stats: FrameStats::new(),
             show_stats: false,
             view_gizmo: ViewGizmo::new(),
             transform_gizmo: TransformGizmo::new(),
@@ -1049,8 +1050,6 @@ impl ViewerApp {
 
         // Animate camera snap transitions
         self.animate_camera();
-
-        self.render_stats.record_frame();
 
         // Track the last selected entity so DoF follow keeps its target
         // after a deselect, and drive the focus plane while F12 is on.
@@ -1610,7 +1609,7 @@ impl ViewerApp {
         // Build the UI — we need to collect data for the closure without borrowing self
         let scene_tree = &mut self.scene_tree;
         let entity_inspector = &mut self.entity_inspector;
-        let render_stats = &self.render_stats;
+        let frame_stats = &mut self.frame_stats;
         let violation_count = self.violation_count;
         let violation_messages = &self.violation_messages;
         let diagnostics = &self.diagnostics;
@@ -1631,8 +1630,7 @@ impl ViewerApp {
         let overlay_stats: Option<flint_render::RenderStats> = if self.show_stats {
             self.scene_renderer.as_ref().map(|r| {
                 let mut s = r.collect_stats();
-                s.fps = render_stats.fps();
-                s.frame_time_ms = if s.fps > 0.0 { 1000.0 / s.fps } else { 0.0 };
+                (s.fps, s.frame_time_ms) = frame_stats.fps();
                 if let Some(ctx) = &self.render_context {
                     s.resolution = [ctx.width, ctx.height];
                 }
@@ -1968,7 +1966,7 @@ impl ViewerApp {
 
             // Render stats overlay (F2 toggle)
             if let Some(ref s) = overlay_stats {
-                render_stats_overlay(ctx, s);
+                render_stats_overlay(ctx, s, frame_stats);
             }
         }
 
@@ -2894,6 +2892,9 @@ impl Editor for ViewerApp {
                         }
                         PhysicalKey::Code(KeyCode::F2) => {
                             self.show_stats = !self.show_stats;
+                            if self.show_stats {
+                                self.frame_stats.reset();
+                            }
                         }
                         PhysicalKey::Code(KeyCode::F3) => {
                             if let Some(renderer) = &mut self.scene_renderer {
@@ -2994,6 +2995,15 @@ impl Editor for ViewerApp {
         self.frame_update();
     }
 
+    /// The host times frames only while F2 shows the graph.
+    fn times_frames(&self) -> bool {
+        self.show_stats
+    }
+
+    fn frame_timed(&mut self, times: &host::FrameTimes) {
+        self.frame_stats.record(times);
+    }
+
     fn draw(&mut self, target: &Target) {
         if let Some(renderer) = &mut self.scene_renderer {
             target.render(renderer, &self.camera);
@@ -3045,12 +3055,19 @@ fn lerp_angle(from: f32, to: f32, t: f32) -> f32 {
     from + shortest_angle_diff(from, to) * t
 }
 
-fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) {
+/// F2: the frame-time graph (#1110) above the rendering stats.
+fn render_stats_overlay(
+    ctx: &egui::Context,
+    stats: &flint_render::RenderStats,
+    frames: &mut FrameStats,
+) {
     use flint_render::format_count;
 
     egui::Area::new(egui::Id::new("render_stats_overlay"))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
         .order(egui::Order::Foreground)
+        // A readout: clicks go through to the inspector under it
+        .interactable(false)
         .show(ctx, |ui| {
             egui::Frame::NONE
                 .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 209))
@@ -3068,6 +3085,9 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) 
                         egui::Color32::from_gray(136),
                         egui::RichText::new("RENDERING STATS").size(9.0),
                     );
+                    ui.separator();
+
+                    frames.ui(ui);
                     ui.separator();
 
                     ui.horizontal(|ui| {
