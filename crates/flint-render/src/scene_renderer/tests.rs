@@ -127,3 +127,64 @@ fn a_render_scale_step_keeps_the_style_targets() {
     renderer.resize_postprocess(&ctx.device, 128, 64);
     assert!(!std::sync::Arc::ptr_eq(&before, &probe(&renderer)));
 }
+
+/// Every pipeline the main and shadow passes can draw through has a name
+/// of its own (#1151), so a frame's description tells any two apart. The
+/// names come from the same choice the passes bind by, a match with no
+/// wildcard, so a new choice can't compile without one; this holds that
+/// no two share it.
+#[test]
+fn every_main_and_shadow_pipeline_has_a_name_of_its_own() {
+    use super::render_passes::{CasterPipe, MainPipe};
+    use crate::pipeline::BlendMode;
+    let bools = [false, true];
+    let modes = [BlendMode::Alpha, BlendMode::Additive, BlendMode::Multiply];
+    let mut main = vec![
+        MainPipe::Terrain,
+        MainPipe::Line,
+        MainPipe::SkinnedSoftEdge,
+        MainPipe::Billboard,
+    ];
+    for woozy in bools {
+        for double_sided in bools {
+            main.push(MainPipe::Mesh {
+                woozy,
+                double_sided,
+            });
+            main.push(MainPipe::Skinned {
+                woozy,
+                double_sided,
+            });
+        }
+        for mode in modes {
+            main.push(MainPipe::MeshBlended { woozy, mode });
+            main.push(MainPipe::SkinnedBlended { woozy, mode });
+        }
+        main.push(MainPipe::Echo { lighten: woozy });
+    }
+    main.extend(flint_particles::ParticleBlendMode::ALL.map(MainPipe::Particles));
+    let mut casters = Vec::new();
+    for woozy in bools {
+        for double_sided in bools {
+            casters.push(CasterPipe::Mesh {
+                woozy,
+                double_sided,
+            });
+            casters.push(CasterPipe::Skinned {
+                woozy,
+                double_sided,
+            });
+        }
+    }
+    let names: Vec<&str> = main
+        .iter()
+        .map(|p| p.name())
+        .chain(casters.iter().map(|p| p.name()))
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    for name in &names {
+        assert!(!name.is_empty());
+        assert!(seen.insert(*name), "two pipelines are named {name:?}");
+    }
+    assert_eq!(names.len(), 30 + 8);
+}
