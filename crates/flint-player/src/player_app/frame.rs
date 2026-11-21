@@ -366,6 +366,8 @@ impl PlayerApp {
             context.queue.present(output);
         }
         let presented = web_time::Instant::now();
+        // A load's first frame is on screen: its table (#1092)
+        self.frame_presented_for_loads();
         self.stats.perf.presented_at(presented);
         self.perf_mark(super::perf::Phase::Present);
         #[cfg(target_arch = "wasm32")]
@@ -1345,19 +1347,14 @@ impl PlayerApp {
             if !ocean_panel.probe_shown() {
                 continue;
             }
-            let Some(ocean) = self
-                .core
-                .world
-                .get_id(ocean_panel.entity_name())
-                .and_then(|id| {
-                    self.core
-                        .world
-                        .get_component(id, flint_geometry::components::OCEAN)
-                })
-            else {
+            let Some(id) = self.core.world.get_id(ocean_panel.entity_name()) else {
                 continue;
             };
-            let lines = ocean_panel.probe_lines(ocean, time, camera_pos, forward);
+            let ocean = self.core.world.view(id, flint_geometry::components::OCEAN);
+            if !ocean.exists() {
+                continue;
+            }
+            let lines = ocean_panel.probe_lines(&ocean, time, camera_pos, forward);
             self.hud.world_lines.extend(lines);
         }
     }

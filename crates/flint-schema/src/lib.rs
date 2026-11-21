@@ -21,7 +21,7 @@ pub use flint_core::project::{SchemaDirs, SchemaDirsError, SchemaSource};
 pub use panel::{PanelRole, PanelRow, PanelSpec, PanelValue};
 #[allow(deprecated)]
 pub use registry::discover_schema_dirs;
-pub use registry::{SchemaOrigin, SchemaRegistry};
+pub use registry::{ArchetypeOrigin, SchemaOrigin, SchemaRegistry};
 pub use validation::{
     references, validate_component, validate_component_data, validate_table, Reference,
     ReferenceKind,

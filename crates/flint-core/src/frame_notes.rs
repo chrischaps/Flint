@@ -19,6 +19,9 @@
 //! ([`take`] returns how many were dropped), so a host that stops taking
 //! holds a bounded list, never a growing one.
 //!
+//! A load being recorded ([`crate::load_report`], #1092) hears every timed
+//! note too, listened for or not: a note's time is also a load stage's.
+//!
 //! Notes nest. A [`timed`] note made inside another (a texture decoded
 //! inside a model load, a pipeline inside a style build, a model load
 //! inside a scene transition) is kept with its `depth`, and its time is
@@ -56,6 +59,22 @@ pub enum NoteKind {
     Procgen,
     /// Sound decoded on the frame (`detail`: the sounds).
     AudioDecode,
+    /// A scene file read, parsed and settled: prefabs, schemas (#1092;
+    /// `detail`: the scene).
+    SceneRead,
+    /// The last scene torn down at a transition (#1092).
+    SceneTeardown,
+    /// The physics world built from the scene: bodies, colliders (#1092).
+    PhysicsBuild,
+    /// A scene's sounds found and read, the preload decoded (#1092).
+    AudioLoad,
+    /// Animation clips, sprite clips and sequences loaded (#1092).
+    AnimationLoad,
+    /// Particle effects and their textures loaded (#1092).
+    ParticleLoad,
+    /// The scripts' `on_init` (and `on_scene_enter` at a transition)
+    /// (#1092).
+    ScriptInit,
     /// The window's surface configured again (`detail`: its size).
     SurfaceReconfigure,
     /// A frame that ran more than one fixed physics step.
@@ -74,7 +93,7 @@ pub enum NoteKind {
 
 impl NoteKind {
     /// Every kind, in the order above.
-    pub const ALL: [NoteKind; 17] = [
+    pub const ALL: [NoteKind; 24] = [
         NoteKind::ModelLoad,
         NoteKind::TextureLoad,
         NoteKind::PipelineBuild,
@@ -86,6 +105,13 @@ impl NoteKind {
         NoteKind::ReloadPoll,
         NoteKind::Procgen,
         NoteKind::AudioDecode,
+        NoteKind::SceneRead,
+        NoteKind::SceneTeardown,
+        NoteKind::PhysicsBuild,
+        NoteKind::AudioLoad,
+        NoteKind::AnimationLoad,
+        NoteKind::ParticleLoad,
+        NoteKind::ScriptInit,
         NoteKind::SurfaceReconfigure,
         NoteKind::PhysicsSteps,
         NoteKind::ClockStall,
@@ -108,6 +134,13 @@ impl NoteKind {
             NoteKind::ReloadPoll => "reload poll",
             NoteKind::Procgen => "procgen",
             NoteKind::AudioDecode => "audio decode",
+            NoteKind::SceneRead => "scene read",
+            NoteKind::SceneTeardown => "scene teardown",
+            NoteKind::PhysicsBuild => "physics build",
+            NoteKind::AudioLoad => "audio load",
+            NoteKind::AnimationLoad => "animation load",
+            NoteKind::ParticleLoad => "particle load",
+            NoteKind::ScriptInit => "on_init",
             NoteKind::SurfaceReconfigure => "surface reconfigure",
             NoteKind::PhysicsSteps => "physics steps",
             NoteKind::ClockStall => "clock stall",
@@ -238,18 +271,35 @@ pub fn timed<R>(kind: NoteKind, detail: impl FnOnce() -> String, work: impl FnOn
 
 /// Start a note of `kind` that is timed until the [`Timing`] drops: for
 /// work that can't be one closure (it `continue`s a loop, returns early).
-/// While no one listens it holds nothing and its drop does nothing.
+/// While no one listens and no load is recorded it holds nothing and its
+/// drop does nothing.
 #[inline]
 #[must_use = "the note is timed until this drops"]
 pub fn begin(kind: NoteKind, detail: impl FnOnce() -> String) -> Timing {
-    if !listening() {
-        return Timing(None);
+    let listening = listening();
+    let loading = crate::load_report::recording();
+    if !listening && !loading {
+        return Timing(None, None);
     }
-    Timing(Some(Open::new(kind, detail())))
+    let detail = detail();
+    let load = crate::load_report::Stage::of_note(kind)
+        .filter(|_| loading)
+        .and_then(|stage| crate::load_report::open(stage, detail.clone()));
+    Timing(listening.then(|| Open::new(kind, detail)), load)
 }
 
-/// A note being timed; see [`begin`].
-pub struct Timing(#[allow(dead_code)] Option<Open>); // held for its drop
+/// A note being timed; see [`begin`]: its frame note and its load span.
+pub struct Timing(Option<Open>, Option<crate::load_report::Token>);
+
+impl Drop for Timing {
+    fn drop(&mut self) {
+        // The frame note is filled in first, then the load's span closes
+        drop(self.0.take());
+        if let Some(token) = self.1.take() {
+            crate::load_report::close(token, true);
+        }
+    }
+}
 
 /// Fills the note in when the work ends, a panic included.
 struct Open {

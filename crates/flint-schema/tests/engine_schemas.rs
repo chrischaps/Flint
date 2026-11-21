@@ -738,6 +738,28 @@ fn engine_schemas_type_their_references() {
     assert_eq!(field("material", "texture"), "asset<textures|specs>");
     assert_eq!(field("spline", "file"), "asset<files>");
     assert_eq!(field("terrain", "heightmap"), "asset<files>");
+    // #1063: a name the loader takes with no file is the field's `builtins`
+    assert_eq!(
+        field("ascii_style", "palette"),
+        "asset<palettes> or cga, cga-warm, cga16, phosphor, amber, mono, paper"
+    );
+    assert_eq!(field("ascii_style", "font"), "asset<glyph-sets> or builtin");
+    assert_eq!(
+        field("pencil_style", "paper_image"),
+        "asset<papers> or none"
+    );
+    assert_eq!(
+        field("pencil_style", "stroke_image"),
+        "asset<strokes> or none"
+    );
+    assert_eq!(
+        field("watercolor_style", "paper_image"),
+        "asset<papers> or none"
+    );
+    assert_eq!(
+        field("ui_text", "font"),
+        "asset<glyph-sets|fonts> or builtin"
+    );
     assert_eq!(
         field("material", "blend_mode"),
         "enum[alpha, additive, multiply]"

@@ -167,11 +167,11 @@ fn a_misspelled_table_and_field_warn_with_a_suggestion() {
         "{out}"
     );
     for expected in [
-        "  warning[unknown-table] [enviroment]: no scene table named `enviroment`, so nothing \
+        "  warning[unknown-table] 5:2 [enviroment]: no scene table named `enviroment`, so nothing \
          reads it\n      hint: did you mean `environment`?\n",
-        "  warning[unknown-field] [post_process] bloom_intesity: `post_process` has no field \
+        "  warning[unknown-field] 9:1 [post_process] bloom_intesity: `post_process` has no field \
          `bloom_intesity`\n      hint: did you mean `bloom_intensity`?\n",
-        "  warning[unknown-field] [weather] rian: `weather` has no field `rian`\n      hint: \
+        "  warning[unknown-field] 12:1 [weather] rian: `weather` has no field `rian`\n      hint: \
          did you mean `rain`?\n",
     ] {
         assert!(out.contains(expected), "missing:\n{expected}\nin:\n{out}");
@@ -180,7 +180,10 @@ fn a_misspelled_table_and_field_warn_with_a_suggestion() {
     let o = flint(&dir, &["validate", "scenes/typos.scene.toml", "--strict"]);
     let out = stdout(&o);
     assert_eq!(o.status.code(), Some(1), "{out}");
-    assert!(out.contains("error[unknown-table] [enviroment]"), "{out}");
+    assert!(
+        out.contains("error[unknown-table] 5:2 [enviroment]"),
+        "{out}"
+    );
     assert!(out.contains(": 3 errors\n"), "{out}");
 }
 
@@ -194,12 +197,12 @@ fn a_wrong_value_in_a_table_is_an_error() {
     let out = stdout(&o);
     assert_eq!(o.status.code(), Some(1), "{out}");
     for expected in [
-        "  error[bad-enum-value] [camera] projection: \"ortho\" is not a value of \
+        "  error[bad-enum-value] 6:1 [camera] projection: \"ortho\" is not a value of \
          `projection`\n      hint: allowed values: orthographic, perspective\n",
-        "  error[bad-type] [weather] wind: expected vec3, got string\n",
-        "  error[bad-enum-value] [weather] kind: \"strom\" is not a value of `kind`\n      \
+        "  error[bad-type] 11:1 [weather] wind: expected vec3, got string\n",
+        "  error[bad-enum-value] 10:1 [weather] kind: \"strom\" is not a value of `kind`\n      \
          hint: did you mean `storm`? allowed values: clear, storm\n",
-        "  error[out-of-range] [weather] rain: 3 is above the maximum 1\n",
+        "  error[out-of-range] 9:1 [weather] rain: 3 is above the maximum 1\n",
     ] {
         assert!(out.contains(expected), "missing:\n{expected}\nin:\n{out}");
     }
@@ -219,8 +222,16 @@ fn a_wrong_value_in_a_table_is_an_error() {
     let o = flint(&dir, &["validate", "scenes/unparsed.scene.toml"]);
     let out = stdout(&o);
     assert_eq!(o.status.code(), Some(1), "{out}");
-    assert!(out.contains("error[toml-parse]"), "{out}");
-    assert!(out.contains("6 | exposure = \"bright\""), "{out}");
+    // A wrong type in a typed table refuses the load, and is named by its
+    // field and line (#1061), not by serde's `toml-parse`
+    assert!(
+        out.contains(
+            "  error[bad-type] 6:1 [post_process] exposure: expected f32, got string\n      \
+             hint: the scene does not load until the table fits\n"
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("toml-parse"), "{out}");
 }
 
 /// `flint schema` knows a table as it knows a component: in the list, by

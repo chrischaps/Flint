@@ -662,6 +662,42 @@ Startup hitches never count against `--max-hitches`, and `tooling` hitches count
 
 **Look inside it.** The log says which phase and which script, and what the engine was doing. To see what happened inside a slow phase, build with the `profile` feature and open the frame in Tracy (above). To see inside a scope, sample it ([When scopes aren't enough](#when-scopes-arent-enough)).
 
+## Load time
+
+The longest hitch in a game is usually a load: the start-up, a scene transition, a chunk streaming in. `--load-report` (and `--perf`, and the web page's `?perf=1`, which print it to the console) gives each load a table of where its time went:
+
+```bash
+flint play levels/tavern_hub.scene.toml --load-report --exit-after 1
+```
+
+```text
+load (transition) showcase_game/levels/tavern_hub.scene.toml: 1272.5 ms to the first frame
+  stage              ms   share  count
+  procgen        1088.7   85.6%      4
+  scripts          75.3    5.9%     15
+  models           39.0    3.1%      1
+  scene read       26.8    2.1%      1
+  first frame      10.1    0.8%      1
+  on_init           6.2    0.5%      1
+  ...
+  not named        21.8    1.7%
+  slowest:    466.8 ms  procgen asset tavern_wood_plank
+              458.7 ms  procgen asset tavern_stone
+              116.2 ms  procgen asset cracked_plaster
+               39.0 ms  model showcase_game/models/YBotWithIdle.glb
+               26.8 ms  scene read tavern_hub.scene.toml
+```
+
+A start-up runs from the process's start to its first frame on screen. A transition runs from the frame that asked for it to the new scene's first frame, and a chunk from its load to the next frame. The stages are what the engine already notes for hitches ([frame notes](#hitches)): every model, texture, pipeline, style and script load, plus the bring-up's own steps (scene read, window, GPU device, audio device, renderer, HUD, teardown, procgen, physics, audio, animation, particles, `on_init`). The first frame is what ran after the bring-up, less what it built on first sight: a pipeline built on its first draw counts as a pipeline. Each stage counts its own time **less what ran inside it**, so a model's row leaves out its textures and the rows add up to the measured time. What no stage named is a row of its own, `not named`. On the desktop it is usually under 2%. On the web it holds the page's fetches and the device's promise, which nothing times. The slowest list is by each item's whole time, so a model there includes its textures.
+
+`flint render` takes the flag too, for a load with no window: its table runs to the first capture, and `--report json` carries it as `load` (`kind`, `name`, `total_ms`, `stages` of `stage`/`ms`/`count`, `unnamed_ms`, `slowest` of `kind`/`name`/`ms`):
+
+```bash
+flint render levels/tavern_hub.scene.toml -o shot.png --load-report --report json
+```
+
+A headless render loads less than the player. It resolves procgen only for living props, opens no sound device and starts no scripts unless `--scripts` is given. So use it to measure what the renderer loads (models, textures, pipelines), and the player for a game's whole start-up. Time in other threads (a hot reload's compile, the frame-capture writer) never shows in a table: a load report is the frame thread's.
+
 ## When scopes aren't enough
 
 The overlay, the hitch log and Tracy see only what Flint timed: a phase, a scope, a script callback. When the slow part is inside one of those, in wgpu, the driver, Rapier, Rhai or a loop nobody scoped, a **sampling profiler** can see it. It stops the program thousands of times a second and records where each thread was. Flint doesn't ship one. It builds for the ones that already exist ([#1101](https://github.com/chrischaps/Flint/issues/1101)).

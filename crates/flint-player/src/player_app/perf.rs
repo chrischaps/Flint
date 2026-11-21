@@ -871,6 +871,8 @@ impl super::PlayerApp {
     /// submissions a frame, so `?perf=cpu` leaves it off.
     pub fn enable_perf(&mut self, gpu: bool) {
         self.stats.perf.show_readout(gpu);
+        // Each load says where its time went too (#1092)
+        self.launch.load_report = true;
         self.core.script.set_timing(true);
     }
 

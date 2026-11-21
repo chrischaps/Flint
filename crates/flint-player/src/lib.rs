@@ -6,6 +6,8 @@
 pub mod capture_args;
 pub mod extension;
 pub mod hitch_args;
+// `--load-report` (#1092)
+pub mod load_args;
 // Everything the player says, through tracing, as text or JSON lines (#716)
 pub mod logging;
 #[cfg(feature = "music")]
@@ -37,6 +39,7 @@ pub use flint_render::{
 pub use flint_script::{Projector, ScreenPoint, View};
 pub use flint_terrain::{GrassConfig, GroundField, Heightmap};
 pub use hitch_args::{HitchArgs, HitchClass, HitchGate};
+pub use load_args::LoadReportArgs;
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};

@@ -719,6 +719,79 @@ fn bundle_and_check_report_the_same_references() {
     assert_eq!(packed.status.code(), Some(0), "{}", stderr(&packed));
 }
 
+/// #1060: a project's `[project.diagnostics] allow` reaches the bundle's
+/// reference pass as it reaches `flint check`'s. A script names a poster
+/// nobody made (`missing-file`, found outside any scene's own check); the
+/// manifest allows the code, so check passes with it counted, and the
+/// bundle packs and counts the same one. Before, the bundle refused it.
+#[test]
+fn bundle_and_check_allow_the_same_reference() {
+    let dir = project(
+        "bundle_allowed",
+        &[
+            (
+                "flint.toml",
+                "[project]\nid = \"dock\"\nschemas = [\"schemas\"]\n\
+                 scene = \"scenes/dock.scene.toml\"\n\n\
+                 [project.diagnostics]\nallow = [\"missing-file\"]\n",
+            ),
+            ("scenes/dock.scene.toml", CLEAN_SCENE),
+            (
+                "scripts/sign.rhai",
+                "fn on_init() {\n    play_sound(\"audio/creak.ogg\");\n    \
+                 let poster = \"textures/poster.png\";\n}\n",
+            ),
+            ("audio/creak.ogg", ""),
+            ("models/boat.glb", ""),
+        ],
+    );
+    // The poster is what the allow list leaves out: without it, both fail on it
+    let unallowed = project(
+        "bundle_unallowed",
+        &[
+            ("scenes/dock.scene.toml", CLEAN_SCENE),
+            (
+                "scripts/sign.rhai",
+                "fn on_init() {\n    play_sound(\"audio/creak.ogg\");\n    \
+                 let poster = \"textures/poster.png\";\n}\n",
+            ),
+            ("audio/creak.ogg", ""),
+            ("models/boat.glb", ""),
+        ],
+    );
+    let checked = flint(&unallowed, &["check"]);
+    assert_eq!(checked.status.code(), Some(1), "{}", stdout(&checked));
+    assert!(
+        stdout(&checked).contains("error[missing-file]"),
+        "{}",
+        stdout(&checked)
+    );
+    let packed = flint(&unallowed, &["bundle", ".", "--dry-run"]);
+    assert_eq!(packed.status.code(), Some(1), "{}", stderr(&packed));
+    assert!(
+        stderr(&packed).contains("error[missing-file]"),
+        "{}",
+        stderr(&packed)
+    );
+
+    let checked = json(&flint(&dir, &["--json", "check"]));
+    assert_eq!(checked["valid"], true, "{checked}");
+    assert_eq!(checked["allowed"], 1, "{checked}");
+
+    let o = flint(&dir, &["--json", "bundle", ".", "--dry-run"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let packed = json(&o);
+    assert_eq!(packed["allowed"], checked["allowed"], "{packed}");
+
+    // The text says so too, in check's words
+    let o = flint(&dir, &["bundle", ".", "--dry-run"]);
+    assert!(
+        stdout(&o).contains("  check: no problems (1 allowed by flint.toml)\n"),
+        "{}",
+        stdout(&o)
+    );
+}
+
 /// `flint bundle` holds no check of its own: what it used to do in
 /// `check_references`, `check_scenes` and `check_user_styles` is
 /// `crate::check`'s, and the file no longer names what those called.

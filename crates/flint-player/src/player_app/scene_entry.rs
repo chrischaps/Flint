@@ -17,6 +17,8 @@ use super::scene_loading::{
 };
 use super::PlayerApp;
 use anyhow::{Context, Result};
+use flint_core::frame_notes::{self, NoteKind};
+use flint_core::load_report::{self, Stage};
 use flint_core::vfs;
 use flint_render::model_loader;
 use flint_render::{Camera, SceneRenderer};
@@ -57,10 +59,12 @@ impl PlayerApp {
         self.reset_camera();
 
         // Project fonts may differ when the scene lives in another project
-        self.refresh_project_fonts();
-        if entry == SceneEntry::Start {
-            self.install_text_measurer();
-        }
+        load_report::timed(Stage::Hud, String::new, || {
+            self.refresh_project_fonts();
+            if entry == SceneEntry::Start {
+                self.install_text_measurer();
+            }
+        });
 
         // Which model each mesh collider takes its triangles from, before
         // the renderer expands a model of several nodes and its parent
@@ -86,7 +90,9 @@ impl PlayerApp {
 
         // The project's collision layers and the mesh colliders' triangles,
         // before physics makes the scene's bodies
-        self.prepare_physics(&collider_meshes);
+        frame_notes::timed(NoteKind::PhysicsBuild, String::new, || {
+            self.prepare_physics(&collider_meshes)
+        });
 
         self.start_scene_systems(entry)?;
         // The subsystems this scene uses, each told it is up
@@ -97,6 +103,8 @@ impl PlayerApp {
         // warnings included), and one for the controls this scene binds (#716)
         self.say_loaded();
         self.say_controls();
+        // The load report's bring-up ends here; the first frame is next (#1092)
+        self.load_brought_up();
 
         // On Android the cursor always counts as captured, so touch input
         // flows without a click-to-capture gate; elsewhere a first-person
@@ -172,8 +180,7 @@ impl PlayerApp {
             &self.core.project,
             &self.core.scene_path,
             &self.core.world,
-            self.assets.catalog.as_ref(),
-            self.assets.content_store.as_ref(),
+            self.assets.of(&self.core.project),
         );
 
         // What the scene says about living props, for the props procgen
@@ -338,17 +345,19 @@ impl PlayerApp {
     /// scene's music is a subsystem, started on this audio when the
     /// subsystems hear the scene loaded, before the scripts' first frame.
     fn start_scene_systems(&mut self, entry: SceneEntry) -> Result<()> {
-        let physics = self
-            .core
-            .physics
-            .initialize(&mut self.core.world)
-            .context("Failed to initialize physics");
+        // Each system's start is a frame note (#1092): a transition's
+        // hitch names them, and a load report times them
+        let physics = frame_notes::timed(NoteKind::PhysicsBuild, String::new, || {
+            self.core.physics.initialize(&mut self.core.world)
+        })
+        .context("Failed to initialize physics");
         match (physics, entry) {
             (Err(e), SceneEntry::Start) => return Err(e),
             (Err(e), SceneEntry::Transition) => tracing::warn!("{e:#}"),
             (Ok(()), _) => {}
         }
 
+        let audio_note = frame_notes::begin(NoteKind::AudioLoad, String::new);
         load_audio_from_world(
             &self.core.world,
             &mut self.audio,
@@ -363,7 +372,9 @@ impl PlayerApp {
         self.audio
             .initialize(&mut self.core.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
+        drop(audio_note);
 
+        let animation_note = frame_notes::begin(NoteKind::AnimationLoad, String::new);
         load_animations_from_world(
             &self.core.project,
             &self.core.scene_path,
@@ -383,10 +394,12 @@ impl PlayerApp {
             .animation
             .initialize(&mut self.core.world)
             .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
+        drop(animation_note);
 
         // `particles/*.particles.toml` registered first, so `particle_effect`
         // components resolve on the first sync
         self.refresh_project();
+        let particle_note = frame_notes::begin(NoteKind::ParticleLoad, String::new);
         flint_particles::load_particle_effects_from_world(
             &self.core.project,
             &self.core.scene_path,
@@ -397,6 +410,7 @@ impl PlayerApp {
             .initialize(&mut self.core.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
         self.load_particle_textures();
+        drop(particle_note);
 
         // The subsystems this scene uses, and the script modules they own
         // (#698), before the scripts that may call them load
@@ -416,6 +430,7 @@ impl PlayerApp {
         // on_init's list_looks() and get_look() (#497)
         self.publish_looks();
         {
+            let _init = frame_notes::begin(NoteKind::ScriptInit, String::new);
             let _state_scope = self.core.script.state_scope(
                 &mut self.core.state_machine,
                 &mut self.core.store,

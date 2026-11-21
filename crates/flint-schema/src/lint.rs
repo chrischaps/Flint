@@ -276,6 +276,15 @@ fn lint_field(path: &str, def: &toml::Value, found: &mut Vec<Diagnostic>) {
     }
     if type_name.and_then(type_name_of) == Some("asset") {
         lint_asset_kind(path, table.get("kind"), found);
+    } else if table.contains_key("builtins") {
+        found.push(
+            Diagnostic::warning(
+                codes::IGNORED_SCHEMA_KEY,
+                "`builtins` is ignored: only an asset field takes names with no file",
+            )
+            .field(format!("{path}.builtins"))
+            .hint("write type = \"asset\" with a `kind`, or leave `builtins` out"),
+        );
     }
     if let Some(element) = table.get("element") {
         lint_field(&format!("{path}[]"), element, found);
@@ -520,6 +529,24 @@ file = { type = "asset" }
                  looked for",
                 "warning[ignored-schema-key] rig.note.optional: `optional` is ignored: it is no \
                  key of a field definition",
+            ]
+        );
+    }
+
+    /// #1063: `builtins` is an asset's; on any other field it says nothing.
+    #[test]
+    fn builtins_belong_to_an_asset_field() {
+        assert_eq!(
+            said(
+                r#"
+[component.rig.fields]
+palette = { type = "asset", kind = "palettes", builtins = ["amber"] }
+ramp = { type = "string", builtins = ["classic"] }
+"#
+            ),
+            [
+                "warning[ignored-schema-key] rig.ramp.builtins: `builtins` is ignored: only an \
+              asset field takes names with no file"
             ]
         );
     }

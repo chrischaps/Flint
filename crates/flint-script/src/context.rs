@@ -1026,9 +1026,8 @@ impl ScriptCallContext {
         }
         let caller = self.current_entity;
         let script = world
-            .get_components(caller)
-            .and_then(|c| c.get_field("script", "source"))
-            .and_then(|v| v.as_str())
+            .view(caller, flint_core::components::SCRIPT)
+            .opt_str("source")
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .or_else(|| world.get_name(caller).map(|n| format!("entity '{n}'")))

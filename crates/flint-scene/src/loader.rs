@@ -134,18 +134,25 @@ fn load_text_into(
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
-    let found = load_diagnostics(&scene_file, path, registry);
+    let found = load_diagnostics(&scene_file, content, path, registry);
     populate_world(&mut world, &scene_file, registry)?;
     Ok((world, scene_file, found))
 }
 
-/// What a load says of a scene it parsed: [`diagnose_scene_in`], less what
-/// the project allows. Not promoted by `[project] strict` (see
-/// [`load_scene`]).
-fn load_diagnostics(scene: &SceneFile, path: &Path, registry: &SchemaRegistry) -> Vec<Diagnostic> {
+/// What a load says of a scene it parsed from `content`:
+/// [`diagnose_scene_in`], less what the project allows, a scene table's
+/// mistakes placed by line and column (#1061). Not promoted by `[project]
+/// strict` (see [`load_scene`]).
+fn load_diagnostics(
+    scene: &SceneFile,
+    content: &str,
+    path: &Path,
+    registry: &SchemaRegistry,
+) -> Vec<Diagnostic> {
     let project = Project::for_scene(path);
     let mut found = diagnose_scene_in(scene, path, registry, &project);
     diagnostic::drop_allowed(&mut found, &project.allow);
+    crate::place_table_diagnostics(content, &mut found);
     found
 }
 
@@ -245,7 +252,7 @@ pub fn reload_scene<P: AsRef<Path>>(
 
     // Expand prefab instances
     prefab::expand_prefabs(&mut scene_file, path)?;
-    let found = load_diagnostics(&scene_file, path, registry);
+    let found = load_diagnostics(&scene_file, &content, path, registry);
     diagnostic::log_summary(&flint_core::project::shown(path), &found);
 
     // Clear existing world
