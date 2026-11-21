@@ -9,9 +9,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
     asset, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples, export,
-    frame, gen, gen_preview, init, legacy_names, music, play, playtest, prefab, preview, profile,
-    query, render, render_goldens, scene, schema, script, spike_rumble, spline_edit, style,
-    terrain_edit, tex_edit, validate,
+    frame, gen, gen_preview, init, music, play, playtest, prefab, preview, profile, query, render,
+    render_goldens, scene, schema, script, spline_edit, style, terrain_edit, tex_edit, validate,
 };
 
 #[derive(Parser)]
@@ -128,11 +127,6 @@ enum Commands {
     #[command(subcommand)]
     Music(Box<music::MusicCommands>),
 
-    /// The rumble spike (ADR 0025), an example since #709:
-    /// `cargo run -p flint-input-capture --example spike_rumble`
-    #[command(hide = true)]
-    SpikeRumble(Box<spike_rumble::SpikeRumbleArgs>),
-
     /// Render a `.goldens.toml` of scenes and gate each against its golden
     /// PNG (`--bless` rewrites them)
     Goldens(Box<render_goldens::GoldensArgs>),
@@ -189,12 +183,7 @@ enum Commands {
 }
 
 fn main() -> std::process::ExitCode {
-    // The old names (`play-chart` is `music chart play`, #709;
-    // `render-suite <x>.goldens.toml` is `goldens`, #327) still run
-    let (argv, moved) = legacy_names::route(std::env::args_os().collect());
-    if let Some(note) = moved {
-        eprintln!("{note}");
-    }
+    let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
     let cli = match Cli::try_parse_from(&argv) {
         Ok(cli) => cli,
         Err(e) => {
@@ -298,7 +287,6 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Export(cmd) => export::run(*cmd),
         Commands::Dxc(cmd) => dxc::run(*cmd),
         Commands::Music(cmd) => music::run(*cmd),
-        Commands::SpikeRumble(args) => spike_rumble::run(*args),
         Commands::Goldens(args) => render_goldens::run_command(*args),
         Commands::Play(args) => play::run(*args),
         Commands::Playtest(args) => playtest::run(*args),
@@ -362,7 +350,6 @@ impl Commands {
                 music::MusicCommands::Chart(music::ChartCommands::Play(_)) => "music chart play",
                 _ => return None,
             },
-            Commands::SpikeRumble(_) => "spike-rumble",
             Commands::Play(_) => "play",
             Commands::Preview(args) if args.render.is_none() => "preview",
             Commands::GenPreview(_) => "gen-preview",

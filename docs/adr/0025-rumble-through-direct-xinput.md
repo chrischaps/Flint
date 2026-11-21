@@ -70,6 +70,7 @@ spread of about 36 ms.
 - Vault: "2026-08-16 The 50ms Server Nobody Mentions"
 - Code now: `crates/flint-input-capture/src/rumble.rs` (`spike_rumble`,
   `RumbleSpikeReport`), `crates/flint-input-capture/src/lib.rs` (the capture
-  loop), `crates/flint-cli/src/commands/spike_rumble.rs`,
+  loop), `crates/flint-input-capture/examples/spike_rumble.rs` (the spike,
+  `flint spike-rumble` until #709 and its alias until #1141),
   `crates/flint-runtime/src/rumble.rs` (`PadRumble`),
   [Music Sessions](../book/src/concepts/music-sessions.md)

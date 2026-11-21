@@ -80,7 +80,7 @@ fn help(command: &str) -> String {
     String::from_utf8_lossy(&run.stdout).into_owned()
 }
 
-/// #327: `goldens` and `music render` (once `render-suite`) are two
+/// #327: `goldens` and `music render` (once both `render-suite`) are two
 /// commands, and each one's `--help` lists only its own flags.
 #[test]
 fn goldens_and_music_each_list_only_their_own_flags() {
@@ -130,34 +130,29 @@ fn goldens_and_music_each_list_only_their_own_flags() {
     assert!(music.contains("flint goldens"), "{music}");
 }
 
-/// #327: the old spelling, `render-suite <x>.goldens.toml` with golden
-/// flags, still runs the goldens. A case filter that matches nothing stops
-/// it before any GPU work, so this holds on any machine.
+/// #327: `goldens` takes a manifest with golden flags after it, and
+/// `music render` asks clap for its WAV. A case filter that matches nothing
+/// stops the goldens before any GPU work, so this holds on any machine.
 #[test]
-fn render_suite_still_runs_a_goldens_manifest() {
+fn goldens_takes_a_manifest_and_music_render_needs_its_wav() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/stylize.goldens.toml");
-    for command in ["render-suite", "goldens"] {
-        let run = Command::new(FLINT)
-            .arg(command)
-            .arg("--case")
-            .arg("no-case-is-named-this")
-            .arg(&manifest)
-            .output()
-            .expect("run flint");
-        let err = String::from_utf8_lossy(&run.stderr);
-        assert!(!run.status.success(), "{command}: {err}");
-        assert!(err.contains("no cases to run"), "{command}: {err}");
-    }
-    // A music suite still needs its WAV, now from clap, by either name
-    for command in [&["render-suite"][..], &["music", "render"]] {
-        let run = Command::new(FLINT)
-            .args(command)
-            .arg("x.suite.toml")
-            .output()
-            .expect("run flint");
-        let err = String::from_utf8_lossy(&run.stderr);
-        assert!(!run.status.success() && err.contains("--output"), "{err}");
-    }
+    let run = Command::new(FLINT)
+        .arg("goldens")
+        .arg("--case")
+        .arg("no-case-is-named-this")
+        .arg(&manifest)
+        .output()
+        .expect("run flint");
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert!(!run.status.success(), "{err}");
+    assert!(err.contains("no cases to run"), "{err}");
+
+    let run = Command::new(FLINT)
+        .args(["music", "render", "x.suite.toml"])
+        .output()
+        .expect("run flint");
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert!(!run.status.success() && err.contains("--output"), "{err}");
 }
 
 /// A user style that fails to compile (#417): `flint render` names its
