@@ -177,7 +177,12 @@ What draws a frame again, as measured:
     style's `history` targets. Measured: 112,837 of 921,600 pixels off, whole
     glyphs; exact when the captured frame was itself drawn with no history.
     Exporting it needs a hook on each style that keeps history
-    (#1136).
+    (#1136). **Captured since #1136** (no version bump: a field and files
+    added): `StylePass::export_history` / `import_history`
+    (`flint_render::stylize::history`), the textures under
+    `replay/history/`, each part keyed without the epoch or frame number,
+    which are the capturing renderer's. The measurement repeated on the
+    frozen bench with an orbit script: byte-identical.
   - A game's runtime meshes (`model.runtime = true`, uploaded by an
     extension), grass mask repaints (`update_grass_mask`) and runtime
     terrain edits: named as missing.

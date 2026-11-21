@@ -304,22 +304,18 @@ fn write_replay(
         renderer,
         particles: particles.emitters,
     };
-    flint_render::frame_capture::write_replay(
-        dir,
-        &flint_render::frame_capture::ReplayFiles {
-            world_toml: &world_toml,
-            inputs: &inputs,
-            skinning: &palettes.bytes,
-            particles: &particles.bytes,
-        },
-    )?;
+    let files = flint_render::frame_capture::ReplayFiles {
+        world_toml: &world_toml,
+        inputs: &inputs,
+        skinning: &palettes.bytes,
+        particles: &particles.bytes,
+        history: &palettes.history,
+    };
+    flint_render::frame_capture::write_replay(dir, &files)?;
     let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(scene);
     description.replay = Some(flint_render::frame_capture::ReplayDescription {
         available: true,
-        files: flint_render::frame_capture::REPLAY_FILES
-            .iter()
-            .map(|f| f.to_string())
-            .collect(),
+        files: files.listed(),
         fresh_only,
         assets: replay::hash_assets(replay::assets_named(world), &config),
     });

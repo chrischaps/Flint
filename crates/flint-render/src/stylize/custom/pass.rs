@@ -119,7 +119,12 @@ pub(super) struct LastFrame {
     pub(super) frame: u64,
     pub(super) epoch: u64,
     /// Every target texture it used; held, so an address can't be reused.
+    /// A pair a target, the same texture twice for one with no history.
     pub(super) textures: Vec<Arc<super::super::StyleTexture>>,
+    /// Whether it read its history targets' last frame (#1136).
+    pub(super) trusted: bool,
+    /// What a frame capture keys the history on (#1136).
+    pub(super) key: serde_json::Value,
 }
 
 pub(super) struct CustomPass {
@@ -140,6 +145,8 @@ pub(super) struct CustomPass {
     pub(super) empty: Option<wgpu::BindGroup>,
     /// The history targets' parity and what the last frame drew (#412).
     pub(super) history: Mutex<History>,
+    /// History taken from a frame capture (#1136), until the next frame.
+    pub(super) imported: super::super::history::PendingHistory,
 }
 
 pub(super) fn create(d: &StyleDevice) -> Box<dyn StylePass> {
@@ -293,6 +300,7 @@ pub(super) fn build(d: &StyleDevice) -> CustomPass {
         images: images.map(Mutex::new),
         empty,
         history: Mutex::new(History::default()),
+        imported: Default::default(),
         loaded,
     };
     for i in 0..pass.passes.len() {
@@ -1150,7 +1158,7 @@ impl StylePass for CustomPass {
         let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
         let used: Vec<Arc<super::super::StyleTexture>> =
             textures.iter().flatten().cloned().collect();
-        let trusted = history.last.as_ref().is_some_and(|last| {
+        let mut trusted = history.last.as_ref().is_some_and(|last| {
             last.frame.wrapping_add(1) == frame.frame
                 && last.epoch == frame.history_epoch
                 && last.textures.len() == used.len()
@@ -1162,6 +1170,50 @@ impl StylePass for CustomPass {
         });
         let write = history.parity;
         let previous = 1 - write;
+        // What a frame capture keys the history on (#1136): each history
+        // target's name, format and size
+        let key = serde_json::json!({
+            "targets": source
+                .targets
+                .iter()
+                .zip(&sizes)
+                .filter(|(t, _)| t.history)
+                .map(|(t, s)| serde_json::json!({
+                    "name": t.name,
+                    "format": format!("{:?}", t.format.wgpu()),
+                    "size": s,
+                }))
+                .collect::<Vec<_>>(),
+        });
+        // History a frame capture handed back (#1136): last frame's side of
+        // each history target, when the key is the captured frame's
+        if let Some(h) = self.imported.take() {
+            let style = descriptor_name(&self.loaded);
+            if let Some(part) = h.used_part("targets") {
+                match super::super::history::key_difference(&part.key, &key) {
+                    Some(why) => h.say(format!(
+                        "{style}: the captured history was another frame's ({why}): drawn fresh"
+                    )),
+                    None => {
+                        let wrote = source
+                            .targets
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, t)| t.history)
+                            .try_for_each(|(k, t)| {
+                                h.write(frame.queue, part, &t.name, &textures[k][previous].texture)
+                            });
+                        match wrote {
+                            Ok(()) => {
+                                trusted = true;
+                                h.say(format!("{style}: history taken from the capture"));
+                            }
+                            Err(why) => h.say(format!("{style}: history not taken: {why}")),
+                        }
+                    }
+                }
+            }
+        }
         if !trusted {
             for (k, t) in source.targets.iter().enumerate() {
                 if t.history {
@@ -1284,6 +1336,47 @@ impl StylePass for CustomPass {
             frame: frame.frame,
             epoch: frame.history_epoch,
             textures: used,
+            trusted,
+            key,
         });
     }
+
+    /// Each history target's last-frame side as the captured frame read it
+    /// (#1136): the frame read it and wrote the other, so after the frame
+    /// it still holds the past.
+    fn export_history(&self, out: &mut super::super::history::HistoryExport<'_>) {
+        let source = &self.loaded.source;
+        if !source.has_history() {
+            return;
+        }
+        let history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(last) = history.last.as_ref().filter(|l| l.frame == out.frame) else {
+            return;
+        };
+        // The frame flipped the parity to the side it read
+        let read = history.parity;
+        let textures: Vec<(&str, &wgpu::Texture)> = source
+            .targets
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.history)
+            .filter_map(|(k, t)| Some((t.name.as_str(), &last.textures.get(2 * k + read)?.texture)))
+            .collect();
+        out.part(
+            "targets",
+            last.key.clone(),
+            last.trusted,
+            Default::default(),
+            &textures,
+        );
+    }
+
+    fn import_history(&self, history: super::super::history::ImportedHistory) {
+        self.imported.put(history);
+    }
+}
+
+/// The style's name, for what it says of an imported history.
+fn descriptor_name(loaded: &Loaded) -> &str {
+    &loaded.source.name
 }

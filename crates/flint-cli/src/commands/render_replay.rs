@@ -126,6 +126,11 @@ pub struct ReplayHost {
     pub fresh_only: Vec<String>,
     /// The passes this frame can be drawn without.
     pub skippable: Vec<Skippable>,
+    /// Each style's frame-to-frame history as captured (#1136), handed
+    /// back before every draw.
+    history: Vec<flint_render::stylize::history::ImportedHistory>,
+    /// What the styles did with it at the last draw, a line each.
+    pub history_notes: Vec<String>,
 }
 
 /// A capture's file under `dir`.
@@ -182,9 +187,15 @@ impl ReplayHost {
         let world_toml = String::from_utf8(read(dir, "replay/world.toml")?)
             .context("replay/world.toml isn't text")?;
         let skinning = read(dir, "replay/skinning.bin")?;
+        // Each style's history (#1136): a capture from before it has none,
+        // and its styles draw fresh as they always did
+        let (history, history_missing) = flint_render::frame_replay::read_style_history(
+            &dir.join("replay"),
+            &inputs.renderer.style_history,
+        );
         let particle_bytes = read(dir, "replay/particles.bin")?;
 
-        let mut notes = Vec::new();
+        let mut notes = history_missing;
         let recorded = description.scene.as_ref().map(|s| s.path.clone());
         let scene_path = match (scene, &recorded) {
             (Some(path), _) => path.to_path_buf(),
@@ -383,6 +394,8 @@ impl ReplayHost {
             assets,
             fresh_only: replay.fresh_only.clone(),
             skippable,
+            history,
+            history_notes: Vec::new(),
         })
     }
 
@@ -408,8 +421,12 @@ impl ReplayHost {
         renderer.set_post_process_config(config);
         renderer.ensure_style_resources(&ctx.device);
         renderer.ensure_fxaa_resources(&ctx.device);
-        // Every replay draws fresh, so two of one frame agree
+        // Every replay starts from the captured frame's past, so two of
+        // one frame agree: no history of the last draw, and the capture's
+        // own (#1136) where it holds one
         renderer.reset_style_history();
+        let _ = renderer.take_style_history_notes();
+        renderer.import_style_history(self.history.clone());
         renderer.set_motion_time(self.inputs.state.time);
 
         let world = self.stage.game.world();
@@ -461,8 +478,10 @@ impl ReplayHost {
             Some(world),
         );
         pollster::block_on(ctx.read_pixels()).context("reading the replayed frame")?;
+        self.history_notes = renderer.take_style_history_notes();
 
         let mut notes = vec!["replayed by flint frame replay".to_string()];
+        notes.extend(self.history_notes.iter().map(|n| format!("history: {n}")));
         if !controls.hidden.is_empty() {
             notes.push(format!("hidden: {}", controls.hidden.join(", ")));
         }
