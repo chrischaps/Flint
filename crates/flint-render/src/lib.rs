@@ -39,6 +39,7 @@ pub mod orbit_controller;
 pub mod palette;
 pub mod panels;
 pub(crate) mod particle_pipeline;
+pub mod pass_knobs;
 mod pipeline;
 pub mod pipeline_cache;
 pub mod post_style;
@@ -92,6 +93,7 @@ pub use headless::HeadlessContext;
 pub use ocean_pipeline::{OceanTint, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
 pub use particle_pipeline::{ParticleBlendMode, ParticleDrawData, ParticleInstance};
+pub use pass_knobs::PassKnobs;
 pub use pipeline::LightUniforms;
 pub use postprocess::{post_process_config_from_def, PostProcessConfig, HDR_FORMAT};
 pub use primitives::{

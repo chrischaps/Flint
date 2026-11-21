@@ -20,6 +20,31 @@ impl SceneRenderer {
         self.debug_state.mode = mode;
     }
 
+    /// Skip or repeat parts of every frame from now on, by label (#1317,
+    /// [`crate::pass_knobs`]): what `--skip-pass` / `--repeat-pass` and the
+    /// web's `?skip_pass=` / `?repeat_pass=` hand over. Empty knobs, or
+    /// `None`, draw every part once, as a renderer that was never told.
+    pub fn set_pass_knobs(&mut self, knobs: Option<crate::pass_knobs::PassKnobs>) {
+        self.pass_knobs = knobs
+            .filter(|k| !k.is_empty())
+            .map(|k| Box::new(crate::pass_knobs::KnobRun::new(k)));
+    }
+
+    /// The knobs set, if any.
+    pub fn pass_knobs(&self) -> Option<&crate::pass_knobs::PassKnobs> {
+        self.pass_knobs.as_deref().map(|run| &run.knobs)
+    }
+
+    /// How many times a host's own part named `label` (the player's `UI`)
+    /// should record its work this frame: 0 skipped, else 1, or the
+    /// repeat asked unless `refuse` says why it can't be (#1317).
+    pub fn pass_times(&mut self, label: &'static str, refuse: Option<&str>) -> u32 {
+        match self.pass_knobs.as_deref_mut() {
+            None => 1,
+            Some(run) => run.times(label, refuse),
+        }
+    }
+
     /// Collect rendering statistics for the current frame.
     ///
     /// Timing (`fps`, `frame_time_ms`) and `resolution` are left at zero —

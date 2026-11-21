@@ -158,8 +158,10 @@ impl ScriptHost for PlayerApp {
         match &self.transition_phase {
             TransitionPhase::Exiting { target_scene, .. } => {
                 let target = target_scene.clone();
+                // The script says its cover is drawn (#1125)
                 self.transition_phase = TransitionPhase::Loading {
                     target_scene: target,
+                    covered: true,
                 };
             }
             TransitionPhase::Entering { .. } => {
@@ -206,6 +208,12 @@ impl ScriptHost for PlayerApp {
     fn set_look(&mut self, name: Option<String>, seconds: f64) {
         if let Err(e) = PlayerApp::fade_to_look(self, name.as_deref(), seconds) {
             tracing::warn!("set_look: {e}");
+        }
+    }
+
+    fn prepare_look(&mut self, name: String) {
+        if let Err(e) = PlayerApp::prepare_look(self, &name) {
+            tracing::warn!("prepare_look: {e}");
         }
     }
 

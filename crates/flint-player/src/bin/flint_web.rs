@@ -132,6 +132,34 @@ mod web {
         /// `FLINT_STYLE_SCISSOR=0` does natively, to measure what the
         /// scissor saves in a browser (#538).
         scissor: Option<bool>,
+        /// `skip_pass=<label>[,..]` and `repeat_pass=<label>:<N>[,..]`,
+        /// each repeatable: cost a part of the frame on a GPU whose
+        /// timestamps read 0 by taking it away or drawing it N times
+        /// (#1317, `flint_render::pass_knobs`). A word that doesn't read is
+        /// a console warning.
+        pass_knobs: Option<flint_render::PassKnobs>,
+    }
+
+    /// The pass knobs the query's `skip_pass` and `repeat_pass` ask for.
+    fn pass_knobs(params: Option<&web_sys::UrlSearchParams>) -> Option<flint_render::PassKnobs> {
+        let params = params?;
+        let all = |key: &str| -> Vec<String> {
+            params
+                .get_all(key)
+                .iter()
+                .filter_map(|v| v.as_string())
+                .collect()
+        };
+        let mut knobs = flint_render::PassKnobs::new();
+        for list in all("skip_pass") {
+            knobs.skip_list(&list);
+        }
+        for list in all("repeat_pass") {
+            if let Err(e) = knobs.repeat_list(&list) {
+                web_sys::console::warn_1(&format!("[flint-web] {e}").into());
+            }
+        }
+        (!knobs.is_empty()).then_some(knobs)
     }
 
     impl WebArgs {
@@ -194,6 +222,7 @@ mod web {
                     get("gpu_labels").as_deref(),
                 ),
                 scissor: get("scissor").map(|v| v != "0"),
+                pass_knobs: pass_knobs(params.as_ref()),
             }
         }
     }
@@ -296,6 +325,7 @@ mod web {
             loaded.scene_file.scene.input_config.clone(),
         );
         app.launch.msaa_sample_count = args.msaa;
+        app.launch.pass_knobs = args.pass_knobs;
         app.launch.render_scale = args.render_scale;
         app.launch.quality_overrides = args.quality;
         // A bad word is a warning in the console, not a page that won't

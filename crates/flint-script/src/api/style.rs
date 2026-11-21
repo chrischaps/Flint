@@ -337,6 +337,17 @@ pub(crate) fn register(api: &mut ScriptApi) {
     });
 
     m.func(
+        "prepare_look",
+        "Build a look's styles on worker threads now, so the frame that later sets it doesn't stop to: call it well before the look is shown (on_init).",
+    )
+    .arg("name", Str)
+    .run(|call, (name,)| {
+        if let Some(name) = look_name(&name) {
+            call.ctx().commands.push(ScriptCommand::PrepareLook { name });
+        }
+    });
+
+    m.func(
         "get_look",
         "The look the scene draws with now: its own, or the last a script or F4 chose (a fade's target from its start).",
     )

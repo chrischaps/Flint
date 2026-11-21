@@ -187,6 +187,10 @@ pub trait ScriptHost {
     fn set_look(&mut self, name: Option<String>, seconds: f64) {
         self.unsupported("set_look");
     }
+    /// `prepare_look(name)` (#1121): build the look's styles ahead.
+    fn prepare_look(&mut self, name: String) {
+        self.unsupported("prepare_look");
+    }
 
     // ── The frame: camera, post-processing, render settings ──
     fn set_camera(&mut self, camera: CameraOverrides) {
@@ -339,6 +343,7 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
             seconds,
         } => host.rumble(pad, strength, seconds),
         C::SetLook { name, seconds } => host.set_look(name, seconds),
+        C::PrepareLook { name } => host.prepare_look(name),
         C::SetCamera { camera } => host.set_camera(camera),
         C::SetPostProcess { post } => host.set_post_process(post),
         C::SetRenderMode { mode, params } => host.set_render_mode(mode, params),
@@ -408,6 +413,7 @@ pub fn command_name(cmd: &ScriptCommand) -> Option<&'static str> {
         C::ClearPanels => "clear_panels",
         C::Rumble { .. } => "rumble",
         C::SetLook { .. } => "set_look",
+        C::PrepareLook { .. } => "prepare_look",
         C::SetCamera { .. } => "set_camera_*",
         C::SetPostProcess { .. } => "set_post",
         C::SetRenderMode { .. } => "set_render_mode",

@@ -432,6 +432,9 @@ pub struct HitchCounters<'a> {
     pub since_last_secs: Option<f64>,
     /// The last hitch in one line: how long and whose time it was
     pub last: Option<&'a str>,
+    /// Hitches of scene loads drawn behind a fade, counted apart from
+    /// `hitches` (flint-player's `loading`, #1125); shown when there are any
+    pub loading: u64,
 }
 
 /// How long the hitch count stays loud after a hitch, seconds, and how
@@ -459,6 +462,9 @@ pub fn hitch_counters(ui: &mut egui::Ui, c: &HitchCounters, compact: bool) {
         ui.colored_label(quiet, if c.hitches == 1 { " hitch" } else { " hitches" });
         if !compact {
             ui.colored_label(dim, format!("  {:.1}/min", c.per_minute));
+        }
+        if c.loading > 0 {
+            ui.colored_label(dim, format!("  +{} loading", c.loading));
         }
         ui.colored_label(dim, format!("  worst {:.0} ms", c.worst_ms));
         if let Some(s) = c.since_last_secs {

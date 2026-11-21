@@ -1230,6 +1230,30 @@ The fade writes only what the two looks set differently. Whatever else moves the
 
 *Captured with `flint-player flint-examples/look_fade.scene.toml --frame-step 0.0333333 --screenshot fade.png --screenshot-every 0.0333333 --exit-after 4`.*
 
+#### Building a look before it is shown
+
+A style's pipelines are built the first time a frame draws it, and some styles have many: ASCII builds 15. So the first `set_look` to a look nobody has drawn yet stops the game while they are built, on that frame. Measured on the looks tour ([`flint-examples/looks.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/looks.scene.toml)), whose `ascii_noir` beat comes at 3 s, in a release build on an RTX 5070 Laptop: that frame took about a second: 976 to 1083 ms on Vulkan with the driver's shader cache emptied before each run (eight runs), 825 to 1491 ms on DX12, whose shaders Flint compiles itself every run (three runs). Ink wash's and watercolor's first beats cost 67 to 132 ms more. Later switches to the same look cost nothing: the built pipelines are kept. A cross-fade (`set_look(name, 2.0)`) pays the same on its first frame, which is the story beat you wanted smooth.
+
+`prepare_look(name)` builds a look's styles ahead, on worker threads, while the game goes on drawing:
+
+```rhai
+fn on_init() {
+    for name in ["ascii_noir", "ink_wash", "watercolor"] {
+        prepare_look(name);    // nothing changes on screen
+    }
+}
+
+fn on_event(name, data) {
+    if name == "storm_breaks" {
+        set_look("ink_wash", 2.0);   // built already: the fade starts smoothly
+    }
+}
+```
+
+Nothing is shown and `get_look()` still answers the look drawn. Each style is built once whoever asks: a look that is built or building already costs nothing, and the frame that sets a look whose styles are still building waits for that build rather than starting another, so it never pays more than it would have. A switch made right after `prepare_look` therefore still stops; give it the time a build takes (about a second for ASCII on a fast machine). In the tour above, preparing its five looks at `on_init` left no frame over 50 ms at the `ascii_noir` beat in seven runs on the two backends, and none at the others but one of 50.3 ms, spent in `set_look` itself, not in a build.
+
+On the web there are no threads, so `prepare_look` builds at the call: make it where a stop is hidden, behind a loading screen or a fade to black. A Rust host calls `SceneRenderer::prepare_styles(device, &config)` with the config it will show, or `PlayerApp::prepare_look(name)`.
+
 **`--sweep KEY=V1,V2,...`** renders the same frame once per value and lays the frames out as one labelled contact sheet, four across, in the ASCII style's built-in glyphs. KEY can be:
 
 - any `--style` key, written `<style>.<key>`: `ascii.cell=6,8,12`, `ascii.ramp=classic,blocks`, `kuwahara.radius=2,4,6,8`. Values are checked against the style's range;

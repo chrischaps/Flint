@@ -278,6 +278,8 @@ impl FrameStats {
             worst_ms: self.worst_ms,
             since_last_secs: self.last_hitch_end.map(|end| (newest - end).max(0.0)),
             last: self.last_hitch_end.map(|_| self.last.as_str()),
+            // The viewer draws no scene load behind a fade (#1125)
+            loading: 0,
         };
         ui.scope(|ui| {
             ui.style_mut().override_font_id = Some(egui::FontId::monospace(9.5));

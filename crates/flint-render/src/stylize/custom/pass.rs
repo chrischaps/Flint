@@ -992,6 +992,10 @@ impl CustomPass {
 }
 
 impl StylePass for CustomPass {
+    fn keeps_history(&self) -> bool {
+        self.loaded.source.has_history()
+    }
+
     fn encode(
         &self,
         frame: &StyleFrame<'_>,

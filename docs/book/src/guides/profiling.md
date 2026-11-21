@@ -120,6 +120,46 @@ With `--exit-after` and `--stats`, the player prints the average GPU frame time 
 [perf] avg GPU 2.73 ms/frame over 6692 timed frames no vsync
 ```
 
+### Costing a part without timestamps
+
+Some GPUs time nothing. On the Pixel 8 Pro's Mali every pass after `Scene` reads 0.00, so `?perf=1`, F2 and traces can't say which pass is slow. There the only way to cost a part is to take it away, or draw it more, and watch the frame time (#1317). Two knobs do that on any GPU. Each names a part by the label the rows above use, ignoring case:
+
+| Where | Skip a part | Draw it N times |
+|---|---|---|
+| `flint play`, `flint-player`, `flint render` | `--skip-pass "Style edges"` | `--repeat-pass "Style edges:4"` |
+| The web page | `?skip_pass=Style%20edges` | `?repeat_pass=Style%20edges:4` |
+
+Each takes several parts, comma separated or given again (`--skip-pass Bloom,SSAO`). A repeat is 1 to 256 times, and a later word for the same part replaces an earlier one. The player logs a `pass knobs:` line at start-up. A label that no part of the frame has gets one warning after the first frame, listing the parts drawn: `skip_pass / repeat_pass: no part of the frame is named `Edges` (yet); the parts drawn: Shadows, Scene, …`.
+
+- **Skip:** the part records no work. Its targets keep what they last held: zero (wgpu clears a texture when it makes it) when the part is skipped from the first frame, or else what it wrote before the skip began. Whatever reads those targets still runs, so the frame time drops by the part's own cost. A skipped part has no `--gpu-time` row and no F2 row, and a frame's description lists it as skipped with `skip_pass names it (#1317)`. A skipped `Style edges` still hands its target to the styles that read it, so ASCII, pencil and contour draw on edges that are empty or stale. That is what #568 did by hand when it stubbed `edges.wgsl` to return early. A skipped `Fog veil` keeps the composite's veiled path, a skipped `Grass` compute leaves the scene drawing the blades the last compute made, and a skipped `Composite` or `UI` leaves the window as it was.
+- **Repeat:** the part records its work N times inside its one timer scope and debug group, so its `--gpu-time` row reads N times its cost. The picture comes out the same, and a frame's description lists the part once. Only a part that redraws its targets whole each time can repeat. The rest draw once and print a warning, `repeat_pass: `ASCII` draws once: it keeps history from frame to frame, …`:
+  - `Grass` counts blades into draw arguments that reset once a frame.
+  - `World lines`, `Selection outline` and the player's `UI` blend over the finished picture.
+  - `ASCII`, and a user style with a `history` target, keep state from one frame to the next.
+
+  A style with a `reveal` or a tear blend has 16 uniform slots a frame. Repeated past that, its extra draws show it untorn.
+
+On the desktop the repeats grow in a straight line. The ASCII edges fixture at 1920x1080 on an RTX 4070 (Vulkan, debug build, `flint render tests/fixtures/scenes/ascii_edges.scene.toml --gpu-time 200`, p50 in ms), with `Scene` and `Style edges` repeated together:
+
+| N | `Scene` | `Style edges` | frame |
+|---|---|---|---|
+| 1 | 0.131 | 0.101 | 1.84 |
+| 2 | 0.220 | 0.179 | 1.83 |
+| 4 | 0.402 | 0.321 | 2.01 |
+| 8 | 0.801 | 0.643 | 2.73 |
+| 16 | 1.596 | 1.288 | 5.69 |
+
+That is about 0.10 ms a scene pass and 0.08 ms an edge pass. All five PNGs have the same bytes. The frame column grows more slowly than the two rows at small N because SSAO's spread is wider than what they add.
+
+On a phone the frame time is what changes. Run the page with `fps=native` and `?scale=1` so every frame is GPU-bound, and count frames, as `tools/phone-perf/submits.mjs` does. Each of its items is a scene and its query after a `+`, so spell a space in a label as `%20`:
+
+```bash
+BASE='&scale=1' node tools/phone-perf/submits.mjs out \
+  "ascii_none+style=ascii;ascii_none+style=ascii&skip_pass=Style%20edges" 12 5
+```
+
+The page that skips a part, run against the same page without the skip, gives that part's milliseconds. With `repeat_pass=<label>:4` instead, the page adds three more of the part's milliseconds. #568 needed a hand-patched wasm and a copy of the site for each pass to measure this.
+
 ### A frame's description
 
 `--gpu-time` says what each part cost. `--frame-dump <file.json>` says what each part did (#1084): which passes ran in the frame `flint render` drew, in the order they were recorded, and why the others didn't; what each read and wrote; and every draw, by the entity it draws.
@@ -280,7 +320,7 @@ F2's overlay shows the same under the draw counts, for the frame just ended (the
 [perf] GPU memory at exit: textures 102.1 MB (scene 8.2 style 8.5 shadow 64.0 model 21.3 glyph 0.0) meshes 6.3 MB device 9.2/114.6 MB
 ```
 
-A frame that creates objects also leaves a `gpu objects` frame note (`2 buffers, 1 bind group`), so a hitch's line names it beside its cause (`render +60.0 ms (also: gpu objects)`). A count is evidence, not a measured time, so it never takes the blame by itself. A host reads the frame's count with `SceneRenderer::frame_gpu_calls()` and the memory with `gpu_memory()`; `RenderStats` carries both as `gpu_calls` and `gpu_memory`.
+A frame that creates objects also leaves a `gpu objects` frame note (`2 buffers, 1 bind group`), so a hitch's line names it beside its cause (`render +60.0 ms (also: gpu objects)`). A count is evidence, not a measured time, so it never takes the blame by itself. A host reads the frame's count with `SceneRenderer::frame_gpu_calls()` and the memory with `SceneRenderer::gpu_memory()`; `RenderStats` carries both as `gpu_calls` and `gpu_memory`.
 
 #### When the adapter's timestamps read zero
 
@@ -443,7 +483,7 @@ Build the player with `--features profile` (a game binary passes it on: `profile
 
 - `tick`, the game's step, with each [phase](#the-perf-line)'s systems beneath it ([#1096](https://github.com/chrischaps/Flint/issues/1096)):
   - input: `poll_devices`, `frame_history`, `input_script`, `collect_game_events`, `advance_transition` (with `scene_transition`, by the scene it goes to, when one runs) and `run_extension_pre_updates`;
-  - scripts: `run_scripts` holds `publish_style_reader` and `script::update`, which holds `script::hot_reload_poll` (`script::poll_scripts`, `script::poll_ui`), `script::discover`, `script::events` and one scope a callback kind (`script::on_init`, `script::on_update`...), each with a `script::call` for each script it calls, named by its file;
+  - scripts: `run_scripts` holds `publish_style_reader` and `script::update`, which holds `script::hot_reload_poll` (`script::poll_scripts`, with its steps `script::poll_take_finished`, `script::poll_failed_at_load`, `script::poll_scan_libs` and `script::poll_each_script`; then `script::poll_ui`), `script::discover`, `script::events` and one scope a callback kind (`script::on_init`, `script::on_update`...), each with a `script::call` for each script it calls, named by its file;
   - physics: `tick_fixed_physics`, with `physics::character` and a `physics::fixed_update` for each fixed step, holding `physics::sync_in`, `physics::step` (Rapier's, its detail the body count) and `physics::sync_out`;
   - script UI: `dispatch_commands`, `call_draw_uis` (`script::on_draw_ui`) and `collect_script_ui` (`script::ui_layout`);
   - anim/fx: `sound` (`audio::decode_queue`, `audio::triggers`, `audio::update` with `audio::sync_sources` and `audio::pan`), `animate` (`animation::update`, a scope for each of its tiers, `animation::sample_and_skin` inside `animation::skeletal`), `upload_bones` and `after_animation` (`publish_bone_probes`, `animation::ik`, `particles::sync`, `particles::simulate`);
@@ -656,6 +696,7 @@ A note made inside another, such as a model inside a transition or a pipeline in
 | `surface reconfigure` | the window's swapchain made again (a resize) |
 | `physics steps` | a frame that ran more than one fixed step |
 | `clock stall` | a frame over 250 ms, which pacing passed through as it was |
+| `save` | the `persist_*` store written to its save file, by why (`debounce`, `persist_save`, `scene transition`, `exit`) |
 | `screenshot` | a `--screenshot` frame read back and written as a PNG, by its file |
 | `stats overlay` | the HUD pass of the first frame F2 shows a view on (`opened`, `opened (graph)`) |
 | `trace ring` | the scope recorder's ring grew to hold its look-back (`main ring grew to 655360 records`; [Recording a trace](#recording-a-trace)) |
@@ -744,7 +785,7 @@ The perf line's count includes the start's hitches; the exit report below sets t
 | `wall_time` | when it began, seconds since recording began |
 | `ms`, `judged_ms`, `median_ms` | its wall time, the time it was judged by (paced under vsync) and the median it stood out from |
 | `missed_refreshes` | under vsync, the refreshes it ran past its one; `null` without vsync |
-| `class` | `player`, `elsewhere`, or `tooling` (the player's own screenshot or F2 overlay; see the notes above) |
+| `class` | `player`, `elsewhere`, `tooling` (the player's own screenshot or F2 overlay; see the notes above), or `loading` (a scene loaded behind a script's fade; below) |
 | `startup` | it came in the first two seconds of game time |
 | `player_ms` | the player's own work in it, every phase but `acquire` and `present` |
 | `phase`, `phase_ms` | the phase that grew most, and by how much (`player` only) |
@@ -773,6 +814,14 @@ Hitches in the first two seconds of game time (loading's last uploads, the first
 [perf] tooling hitches (screenshots, the F2 overlay, the trace ring; never gated): 4, worst 219.8 ms at t=9.62 s (screenshot shots/look_0003.png, 192.4 ms); causes: 4 screenshot
 ```
 
+**How loads are counted.** A scene transition takes its whole load in one frame: 40 to 150 ms in a release build, more on a fresh procgen cache. A game that covers it draws a fade during the transition's exiting phase and calls `complete_transition()` once the screen is black, as the showcase's zone doors do after 1.5 s. The load's long frame then stands behind the fade, and the player sees none of it. Such a hitch, on the load's frame or the frame after it (the new scene's first draws, still under the fade), is classed **`loading`**. It keeps its cause, usually `scene transition <scene>, 151.2 ms`, and is logged like any other. It is counted apart from the game's hitches: the graph's count, the perf line, the exit report's counts and `--capture-on-hitch` leave it out, and so do `--max-hitches` and `--max-hitches-startup` unless `--max-hitches-of loading` names it. A chunk loaded or a model built on that frame is part of the same covered frame. The graph's counters add `+N loading` and its last line ends `, behind a cover`. The exit report gives loads a line of their own when there were any. This one is from a scene whose next scene's `on_init` takes 150 ms:
+
+```text
+[perf] loading hitches (scene loads behind a script's cover, not gated): 1, worst 159.6 ms at t=3.05 s (scene transition b.scene.toml, 159.0 ms); causes: 1 scene transition
+```
+
+A transition no script covers is the game's hitch, since the player sees the stall. That is a scene whose scripts never call `complete_transition()`, so the load runs on the next frame, or a fade that hit the ten-second timeout without saying it was drawn. A game that wants its loads gated as gameplay leaves out the cover call, or gates them by name.
+
 **Gate it.** `--max-hitches N` makes the run exit non-zero when it had more than N hitches after the start, the way `--strict-scripts` does for script errors, so a scripted run can fail:
 
 ```sh
@@ -780,7 +829,7 @@ flint-player levels/demo.scene.toml --frame-step 0.0166667 --input-script route.
   --exit-after 30 --hitch-log hitches.jsonl --max-hitches 0
 ```
 
-Startup hitches never count against `--max-hitches`, and `tooling` hitches count against no gate, so a run validated with `--screenshot-every` isn't failed by its own screenshots. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. The failure line's worst hitch and causes are that class's too. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
+Startup hitches never count against `--max-hitches`, and `tooling` hitches count against no gate, so a run validated with `--screenshot-every` isn't failed by its own screenshots. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, `--max-hitches-of elsewhere` only the time spent outside it, and `--max-hitches-of loading` only the scene loads drawn behind a fade, which the other three leave out. The failure line's worst hitch and causes are that class's too. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
 
 **Look inside it.** The log says which phase and which script, and what the engine was doing. To see what happened inside a slow phase, build with the `profile` feature and open the frame in Tracy (above). To see inside a scope, sample it ([When scopes aren't enough](#when-scopes-arent-enough)).
 

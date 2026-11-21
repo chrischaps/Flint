@@ -266,6 +266,52 @@ impl SceneRenderer {
         samples
     }
 
+    /// Start building, on worker threads, the pipelines of every stylize
+    /// pass `config` switches on that isn't built yet (#1121): a look the
+    /// game will show later, not the one it draws now. The frame goes on
+    /// drawing meanwhile, and the first frame after a style is ready to
+    /// draw with it costs nothing to switch on: ASCII's 15 pipelines took
+    /// 1.3 s (Vulkan) to 1.7 s (DX12) on the frame that first drew it. A
+    /// frame that needs a style still building waits for it, which is never
+    /// longer than building it would have been. Returns the styles started
+    /// (none when post-processing is off, or all are built or building).
+    /// On the web it builds now, there being no threads: call it where a
+    /// hitch is hidden (a loading screen, a fade to black).
+    pub fn prepare_styles(
+        &mut self,
+        device: &wgpu::Device,
+        config: &PostProcessConfig,
+    ) -> Vec<&'static str> {
+        flint_core::scope!("prepare_styles");
+        let Some(pp) = &mut self.postprocess_pipeline else {
+            return Vec::new();
+        };
+        let surface_format = pp.surface_format;
+        pp.styles.prepare(
+            device,
+            surface_format,
+            config,
+            &self.style_mask.ids,
+            &self.styles,
+        )
+    }
+
+    /// The styles [`prepare_styles`](Self::prepare_styles) has building
+    /// that no frame has taken in yet, by name.
+    pub fn styles_preparing(&self) -> Vec<&'static str> {
+        self.postprocess_pipeline
+            .as_ref()
+            .map(|pp| pp.styles.preparing())
+            .unwrap_or_default()
+    }
+
+    /// Whether style `name`'s passes are built (prepared or drawn).
+    pub fn style_built(&self, name: &str) -> bool {
+        self.postprocess_pipeline
+            .as_ref()
+            .is_some_and(|pp| pp.styles.is_built(name))
+    }
+
     /// Build the pipelines of every stylize pass the config switches on
     /// that isn't built yet (#262). Every frame does this itself; calling
     /// it after setting a config moves the shader compile off the first
