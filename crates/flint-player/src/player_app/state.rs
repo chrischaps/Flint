@@ -180,6 +180,78 @@ impl Default for LaunchOptions {
     }
 }
 
+/// Every field, so two launches can be compared whole (#1142's test: a
+/// page's query and the desktop's flags launch the same). The sockets and
+/// feeds say only whether one was given. The pattern names every field, so
+/// a new one doesn't compile until it is listed here too.
+impl std::fmt::Debug for LaunchOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            fullscreen,
+            window_size,
+            window_options,
+            msaa_sample_count,
+            pass_knobs,
+            procgen_mode,
+            render_scale,
+            procgen_disk_cache,
+            scene_file_writable,
+            quality_overrides,
+            pixels_per_point,
+            safe_area,
+            touch_device,
+            hold_at,
+            look,
+            style_specs,
+            style_time,
+            motion_hold,
+            save_dir,
+            expression_feed,
+            compare,
+            compare_at_start,
+            strict_scripts,
+            saves_in_memory,
+            load_report,
+            headless_screen,
+            #[cfg(not(target_arch = "wasm32"))]
+            inspect,
+            #[cfg(not(target_arch = "wasm32"))]
+            world_dump,
+        } = self;
+        let mut s = f.debug_struct("LaunchOptions");
+        s.field("fullscreen", fullscreen)
+            .field("window_size", window_size)
+            .field("window_options", window_options)
+            .field("msaa_sample_count", msaa_sample_count)
+            .field("pass_knobs", pass_knobs)
+            .field("procgen_mode", procgen_mode)
+            .field("render_scale", render_scale)
+            .field("procgen_disk_cache", procgen_disk_cache)
+            .field("scene_file_writable", scene_file_writable)
+            .field("quality_overrides", quality_overrides)
+            .field("pixels_per_point", pixels_per_point)
+            .field("safe_area", safe_area)
+            .field("touch_device", touch_device)
+            .field("hold_at", hold_at)
+            .field("look", look)
+            .field("style_specs", style_specs)
+            .field("style_time", style_time)
+            .field("motion_hold", motion_hold)
+            .field("save_dir", save_dir)
+            .field("expression_feed", &expression_feed.is_some())
+            .field("compare", compare)
+            .field("compare_at_start", compare_at_start)
+            .field("strict_scripts", strict_scripts)
+            .field("saves_in_memory", saves_in_memory)
+            .field("load_report", load_report)
+            .field("headless_screen", headless_screen);
+        #[cfg(not(target_arch = "wasm32"))]
+        s.field("inspect", &inspect.is_some())
+            .field("world_dump", &world_dump.is_some());
+        s.finish()
+    }
+}
+
 /// What the current scene's file says about how it is drawn and run, taken
 /// by `apply_scene_settings` and replaced whole at each transition: a block
 /// the scene doesn't author is the default here, never the last scene's.
