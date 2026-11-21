@@ -1224,7 +1224,7 @@ What crosses, and how:
 
 The fade writes only what the two looks set differently. Whatever else moves the config meanwhile keeps moving: a script's `set_post_process` overrides are stamped over the fade each frame, and a style a script tweens that neither look touches is left to the tween. At the end the config is exactly what the cut would have drawn, and `look_faded` fires. A scene transition drops a fade in progress.
 
-`flint render --scripts --time T` captures a fade at T, from the game time the script asked: [`flint-examples/look_fade.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/look_fade.scene.toml) holds each look for 1.5 s and fades for 2, so `--time 2.5` is halfway from graphite to watercolor.
+A fade is timed from the game time the script asked it at: the frame drawn at that moment is where it starts, and the frame at the asked time plus its seconds is where it ends. `flint render --scripts --time T` captures a fade at T with the values the player draws at T, every look the scripts asked before T laid in the order asked (#1157), so a fade asked after a cut starts from the cut's look, not from the look the scene file authors. [`flint-examples/look_fade.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/look_fade.scene.toml) holds each look for 1.5 s and fades for 2, so `--time 2.5` is halfway from graphite to watercolor.
 
 ![flint-examples/look_fade.scene.toml in flint-player: graphite fading into watercolor over two seconds, at 1.0, 2.0, 2.5, 3.0 and 3.7 s of game time; the HUD bar is time, the picture eases](../images/look-fade-player.jpg)
 
@@ -1253,6 +1253,18 @@ fn on_event(name, data) {
 Nothing is shown and `get_look()` still answers the look drawn. Each style is built once whoever asks: a look that is built or building already costs nothing, and the frame that sets a look whose styles are still building waits for that build rather than starting another, so it never pays more than it would have. A switch made right after `prepare_look` therefore still stops; give it the time a build takes (about a second for ASCII on a fast machine). In the tour above, preparing its five looks at `on_init` left no frame over 50 ms at the `ascii_noir` beat in seven runs on the two backends, and none at the others but one of 50.3 ms, spent in `set_look` itself, not in a build.
 
 On the web there are no threads, so `prepare_look` builds at the call: make it where a stop is hidden, behind a loading screen or a fade to black. A Rust host calls `SceneRenderer::prepare_styles(device, &config)` with the config it will show, or `PlayerApp::prepare_look(name)`.
+
+A scene can say the same in its file, and the player prepares them when the scene loads, before its first frame:
+
+```toml
+[post_process]
+preload_looks = ["graphite", "ink_wash", "watercolor"]   # looks a script will set_look
+preload_styles = ["matrix", "tron"]                      # styles a script will set_post_style
+```
+
+A style is more than its own pipelines. The stage draws a style's `blend`, its [reveal](#revealing-a-whole-frame-style) and its tear (`blend_source = "tear"`) with pipelines of its own, built the first time a frame needs each: the first frame a sheet waiting at `reveal = 0` starts to tear open used to stop for that build (92 ms in one film). Preparing builds those too: the ones a style's table asks for, and for a preloaded look or style every one of them, whatever its table says at load, since a fade blends a look in and a script may tween a reveal or tear a style in later. A scene's own styles get theirs at its entry with no key at all. `preload_styles` is for styles nothing switches on until a script does: the reality styles (`matrix`, `tron`) a render mode tears in, a `set_post_style` at a story beat. A name the search can't find is warned about at load and skipped. A preloaded look's file is read once, at load, so the cut reads nothing from the disk; edit one while the scene plays and the edit shows at its next load. Rust hosts pass the names to `SceneRenderer::prepare_styles_with(device, &config, &names)`.
+
+Measured on a bench that cuts through Kindling's four looks every 1.5 s (`graphite`, `ink_wash`, `watercolor`, `coloured_pencil`) in a debug build, Vulkan, RTX 4070, a fresh shader cache each run: without `preload_looks` the first cut took 750 to 1150 ms (pencil's pipelines) and watercolor's 102 to 228 ms over six runs; with it every one of the 24 cuts took 16.2 to 18.4 ms, a refresh, and no run had a hitch. Plaintext's beats (a pencil sheet tearing in, then `matrix` and `tron` switched on and torn in) hitched 61 to 92 ms at `matrix` in five runs out of five without `preload_styles`, and in none with it.
 
 **`--sweep KEY=V1,V2,...`** renders the same frame once per value and lays the frames out as one labelled contact sheet, four across, in the ASCII style's built-in glyphs. KEY can be:
 

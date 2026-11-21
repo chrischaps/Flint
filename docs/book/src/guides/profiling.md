@@ -201,7 +201,7 @@ With `--time`, the frame described is the span's last. `--report json` names the
 
 ### A frame's images
 
-`--frame-capture <dir>` writes the frame's description and every target each pass wrote, as that pass left it (#1085, [ADR 0126](https://github.com/chrischaps/Flint/blob/main/docs/adr/0126-what-a-frame-capture-holds-and-how-it-replays.md)): the shadow cascades, the HDR scene before post, SSAO, each bloom step, the style mask, each style's output and its own targets.
+`--frame-capture <dir>` writes the frame's description and every target each pass wrote, as that pass left it (#1085, [ADR 0126](https://github.com/chrischaps/Flint/blob/main/docs/adr/0126-what-a-frame-capture-holds-and-how-it-replays.md)): the shadow cascades, the HDR scene before post, SSAO, each bloom step, the style mask, the editor's selection mask, each style's output and its own targets.
 
 ```bash
 flint render flint-examples/stylize_props.scene.toml --frame-capture props.flintframe
@@ -222,11 +222,12 @@ props.flintframe/
     10-ssao.png
     12-bloom_mip_1-down.exr       a step of a pass that writes one target more than once
     14-style_display_ping_0.png   a style's output, then its own targets (ascii_cells_a ...)
+    14-ascii_edge_cells_past.exr  and the textures it holds itself: ASCII's edge history
     15-surface.png                the output, byte for byte the -o file
 ```
 
 - **Each target is kept once, exactly**: 8-bit targets as PNG, 16-bit integers (the style mask) as a 16-bit PNG, half floats (the HDR chain) as OpenEXR half, depth and 32-bit floats as OpenEXR f32 (channel `Z` for depth), the EXRs ZIP-compressed. No viewable copy sits beside an EXR: `flint frame image <capture> <pass> -o x.png` makes one (HDR tonemapped, depth stretched to grey, ids coloured; [The `frame` Command](../cli-reference/overview.md#the-frame-command)). An EXR opens in most image tools too.
-- **Read where it's written.** Each copy is made right after the pass, in the frame's own encoder, because the chain reuses its targets: a style stage's two pings, and bloom's mips, which the upsample writes over. So a ping written by two styles is two images, and bloom's are `threshold`, each `down` and each `up`. A multisampled target is read through its resolve (the HDR buffer), each shadow map layer that was drawn is its own image (a sun's cascades, a casting spot's `spot_shadow`), and a style's own targets are whatever it asked the chain's table for while it drew, so a user style's are there too.
+- **Read where it's written.** Each copy is made right after the pass, in the frame's own encoder, because the chain reuses its targets: a style stage's two pings, and bloom's mips, which the upsample writes over. So a ping written by two styles is two images, and bloom's are `threshold`, each `down` and each `up`. A multisampled target is read through its resolve (the HDR buffer), each shadow map layer that was drawn is its own image (a sun's cascades, a casting spot's `spot_shadow`), and a style's own targets are whatever it asked the chain's table for while it drew, so a user style's are there too. A style that holds textures of its own notes each as it draws it (`StylePass::held_targets`, #1161): ASCII's edge cells, slots, thinned lines and outlines, the past edge cells and slots it read (`ascii.edge_cells.past`, only on a frame that followed on from the last), its tone statistics, variant cells, snap owners and dissolve state, each only on a frame that drew it. With `--select`, the `Selection mask` pass's `selection_mask` is read too; the `Selection outline` pass lists it under `reads`. Over a `--time` span the last frame is captured, so `--time 0..0.25` gives ASCII two frames to keep history from.
 - **In the manifest**, each pass's `images` lists `target`, `step`, `layer`, `format`, `size`, `file` and `stored` (`png`, `png16`, `exr-half`, `exr-f32`, `exr-u32`, or `raw` for a format nothing else holds). `frame.capturing` is true. `capture` says what it cost: images, bytes read back and on disk, the targets a pass wrote that weren't read and why (`grass_instances` is a buffer), and the milliseconds spent recording the copies, waiting, copying out and encoding.
 - **The last `surface` image is the output.** A pass that writes after it (the depth upscale below render scale 1) still follows it in the folder. A comic page's panels each have their own `surface`, the panel's picture, and the page's is the `Panels` pass's.
 - **A folder that holds anything but a capture is refused**, so a wrong path can't empty it; an earlier capture there is replaced.
@@ -275,7 +276,7 @@ Under vsync the GPU finishes a frame and then waits for the display, and a GPU t
 … | present fifo-relaxed | … | gpu 3.90 ms under vsync at idle clocks (23% busy, reads high; FLINT_VSYNC=0 for pass costs): Shadows 0.17, Scene 1.94, SSAO 0.76, Volumetric 0.89, … | …
 ```
 
-Here the frame read 3.9 ms against 2.8 unlocked, about 1.4x; in #270 (DX12, 1080p) SSAO read 4.4 ms under vsync against 0.80 without, about 5x. To compare passes, take them with `FLINT_VSYNC=0` or with `flint render --gpu-time`, which presents nothing. The share is the GPU's frame time over the mean time between frames, not the median: under Fifo on a hybrid-GPU laptop frames come in bursts (see Frame pacing below), and the median frame there was 5 ms at a 60 fps mean.
+Here the frame read 3.9 ms against 2.8 unlocked, about 1.4x; in #270 (DX12, 1080p) SSAO read 4.4 ms under vsync against 0.80 without, about 5x. To compare passes, take them with `--vsync off` (or `FLINT_VSYNC=0`) or with `flint render --gpu-time`, which presents nothing. The share is the GPU's frame time over the mean time between frames, not the median: under Fifo on a hybrid-GPU laptop frames come in bursts (see Frame pacing below), and the median frame there was 5 ms at a 60 fps mean.
 
 #### The mean frame, and when it is the GPU's
 

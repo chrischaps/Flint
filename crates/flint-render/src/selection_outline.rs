@@ -117,6 +117,7 @@ pub(crate) struct SelectionOutline {
 }
 
 struct MaskTarget {
+    texture: wgpu::Texture,
     view: wgpu::TextureView,
     size: (u32, u32),
     outline_bind: wgpu::BindGroup,
@@ -386,6 +387,12 @@ impl SelectionOutline {
         }
     }
 
+    /// The mask's texture, once [`ensure_mask`](Self::ensure_mask) made it:
+    /// what a frame capture reads after the mask pass (#1161).
+    pub fn mask_texture(&self) -> Option<&wgpu::Texture> {
+        self.target.as_ref().map(|t| &t.texture)
+    }
+
     /// The mask's view, once [`ensure_mask`](Self::ensure_mask) made it.
     pub fn mask_view(&self) -> &wgpu::TextureView {
         &self.target.as_ref().expect("ensure_mask first").view
@@ -406,8 +413,10 @@ impl SelectionOutline {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: SELECTION_MASK_FORMAT,
+                // Copied out by a frame capture (#1161)
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -426,6 +435,7 @@ impl SelectionOutline {
                 ],
             });
             self.target = Some(MaskTarget {
+                texture,
                 view,
                 size,
                 outline_bind,

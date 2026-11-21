@@ -62,9 +62,10 @@ impl PlayerApp {
                 tracing::warn!("look: {e}");
             }
         }
-        // A look's cross-fade (#496) eases what the two looks differ in, on
-        // game time, under the scripts' overrides stamped below
-        self.step_look_fade(self.core.clock.delta_time);
+        // A look's cross-fade (#496) eases what the two looks differ in, at
+        // this frame's game time (#1157), under the scripts' overrides
+        // stamped below
+        self.lay_look_fade(self.core.clock.total_time);
         // The presented frame as a PNG (#583): a capture line on the
         // expression socket, `--record`. Nothing at all while neither asks
         #[cfg(not(target_arch = "wasm32"))]
@@ -772,7 +773,9 @@ impl PlayerApp {
             self.input.touch_controls_mut().set_enabled(enabled);
         }
 
-        // A quality setting moved the distance levers (#56).
+        // A script's set_lod_scale moved the distance levers (#56), which
+        // are the quality keys lod_scale and draw_distance_scale (#1149):
+        // the quality in force follows, so get_quality() reads them too.
         if let Some(renderer) = &mut self.scene_renderer {
             let lod = self.core.script_requests.lod_scale.take();
             let draw = self.core.script_requests.draw_distance_scale.take();
@@ -782,6 +785,9 @@ impl PlayerApp {
                 s.draw_distance_scale = draw.unwrap_or(s.draw_distance_scale);
                 renderer.set_lod_settings(s);
                 s = renderer.lod_settings();
+                self.quality.settings.lod_scale = s.lod_scale;
+                self.quality.settings.draw_distance_scale = s.draw_distance_scale;
+                self.core.script.set_quality_state(self.quality.settings);
             }
             self.core
                 .script

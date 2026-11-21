@@ -333,6 +333,15 @@ pub trait Editor {
     /// once a frame (the host runs egui in one pass).
     fn ui(&mut self, _ui: &mut egui::Ui) {}
 
+    /// What the editor paints over its view that is part of the picture,
+    /// not a panel: the track editor's spline and its handles (#1154). The
+    /// window paints it after [`Editor::ui`], in the same egui pass (and
+    /// hides it with the panels); a `--render` still paints it over the
+    /// view, where the panels are left out. Paint it in screen points over
+    /// the whole context (`ctx.content_rect()`): a still is one pixel a
+    /// point.
+    fn overlay(&mut self, _ctx: &egui::Context) {}
+
     /// Prepare a `--render` still: by default one frame at rest. An editor
     /// whose still is not its 3D view (a texture) returns the picture.
     fn still(&mut self, _options: &StillOptions) -> Result<Option<image::RgbaImage>> {
@@ -379,7 +388,8 @@ pub fn run(editor: impl Editor, options: HostOptions) -> Result<()> {
 }
 
 /// Draw `editor` offscreen at the options' size: its `init`, the camera
-/// flags, its `still` and its `draw`, the panels left out.
+/// flags, its `still` and its `draw`, then its [`Editor::overlay`], the
+/// panels left out.
 pub fn render_still(
     editor: &mut impl Editor,
     options: &HostOptions,
@@ -404,10 +414,90 @@ pub fn render_still(
         depth: context.depth_target(),
         gpu: &gpu,
     });
+    paint_still_overlay(editor, &egui, &context);
     let pixels =
         pollster::block_on(context.read_pixels()).context("Failed to read rendered pixels")?;
     image::RgbaImage::from_raw(width, height, pixels)
         .context("Failed to create image from pixel data")
+}
+
+/// Paint `editor`'s [`Editor::overlay`] over a still's view, as the window
+/// paints it: one egui pass at one pixel a point on a clock of 0, into the
+/// target's plain view so it blends in display space as the window's does
+/// (#428, `HeadlessContext::hud_view`). An editor that paints nothing over
+/// its view gets no egui renderer and no pass, so its still is the bare
+/// view, byte for byte.
+fn paint_still_overlay(editor: &mut impl Editor, egui: &egui::Context, context: &HeadlessContext) {
+    let mut input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(context.width as f32, context.height as f32),
+        )),
+        time: Some(0.0),
+        ..Default::default()
+    };
+    input
+        .viewports
+        .entry(egui::ViewportId::ROOT)
+        .or_default()
+        .native_pixels_per_point = Some(1.0);
+    // A real frame: its texture updates are uploaded below (#944)
+    #[allow(clippy::disallowed_methods)]
+    let mut output = egui.run_ui(input, |ui| editor.overlay(ui.ctx()));
+    let jobs = egui.tessellate(std::mem::take(&mut output.shapes), output.pixels_per_point);
+    if jobs.is_empty() {
+        // Nothing to upload them for: egui 0.36 asserts on a dropped delta
+        output.textures_delta.clear();
+        return;
+    }
+    let (device, queue) = (&context.device, &context.queue);
+    let mut renderer = egui_wgpu::Renderer::new(
+        device,
+        context.format.remove_srgb_suffix(),
+        egui_wgpu::RendererOptions {
+            depth_stencil_format: None,
+            msaa_samples: 1,
+            dithering: false,
+            ..Default::default()
+        },
+    );
+    let screen = egui_wgpu::ScreenDescriptor {
+        size_in_pixels: [context.width, context.height],
+        pixels_per_point: output.pixels_per_point,
+    };
+    for (id, deltas) in &output.textures_delta.set {
+        for delta in deltas {
+            renderer.update_texture(device, queue, *id, delta);
+        }
+    }
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Editor still overlay"),
+    });
+    renderer.update_buffers(device, queue, &mut encoder, &jobs, &screen);
+    let view = context.hud_view();
+    {
+        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Editor still overlay Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        let mut pass = pass.forget_lifetime();
+        renderer.render(&mut pass, &jobs, &screen);
+    }
+    queue.submit(std::iter::once(encoder.finish()));
+    // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+    output.textures_delta.clear();
 }
 
 /// The camera flags over the editor's framing, its aspect the target's.
@@ -794,7 +884,10 @@ impl<E: Editor> Host<E> {
         let editor = &mut self.editor;
         // A real frame: its texture updates are uploaded below (#944)
         #[allow(clippy::disallowed_methods)]
-        let mut output = self.egui.run_ui(raw_input, |ui| editor.ui(ui));
+        let mut output = self.egui.run_ui(raw_input, |ui| {
+            editor.ui(ui);
+            editor.overlay(ui.ctx());
+        });
         egui_winit.handle_platform_output(window, std::mem::take(&mut output.platform_output));
 
         let paint_jobs = self

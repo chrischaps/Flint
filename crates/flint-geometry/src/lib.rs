@@ -5,6 +5,8 @@
 //! - [`ocean`] - the Gerstner wave spectrum, the one source of the ocean's
 //!   surface for the renderer and for scripts' buoyancy
 //! - [`spline`] - Catmull-Rom path sampling with twist
+//! - [`point_path`] - a Catmull-Rom path through a list of points, read by
+//!   distance, with a bank into its turns: a camera's flight (#1158)
 //! - [`spline_file`] - a `.spline.toml` read with its mistakes placed by line
 //!   and column (#750)
 //! - [`sweep`] - a profile polygon swept along a sampled spline: a road, a
@@ -14,6 +16,7 @@
 
 pub mod components;
 pub mod ocean;
+pub mod point_path;
 pub mod ray_mesh;
 pub mod spline;
 pub mod spline_file;

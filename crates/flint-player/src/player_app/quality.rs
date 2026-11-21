@@ -1,6 +1,7 @@
 //! Runtime quality settings (FlintKart#55): one path from every source to
 //! the renderer. The desktop's `--msaa`, `--render-scale`, `--quality` and
-//! `FLINT_SHADOWS` / `FLINT_SHADOW_RES`, the page's `?msaa=`, `?scale=` and
+//! its environment aliases (`FLINT_SHADOWS`, `FLINT_SHADOW_RES`,
+//! `FLINT_LOD_SCALE`, `FLINT_DRAW_DISTANCE_SCALE`, #1149), the page's `?msaa=`, `?scale=` and
 //! `?quality=`, an Android dev profile and a script's `set_quality` all end
 //! in [`PlayerApp::apply_quality`], between frames.
 //!
@@ -14,23 +15,16 @@ use flint_render::QualitySettings;
 
 impl PlayerApp {
     /// The settings startup asks for: the MSAA and render-scale fields, the
-    /// shadow switches in the environment, then `quality_overrides`.
+    /// quality keys' environment aliases (`QualitySettings::from_env`:
+    /// `FLINT_SHADOWS=0` A/Bs the shadow pass headlessly, `FLINT_LOD_SCALE`
+    /// the distance levers), then `quality_overrides`, which win.
     fn startup_quality(&self) -> QualitySettings {
         let mut q = QualitySettings {
             render_scale: self.launch.render_scale.scale,
             render_scale_auto: self.launch.render_scale.dynamic,
             msaa: self.launch.msaa_sample_count,
-            ..QualitySettings::default()
+            ..QualitySettings::from_env()
         };
-        // FLINT_SHADOWS=0 starts with the shadow pass off, so a perf run
-        // can A/B its cost headlessly.
-        if flint_core::env::SHADOWS.flag() == Some(false) {
-            q.shadows = false;
-        }
-        // FLINT_SHADOW_RES=1024 sizes each cascade's map (FlintKart#54).
-        if let Some(res) = flint_core::env::SHADOW_RES.u32() {
-            q.shadow_resolution = res;
-        }
         for e in q.apply_str(&self.launch.quality_overrides) {
             tracing::warn!("--quality: {e}");
         }
@@ -112,5 +106,31 @@ impl PlayerApp {
     /// The quality settings in force.
     pub fn quality(&self) -> &QualitySettings {
         &self.quality.settings
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flint_ecs::FlintWorld;
+
+    /// The web page's `?quality=` and `--quality` both land in
+    /// `quality_overrides` (flint_web.rs, player_args.rs): the distance
+    /// levers ride it like any other key (#1149), over their aliases
+    #[test]
+    fn the_quality_string_reaches_the_distance_levers() {
+        let mut app = PlayerApp::new(
+            FlintWorld::new(),
+            "lod.scene.toml".into(),
+            false,
+            None,
+            None,
+        );
+        app.launch.quality_overrides = "lod_scale=0.5,draw_distance_scale=2".into();
+        let q = app.startup_quality();
+        assert_eq!((q.lod_scale, q.draw_distance_scale), (0.5, 2.0));
+        app.apply_quality(q);
+        assert_eq!(app.quality().lod_scale, 0.5);
+        assert_eq!(app.quality().draw_distance_scale, 2.0);
     }
 }

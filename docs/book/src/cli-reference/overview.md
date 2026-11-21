@@ -481,7 +481,10 @@ set of flags (`flint_player::PlayerArgs`) and launch through one function
 Every flag below, the capture and quality ones included, works on either, and
 a scene plays the same under both. Among them: `--msaa <1|4>` (default `1`)
 for multisample anti-aliasing of the scene passes, `--render-scale` and
-`--quality`, and `--procgen-defer`, which shows placeholders for a scene's
+`--quality`, `--vsync off|mailbox|fifo`, `--frame-latency 1..3` and
+`--no-pacing` for how frames reach the display (#1149: each over its old
+variable, `FLINT_VSYNC`, `FLINT_FRAME_LATENCY` and `FLINT_PACING`, which are
+read only when the flag isn't given), and `--procgen-defer`, which shows placeholders for a scene's
 procgen assets at once and generates them over the following frames instead
 of during load (see [Specs in Scenes](../concepts/procgen.md#specs-in-scenes)).
 
@@ -1048,8 +1051,13 @@ flint edit flint-examples/stylize_props.scene.toml --render props.png --no-grid 
 
 A texture generator's or a texture pipeline's still is its output maps side by
 side, in the order the editor's tabs list them, and the command prints that
-order. The track editor's spline handles are drawn by its panels, so its still
-is the scene from the editor's camera.
+order. The track editor's still is the scene from the editor's camera with the
+spline over it, as the window draws it: the curve, the thin polygon joining
+its control points, and each point as a numbered white disc.
+
+```bash
+flint edit flint-examples/sweep_garden.scene.toml --spline --render track.png  # the track and its handles
+```
 
 ### GPU Selection
 

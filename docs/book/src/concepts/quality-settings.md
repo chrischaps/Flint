@@ -19,6 +19,8 @@ source, and the renderer applies it between frames.
 | `post_process` | bool | true | The whole post chain: bloom, SSAO, fog, vignette, grade |
 | `bloom`, `ssao`, `fog`, `volumetric` | bool | true | Caps on the scene's effects (below) |
 | `ssao_samples` | 1 to 64 | 64 | The most SSAO samples a pixel takes |
+| `lod_scale` | 0.05 and up | 1 | Multiplies every LOD switch distance: under 1 a model drops to its simpler levels sooner; 1000 holds every model at full detail ([Levels of detail](rendering.md)) |
+| `draw_distance_scale` | 0.05 and up | 1 | Multiplies every entity's `draw_distance`: under 1 far things stop drawing sooner |
 
 ## Caps, not settings
 
@@ -92,8 +94,10 @@ flint render scenes/track.scene.toml --output low.png \
 ```
 
 - **flint-player**: `--quality` is applied over `--msaa`, `--render-scale`
-  and `FLINT_SHADOWS` / `FLINT_SHADOW_RES`. A key it doesn't know stops the
-  player at start rather than run with the setting dropped.
+  and the four keys' environment aliases, `FLINT_SHADOWS`, `FLINT_SHADOW_RES`,
+  `FLINT_LOD_SCALE` and `FLINT_DRAW_DISTANCE_SCALE`, which are read only for
+  a key `--quality` doesn't give. A key it doesn't know stops the player at
+  start rather than run with the setting dropped.
 - **flint render**: `--quality` is applied after every other flag, so a
   headless snapshot can render a tier.
 - **The web player**: `?quality=shadow_cascades=1,ssao=0`, over `?msaa=` and
@@ -126,6 +130,10 @@ between frames, never with a frame's passes half encoded.
 - **Shadows off** writes uniforms that light everything, since the shaders
   sample the maps whatever the pass does.
 - **Post caps** recompute the drawn config.
+- **LOD and draw-distance scales** change two numbers the next frame's
+  culls read: nothing is rebuilt or reloaded. A script's `set_lod_scale` and
+  `set_draw_distance_scale` set the same two keys, so `get_quality()` reads
+  them back either way.
 
 On Android the renderer outlives a suspend; on resume the player applies the
 settings again over the resized chain, so a tier survives the app going to

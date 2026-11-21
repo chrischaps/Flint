@@ -681,6 +681,9 @@ pub(crate) struct FrameLog {
     pub on_page: bool,
     /// What the description's `notes` say of the frame (a split view).
     pub notes: Vec<String>,
+    /// Targets a style holds itself (#1161), as a captured frame read
+    /// them: the description's `targets` lists them after the renderer's.
+    pub targets: Vec<TargetDescription>,
 }
 
 impl FrameLog {

@@ -51,6 +51,15 @@ pub struct LaunchOptions {
     /// `?repeat_pass=`), handed to the renderer when it is made. `None`
     /// draws every part once.
     pub pass_knobs: Option<flint_render::PassKnobs>,
+    /// The present mode (`--vsync`, #1149); `None` is `FLINT_VSYNC`'s,
+    /// else vsync. Read when the window opens.
+    pub vsync: Option<flint_render::Vsync>,
+    /// Frames the CPU may queue ahead of the display, 1 to 3
+    /// (`--frame-latency`); `None` is `FLINT_FRAME_LATENCY`'s, else 2.
+    pub frame_latency: Option<u32>,
+    /// Pace the game clock to the monitor's refresh under vsync
+    /// (`--no-pacing` is `Some(false)`); `None` is `FLINT_PACING`'s, else on.
+    pub pacing: Option<bool>,
     /// When scene procgen assets are made (#32): during load, or behind
     /// placeholders on the frame-budgeted queue (`--procgen-defer`).
     pub procgen_mode: ProcGenMode,
@@ -151,6 +160,9 @@ impl Default for LaunchOptions {
             window_options: crate::WindowArgs::default(),
             msaa_sample_count: 1,
             pass_knobs: None,
+            vsync: None,
+            frame_latency: None,
+            pacing: None,
             procgen_mode: ProcGenMode::Immediate,
             render_scale: Default::default(),
             procgen_disk_cache: cfg!(not(target_arch = "wasm32")),
@@ -192,6 +204,9 @@ impl std::fmt::Debug for LaunchOptions {
             window_options,
             msaa_sample_count,
             pass_knobs,
+            vsync,
+            frame_latency,
+            pacing,
             procgen_mode,
             render_scale,
             procgen_disk_cache,
@@ -224,6 +239,9 @@ impl std::fmt::Debug for LaunchOptions {
             .field("window_options", window_options)
             .field("msaa_sample_count", msaa_sample_count)
             .field("pass_knobs", pass_knobs)
+            .field("vsync", vsync)
+            .field("frame_latency", frame_latency)
+            .field("pacing", pacing)
             .field("procgen_mode", procgen_mode)
             .field("render_scale", render_scale)
             .field("procgen_disk_cache", procgen_disk_cache)
@@ -571,10 +589,30 @@ pub(super) struct StyleState {
     /// the seconds to fade to it over (#496; 0 cuts), laid under the
     /// scene's keys at the start of the next render.
     pub(super) pending_look: Option<(Option<String>, f64)>,
-    /// A cross-fade to a look in progress (#496) and the look it ends on,
-    /// stepped on game time each render; dropped at its end, a cut, or a
+    /// A cross-fade to a look in progress (#496), laid each render at the
+    /// game time since it was asked; dropped at its end, a cut, or a
     /// scene's teardown.
-    pub(super) look_fade: Option<(flint_render::look_fade::LookFade, Option<String>)>,
+    pub(super) look_fade: Option<LookFadeState>,
+    /// The scene's `preload_looks` as read at its entry (#1159), by name,
+    /// so a cut to one reads no file. Replaced at each scene's entry.
+    pub(super) preloaded_looks: std::collections::HashMap<String, flint_render::look::Look>,
+}
+
+/// A look's cross-fade under way in the player (#496, #1157).
+pub(super) struct LookFadeState {
+    pub(super) fade: flint_render::look_fade::LookFade,
+    /// The look it ends on, for `look_faded`.
+    pub(super) look: Option<String>,
+    /// The game time it was asked at (`clock.total_time`): a render at game
+    /// time `t` lays it `t - at` seconds in, as a capture does.
+    pub(super) at: f64,
+}
+
+impl LookFadeState {
+    /// The fade `now - at` seconds in.
+    pub(super) fn at_time(&self, now: f64) -> flint_render::look_fade::LookFade {
+        self.fade.at((now - self.at) as f32)
+    }
 }
 
 /// The input config's layers (built-in, game, user overrides, CLI) and a

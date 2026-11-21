@@ -675,7 +675,8 @@ impl PlayerApp {
 
     /// Pace the clock to the window's monitor when frames wait for vblank
     /// (#406 in The Capitol). On start, and again when the window moves, since
-    /// another monitor can have another refresh. `FLINT_PACING=0` turns it off.
+    /// another monitor can have another refresh. `--no-pacing` (or its alias
+    /// `FLINT_PACING=0`) turns it off (#1149).
     pub(super) fn update_vsync_pacing(&mut self) {
         // On the web the frame-rate pacer sets the period (#140).
         if self.frame_pacer.is_some() {
@@ -685,7 +686,7 @@ impl PlayerApp {
             .render_context
             .as_ref()
             .is_some_and(|c| c.presents_on_vblank());
-        let disabled = flint_core::env::PACING.flag() == Some(false);
+        let disabled = !crate::present_args::pacing(&self.launch);
         let period = (on_vblank && !disabled)
             .then(|| {
                 self.window

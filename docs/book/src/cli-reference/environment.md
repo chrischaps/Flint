@@ -7,20 +7,22 @@ Flint reads a few `FLINT_*` environment variables, for what a flag can't reach e
 
 A value a switch doesn't accept is said once, as a warning naming the forms it takes, and the default is used: `FLINT_VSYNC=fasle` warns rather than measuring with vsync on. An empty value is the same as unset.
 
+A switch that is the alias of a flag or a quality key (`FLINT_VSYNC` of `--vsync`, `FLINT_LOD_SCALE` of `--quality lod_scale=`) says so: the flag or key wins when given, and the variable is read only when it isn't.
+
 ## Window
 
 | Variable | Accepts | Unset | What it does |
 |---|---|---|---|
-| `FLINT_VSYNC` | 1\|on\|fifo\|0\|off\|immediate\|mailbox | vsync (fifo) | How frames are presented: 1\|on\|fifo waits for vsync, 0\|off\|immediate is unlocked (real frame times for perf runs), mailbox renders uncapped and shows the newest frame each refresh |
-| `FLINT_FRAME_LATENCY` | a whole number from 1 to 3 | 2 | Frames the CPU may queue ahead of the display |
-| `FLINT_PACING` | 1\|on\|true\|yes or 0\|off\|false\|no | on | Pace the game clock to the monitor's refresh when frames wait for vsync; 0 turns it off |
+| `FLINT_VSYNC` | 1\|on\|fifo\|0\|off\|immediate\|mailbox | vsync (fifo) | How frames are presented: 1\|on\|fifo waits for vsync, 0\|off\|immediate is unlocked (real frame times for perf runs), mailbox renders uncapped and shows the newest frame each refresh. Alias of `--vsync`, which wins when given |
+| `FLINT_FRAME_LATENCY` | a whole number from 1 to 3 | 2 | Frames the CPU may queue ahead of the display. Alias of `--frame-latency`, which wins when given |
+| `FLINT_PACING` | 1\|on\|true\|yes or 0\|off\|false\|no | on | Pace the game clock to the monitor's refresh when frames wait for vsync; 0 turns it off. Alias of `--no-pacing`, which wins when given |
 
 ## Renderer
 
 | Variable | Accepts | Unset | What it does |
 |---|---|---|---|
-| `FLINT_LOD_SCALE` | a number of at least 0.05 | 1 | Multiplies every LOD switch distance (under 1 drops to coarser levels sooner) |
-| `FLINT_DRAW_DISTANCE_SCALE` | a number of at least 0.05 | 1 | Multiplies every entity's draw distance |
+| `FLINT_LOD_SCALE` | a number of at least 0.05 | 1 | Multiplies every LOD switch distance (under 1 drops to coarser levels sooner). Alias of `--quality lod_scale=`, which wins when given |
+| `FLINT_DRAW_DISTANCE_SCALE` | a number of at least 0.05 | 1 | Multiplies every entity's draw distance. Alias of `--quality draw_distance_scale=`, which wins when given |
 | `FLINT_STYLE_SCISSOR` | 1\|on\|true\|yes or 0\|off\|false\|no | on | Per-entity styles scissor their passes to their entities; 0 draws them full-frame, to check the two match byte for byte |
 | `FLINT_STYLE_SHADER_DIR` | a path | the built-in shaders | Read the style shaders from this folder (crates/flint-render/src/stylize) and rebuild on save, without a rebuild of the engine |
 | `FLINT_SHADER_CHECKS` | all\|default | every check but loop bounding | all also keeps loop bounding in the engine's own shaders (it costs ASCII's pass 2.6x GPU) |
@@ -35,8 +37,8 @@ A value a switch doesn't accept is said once, as a warning naming the forms it t
 | `FLINT_HITCH_FACTOR` | a number of at least 1 | 2 | A frame is a hitch over this many times the rolling median frame time |
 | `FLINT_HITCH_FLOOR_MS` | a number of at least 0 | 24 | ...and at least this many milliseconds over it, at any refresh rate |
 | `FLINT_PERF_LOG` | a path | stderr only | Also append each perf summary line to this file (Android sets it beside a perf profile) |
-| `FLINT_SHADOWS` | 1\|on\|true\|yes or 0\|off\|false\|no | on | 0 starts with the shadow pass off; the same as --quality shadows=off, which overrides it |
-| `FLINT_SHADOW_RES` | a whole number from 256 to 4096 | 2048 | Each shadow cascade's map, texels on a side; the same as --quality shadow_resolution=, which overrides it |
+| `FLINT_SHADOWS` | 1\|on\|true\|yes or 0\|off\|false\|no | on | 0 starts with the shadow pass off. Alias of `--quality shadows=`, which wins when given |
+| `FLINT_SHADOW_RES` | a whole number from 256 to 4096 | 2048 | Each shadow cascade's map, texels on a side. Alias of `--quality shadow_resolution=`, which wins when given |
 | `FLINT_PROCGEN_CACHE` | a folder, or 0\|off\|false for none | .flint/procgen-cache/ at the project root | Where procedural generation caches what it built on disk; 0 keeps no disk cache |
 
 ## Asset generation

@@ -293,6 +293,23 @@ pub fn resolve_in(
     resolve_with(def, look, &mut |name| find_in(name, scope))
 }
 
+/// [`resolve_in`], with a look in `read` (by the name asked) taken from
+/// there instead of searched for and read again (#1159): the player keeps
+/// a scene's `preload_looks` as read at its entry, so the cut to one asks
+/// nothing of the disk (that search stalled a cut 68 ms, measured). A
+/// name `read` doesn't hold is found as `resolve_in` finds it.
+pub fn resolve_read(
+    def: &PostProcessDef,
+    look: Option<&str>,
+    scope: &AssetScope,
+    read: &std::collections::HashMap<String, Look>,
+) -> Result<PostProcessDef, String> {
+    resolve_with(def, look, &mut |name| match read.get(name) {
+        Some(found) => Ok(found.clone()),
+        None => find_in(name, scope),
+    })
+}
+
 fn resolve_with(
     def: &PostProcessDef,
     look: Option<&str>,
@@ -512,6 +529,35 @@ mod tests {
         let mut builtin: Vec<String> = builtin_names().map(str::to_string).collect();
         builtin.sort();
         assert_eq!(on_disk, builtin);
+    }
+
+    /// #1159: a look already read is laid from what was read, and the
+    /// search isn't asked: here there is no file to find.
+    #[test]
+    fn a_look_already_read_is_not_searched_for_again() {
+        let mut files = MemorySource::new();
+        files.insert("game/flint.toml", "");
+        flint_core::vfs::scoped(Arc::new(files), || {
+            let scope = AssetScope::for_scene(Path::new("game/scenes/a.scene.toml"));
+            let def =
+                PostProcessDef::from_authored(toml::from_str("exposure = 2.5").unwrap()).unwrap();
+            assert!(resolve_in(&def, Some("dusk"), &scope).is_err(), "no file");
+            let dusk = Look::parse(
+                "dusk",
+                "[post_process]\nexposure = 0.5\nbloom_intensity = 0.4",
+                "read at the scene's entry",
+            )
+            .unwrap();
+            let read = std::collections::HashMap::from([("dusk".to_string(), dusk)]);
+            let laid = resolve_read(&def, Some("dusk"), &scope, &read).unwrap();
+            assert_eq!(laid.exposure, 2.5, "the scene's own key over the look");
+            assert_eq!(laid.bloom_intensity, 0.4, "the look's");
+            assert_eq!(laid.look.as_deref(), Some("dusk"));
+            // A name it doesn't hold is found as resolve_in finds it
+            let built_in = resolve_read(&def, Some("graphite"), &scope, &read).unwrap();
+            let searched = resolve_in(&def, Some("graphite"), &scope).unwrap();
+            assert_eq!(format!("{built_in:?}"), format!("{searched:?}"));
+        });
     }
 
     #[test]

@@ -14,7 +14,7 @@
 //! hundreds of times a frame, so no call takes the call context's lock
 //! (docs/design/script-api-overhead.md, "Pure functions").
 
-use super::builder::kind::{Map, Num};
+use super::builder::kind::{Int, Map, Num};
 use super::builder::ScriptApi;
 use rhai::Dynamic;
 use std::f64::consts::{PI, TAU};
@@ -130,6 +130,21 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .arg("degrees", Num)
         .returns(Num, "")
         .run_pure(|(degrees,)| ((degrees % 360.0) + 360.0) % 360.0);
+
+    // Smooth seeded noise (#1158): a wander, a flicker, a shake that is
+    // the same on every run
+    m.func(
+        "noise",
+        "Smooth noise of x in -1..1, about one swing a unit, 0 at whole x: the same every run.",
+    )
+    .arg("x", Num)
+    .returns(Num, "-1..1")
+    .run_pure(|(x,)| crate::rig::noise(x, 0));
+    m.func("noise", "`noise` from another seed: another curve.")
+        .arg("x", Num)
+        .arg("seed", Int)
+        .returns(Num, "-1..1")
+        .run_pure(|(x, seed)| crate::rig::noise(x, seed));
 }
 
 #[cfg(test)]

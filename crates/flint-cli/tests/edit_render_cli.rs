@@ -211,6 +211,43 @@ fn a_scene_says_one_load_summary_as_the_player_does() {
     }
 }
 
+/// #1154: the track editor's still shows what the track editor is for, the
+/// spline and its control points, painted over the scene by the same
+/// overlay the window paints (`Editor::overlay`). Its curve is the one
+/// green (80, 200, 120) in the picture and its points are white discs, so
+/// the still is held to pixels of both; before #1154 it had none of either.
+#[test]
+fn the_track_still_shows_the_spline_and_its_points() {
+    let tmp = dir("track");
+    let out = tmp.join("track.png");
+    let scene = repo().join("tests/fixtures/scenes/editors/sweep_garden.scene.toml");
+    let o = std::process::Command::new(FLINT)
+        .current_dir(repo())
+        .arg("edit")
+        .arg(&scene)
+        .args(["--spline", "--width", "960", "--height", "540", "--render"])
+        .arg(&out)
+        .output()
+        .expect("run flint");
+    if no_gpu(&o) {
+        return;
+    }
+    assert!(o.status.success(), "{}", stderr(&o));
+    let img = image::open(&out).unwrap().to_rgb8();
+    let near = |p: &image::Rgb<u8>, c: [u8; 3], within: i32| {
+        (0..3).all(|i| (p[i] as i32 - c[i] as i32).abs() <= within)
+    };
+    let curve = img.pixels().filter(|p| near(p, [80, 200, 120], 6)).count();
+    let points = img.pixels().filter(|p| near(p, [255, 255, 255], 2)).count();
+    // The loop is a few hundred pixels round in a 960-pixel still, much of it
+    // under its eight points, each a white disc of radius 6 (about 110 pixels)
+    assert!(curve > 150, "the curve drew {curve} pixels");
+    assert!(
+        points > 400,
+        "the control points drew {points} white pixels"
+    );
+}
+
 /// The camera flags mean the same in every editor with a view: a yaw
 /// turns the procgen mesh as it turns the model.
 #[test]

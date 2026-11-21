@@ -157,8 +157,10 @@ pub(super) fn distance_to_box(p: [f32; 3], min: [f32; 3], max: [f32; 3]) -> f32 
 /// The renderer's distance levers (#56). `lod_scale` multiplies every level
 /// switch distance (below 1 a model drops to its simpler levels sooner);
 /// `draw_distance_scale` multiplies every draw distance (below 1 far things
-/// stop drawing sooner). Both start at 1, or at `FLINT_LOD_SCALE` /
-/// `FLINT_DRAW_DISTANCE_SCALE`, and quality settings change them at runtime.
+/// stop drawing sooner). They are the quality keys `lod_scale` and
+/// `draw_distance_scale` (#1149), which the renderer keeps in its
+/// [`QualitySettings`](crate::QualitySettings): both start at 1, or at
+/// their aliases `FLINT_LOD_SCALE` / `FLINT_DRAW_DISTANCE_SCALE`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LodSettings {
     pub lod_scale: f32,
@@ -177,20 +179,22 @@ impl Default for LodSettings {
 impl LodSettings {
     /// The smallest scale accepted: zero would draw only the last level and
     /// nothing with a draw distance.
-    pub const MIN_SCALE: f32 = 0.05;
+    pub const MIN_SCALE: f32 = flint_core::quality::MIN_DISTANCE_SCALE;
 
-    /// The defaults, overridden by `FLINT_LOD_SCALE` and
-    /// `FLINT_DRAW_DISTANCE_SCALE` when they hold a number.
-    /// A value under [`Self::MIN_SCALE`] warns (the table's minimum).
+    /// The defaults under the aliases `FLINT_LOD_SCALE` and
+    /// `FLINT_DRAW_DISTANCE_SCALE`, as
+    /// [`QualitySettings::from_env`](crate::QualitySettings::from_env) reads
+    /// them. A value under [`Self::MIN_SCALE`] warns (the table's minimum).
     pub fn from_env() -> Self {
-        let mut s = Self::default();
-        if let Some(v) = flint_core::env::LOD_SCALE.f32() {
-            s.lod_scale = v.max(Self::MIN_SCALE);
+        Self::of(&crate::QualitySettings::from_env())
+    }
+
+    /// The levers a quality setting holds.
+    pub fn of(q: &crate::QualitySettings) -> Self {
+        Self {
+            lod_scale: q.lod_scale,
+            draw_distance_scale: q.draw_distance_scale,
         }
-        if let Some(v) = flint_core::env::DRAW_DISTANCE_SCALE.f32() {
-            s.draw_distance_scale = v.max(Self::MIN_SCALE);
-        }
-        s
     }
 }
 
@@ -557,8 +561,6 @@ pub struct SceneRenderer {
     /// The loaded terrain's chunk draws and material (ADR 0118, #736).
     terrain: terrain::TerrainRenderer,
     camera_frustum: Option<crate::frustum::Frustum>,
-    /// Level-of-detail and draw-distance scales (#56)
-    lod_settings: LodSettings,
     /// Draws the last `render_to` set aside by level of detail
     lod_culled: u32,
     /// Grass (ADR 0089, 0092): the compute scatter's and the draw's
@@ -819,7 +821,6 @@ impl SceneRenderer {
             sky,
             terrain: Default::default(),
             camera_frustum: None,
-            lod_settings: LodSettings::from_env(),
             lod_culled: 0,
             gpu_timer: None,
             gpu_calls_at: crate::gpu_counts::totals(),
@@ -857,9 +858,15 @@ impl SceneRenderer {
             authored_postprocess: postprocess_config.clone(),
             postprocess_config,
             post_config_generation: next_post_config_generation(),
-            quality: crate::quality::QualitySettings {
-                msaa: sample_count,
-                ..Default::default()
+            // The distance levers start at their environment aliases (#1149)
+            quality: {
+                let lod = LodSettings::from_env();
+                crate::quality::QualitySettings {
+                    msaa: sample_count,
+                    lod_scale: lod.lod_scale,
+                    draw_distance_scale: lod.draw_distance_scale,
+                    ..Default::default()
+                }
             },
             render_scale: 1.0,
             surface_size: size,
