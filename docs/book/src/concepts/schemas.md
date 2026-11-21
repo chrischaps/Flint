@@ -277,7 +277,7 @@ A component or archetype is known when **any** loaded schema directory declares 
 
 ### Diagnostics while the game runs
 
-The pass above checks a scene file against the schemas. A value can still be wrong where no schema looks: a component whose schema is open, a field a script writes with `set_field`, an entity a script spawns. So the systems that read components check as they read. Physics, audio, animation (`animator`, its `layers`, `sprite_animator`, `ik_two_bone`), the renderer (`sprite`, `material`, `bounds`, `model`, `terrain` and its grass, `grass_ground`, `sky`, `ocean`, `water_body`, `spline`, `spline_mesh` and the 2D UI's `screen_anchor`, `parallax`, `ui_fill`, `ui_text`) and the script system (`script`, `interactable`, the sprite functions) read through a typed view of the component, and a value they cannot use is logged as a diagnostic of the same shape, then the default is used:
+The pass above checks a scene file against the schemas. A value can still be wrong where no schema looks: a component whose schema is open, a field a script writes with `set_field`, an entity a script spawns. So the systems that read components check as they read. Physics, audio, animation (`animator`, its `layers`, `sprite_animator`, `ik_two_bone`), the renderer (`sprite`, `material`, `bounds`, `model`, `material_overrides`, `terrain` and its grass, `grass_ground`, `sky`, `ocean` (its look and its waves), `water_body`, `spline`, `spline_mesh` and the 2D UI's `screen_anchor`, `parallax`, `ui_fill`, `ui_text`) the script system (`script`, `interactable`, `joint` for `get_joint_target`, the sprite and ocean functions) and the player (`camera_tuning`, `bone_probe` and the F3 panels' starting values) read through a typed view of the component, and a value they cannot use is logged as a diagnostic of the same shape, then the default is used:
 
 ```
 WARN error[bad-enum-value] entity 'crate' rigidbody.body_type: "dynamc" is not a value of `body_type` (did you mean `dynamic`? allowed values: static, dynamic, kinematic, kinematic_position, kinematic_velocity; the default "static" is used)
@@ -286,7 +286,7 @@ WARN warning[needs-component] entity 'wall' component 'collider': a collider wit
 WARN error[bad-enum-value] entity 'hero' animator.layers[1].mode: "overide" is not a value of `mode` (did you mean `override`? allowed values: additive, override, replace; the layer is additive)
 ```
 
-An entry of an array of tables is named by its index (`animator.layers[1].mode`).
+An entry of an array of tables is named by its index (`animator.layers[1].mode`), and a table inside a component by its key (`material_overrides.Glass.emissive`).
 
 Each (entity, component, field) is reported **once**, however many frames read it, and again after the scene is reloaded. The codes are `bad-type` and `bad-enum-value`, as at load, and `needs-component`. An integer where a number is read (`move_speed = 8`) is not a mistake and is not reported. These are log lines only: `flint validate` does not run the game, so it does not print them. The one it can see without running, a collider on an entity with no rigidbody, it reports before the game starts as well.
 
@@ -587,7 +587,9 @@ flint schema --format json           # everything: every field's type, default, 
 flint schema --format json-schema --output scene.schema.json
 ```
 
-writes a JSON Schema (draft-07) for a `.scene.toml` under the schemas of your project: each entity takes `archetype` (one of the loaded archetypes), `parent`, and a table per component, with every field typed, described and given its default, range and enum values. [Taplo](https://taplo.tamasfe.dev/) and the Even Better TOML extension for VS Code read it, and give completion and inline errors while you type. Point a scene at it with a first line:
+writes a JSON Schema (draft-07) for a `.scene.toml` under the schemas of your project: each entity takes `archetype` (one of the loaded archetypes), `parent`, and a table per component, with every field typed, described and given its default, range and enum values. [Taplo](https://taplo.tamasfe.dev/) reads it, and so does the Even Better TOML extension for VS Code, which runs taplo. Under `[entities.<name>]` it offers the components, `archetype` and `parent`; under a component, its fields, a field's default filled in; for an enum field, its values. A wrong enum value or a vec3 of two numbers is marked where it stands (the vec3's message is a JSON Schema `anyOf`'s: valid under none of the forms).
+
+Point a scene at it with a `#:schema` line before its first table (comments may come before it):
 
 ```toml
 #:schema ../scene.schema.json
@@ -596,7 +598,9 @@ writes a JSON Schema (draft-07) for a `.scene.toml` under the schemas of your pr
 name = "Hall"
 ```
 
-or for every scene at once, in a `.taplo.toml` at the project root:
+The path is relative to the scene file: `../` for a scene in `levels/` with the schema at the project root. A full path is written as a URL, `file:///C:/games/hall/scene.schema.json`: taplo reads `C:\...` as a URL whose scheme is `c`.
+
+Or point every scene at it at once, with a `.taplo.toml` at the project root:
 
 ```toml
 [[rule]]
@@ -604,8 +608,13 @@ include = ["**/*.scene.toml"]
 
 [rule.schema]
 path = "./scene.schema.json"
-enabled = true
 ```
+
+Taplo finds `.taplo.toml` in the folder it runs from or the nearest parent folder that has one. But it reads the `include` patterns and the schema `path` against the folder it runs from, not the one that holds the file: in VS Code that is the workspace folder, and for `taplo lint` the working directory. So open the project folder itself in VS Code, not a folder above it, and run `taplo lint` from the project root. Run from `levels/`, the same file looks for `levels/scene.schema.json`. A `#:schema` line takes precedence over a rule and is relative to the scene wherever taplo runs.
+
+Taplo keeps a schema it has read for a minute in memory, and for up to ten where it keeps a cache on disk. After writing the file again, reload the editor window to see the new fields at once.
+
+These rules come from taplo 0.10.0's source (#1062); nobody has yet tried this setup in an editor.
 
 What it holds to, and what it leaves to `flint validate`:
 

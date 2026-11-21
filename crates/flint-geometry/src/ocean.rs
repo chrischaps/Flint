@@ -21,15 +21,7 @@
 //! Steepness is normalized (`Qᵢ = choppiness / (kᵢ·Aᵢ·N)`) so the summed
 //! steepness never exceeds `choppiness ≤ 1` — no self-intersecting loops.
 
-use flint_core::toml_util::toml_f32;
-
-fn toml_i64(v: &toml::Value) -> Option<i64> {
-    match v {
-        toml::Value::Integer(i) => Some(*i),
-        toml::Value::Float(f) => Some(*f as i64),
-        _ => None,
-    }
-}
+use flint_ecs::ComponentView;
 
 /// Gravitational acceleration for deep-water dispersion ω = √(g·k).
 pub const GRAVITY: f64 = 9.81;
@@ -91,15 +83,18 @@ impl Default for OceanParams {
 }
 
 impl OceanParams {
-    /// Read params from an `ocean` component TOML table; missing fields keep defaults.
-    pub fn from_component(value: &toml::Value) -> Self {
+    /// Read params from an `ocean` component through the typed view
+    /// (ADR 0115, #1068): a missing field keeps its default in silence, and
+    /// one of the wrong type keeps it too and is reported once by entity,
+    /// component and field. `seed` and `num_waves` are integers; a float
+    /// with no fraction (`12.0`) is one, `12.5` is the default and a report.
+    pub fn from_component(view: &ComponentView<'_>) -> Self {
         let d = Self::default();
-        let f = |name: &str, dv: f32| value.get(name).and_then(toml_f32).unwrap_or(dv);
+        let f = |name: &str, dv: f32| view.f32(name, dv);
         Self {
-            seed: value.get("seed").and_then(toml_i64).unwrap_or(d.seed),
-            num_waves: value
-                .get("num_waves")
-                .and_then(toml_i64)
+            seed: view.i64("seed", d.seed),
+            num_waves: view
+                .opt_i64("num_waves")
                 .map(|n| n.clamp(1, MAX_WAVES as i64) as usize)
                 .unwrap_or(d.num_waves),
             wavelength_min: f("wavelength_min", d.wavelength_min).max(0.5),
@@ -389,6 +384,48 @@ mod tests {
 
     fn spectrum() -> WaveSpectrum {
         WaveSpectrum::generate(&OceanParams::default())
+    }
+
+    #[test]
+    fn a_wrong_wave_field_keeps_its_default_and_is_reported_once() {
+        let mut world = flint_ecs::FlintWorld::new();
+        let id = world.spawn("sea").unwrap();
+        let data: toml::Value =
+            toml::from_str("amplitude = \"high\"\nnum_waves = 6\nseed = 3.5\nchoppiness = 1")
+                .unwrap();
+        world
+            .set_component(id, crate::components::OCEAN, data)
+            .unwrap();
+        let d = OceanParams::default();
+        for _ in 0..3 {
+            let p = OceanParams::from_component(&world.view(id, crate::components::OCEAN));
+            assert_eq!(p.amplitude, d.amplitude);
+            assert_eq!(p.seed, d.seed);
+            assert_eq!(p.num_waves, 6);
+            assert_eq!(p.choppiness, 1.0, "an integer is a number");
+        }
+        let said: Vec<String> = world
+            .read_reports()
+            .snapshot()
+            .iter()
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "error[bad-type] entity 'sea' ocean.seed: expected an integer, got float 3.5",
+                "error[bad-type] entity 'sea' ocean.amplitude: expected a number, got string \
+                 \"high\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn no_component_is_the_default_sea() {
+        let world = flint_ecs::FlintWorld::new();
+        let view = world.view(flint_core::EntityId::from_raw(1), crate::components::OCEAN);
+        assert_eq!(OceanParams::from_component(&view), OceanParams::default());
+        assert!(world.read_reports().is_empty());
     }
 
     #[test]

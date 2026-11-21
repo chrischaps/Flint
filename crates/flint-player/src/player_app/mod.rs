@@ -8,6 +8,8 @@ mod alloc_count;
 mod asset_search_tests;
 mod camera_cut;
 #[cfg(test)]
+mod catalog_root_tests;
+#[cfg(test)]
 mod collider_mesh_tests;
 mod collider_meshes;
 // The load summary and controls line a scene says when it comes up (#716)

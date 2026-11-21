@@ -1856,6 +1856,7 @@ name = "flint-geometry"
 version = "0.1.0"
 dependencies = [
  "flint-core",
+ "flint-ecs",
  "serde",
  "toml",
 ]

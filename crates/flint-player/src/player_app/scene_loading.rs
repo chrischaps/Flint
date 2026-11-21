@@ -5,7 +5,7 @@ use flint_animation::node_clip::NodeClip;
 use flint_animation::skeletal_clip::SkeletalClip;
 use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
-use flint_asset::{AssetCatalog, ContentStore};
+use flint_asset::HeldAssets;
 use flint_audio::decode::Need;
 use flint_audio::AudioSystem;
 use flint_core::components as comp;
@@ -118,13 +118,14 @@ pub fn load_scene_grass_ground(
         .is_some()
 }
 
-/// Build a ModelLoadConfig with catalog-resolved path overrides.
+/// Build a ModelLoadConfig with catalog-resolved path overrides: `held` is
+/// the project's catalog and store (`AssetSources::of`, #1065), the same
+/// `flint validate` and `flint check` ask.
 pub(super) fn build_model_load_config(
     project: &Project,
     scene_path: &str,
     world: &FlintWorld,
-    catalog: Option<&AssetCatalog>,
-    store: Option<&ContentStore>,
+    held: Option<&HeldAssets>,
 ) -> ModelLoadConfig {
     let mut config = ModelLoadConfig::in_project(project.clone(), scene_path);
     // The player asks procgen for every name before its file (#32), and the
@@ -133,48 +134,25 @@ pub(super) fn build_model_load_config(
         .asked_first
         .push("a procgen spec of the same name (specs/<name>.procgen.toml)");
 
-    let (Some(cat), Some(st)) = (catalog, store) else {
+    let Some(held) = held else {
         return config;
     };
     config.asked_first.insert(0, "the asset catalog");
 
     for entity in world.all_entities() {
-        if world.get_components(entity.id).is_some() {
-            // Resolve model assets
-            if let Some(name) = world.view(entity.id, comp::MODEL).opt_str("asset") {
-                {
-                    if !config.overrides.contains_key(name) {
-                        if let Some(path) = resolve_catalog(cat, st, name) {
-                            config.overrides.insert(name.to_string(), path);
-                        }
-                    }
-                }
-            }
-            // Resolve textures
-            for comp_name in &[comp::MATERIAL, comp::SPRITE] {
-                if let Some(tex) = world.view(entity.id, comp_name).opt_str("texture") {
-                    if !config.overrides.contains_key(tex) {
-                        if let Some(path) = resolve_catalog(cat, st, tex) {
-                            config.overrides.insert(tex.to_string(), path);
-                        }
-                    }
+        let model = world.view(entity.id, comp::MODEL).opt_str("asset");
+        let textures = [comp::MATERIAL, comp::SPRITE]
+            .map(|table| world.view(entity.id, table).opt_str("texture"));
+        for name in std::iter::once(model).chain(textures).flatten() {
+            if !config.overrides.contains_key(name) {
+                if let Some(path) = held.path_of(name) {
+                    config.overrides.insert(name.to_string(), path);
                 }
             }
         }
     }
 
     config
-}
-
-/// Look up an asset name in the catalog and content store.
-pub(super) fn resolve_catalog(
-    catalog: &AssetCatalog,
-    store: &ContentStore,
-    name: &str,
-) -> Option<PathBuf> {
-    let meta = catalog.get(name)?;
-    let hash = flint_core::ContentHash::from_prefixed_hex(&meta.hash)?;
-    store.get(&hash)
 }
 
 /// Register skeletal data from loaded models into the animation system.

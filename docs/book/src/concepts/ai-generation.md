@@ -241,11 +241,11 @@ The layering order is: global config < project config < environment variables.
 
 ## Runtime Catalog Integration
 
-The player can optionally load the asset catalog at startup for runtime asset resolution. When an entity references an asset by name, the resolution chain is:
+The player reads the project root's asset catalog for runtime asset resolution, the same one `flint validate` and `flint check` ask. When an entity references an asset by name, the resolution chain is:
 
-1. Look up the name in the `AssetCatalog`
+1. Look up the name in the `AssetCatalog` (`<root>/assets`)
 2. If found, resolve the content hash
-3. Load from the `ContentStore` path (`.flint/assets/<hash>`)
+3. Load from the `ContentStore` path (`<root>/.flint/assets/<hash>`)
 4. Fall back to file-based loading if not in the catalog
 
 This means scenes can seamlessly reference both pre-imported and AI-generated assets by name, without hardcoding file paths.

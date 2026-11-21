@@ -17,7 +17,6 @@
 
 use crate::gpu_counts::CountedDevice;
 use bytemuck::{Pod, Zeroable};
-use flint_core::toml_util::toml_f32;
 
 /// A water mesh vertex: where the surface rests, which way is up for it,
 /// and where the water there is going.
@@ -383,11 +382,16 @@ impl GpuWaterBody {
 /// Build the mesh a `water_body` component describes: `shape = "lake"` with
 /// an `outline` of [x, z] points and a `level`, or `shape = "river"` with a
 /// `path` of [x, y, z] points, a `width`, a `speed` and a `fall_speedup`.
-pub fn mesh_from_component(value: &toml::Value) -> Result<WaterBodyMesh, String> {
-    let f = |name: &str, dv: f32| value.get(name).and_then(toml_f32).unwrap_or(dv);
+///
+/// Read through the typed view (ADR 0115, #1068): `level`, `width`, `speed`
+/// and `fall_speedup` of the wrong type keep their defaults and are
+/// reported once, as is a `shape` that is no string (a lake). An unknown
+/// shape or a bad point list is still the `Err` the caller warns with.
+pub fn mesh_from_component(view: &flint_ecs::ComponentView<'_>) -> Result<WaterBodyMesh, String> {
+    let f = |name: &str, dv: f32| view.f32(name, dv);
     let points = |name: &str, n: usize| -> Result<Vec<Vec<f32>>, String> {
-        let arr = value
-            .get(name)
+        let arr = view
+            .raw(name)
             .and_then(|v| v.as_array())
             .ok_or_else(|| format!("water_body needs a `{name}` array"))?;
         arr.iter()
@@ -399,11 +403,7 @@ pub fn mesh_from_component(value: &toml::Value) -> Result<WaterBodyMesh, String>
             })
             .collect()
     };
-    match value
-        .get("shape")
-        .and_then(|v| v.as_str())
-        .unwrap_or("lake")
-    {
+    match view.str("shape", "lake") {
         "lake" => {
             let outline: Vec<[f32; 2]> =
                 points("outline", 2)?.iter().map(|p| [p[0], p[1]]).collect();
@@ -660,13 +660,34 @@ mod tests {
             "shape = 'lake'\nlevel = 3.0\noutline = [[0, 0], [4, 0], [4, 4], [0, 4]]",
         )
         .unwrap();
-        let m = mesh_from_component(&lake).unwrap();
+        let reports = flint_ecs::ReadReports::new();
+        let view = |v| flint_ecs::ComponentView::of("pool", "water_body", Some(v), &reports);
+        let m = mesh_from_component(&view(&lake)).unwrap();
         assert!((tri_area(&m) - 16.0).abs() < 1e-4);
         let river: toml::Value =
             toml::from_str("shape = 'river'\nwidth = 2\npath = [[0, 1, 0], [10, 1, 0]]").unwrap();
-        assert!(mesh_from_component(&river).unwrap().vertices.len() > 10);
+        assert!(mesh_from_component(&view(&river)).unwrap().vertices.len() > 10);
         let bad: toml::Value = toml::from_str("shape = 'pond'").unwrap();
-        assert!(mesh_from_component(&bad).is_err());
+        assert!(mesh_from_component(&view(&bad)).is_err());
+        assert!(reports.is_empty());
+    }
+
+    #[test]
+    fn a_wrong_typed_body_field_keeps_its_default_and_is_reported_once() {
+        let river: toml::Value = toml::from_str(
+            "shape = 'river'\nwidth = 'wide'\nspeed = 2\npath = [[0, 1, 0], [10, 1, 0]]",
+        )
+        .unwrap();
+        let reports = flint_ecs::ReadReports::new();
+        let view = flint_ecs::ComponentView::of("stream", "water_body", Some(&river), &reports);
+        let first = mesh_from_component(&view).unwrap();
+        let again = mesh_from_component(&view).unwrap();
+        assert_eq!(first.vertices.len(), again.vertices.len());
+        let said: Vec<String> = reports.snapshot().iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            ["error[bad-type] entity 'stream' water_body.width: expected a number, got string \"wide\""]
+        );
     }
 
     #[test]

@@ -370,14 +370,12 @@ impl WaterRenderer {
     pub(crate) fn extract_ocean(&mut self, world: &FlintWorld, has_pipeline: bool) {
         self.ocean_active = false;
         for &entity_id in world.entities_with_component(flint_geometry::components::OCEAN) {
-            let ocean_comp = world
-                .get_components(entity_id)
-                .and_then(|components| components.get(flint_geometry::components::OCEAN).cloned());
-            let Some(ocean_comp) = ocean_comp else {
+            let view = world.view(entity_id, flint_geometry::components::OCEAN);
+            if !view.exists() {
                 continue;
-            };
+            }
 
-            let params = flint_geometry::ocean::OceanParams::from_component(&ocean_comp);
+            let params = flint_geometry::ocean::OceanParams::from_component(&view);
             let needs_regen = self
                 .spectrum
                 .as_ref()
@@ -386,9 +384,7 @@ impl WaterRenderer {
             if needs_regen {
                 self.spectrum = Some(flint_geometry::ocean::WaveSpectrum::generate(&params));
             }
-            self.visuals = crate::ocean_pipeline::OceanVisuals::from_component(
-                &world.view(entity_id, flint_geometry::components::OCEAN),
-            );
+            self.visuals = crate::ocean_pipeline::OceanVisuals::from_component(&view);
             self.ocean_active = has_pipeline;
             break; // one ocean per scene
         }
@@ -465,10 +461,9 @@ impl WaterRenderer {
             {
                 continue;
             }
-            let look = crate::water_body::WaterBodyLook::from_component(
-                &world.view(entity_id, flint_geometry::components::WATER_BODY),
-            );
-            let body = crate::water_body::mesh_from_component(value)
+            let view = world.view(entity_id, flint_geometry::components::WATER_BODY);
+            let look = crate::water_body::WaterBodyLook::from_component(&view);
+            let body = crate::water_body::mesh_from_component(&view)
                 .and_then(|mesh| self.build_body(device, pipeline, &name, &mesh, look));
             let body = match body {
                 Ok(b) => Some(b),
