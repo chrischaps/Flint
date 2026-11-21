@@ -2355,10 +2355,17 @@ fn a_spawned_entity_creates_gpu_objects_that_frame_and_none_after() {
     );
     spawn(&mut world, "first", "tile", [0.0; 3]);
     let camera = Camera::default();
+    // Every frame's objects, printed at the end: the series #1091's
+    // presentation charts
+    let mut series: Vec<u64> = Vec::new();
+    fn step(gpu: &Gpu, r: &mut SceneRenderer, w: &FlintWorld, c: &Camera, s: &mut Vec<u64>) {
+        gpu.frame(r, w, c);
+        s.push(r.frame_gpu_calls().created());
+    }
 
     // The first frames build what the frame draws with: targets, pipelines,
     // the transform arena's page and the first entity's binds
-    gpu.frame(&mut renderer, &world, &camera);
+    step(&gpu, &mut renderer, &world, &camera, &mut series);
     let first = renderer.frame_gpu_calls();
     eprintln!("first frame: {}", first.created_line());
     assert!(
@@ -2366,12 +2373,12 @@ fn a_spawned_entity_creates_gpu_objects_that_frame_and_none_after() {
         "the first frame makes what it draws with"
     );
     for _ in 0..4 {
-        gpu.frame(&mut renderer, &world, &camera);
+        step(&gpu, &mut renderer, &world, &camera, &mut series);
     }
 
     // Steady: nothing made, every frame, though each still writes
     for n in 0..30 {
-        gpu.frame(&mut renderer, &world, &camera);
+        step(&gpu, &mut renderer, &world, &camera, &mut series);
         let calls = renderer.frame_gpu_calls();
         assert_eq!(
             calls.created(),
@@ -2384,7 +2391,7 @@ fn a_spawned_entity_creates_gpu_objects_that_frame_and_none_after() {
 
     // An entity spawned mid-run: its binds are made the frame it first draws
     spawn(&mut world, "second", "tile", [1.5, 0.0, 0.0]);
-    gpu.frame(&mut renderer, &world, &camera);
+    step(&gpu, &mut renderer, &world, &camera, &mut series);
     let spawned = renderer.frame_gpu_calls();
     eprintln!("spawn frame: {}", spawned.created_line());
     assert!(
@@ -2397,7 +2404,7 @@ fn a_spawned_entity_creates_gpu_objects_that_frame_and_none_after() {
 
     // And back to zero the frame after
     for n in 0..5 {
-        gpu.frame(&mut renderer, &world, &camera);
+        step(&gpu, &mut renderer, &world, &camera, &mut series);
         let calls = renderer.frame_gpu_calls();
         assert_eq!(
             calls.created(),
@@ -2417,15 +2424,16 @@ fn a_spawned_entity_creates_gpu_objects_that_frame_and_none_after() {
         ImportedMaterial::vertex_colored("small"),
     );
     spawn(&mut world, "third", "small", [-1.5, 0.0, 0.0]);
-    gpu.frame(&mut renderer, &world, &camera);
+    step(&gpu, &mut renderer, &world, &camera, &mut series);
     let loaded = renderer.frame_gpu_calls();
     eprintln!("load frame: {}", loaded.created_line());
     assert!(
         loaded.buffers >= 2,
         "the mesh's vertex and index buffers: {loaded:?}"
     );
-    gpu.frame(&mut renderer, &world, &camera);
+    step(&gpu, &mut renderer, &world, &camera, &mut series);
     assert_eq!(renderer.frame_gpu_calls().created(), 0);
+    eprintln!("objects a frame: {series:?}");
 }
 
 #[test]

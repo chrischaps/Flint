@@ -324,10 +324,9 @@ pub(crate) fn gpu_alloc_rows(
         },
     )];
     if let Some((ago, calls)) = last.filter(|(ago, _)| created == 0 && *ago < LAST_ALLOC_SECS) {
-        rows.push(row(
-            format!("  last {:.1}s ago: {}", ago, calls.created_line()),
-            Tone::Quiet,
-        ));
+        // Two rows: a startup frame's list is wider than the overlay
+        rows.push(row(format!("  last {ago:.1}s ago:"), Tone::Quiet));
+        rows.push(row(format!("    {}", calls.created_line()), Tone::Quiet));
     }
     rows.push(row(
         format!(
@@ -431,7 +430,8 @@ mod gpu_alloc_tests {
         // The frame after: zero, and the creation named while it is recent
         let after = gpu_alloc_rows(&stats(GpuCalls::default()), Some((1.25, spawned)));
         assert_eq!(after[0].tone, Tone::Calm);
-        assert_eq!(after[1].text, "  last 1.2s ago: 2 buffers, 1 bind group");
+        assert_eq!(after[1].text, "  last 1.2s ago:");
+        assert_eq!(after[2].text, "    2 buffers, 1 bind group");
         let later = gpu_alloc_rows(
             &stats(GpuCalls::default()),
             Some((LAST_ALLOC_SECS, spawned)),
