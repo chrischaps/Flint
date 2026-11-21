@@ -127,6 +127,19 @@ pub(super) fn build_model_load_config(
     world: &FlintWorld,
     held: Option<&HeldAssets>,
 ) -> ModelLoadConfig {
+    let ids: Vec<EntityId> = world.all_entities().iter().map(|e| e.id).collect();
+    build_model_load_config_of(project, scene_path, world, &ids, held)
+}
+
+/// [`build_model_load_config`] with the catalog asked only for the names
+/// the entities `ids` use: a chunk's, or a script's spawns (#1107).
+pub(super) fn build_model_load_config_of(
+    project: &Project,
+    scene_path: &str,
+    world: &FlintWorld,
+    ids: &[EntityId],
+    held: Option<&HeldAssets>,
+) -> ModelLoadConfig {
     let mut config = ModelLoadConfig::in_project(project.clone(), scene_path);
     // The player asks procgen for every name before its file (#32), and the
     // catalog before that: a not-found warning says so beside the paths.
@@ -139,10 +152,10 @@ pub(super) fn build_model_load_config(
     };
     config.asked_first.insert(0, "the asset catalog");
 
-    for entity in world.all_entities() {
-        let model = world.view(entity.id, comp::MODEL).opt_str("asset");
-        let textures = [comp::MATERIAL, comp::SPRITE]
-            .map(|table| world.view(entity.id, table).opt_str("texture"));
+    for &id in ids {
+        let model = world.view(id, comp::MODEL).opt_str("asset");
+        let textures =
+            [comp::MATERIAL, comp::SPRITE].map(|table| world.view(id, table).opt_str("texture"));
         for name in std::iter::once(model).chain(textures).flatten() {
             if !config.overrides.contains_key(name) {
                 if let Some(path) = held.path_of(name) {

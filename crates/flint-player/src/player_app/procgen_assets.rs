@@ -125,6 +125,19 @@ pub fn collect_requests(
     resolver: &ProcGenResolver,
     sink: &dyn AssetSink,
 ) -> Vec<AssetRequest> {
+    let ids: Vec<EntityId> = world.all_entities().iter().map(|e| e.id).collect();
+    collect_requests_of(world, &ids, config, resolver, sink)
+}
+
+/// [`collect_requests`] for the entities `ids` alone: a chunk's, or a
+/// script's spawns (#1107).
+pub fn collect_requests_of(
+    world: &FlintWorld,
+    ids: &[EntityId],
+    config: &ModelLoadConfig,
+    resolver: &ProcGenResolver,
+    sink: &dyn AssetSink,
+) -> Vec<AssetRequest> {
     let mut seen: HashSet<(String, bool)> = HashSet::new();
     let mut requests = Vec::new();
     let mut want = |name: &str, kind: AssetKind, position: [f32; 3]| {
@@ -143,22 +156,20 @@ pub fn collect_requests(
         }
     };
 
-    for entity in world.all_entities() {
-        if world.get_components(entity.id).is_none() {
+    for &id in ids {
+        if world.get_components(id).is_none() {
             continue;
         }
         // Through the typed view (ADR 0115): a wrong type is reported once
-        let position = world
-            .view(entity.id, comp::TRANSFORM)
-            .vec3("position", [0.0; 3]);
-        let model = world.view(entity.id, comp::MODEL);
+        let position = world.view(id, comp::TRANSFORM).vec3("position", [0.0; 3]);
+        let model = world.view(id, comp::MODEL);
         if !model.bool("runtime", false) {
             if let Some(name) = model.opt_str("asset") {
                 want(name, AssetKind::Model, position);
             }
         }
         for comp_name in [comp::MATERIAL, comp::SPRITE] {
-            if let Some(tex) = world.view(entity.id, comp_name).opt_str("texture") {
+            if let Some(tex) = world.view(id, comp_name).opt_str("texture") {
                 want(tex, AssetKind::Texture, position);
             }
         }

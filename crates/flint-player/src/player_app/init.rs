@@ -184,6 +184,7 @@ impl PlayerApp {
             particles_render_enabled: true,
             stats: Default::default(),
             loaded_chunks: HashMap::new(),
+            late_models: Default::default(),
             #[cfg(target_os = "android")]
             android_gamepad: AndroidGamepadTracker::new(),
             #[cfg(target_os = "android")]

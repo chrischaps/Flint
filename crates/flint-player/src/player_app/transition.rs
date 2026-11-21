@@ -237,6 +237,10 @@ impl PlayerApp {
             .into_iter()
             .filter(|(id, _)| spawned_ids.contains(id))
             .collect();
+        // The chunk's models (#1107), after the colliders have asked for
+        // their triangles (a model of several nodes leaves its parent with
+        // no `model`) and inside the chunk's note and load report
+        self.load_late_models();
         self.prepare_physics(&collider_meshes);
         self.core
             .physics
