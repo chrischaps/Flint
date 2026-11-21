@@ -179,24 +179,105 @@ fn pair(
     }
 }
 
-/// Whether an item goes into the veil, and if so whether it only adds
-/// light. Every match is spelled out, so a new kind of draw is asked.
-fn veils(item: &super::DrawItem) -> Option<bool> {
+impl FogVeilPipelines {
+    /// The pipeline a [`VeilDraw`] draws through; `None` for particles
+    /// before their pair is made.
+    fn get(&self, v: VeilDraw) -> Option<&wgpu::RenderPipeline> {
+        let pair = match v.kind {
+            VeilKind::Mesh => &self.meshes,
+            VeilKind::Skinned => &self.skinned,
+            VeilKind::Echo => &self.echoes,
+            VeilKind::Particles => self.particles.as_ref()?,
+        };
+        Some(pair.get(v.light))
+    }
+}
+
+/// Which of the veil's pipeline pairs an item draws through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VeilKind {
+    Mesh,
+    Skinned,
+    Echo,
+    Particles,
+}
+
+/// What the veil draws an item as (#1151): its pair, and whether it only
+/// adds light. One choice the encode binds by and the description names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct VeilDraw {
+    kind: VeilKind,
+    light: bool,
+}
+
+impl VeilDraw {
+    /// What the frame's description calls it: its pipeline's label.
+    fn name(self) -> &'static str {
+        match (self.kind, self.light) {
+            (VeilKind::Mesh, false) => "fog veil mesh (covers)",
+            (VeilKind::Mesh, true) => "fog veil mesh (light)",
+            (VeilKind::Skinned, false) => "fog veil skinned (covers)",
+            (VeilKind::Skinned, true) => "fog veil skinned (light)",
+            (VeilKind::Echo, false) => "fog veil echo (covers)",
+            (VeilKind::Echo, true) => "fog veil echo (light)",
+            (VeilKind::Particles, false) => "fog veil particle (covers)",
+            (VeilKind::Particles, true) => "fog veil particle (light)",
+        }
+    }
+}
+
+/// Whether an item goes into the veil, and if so as what. Every match is
+/// spelled out, so a new kind of draw is asked.
+fn veils(item: &super::DrawItem) -> Option<VeilDraw> {
     if !item.blend.blends() {
         return None;
     }
     let light = matches!(item.blend, Blend::Additive | Blend::Lighten);
-    match &item.draw {
-        Draw::Static(d) if d.is_wireframe => None,
+    let kind = match &item.draw {
+        Draw::Static(d) if d.is_wireframe => return None,
         // A soft edge writes depth: the composite fogs it as opaque
-        Draw::Skinned(d) if d.soft_edge_only => None,
-        Draw::Static(_) | Draw::Skinned(_) | Draw::Echo(_) | Draw::Particles(_) => Some(light),
+        Draw::Skinned(d) if d.soft_edge_only => return None,
+        Draw::Static(_) => VeilKind::Mesh,
+        Draw::Skinned(_) => VeilKind::Skinned,
+        Draw::Echo(_) => VeilKind::Echo,
+        Draw::Particles(_) => VeilKind::Particles,
         // Billboards and terrain don't blend
-        Draw::Billboard(_) | Draw::Terrain(_) => None,
-    }
+        Draw::Billboard(_) | Draw::Terrain(_) => return None,
+    };
+    Some(VeilDraw { kind, light })
 }
 
 impl SceneRenderer {
+    /// The veil's draws (#1151), in the order it draws them: each item
+    /// [`veils`] keeps, with what it's drawn as and through, once its
+    /// pipelines are made. The encode and the description's log both walk
+    /// this, so they can't list different draws.
+    fn veil_draws<'a>(
+        &'a self,
+        pipelines: &'a FogVeilPipelines,
+    ) -> impl Iterator<Item = (&'a super::DrawItem, VeilDraw, &'a wgpu::RenderPipeline)> + 'a {
+        self.draws.drawn().filter_map(move |item| {
+            let v = veils(item)?;
+            if let Draw::Particles(n) = &item.draw {
+                // Drawn from the particles' shared buffers, when they're up
+                self.particle_buffers.as_ref()?;
+                self.particle_draws.get(*n as usize)?;
+            }
+            Some((item, v, pipelines.get(v)?))
+        })
+    }
+
+    /// Log the veil's draws (#1151) into the description's pass, each named
+    /// by its pipeline.
+    pub(super) fn log_fog_veil_draws(&self, pass: &mut crate::frame_capture::LoggedPass) {
+        let Some(pipelines) = &self.fog_veil.pipelines else {
+            return;
+        };
+        for (item, v, _) in self.veil_draws(pipelines) {
+            pass.draws.push(self.logged_draw(item, None, v.name()));
+        }
+    }
+
     /// Whether this frame's fog reaches a translucent draw (#513): fog or
     /// ground fog on, and something drawn that blends. Read after the
     /// camera's culls.
@@ -345,13 +426,10 @@ impl SceneRenderer {
         // each layer back to front, so the "over" weights stack as the
         // colours did.
         let mut particles_bound = false;
-        for item in self.draws.drawn() {
-            let Some(light) = veils(item) else {
-                continue;
-            };
+        for (item, _, pipeline) in self.veil_draws(pipelines) {
+            pass.set_pipeline(pipeline);
             match &item.draw {
                 Draw::Static(d) => {
-                    pass.set_pipeline(pipelines.meshes.get(light));
                     pass.set_bind_group(0, &*d.transform_bind_group, &[]);
                     pass.set_bind_group(1, &*d.material_bind_group, &[]);
                     pass.set_bind_group(2, &self.lights.bind_group, &[]);
@@ -360,7 +438,6 @@ impl SceneRenderer {
                     pass.draw_indexed(0..d.index_count, 0, 0..1);
                 }
                 Draw::Skinned(d) => {
-                    pass.set_pipeline(pipelines.skinned.get(light));
                     pass.set_bind_group(0, &*d.transform_bind_group, &[]);
                     pass.set_bind_group(1, &*d.material_bind_group, &[]);
                     pass.set_bind_group(2, &self.lights.bind_group, &[]);
@@ -370,7 +447,6 @@ impl SceneRenderer {
                     pass.draw_indexed(0..d.index_count, 0, 0..1);
                 }
                 Draw::Echo(d) => {
-                    pass.set_pipeline(pipelines.echoes.get(light));
                     pass.set_bind_group(0, &*d.transform_bind_group, &[]);
                     pass.set_bind_group(1, &*d.material_bind_group, &[]);
                     pass.set_bind_group(2, &self.lights.bind_group, &[]);
@@ -380,11 +456,10 @@ impl SceneRenderer {
                     pass.draw_indexed(0..d.index_count, 0, 0..1);
                 }
                 Draw::Particles(n) => {
-                    let (Some(pair), Some(buffers), Some(draw)) = (
-                        &pipelines.particles,
-                        &self.particle_buffers,
-                        self.particle_draws.get(*n as usize),
-                    ) else {
+                    // veil_draws kept it only with both
+                    let (Some(buffers), Some(draw)) =
+                        (&self.particle_buffers, self.particle_draws.get(*n as usize))
+                    else {
                         continue;
                     };
                     if !particles_bound {
@@ -396,7 +471,6 @@ impl SceneRenderer {
                         pass.set_bind_group(1, buffers.instance_bind_group(), &[]);
                         particles_bound = true;
                     }
-                    pass.set_pipeline(pair.get(light));
                     pass.set_bind_group(2, draw.texture_bind_group.as_ref(), &[]);
                     let first = draw.first_instance;
                     pass.draw_indexed(0..6, 0, first..first + draw.instance_count);
