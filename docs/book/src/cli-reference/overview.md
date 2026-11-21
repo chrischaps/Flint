@@ -1158,6 +1158,23 @@ target yet, so nothing copies it into a build for you.
 | `--spline` | `false` | Open the spline/track editor instead of the viewer (scene) |
 | `--auto-orbit` | `false` | Start with the turntable auto-orbit on (scene/model/procgen); toggle with **O**, speed with `[` / `]` |
 | `--motion-hold <rate>` | (the scene's) | Motion on twos for the whole frame (#871), as `--set post.motion_hold=<rate>` is on `flint render`: the scene viewer and the model previewer draw positions and poses on ticks, this many a second (0 = off). See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
+| `--log-format <text\|json>` | `text` | How the editor writes what it says, to stderr, as the player does: `json` is one object a line with `timestamp`, `level`, `target`, `message` and the event's fields (#1164) |
+| `--quiet` | `false` | Say only warnings and errors: no load summary or the window's notices |
+
+The editors write what they say through the player's log (see
+[What the player says](#what-the-player-says)): a scene, in the viewer or the
+track editor, says its load in one line once its models are in, and again
+after each hot reload,
+
+```text
+INFO load: Loaded tests/fixtures/scenes/stylize_props.scene.toml: 8 entities, 2 models, 2 particle effects in 140 ms; no warnings
+```
+
+and the window's own notices (saves, reloads, undo, the F4 toggles, the
+auto-orbit speed) are info lines of target `viewer`. The default filter is
+`warn,rfd=off,load=info,script=info,viewer=info`; `RUST_LOG=load=debug` lists each
+file a load reads again. A `--render` still answers `Rendered ...` on stdout
+as before.
 
 ### Model Previewer Flags
 

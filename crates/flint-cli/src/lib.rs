@@ -270,6 +270,15 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
                 .with(flint_player::playtest_warning_layer())
                 .init();
         }
+        // The editors' windows say what they say through the player's
+        // subscriber, and the scene viewer its one load summary (#1164)
+        Commands::Edit(edit) => edit.log.init(),
+        Commands::Serve { .. }
+        | Commands::SplineEdit(_)
+        | Commands::Preview(_)
+        | Commands::GenPreview(_)
+        | Commands::TerrainEdit(_)
+        | Commands::TexEdit(_) => edit_router::EditLogArgs::default().init(),
         _ => default_logging(),
     }
     output::set_json(cli.json);

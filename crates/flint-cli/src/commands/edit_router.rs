@@ -202,6 +202,56 @@ pub struct EditArgs {
     /// model previewer
     #[arg(long, value_name = "RATE")]
     pub motion_hold: Option<f32>,
+
+    /// `--log-format` and `--quiet`: the player's log (#1164)
+    #[command(flatten)]
+    pub log: EditLogArgs,
+}
+
+/// What an editor shows by default (#1164): warnings, the scene's one load
+/// summary, what scripts say and the window's own notices (target
+/// `viewer`: saves, reloads, toggles). `rfd=off`: the file dialog's chatter.
+pub const EDIT_FILTER: &str = "warn,rfd=off,load=info,script=info,viewer=info";
+
+/// `--quiet`: warnings and errors alone
+pub const EDIT_QUIET_FILTER: &str = "warn,rfd=off";
+
+/// How `flint edit` writes what it says, as `flint play` does (#1164)
+#[derive(clap::Args, Clone, Debug, Default)]
+pub struct EditLogArgs {
+    /// How the editor writes what it says (to stderr): `text`, or `json`,
+    /// one object a line with `timestamp`, `level`, `target`, `message`
+    /// and the event's fields. RUST_LOG sets the filter in either
+    #[arg(long, value_enum, value_name = "FORMAT", default_value_t = flint_player::logging::LogFormat::Text)]
+    pub log_format: flint_player::logging::LogFormat,
+
+    /// Say only warnings and errors: no load summary or the window's notices
+    #[arg(long)]
+    pub quiet: bool,
+}
+
+impl EditLogArgs {
+    /// Install the player's subscriber over the editor's filter
+    pub fn init(&self) {
+        let args = flint_player::logging::LogArgs {
+            log_format: self.log_format,
+            quiet: self.quiet,
+        };
+        let filter = if self.quiet {
+            EDIT_QUIET_FILTER
+        } else {
+            EDIT_FILTER
+        };
+        flint_player::logging::init_filtered(&args, filter);
+    }
+}
+
+/// The player's load summary, for the scene viewer's loads and reloads
+fn player_load_summary() -> flint_viewer::app::LoadSummary {
+    flint_viewer::app::LoadSummary {
+        begin: flint_player::logging::begin_load_count,
+        say: flint_player::logging::say_loaded,
+    }
 }
 
 /// The editor a file opens, as finely as the flags care (#712): a
@@ -407,26 +457,34 @@ pub fn run(args: EditArgs) -> Result<()> {
     let window = scene_window(&args);
 
     match kind {
-        K::Track => launch.go(spline_edit::editor(
-            spline_edit::EditArgs {
-                scene: args.file,
-                schemas: args.schemas,
-            },
-            window,
-        )?),
-        K::Scene => launch.go(flint_viewer::app::viewer(
-            &args.file,
-            args.watch,
-            &args.schemas,
-            !args.no_inspector,
-            args.auto_orbit,
-            flint_viewer::app::ViewerStyle {
-                specs: args.style.styles.clone(),
-                time: args.style.style_time,
-                motion_hold: args.motion_hold,
-            },
-            window,
-        )?),
+        K::Track => {
+            let mut editor = spline_edit::editor(
+                spline_edit::EditArgs {
+                    scene: args.file,
+                    schemas: args.schemas,
+                },
+                window,
+            )?;
+            editor.set_load_summary(player_load_summary());
+            launch.go(editor)
+        }
+        K::Scene => {
+            let mut viewer = flint_viewer::app::viewer(
+                &args.file,
+                args.watch,
+                &args.schemas,
+                !args.no_inspector,
+                args.auto_orbit,
+                flint_viewer::app::ViewerStyle {
+                    specs: args.style.styles.clone(),
+                    time: args.style.style_time,
+                    motion_hold: args.motion_hold,
+                },
+                window,
+            )?;
+            viewer.set_load_summary(player_load_summary());
+            launch.go(viewer)
+        }
         K::Mesh | K::Texture => launch.go(gen_preview::editor(gen_preview::GenPreviewArgs {
             spec: args.file,
             seed: args.seed,
@@ -691,6 +749,86 @@ name = \"x\"
             found.is_empty(),
             "an editor host outside host.rs: {found:#?}"
         );
+    }
+
+    /// What an editor's window says goes through the log (#1164): no
+    /// `println!` or `eprintln!` in the viewer or a `flint edit` module
+    /// outside its tests, so `--log-format json` and `--quiet` hold for
+    /// every line.
+    #[test]
+    fn no_editor_prints_outside_the_log() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let commands = root.join("flint-cli/src/commands");
+        let mut files: Vec<PathBuf> = [
+            "edit_router.rs",
+            "gen_preview.rs",
+            "gen_preview_common.rs",
+            "preview.rs",
+            "spline_edit.rs",
+            "terrain_edit.rs",
+            "tex_edit.rs",
+        ]
+        .iter()
+        .map(|f| commands.join(f))
+        .collect();
+        let mut stack = vec![
+            root.join("flint-viewer/src"),
+            commands.join("particle_edit"),
+        ];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("rs")
+                    && !path.to_string_lossy().ends_with("_tests.rs")
+                {
+                    files.push(path);
+                }
+            }
+        }
+        let mut found = Vec::new();
+        for path in &files {
+            let text = without_test_modules(&std::fs::read_to_string(path).unwrap());
+            // Split, so this file doesn't name it; `eprintln` holds it too
+            for line in text.lines() {
+                if line.contains(concat!("println", "!(")) {
+                    found.push(format!("{}: {}", path.display(), line.trim()));
+                }
+            }
+        }
+        assert!(found.is_empty(), "printed outside the log: {found:#?}");
+    }
+
+    /// `text` with each `#[cfg(test)]` item cut out, braces matched
+    fn without_test_modules(text: &str) -> String {
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(at) = rest.find("#[cfg(test)]") {
+            out.push_str(&rest[..at]);
+            let after = &rest[at..];
+            let Some(open) = after.find('{') else {
+                return out;
+            };
+            let mut depth = 0usize;
+            let mut end = after.len();
+            for (i, c) in after[open..].char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = open + i + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rest = &after[end..];
+        }
+        out.push_str(rest);
+        out
     }
 
     /// The flags every editor takes pass for every kind; the table names

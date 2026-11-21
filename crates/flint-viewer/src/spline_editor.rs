@@ -203,7 +203,7 @@ impl SplineEditor {
         let content = self.to_toml_string();
         std::fs::write(&self.file_path, &content)?;
         self.modified = false;
-        println!("Saved spline to: {}", self.file_path);
+        tracing::info!(target: "viewer", "Saved spline to: {}", self.file_path);
         Ok(())
     }
 

@@ -142,6 +142,75 @@ fn every_kind_of_file_renders_a_still() {
     }
 }
 
+/// `flint edit <scene>` says its load in one line, the player's (#1164):
+/// the entities, each kind of file, the time and the warnings, and no
+/// `Loaded scene:` / `Entities:` pair or per-file list. The scene viewer
+/// and the track editor alike; `--log-format json` makes it one object
+/// with the figures as fields.
+#[test]
+fn a_scene_says_one_load_summary_as_the_player_does() {
+    let tmp = dir("summary");
+    for (kind, scene, args) in [
+        (
+            "scene",
+            "tests/fixtures/scenes/stylize_props.scene.toml",
+            &[][..],
+        ),
+        (
+            "track",
+            "tests/fixtures/scenes/editors/sweep_garden.scene.toml",
+            &["--spline"][..],
+        ),
+    ] {
+        let o = edit(&repo().join(scene), &tmp.join(format!("{kind}.png")), args);
+        if no_gpu(&o) {
+            return;
+        }
+        assert!(o.status.success(), "{kind}: {}", stderr(&o));
+        let text = stderr(&o);
+        let loads: Vec<&str> = text.lines().filter(|l| l.contains("Loaded ")).collect();
+        let summary: Vec<&&str> = loads
+            .iter()
+            .filter(|l| l.contains(" entities, ") && l.contains(" ms; "))
+            .collect();
+        assert_eq!(summary.len(), 1, "{kind}: one summary line\n{text}");
+        assert!(
+            summary[0].contains("stylize_props") || summary[0].contains("sweep_garden"),
+            "{kind}: the summary names the scene: {}",
+            summary[0]
+        );
+        assert!(
+            !text.contains("Loaded scene:") && !text.contains("Entities:"),
+            "{kind}: the old pair is gone\n{text}"
+        );
+        assert!(
+            !text.contains("Loaded model:"),
+            "{kind}: files are counted, not listed\n{text}"
+        );
+
+        let mut json_args = args.to_vec();
+        json_args.extend(["--log-format", "json"]);
+        let o = edit(
+            &repo().join(scene),
+            &tmp.join(format!("{kind}-json.png")),
+            &json_args,
+        );
+        assert!(o.status.success(), "{kind} json: {}", stderr(&o));
+        let summaries: Vec<serde_json::Value> = stderr(&o)
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<serde_json::Value>(l)
+                    .unwrap_or_else(|e| panic!("{kind}: not a JSON line ({e}): {l}"))
+            })
+            .filter(|v| v["target"] == "load" && v.get("entities").is_some())
+            .collect();
+        assert_eq!(summaries.len(), 1, "{kind}: {}", stderr(&o));
+        let s = &summaries[0];
+        assert!(s["entities"].as_u64().unwrap() > 0, "{s}");
+        assert!(s["ms"].is_u64() && s["warnings"].is_u64(), "{s}");
+    }
+}
+
 /// The camera flags mean the same in every editor with a view: a yaw
 /// turns the procgen mesh as it turns the model.
 #[test]
