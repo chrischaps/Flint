@@ -100,6 +100,12 @@ hound = { workspace = true }
 # a sound passes exactly when the engine finds it (#975).
 flint-audio = { workspace = true }
 
+# A game binary with commands of its own (#1140): the test is the binary,
+# so its `main` is its own
+[[test]]
+name = "cli_extension"
+harness = false
+
 # Built-in shader modules and frame acquisition go through flint-render's
 # seams; the list is this crate's clippy.toml (#944, #761), denied workspace-wide (#979).
 [lints]

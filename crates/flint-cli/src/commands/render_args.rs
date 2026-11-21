@@ -22,7 +22,7 @@ const DEBUG_LISTS: &str = "Debug, lists, GPU and schemas";
 /// and that is for the stack as much as for `--help`: in a debug build a
 /// derived `augment_args` is one frame of about 8 KB a flag, and the
 /// 130-flag struct this was needed 1.3 MB to parse any command line (#708).
-/// Keep a struct to a dozen or so flags; `main.rs`'s `stack_tests` hold the
+/// Keep a struct to a dozen or so flags; `lib.rs`'s `stack_tests` hold the
 /// whole parser to 1 MB.
 #[derive(clap::Args)]
 #[command(group(clap::ArgGroup::new("sequence").multiple(true).args(["frames", "mesh"])))]
