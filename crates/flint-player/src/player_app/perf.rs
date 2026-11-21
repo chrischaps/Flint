@@ -660,7 +660,7 @@ pub(crate) enum GpuSource {
 const IDLE_CLOCK_SHARE: f32 = 0.75;
 
 /// What the readout calls a present mode: wgpu's name, lower case.
-fn present_name(mode: wgpu::PresentMode) -> &'static str {
+pub(super) fn present_name(mode: wgpu::PresentMode) -> &'static str {
     use wgpu::PresentMode as P;
     match mode {
         P::Fifo | P::AutoVsync => "fifo",
@@ -672,7 +672,7 @@ fn present_name(mode: wgpu::PresentMode) -> &'static str {
 
 /// True when each frame waits for a vblank: the frame rate is the
 /// display's and the GPU rests in whatever the frame leaves over.
-fn under_vsync(mode: wgpu::PresentMode) -> bool {
+pub(super) fn under_vsync(mode: wgpu::PresentMode) -> bool {
     use wgpu::PresentMode as P;
     matches!(mode, P::Fifo | P::FifoRelaxed | P::AutoVsync)
 }

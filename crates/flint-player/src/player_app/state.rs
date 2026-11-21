@@ -421,6 +421,9 @@ pub(super) struct Stats {
     /// The start-up's wait from `run_app` to the first `resumed`, timed
     /// as the window's (#1092)
     pub(super) awaiting_window: Option<flint_core::load_report::Span>,
+    /// `--perf-report FILE` (#1093): where the exit report's JSON goes and
+    /// the run's phase and script totals it is built from.
+    pub(super) report: Option<super::perf_report::ReportTo>,
 }
 
 impl Default for Stats {
@@ -441,6 +444,7 @@ impl Default for Stats {
             last_gpu_objects: None,
             loads: Vec::new(),
             awaiting_window: None,
+            report: None,
         }
     }
 }

@@ -12,6 +12,8 @@ pub mod load_args;
 pub mod logging;
 #[cfg(feature = "music")]
 mod music;
+// `--perf-report FILE` (#1093)
+pub mod perf_report_args;
 mod player_app;
 // The desktop launch, shared by `flint play` and `flint-player` (#705)
 pub mod player_args;
@@ -40,6 +42,7 @@ pub use flint_script::{Projector, ScreenPoint, View};
 pub use flint_terrain::{GrassConfig, GroundField, Heightmap};
 pub use hitch_args::{HitchArgs, HitchClass, HitchGate};
 pub use load_args::LoadReportArgs;
+pub use perf_report_args::PerfReportArgs;
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};
