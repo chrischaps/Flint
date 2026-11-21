@@ -9,6 +9,7 @@
 //! Everything it needed from outside this file was its name in
 //! `register_styles!`.
 
+use crate::gpu_counts::CountedQueue;
 use super::kit;
 use super::{
     StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleParam, StylePass,
@@ -71,7 +72,7 @@ impl StylePass for Invert {
         };
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
         kit::fullscreen_pass(
             encoder,
             "Invert Pass",

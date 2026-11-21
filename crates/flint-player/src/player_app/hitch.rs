@@ -232,7 +232,11 @@ impl Hitch {
         if top.is_empty() {
             return false;
         }
-        if top.iter().any(|n| n.note.ms.is_none()) {
+        // An untimed load explains the hitch; a count (#1091) never does
+        if top
+            .iter()
+            .any(|n| n.note.ms.is_none() && !n.note.kind.is_count())
+        {
             return true;
         }
         let ms: f32 = top.iter().filter_map(|n| n.note.ms).sum();
@@ -1385,6 +1389,27 @@ mod tests {
     /// A note that does account for its hitch is still the cause: a model
     /// load of 70 ms in a frame 83 ms over, a transition of 90 ms. A note
     /// of the frame before that doesn't is named after, marked so.
+    #[test]
+    fn a_frame_that_made_gpu_objects_is_named_beside_the_cause_never_as_it() {
+        // #1091: an untimed load is named as the cause, but a count of GPU
+        // objects is evidence, not a measured cost
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        frame_notes::note(NoteKind::GpuObjects, || "40 bind groups".into(), None);
+        let stall = F {
+            render: 62.0,
+            ..steady(HZ60_MS + 60.0)
+        };
+        assert_eq!(run.frame(stall), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "render +60.0 ms (also: gpu objects)");
+        assert_eq!(h.cause_key(), "render");
+        assert_eq!(h.likely_cause(), "gpu objects 40 bind groups");
+        frame_notes::listen(false);
+    }
+
     #[test]
     fn a_note_that_covers_half_the_hitch_is_its_cause() {
         use flint_core::frame_notes::{self, NoteKind};

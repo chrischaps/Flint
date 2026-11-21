@@ -1,11 +1,11 @@
 //! GPU mesh cache — uploads imported meshes to GPU buffers
 
+use crate::gpu_counts::CountedDevice;
 use crate::primitives::{SkinnedVertex, Vertex};
 use crate::skinned_pipeline::MAX_BONES;
 use flint_import::{ImportResult, ImportedMaterial};
 use std::collections::HashMap;
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 /// The label [`crate::pipeline_cache`] counts kept mesh buffers under.
 pub const KEPT_GEOMETRY_LABEL: &str = "Geometry";
@@ -28,7 +28,7 @@ fn geometry_buffer(
         "only geometry nothing writes is kept: {usage:?}"
     );
     let make = || {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some(label),
             contents,
             usage,
@@ -91,7 +91,7 @@ fn bounds_of(positions: impl Iterator<Item = [f32; 3]>) -> ([f32; 3], [f32; 3]) 
 impl GpuMesh {
     /// Create a copy of the vertex buffer for a new draw call
     pub fn create_vertex_buffer_copy(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some("Imported Vertex Buffer Copy"),
             contents: &self.vertex_data,
             usage: wgpu::BufferUsages::VERTEX,
@@ -100,7 +100,7 @@ impl GpuMesh {
 
     /// Create a copy of the index buffer for a new draw call
     pub fn create_index_buffer_copy(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some("Imported Index Buffer Copy"),
             contents: &self.index_data,
             usage: wgpu::BufferUsages::INDEX,
@@ -451,13 +451,13 @@ impl MeshCache {
             MAX_BONES
         ];
         // Create bone storage buffer initialized to identity
-        let bone_buffer = Arc::new(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let bone_buffer = Arc::new(device.create_buffer_init_counted(
+            &wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("{} Bone Buffer", name)),
                 contents: bytemuck::cast_slice(&identity_bones),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
+            },
+        ));
 
         let gpu_skinned: Vec<GpuSkinnedMesh> = import_result
             .meshes
@@ -531,14 +531,15 @@ impl MeshCache {
                     wgpu::BufferUsages::INDEX,
                 );
 
-                let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: bone_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: bone_buffer.as_entire_binding(),
-                    }],
-                    label: Some(&format!("{} Bone Bind Group", name)),
-                });
+                let bone_bind_group =
+                    device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                        layout: bone_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: bone_buffer.as_entire_binding(),
+                        }],
+                        label: Some(&format!("{} Bone Bind Group", name)),
+                    });
 
                 GpuSkinnedMesh {
                     vertex_buffer,
@@ -645,13 +646,13 @@ impl MeshCache {
         // Never kept (#961): a host replaces a procedural mesh at run time
         // (a living prop, a sweep), and a cache keyed by its bytes would
         // keep every version
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let vertex_buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{} Procedural Vertex Buffer", name)),
             contents: &vertex_data,
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let index_buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{} Procedural Index Buffer", name)),
             contents: &index_data,
             usage: wgpu::BufferUsages::INDEX,
@@ -679,6 +680,28 @@ impl MeshCache {
         let had_static = self.meshes.remove(name).is_some();
         let had_skinned = self.skinned_meshes.remove(name).is_some();
         had_static || had_skinned
+    }
+
+    /// The vertex, index and bone buffers held, bytes (#1091). A buffer two
+    /// sub-meshes share (a skinned asset's one bone buffer) counts once.
+    pub fn buffer_bytes(&self) -> u64 {
+        let mut bytes = 0u64;
+        for subs in self.meshes.values() {
+            for m in subs {
+                bytes += m.vertex_buffer.size() + m.index_buffer.size();
+            }
+        }
+        for subs in self.skinned_meshes.values() {
+            for (i, m) in subs.iter().enumerate() {
+                bytes += m.vertex_buffer.size() + m.index_buffer.size();
+                // An asset's sub-meshes share its first one's bone buffer
+                // (#139); one that doesn't counts its own
+                if i == 0 || !Arc::ptr_eq(&m.bone_buffer, &subs[0].bone_buffer) {
+                    bytes += m.bone_buffer.size();
+                }
+            }
+        }
+        bytes
     }
 
     /// Number of named meshes (static and skinned) in the cache.

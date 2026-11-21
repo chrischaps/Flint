@@ -10,9 +10,9 @@
 //! - Storage buffer instancing for efficient batched rendering
 //! - Layer-based Z-offset for draw ordering (depth write disabled)
 
+use crate::gpu_counts::CountedDevice;
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
 
 /// GPU instance data for a single 2D sprite — 80 bytes, 16-byte aligned (5 x vec4).
 #[repr(C)]
@@ -143,7 +143,7 @@ impl Sprite2dPipeline {
             bias: wgpu::DepthBiasState::default(),
         };
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_counted(&wgpu::RenderPipelineDescriptor {
             label: Some("Sprite2D Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
@@ -182,14 +182,15 @@ impl Sprite2dPipeline {
 
         // Shared quad index buffer (same as particle pipeline)
         let quad_indices: [u32; 6] = [0, 1, 2, 2, 1, 3];
-        let quad_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Sprite2D Quad Index Buffer"),
-            contents: bytemuck::cast_slice(&quad_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let quad_index_buffer =
+            device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                label: Some("Sprite2D Quad Index Buffer"),
+                contents: bytemuck::cast_slice(&quad_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
 
         // Persistent uniform buffer for view_proj
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let uniform_buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some("Sprite2D Uniform Buffer"),
             contents: bytemuck::cast_slice(&[Sprite2dUniforms {
                 view_proj: [[0.0; 4]; 4],
@@ -197,7 +198,7 @@ impl Sprite2dPipeline {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let uniform_bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: &uniform_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,

@@ -269,6 +269,14 @@ fn a_perf_report_holds_the_numbers_the_lines_print() {
         "{:.0} draw calls",
         r["draws"]["draw_calls"].as_f64().unwrap()
     )));
+    // The renderer's GPU objects a frame (#1091)
+    let objects = &r["gpu_objects"];
+    assert!(line("[perf] GPU objects a frame:").contains(&format!(
+        "a frame: {:.2} (",
+        objects["created"].as_f64().unwrap()
+    )));
+    assert!(line("[perf] GPU objects a frame:")
+        .contains(&format!("in {} of 61 frames", objects["frames_creating"])));
     // GPU timing is on for a report, where the adapter has timestamps
     if let Some(gpu) = r["gpu"].as_object() {
         if gpu["timed_frames"].as_u64().unwrap_or(0) > 0 {

@@ -195,7 +195,9 @@ impl Stage {
             | NoteKind::ClockStall
             | NoteKind::Screenshot
             | NoteKind::StatsOverlay
-            | NoteKind::TraceRing => return None,
+            | NoteKind::TraceRing
+            // An untimed count of GPU objects (#1091), not load work
+            | NoteKind::GpuObjects => return None,
         })
     }
 

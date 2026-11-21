@@ -138,6 +138,28 @@ pub(crate) struct ExitNumbers {
     pub draws: Draws,
     /// The GPU's frame time as F2 shows it, over the frames that had one
     pub gpu: Option<GpuMean>,
+    /// What the renderer created and wrote on the GPU, a frame's mean (#1091)
+    pub gpu_objects: GpuObjects,
+}
+
+/// The GPU objects the renderer created and what it wrote, a frame's mean
+/// over the run (#1091, `flint_render::gpu_counts`): zero objects on a
+/// steady run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+pub(crate) struct GpuObjects {
+    /// Every object: buffers, bind groups, textures, pipelines and shader
+    /// modules
+    pub created: f64,
+    pub buffers: f64,
+    pub bind_groups: f64,
+    pub textures: f64,
+    /// Render and compute pipelines and shader modules
+    pub pipelines: f64,
+    /// Frames of the run that created any
+    pub frames_creating: u64,
+    /// Buffer and texture writes, and their KB
+    pub writes: f64,
+    pub write_kb: f64,
 }
 
 /// The F2 overlay's draw figures, a frame's mean.
@@ -180,6 +202,11 @@ impl ExitNumbers {
             "[perf] avg per frame: {:.0} draw calls ({:.0} entity draws, {:.0} culled, {:.0} of them by LOD), {:.0} triangles, {:.0} in shadows",
             d.draw_calls, d.entity_draws, d.culled, d.lod_culled, d.triangles, d.shadow_triangles
         ));
+        let o = &self.gpu_objects;
+        lines.push(format!(
+            "[perf] GPU objects a frame: {:.2} ({:.2} buffers, {:.2} bind groups, {:.2} textures, {:.2} pipelines), in {} of {} frames; {:.1} writes ({:.1} KB)",
+            o.created, o.buffers, o.bind_groups, o.textures, o.pipelines, o.frames_creating, self.frames, o.writes, o.write_kb
+        ));
         if let Some(g) = &self.gpu {
             lines.push(format!(
                 "[perf] avg GPU {:.2} ms/frame over {} timed frames{note}",
@@ -205,6 +232,8 @@ pub(crate) struct PerfReport {
     /// The clock's dt (paced to whole refreshes under vsync)
     pub dt: Option<SpreadJson>,
     pub draws: Draws,
+    /// The GPU objects created and writes, a frame's mean (#1091)
+    pub gpu_objects: GpuObjects,
     pub cpu: Cpu,
     pub gpu: Option<Gpu>,
     pub hitches: Hitches,
@@ -356,6 +385,7 @@ impl PerfReport {
             frame: numbers.present.as_ref().map(SpreadJson::from),
             dt: numbers.dt.as_ref().map(SpreadJson::from),
             draws: numbers.draws,
+            gpu_objects: numbers.gpu_objects,
             cpu: RunTotals::default().cpu(&[]),
             gpu: None,
             hitches: Hitches::default(),
@@ -401,6 +431,19 @@ impl super::PlayerApp {
                 mean_ms: c.perf_gpu_ms / c.perf_gpu_frames as f64,
                 frames: c.perf_gpu_frames,
             }),
+            gpu_objects: {
+                let g = &c.perf_gpu_calls;
+                GpuObjects {
+                    created: avg(g.created()),
+                    buffers: avg(g.buffers),
+                    bind_groups: avg(g.bind_groups),
+                    textures: avg(g.textures),
+                    pipelines: avg(g.pipelines + g.shader_modules),
+                    frames_creating: c.perf_gpu_creating,
+                    writes: avg(g.writes + g.texture_writes),
+                    write_kb: avg(g.write_bytes + g.texture_write_bytes) / 1024.0,
+                }
+            },
         })
     }
 
@@ -553,6 +596,14 @@ mod tests {
                 mean_ms: 2.345,
                 frames: 118,
             }),
+            gpu_objects: GpuObjects {
+                created: 0.025,
+                bind_groups: 0.025,
+                frames_creating: 1,
+                writes: 17.0,
+                write_kb: 27.4,
+                ..Default::default()
+            },
         }
     }
 
@@ -662,6 +713,15 @@ mod tests {
             "draws.lod_culled",
             "draws.triangles",
             "draws.shadow_triangles",
+            "gpu_objects",
+            "gpu_objects.created",
+            "gpu_objects.buffers",
+            "gpu_objects.bind_groups",
+            "gpu_objects.textures",
+            "gpu_objects.pipelines",
+            "gpu_objects.frames_creating",
+            "gpu_objects.writes",
+            "gpu_objects.write_kb",
             "cpu",
             "cpu.frames",
             "cpu.work_ms",
@@ -752,7 +812,19 @@ mod tests {
             "{:.0} draw calls",
             r["draws"]["draw_calls"].as_f64().unwrap()
         )));
-        assert!(lines[3].starts_with(&format!(
+        // The renderer's GPU objects (#1091)
+        assert_eq!(
+            lines[3],
+            format!(
+                "[perf] GPU objects a frame: {:.2} (0.00 buffers, {:.2} bind groups, 0.00 textures, 0.00 pipelines), in {} of 120 frames; {:.1} writes ({:.1} KB)",
+                r["gpu_objects"]["created"].as_f64().unwrap(),
+                r["gpu_objects"]["bind_groups"].as_f64().unwrap(),
+                r["gpu_objects"]["frames_creating"],
+                r["gpu_objects"]["writes"].as_f64().unwrap(),
+                r["gpu_objects"]["write_kb"].as_f64().unwrap()
+            )
+        );
+        assert!(lines[4].starts_with(&format!(
             "[perf] avg GPU {:.2} ms/frame over {} timed frames",
             r["gpu"]["mean_ms"].as_f64().unwrap(),
             r["gpu"]["timed_frames"]

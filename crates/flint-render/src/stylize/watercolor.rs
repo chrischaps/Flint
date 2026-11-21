@@ -62,6 +62,7 @@
 //! the other, and they share nothing (Kuwahara's structure tensor is an
 //! HDR-stage intermediate; the wash is the only smoothing watercolor does).
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use super::images::{ImageStack, ImageUse, LayerInfo, StackedImages, MAX_LAYERS};
 use super::kit;
 use super::variant_table::{report_drop, storage_entry, VariantTable};
@@ -271,7 +272,7 @@ impl Watercolor {
             kit::wgsl!("watercolor_wash.wgsl"),
         );
         // A one-texel mask of id 0, bound while no entity asks
-        let no_mask = device.create_texture(&wgpu::TextureDescriptor {
+        let no_mask = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Watercolor No Mask"),
             size: wgpu::Extent3d {
                 width: 1,
@@ -337,7 +338,7 @@ impl Watercolor {
         let mask = frame.mask.filter(|_| with_mask);
         let key = mask.is_some() as u64 | paper.generation << 1;
         frame.depth_bind("Watercolor Entity BG", key, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Watercolor Entity BG"),
                 layout: &self.entity_bgl,
                 entries: &[
@@ -409,7 +410,7 @@ impl Watercolor {
         table.upload(frame.device, frame.queue, rows, slots);
         let [rows, slots] = table.entries(1);
         frame.bind("Watercolor Uniform BG", table.generation(), || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Watercolor Uniform BG"),
                 layout: &self.paint_bgl,
                 entries: &[
@@ -485,7 +486,7 @@ impl StylePass for Watercolor {
                 radius,
                 _pad: [0.0; 3],
             };
-            frame.queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
+            frame.queue.write_buffer_counted(buffer, 0, bytemuck::bytes_of(&u));
         }
         // Per entity (#538), each pass runs only where what follows reads
         // it: the paint inside its entities' rect, the wash inside the
@@ -540,7 +541,7 @@ impl StylePass for Watercolor {
         };
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
         let paint_bind = self.paint_bind(frame, &rows, &slots);
         let input_bind =
             frame.sampled_input("Watercolor Paint Input BG", &self.sampled_bgl, input);

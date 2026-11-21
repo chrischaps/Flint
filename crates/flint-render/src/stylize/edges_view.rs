@@ -18,6 +18,7 @@
 //! `needs: &[StyleNeed::Edges]`, and [`StyleFrame::edges_bind`] for the
 //! bind group.
 
+use crate::gpu_counts::CountedQueue;
 use super::kit;
 use super::{
     StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleNeed, StyleParam,
@@ -101,7 +102,7 @@ impl StylePass for EdgesView {
         };
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
         kit::fullscreen_pass(
             encoder,
             "Edges View Pass",

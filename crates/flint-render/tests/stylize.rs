@@ -13,6 +13,8 @@
 //! device takes it alone ([`gpu_alone`]); the rest take [`gpu`], which
 //! lends it as `shared_gpu` decides (`FLINT_GPU_TEST_PARALLEL`).
 
+#![allow(clippy::disallowed_methods)] // the test's own targets and read-backs, not the renderer's, so uncounted (#1091)
+
 mod shared_gpu;
 
 use flint_ecs::FlintWorld;

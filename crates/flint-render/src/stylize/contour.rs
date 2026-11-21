@@ -17,6 +17,7 @@
 //! field, `boil` re-decides on each drawing of the field where a line runs,
 //! how wide it is and how hard the pen pressed; at 0 none of that runs.
 
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use super::kit;
 use super::{
     StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleNeed, StyleParam,
@@ -164,7 +165,7 @@ impl Contour {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        let no_edges = device.create_texture(&wgpu::TextureDescriptor {
+        let no_edges = device.create_texture_counted(&wgpu::TextureDescriptor {
             label: Some("Contour No Edges"),
             size: wgpu::Extent3d {
                 width: 1,
@@ -209,11 +210,11 @@ impl StylePass for Contour {
         );
         frame
             .queue
-            .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
+            .write_buffer_counted(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
         // Kept over the edges themselves (#960)
         let over = [frame.edges_or(&self.no_edges_view)];
         let depth = frame.depth_bind_over("Contour Depth BG", 0, &over, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            frame.device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
                 label: Some("Contour Depth BG"),
                 layout: &self.depth_bgl,
                 entries: &[

@@ -163,6 +163,7 @@
 //! not the prop's) or wholly to the prop (its scene pixels plain). See
 //! [`super::ownership`].
 
+use crate::gpu_counts::CountedDevice;
 use super::kit;
 use super::variant_table::{report_drop, storage_entry, VariantTable};
 use super::text::{self, GlyphCell, GlyphText};
@@ -558,7 +559,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         ],
     });
     // Bound while no entity asks for the style: one unstyled pixel
-    let no_mask = device.create_texture(&wgpu::TextureDescriptor {
+    let no_mask = device.create_texture_counted(&wgpu::TextureDescriptor {
         label: Some("ASCII No Mask"),
         size: wgpu::Extent3d {
             width: 1,
@@ -575,7 +576,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     let no_mask_view = no_mask.create_view(&Default::default());
     // Bound if the shared edge pass couldn't be built: no edge anywhere, so
     // only the mask's outlines are found
-    let no_edges = device.create_texture(&wgpu::TextureDescriptor {
+    let no_edges = device.create_texture_counted(&wgpu::TextureDescriptor {
         label: Some("ASCII No Edges"),
         size: wgpu::Extent3d {
             width: 1,

@@ -6,6 +6,7 @@
 //! in `ScenePipelines`; the host's clock is still `SceneRenderer::ocean_time`.
 
 use super::helpers::identity_matrix;
+use crate::gpu_counts::{CountedDevice, CountedQueue};
 use crate::ocean_pipeline::OceanPipeline;
 use crate::pipeline::TransformUniforms;
 use crate::postprocess::HDR_FORMAT;
@@ -163,19 +164,19 @@ impl WaterRenderer {
             return Self::without_gpu(None, None, None, None, None);
         };
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Ocean Uniform Buffer"),
             size: std::mem::size_of::<crate::ocean_pipeline::OceanUniformsGpu>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let sea_body_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let sea_body_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Ocean Sea Body Buffer"),
             size: std::mem::size_of::<crate::water_body::WaterBodyUniformsGpu>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let uniform_bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: &pipeline.ocean_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -190,13 +191,13 @@ impl WaterRenderer {
             label: Some("Ocean Uniform Bind Group"),
         });
 
-        let transform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let transform_buffer = device.create_buffer_counted(&wgpu::BufferDescriptor {
             label: Some("Ocean Transform Buffer"),
             size: std::mem::size_of::<TransformUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let transform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let transform_bind_group = device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
             layout: transform_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -245,6 +246,13 @@ impl WaterRenderer {
         }
     }
 
+    /// The refraction grab's colour and depth, bytes (#1091).
+    pub(crate) fn grab_bytes(&self) -> u64 {
+        use crate::gpu_counts::bytes_of;
+        self.grab.color.as_ref().map_or(0, |c| bytes_of(&c.0))
+            + self.grab.depth.as_ref().map_or(0, |d| bytes_of(&d.0))
+    }
+
     /// Trade this view's grab for a panel's (`panels::ViewSlot`).
     pub(crate) fn swap_grab(&mut self, other: &mut OceanGrab) {
         std::mem::swap(&mut self.grab, other);
@@ -275,20 +283,22 @@ impl WaterRenderer {
         );
         let cv = dummy_color.create_view(&Default::default());
         let dv = dummy_depth.create_view(&Default::default());
-        self.grab_dummy_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &op.grab_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&cv),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&dv),
-                },
-            ],
-            label: Some("Ocean Grab Dummy Bind Group"),
-        }));
+        self.grab_dummy_bind_group = Some(device.create_bind_group_counted(
+            &wgpu::BindGroupDescriptor {
+                layout: &op.grab_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&cv),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&dv),
+                    },
+                ],
+                label: Some("Ocean Grab Dummy Bind Group"),
+            },
+        ));
     }
 
     /// Ensure grab-pass textures + bind groups exist at the given size.
@@ -310,7 +320,7 @@ impl WaterRenderer {
         }
 
         let make = |format: wgpu::TextureFormat, label: &str| {
-            let tex = device.create_texture(&wgpu::TextureDescriptor {
+            let tex = device.create_texture_counted(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
                     width,
@@ -333,20 +343,22 @@ impl WaterRenderer {
         let color = make(HDR_FORMAT, "Ocean Grab Color");
         let depth = make(wgpu::TextureFormat::R32Float, "Ocean Grab Depth");
 
-        self.grab.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &op.grab_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&color.1),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&depth.1),
-                },
-            ],
-            label: Some("Ocean Grab Bind Group"),
-        }));
+        self.grab.bind_group = Some(
+            device.create_bind_group_counted(&wgpu::BindGroupDescriptor {
+                layout: &op.grab_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&color.1),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&depth.1),
+                    },
+                ],
+                label: Some("Ocean Grab Bind Group"),
+            }),
+        );
         self.grab.color = Some(color);
         self.grab.depth = Some(depth);
         self.grab.size = (width, height);
@@ -646,7 +658,7 @@ impl WaterRenderer {
                 camera_pos,
                 _pad: 0.0,
             };
-            queue.write_buffer(tbuf, 0, bytemuck::cast_slice(&[transform]));
+            queue.write_buffer_counted(tbuf, 0, bytemuck::cast_slice(&[transform]));
 
             let v = &self.visuals;
             let hulls = self.contacts_to_foam(camera_pos);
@@ -744,17 +756,17 @@ impl WaterRenderer {
                 tint_foam: tint.2[3],
                 tint_sky: tint.2[4],
             };
-            queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
+            queue.write_buffer_counted(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
 
             // Each body's look, its missing colours the sea's as they
             // stand this frame (so a time-of-day palette tints them too).
             if let Some(sea_buf) = &self.sea_body_buffer {
                 let sea = crate::water_body::WaterBodyUniformsGpu::sea(v);
-                queue.write_buffer(sea_buf, 0, bytemuck::cast_slice(&[sea]));
+                queue.write_buffer_counted(sea_buf, 0, bytemuck::cast_slice(&[sea]));
             }
             for b in self.bodies_to_draw() {
                 let u = b.look.to_gpu(v, b.flowing);
-                queue.write_buffer(&b.uniform_buffer, 0, bytemuck::cast_slice(&[u]));
+                queue.write_buffer_counted(&b.uniform_buffer, 0, bytemuck::cast_slice(&[u]));
             }
         }
     }
