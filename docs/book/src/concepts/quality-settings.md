@@ -101,7 +101,8 @@ flint render scenes/track.scene.toml --output low.png \
 - **flint render**: `--quality` is applied after every other flag, so a
   headless snapshot can render a tier.
 - **The web player**: `?quality=shadow_cascades=1,ssao=0`, over `?msaa=` and
-  `?scale=`.
+  `?scale=`. A key it doesn't know is a console warning, and the page plays
+  on with the settings that did read.
 - **Android**: a debug build's `dev_profile.toml` takes a `[quality]` table
   or a `quality = "..."` string (flint-android's `DevProfile`, written over
   `adb shell run-as`).

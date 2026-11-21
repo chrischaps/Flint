@@ -402,6 +402,7 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 - Music-session lifecycle: starts a `flint-rhythm` `ChartSession` on the shared Kira manager and hands the gamepad to `flint-input-capture` while a `music_session` component is active
 - Summonable debug overlay (F3 scene panels, F4 Rendering & Effects, Music Guide and Manifest Map strips) behind the `debug-hud` feature
 - One launch (`player_args.rs`, #705): `flint_player::PlayerArgs` is every flag, `flint_player::launch` turns them into a running `PlayerApp`, and both `flint-player` (which adds `--bundle`) and `flint play` call it, so the two take the same flags and play a scene the same
+- One set of options (`play_options.rs`, #1142): the desktop's flags (`PlayerArgs::options`), the web page's query string (`PlayOptions::from_query`) and Android's `dev_profile.toml` each build a `flint_player::PlayOptions`, and `PlayOptions::apply` sets the `PlayerApp` from it, so a value means the same whichever host read it. A bad value stops the desktop before its window opens. The page and Android warn of it and play on with the default
 
 ### flint-cli
 

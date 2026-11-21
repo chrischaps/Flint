@@ -138,13 +138,17 @@ fn android_main(app: AndroidApp) {
     // Register the JNI gamepad axis reader so PlayerApp can poll trigger/right-stick values
     player.set_android_axis_reader(read_gamepad_axes);
 
+    // The launch's options, through the call the desktop's flags and the
+    // page's query take (#1142): a dev profile's, else none
+    profile
+        .as_ref()
+        .map(DevProfile::options)
+        .unwrap_or_default()
+        .apply(&mut player);
+
     // Skybox, ambient, shading levers, camera and post from the scene file,
     // as the desktop player applies them
     player.apply_scene_settings(&scene_file);
-
-    if let Some(profile) = &profile {
-        profile.apply(&mut player);
-    }
 
     // Enable gamepad trigger and right-stick axes for GameActivity's native event processing.
     // By default only X and Y (left stick) are enabled. Our JNI bridge handles these too,
@@ -347,10 +351,14 @@ impl DevProfile {
         }
     }
 
-    fn apply(&self, player: &mut flint_player::PlayerApp) {
+    /// The profile's [`flint_player::PlayOptions`], the struct the desktop's
+    /// flags and the page's query build too (#1142). A value that doesn't
+    /// read goes to logcat and the game plays without it.
+    fn options(&self) -> flint_player::PlayOptions {
         let t = &self.table;
+        let mut options = flint_player::PlayOptions::default();
         if let Some(msaa) = t.get("msaa").and_then(|v| v.as_integer()) {
-            player.launch.msaa_sample_count = if msaa >= 4 { 4 } else { 1 };
+            options.msaa = if msaa >= 4 { 4 } else { 1 };
         }
         let scale = match t.get("render_scale") {
             Some(toml::Value::String(s)) => Some(s.clone()),
@@ -359,13 +367,15 @@ impl DevProfile {
             _ => None,
         };
         if let Some(scale) = scale {
-            match flint_player::RenderScaleSetting::default().parse(&scale) {
-                Some(setting) => player.launch.render_scale = setting,
-                None => log::warn!("Dev profile render_scale {scale}: a number or auto"),
+            if let Err(e) =
+                options.read_render_scale(flint_player::RenderScaleSetting::default(), &scale)
+            {
+                log::warn!("Dev profile render_scale {e}");
             }
         }
-        // Quality settings (FlintKart#55), the same path as the desktop's
-        // --quality and the page's ?quality=: a string or a table.
+        // Quality settings (FlintKart#55), the same reader as the desktop's
+        // --quality and the page's ?quality=: a string or a table. Every
+        // setting that doesn't read is said; the ones that do apply.
         let quality = match t.get("quality") {
             Some(toml::Value::String(s)) => s.clone(),
             Some(toml::Value::Table(table)) => {
@@ -373,14 +383,14 @@ impl DevProfile {
             }
             _ => String::new(),
         };
-        if !quality.is_empty() {
+        if !quality.is_empty() && options.read_quality(&quality).is_err() {
             for e in flint_player::QualitySettings::default().apply_str(&quality) {
                 log::warn!("Dev profile quality: {e}");
             }
-            player.launch.quality_overrides = quality;
         }
         if t.get("perf").and_then(|v| v.as_bool()).unwrap_or(false) {
-            player.enable_perf(true);
+            options.perf = Some(true);
         }
+        options
     }
 }

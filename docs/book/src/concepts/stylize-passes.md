@@ -1481,7 +1481,7 @@ StyleParam::new("background", 0.15, 0.0..=1.0)
     .unless("color", &["palette"]),
 ```
 
-`StyleDescriptor::label_for`, `help_for` and `is_integer` read them back by any setting's name, a colour's key included (`ui(name)` gives the whole `StyleUi`).
+`StyleDescriptor::label_for`, `help_for` and `is_integer` read them back by any setting's name, a colour's key included (`StyleDescriptor::ui(name)` gives the whole `StyleUi`).
 
 A greyed row's reset button stays live, and the value is kept: it only stops mattering. `StyleDescriptor::unused_reason(config, name)` gives the hover line, or `None` while the setting is read.
 

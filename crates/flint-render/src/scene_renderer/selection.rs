@@ -8,6 +8,49 @@ use crate::selection_outline::{OutlineLayouts, SelectionOutline};
 use flint_core::EntityId;
 use std::collections::HashSet;
 
+/// What the selection mask draws an item through (#1151): the one choice
+/// the encode binds by and the frame's description names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectionPipe {
+    /// A mesh or a terrain chunk.
+    Tris,
+    /// A wireframe box.
+    Lines,
+    WoozyTris,
+    Skinned,
+    WoozySkinned,
+    Billboard,
+}
+
+impl SelectionPipe {
+    fn name(self) -> &'static str {
+        match self {
+            SelectionPipe::Tris => "selection mask",
+            SelectionPipe::Lines => "selection mask lines",
+            SelectionPipe::WoozyTris => "selection mask woozy",
+            SelectionPipe::Skinned => "selection mask skinned",
+            SelectionPipe::WoozySkinned => "selection mask woozy skinned",
+            SelectionPipe::Billboard => "selection mask billboard",
+        }
+    }
+
+    /// Its pipeline; `None` for one the mask couldn't make (skinned without
+    /// the skinned layouts, a billboard without the billboard's).
+    fn pipeline(
+        self,
+        p: &crate::selection_outline::MaskPipelines,
+    ) -> Option<&wgpu::RenderPipeline> {
+        match self {
+            SelectionPipe::Tris => Some(&p.static_tris),
+            SelectionPipe::Lines => Some(&p.static_lines),
+            SelectionPipe::WoozyTris => Some(&p.woozy_tris),
+            SelectionPipe::Skinned => p.skinned.as_ref(),
+            SelectionPipe::WoozySkinned => p.woozy_skinned.as_ref(),
+            SelectionPipe::Billboard => p.billboard.as_ref(),
+        }
+    }
+}
+
 impl SceneRenderer {
     /// Set the entity the editor outlines (#602), or None to clear. The
     /// outline goes round it and everything under it in the hierarchy, so
@@ -72,7 +115,9 @@ impl SceneRenderer {
             });
         outline.last_draws.set(0);
         outline.ensure_mask(device, size);
-        let outline = &*outline;
+        let Some(outline) = self.selection_outline.as_ref() else {
+            return;
+        };
         let mask_view = outline.mask_view();
         // One bind group a frame over the depth, and only while something
         // is selected: the editor's, never a game's
@@ -84,7 +129,6 @@ impl SceneRenderer {
                 resource: wgpu::BindingResource::TextureView(depth_view),
             }],
         });
-        let mine = |id: Option<EntityId>| id.is_some_and(|id| selection.contains(&id));
         let mut draws = 0usize;
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -103,25 +147,13 @@ impl SceneRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            let p = &outline.mask;
-
             // Every item of the selection this camera draws, through the
-            // mask's pipeline for its kind: meshes (wireframes as lines,
-            // woozy ones through their own stage), terrain chunks in view,
-            // skinned meshes as posed, billboards cut out by their alpha.
-            // The mask keeps the most any draw wrote, so order is free.
-            for item in self.draws.drawn().filter(|i| mine(i.entity)) {
+            // mask's pipeline for its kind (`selection_draws`). The mask
+            // keeps the most any draw wrote, so order is free.
+            for (item, _, pipeline) in self.selection_draws(&outline.mask, selection) {
+                pass.set_pipeline(pipeline);
                 match &item.draw {
                     Draw::Static(draw) => {
-                        let pipeline = if draw.is_wireframe {
-                            &p.static_lines
-                        } else if item.wooze().is_some() && self.pipelines.wooze_standard.is_some()
-                        {
-                            &p.woozy_tris
-                        } else {
-                            &p.static_tris
-                        };
-                        pass.set_pipeline(pipeline);
                         pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                         pass.set_bind_group(1, &depth_bind, &[]);
                         pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -135,12 +167,6 @@ impl SceneRenderer {
                         let Some(draw) = self.terrain.draws.get(*n as usize) else {
                             continue;
                         };
-                        if let Some(frustum) = &self.camera_frustum {
-                            if !frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
-                                continue;
-                            }
-                        }
-                        pass.set_pipeline(&p.static_tris);
                         pass.set_bind_group(1, &depth_bind, &[]);
                         pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                         pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -151,13 +177,6 @@ impl SceneRenderer {
                         pass.draw_indexed(0..draw.index_count, 0, 0..1);
                     }
                     Draw::Skinned(draw) => {
-                        let (Some(skinned), Some(woozy_skinned)) = (&p.skinned, &p.woozy_skinned)
-                        else {
-                            continue;
-                        };
-                        let woozy =
-                            item.wooze().is_some() && self.pipelines.wooze_skinned.is_some();
-                        pass.set_pipeline(if woozy { woozy_skinned } else { skinned });
                         pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                         pass.set_bind_group(1, &depth_bind, &[]);
                         pass.set_bind_group(2, &*draw.bone_bind_group, &[]);
@@ -169,11 +188,10 @@ impl SceneRenderer {
                         pass.draw_indexed(0..draw.index_count, 0, 0..1);
                     }
                     Draw::Billboard(draw) => {
-                        let (Some(pipeline), Some(bp)) = (&p.billboard, &self.pipelines.billboard)
-                        else {
+                        // selection_draws kept it only with the quad
+                        let Some(bp) = &self.pipelines.billboard else {
                             continue;
                         };
-                        pass.set_pipeline(pipeline);
                         pass.set_bind_group(0, &draw.billboard_bind_group, &[]);
                         pass.set_bind_group(1, &draw.texture_bind_group, &[]);
                         pass.set_bind_group(2, &depth_bind, &[]);
@@ -183,7 +201,7 @@ impl SceneRenderer {
                         );
                         pass.draw_indexed(0..6, 0, 0..1);
                     }
-                    // A translucent copy or a particle isn't the thing picked
+                    // selection_draws keeps neither
                     Draw::Echo(_) | Draw::Particles(_) => continue,
                 }
                 draws += 1;
@@ -191,6 +209,68 @@ impl SceneRenderer {
         }
         if let Some(outline) = &self.selection_outline {
             outline.last_draws.set(draws);
+        }
+    }
+
+    /// The selection mask's draws (#602, #1151): every item of `selection`
+    /// this camera draws, with what it's drawn as and the mask pipeline
+    /// that is: meshes (wireframes as lines, woozy ones through their own
+    /// stage), terrain chunks in view, skinned meshes as posed, billboards
+    /// cut out by their alpha. A translucent copy or a particle isn't the
+    /// thing picked. The encode and the description both walk this.
+    fn selection_draws<'a>(
+        &'a self,
+        mask: &'a crate::selection_outline::MaskPipelines,
+        selection: &'a HashSet<EntityId>,
+    ) -> impl Iterator<Item = (&'a super::DrawItem, SelectionPipe, &'a wgpu::RenderPipeline)> + 'a
+    {
+        let frustum = self.camera_frustum.as_ref();
+        self.draws
+            .drawn()
+            .filter(|i| i.entity.is_some_and(|id| selection.contains(&id)))
+            .filter_map(move |item| {
+                let pipe = match &item.draw {
+                    Draw::Static(d) if d.is_wireframe => SelectionPipe::Lines,
+                    Draw::Static(_)
+                        if item.wooze().is_some() && self.pipelines.wooze_standard.is_some() =>
+                    {
+                        SelectionPipe::WoozyTris
+                    }
+                    Draw::Static(_) => SelectionPipe::Tris,
+                    Draw::Terrain(n) => {
+                        let d = self.terrain.draws.get(*n as usize)?;
+                        if frustum.is_some_and(|f| !f.aabb_visible(d.aabb_min, d.aabb_max)) {
+                            return None;
+                        }
+                        SelectionPipe::Tris
+                    }
+                    Draw::Skinned(_)
+                        if item.wooze().is_some() && self.pipelines.wooze_skinned.is_some() =>
+                    {
+                        SelectionPipe::WoozySkinned
+                    }
+                    Draw::Skinned(_) => SelectionPipe::Skinned,
+                    Draw::Billboard(_) => {
+                        self.pipelines.billboard.as_ref()?;
+                        SelectionPipe::Billboard
+                    }
+                    Draw::Echo(_) | Draw::Particles(_) => return None,
+                };
+                Some((item, pipe, pipe.pipeline(mask)?))
+            })
+    }
+
+    /// Log the selection mask's draws (#1151) into the description's pass.
+    pub(super) fn log_selection_draws(
+        &self,
+        pass: &mut crate::frame_capture::LoggedPass,
+        selection: &HashSet<EntityId>,
+    ) {
+        let Some(outline) = &self.selection_outline else {
+            return;
+        };
+        for (item, pipe, _) in self.selection_draws(&outline.mask, selection) {
+            pass.draws.push(self.logged_draw(item, None, pipe.name()));
         }
     }
 

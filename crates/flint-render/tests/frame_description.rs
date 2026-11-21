@@ -669,3 +669,78 @@ fn knobs_set_and_cleared_leave_a_renderer_as_it_was() {
     gpu.frame(&mut r, &world);
     assert_eq!(gpu.frame(&mut r, &world), once);
 }
+
+/// Each draw of a pass as (entity, pipeline).
+fn draws_of(d: &FrameDescription, pass: &str) -> Vec<(String, String)> {
+    let p = d
+        .pass(pass)
+        .unwrap_or_else(|| panic!("no {pass} pass in {:?}", d.passes));
+    assert!(p.ran, "{pass} didn't run: {:?}", p.skipped);
+    p.draws
+        .iter()
+        .map(|dr| (dr.entity.clone().unwrap_or_default(), dr.pipeline.clone()))
+        .collect()
+}
+
+/// The passes after the scene that draw a selection of the draw list
+/// (#1151): the style mask, the fog veil and the selection mask each list
+/// their draws by entity, through the selector they draw with, and each
+/// names the pipeline it bound. The picture is the same described or not.
+#[test]
+fn the_mask_veil_and_selection_passes_list_their_draws_by_entity() {
+    let gpu = gpu_or_skip!();
+    let mut world = world();
+    // The crate in glyphs, so the mask draws it and nothing else
+    let crate_id = world.get_id("crate").unwrap();
+    flint_render::entity_style::set_entity_style(
+        &mut world,
+        &flint_render::stylize::StyleRegistry::new(),
+        crate_id,
+        "ascii",
+    )
+    .unwrap();
+    // The tile translucent in fog, so the veil draws it again
+    let tile = world.get_id("in_view").unwrap();
+    let mut glass = toml::Table::new();
+    glass.insert("opacity".into(), 0.4.into());
+    world.set_component(tile, "material", glass.into()).unwrap();
+
+    let make = || {
+        let mut r = gpu.renderer();
+        let mut config = r.post_process_config().clone();
+        config.fog_enabled = true;
+        config.fog_density = 0.05;
+        r.set_post_process_config(config);
+        // The editor's selection: the crate
+        r.set_selected_entity(Some(crate_id));
+        r
+    };
+    let mut plain = make();
+    gpu.frame(&mut plain, &world);
+    let undescribed = gpu.frame(&mut plain, &world);
+
+    let mut renderer = make();
+    gpu.frame(&mut renderer, &world);
+    let d = describe(&gpu, &mut renderer, &world);
+    assert_eq!(gpu.pixels(), undescribed, "describing changed the picture");
+
+    let pair = |e: &str, p: &str| (e.to_string(), p.to_string());
+    assert_eq!(draws_of(&d, "Style mask"), [pair("crate", "style mask")]);
+    assert_eq!(
+        draws_of(&d, "Fog veil"),
+        [pair("in_view", "fog veil mesh (covers)")]
+    );
+    assert_eq!(
+        draws_of(&d, "Selection mask"),
+        [pair("crate", "selection mask")]
+    );
+    // The scene pass names what draw_main bound: the crate opaque, the
+    // tile blended now
+    assert_eq!(
+        draws_of(&d, "Scene"),
+        [
+            pair("crate", "pbr"),
+            pair("in_view", "pbr alpha (back, then front)")
+        ]
+    );
+}

@@ -17,6 +17,8 @@ pub mod pass_knob_args;
 pub mod present_args;
 // `--perf-report FILE` (#1093)
 pub mod perf_report_args;
+// What a launch's options mean, whichever host read them (#1142)
+pub mod play_options;
 mod player_app;
 // The desktop launch, shared by `flint play` and `flint-player` (#705)
 pub mod player_args;
@@ -47,6 +49,7 @@ pub use hitch_args::{HitchArgs, HitchClass, HitchGate};
 pub use load_args::LoadReportArgs;
 pub use pass_knob_args::PassKnobArgs;
 pub use perf_report_args::PerfReportArgs;
+pub use play_options::{PlayOptions, Query};
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};

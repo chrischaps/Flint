@@ -905,6 +905,9 @@ impl SceneRenderer {
                     self.fog_veil.drawn = self.encode_fog_veil(device, encoder, depth_view);
                 }
                 scopes.end(encoder, scope);
+                if let Some(pass) = scopes.log().and_then(|l| l.named("Fog veil")) {
+                    self.log_fog_veil_draws(pass);
+                }
                 scopes.note("Fog veil", |p| {
                     p.reads(&[sd]).writes(&["fog_veil"]);
                 });
@@ -987,6 +990,12 @@ impl SceneRenderer {
                     self.encode_selection_mask(device, encoder, depth_view, &selection);
                 }
                 scopes.end(encoder, scope);
+                if let Some(pass) = scopes.log().and_then(|l| l.named("Selection mask")) {
+                    self.log_selection_draws(pass, &selection);
+                }
+                scopes.note("Selection mask", |p| {
+                    p.reads(&[sd]);
+                });
             }
         } else {
             scopes.skip("Selection mask", || "nothing selected".to_string());

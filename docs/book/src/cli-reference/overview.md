@@ -1013,7 +1013,11 @@ flint edit fx/fire.particles.toml              # Particle effect editor (created
 
 Every editor runs in one host (`flint_viewer::host`, #712): it opens the
 window, the GPU and egui, feeds the orbit camera, watches the file and draws
-the `--render` still. A flag means the same in every editor that takes it,
+the `--render` still. The orbit camera is one controller for all of them, the
+scene viewer and track editor included (#1153), so a drag, a scroll, WASD/QE
+and the O turntable turn every 3D view at the same speeds. `--watch` is the
+host's too: the scene viewer asks it for the scene's folder and the schema
+folders with everything under them. A flag means the same in every editor that takes it,
 and one an editor doesn't take is an error that names the editors it applies
 to, before anything opens:
 
@@ -1206,8 +1210,8 @@ See the [Particle Editor guide](../guides/particle-editor.md).
 
 | Input | Action |
 |-------|--------|
-| Left-click | Select entity / pick gizmo axis |
-| Left-drag | Orbit camera (or drag gizmo if axis selected) |
+| Left-click | Select entity / pick gizmo axis (a press that moves more than a few pixels is a drag, and picks nothing) |
+| Left-drag | Orbit camera (or drag gizmo if axis selected; a press on a gizmo handle never orbits) |
 | Right-drag | Pan camera |
 | Scroll | Zoom |
 | W / A / S / D | Orbit camera (when no entity is selected) |
@@ -1238,6 +1242,7 @@ When an entity is selected, a **translate gizmo** appears with colored axis arro
 | Middle-drag | Orbit camera |
 | Right-drag | Pan camera |
 | Scroll | Zoom |
+| O, `[` / `]` | Toggle auto-orbit, slower / faster |
 | Tab / Shift+Tab | Cycle through control points |
 | I | Insert a new control point after selected |
 | Delete | Remove selected control point |

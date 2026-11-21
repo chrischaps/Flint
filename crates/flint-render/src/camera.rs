@@ -79,6 +79,10 @@ impl Default for Camera {
 }
 
 impl Camera {
+    /// How far an orbit tilts up or down, radians (about 89.4 degrees):
+    /// near enough a top or bottom view, short of the pole where yaw is lost.
+    pub const PITCH_LIMIT: f32 = 1.56;
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -106,8 +110,7 @@ impl Camera {
     /// Orbit vertically (tilt up/down)
     pub fn orbit_vertical(&mut self, delta: f32) {
         self.pitch += delta;
-        // Clamp pitch to avoid gimbal lock (1.56 ≈ 89.4° allows near-orthographic top/bottom views)
-        self.pitch = self.pitch.clamp(-1.56, 1.56);
+        self.pitch = self.pitch.clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
         self.update_orbit();
     }
 
