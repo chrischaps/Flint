@@ -73,7 +73,8 @@ grass, volumetric, ocean).
   `SpotLight` would do it; the issue asked for one, and one keeps the cost
   of a scene that asks to one depth pass.
 - **Point lights (cube maps).** Six faces, a cube or six-layer view and a
-  different lookup; a later step (#1112).
+  different lookup; a later step (#1112), taken in ADR 0132 as a six-face
+  atlas in one more layer.
 
 ## Consequences
 

@@ -191,7 +191,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var lamps = vec3<f32>(0.0);
     let view_local = normalize(transform.camera_pos - in.world_pos);
     for (var i = 0u; i < lights.point_count; i = i + 1u) {
-        lamps += grass_local_light(point_light_at(i, in.world_pos),
+        lamps += grass_local_light(point_light_at(i, in.world_pos, in.world_normal, in.clip_pos.xy),
             in.world_normal, view_local, in.uv.y);
     }
     for (var i = 0u; i < lights.spot_count; i = i + 1u) {
