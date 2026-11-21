@@ -291,6 +291,9 @@ pub(crate) struct Gpu {
     /// `[perf] avg GPU`'s figure and its frames
     pub mean_ms: f64,
     pub timed_frames: u64,
+    /// Why the pass times can't be trusted (#1316: scopes that read zero
+    /// ticks, which the total then leaves out), or `None` when they can
+    pub timestamps_unavailable: Option<String>,
     /// `frames_kept`, `frames_dropped`, `passes`, `frame`: each pass's
     /// spread over the run, raw (`GpuSpread::to_json`)
     #[serde(flatten)]
@@ -430,6 +433,12 @@ impl super::PlayerApp {
         m
     }
 
+    /// Why the GPU's pass times read empty on this adapter (#1316), the
+    /// warning's clause; `None` while they can be shown.
+    pub(super) fn gpu_timestamps_unusable(&self) -> Option<String> {
+        self.scene_renderer.as_ref()?.gpu_timestamps().why()
+    }
+
     /// The GPU's passes over the run, from the timer's tally, after waiting
     /// for the read-backs still out. `None` with no timer.
     fn report_gpu(&mut self, numbers: &ExitNumbers) -> Option<Gpu> {
@@ -448,6 +457,7 @@ impl super::PlayerApp {
         Some(Gpu {
             mean_ms: mean.mean_ms,
             timed_frames: mean.frames,
+            timestamps_unavailable: self.gpu_timestamps_unusable(),
             spread,
         })
     }
@@ -561,6 +571,7 @@ mod tests {
         r.gpu = Some(Gpu {
             mean_ms: 2.345,
             timed_frames: 118,
+            timestamps_unavailable: None,
             spread: match flint_render::GpuSpread::default().to_json(false) {
                 serde_json::Value::Object(m) => m,
                 _ => unreachable!(),
@@ -662,6 +673,7 @@ mod tests {
             "gpu",
             "gpu.mean_ms",
             "gpu.timed_frames",
+            "gpu.timestamps_unavailable",
             "gpu.frames_kept",
             "gpu.frames_dropped",
             "gpu.passes",

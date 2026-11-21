@@ -12,6 +12,8 @@
 use crate::PlayerApp;
 use anyhow::{Context, Result};
 use flint_core::bundle::Bundle;
+use flint_core::frame_notes::NoteKind;
+use flint_core::load_report::{self, LoadKind, Stage};
 use flint_core::vfs;
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
@@ -320,6 +322,11 @@ pub struct PlayerArgs {
     #[command(flatten)]
     pub trace: crate::TraceArgs,
 
+    /// `--load-report`: where each load's time went, a table a load
+    /// (#1092). --perf prints it too
+    #[command(flatten)]
+    pub loads: crate::LoadReportArgs,
+
     /// `--log-format text|json` and `--quiet`: how and how much the player
     /// says, which its binary's `main` hands `logging::init` (#716)
     #[command(flatten)]
@@ -391,6 +398,7 @@ pub struct Prepared {
 }
 
 fn start(args: PlayerArgs, bundle: Option<&Path>) -> Result<()> {
+    let began = web_time::Instant::now();
     if args.list_gpus {
         let adapters = flint_render::list_adapters();
         if adapters.is_empty() {
@@ -419,6 +427,11 @@ fn start(args: PlayerArgs, bundle: Option<&Path>) -> Result<()> {
         return Ok(());
     }
 
+    // The start-up's load report (#1092), from here to the first frame on
+    // screen; its name is the scene's, once it is up
+    if args.loads.wanted(args.perf) {
+        flint_core::load_report::begin_at(LoadKind::Start, "", began);
+    }
     let Prepared {
         mut app,
         late_bundles,
@@ -426,7 +439,7 @@ fn start(args: PlayerArgs, bundle: Option<&Path>) -> Result<()> {
 
     // The controls are said from the scene's own bindings once they are
     // loaded (`PlayerApp::say_controls`, #716), not as a fixed banner here
-    let event_loop = EventLoop::new()?;
+    let event_loop = load_report::timed(Stage::Window, String::new, EventLoop::new)?;
     event_loop.set_control_flow(ControlFlow::Poll);
     if let Some((source, late)) = late_bundles {
         if !late.is_empty() {
@@ -434,6 +447,7 @@ fn start(args: PlayerArgs, bundle: Option<&Path>) -> Result<()> {
         }
     }
 
+    app.awaiting_window();
     event_loop.run_app(&mut app)?;
     // A failed start or a screenshot that never reached the disk exits
     // non-zero, never as a clean run (#639), as does a script error under
@@ -461,6 +475,9 @@ impl PlayerArgs {
         let from_bundle = bundle.is_some();
 
         let scene = resolve_scene(args.scene.clone())?;
+        // Schemas, styles, the scene parsed and settled: the load's first
+        // stage (#1092), a frame note no frame hears
+        let read = flint_core::frame_notes::begin(NoteKind::SceneRead, || scene.clone());
         // The one resolver (ADR 0114): --schemas, else the manifest, else
         // discovery. A bundle settled its list when it was packed
         // (`args.schemas` holds it by now), plus what lies beside the scene.
@@ -559,6 +576,7 @@ impl PlayerArgs {
         #[cfg(feature = "living")]
         flint_procgen::settle_scene(&mut scene_file, scene_path)
             .with_context(|| flint_scene::load_failed(scene_path))?;
+        drop(read);
         // The scene's name and size are said with what it loaded, once it
         // is up (`enter_scene`'s summary). On stderr, so `--list-keys
         // --json`'s stdout is the table alone
@@ -613,6 +631,7 @@ impl PlayerArgs {
         args.frame_captures.apply(&mut app)?;
         args.record.apply(&mut app)?;
         args.trace.apply(&mut app)?;
+        args.loads.apply(&mut app, args.perf);
         // Skybox, ambient, shading levers, shadows, default lights, camera,
         // user styles and post from the scene file, as every host and
         // transition take them (#723)

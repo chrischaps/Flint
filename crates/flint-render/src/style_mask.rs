@@ -2461,6 +2461,68 @@ mod tests {
         }
     }
 
+    /// #1063: each style's (and `ui_text`'s) asset field lists, as its
+    /// `builtins`, exactly the names its loader takes with no file, so
+    /// `flint validate` passes `amber` and `none` and calls `ambr` missing.
+    /// The schema can't ask this crate, so this holds the two lists equal.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // reads the engine's schema files from the checkout
+    fn the_asset_fields_name_the_built_ins_their_loaders_take() {
+        use flint_core::project::AssetKind;
+        use flint_schema::FieldType;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+        let registry = flint_schema::SchemaRegistry::load_from_directory(&dir).unwrap();
+        let none = [crate::stylize::images::NO_IMAGE];
+        let glyphs = [crate::glyph_atlas::BUILTIN_SET];
+        let fields: [(&str, &str, &[AssetKind], &[&str]); 6] = [
+            (
+                "ascii_style",
+                "palette",
+                &[AssetKind::Palettes],
+                crate::palette::BUILTIN_PALETTES,
+            ),
+            ("ascii_style", "font", &[AssetKind::GlyphSets], &glyphs),
+            ("pencil_style", "paper_image", &[AssetKind::Papers], &none),
+            ("pencil_style", "stroke_image", &[AssetKind::Strokes], &none),
+            (
+                "watercolor_style",
+                "paper_image",
+                &[AssetKind::Papers],
+                &none,
+            ),
+            (
+                "ui_text",
+                "font",
+                &[AssetKind::GlyphSets, AssetKind::Fonts],
+                &glyphs,
+            ),
+        ];
+        for (component, field, want_kinds, want_builtins) in fields {
+            let schema = registry
+                .get_component(component)
+                .and_then(|c| c.get_field(field))
+                .unwrap_or_else(|| panic!("no field {component}.{field}"));
+            let FieldType::Asset {
+                kinds, builtins, ..
+            } = &schema.field_type
+            else {
+                panic!("{component}.{field} is no asset field");
+            };
+            assert_eq!(kinds.as_slice(), want_kinds, "{component}.{field}'s kinds");
+            assert_eq!(builtins, want_builtins, "{component}.{field}'s builtins");
+        }
+        // Each image option's no-file name is the one the schema lists
+        let mut images = 0;
+        for style in ["pencil", "watercolor"] {
+            let d = crate::stylize::builtin(style).unwrap();
+            for option in d.options.iter().filter(|o| o.name.ends_with("_image")) {
+                assert_eq!(option.default, crate::stylize::images::NO_IMAGE);
+                images += 1;
+            }
+        }
+        assert_eq!(images, 3, "pencil's paper and strokes, watercolor's paper");
+    }
+
     #[test]
     fn a_box_projects_to_its_screen_rect_and_behind_the_camera_to_nothing() {
         let camera = crate::Camera {

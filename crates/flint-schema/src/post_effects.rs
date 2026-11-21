@@ -54,16 +54,22 @@ pub enum PostValue {
     Rgb([f32; 3]),
 }
 
+/// An f32 as TOML: its shortest decimal, `0.04`, not the
+/// `0.03999999910593033` a widening cast gives. It reads back as the same
+/// f32. The scene's JSON Schema hands a default to an editor, whose
+/// completion inserts it as written (#1062).
+fn float(v: f32) -> toml::Value {
+    toml::Value::Float(v.to_string().parse().unwrap_or(v as f64))
+}
+
 impl PostValue {
     /// The value as TOML, as a scene writes it.
     pub fn to_toml(self) -> toml::Value {
         match self {
             PostValue::Bool(b) => toml::Value::Boolean(b),
-            PostValue::F32(v) => toml::Value::Float(v as f64),
+            PostValue::F32(v) => float(v),
             PostValue::U32(v) => toml::Value::Integer(v as i64),
-            PostValue::Rgb(rgb) => {
-                toml::Value::Array(rgb.iter().map(|&c| toml::Value::Float(c as f64)).collect())
-            }
+            PostValue::Rgb(rgb) => toml::Value::Array(rgb.iter().map(|&c| float(c)).collect()),
         }
     }
 
@@ -211,9 +217,11 @@ impl PostParam {
                 .collect(),
             v => flint_core::toml_util::toml_f64(v).into_iter().collect(),
         };
+        // As the f32 the reader stores: `0.7` written is 0.7f32, not past a
+        // max of 0.7 that widens to 0.699999988
         let outside = numbers
             .iter()
-            .any(|&n| n < self.min as f64 || n > self.max as f64);
+            .any(|&n| (n as f32) < self.min || (n as f32) > self.max);
         outside.then(|| {
             format!(
                 "{}={value} is outside its range {}..{}",
@@ -738,6 +746,36 @@ mod tests {
             range_warnings(&table),
             ["exposure=50 is outside its range 0.05..8"]
         );
+    }
+
+    /// #1062: a default is the decimal the descriptor wrote, which an
+    /// editor's completion inserts from the JSON Schema, and still the same
+    /// f32; a value written at a bound is inside it.
+    #[test]
+    fn a_default_is_its_shortest_decimal_and_a_bound_is_inside() {
+        let bloom = param("bloom_intensity").unwrap();
+        assert_eq!(bloom.default.to_toml(), toml::Value::Float(0.04));
+        assert_eq!(
+            param("fog_color").unwrap().default.to_toml(),
+            toml::Value::Array(vec![
+                toml::Value::Float(0.7),
+                toml::Value::Float(0.75),
+                toml::Value::Float(0.82),
+            ])
+        );
+        for p in params() {
+            let back = p.value_of(&p.default.to_toml()).unwrap();
+            assert_eq!(back, p.default, "{}: its default reads back", p.key);
+            for bound in [p.min, p.max] {
+                let written: f64 = bound.to_string().parse().unwrap();
+                let at = match p.kind {
+                    PostKind::Bool => continue,
+                    PostKind::Rgb => toml::Value::Array(vec![toml::Value::Float(written); 3]),
+                    _ => toml::Value::Float(written),
+                };
+                assert!(p.range_error(&at).is_none(), "{} = {at}", p.key);
+            }
+        }
     }
 
     #[test]

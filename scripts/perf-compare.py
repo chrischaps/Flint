@@ -395,6 +395,12 @@ def compare(args: argparse.Namespace) -> int:
             "  one run each: run-to-run noise is unmeasured; scripts/perf-run.sh takes several"
         )
     for which, path, doc in (("base", args.base, base), ("new", args.new, new)):
+        why = (doc.get("gpu") or {}).get("timestamps_unavailable")
+        if why:
+            print(
+                f"  warning: {which}'s GPU pass times are unavailable on its adapter ({why}): "
+                "its gpu.* totals count only the scopes that read"
+            )
         runs = disturbed[which]
         if runs:
             count = (doc.get("runs") or {}).get("count", "?")

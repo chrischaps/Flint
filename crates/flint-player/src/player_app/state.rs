@@ -10,10 +10,12 @@
 use super::input_config::{InputConfigPaths, PendingRebind};
 use super::{camera_cut, expression_feed, fonts, hitch, hitch_watch, perf};
 use super::{egui_input, render_scale, text_halo, world_text};
-use flint_asset::{AssetCatalog, ContentStore};
+use flint_asset::HeldAssets;
+use flint_core::project::Project;
 use flint_runtime::{InputConfig, SaveDebounce};
 use flint_script::context::DrawItem;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// When the player generates a scene's procgen assets (`LaunchOptions::procgen_mode`).
@@ -117,6 +119,10 @@ pub struct LaunchOptions {
     /// Keep the `persist_*` store in memory only: read no save and write
     /// none (#714: a playtest starts from no save, and leaves none).
     pub saves_in_memory: bool,
+    /// `--load-report` or `--perf` (#1092): record each transition's and
+    /// chunk's load and say its table (the start-up's is begun before the
+    /// app exists, by whoever builds it).
+    pub load_report: bool,
     /// The screen scripts see, in points, when there is no window (#714:
     /// a playtest's `screen_width()` is its `--width`, not egui's
     /// placeholder). `None` keeps egui's.
@@ -158,6 +164,7 @@ impl Default for LaunchOptions {
             compare_at_start: None,
             strict_scripts: false,
             saves_in_memory: false,
+            load_report: false,
             headless_screen: None,
             #[cfg(not(target_arch = "wasm32"))]
             inspect: None,
@@ -403,6 +410,11 @@ pub(super) struct Stats {
     /// What the run keeps of them (#1079): the hitch log, the exit
     /// report's counts and the `--max-hitches` gate.
     pub(super) watch: hitch_watch::HitchWatch,
+    /// Every load's report so far, the start-up first (#1092)
+    pub(super) loads: Vec<flint_core::load_report::LoadReport>,
+    /// The start-up's wait from `run_app` to the first `resumed`, timed
+    /// as the window's (#1092)
+    pub(super) awaiting_window: Option<flint_core::load_report::Span>,
     /// `--perf-report FILE` (#1093): where the exit report's JSON goes and
     /// the run's phase and script totals it is built from.
     pub(super) report: Option<super::perf_report::ReportTo>,
@@ -422,6 +434,8 @@ impl Default for Stats {
             // `FLINT_HITCH_FACTOR` / `FLINT_HITCH_FLOOR_MS`, read once.
             hitches: hitch::HitchDetector::new(hitch::HitchThresholds::from_env()),
             watch: Default::default(),
+            loads: Vec::new(),
+            awaiting_window: None,
             report: None,
         }
     }
@@ -553,19 +567,31 @@ pub(super) struct QualityState {
     pub(super) script_request: Option<flint_core::quality::QualitySettings>,
 }
 
-/// The asset catalog and content store, for content-addressed asset
-/// resolution (both optional).
+/// The project's asset catalog and content store, for content-addressed
+/// asset resolution (#1065): `<root>/assets` and `<root>/.flint/assets`,
+/// the ones `flint validate` and `flint check` ask
+/// ([`HeldAssets::of`]), wherever the player was started from. Read on
+/// first use and kept for that project root and file source, so a
+/// transition into another project, or the web's bundle installed after
+/// the app was made, reads again.
+#[derive(Default)]
 pub(super) struct AssetSources {
-    pub(super) catalog: Option<AssetCatalog>,
-    pub(super) content_store: Option<ContentStore>,
+    /// The root and `vfs::generation` read for, and what was found there
+    /// (`None`: that project has no catalog).
+    read: Option<(PathBuf, u64, Option<HeldAssets>)>,
 }
 
 impl AssetSources {
-    /// The working directory's `assets/` catalog and `.flint/assets` store.
-    pub(super) fn from_working_dir() -> Self {
-        Self {
-            catalog: AssetCatalog::load_from_directory("assets").ok(),
-            content_store: Some(ContentStore::new(".flint/assets")),
+    /// `project`'s catalog and store, read now unless they are held.
+    pub(super) fn of(&mut self, project: &Project) -> Option<&HeldAssets> {
+        let generation = flint_core::vfs::generation();
+        let held = matches!(&self.read,
+            Some((root, read_at, _)) if *root == project.root && *read_at == generation);
+        if !held {
+            self.read = Some((project.root.clone(), generation, HeldAssets::of(project)));
         }
+        self.read
+            .as_ref()
+            .and_then(|(_, _, assets)| assets.as_ref())
     }
 }

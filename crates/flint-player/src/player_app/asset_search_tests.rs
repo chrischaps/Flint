@@ -60,7 +60,7 @@ fn in_game<R>(f: impl FnOnce(&Project) -> R) -> R {
 #[test]
 fn a_deep_scene_finds_the_projects_models_and_textures() {
     in_game(|project| {
-        let config = build_model_load_config(project, DEEP, &FlintWorld::new(), None, None);
+        let config = build_model_load_config(project, DEEP, &FlintWorld::new(), None);
         assert_eq!(
             resolve_model_path(&config, "tree"),
             Ok(PathBuf::from("game/models/tree.glb"))
@@ -79,7 +79,7 @@ fn a_deep_scene_finds_the_projects_models_and_textures() {
 #[test]
 fn a_missing_model_says_every_path_tried_and_what_was_asked_first() {
     in_game(|project| {
-        let config = build_model_load_config(project, DEEP, &FlintWorld::new(), None, None);
+        let config = build_model_load_config(project, DEEP, &FlintWorld::new(), None);
         let missing = resolve_model_path(&config, "boulder").unwrap_err();
         let text = config.not_found_text(&missing);
         let lines: Vec<&str> = text.lines().collect();
@@ -117,7 +117,7 @@ fn a_missing_model_says_every_path_tried_and_what_was_asked_first() {
 #[test]
 fn a_catalog_path_is_asked_before_the_files() {
     in_game(|project| {
-        let mut config = build_model_load_config(project, DEEP, &FlintWorld::new(), None, None);
+        let mut config = build_model_load_config(project, DEEP, &FlintWorld::new(), None);
         config
             .overrides
             .insert("tree".into(), PathBuf::from("game/textures/wall.png"));

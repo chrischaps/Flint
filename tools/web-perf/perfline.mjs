@@ -51,6 +51,9 @@ export function parsePerfLine(line) {
       }
     } else if (part === 'gpu off' || part === 'gpu untimed') {
       out.gpu = { frame: null, passes: {}, note: part };
+    } else if (part.startsWith('GPU pass times unavailable')) {
+      // The adapter's timestamps read zero (#1316): no passes to list
+      out.gpu = { frame: null, passes: {}, note: part, unavailable: true };
     } else if ((m = /^(\d+) draws ([\d.]+\w?) tris$/.exec(part))) {
       out.draws = num(m[1]);
       out.tris = m[2];
