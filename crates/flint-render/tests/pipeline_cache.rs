@@ -482,3 +482,143 @@ fn a_mesh_is_uploaded_once_a_device_by_its_bytes() {
     );
     pipeline_cache::clear();
 }
+
+/// ASCII switched on in `renderer`'s config, as [`ascii`] does.
+fn with_ascii(renderer: &SceneRenderer) -> flint_render::PostProcessConfig {
+    let mut config = renderer.post_process_config().clone();
+    config.styles.set_enabled("ascii", true);
+    config.styles.set_option("ascii", "temporal", "on");
+    config
+}
+
+/// A renderer with no style on.
+fn plain(frame: &Frame) -> SceneRenderer {
+    SceneRenderer::new_headless(
+        frame.device,
+        frame.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    )
+}
+
+/// What a frame said it built (#1077), as `<kind>: <detail>`.
+fn builds_noted(notes: &[flint_core::frame_notes::FrameNote]) -> Vec<String> {
+    use flint_core::frame_notes::NoteKind;
+    notes
+        .iter()
+        .filter(|n| matches!(n.kind, NoteKind::StyleBuild | NoteKind::PipelineBuild))
+        .map(|n| format!("{}: {}", n.kind.label(), n.detail))
+        .collect()
+}
+
+/// The frame notes `draw` makes on this thread.
+fn noted<R>(draw: impl FnOnce() -> R) -> (R, Vec<String>) {
+    flint_core::frame_notes::listen(true);
+    let made = draw();
+    let mut notes = Vec::new();
+    flint_core::frame_notes::take(&mut notes);
+    flint_core::frame_notes::listen(false);
+    (made, builds_noted(&notes))
+}
+
+/// #1121: a style prepared ahead is built on worker threads while frames
+/// go on drawing without it; the frame that then switches it on builds
+/// nothing (no style or ASCII pipeline in its notes, none counted) and
+/// draws the bytes a style built on its own frame draws.
+#[test]
+fn a_prepared_style_is_built_off_the_frame_and_draws_the_same() {
+    let Some(lease) = shared_gpu::lease_alone() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let frame = Frame::new(&lease.gpu.device, &lease.gpu.queue);
+    let world = box_world();
+    // Every build counted: nothing kept from another test or renderer
+    pipeline_cache::set_enabled(false);
+    pipeline_cache::reset_counts();
+    let fresh = frame.draw(&mut ascii(&frame), &world, &camera(0.08));
+    assert_eq!(count("ASCII Pipeline").built, 1);
+
+    let mut renderer = plain(&frame);
+    let config = with_ascii(&renderer);
+    let started = renderer.prepare_styles(frame.device, &config);
+    assert!(started.contains(&"ascii"), "started {started:?}");
+    // Asked again while it builds: nothing more starts
+    assert!(
+        renderer.prepare_styles(frame.device, &config).is_empty(),
+        "a second prepare started a second build"
+    );
+    // Frames without ASCII go on; one of them takes the pass in once it's
+    // ready, and none waits for it
+    let since = std::time::Instant::now();
+    while !renderer.style_built("ascii") {
+        assert!(
+            since.elapsed() < std::time::Duration::from_secs(120),
+            "ASCII never arrived: still {:?}",
+            renderer.styles_preparing()
+        );
+        let ((), built) = noted(|| {
+            frame.draw(&mut renderer, &world, &camera(0.08));
+        });
+        assert!(
+            !built
+                .iter()
+                .any(|n| n.contains("ascii") || n.contains("ASCII")),
+            "a frame without ASCII built or waited for it: {built:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(renderer.styles_preparing().is_empty());
+    assert_eq!(count("ASCII Pipeline").built, 2, "built once ahead");
+
+    // The frame that switches it on: nothing to build
+    renderer.set_post_process_config(config);
+    let (drawn, built) = noted(|| frame.draw(&mut renderer, &world, &camera(0.08)));
+    let built: Vec<_> = built
+        .into_iter()
+        .filter(|n| n.starts_with("style build") || n.contains("ASCII"))
+        .collect();
+    assert!(built.is_empty(), "the switch built: {built:?}");
+    assert_eq!(count("ASCII Pipeline").built, 2, "built again on the frame");
+    assert_eq!(drawn, fresh, "the prepared pass draws other bytes");
+}
+
+/// #1121: a frame that needs a style still building ahead waits for that
+/// build instead of starting its own: each ASCII pipeline is built once,
+/// and the frame draws what a style built on it draws.
+#[test]
+fn a_frame_that_needs_a_style_still_preparing_waits_for_it() {
+    let Some(lease) = shared_gpu::lease_alone() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let frame = Frame::new(&lease.gpu.device, &lease.gpu.queue);
+    let world = box_world();
+    pipeline_cache::set_enabled(false);
+    let fresh = frame.draw(&mut ascii(&frame), &world, &camera(0.08));
+    pipeline_cache::reset_counts();
+
+    let mut renderer = plain(&frame);
+    let config = with_ascii(&renderer);
+    renderer.prepare_styles(frame.device, &config);
+    // At once: ASCII's dozen pipelines take far longer than this
+    renderer.set_post_process_config(config);
+    let (drawn, built) = noted(|| frame.draw(&mut renderer, &world, &camera(0.08)));
+    let styles: Vec<_> = built
+        .into_iter()
+        .filter(|n| n.starts_with("style build"))
+        .collect();
+    // It waited (or, on a machine that builds faster than it asks, found
+    // the pass ready): never built it on the frame itself
+    assert!(
+        styles.iter().all(|n| n.contains("waited for its prepare")),
+        "the frame built it itself: {styles:?}"
+    );
+    let glyph = count("ASCII Pipeline");
+    assert_eq!(glyph.built, 1, "built twice: {glyph:?}");
+    assert!(renderer.style_built("ascii"));
+    assert!(renderer.styles_preparing().is_empty());
+    assert_eq!(drawn, fresh);
+}

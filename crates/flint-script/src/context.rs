@@ -349,6 +349,11 @@ pub enum ScriptCommand {
         name: Option<String>,
         seconds: f64,
     },
+    /// `prepare_look(name)` (#1121): build a look's styles on worker
+    /// threads now, so the frame that later sets it pays nothing.
+    PrepareLook {
+        name: String,
+    },
     /// A function of a module an optional feature owns (#698): Living
     /// Props' knobs, the wooze field, the A/B. The subsystem that declared
     /// the module takes it (`crate::module`); the core names none of them.

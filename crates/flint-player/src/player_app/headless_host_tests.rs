@@ -176,6 +176,9 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             name: Some(s("graphite")),
             seconds: 2.0,
         },
+        C::PrepareLook {
+            name: s("ascii_noir"),
+        },
         // The living subsystem's module commands (#698), one a function
         module(
             "set_wooze",

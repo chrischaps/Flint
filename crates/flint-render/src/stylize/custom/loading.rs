@@ -243,8 +243,19 @@ impl StyleRegistry {
 
     /// The loaded style whose description is the file at `path`.
     pub(super) fn loaded_from(&self, path: &Path) -> Option<Arc<Loaded>> {
+        // The spelling first: the reload poll asks this of every file in
+        // every style folder, a few times a second on the frame thread, and
+        // lists them from the folders the load read them from, so a loaded
+        // file is spelled the same. `same_path` on a mismatch asks the
+        // working directory and the disk (`anchor`): with the frame's other
+        // threads busy on files that took 16-37 ms a style and stopped the
+        // looks tour 150-200 ms a poll (#1121)
         self.users()
-            .find(|l| flint_core::project::same_path(&l.source.toml_path, path))
+            .find(|l| l.source.toml_path == path)
+            .or_else(|| {
+                self.users()
+                    .find(|l| flint_core::project::same_path(&l.source.toml_path, path))
+            })
             .cloned()
     }
 
@@ -334,7 +345,18 @@ impl StyleRegistry {
             // one that counts: `Project::list`'s rule, read through
             // `file_watch` so the poll never waits on the disk (#633)
             let mut seen = std::collections::HashSet::new();
-            for dir in style_dirs(scope) {
+            // The folders are the scope's paths alone, existing or not, so
+            // they are worked out once a scope rather than every poll: the
+            // working out asks the working directory and the disk
+            if self.poll_dirs.as_ref().is_none_or(|(s, _)| s != scope) {
+                self.poll_dirs = Some((scope.clone(), style_dirs(scope)));
+            }
+            let dirs = self
+                .poll_dirs
+                .as_ref()
+                .map(|(_, d)| d.clone())
+                .unwrap_or_default();
+            for dir in dirs {
                 let Some(mut entries) = flint_core::file_watch::list(&dir) else {
                     continue;
                 };
