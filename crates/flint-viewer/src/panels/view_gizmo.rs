@@ -287,9 +287,11 @@ impl ViewGizmo {
         } else if response.dragged() && !self.drag_started_on_axis {
             let delta = response.drag_delta();
             if delta.length() > 0.0 {
+                // The cube turns as it's dragged, the way a drag in the
+                // view turns the scene (#1153): down shows its top
                 action = Some(GizmoAction::OrbitDelta {
                     dyaw: -delta.x * 0.01,
-                    dpitch: -delta.y * 0.01,
+                    dpitch: delta.y * 0.01,
                 });
             }
         }

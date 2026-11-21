@@ -88,6 +88,7 @@ Where a key's owner isn't in the scene, or the game binds the key, the press is 
 | Alt+drag | Move vertically (Y) |
 | Middle-drag | Orbit |
 | Right-drag | Pan |
+| O, `[` / `]` | Toggle auto-orbit, slower / faster |
 | Tab / Shift+Tab | Cycle control points |
 | I | Insert point |
 | Delete | Remove point |
