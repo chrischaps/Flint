@@ -248,13 +248,17 @@ impl SceneRenderer {
             .unwrap_or_default()
     }
 
-    /// The newest frame's GPU busy time read back since the last call, ms,
-    /// unsmoothed ([`GpuTimer::take_latest_frame_ms`]); `None` while timing
-    /// is off or when no read-back came in.
+    /// Each frame's GPU busy time read back since the last call, ms,
+    /// unsmoothed, with the index it was resolved under
+    /// ([`GpuTimer::take_frame_times`]); empty while timing is off or when
+    /// no read-back came in.
     ///
-    /// [`GpuTimer::take_latest_frame_ms`]: crate::GpuTimer::take_latest_frame_ms
-    pub fn take_gpu_frame_ms(&mut self) -> Option<f32> {
-        self.gpu_timer.as_mut()?.take_latest_frame_ms()
+    /// [`GpuTimer::take_frame_times`]: crate::GpuTimer::take_frame_times
+    pub fn take_gpu_frame_times(&mut self) -> impl Iterator<Item = crate::GpuFrameTime> + '_ {
+        self.gpu_timer
+            .as_mut()
+            .into_iter()
+            .flat_map(|t| t.take_frame_times())
     }
 
     /// The timer, while timing is on, for a host to time its own work (its

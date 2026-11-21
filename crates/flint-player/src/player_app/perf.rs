@@ -360,11 +360,19 @@ impl PerfRecorder {
         }
     }
 
-    /// The GPU time read back this frame, if any.
-    pub(crate) fn gpu_ms(&mut self, ms: Option<f32>) {
+    /// A GPU time read back this frame, for the frame numbered `index`
+    /// ([`FrameHistory::gpu_time`], #1104).
+    pub(crate) fn gpu_time(&mut self, index: Option<u64>, ms: f32) {
         if self.recording() {
-            self.history.gpu_ms(ms);
+            self.history.gpu_time(index, ms);
         }
+    }
+
+    /// The number a frame resolved now carries for the history: the frame
+    /// under way's while recording, else none, so a time resolved while the
+    /// history slept isn't laid on a frame it never timed.
+    pub(crate) fn gpu_frame_index(&self) -> Option<u64> {
+        self.recording().then(|| self.history.under_way_index())
     }
 
     /// Turn the readout on, from this frame: the frames already kept stay.

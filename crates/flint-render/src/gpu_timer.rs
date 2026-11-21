@@ -76,6 +76,21 @@ pub struct TracedPass {
 /// Traced frames kept for the host to take; more and the oldest go.
 const TRACED_KEPT: usize = 16;
 
+/// One frame's GPU busy time, ms and unsmoothed, under the index the host
+/// gave the frame when it was resolved ([`GpuTimer::set_frame_index`]), so
+/// the host can lay it on the frame it timed rather than the one it came
+/// back in (#1104). Read-backs come back a frame or two late, and not
+/// always in the order the frames were drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GpuFrameTime {
+    /// The host's index for the frame; `None` when it gave none.
+    pub index: Option<u64>,
+    pub ms: f32,
+}
+
+/// Frame times kept for the host to take; more and the oldest go.
+const FRAME_TIMES_KEPT: usize = 16;
+
 /// Frames read back before [`TimestampCheck`] gives a verdict, and again
 /// for each one after: a second at 60 fps.
 pub const TIMESTAMP_WINDOW: u32 = 60;
@@ -213,6 +228,8 @@ struct Readback {
     /// was resolved.
     tag: u64,
     trace: bool,
+    /// The host's index for the frame ([`GpuTimer::set_frame_index`]).
+    index: Option<u64>,
     /// 0 while the map is pending, 1 mapped, 2 failed
     state: Arc<AtomicU8>,
 }
@@ -236,11 +253,13 @@ pub struct GpuTimer {
     /// run's, for a perf report (#1093). Apart from `recorded`, which a
     /// frame capture turns on and off around its one frame.
     tallied: Option<Vec<GpuTimings>>,
-    /// The busy time of the last frame read back, unsmoothed, until
-    /// [`take_latest_frame_ms`](Self::take_latest_frame_ms) takes it.
-    latest_ms: Option<f32>,
+    /// Each frame read back since the last
+    /// [`take_frame_times`](Self::take_frame_times), oldest first.
+    frame_times: std::collections::VecDeque<GpuFrameTime>,
     /// What [`set_frame_tag`](Self::set_frame_tag) said last.
     frame_tag: u64,
+    /// What [`set_frame_index`](Self::set_frame_index) said last.
+    frame_index: Option<u64>,
     /// Frames read back while [`trace`](Self::trace) is on, until
     /// [`take_traced`](Self::take_traced) takes them.
     traced: Option<std::collections::VecDeque<TracedGpuFrame>>,
@@ -288,6 +307,7 @@ impl GpuTimer {
                 tally: false,
                 tag: 0,
                 trace: false,
+                index: None,
                 state: Default::default(),
             })
             .collect();
@@ -301,8 +321,9 @@ impl GpuTimer {
             resolved: None,
             recorded: None,
             tallied: None,
-            latest_ms: None,
+            frame_times: std::collections::VecDeque::with_capacity(FRAME_TIMES_KEPT),
             frame_tag: 0,
+            frame_index: None,
             traced: None,
             check: TimestampCheck::default(),
         })
@@ -347,6 +368,17 @@ impl GpuTimer {
     /// index), until it says another.
     pub fn set_frame_tag(&mut self, tag: u64) {
         self.frame_tag = tag;
+    }
+
+    /// The index the frames resolved from now on carry back with their
+    /// times ([`GpuFrameTime::index`]): the host's number for the frame
+    /// under way, said once a frame before
+    /// [`resolve_into`](Self::resolve_into) or
+    /// [`finish_frame`](Self::finish_frame), and kept until it says
+    /// another. Apart from [`set_frame_tag`](Self::set_frame_tag), whose
+    /// number is a trace's.
+    pub fn set_frame_index(&mut self, index: Option<u64>) {
+        self.frame_index = index;
     }
 
     /// The traced frames read back since the last take, oldest first: at
@@ -484,6 +516,7 @@ impl GpuTimer {
         readback.tally = self.tallied.is_some();
         readback.tag = self.frame_tag;
         readback.trace = self.traced.is_some();
+        readback.index = self.frame_index;
         readback.state.store(0, Ordering::Release);
         self.resolved = Some(slot);
         true
@@ -505,12 +538,14 @@ impl GpuTimer {
             });
     }
 
-    /// The busy time of the newest frame read back since the last take, ms
-    /// and unsmoothed: a frame's own figure for the player's frame history
-    /// (#1076). It is a frame or two old, as every read-back is, and `None`
-    /// on a frame no read-back came in.
-    pub fn take_latest_frame_ms(&mut self) -> Option<f32> {
-        self.latest_ms.take()
+    /// Every frame read back since the last take, in the order they came
+    /// back, each with the index it was resolved under: a frame's own
+    /// figure for the player's frame history (#1076, #1104). A read-back
+    /// is a frame or two late, so each belongs to an earlier frame than the
+    /// one taking it; none come on some frames and two on others. At most
+    /// the last 16 wait, so a host that takes once a frame misses none.
+    pub fn take_frame_times(&mut self) -> std::collections::vec_deque::Drain<'_, GpuFrameTime> {
+        self.frame_times.drain(..)
     }
 
     /// The smoothed times of the frames read back so far.
@@ -559,7 +594,13 @@ impl GpuTimer {
                     }
                     let frame = frame_times(&readback.labels, &ticks, self.period_ns);
                     self.check.observe(&frame);
-                    self.latest_ms = Some(frame.frame_ms);
+                    if self.frame_times.len() >= FRAME_TIMES_KEPT {
+                        self.frame_times.pop_front();
+                    }
+                    self.frame_times.push_back(GpuFrameTime {
+                        index: readback.index,
+                        ms: frame.frame_ms,
+                    });
                     if let (Some(recorded), true) = (&mut self.recorded, readback.record) {
                         recorded.push(frame.clone());
                     }

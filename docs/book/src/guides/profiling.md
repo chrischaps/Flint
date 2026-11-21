@@ -722,7 +722,7 @@ The perf line's count includes the start's hitches; the exit report below sets t
 | `phase`, `phase_ms` | the phase that grew most, and by how much (`player` only) |
 | `script`, `script_ms` | the script callback that took longest (`player` only) |
 | `acquire_ms`, `present_ms` | the swapchain's two waits: for an image, and handing it back (`elsewhere` only) |
-| `gpu_ms` | the GPU's busy time read back in it (a frame or two old), or `null` while the GPU isn't timed: a long `acquire_ms` beside a long `gpu_ms` waited on the GPU, one beside a short `gpu_ms` on the compositor |
+| `gpu_ms` | the GPU's busy time on the hitch frame's own work (its read-back comes a frame or two later, before the line is written), or `null` while the GPU isn't timed: a long `acquire_ms` beside a long `gpu_ms` waited on the GPU, one beside a short `gpu_ms` on the compositor |
 | `cause` | the line the report and the perf line name it by: the engine's notes when they cover half the hitch, else the script, the phase or `elsewhere`, with the notes after it as `(also: ..)` |
 | `notes` | the frame notes of its frame and the frame before, each with `kind`, `detail`, `ms`, `depth` and `frame_before` |
 | `before_ms`, `after_ms` | the eight frames either side, oldest first |
