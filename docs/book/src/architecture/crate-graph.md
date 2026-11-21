@@ -72,7 +72,7 @@ The workspace has 33 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 2 | `flint-rhythm` | core, music | cli, input-capture, player (optional) |
 | 3 | `flint-geometry` | core, ecs | cli, debug-ui, player, procgen, render, script, viewer |
 | 3 | `flint-query` | core, ecs | cli, constraint, player |
-| 3 | `flint-runtime` | core, ecs | animation, audio, cli, input-capture, particles, physics, player, script |
+| 3 | `flint-runtime` | core, ecs | animation, audio, cli, input-capture, particles, physics, player, script, viewer |
 | 3 | `flint-scene` | asset, core, ecs, schema | android, cli, debug-ui, player, procgen, render, viewer |
 | 3 | `flint-terrain` | core, ecs | cli, debug-ui, player, render, script |
 | 4 | `flint-animation` | core, ecs, import, runtime | cli, player, script |
@@ -89,7 +89,7 @@ The workspace has 33 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 5 | `flint-script` | animation, core, ecs, geometry, physics, runtime, schema, terrain | cli, player |
 | 6 | `flint-debug-ui` | core, ecs, geometry, particles, procgen (optional), render, scene, schema, terrain, wooze | cli, player (optional), viewer |
 | 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, geometry, import, input-capture (optional), living (optional), music (optional), particles, physics, pixels, procgen (optional), query, render, rhythm (optional), runtime, scene, schema, script, terrain, wooze | android, cli |
-| 7 | `flint-viewer` | constraint, core, debug-ui, ecs, geometry, import, particles, procgen, render, scene, schema, wooze | cli |
+| 7 | `flint-viewer` | constraint, core, debug-ui, ecs, geometry, import, particles, procgen, render, runtime, scene, schema, wooze | cli |
 | 8 | `flint-android` | core, ecs, player, scene, schema | *(none)* |
 | 8 | `flint-cli` | ai-core, animation, asset, asset-gen, constraint, core, debug-ui, ecs, geometry, import, input-capture, living, music, particles, physics, player, procgen, procgen-ai, query, render, rhythm, runtime, scene, schema, script, terrain, viewer, wooze | *(none)* |
 
