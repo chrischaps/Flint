@@ -60,6 +60,10 @@ pub(crate) const MEDIAN_FRAMES: usize = 120;
 pub(crate) const WARM_FRAMES: usize = 30;
 /// How many hitches are kept to look back at; the counts go on past them.
 pub(crate) const HITCHES_KEPT: usize = 256;
+/// How many frames after a hitch its GPU time is still looked for on its
+/// record (#1104): a read-back is a frame or two late, and the timer has
+/// three in flight at most.
+pub(crate) const GPU_LATE_FRAMES: u64 = 8;
 /// The share of a hitch's excess the player's work must account for to be
 /// the player's.
 const PLAYER_SHARE: f32 = 0.5;
@@ -167,9 +171,10 @@ pub(crate) struct Hitch {
     pub median_ms: f32,
     /// The player's work in it (every phase but `acquire` and `present`).
     pub player_ms: f32,
-    /// The GPU's busy time read back during it ([`Frame::gpu_ms`]: a frame
-    /// or two old), so a reader can tell a wait on the GPU from one on the
-    /// compositor; `None` while the GPU isn't timed.
+    /// The GPU's busy time on its own work ([`Frame::gpu_ms`]), so a reader
+    /// can tell a wait on the GPU from one on the compositor; `None` while
+    /// the GPU isn't timed. It comes back a frame or two after the hitch is
+    /// judged, and [`HitchDetector::observe`] fills it in then (#1104).
     pub gpu_ms: Option<f32>,
     /// Under vsync, how many refreshes it stood for (1 is on time).
     pub refreshes: Option<u32>,
@@ -472,6 +477,18 @@ impl HitchDetector {
         let Some(newest) = frames.back() else {
             return 0;
         };
+        // A hitch is judged before its GPU time is back: picked up from its
+        // record once it is (#1104)
+        for h in self
+            .hitches
+            .iter_mut()
+            .rev()
+            .take_while(|h| newest.index.saturating_sub(h.index) <= GPU_LATE_FRAMES)
+        {
+            if h.gpu_ms.is_none() {
+                h.gpu_ms = history.frame(h.index).and_then(|f| f.gpu_ms);
+            }
+        }
         if newest.index < self.next {
             return 0;
         }
@@ -1139,7 +1156,9 @@ mod tests {
                 history.mark(phase);
             }
             history.fixed_steps(1);
-            history.gpu_ms(None);
+            // The read-back of two frames ago, onto its record
+            let late = history.under_way_index().checked_sub(2);
+            history.gpu_time(late, 1.5);
         };
         // Warm: the ring full and the detector judging.
         for _ in 0..2 * HISTORY_FRAMES {
@@ -1168,7 +1187,7 @@ mod tests {
                 off.mark(phase);
             }
             off.fixed_steps(1);
-            off.gpu_ms(None);
+            off.gpu_time(off.gpu_frame_index(), 1.5);
             std::hint::black_box(&mut off);
         }
         let off_us = began.elapsed().as_secs_f64() * 1e6 / frames as f64;

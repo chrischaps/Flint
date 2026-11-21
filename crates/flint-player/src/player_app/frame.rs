@@ -276,6 +276,11 @@ impl PlayerApp {
                     &place,
                 );
             }
+            // Its GPU time comes back under its number in the history, to
+            // be laid on its own record a frame or two on (#1104)
+            if let Some(timer) = renderer.gpu_timer_mut() {
+                timer.set_frame_index(self.stats.perf.gpu_frame_index());
+            }
             renderer.encode_gpu_timings(&context.device, &mut encoder);
             {
                 flint_core::scope!("submit");
@@ -296,8 +301,11 @@ impl PlayerApp {
             ) {
                 trace.tracks.gpu(timer.take_traced(), timer.timestamps());
             }
-            // The GPU time read back this frame, for the frame history
-            self.stats.perf.gpu_ms(renderer.take_gpu_frame_ms());
+            // The GPU times read back this frame, each onto the frame it
+            // timed in the history
+            for time in renderer.take_gpu_frame_times() {
+                self.stats.perf.gpu_time(time.index, time.ms);
+            }
             #[cfg(not(target_arch = "wasm32"))]
             {
                 if let Some(info) = &capture_adapter {
