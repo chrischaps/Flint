@@ -1039,6 +1039,16 @@ The camera flags lay themselves over the editor's own framing (the model
 auto-fitted, the terrain from above, the scene's `[camera]`), so a flag left
 out keeps that part of it.
 
+**F1 lists the debug keys, in every editor** (#1170), as it does in the
+player: the same card, the host's key for each of them. An editor's own
+function keys are a table like the player's ([Debug Panels](../guides/debug-panels.md#keys)),
+each with an owner and an action name, and the host looks a press up in it;
+no editor matches an F-key of its own. The scene viewer's are F2 to F4 and
+the procgen previewer's F2 to F5 (the tables below); the other editors have
+none yet, so their card shows F1 alone. A held key doesn't repeat its
+action. The editors read no input config, so `[debug_keys]` rebinds the
+player's keys only.
+
 `--render out.png` writes what the window would show, without the panels, at
 `--width` x `--height`, for every kind of file:
 
@@ -1246,13 +1256,38 @@ See the [Particle Editor guide](../guides/particle-editor.md).
 | Ctrl+Z | Undo the last edit |
 | Ctrl+Shift+Z / Ctrl+Y | Redo it |
 | Escape | Cancel gizmo drag / exit |
-| F2 | Toggle the render stats overlay |
-| F3 | Toggle normal arrows |
-| F4 | Toggle the **Rendering & Effects** menu (all render and post toggles and parameters, debug shading mode, shadows, an authored-vs-viewer-default post switch, DoF follow, and the live Particles controls) |
+| F1 | Show or hide the list of debug keys (`keys`, the host's) |
+| F2 | Toggle the render stats overlay (`stats`) |
+| F3 | Toggle normal arrows (`normal_arrows`) |
+| F4 | Toggle the **Rendering & Effects** menu (all render and post toggles and parameters, debug shading mode, shadows, an authored-vs-viewer-default post switch, DoF follow, and the live Particles controls; `render_panel`) |
 
 The viewer applies the scene's `[post_process]` block on load; the F4 menu's "authored" switch flips between those values and the viewer defaults. The earlier F1 (debug mode), F2 (wireframe overlay) and F4 (shadows) keys were folded into the F4 menu.
 
 When an entity is selected, a **translate gizmo** appears with colored axis arrows (red = X, green = Y, blue = Z) and plane handles. Click and drag an axis or plane to move the entity. Position changes can be undone/redone and saved back to the scene file.
+
+### Procgen Previewer Controls
+
+The previewer of a mesh or texture spec (`flint edit specs/oak_tree.procgen.toml`):
+
+| Input | Action |
+|-------|--------|
+| Left-drag, right-drag, scroll, W/A/S/D, Q/E | Orbit, pan, zoom (Q/E zoom a texture too) |
+| O, `[` / `]` | Toggle auto-orbit, slower / faster |
+| Space | Fit the camera to the mesh; a texture back to 1x, centred |
+| R | A new random seed |
+| T | Tile the texture |
+| Tab | Hide or show the panels |
+| Ctrl+S / Ctrl+Shift+S | Save the spec / save it as (only the changed params are written) |
+| Ctrl+E | Export the output |
+| F1 | Show or hide the list of debug keys (`keys`, the host's) |
+| F2 | Wireframe over the mesh, or back to shaded (`wireframe`) |
+| F3 | Normal arrows (`normal_arrows`) |
+| F4 | The skeleton overlay, for a mesh with a skeleton (`skeleton`) |
+| F5 | The next debug shading mode: PBR, wireframe, normals, depth, UV, ... (`debug_mode`) |
+| Escape | Exit |
+
+F2 to F5 act on a mesh; with a texture spec the card shows them dimmed. F5
+was F1 until #1170 gave F1 one meaning in every tool.
 
 ### Spline Editor Controls (`--spline`)
 
@@ -1265,6 +1300,7 @@ When an entity is selected, a **translate gizmo** appears with colored axis arro
 | Right-drag | Pan camera |
 | Scroll | Zoom |
 | O, `[` / `]` | Toggle auto-orbit, slower / faster |
+| F1 | Show or hide the list of debug keys; the scene viewer's F2 to F4 work here too |
 | Tab / Shift+Tab | Cycle through control points |
 | I | Insert a new control point after selected |
 | Delete | Remove selected control point |

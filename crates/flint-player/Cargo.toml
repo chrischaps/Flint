@@ -94,7 +94,7 @@ flint-scene = { workspace = true }
 flint-query = { workspace = true }
 flint-render = { workspace = true }
 flint-pixels = { workspace = true }
-flint-runtime = { workspace = true }
+flint-runtime = { workspace = true, features = ["egui"] }
 flint-physics = { workspace = true }
 flint-import = { workspace = true }
 flint-audio = { workspace = true }
