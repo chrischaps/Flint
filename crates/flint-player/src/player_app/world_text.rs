@@ -41,6 +41,13 @@ pub(super) struct TextView {
 /// few sizes as the camera moves.
 const PLANE_EM_PX: (f32, f32) = (4.0, 128.0);
 
+/// A size on a plane at least this many world units, whose em is longer
+/// than its distance from the camera, is taken for points and warned of
+/// (#1182):
+/// `size: 15.0` with `facing` asks for a 15 m em, which a camera a few
+/// metres off sees as a corner of one glyph, or not at all.
+const POINTS_LIKE_SIZE: f32 = 4.0;
+
 /// Where a label's layout, in points with its anchor at the origin and y
 /// down, goes in the frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -124,7 +131,7 @@ pub(super) fn lay_out(
         if t.text.is_empty() || t.color[3] <= 0.0 || t.size <= 0.0 {
             continue;
         }
-        let Some((place, points, scale)) = place(t, view) else {
+        let Some((place, points, scale)) = place(t, view, warned) else {
             continue;
         };
         let font_id = resolve_font_id(points, t.font.as_deref(), fonts, warned);
@@ -183,8 +190,13 @@ pub(super) fn lay_out(
 }
 
 /// Where `t` goes, the font size to lay it out at in points, and how many
-/// points one of its own length units is (1 for a billboard).
-fn place(t: &WorldText, view: &TextView) -> Option<(Place, f32, f32)> {
+/// points one of its own length units is (1 for a billboard). A plane's
+/// size that reads as points is warned of once a label (`warned`).
+fn place(
+    t: &WorldText,
+    view: &TextView,
+    warned: &mut HashSet<String>,
+) -> Option<(Place, f32, f32)> {
     let [w, h] = view.screen;
     if w <= 0.0 || h <= 0.0 {
         return None;
@@ -215,6 +227,7 @@ fn place(t: &WorldText, view: &TextView) -> Option<(Place, f32, f32)> {
                 return None;
             }
             let (right, up) = plane.basis()?;
+            warn_if_points(t, view.eye, warned);
             let em_px = em_on_screen(t, right, up, view)?;
             let em_px = em_px.round().clamp(PLANE_EM_PX.0, PLANE_EM_PX.1);
             let points = em_px / view.px_per_point;
@@ -230,6 +243,36 @@ fn place(t: &WorldText, view: &TextView) -> Option<(Place, f32, f32)> {
             ))
         }
     }
+}
+
+/// The key `warned` holds for a label warned of as sized in points.
+fn points_key(text: &str) -> String {
+    format!("draw_world_text size: {text}")
+}
+
+/// Warn, once a label, when text on a plane is sized as if in points: at
+/// least [`POINTS_LIKE_SIZE`] world units and an em longer than the way
+/// from `eye` to it, so it spans about the screen's height or more and its
+/// corners often reach behind the camera. Nothing else says why such a
+/// label draws nothing (#1182). Asked before the em is projected, which
+/// fails when a corner is behind the camera.
+fn warn_if_points(t: &WorldText, eye: [f32; 3], warned: &mut HashSet<String>) {
+    let away = [t.at[0] - eye[0], t.at[1] - eye[1], t.at[2] - eye[2]];
+    let distance = (away[0] * away[0] + away[1] * away[1] + away[2] * away[2]).sqrt();
+    if t.size < POINTS_LIKE_SIZE || t.size <= distance || !warned.insert(points_key(&t.text)) {
+        return;
+    }
+    let [x, y, z] = t.at;
+    tracing::warn!(
+        target: "script",
+        "draw_world_text `{}` at ({x:.2}, {y:.2}, {z:.2}) has `facing`, so its size {} is the \
+         em in world units: letters {} m tall, {distance:.1} m from the camera. A billboard's \
+         size is points. For text painted on a surface give the em in metres (0.03 is a line \
+         on a screen, 0.3 a shop sign), or leave out `facing`",
+        t.text,
+        t.size,
+        t.size,
+    );
 }
 
 /// How many pixels `t`'s em spans on screen at its anchor, along whichever
@@ -689,6 +732,149 @@ mod tests {
         let mut t = text([-2.0, 0.0, -1.5], 1.0, wall);
         t.text = "A very long name painted along the wall".into();
         assert!(build(&[t], &view()).is_empty());
+    }
+
+    /// A camera at `eye` looking at `target`, world up, 60° vertical fov on
+    /// a 320x180-point screen, near 0.1, far 100. Column-major, wgpu depth.
+    fn look_at(eye: [f32; 3], target: [f32; 3]) -> TextView {
+        let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+        let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let cross = |a: [f32; 3], b: [f32; 3]| {
+            [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ]
+        };
+        let unit = |a: [f32; 3]| {
+            let l = dot(a, a).sqrt();
+            [a[0] / l, a[1] / l, a[2] / l]
+        };
+        let f = unit(sub(target, eye));
+        let s = unit(cross(f, [0.0, 1.0, 0.0]));
+        let u = cross(s, f);
+        // Row-major view, then projection, then their product.
+        let view = [
+            [s[0], s[1], s[2], -dot(s, eye)],
+            [u[0], u[1], u[2], -dot(u, eye)],
+            [-f[0], -f[1], -f[2], dot(f, eye)],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let (w, h, near, far) = (320.0f32, 180.0f32, 0.1f32, 100.0f32);
+        let t = 1.0 / (30.0f32.to_radians()).tan();
+        let proj = [
+            [t * h / w, 0.0, 0.0, 0.0],
+            [0.0, t, 0.0, 0.0],
+            [0.0, 0.0, far / (near - far), near * far / (near - far)],
+            [0.0, 0.0, -1.0, 0.0],
+        ];
+        let mut view_proj = [[0.0f32; 4]; 4];
+        for (col, out) in view_proj.iter_mut().enumerate() {
+            for (row, o) in out.iter_mut().enumerate() {
+                *o = (0..4).map(|k| proj[row][k] * view[k][col]).sum();
+            }
+        }
+        TextView {
+            view_proj,
+            eye,
+            screen: [w, h],
+            px_per_point: 1.0,
+        }
+    }
+
+    /// #1182's prompt: on a terminal's glass at x = 0, facing +x, a little
+    /// off its middle, left-aligned, the camera 1 to 5 m off on the +x side.
+    fn prompt(size: f32) -> WorldText {
+        let mut t = text(
+            [0.06, 1.06, 0.12],
+            size,
+            Some(TextPlane {
+                normal: [1.0, 0.0, 0.0],
+                up: [0.0, 1.0, 0.0],
+            }),
+        );
+        t.text = "> _".into();
+        t.color = [0.02, 0.2, 0.08, 0.95];
+        t.align = 0;
+        t
+    }
+
+    fn lay_out_warned(texts: &[WorldText], v: &TextView) -> HashSet<String> {
+        let ctx = context();
+        let mut warned = HashSet::new();
+        let _ = run_headless_frame(&ctx, Default::default(), |ui| {
+            let ctx = &ui.ctx().clone();
+            lay_out(
+                ctx,
+                texts,
+                v,
+                &HashSet::new(),
+                &mut warned,
+                &mut TextHalos::default(),
+            );
+        });
+        warned
+    }
+
+    /// The cameras #1182 drew from: 1 to 5 m off the glass, some square
+    /// on, some from the side and above.
+    fn prompt_cameras() -> Vec<TextView> {
+        let glass = [0.0, 1.0, 0.0];
+        [
+            [1.0, 1.0, 0.0],
+            [2.0, 1.3, 0.6],
+            [3.5, 1.8, -1.2],
+            [5.0, 1.0, 0.2],
+        ]
+        .into_iter()
+        .map(|eye| look_at(eye, glass))
+        .collect()
+    }
+
+    #[test]
+    fn a_prompt_sized_in_points_on_a_plane_is_warned_of() {
+        // `size: 15.0` with `facing` is a 15 m em: the issue's call. It's
+        // warned of from every one of its cameras, once a label.
+        for v in prompt_cameras() {
+            let warned = lay_out_warned(&[prompt(15.0), prompt(15.0)], &v);
+            assert_eq!(warned.len(), 1, "{warned:?}");
+            assert!(warned.contains(&points_key("> _")), "{warned:?}");
+        }
+        // A billboard's 15 is points, and a plane's 0.03 is metres: neither.
+        let v = &prompt_cameras()[1];
+        let mut billboard = prompt(15.0);
+        billboard.plane = None;
+        assert!(lay_out_warned(&[billboard, prompt(0.03)], v).is_empty());
+        // A big sign seen whole isn't taken for points.
+        let mut sign = prompt(6.0);
+        sign.at = [0.0, 3.0, -40.0];
+        sign.plane = facing_camera();
+        assert!(lay_out_warned(&[sign], &look_at([0.0, 3.0, 10.0], [0.0, 3.0, 0.0])).is_empty());
+    }
+
+    #[test]
+    fn a_prompt_in_metres_lies_on_the_glass_and_reads_from_plus_x() {
+        for v in prompt_cameras() {
+            let mesh = build(&[prompt(0.03)], &v);
+            assert!(!mesh.is_empty(), "nothing drawn from {:?}", v.eye);
+            assert!(mesh.vertices.iter().all(|g| g.position[3] > 0.0));
+            // On screen, near the anchor: a few percent of the screen.
+            let (lo, hi) = bounds(&mesh);
+            assert!(hi[0] - lo[0] < 0.5 && hi[1] - lo[1] < 0.3, "{lo:?} {hi:?}");
+            let anchor = project(&v.view_proj, [0.06, 1.06, 0.12]);
+            let ax = anchor[0] / anchor[3];
+            // Left-aligned and read left to right: it starts at the anchor
+            // and runs to its right, `>` before `_`, not mirrored.
+            assert!((lo[0] - ax).abs() < 0.05, "starts at {} not {ax}", lo[0]);
+            let x = |g: &GlyphVertex| g.position[0] / g.position[3];
+            let n = mesh.vertices.len();
+            let first = mesh.vertices[..4].iter().map(x).sum::<f32>() / 4.0;
+            let last = mesh.vertices[n - 4..].iter().map(x).sum::<f32>() / 4.0;
+            assert!(first < last, "`>` at {first}, `_` at {last}");
+        }
+        // From behind the glass, nothing.
+        let behind = look_at([-3.0, 1.2, 0.5], [0.0, 1.0, 0.0]);
+        assert!(build(&[prompt(0.03)], &behind).is_empty());
     }
 
     #[test]

@@ -1881,7 +1881,7 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `draw_line_3d(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, opts: map)` | — | A line between two world points projected onto the HUD; opts: color, thickness (points, 1), layer. |
 | `draw_world_line(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, r: num, g: num, b: num, a: num, thickness: num)` | — | A line between two world points drawn in the 3D frame, depth-tested; thickness in points. |
 | `draw_world_line(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, opts: map)` | — | A line between two world points in the 3D frame, depth-tested; opts: color, thickness (points, 1). |
-| `draw_world_text(x: num, y: num, z: num, text: str, size: num, opts: map)` | — | Text at a world point, depth-tested; opts: `draw_text`'s (no layer) plus valign, facing \[x, y, z\] (a plane's normal; none is a billboard) and up. |
+| `draw_world_text(x: num, y: num, z: num, text: str, size: num, opts: map)` | — | Text at a world point, depth-tested; opts: `draw_text`'s (no layer) plus valign, facing \[x, y, z\] and up. Without facing it's a billboard and size is points. With facing it's painted on the plane through the point, read only from the side facing points to, and size is the em in world units (0.03 is a line on a screen), as are spacing, stroke, glow and shadow. |
 | `draw_ring(cx: num, cy: num, r_inner: num, r_outer: num, start_deg: num, end_deg: num, r: num, g: num, b: num, a: num, layer: int)` | — | Fill an annular sector: degrees clockwise from 12 o'clock, end after start, `r_inner` 0 for a pie. |
 | `draw_ring(cx: num, cy: num, r_inner: num, r_outer: num, start_deg: num, end_deg: num, opts: map)` | — | Fill an annular sector (degrees clockwise from 12 o'clock); opts: color, layer. |
 | `draw_arc(cx: num, cy: num, radius: num, start_deg: num, end_deg: num, r: num, g: num, b: num, a: num, thickness: num, layer: int)` | — | Stroke an arc of a circle: `draw_ring` centred on radius, thickness wide. |
@@ -1958,6 +1958,14 @@ fn sign(x, y, z, fx, fz, name) {
 ```
 
 The point is pulled toward the camera by the world lines' 0.2% (`DEPTH_SLACK`), so text painted on a surface doesn't fight it. A plane's text that reaches behind the camera isn't drawn at all, and nor is any text whose point is behind it or past the far plane. Scripts decide when text is too small to read: there's no minimum size.
+
+Adding `facing` to a billboard changes what its `size` means. `size: 15.0` is a 15 point name tag without it and a 15 metre em with it: from a few metres away that's a corner of one glyph, or, when the label reaches behind the camera, nothing at all. The player warns once a label when a plane's size is 4 units or more and longer than the text's distance from the camera (`draw_world_text ... has facing, so its size 15 is the em in world units`). A line of text on a screen is about 0.03, a shop's name 0.15 to 0.3:
+
+```rust
+// A prompt on a terminal's glass, which faces +x: read from the +x side
+draw_world_text(c[0] + 0.01, c[1] + 0.06, c[2] + 0.12, "> _", 0.03,
+    #{ color: [0.4, 1.0, 0.6, 0.95], facing: [1.0, 0.0, 0.0], align: "left" });
+```
 
 `find_nearest_interactable()` returns a map with `entity` (ID), `prompt_text`, `interaction_type`, and `distance` fields when an interactable entity is within range.
 
