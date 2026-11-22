@@ -117,6 +117,7 @@ fn summary(d: &FrameDescription, top: usize) -> Value {
         "scene": d.scene,
         "trigger": d.trigger,
         "notes": d.notes,
+        "camera": d.camera,
         "frame": {
             "index": f.index,
             "game_time": f.game_time,
@@ -183,6 +184,54 @@ fn ms(v: &Value) -> String {
 
 fn count(n: &Value) -> String {
     flint_render::format_count(n.as_u64().unwrap_or(0).min(u32::MAX as u64) as u32)
+}
+
+/// The frame's camera in a line (#1176): `perspective, fov 60°, near 0.1 m,
+/// far 1000 m, at (0, 2, 8) looking at (0, 1, 0)`. `None` for a capture
+/// that names none (written before it).
+fn camera_words(c: &Value) -> Option<String> {
+    let c = c.as_object()?;
+    let num = |k: &str| c.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+    let point = |k: &str| {
+        let v: Vec<String> = c
+            .get(k)
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|x| metres(x.as_f64().unwrap_or(0.0)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        format!("({})", v.join(", "))
+    };
+    let lens = if c.get("orthographic").and_then(Value::as_bool) == Some(true) {
+        // ortho_height is the half-height; 0 sizes it from the distance
+        let half = match num("ortho_height") {
+            h if h > 0.0 => h,
+            _ => num("distance") * (num("fov").to_radians() / 2.0).tan(),
+        };
+        format!("orthographic, {} m tall", metres(half * 2.0))
+    } else {
+        format!("perspective, fov {}°", metres(num("fov")))
+    };
+    Some(format!(
+        "{lens}, near {} m, far {} m, at {} looking at {}",
+        metres(num("near")),
+        metres(num("far")),
+        point("position"),
+        point("target")
+    ))
+}
+
+/// A length as few digits as say it: `0.1`, `12.5`, `1000`.
+fn metres(v: f64) -> String {
+    let s = format!("{v:.3}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" {
+        "0".into()
+    } else {
+        s.into()
+    }
 }
 
 fn summary_text(shown: &str, s: &Value) -> String {
@@ -268,6 +317,9 @@ fn summary_text(shown: &str, s: &Value) -> String {
         let _ = write!(frame, ", debug {}", f["debug_mode"].as_str().unwrap_or(""));
     }
     line(&mut out, "Frame", frame);
+    if let Some(c) = camera_words(&s["camera"]) {
+        line(&mut out, "Camera", c);
+    }
     let t = &s["time"];
     let mut time = match t["gpu_frame_ms"].as_f64() {
         Some(g) => format!("GPU {g:.3} ms"),

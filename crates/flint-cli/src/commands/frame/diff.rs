@@ -418,7 +418,7 @@ fn diff_picture(
     max: f32,
     exposure: f32,
 ) -> image::RgbaImage {
-    let (shown, _) = viewable(b, image, exposure);
+    let (shown, _) = viewable(b, image, exposure, None);
     let mut out = shown;
     let max = if max.is_finite() && max > 0.0 {
         max

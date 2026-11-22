@@ -184,6 +184,11 @@ impl ReplayHost {
                 inputs.version
             );
         }
+        let Some(camera) = inputs.camera_of(description).map(|c| c.camera()) else {
+            anyhow::bail!(
+                "{shown} names no camera: neither its manifest nor replay/inputs.json has one"
+            );
+        };
         let world_toml = String::from_utf8(read(dir, "replay/world.toml")?)
             .context("replay/world.toml isn't text")?;
         let skinning = read(dir, "replay/skinning.bin")?;
@@ -379,7 +384,7 @@ impl ReplayHost {
             });
         }
         Ok(Self {
-            camera: inputs.camera.camera(),
+            camera,
             shadow_resolution,
             selected: inputs.renderer.selected.clone(),
             ctx,

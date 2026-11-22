@@ -166,7 +166,6 @@ fn frame(app: &mut PlayerApp, gpu: &'static HeadlessContext) {
     if armed {
         let facts = FrameFacts {
             world: &app.core.world,
-            camera: &app.camera,
             particles: None,
             scene_path: &app.core.scene_path,
             project: &app.core.project,
@@ -282,10 +281,15 @@ fn an_input_scripts_capture_line_writes_the_next_frame_without_waiting_on_it() {
         (inputs.frame.time - t).abs() < 1e-9,
         "the inputs are the frame's"
     );
-    assert_eq!(inputs.camera.position, {
+    // The camera is written once, in the manifest, as the frame drew it
+    // (#1176): the inputs point at it
+    assert_eq!(inputs.camera, None, "the manifest holds the camera");
+    let camera = inputs.camera_of(&manifest).expect("the manifest's camera");
+    assert_eq!(camera.position, {
         let p = app.camera.position;
         [p.x, p.y, p.z]
     });
+    assert_eq!((camera.near, camera.far), (app.camera.near, app.camera.far));
     let world = std::fs::read_to_string(dir.join("replay/world.toml")).unwrap();
     assert!(world.contains("[entities.card"), "{world}");
 

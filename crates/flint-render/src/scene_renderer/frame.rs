@@ -457,7 +457,10 @@ impl SceneRenderer {
         };
         self.begin_view_taps(&scopes);
         if let Some(log) = scopes.log() {
-            log.begin_view(self.surface_size.into());
+            log.begin_view(
+                self.surface_size.into(),
+                crate::frame_replay::CameraState::of(camera),
+            );
         }
         // The depth the scene draws against, in the description's names
         let sd = self.scene_depth_id();

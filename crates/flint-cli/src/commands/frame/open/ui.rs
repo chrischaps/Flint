@@ -4,7 +4,7 @@
 //! bottom. Everything links: a pass selects its image and its draws, a
 //! draw selects its entity, and the entity is marked in every pass.
 
-use super::super::display::{Channel, Mode};
+use super::super::display::{metres_text, Channel, DepthCamera, Mode};
 use super::super::read::Capture;
 use super::loader::{Loader, Slot};
 use super::model::{Model, Sort, TableQuery};
@@ -351,7 +351,9 @@ impl App {
     fn request(&mut self, image: usize) {
         let im = &self.model.images[image];
         let path = self.capture.file(&im.image);
-        self.loader.request(image, path, &im.image, self.exposure);
+        let camera = DepthCamera::of(&self.capture.description, &im.image);
+        self.loader
+            .request(image, path, &im.image, self.exposure, camera);
     }
 
     fn style(&mut self, ctx: &egui::Context) {
@@ -1155,7 +1157,35 @@ impl App {
                     self.view.ev = 0.0;
                 }
             }
-            if current == Mode::Depth {
+            if let (Mode::Metres, Some(m)) = (current, loaded.and_then(|l| l.auto.metres)) {
+                // The log scale's ends, metres from the camera (#1176)
+                let (mut lo, mut hi) = self.view.metres.unwrap_or((m.lo, m.hi));
+                let far = m.camera.far.max(m.hi);
+                ui.label(RichText::new("metres").color(ink::DIM));
+                let a = ui.add(
+                    egui::DragValue::new(&mut lo)
+                        .speed(0.05)
+                        .range(0.0..=far)
+                        .max_decimals(2),
+                );
+                let b = ui.add(
+                    egui::DragValue::new(&mut hi)
+                        .speed(0.05)
+                        .range(0.0..=far)
+                        .max_decimals(2),
+                );
+                if a.changed() || b.changed() {
+                    self.view.metres = Some((lo, hi));
+                }
+                if self.view.metres.is_some()
+                    && ui
+                        .small_button("drawn")
+                        .on_hover_text("The nearest and farthest the frame drew")
+                        .clicked()
+                {
+                    self.view.metres = None;
+                }
+            } else if matches!(current, Mode::Depth | Mode::Metres) {
                 if let Some(l) = loaded {
                     let (mut lo, mut hi) = self.view.depth.unwrap_or((l.auto.lo, l.auto.hi));
                     ui.label(RichText::new("depth").color(ink::DIM));
@@ -2288,6 +2318,14 @@ fn describe(d: &super::super::display::Display, auto_words: &str, untouched: boo
     match d.mode {
         Mode::Tonemap => format!("tonemapped at exposure {:.3}", d.exposure),
         Mode::Linear => format!("linear at exposure {:.3}", d.exposure),
+        Mode::Metres => match &d.metres {
+            Some(m) => format!(
+                "depth {}..{} m, log scale",
+                metres_text(m.lo),
+                metres_text(m.hi)
+            ),
+            None => format!("depth {:.5}..{:.5} (no camera named)", d.lo, d.hi),
+        },
         Mode::Depth => format!("depth {:.5}..{:.5}", d.lo, d.hi),
         Mode::Ids => "ids coloured".into(),
         Mode::Log => format!("log over 0..{:.3}", d.max),

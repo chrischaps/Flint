@@ -795,10 +795,26 @@ pub struct ReplayInputs {
     /// [`FrameInputsState`]'s version: 1.
     pub version: u32,
     pub frame: FrameInputsState,
-    pub camera: CameraState,
+    /// The camera, in a capture written before #1176. Since, it is the
+    /// manifest's `camera` (`FrameDescription::camera`, what the frame drew
+    /// with) and left out here, so the two can't disagree:
+    /// [`camera_of`](Self::camera_of) reads either.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera: Option<CameraState>,
     pub renderer: ReplayRenderer,
     /// The particle draws of `particles.bin`.
     pub particles: Vec<EmitterDraw>,
+}
+
+impl ReplayInputs {
+    /// The camera a replay of the frame `description` describes draws with:
+    /// the manifest's, else (a capture from before #1176) these inputs'.
+    pub fn camera_of<'a>(
+        &'a self,
+        description: &'a crate::frame_capture::FrameDescription,
+    ) -> Option<&'a CameraState> {
+        description.camera.as_ref().or(self.camera.as_ref())
+    }
 }
 
 /// What a replay of this frame draws fresh rather than as captured

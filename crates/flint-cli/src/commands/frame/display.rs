@@ -11,7 +11,7 @@
 //! texel into display-encoded RGB in 0..1.
 
 use super::read::{Kind, Texels};
-use flint_render::frame_capture::ImageDescription;
+use flint_render::frame_capture::{FrameDescription, ImageDescription};
 
 /// How a texel becomes a colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,14 +30,19 @@ pub enum Mode {
     Log,
     /// A signed value, 0 at mid-grey, `max` at white.
     Signed,
+    /// Scene depth turned into metres through the frame's camera (#1176),
+    /// on a log scale over [`Metres::lo`]`..`[`Metres::hi`], near white;
+    /// the clear value black. Without a camera it is [`Mode::Depth`].
+    Metres,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 7] = [
+    pub const ALL: [Mode; 8] = [
         Mode::Tonemap,
         Mode::Linear,
         Mode::Stored,
         Mode::Depth,
+        Mode::Metres,
         Mode::Ids,
         Mode::Log,
         Mode::Signed,
@@ -52,6 +57,7 @@ impl Mode {
             Mode::Ids => "Ids",
             Mode::Log => "Log",
             Mode::Signed => "Signed",
+            Mode::Metres => "Metres",
         }
     }
 
@@ -179,6 +185,76 @@ impl Prepared {
     }
 }
 
+/// The camera's depth planes (#1176): what turns a stored depth into
+/// metres from the camera.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DepthCamera {
+    pub near: f32,
+    pub far: f32,
+    pub orthographic: bool,
+}
+
+impl DepthCamera {
+    /// The camera `image` was drawn from, when the capture names one and
+    /// the image is the scene's depth: `None` for a shadow map's layer
+    /// (orthographic and linear already, in a light's metres), any image
+    /// of a capture written before #1176, and a camera whose planes don't
+    /// make a range.
+    pub fn of(d: &FrameDescription, image: &ImageDescription) -> Option<Self> {
+        let c = d.camera_of(image)?;
+        let fits = c.far > c.near && (c.orthographic || c.near > 0.0);
+        fits.then_some(Self {
+            near: c.near,
+            far: c.far,
+            orthographic: c.orthographic,
+        })
+    }
+
+    /// The distance along the view a stored depth `d` (0 at near, 1 at
+    /// far: wgpu's convention, ADR 0055) is, in metres.
+    pub fn metres(&self, d: f32) -> f32 {
+        if self.orthographic {
+            self.near + d * (self.far - self.near)
+        } else {
+            self.near * self.far / (self.far - d * (self.far - self.near))
+        }
+    }
+}
+
+/// Depth in metres (#1176): the camera that linearizes it, and the range
+/// its log scale runs over.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Metres {
+    pub camera: DepthCamera,
+    /// The nearest and farthest drawn, metres.
+    pub lo: f32,
+    pub hi: f32,
+}
+
+/// The nearest a log scale of metres starts from: a camera's near plane
+/// is never closer than this in a scene (`Camera::near` is 0.1 by default).
+const NEAREST_M: f32 = 0.01;
+
+impl Metres {
+    /// A stored depth on the scale: 0 at `lo`, 1 at `hi`, by the logarithm
+    /// of the distance, so each doubling of distance is one step of grey.
+    pub fn scaled(&self, d: f32) -> f32 {
+        let lo = self.lo.max(NEAREST_M);
+        let hi = self.hi.max(lo);
+        let z = self.camera.metres(d).max(lo);
+        ((z / lo).ln() / (hi / lo).ln().max(1e-6)).clamp(0.0, 1.0)
+    }
+}
+
+/// A length in metres to as many places as it needs: `0.42`, `38.2`.
+pub fn metres_text(m: f32) -> String {
+    if m.abs() < 10.0 {
+        format!("{m:.2}")
+    } else {
+        format!("{m:.1}")
+    }
+}
+
 /// How one image is shown: a [`Mode`] and what it needs.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Display {
@@ -190,18 +266,24 @@ pub struct Display {
     pub hi: f32,
     /// The top of a [`Mode::Log`] or [`Mode::Signed`] range.
     pub max: f32,
+    /// What a [`Mode::Metres`] needs, when the frame named its camera.
+    pub metres: Option<Metres>,
 }
 
 impl Display {
     /// How `flint frame image` shows `p` (a float colour target at the
-    /// frame's `exposure`), and a few words saying so.
-    pub fn auto(p: &Prepared, exposure: f32) -> (Self, String) {
+    /// frame's `exposure`), and a few words saying so. `camera` is the
+    /// camera a scene depth was drawn from ([`DepthCamera::of`]): with one,
+    /// depth is shown in metres; without (a version-1 capture, a shadow
+    /// map) it is stretched over the stored values.
+    pub fn auto(p: &Prepared, exposure: f32, camera: Option<DepthCamera>) -> (Self, String) {
         let mut d = Display {
             mode: Mode::Stored,
             exposure,
             lo: 0.0,
             hi: 1.0,
             max: 1.0,
+            metres: None,
         };
         let n = p.pixels();
         let words = if p.integer {
@@ -213,12 +295,29 @@ impl Display {
                 .map(|i| p.rgba[i * 4])
                 .filter(|v| drawn_depth(*v))
                 .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
-            if lo <= hi {
+            if lo > hi {
+                "depth: nothing drawn".into()
+            } else if let Some(camera) = camera {
+                d.lo = lo;
+                d.hi = hi;
+                // Depth grows with distance in both projections, so the
+                // drawn range's ends are the nearest and farthest metres
+                let m = Metres {
+                    camera,
+                    lo: camera.metres(lo),
+                    hi: camera.metres(hi),
+                };
+                d.mode = Mode::Metres;
+                d.metres = Some(m);
+                format!(
+                    "depth {}..{} m, log scale, near white",
+                    metres_text(m.lo),
+                    metres_text(m.hi)
+                )
+            } else {
                 d.lo = lo;
                 d.hi = hi;
                 format!("depth {lo:.5}..{hi:.5} stretched, near white")
-            } else {
-                "depth: nothing drawn".into()
             }
         } else if p.channels >= 3 && p.kind == Kind::Float {
             d.mode = Mode::Tonemap;
@@ -255,7 +354,17 @@ impl Display {
     pub fn map(&self, rgba: [f32; 4], channels: usize) -> [f32; 3] {
         let rgb = match self.mode {
             Mode::Ids => id_colour(rgba[0].max(0.0) as u32),
-            Mode::Depth => {
+            Mode::Metres if self.metres.is_some() => {
+                let m = self.metres.expect("checked above");
+                let v = rgba[0];
+                let g = if drawn_depth(v) && m.lo <= m.hi {
+                    1.0 - 0.85 * m.scaled(v)
+                } else {
+                    0.0
+                };
+                [g; 3]
+            }
+            Mode::Depth | Mode::Metres => {
                 let v = rgba[0];
                 let span = (self.hi - self.lo).max(1e-12);
                 let g = if drawn_depth(v) && self.lo <= self.hi {
@@ -381,7 +490,7 @@ mod tests {
         assert_eq!(p.texel(0), [1.0, 0.2, 0.0, 1.0]);
         assert_eq!(p.stored(0, 0), Some(vec![255.0, 51.0, 0.0]));
         assert_eq!(p.stored(1, 0), None);
-        let (d, _) = Display::auto(&p, 1.0);
+        let (d, _) = Display::auto(&p, 1.0, None);
         assert_eq!(d.mode, Mode::Stored);
         assert_eq!(d.map(p.texel(0), p.channels), [1.0, 0.2, 0.0]);
     }
@@ -394,6 +503,7 @@ mod tests {
             lo: 0.0,
             hi: 1.0,
             max: 1.0,
+            metres: None,
         };
         let px = [0.1, 0.1, 0.1, 1.0];
         let dim = d.map(px, 4)[0];
@@ -411,10 +521,94 @@ mod tests {
             lo: 0.0,
             hi: 1.0,
             max: 1.0,
+            metres: None,
         };
         assert_eq!(d.map(p, c), [0.8; 3]);
         let (l, _) = pick([1.0, 1.0, 1.0, 1.0], 4, Channel::Luma);
         assert!((l[0] - 1.0).abs() < 1e-6);
+    }
+
+    /// The depth a perspective camera with these planes stores for a
+    /// point `z` metres along its view (`Camera::perspective_matrix`).
+    fn stored_at(c: &DepthCamera, z: f32) -> f32 {
+        c.far * (z - c.near) / (z * (c.far - c.near))
+    }
+
+    #[test]
+    fn a_perspective_depth_reads_back_in_metres() {
+        let c = DepthCamera {
+            near: 0.1,
+            far: 1000.0,
+            orthographic: false,
+        };
+        for z in [0.1, 0.4, 2.0, 38.2, 999.0] {
+            let back = c.metres(stored_at(&c, z));
+            assert!((back - z).abs() < z * 1e-4, "{z} m came back as {back}");
+        }
+        let ortho = DepthCamera {
+            near: 0.5,
+            far: 100.5,
+            orthographic: true,
+        };
+        assert!((ortho.metres(0.25) - 25.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn depth_in_metres_tells_far_things_apart_where_the_stretch_cannot() {
+        // A prop at 20 m and the ground behind it at 30 m, the nearest
+        // thing at 0.5 m: a perspective buffer keeps both far ones near 1
+        let c = DepthCamera {
+            near: 0.1,
+            far: 200.0,
+            orthographic: false,
+        };
+        let values: Vec<f32> = [0.5, 20.0, 30.0]
+            .iter()
+            .map(|z| stored_at(&c, *z))
+            .chain([1.0])
+            .collect();
+        let t = Texels {
+            width: 4,
+            height: 1,
+            channels: 1,
+            kind: Kind::Depth,
+            values,
+        };
+        let p = Prepared::new(&t, &image("Depth32Float"));
+        let grey = |d: &Display, i: usize| (d.map(p.texel(i), 1)[0] * 255.0 + 0.5) as i32;
+
+        let (stretch, words) = Display::auto(&p, 1.0, None);
+        assert!(words.contains("stretched"), "{words}");
+        let (metres, words) = Display::auto(&p, 1.0, Some(c));
+        assert_eq!(metres.mode, Mode::Metres);
+        assert!(words.starts_with("depth 0.50..30.0 m"), "{words}");
+
+        assert_eq!(grey(&metres, 0), 255, "the nearest is white");
+        assert_eq!(grey(&metres, 3), 0, "the clear value is black");
+        let apart = |d: &Display| grey(d, 1) - grey(d, 2);
+        assert!(
+            apart(&stretch) <= 3,
+            "the stretch keeps the prop and the ground {} levels apart",
+            apart(&stretch)
+        );
+        assert!(
+            apart(&metres) >= 15,
+            "in metres they are {} levels apart",
+            apart(&metres)
+        );
+    }
+
+    #[test]
+    fn metres_without_a_camera_shows_as_depth() {
+        let d = Display {
+            mode: Mode::Metres,
+            exposure: 1.0,
+            lo: 0.5,
+            hi: 1.0,
+            max: 1.0,
+            metres: None,
+        };
+        assert_eq!(d.map([0.5, 0.0, 0.0, 1.0], 1), [1.0; 3]);
     }
 
     #[test]
@@ -425,6 +619,7 @@ mod tests {
             lo: 0.0,
             hi: 1.0,
             max: 1.0,
+            metres: None,
         };
         assert_eq!(d.map([f32::NAN, 0.5, 0.0, 1.0], 3), [0.0, 0.5, 0.0]);
     }
