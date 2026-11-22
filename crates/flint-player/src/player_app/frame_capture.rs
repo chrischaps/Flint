@@ -45,6 +45,8 @@ use flint_render::frame_replay::{FrameInputsState, ReplayStateCapture};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::background_thread;
 use super::frame_history::{Frame, FrameHistory};
 use super::hitch::{Cause, Hitch};
 use super::perf::Phase;
@@ -133,6 +135,13 @@ struct Job {
     fresh_only: Vec<String>,
 }
 
+/// A writer thread, and the folder it writes.
+#[cfg(not(target_arch = "wasm32"))]
+struct Writer {
+    folder: String,
+    thread: std::thread::JoinHandle<Result<Written, String>>,
+}
+
 /// What a writer thread wrote.
 #[cfg(not(target_arch = "wasm32"))]
 struct Written {
@@ -155,6 +164,9 @@ pub(crate) struct FrameCaptures {
     pub on_hitch_startup: bool,
     /// Startup hitches passed over, so the first is said once.
     passed_startup: u32,
+    /// Hitches passed over while a capture was being written (#1178), so
+    /// the first is said once.
+    passed_writing: u32,
     /// `--capture-dir`; `None` is `captures/` at the project's root.
     pub dir: Option<PathBuf>,
     queue: VecDeque<Trigger>,
@@ -162,7 +174,7 @@ pub(crate) struct FrameCaptures {
     #[cfg(not(target_arch = "wasm32"))]
     in_flight: Option<InFlight>,
     #[cfg(not(target_arch = "wasm32"))]
-    writers: Vec<std::thread::JoinHandle<Result<Written, String>>>,
+    writers: Vec<Writer>,
     /// Folder names taken this run, so two captures at one game time don't
     /// share one.
     names: Vec<String>,
@@ -487,6 +499,7 @@ impl FrameCaptures {
         scripts_timed: bool,
     ) -> bool {
         self.collect_writers(false);
+        self.note_writing();
         let Some(flight) = &mut self.in_flight else {
             return false;
         };
@@ -532,9 +545,47 @@ impl FrameCaptures {
             self.handed.push(job.dir.clone());
         }
         let job = flight.job;
-        self.writers.push(std::thread::spawn(move || write(job)));
+        let folder = job
+            .dir
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        // Behind the game, as each of its encoders will be (#1178)
+        let thread = std::thread::Builder::new()
+            .name("capture writer".into())
+            .spawn(move || {
+                background_thread::enter();
+                write(job)
+            });
+        match thread {
+            Ok(thread) => self.writers.push(Writer { folder, thread }),
+            Err(e) => {
+                let e = format!("the capture's writer thread didn't start: {e}");
+                self.said.push(format!("failed: {e}"));
+                self.failures.push(e);
+            }
+        }
         // The hand-off is this frame's work too
         true
+    }
+
+    /// A frame while a capture's writer runs says so (#1178): the writer
+    /// shares the machine with it, and a hitch then names the write as its
+    /// likely cause rather than reading as the game's own.
+    fn note_writing(&self) {
+        if self.writers.is_empty() {
+            return;
+        }
+        flint_core::frame_notes::note(
+            flint_core::frame_notes::NoteKind::CaptureWrite,
+            || {
+                self.writers
+                    .iter()
+                    .map(|w| w.folder.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+            None,
+        );
     }
 
     /// Wait for the capture in flight and every writer: the run is ending.
@@ -563,12 +614,12 @@ impl FrameCaptures {
     fn collect_writers(&mut self, wait: bool) {
         let mut i = 0;
         while i < self.writers.len() {
-            if !wait && !self.writers[i].is_finished() {
+            if !wait && !self.writers[i].thread.is_finished() {
                 i += 1;
                 continue;
             }
             let writer = self.writers.remove(i);
-            match writer.join() {
+            match writer.thread.join() {
                 Ok(Ok(written)) => {
                     self.said.push(written.line);
                     self.written.push(written.dir);
@@ -764,6 +815,21 @@ impl super::PlayerApp {
                 if !h.is_game() {
                     continue;
                 }
+                // Nor one while the last capture was still being written
+                // (#1178): it may be that capture's own cost, and capturing
+                // it would make the next
+                if h.during_capture_write() {
+                    if captures.passed_writing == 0 {
+                        tracing::info!(
+                            target: "player",
+                            "[capture] passed over a hitch at t={:.2} s while a capture was being written \
+                             (it may be the capture's own)",
+                            h.game_time
+                        );
+                    }
+                    captures.passed_writing += 1;
+                    continue;
+                }
                 if !captures.on_hitch_startup && h.game_time < STARTUP_SECS {
                     if captures.passed_startup == 0 {
                         tracing::info!(
@@ -931,11 +997,20 @@ fn write(job: Job) -> Result<Written, String> {
         fresh_only,
         assets: found,
     });
-    // A quarter of the cores: the game plays on while it encodes
+    // A quarter of the cores, each in the background (#1178): the game
+    // plays on while it encodes
     let threads = std::thread::available_parallelism().map_or(1, |n| (n.get() / 4).max(1));
-    let written =
-        flint_render::frame_capture::write_capture_on(&dir, &mut description, captured, threads)
-            .map_err(|e| fail("writing", &e))?;
+    let each_thread = || {
+        background_thread::enter();
+    };
+    let written = flint_render::frame_capture::write_capture_with(
+        &dir,
+        &mut description,
+        captured,
+        threads,
+        &each_thread,
+    )
+    .map_err(|e| fail("writing", &e))?;
     let passes = description
         .all_passes()
         .iter()
@@ -1030,5 +1105,79 @@ mod tests {
             ..Default::default()
         };
         assert!(c.failure().unwrap().contains("--capture-frame-at 9"));
+    }
+
+    /// #1178: each frame a writer runs is noted with the folder it writes,
+    /// and none once it is done.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_frame_while_a_writer_runs_is_noted_with_its_folder() {
+        use flint_core::frame_notes::{self, NoteKind};
+        let (go, wait) = std::sync::mpsc::channel::<()>();
+        let mut c = FrameCaptures::default();
+        c.writers.push(Writer {
+            folder: "bench-t0.500.flintframe".into(),
+            thread: std::thread::spawn(move || {
+                wait.recv().ok();
+                Err("stopped".into())
+            }),
+        });
+        frame_notes::listen(true);
+        let mut notes = Vec::new();
+        frame_notes::take(&mut notes);
+        notes.clear();
+        c.note_writing();
+        frame_notes::take(&mut notes);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert_eq!(notes[0].kind, NoteKind::CaptureWrite);
+        assert_eq!(notes[0].ms, None, "the frame never waits on it");
+        assert_eq!(
+            notes[0].to_string(),
+            "capture write bench-t0.500.flintframe"
+        );
+
+        go.send(()).unwrap();
+        c.collect_writers(true);
+        notes.clear();
+        c.note_writing();
+        frame_notes::take(&mut notes);
+        assert!(notes.is_empty(), "{notes:?}");
+        frame_notes::listen(false);
+    }
+
+    /// The writer's threads run behind the game's (#1178): the encoders
+    /// `write_capture_with` starts call the hook first.
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn the_writer_puts_each_encoder_in_the_background() {
+        let entered = std::sync::atomic::AtomicUsize::new(0);
+        let hook = || {
+            if background_thread::enter() {
+                entered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        };
+        let dir = std::env::temp_dir().join(format!("flint-1178-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut description = FrameDescription::default();
+        flint_render::frame_capture::write_capture_with(
+            &dir,
+            &mut description,
+            flint_render::frame_capture::CapturedFrame {
+                images: Vec::new(),
+                untapped: Vec::new(),
+                record_ms: 0.0,
+                wait_ms: None,
+                copy_out_ms: 0.0,
+            },
+            2,
+            &hook,
+        )
+        .expect("an empty capture writes");
+        assert_eq!(
+            entered.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "one encoder for no images, lowered"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

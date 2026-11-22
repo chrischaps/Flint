@@ -6,6 +6,8 @@
 mod alloc_count;
 #[cfg(test)]
 mod asset_search_tests;
+#[cfg(not(target_arch = "wasm32"))]
+mod background_thread;
 mod camera_cut;
 #[cfg(test)]
 mod catalog_root_tests;

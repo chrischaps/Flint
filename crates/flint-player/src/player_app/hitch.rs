@@ -239,10 +239,30 @@ impl Hitch {
         self.notes.iter().filter(|n| !n.note.kind.is_symptom())
     }
 
+    /// Whether a frame capture's writer ran on this frame or the one before
+    /// (#1178): `--capture-on-hitch` passes over such a hitch, which may be
+    /// the last capture's own.
+    pub(crate) fn during_capture_write(&self) -> bool {
+        self.notes
+            .iter()
+            .any(|n| n.note.kind == flint_core::frame_notes::NoteKind::CaptureWrite)
+    }
+
     /// The outermost engine events (a transition, not each model it
-    /// loaded), this frame's first, then by time, longest first.
+    /// loaded), this frame's first, then by time, longest first. Work on
+    /// another thread that ran through both frames (#1178: one capture's
+    /// write) is named once, as this frame's.
     fn top_events(&self) -> Vec<&HitchNote> {
-        let mut top: Vec<&HitchNote> = self.engine_events().filter(|n| n.note.depth == 0).collect();
+        let on_this_frame = |n: &HitchNote| {
+            self.notes.iter().any(|o| {
+                !o.frame_before && o.note.kind == n.note.kind && o.note.detail == n.note.detail
+            })
+        };
+        let mut top: Vec<&HitchNote> = self
+            .engine_events()
+            .filter(|n| n.note.depth == 0)
+            .filter(|n| !(n.frame_before && n.note.kind.is_background() && on_this_frame(n)))
+            .collect();
         top.sort_by(|a, b| {
             a.frame_before.cmp(&b.frame_before).then(
                 b.note
@@ -267,11 +287,15 @@ impl Hitch {
         if top.is_empty() {
             return false;
         }
-        // An untimed load explains the hitch; a count (#1091) never does
-        if top
-            .iter()
-            .any(|n| n.note.ms.is_none() && !n.note.kind.is_count())
-        {
+        // An untimed load explains the hitch; a count (#1091) never does,
+        // and another thread's work beside the frame (#1178: a capture
+        // being written) does unless a script took the time itself
+        let script = self.blamed_script().is_some();
+        if top.iter().any(|n| {
+            n.note.ms.is_none()
+                && !n.note.kind.is_count()
+                && !(script && n.note.kind.is_background())
+        }) {
             return true;
         }
         let ms: f32 = top.iter().filter_map(|n| n.note.ms).sum();
@@ -1529,6 +1553,92 @@ mod tests {
             "render +40.0 ms (also: pipeline build 3.0 ms the frame before)"
         );
         assert_eq!(h.cause_key(), "render");
+        frame_notes::listen(false);
+    }
+
+    /// A capture's writer runs beside the game (#1178): a hitch while it
+    /// writes names the write as its likely cause, the reload poll it slowed
+    /// beside it; a script that took the time itself is still the script's.
+    #[test]
+    fn a_hitch_while_a_capture_writes_names_the_write() {
+        use flint_core::frame_notes::{self, NoteKind};
+        let writing = || {
+            frame_notes::note(
+                NoteKind::CaptureWrite,
+                || "tavern_hub-t5.000.flintframe".into(),
+                None,
+            )
+        };
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        writing();
+        frame_notes::note(
+            NoteKind::ReloadPoll,
+            || "15 scripts watched".into(),
+            Some(21.3),
+        );
+        let poll = F {
+            sync: 23.0,
+            ..steady(HZ60_MS + 48.0)
+        };
+        assert_eq!(run.frame(poll), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "reload poll 15 scripts watched, 21.3 ms; capture write tavern_hub-t5.000.flintframe"
+        );
+        assert!(h.is_game(), "the game's frame: counted, gated");
+        assert!(h.during_capture_write());
+
+        // The write alone, the frame before: still named
+        run.frames(60, steady(HZ60_MS));
+        writing();
+        run.frame(steady(HZ60_MS));
+        let stall = F {
+            render: 42.0,
+            ..steady(60.0)
+        };
+        assert_eq!(run.frame(stall), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "capture write tavern_hub-t5.000.flintframe (frame before)"
+        );
+        assert_eq!(h.cause_key(), "capture write");
+        assert!(h.during_capture_write());
+
+        // One write through both frames is named once, as the hitch's own
+        run.frames(60, steady(HZ60_MS));
+        writing();
+        run.frame(steady(HZ60_MS));
+        writing();
+        assert_eq!(run.frame(stall), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "capture write tavern_hub-t5.000.flintframe");
+
+        // A script's own stall stays the script's
+        run.frames(60, steady(HZ60_MS));
+        writing();
+        let slow = F {
+            scripts: 41.0,
+            ..steady(60.0)
+        };
+        assert_eq!(
+            run.frame_scripts(slow, &[("scripts/whale.rhai:on_update", 40.0)]),
+            1
+        );
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "script whale.rhai:on_update 40.0 ms (also: capture write)"
+        );
+        assert_eq!(h.cause_key(), "script whale.rhai:on_update");
+
+        // No writer, no note
+        run.frames(60, steady(HZ60_MS));
+        assert_eq!(run.frame(stall), 1);
+        assert!(!run.detector.last().unwrap().during_capture_write());
         frame_notes::listen(false);
     }
 
