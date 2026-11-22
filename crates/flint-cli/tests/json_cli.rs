@@ -273,6 +273,15 @@ fn every_command_answers_with_one_json_document() {
     run("env");
     assert!(json(&dir, &["env"]).1["switches"].is_array());
 
+    // `play` is a window, but `--list-keys` only prints its debug keys,
+    // under flint's global --json (#1184: the player's own took it)
+    let keys = ok(&dir, &["play", scene, "--list-keys"]);
+    assert!(keys["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|k| k["action"] == "keys"));
+
     // Its takes open player windows, so the case is the plan (#722);
     // tests/capture_cli.rs captures for real
     run("capture");
