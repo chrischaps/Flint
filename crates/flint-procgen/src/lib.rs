@@ -84,8 +84,8 @@ pub use types::{
 
 pub use model::{read_model, read_png, Model, ModelLayout, ModelMesh};
 pub use param_ui::{
-    param_reference_markdown, param_reference_text, parse_param_schema, ParamCondition,
-    ParamFieldSpec, ParamFieldType,
+    param_reference_markdown, param_reference_markdown_in, param_reference_text,
+    parse_param_schema, ParamCondition, ParamFieldSpec, ParamFieldType,
 };
 pub use params::{
     parse_path, prop_type, schema_at, string_enum, validate_params, NumBounds, ParamIssue, PathStep,

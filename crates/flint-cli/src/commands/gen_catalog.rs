@@ -5,8 +5,8 @@
 
 use anyhow::{bail, Result};
 use flint_procgen::{
-    op_ports, op_schema, param_reference_markdown, param_reference_text, Generator,
-    GeneratorRegistry, OutputKind, ALL_OP_TYPES,
+    op_ports, op_schema, param_reference_markdown, param_reference_markdown_in,
+    param_reference_text, Generator, GeneratorRegistry, OutputKind, ALL_OP_TYPES,
 };
 use serde_json::{json, Value};
 
@@ -170,7 +170,7 @@ pub fn describe(registry: &GeneratorRegistry, name: &str, format: Format) -> Res
                     if !ports.is_empty() {
                         out.push_str(&format!("Ports: {ports}.\n\n"));
                     }
-                    out.push_str(&param_reference_markdown(&op_schema(op)));
+                    out.push_str(&param_reference_markdown_in(&op_schema(op), "params.ops"));
                 }
             }
             print!("{out}");
