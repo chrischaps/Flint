@@ -1907,7 +1907,7 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `screen_width()` | `num`: points | The window's width in logical points, the draw space. |
 | `screen_height()` | `num`: points | The window's height in logical points, the draw space. |
 | `measure_text(text: str, size: num)` | `map`: `#{width, height}` in points | The size text would draw at, in the default font. |
-| `measure_text(text: str, size: num, opts: map)` | `map`: `#{width, height}` in points | The size text would draw at; opts: font ("" for the default), spacing (extra letter spacing). |
+| `measure_text(text: str, size: num, opts: map)` | `map`: `#{width, height}` in points | The size text would draw at; opts: font ("" for the default, "monospace" for a fixed pitch), spacing (extra letter spacing). |
 | `find_nearest_interactable()` | `map`: `#{entity, prompt_text, interaction_type, distance}`, or () when none is in range | The enabled interactable nearest the player within its own range, as the HUD's prompt shows it. |
 | `world_to_screen(x: num, y: num, z: num)` | `map`: `#{x, y, depth, visible}`; visible is false behind the near plane, where x and y mean nothing | Where a world point lands on the screen, with the camera the last frame rendered with. |
 | `screen_to_ground(x: num, y: num, plane_y: num)` | `any`: \[x, z\], or () where the view doesn't reach the plane (sky, a level orthographic camera, a plane behind) | Where the ray through a screen point meets the plane y = `plane_y`. |
@@ -2001,7 +2001,7 @@ draw_text(40.0, 40.0, "128", 96.0, #{
 
 | Key | Value | Default | What it draws |
 |-----|-------|---------|---------------|
-| `font` | string | default font | A family from `<project>/fonts/` (below) |
+| `font` | string | default font | A family from `<project>/fonts/` (below), or `"monospace"` / `"proportional"` for egui's own two |
 | `color` | `[r, g, b, a]` | white | The text's face |
 | `align` | `"left"` \| `"center"` \| `"right"` (or 0--2) | `"left"` | Which edge of the text `x` names |
 | `stroke` | `[r, g, b, a, width]` | none | A band `width` points wide round the glyphs, beneath them |
@@ -2026,6 +2026,20 @@ A picture can be no wider or taller than the GPU's largest texture (8192 pixels 
 [[font]]
 name = "display"                      # use as font = "display"
 file = "BarlowCondensed-BlackItalic.ttf"
+
+[[font]]
+name = "terminal"                     # a path, from the manifest's folder
+file = "ofl/VT323/VT323-Regular.ttf"
+```
+
+A `file` with a folder in it is a path from the manifest's own folder: below it (`ofl/VT323/VT323-Regular.ttf`) or beside it (`../vendor/Mono.ttf`), never absolute. That is how a face kept in a subfolder for a [glyph set](glyph-atlas.md) is also a HUD font, without a second copy of the file; it is registered under the alias alone, not its stem.
+
+**Fixed-pitch text with no font of your own.** `font: "monospace"` is egui's monospace family and `font: "proportional"` its proportional one, the default (#1179). Every glyph of the monospace face takes the same width, so a column of numbers or a line of code lines up with one `draw_text` call, and `measure_text` with the same `font` is the width it draws: the cell is `measure_text("0", size, #{ font: "monospace" }).width`. A project file or alias named `monospace` or `proportional` comes first; with `[egui] monospace` set (below) the name draws the game's own face.
+
+```rhai
+let cell = measure_text("0", 18.0, #{ font: "monospace" }).width;
+draw_text(24.0, 24.0, "seed  = 42", 18.0, #{ font: "monospace" });
+draw_rect(24.0 + cell * 10.0, 24.0, cell, 18.0, #{ color: [0.6, 1.0, 0.7, 1.0] }); // the cursor
 ```
 
 Each named family keeps egui's built-in fonts behind it, for glyphs the file lacks. The player logs the loaded families at startup (`RUST_LOG=info`). Text without a `font` — and the data-driven UI's default — uses egui's built-in proportional font, unless the manifest names another ([ADR 0081](https://github.com/chrischaps/Flint/blob/main/docs/adr/0081-project-fonts-name-egui-defaults.md)):

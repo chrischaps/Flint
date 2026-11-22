@@ -78,7 +78,7 @@ At each of those directories `D`, the file tried is `D/<folder>/<name><extension
 | `palettes` | `palettes/`, then `D` itself | `.palette.toml` | `[post_process.styles.ascii] palette = "dusk"` (or a path, `"art/dusk.palette.toml"`), `--style ascii:palette=dusk`, a per-entity style's `palette` | `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono`, `paper`; a file of the name wins |
 | `glyph-sets` | `fonts/`, then `D` itself | `.glyphs.toml` | a style's `font = "terminal"`, `--style ascii:font=terminal`, `ui_text.font = "terminal"`, a `.font.toml`'s `glyphs` | `builtin`, which is never searched for |
 | `fonts` | `D` itself, then `fonts/` | `.font.toml` | `ui_text.font = "fonts/ui.font.toml"` | |
-| `font-faces` | `fonts/` | a file name as written (`.ttf`, `.otf`) | every one is loaded for the script HUD, under its file stem; a `fonts/fonts.toml` alias names one by `file` | |
+| `font-faces` | `fonts/` | a file name as written (`.ttf`, `.otf`) | every one is loaded for the script HUD, under its file stem; a `fonts/fonts.toml` alias names one by `file`, or names a face below or beside `fonts/` by a path from the manifest's folder (`ofl/VT323/VT323-Regular.ttf`) | |
 | `looks` | `styles/`, then `D` itself | `.look.toml` | `[post_process] look = "dusk"`, `--look dusk`, `set_look("dusk")`, or a path, `--look out/tuned.look.toml` | `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, `coloured_pencil`, `blueprint`, `charcoal`, `rotoscope`; a file of the name wins |
 | `papers` | `papers/`, then `D` itself | `.png`, then `.jpg`, `.jpeg` | `paper_image = "cold_press"` or `"scans/linen.jpg"` (pencil, watercolor) | |
 | `strokes` | `strokes/`, then `D` itself | `.png`, then `.jpg`, `.jpeg` | `stroke_image = "graphite"` (pencil) | |
