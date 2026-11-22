@@ -1,0 +1,55 @@
+# Tron ground (#1181): a camera 2 m above a 500 m textured plane, looking
+# 5 degrees below the horizon. A plane this flat seen this low is where
+# tron's depth edges used to read every pixel's steep depth gradient as a
+# silhouette and fill the road with solid glow; now the ground draws grid
+# lines that thin and fade toward the horizon, and the one crate on it
+# keeps its outline.
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/tron_ground.scene.toml --no-grid --style tron --output tron_ground.png
+
+[scene]
+name = "Tron Ground"
+version = "1.0"
+description = "A 500 m textured plane at a grazing angle, for tron's edges and grid (#1181)"
+
+# 5 degrees down: the target drops tan(5) = 0.0875 m a metre.
+[camera]
+position = [0.0, 2.0, 0.0]
+target = [0.0, 1.125, -10.0]
+fov = 50.0
+
+[post_process]
+exposure = 1.1
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.32, 0.42, 0.58, 1.0]
+horizon_color = [0.70, 0.70, 0.68, 1.0]
+haze_color = [0.75, 0.74, 0.70, 0.6]
+cloud_coverage = 0.0
+sun_glow = 0.6
+
+[entities.ground]
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-250, -0.1, -250]
+max = [250, 0, 250]
+[entities.ground.material]
+texture = "./textures/floor_tiles.png"
+texture_scale = 0.25
+roughness = 0.9
+metallic = 0.0
+
+# Something standing on the plane, so an outline that should glow is in
+# the frame beside the ground that shouldn't.
+[entities.crate]
+[entities.crate.transform]
+position = [1.6, 0, -9.0]
+rotation = [0, 30, 0]
+[entities.crate.bounds]
+min = [-0.6, 0, -0.6]
+max = [0.6, 1.2, 0.6]
+[entities.crate.material]
+texture = "./textures/wood_planks.jpg"
+roughness = 0.8

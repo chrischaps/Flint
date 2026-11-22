@@ -1084,3 +1084,15 @@ args = ["--no-grid", "--style", "underwater:depth=0.4,churn=0.3,daylight=1"]
 name = "reality-tron-iris"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "tron:blend_source=tear", "--set", "post.tear=0.45", "--set", "post.tear_iris=true"]
+
+# Tron on a ground plane at a grazing angle (#1181): 2 m above a 500 m tiled
+# plane, 5 degrees below the horizon. Its depth climbs steeply from pixel to
+# pixel there, which the first difference read as a silhouette everywhere:
+# main fills the ground from about 30 m out to the horizon with glow (the
+# horizon's rows read a mean luma of 193, against 49 now). The grid's lines
+# thin and fade toward the horizon instead of breaking into dashes, and the
+# crate keeps its outline
+[[case]]
+name = "reality-tron-ground"
+scene = "tests/fixtures/scenes/tron_ground.scene.toml"
+args = ["--no-grid", "--style", "tron"]
