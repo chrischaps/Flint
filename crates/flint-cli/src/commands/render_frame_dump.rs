@@ -96,11 +96,11 @@ fn checkout_of(scene: &std::path::Path) -> (Option<String>, Option<bool>) {
 }
 
 /// What a capture needs to be drawn again (#1089, ADR 0126 decision 4):
-/// the frame's inputs as the renderer took them, its camera and particles.
-/// `replay/` is written from these and from the renderer's own state.
+/// the frame's inputs as the renderer took them, and its particles.
+/// `replay/` is written from these and from the renderer's own state; the
+/// camera is the manifest's, as the renderer logged it (#1176).
 pub(super) struct ReplayFacts<'a> {
     pub inputs: flint_render::frame_replay::FrameInputsState,
-    pub camera: &'a flint_render::Camera,
     /// The particles the frame drew, when it drew any.
     pub particles: Option<&'a flint_particles::ParticleSync>,
 }
@@ -300,7 +300,8 @@ fn write_replay(
     let inputs = replay::ReplayInputs {
         version: 1,
         frame: facts.inputs,
-        camera: replay::CameraState::of(facts.camera),
+        // The manifest's `camera` is the frame's (#1176)
+        camera: None,
         renderer,
         particles: particles.emitters,
     };

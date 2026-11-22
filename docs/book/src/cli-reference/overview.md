@@ -222,7 +222,7 @@ Most expensive passes (GPU ms):
   13  Composite   0.006      0          0
 ```
 
-`#` is the pass's place in the frame, the `NN` of its image files. `--top N` lists more or fewer passes. A pass's draws include its layers' (the shadow cascades under `Shadows`).
+`#` is the pass's place in the frame, the `NN` of its image files. `--top N` lists more or fewer passes. A pass's draws include its layers' (the shadow cascades under `Shadows`). A capture written since #1176 also has a `Camera` line after `Frame`: the camera the frame drew with, from the manifest's `camera` (a comic panel's is under its panel), such as `Camera   perspective, fov 50°, near 0.1 m, far 1000 m, at (3.4, 1.7, 9) looking at (0.7, 0.7, 4.2)`. The frozen fixture above was written before it and has none.
 
 | View | What it lists |
 |------|---------------|
@@ -274,7 +274,8 @@ The diff is a report, so it exits 0 whatever it finds.
 |--------|------------|
 | 8-bit PNG | the file, byte for byte |
 | float colour (EXR half) | exposed at the frame's `exposure`, tonemapped with the composite's ACES curve, sRGB-encoded |
-| depth (EXR `Z`) | grey over the depths the frame drew, near white, the clear value black |
+| the scene's depth (EXR `Z`), in a capture that names its camera | metres from the camera, through the manifest's `camera` near and far planes, on a log scale from the nearest drawn (white) to the farthest (dark); the clear value black. The `view` line names the range: `depth 2.67..86.0 m, log scale, near white` |
+| depth in a capture that names no camera (written before #1176), and a shadow map's layer (a light's view, linear already) | grey stretched over the stored depths the frame drew, near white, the clear value black: `depth 0.96265..0.99894 stretched` |
 | one or two float channels | grey, or red and green, as stored in 0..1; a measure past 1 (a distance in metres) on a log scale, so a far sky doesn't black out the rest; centred on mid-grey when a value is negative |
 | integer ids (the style mask, a u32 target) | a colour each, spaced round the hue circle; id 0 black |
 

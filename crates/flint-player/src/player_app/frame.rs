@@ -313,7 +313,6 @@ impl PlayerApp {
                     let targets = super::frame_capture::Targets::of(context, &output.texture, info);
                     let facts = super::frame_capture::FrameFacts {
                         world: &self.core.world,
-                        camera: &self.camera,
                         particles: self
                             .particles_render_enabled
                             .then_some(&self.core.particles.sync),

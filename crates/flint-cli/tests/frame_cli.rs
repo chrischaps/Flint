@@ -389,10 +389,14 @@ fn image_copies_a_pass_out_as_a_png_to_look_at() {
         &"-o",
         &depth,
     ]));
-    assert!(doc["written"][0]["view"]
-        .as_str()
-        .unwrap()
-        .starts_with("depth"));
+    // The frozen capture is version 1 and names no camera (#1176): its
+    // depth keeps the stretch over the stored values
+    let view = doc["written"][0]["view"].as_str().unwrap();
+    assert!(
+        view.starts_with("depth") && view.contains("stretched") && !view.contains(" m"),
+        "{view}"
+    );
+    assert!(manifest(&two()).get("camera").is_none());
     // An 8-bit image is copied byte for byte, and --raw keeps an EXR
     let surface = out.join("surface.png");
     ok(&flint(&[
@@ -504,6 +508,72 @@ fn a_fresh_capture_from_todays_writer_reads() {
     let doc = json(&flint(&[&"--json", &"frame", &"show", &capture]));
     let s = &doc["summary"];
     assert_eq!(s["written_by"], "flint render");
+    // The camera it drew with (#1176), in the JSON and as a line
+    let camera = &s["camera"];
+    assert_eq!(camera["orthographic"], false, "{camera}");
+    let (near, far) = (
+        camera["near"].as_f64().unwrap(),
+        camera["far"].as_f64().unwrap(),
+    );
+    assert!(near > 0.0 && far > near, "{camera}");
+    let text = ok(&flint(&[&"frame", &"show", &capture]));
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("Camera") && l.contains("perspective") && l.contains("near")),
+        "{text}"
+    );
+    // so its depth is shown in metres, the range named in the view line;
+    // a shadow cascade (a light's view) keeps the stretch
+    let depth = dir.join("depth.png");
+    let doc = json(&flint(&[
+        &"--json",
+        &"frame",
+        &"image",
+        &capture,
+        &"Scene",
+        &"--target",
+        &"depth",
+        &"-o",
+        &depth,
+    ]));
+    let view = doc["written"][0]["view"].as_str().unwrap();
+    assert!(
+        view.starts_with("depth ") && view.contains(" m, log scale"),
+        "{view}"
+    );
+    let range: Vec<f64> = view["depth ".len()..view.find(" m").unwrap()]
+        .split("..")
+        .map(|v| v.parse().unwrap())
+        .collect();
+    assert!(
+        near <= range[0] && range[0] < range[1] && range[1] <= far,
+        "{view} lies between the planes {near}..{far}"
+    );
+    let png = image::open(&depth).unwrap().to_luma8();
+    assert_eq!(
+        png.pixels().map(|p| p.0[0]).max(),
+        Some(255),
+        "the nearest is white"
+    );
+    let shadow = json(&flint(&[
+        &"--json",
+        &"frame",
+        &"image",
+        &capture,
+        &"Shadow cascade 0",
+        &"-o",
+        &dir.join("shadow.png"),
+    ]));
+    let view = shadow["written"][0]["view"].as_str().unwrap();
+    assert!(view.contains("stretched"), "{view}");
+    // The replay inputs carry no camera of their own: the manifest's is it
+    let inputs: Value =
+        serde_json::from_str(&std::fs::read_to_string(capture.join("replay/inputs.json")).unwrap())
+            .unwrap();
+    assert!(
+        inputs.get("camera").is_none(),
+        "written once, in the manifest"
+    );
     assert_eq!(s["scene"]["name"], "Crate and Lantern");
     assert!(s["captured_at"].as_str().unwrap().ends_with('Z'));
     // It names the engine's commit, as the player's do (#1208): the one

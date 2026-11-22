@@ -10,11 +10,15 @@
 //!   and sRGB-encoded, as the composite does;
 //! - one float channel (SSAO, a blur) is grey, stretched only when it
 //!   passes 1; two (a tensor) go to red and green;
-//! - depth is stretched to grey over the depths the frame drew, near
-//!   white, the clear value black;
+//! - the scene's depth is turned into metres through the frame's camera
+//!   (#1176) and shown on a log scale from the nearest drawn (white) to
+//!   the farthest (dark), the clear value black; the `view` line names the
+//!   range (`depth 0.42..38.2 m`). A capture that names no camera (written
+//!   before #1176) and a shadow map's layer are stretched over the depths
+//!   drawn instead, near white;
 //! - integer ids (a 16-bit or u32 mask) take a colour each, 0 black.
 
-use super::display::{Display, Prepared};
+use super::display::{DepthCamera, Display, Prepared};
 use super::read::{self, Capture, Texels};
 use super::{passes, ImageArgs};
 use crate::output::{self, Answer};
@@ -200,7 +204,8 @@ fn write_one(capture: &Capture, image: &ImageDescription, out: &Path, raw: bool)
         });
     }
     let texels = read::texels(&src, image)?;
-    let (rgba, view) = viewable(&texels, image, exposure(&capture.description));
+    let d = &capture.description;
+    let (rgba, view) = viewable(&texels, image, exposure(d), DepthCamera::of(d, image));
     rgba.save(out)
         .with_context(|| format!("writing {}", out.display()))?;
     Ok(view)
@@ -216,14 +221,16 @@ pub(crate) fn exposure(d: &FrameDescription) -> f32 {
 }
 
 /// `texels` as an 8-bit RGBA picture, and what was done to make it one
-/// ([`Display::auto`], the same choice `flint frame open` starts from).
+/// ([`Display::auto`], the same choice `flint frame open` starts from);
+/// `camera` turns a scene depth into metres.
 pub(crate) fn viewable(
     t: &Texels,
     image: &ImageDescription,
     exposure: f32,
+    camera: Option<DepthCamera>,
 ) -> (image::RgbaImage, String) {
     let p = Prepared::new(t, image);
-    let (display, view) = Display::auto(&p, exposure);
+    let (display, view) = Display::auto(&p, exposure, camera);
     let mut out = vec![0u8; p.pixels() * 4];
     for i in 0..p.pixels() {
         let rgb = display.map(p.texel(i), p.channels);
@@ -257,7 +264,7 @@ mod tests {
             kind: Kind::Float,
             values: vec![0.0, 0.0, 0.0, 1.0, 100.0, 1.0, 0.18, 1.0],
         };
-        let (rgba, view) = viewable(&hdr, &image("Rgba16Float"), 1.0);
+        let (rgba, view) = viewable(&hdr, &image("Rgba16Float"), 1.0, None);
         assert!(view.contains("tonemapped"));
         assert_eq!(rgba.get_pixel(0, 0).0, [0, 0, 0, 255]);
         let p = rgba.get_pixel(1, 0).0;
@@ -270,7 +277,7 @@ mod tests {
             kind: Kind::Depth,
             values: vec![0.9, 0.99, 1.0],
         };
-        let (rgba, _) = viewable(&depth, &image("Depth32Float"), 1.0);
+        let (rgba, _) = viewable(&depth, &image("Depth32Float"), 1.0, None);
         assert_eq!(rgba.get_pixel(0, 0).0[0], 255, "nearest is white");
         assert!(rgba.get_pixel(1, 0).0[0] < 60, "farthest is dark");
         assert_eq!(rgba.get_pixel(2, 0).0[0], 0, "the clear value is black");
@@ -285,7 +292,7 @@ mod tests {
             kind: Kind::Bits16,
             values: vec![0.0, 0.0, 1.0, 0.0, 2.0, 0.0],
         };
-        let (rgba, view) = viewable(&ids, &image("Rg16Uint"), 1.0);
+        let (rgba, view) = viewable(&ids, &image("Rg16Uint"), 1.0, None);
         assert_eq!(view, "ids coloured");
         assert_eq!(rgba.get_pixel(0, 0).0, [0, 0, 0, 255]);
         assert_ne!(rgba.get_pixel(1, 0), rgba.get_pixel(2, 0));
@@ -300,7 +307,7 @@ mod tests {
             kind: Kind::Float,
             values: vec![0.0, 9.0, 900.0],
         };
-        let (rgba, view) = viewable(&far, &image("R32Float"), 1.0);
+        let (rgba, view) = viewable(&far, &image("R32Float"), 1.0, None);
         assert!(view.starts_with("log-stretched"), "{view}");
         assert_eq!(rgba.get_pixel(2, 0).0[0], 255);
         // 9 m of 900 is a third of the way up, not 1%

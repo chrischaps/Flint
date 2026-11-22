@@ -28,9 +28,9 @@ On its own it shows what the frame did, as captured. A capture that holds its re
 
 **The image**, in the middle, is the selected pass's output as the GPU held it. HDR targets are float EXRs and depth is f32, so the viewer works on the real values:
 
-- **Mode**: `Auto` is what `flint frame image` makes. That means HDR exposed at the frame's exposure and ACES-tonemapped, depth stretched over the depths the frame drew (near white), integer ids a colour each, and a distance past 1 on a log scale. `Linear`, `As stored`, `Depth`, `Ids`, `Log` and `Signed` force one.
+- **Mode**: `Auto` is what `flint frame image` makes. That means HDR exposed at the frame's exposure and ACES-tonemapped, the scene's depth in metres from the camera on a log scale (near white; a capture from before #1176, which names no camera, and a shadow map stretch the stored depths instead), integer ids a colour each, and a distance past 1 on a log scale. `Linear`, `As stored`, `Depth`, `Metres`, `Ids`, `Log` and `Signed` force one.
 - **Channel**: RGB, one of R, G, B and A in grey, or luma.
-- **EV** shifts the exposure in stops over the frame's, and a depth image takes its range by hand (`drawn` puts it back). These change on the GPU, so a slider moves the picture the frame it moves.
+- **EV** shifts the exposure in stops over the frame's, and a depth image takes its range by hand, in stored values under `Depth` and in metres under `Metres` (`drawn` puts it back). These change on the GPU, so a slider moves the picture the frame it moves.
 - **Zoom and pan**: scroll zooms about the cursor and dragging pans. Double-click or **F** fits the image, and **1** is one texel a pixel. Past twelve pixels a texel a grid appears between texels.
 - **The readout** under the image gives the texel under the cursor and its stored values: an 8-bit PNG's 0-255, an EXR's floats, a depth's `Z`. A swatch shows its displayed colour.
 - **A pass that wrote no image**, or was skipped, shows the last image an earlier pass left, and says whose. Stepping through the frame never goes blank.

@@ -121,7 +121,6 @@ struct Job {
     replay: ReplayStateCapture,
     description: FrameDescription,
     inputs: FrameInputsState,
-    camera: flint_render::frame_replay::CameraState,
     particles: flint_render::frame_replay::ParticlesState,
     world_toml: String,
     /// The scene's path, to hash.
@@ -319,7 +318,6 @@ impl<'a> Targets<'a> {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct FrameFacts<'a> {
     pub world: &'a flint_ecs::FlintWorld,
-    pub camera: &'a flint_render::Camera,
     pub particles: Option<&'a flint_particles::ParticleSync>,
     pub scene_path: &'a str,
     pub project: &'a flint_core::project::Project,
@@ -450,7 +448,7 @@ impl FrameCaptures {
             replay,
             description,
             inputs: armed.inputs.unwrap_or_default(),
-            camera: flint_render::frame_replay::CameraState::of(facts.camera),
+
             particles,
             world_toml,
             scene_path: PathBuf::from(facts.scene_path),
@@ -865,7 +863,6 @@ fn write(job: Job) -> Result<Written, String> {
         replay,
         mut description,
         inputs,
-        camera,
         particles,
         world_toml,
         scene_path,
@@ -885,7 +882,8 @@ fn write(job: Job) -> Result<Written, String> {
     let inputs = flint_render::frame_replay::ReplayInputs {
         version: 1,
         frame: inputs,
-        camera,
+        // The manifest's `camera` is the frame's (#1176)
+        camera: None,
         renderer,
         particles: particles.emitters,
     };
