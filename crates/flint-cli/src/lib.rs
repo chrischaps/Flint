@@ -428,7 +428,8 @@ impl Commands {
                 music::MusicCommands::Chart(music::ChartCommands::Play(_)) => "music chart play",
                 _ => return None,
             },
-            Commands::Play(_) => "play",
+            // `--list-keys` prints the debug-key table and exits (#717, #1184)
+            Commands::Play(args) if !args.player.list_keys => "play",
             Commands::Preview(args) if args.render.is_none() => "preview",
             Commands::GenPreview(_) => "gen-preview",
             Commands::TerrainEdit(_) => "terrain-edit",
