@@ -54,7 +54,7 @@ What a line asks is a [flint-query](../concepts/queries.md) condition, the same 
 | `expect log <key> <op> <value>` | a script's `test_log(key, value)` last said it |
 | `expect event <name>` | a `fire_event` (or the engine's own event) of that name has fired. For a `wait`, since the check before it settled, so `tap KeyE` then `wait event door_opened` sees the door the tap opened |
 
-A field may name one axis of a vector: `transform.position.y`, `velocity.x` (`x`, `y`, `z`, `w`). The operators are `==`, `!=`, `<`, `<=`, `>`, `>=` and `contains`, and a value is a number, `true`/`false` or a quoted string.
+A field may name one element of a vector, by axis (`transform.position.y`, `velocity.x`: `x`, `y`, `z`, `w`) or by index from 0 (`transform.position[1]`, `path.points[3].x`); a path that finds nothing, past an array's end, is a check that doesn't hold ([Field Paths](../concepts/queries.md#field-paths)). The operators are `==`, `!=`, `<`, `<=`, `>`, `>=` and `contains`, and a value is a number, `true`/`false` or a quoted string.
 
 The same lines work in `flint play --input-script`: there a failed check is printed with the exit report and the run exits 1.
 

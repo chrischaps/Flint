@@ -11,7 +11,8 @@ query     = { SOI ~ resource ~ (where_clause)? ~ EOI }
 resource  = { "entities" | "components" }
 where_clause = { "where" ~ condition }
 condition = { field ~ operator ~ value }
-field     = { identifier ~ ("." ~ identifier)* }
+field     = { identifier ~ ("." ~ identifier | index)* }
+index     = { "[" ~ ASCII_DIGIT+ ~ "]" }
 operator  = { "==" | "!=" | "contains" | ">=" | "<=" | ">" | "<" }
 value     = { string | number | boolean }
 ```
@@ -43,14 +44,19 @@ Two resource types can be queried:
 
 ## Field Paths
 
-Fields use dot notation to access nested values:
+Fields use dot notation to access nested values, and step into an array by an axis or an index:
 
 | Pattern | Meaning |
 |---------|---------|
 | `archetype` | The entity's archetype name |
 | `name` | The entity's name |
 | `door.locked` | The `locked` field of the `door` component |
-| `transform.position` | The `position` field of the `transform` component |
+| `transform.position.z` | The third element of `transform.position`: `x`, `y`, `z` and `w` name an array's first four |
+| `transform.position[2]` | The same element by its index, counted from 0 |
+| `path.points[3].x` | The first element of the fourth entry of a list of vectors |
+| `path.stops[1].name` | The `name` field of the second table in a list of tables |
+
+A comparison needs a string, number or boolean at the end of the path, so `transform.position == 5` (a whole array) matches nothing. A path that finds nothing matches nothing, the same as a field the entity doesn't have: an index past an array's end (`transform.position[3]`, `.w` of a three-element vector), a step into a value that is not an array or table (`door.locked.x`), or an index into a table. That holds for `!=` too, so `transform.position.w != 0` doesn't pick every entity without a fourth element. None of these is an error.
 
 Examples:
 
@@ -64,6 +70,10 @@ flint query "entities where door.locked == true"
 flint query "entities where audio_source.volume > 0.5"
 flint query "entities where material.roughness >= 0.8"
 flint query "entities where collider.shape == 'box'"
+
+# One element of a vector
+flint query "entities where transform.position.z > 5"
+flint query "entities where transform.position[1] < 0"
 ```
 
 ## Value Types
@@ -115,6 +125,9 @@ flint query "entities where door.locked == true" --scene levels/tavern.scene.tom
 
 # The same query of a running game started with --inspect-listen 127.0.0.1:7878
 flint query "entities where door.locked == true" --attach 7878
+
+# Where is the player? Selected on, not printed and read
+flint query "entities where transform.position.z > 5" --attach 7878
 ```
 
 A file and a running game are asked through one function

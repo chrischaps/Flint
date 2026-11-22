@@ -284,4 +284,30 @@ mod tests {
         assert_eq!(cond.operator, Operator::GreaterThan);
         assert_eq!(cond.value.as_f64(), Some(50.0));
     }
+
+    /// A field steps into an array by an axis or by `[n]` (#1185); the
+    /// field keeps its spelling, so a report quotes it as written.
+    #[test]
+    fn a_field_steps_into_an_array_by_index() {
+        for field in [
+            "transform.position[2]",
+            "path.points[3].x",
+            "grid.cells[0][1]",
+            "transform.position.z",
+        ] {
+            let cond = parse_condition(&format!("{field} > 5")).unwrap();
+            assert_eq!(cond.field, field);
+        }
+        for bad in [
+            "transform.position[] > 5",
+            "transform.position[-1] > 5",
+            "transform.position[x] > 5",
+            "transform.position[1.5] > 5",
+            "transform.position.2 > 5",
+            "transform.position [2] > 5",
+            "[0].x > 5",
+        ] {
+            assert!(parse_condition(bad).is_err(), "{bad:?} parsed");
+        }
+    }
 }

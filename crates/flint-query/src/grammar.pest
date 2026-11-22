@@ -19,9 +19,11 @@ where_clause = { ^"where" ~ condition }
 // Conditions
 condition = { field ~ operator ~ value }
 
-// Field path (e.g., "archetype" or "door.locked"; an array's element by
-// x, y, z or w: "transform.position.y")
-field = @{ identifier ~ ("." ~ identifier)* }
+// Field path (e.g., "archetype" or "door.locked"). A step into an array
+// names its element by x, y, z or w ("transform.position.y", #714) or by
+// its index from 0 ("transform.position[2]", "path.points[3].x", #1185)
+field = @{ identifier ~ ("." ~ identifier | index)* }
+index = @{ "[" ~ ASCII_DIGIT+ ~ "]" }
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Operators

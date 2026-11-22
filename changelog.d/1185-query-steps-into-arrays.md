@@ -1,0 +1,3 @@
+### A query field steps into an array by index: `transform.position[2]`, `path.points[3].x` (#1185)
+**What changed.** A field path in `flint query`, a constraint's `query`, `--attach`, `--dump-query` and a playtest's `expect` / `wait` can step into an array by its index from 0, `[n]`, as well as by the axes `x`, `y`, `z`, `w`, and on through a list of vectors or tables (`path.stops[1].name`). `entities where transform.position.z > 5` selects by the third element, of a file and of a running game. A path that finds nothing (past an array's end, into a number or string, `[n]` of a table) matches nothing, as a missing field always has, with `!=` as well, and is not an error. Queries that parsed before mean what they meant.
+**What to do.** Nothing.
