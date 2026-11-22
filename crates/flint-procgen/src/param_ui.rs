@@ -214,21 +214,18 @@ impl ParamFieldSpec {
 
 // ─── Parameter reference ───────────────────────────────────────────────────
 
-/// A Markdown reference for one generator's `params`, built from its
-/// schema: a table per condition (keys every spec may set first, then one
-/// table per `x-when`), each row the key, its type and range, its default
-/// and its `description`. The crate README's catalog is this, for every
-/// built-in generator, and a test keeps the two equal.
-pub fn param_reference_markdown(schema: &Value) -> String {
-    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
-        return String::new();
-    };
-    // Group by condition; BTreeMap keeps the groups and their keys in order.
+/// A table's keys grouped by condition, as the references print them: the
+/// keys every spec may set first (the empty heading), then one group per
+/// `x-when`; `BTreeMap` keeps the groups and their keys in order.
+fn condition_groups(
+    props: &serde_json::Map<String, Value>,
+    markdown: bool,
+) -> std::collections::BTreeMap<String, Vec<(&String, &Value)>> {
     let mut groups: std::collections::BTreeMap<String, Vec<(&String, &Value)>> = Default::default();
     for (key, prop) in props {
         let heading = match parse_condition(prop) {
             None => String::new(),
-            Some(c) => format!(
+            Some(c) if markdown => format!(
                 "Only when `{}` is {}",
                 c.key,
                 c.any_of
@@ -237,12 +234,82 @@ pub fn param_reference_markdown(schema: &Value) -> String {
                     .collect::<Vec<_>>()
                     .join(" or ")
             ),
+            Some(c) => format!(
+                "Only when {} is {}",
+                c.key,
+                c.any_of
+                    .iter()
+                    .map(|v| format!("\"{v}\""))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            ),
         };
         groups.entry(heading).or_default().push((key, prop));
     }
+    groups
+}
 
+/// A key whose value is a table the schema names the keys of (#1173),
+/// found the way [`crate::validate_params`] walks: the key's own
+/// `properties`, the `items` of an array of tables, or the
+/// `additionalProperties` of a table of named tables. A tagged array
+/// (`items` a `oneOf`, a pipeline's `ops`) isn't one: each branch has its
+/// own reference (`op_schema`).
+enum Nested<'a> {
+    /// `[params.key]`: one table
+    Table(&'a Value),
+    /// `[[params.key]]`: an array of tables
+    Entries(&'a Value),
+    /// `[params.key.<name>]`: a table of named tables
+    Named(&'a Value),
+}
+
+fn nested(prop: &Value) -> Option<Nested<'_>> {
+    let has_keys = |s: &Value| {
+        s.get("properties")
+            .and_then(|p| p.as_object())
+            .is_some_and(|p| !p.is_empty())
+    };
+    if has_keys(prop) {
+        Some(Nested::Table(prop))
+    } else if let Some(items) = prop.get("items").filter(|i| has_keys(i)) {
+        Some(Nested::Entries(items))
+    } else {
+        prop.get("additionalProperties")
+            .filter(|e| has_keys(e))
+            .map(Nested::Named)
+    }
+}
+
+/// Whether `schema`'s `required` names `key`.
+fn is_required(schema: &Value, key: &str) -> bool {
+    schema
+        .get("required")
+        .and_then(|r| r.as_array())
+        .is_some_and(|r| r.iter().any(|k| k.as_str() == Some(key)))
+}
+
+/// A Markdown reference for one generator's `params`, built from its
+/// schema: a table per condition (keys every spec may set first, then one
+/// table per `x-when`), each row the key, its type and range, its default
+/// (or `required`) and its `description`. A key holding tables whose keys
+/// the schema names has those under its group, in a table of their own
+/// headed with the TOML that writes one (`Each [[params.bones]] entry:`),
+/// and so on down. The crate README's catalog is this, for every built-in
+/// generator, and a test keeps the two equal.
+pub fn param_reference_markdown(schema: &Value) -> String {
+    param_reference_markdown_in(schema, "params")
+}
+
+/// [`param_reference_markdown`] for a table that sits at `table` in a spec
+/// (`params.ops` for a pipeline op's keys): the dotted path its nested
+/// tables' headings start from.
+pub fn param_reference_markdown_in(schema: &Value, table: &str) -> String {
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return String::new();
+    };
     let mut out = String::new();
-    for (heading, rows) in &groups {
+    for (heading, rows) in &condition_groups(props, true) {
         if !heading.is_empty() {
             out.push_str(&format!("\n{heading}:\n\n"));
         }
@@ -256,12 +323,38 @@ pub fn param_reference_markdown(schema: &Value) -> String {
             if prop.get("deprecated") == Some(&Value::Bool(true)) {
                 text = format!("**Deprecated.** {text}");
             }
+            let default = match prop.get("default") {
+                Some(d) => default_cell(d),
+                None if is_required(schema, key) => "required".into(),
+                None => String::new(),
+            };
             out.push_str(&format!(
-                "| `{key}` | {} | {} | {} |\n",
+                "| `{key}` | {} | {default} | {} |\n",
                 type_cell(prop),
-                prop.get("default").map(default_cell).unwrap_or_default(),
                 text.replace('|', "\\|")
             ));
+        }
+        for (key, prop) in rows {
+            let (path, title, inner) = match nested(prop) {
+                None => continue,
+                Some(Nested::Table(s)) => {
+                    let path = format!("{table}.{key}");
+                    let title = format!("The `[{path}]` table");
+                    (path, title, s)
+                }
+                Some(Nested::Entries(s)) => {
+                    let path = format!("{table}.{key}");
+                    let title = format!("Each `[[{path}]]` entry");
+                    (path, title, s)
+                }
+                Some(Nested::Named(s)) => {
+                    let path = format!("{table}.{key}.<name>");
+                    let title = format!("Each `[{path}]` table");
+                    (path, title, s)
+                }
+            };
+            out.push_str(&format!("\n{title}:\n\n"));
+            out.push_str(&param_reference_markdown_in(inner, &path));
         }
     }
     out
@@ -269,38 +362,37 @@ pub fn param_reference_markdown(schema: &Value) -> String {
 
 /// [`param_reference_markdown`] as plain text, for a terminal (`flint gen
 /// --describe`): the same groups in the same order, a line a key with its
-/// type and default, its description indented under it.
+/// type and default, its description indented under it. A nested table's
+/// keys follow its key, indented, each named by its path from the top
+/// (`limb_chains[].segments[].length`, `materials.<name>.roughness`).
 pub fn param_reference_text(schema: &Value) -> String {
+    let mut out = String::new();
+    reference_text(schema, "", 2, &mut out);
+    out
+}
+
+fn reference_text(schema: &Value, prefix: &str, indent: usize, out: &mut String) {
     let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
-        return String::new();
+        return;
     };
     let plain = |s: String| s.replace('`', "").replace("\\|", "|");
-    let mut groups: std::collections::BTreeMap<String, Vec<(&String, &Value)>> = Default::default();
-    for (key, prop) in props {
-        let heading = match parse_condition(prop) {
-            None => String::new(),
-            Some(c) => format!(
-                "Only when {} is {}",
-                c.key,
-                c.any_of
-                    .iter()
-                    .map(|v| format!("\"{v}\""))
-                    .collect::<Vec<_>>()
-                    .join(" or ")
-            ),
-        };
-        groups.entry(heading).or_default().push((key, prop));
-    }
-    let width = props.keys().map(|k| k.chars().count()).max().unwrap_or(0);
-    let mut out = String::new();
-    for (heading, rows) in &groups {
+    let width = props
+        .keys()
+        .map(|k| prefix.chars().count() + k.chars().count())
+        .max()
+        .unwrap_or(0);
+    let pad = "";
+    for (heading, rows) in &condition_groups(props, false) {
         if !heading.is_empty() {
-            out.push_str(&format!("\n{heading}:\n"));
+            out.push_str(&format!("\n{pad:outer$}{heading}:\n", outer = indent - 2));
         }
         for (key, prop) in rows {
-            let mut line = format!("  {key:<width$}  {}", plain(type_cell(prop)));
+            let name = format!("{prefix}{key}");
+            let mut line = format!("{pad:indent$}{name:<width$}  {}", plain(type_cell(prop)));
             if let Some(d) = prop.get("default") {
                 line.push_str(&format!(", default {}", plain(default_cell(d))));
+            } else if is_required(schema, key) {
+                line.push_str(", required");
             }
             if prop.get("deprecated") == Some(&Value::Bool(true)) {
                 line.push_str(" (deprecated)");
@@ -308,11 +400,17 @@ pub fn param_reference_text(schema: &Value) -> String {
             out.push_str(line.trim_end());
             out.push('\n');
             if let Some(text) = prop.get("description").and_then(|d| d.as_str()) {
-                out.push_str(&format!("  {:width$}    {text}\n", ""));
+                out.push_str(&format!("{pad:indent$}{pad:width$}    {text}\n"));
             }
+            let (inner_prefix, inner) = match nested(prop) {
+                None => continue,
+                Some(Nested::Table(s)) => (format!("{name}."), s),
+                Some(Nested::Entries(s)) => (format!("{name}[]."), s),
+                Some(Nested::Named(s)) => (format!("{name}.<name>."), s),
+            };
+            reference_text(inner, &inner_prefix, indent + 2, out);
         }
     }
-    out
 }
 
 /// "number ≥ 0", "integer 1–8", "`a` \| `b`", "hex colour" and so on.
@@ -753,5 +851,111 @@ mod tests {
         let fields = parse_param_schema(&nested_schema());
         let materials = fields.iter().find(|f| f.name == "materials").unwrap();
         assert!(matches!(materials.field_type, ParamFieldType::ObjectMap));
+    }
+
+    /// A creature-shaped schema: an array of tables holding an array of
+    /// tables, and a table of named tables (#1173).
+    fn creature_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "limb_chains": {
+                    "type": "array",
+                    "description": "Chains",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Names its bones" },
+                            "segments": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": { "length": { "type": "number", "minimum": 0.0 } },
+                                    "required": ["length"]
+                                }
+                            }
+                        },
+                        "required": ["name", "segments"]
+                    }
+                },
+                "materials": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": { "roughness": { "type": "number", "default": 0.5 } }
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn the_text_reference_names_nested_keys_by_their_path() {
+        let text = param_reference_text(&creature_schema());
+        let lines: Vec<&str> = text.lines().collect();
+        let at = |needle: &str| {
+            lines
+                .iter()
+                .position(|l| l.trim_start().starts_with(needle))
+                .unwrap_or_else(|| panic!("no line for {needle} in\n{text}"))
+        };
+        // A line's indent, and its words with the column padding gone
+        let row = |name: &str| {
+            let line = lines[at(name)];
+            let indent = line.len() - line.trim_start().len();
+            (
+                indent,
+                line.split_whitespace().collect::<Vec<_>>().join(" "),
+            )
+        };
+        // Each under its parent, indented a step deeper, with its type
+        assert!(at("limb_chains ") < at("limb_chains[].name"));
+        assert!(at("limb_chains[].segments ") < at("limb_chains[].segments[].length"));
+        assert_eq!(
+            row("limb_chains[].name"),
+            (4, "limb_chains[].name string, required".into())
+        );
+        assert_eq!(
+            row("limb_chains[].segments[].length"),
+            (
+                6,
+                "limb_chains[].segments[].length number ≥ 0, required".into()
+            )
+        );
+        assert_eq!(
+            row("materials.<name>.roughness"),
+            (4, "materials.<name>.roughness number, default 0.5".into())
+        );
+        // A nested key's description sits under it, past its name
+        assert_eq!(
+            lines[at("limb_chains[].name") + 1].trim_start(),
+            "Names its bones"
+        );
+    }
+
+    #[test]
+    fn the_markdown_reference_gives_a_nested_table_its_own() {
+        let md = param_reference_markdown(&creature_schema());
+        for heading in [
+            "\nEach `[[params.limb_chains]]` entry:\n\n| Key |",
+            "\nEach `[[params.limb_chains.segments]]` entry:\n\n| Key |",
+            "\nEach `[params.materials.<name>]` table:\n\n| Key |",
+        ] {
+            assert!(md.contains(heading), "no {heading:?} in\n{md}");
+        }
+        assert!(md.contains("| `segments` | array of tables | required |"));
+        assert!(md.contains("| `length` | number ≥ 0 | required |"));
+        assert!(md.contains("| `roughness` | number | `0.5` |"));
+        // Under a pipeline op's table, its entries are `params.ops.<key>`
+        let op = param_reference_markdown_in(&creature_schema(), "params.ops");
+        assert!(op.contains("Each `[[params.ops.limb_chains.segments]]` entry:"));
+    }
+
+    #[test]
+    fn a_tagged_array_is_left_to_its_own_reference() {
+        // `ops` is a oneOf: its branches are `op_schema`'s, not repeated here
+        let md = param_reference_markdown(&nested_schema());
+        assert!(!md.contains("[[params.ops]]"), "{md}");
+        assert!(md.contains("Each `[params.materials.<name>]` table:"));
     }
 }

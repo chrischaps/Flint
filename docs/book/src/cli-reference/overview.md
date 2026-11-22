@@ -1368,7 +1368,7 @@ It also bakes a terrain spec, with no window: a `.terrain.toml` is a `terrain_v1
 | `--validate` | `false` | Validate output after generation |
 | `--strict` | `false` | Treat warnings as failures |
 | `--list-generators` | `false` | List every generator: output, revision, parameter count, whether it can live (no spec) |
-| `--describe <generator>` | (none) | Print every parameter a generator reads, grouped by the mode that reads it; `texture_v1`'s ops too (no spec). With the global `--json`, either catalog is one document: `--describe`'s is the schema itself |
+| `--describe <generator>` | (none) | Print every parameter a generator reads, grouped by the mode that reads it, a nested table's keys under the key that holds it (`bones[].name`); `texture_v1`'s ops too (no spec). With the global `--json`, either catalog is one document: `--describe`'s is the schema itself |
 | `--markdown` | `false` | With `--describe`: Markdown tables, as the flint-procgen README's catalog |
 | `--style-guide <path>` | (none) | Style guide TOML for validation constraints |
 | `--report <fmt>` | `human` | Validation report format: `human`, or `json` (one object per variant on stdout, with each check's `actual` and `limit`; human output moves to stderr). Requires `--validate` |

@@ -550,13 +550,11 @@ pub fn op_reference_markdown() -> String {
             line[..1].make_ascii_uppercase();
             out.push_str(&format!("{line}.\n\n"));
         }
-        out.push_str(&crate::param_reference_markdown(&op.param_schema()));
-        for p in op.params {
-            if let ParamKind::Tables { items, .. } = p.kind {
-                out.push_str(&format!("\nEach `[[params.ops.{}]]` entry:\n\n", p.key));
-                out.push_str(&crate::param_reference_markdown(&object_schema(items)));
-            }
-        }
+        // A `tables` key's entries follow, as `[[params.ops.<key>]]`
+        out.push_str(&crate::param_reference_markdown_in(
+            &op.param_schema(),
+            "params.ops",
+        ));
     }
     out
 }
