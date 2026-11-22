@@ -512,7 +512,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "measure_text",
-        "The size text would draw at; opts: font (\"\" for the default), spacing (extra letter spacing).",
+        "The size text would draw at; opts: font (\"\" for the default, \"monospace\" for a fixed pitch), spacing (extra letter spacing).",
     )
     .arg("text", Str)
     .arg("size", Num)
@@ -531,7 +531,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "measure_text_ex",
-        "The size text would draw at in a font (\"\" for the default) with extra letter spacing.",
+        "The size text would draw at in a font (\"\" for the default, \"monospace\" for a fixed pitch) with extra letter spacing.",
     )
     .arg("text", Str)
     .arg("size", Num)
