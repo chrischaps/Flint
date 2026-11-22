@@ -583,17 +583,22 @@ fn small_terrain_spec(dir: &Path, extra: &str) -> PathBuf {
     path
 }
 
+/// Done-when of #1168: a `.terrain.toml` is a `terrain_v1` spec, and its
+/// heightmap is 16-bit and the bytes `flint_terrain::bake` makes.
 #[test]
-fn a_terrain_spec_bakes_the_same_two_pngs_every_run() {
+fn a_terrain_spec_bakes_the_bakes_two_pngs_every_run() {
     let dir = scratch("terrain");
     let spec = small_terrain_spec(&dir, "");
     let (a, b) = (dir.join("a/"), dir.join("b/"));
     for out in [&a, &b] {
-        let o = gen(&[s(&spec), "-o", out.to_str().unwrap()]);
+        let o = gen(&[s(&spec), "-o", out.to_str().unwrap(), "--validate"]);
         assert!(o.status.success(), "{}", text(&o));
-        assert!(!text(&o).contains("warning"), "{}", text(&o));
+        assert!(!text(&o).contains("warning:"), "{}", text(&o));
+        assert!(text(&o).contains("0 warnings, 0 failed"), "{}", text(&o));
+        assert!(text(&o).contains("16-bit grey"), "{}", text(&o));
+        assert!(text(&o).contains("coverage: layer 0"), "{}", text(&o));
     }
-    for name in ["rolling_meadow.png", "rolling_meadow_splat.png"] {
+    for name in ["output_height.png", "output_splat.png"] {
         let first = std::fs::read(a.join(name)).unwrap();
         assert_eq!(
             first,
@@ -601,10 +606,27 @@ fn a_terrain_spec_bakes_the_same_two_pngs_every_run() {
             "{name} differs"
         );
     }
-    let height = image::open(a.join("rolling_meadow.png")).unwrap();
+
+    // The bake itself, as the terrain editor runs it
+    let (terrain, _) =
+        flint_terrain::TerrainSpec::parse_checked(&std::fs::read_to_string(&spec).unwrap())
+            .unwrap();
+    let maps = flint_terrain::bake(&terrain, terrain.seed.value);
+    assert_eq!(
+        std::fs::read(a.join("output_height.png")).unwrap(),
+        maps.heightmap_png().unwrap(),
+        "the heightmap isn't the bake's"
+    );
+    assert_eq!(
+        std::fs::read(a.join("output_splat.png")).unwrap(),
+        maps.splat_png().unwrap(),
+        "the splat map isn't the bake's"
+    );
+
+    let height = image::open(a.join("output_height.png")).unwrap();
     assert_eq!(height.color(), image::ColorType::L16);
     assert_eq!((height.width(), height.height()), (64, 64));
-    let splat = image::open(a.join("rolling_meadow_splat.png")).unwrap();
+    let splat = image::open(a.join("output_splat.png")).unwrap();
     assert_eq!(splat.color(), image::ColorType::Rgba8);
 
     // A heightmap that reads back as hills, not byte-swapped static: from
@@ -624,14 +646,14 @@ fn a_terrain_spec_bakes_the_same_two_pngs_every_run() {
 }
 
 #[test]
-fn a_terrain_heightmap_path_puts_the_splat_map_beside_it() {
+fn a_terrain_output_path_names_both_maps() {
     let dir = scratch("terrain_named");
     let spec = small_terrain_spec(&dir, "");
     let out = dir.join("maps/hills.png");
     let o = gen(&[s(&spec), "-o", s(&out), "--seed", "3"]);
     assert!(o.status.success(), "{}", text(&o));
-    assert!(text(&o).contains("3 (--seed)"), "{}", text(&o));
-    assert!(out.is_file());
+    assert!(text(&o).contains("Seed:       3 (fixed)"), "{}", text(&o));
+    assert!(dir.join("maps/hills_height.png").is_file());
     assert!(dir.join("maps/hills_splat.png").is_file());
 }
 
@@ -655,23 +677,50 @@ fn an_unknown_terrain_key_is_named_and_strict_refuses_it() {
     assert!(!strict.exists(), "--strict wrote maps anyway");
 }
 
+/// What a terrain spec couldn't do before #1168: a value the bake can't use
+/// stops the run by its path and range, before anything is written.
 #[test]
-fn a_procgen_flag_on_a_terrain_spec_is_refused() {
+fn a_terrain_value_out_of_range_stops_the_run() {
+    let dir = scratch("terrain_range");
+    let spec = small_terrain_spec(&dir, "\n[[splat_rules]]\nlayer = 5\n");
+    let out = dir.join("out/");
+    let o = gen(&[s(&spec), "-o", s(&out)]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("splat_rules[4].layer"), "{}", text(&o));
+    assert!(!out.exists(), "maps written anyway");
+}
+
+#[test]
+fn a_terrain_spec_takes_the_procgen_flags() {
     let dir = scratch("terrain_flags");
     let spec = small_terrain_spec(&dir, "");
-    let o = gen(&[s(&spec), "--batch", "3"]);
-    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
-    assert!(
-        text(&o).contains("--batch is for .procgen.toml specs"),
-        "{}",
-        text(&o)
+    let out = dir.join("b/hills.png");
+    let o = gen(&[s(&spec), "--batch", "2", "--seed-start", "5", "-o", s(&out)]);
+    assert!(o.status.success(), "{}", text(&o));
+    for seed in [5, 6] {
+        for map in ["height", "splat"] {
+            let f = dir.join(format!("b/hills_{seed}_{map}.png"));
+            assert!(f.is_file(), "no {}\n{}", f.display(), text(&o));
+        }
+    }
+    assert_ne!(
+        std::fs::read(dir.join("b/hills_5_height.png")).unwrap(),
+        std::fs::read(dir.join("b/hills_6_height.png")).unwrap()
     );
+
+    // --print-spec says it in the procgen spelling
+    let o = gen(&[s(&spec), "--print-spec", "--dry-run"]);
+    assert!(o.status.success(), "{}", text(&o));
+    let printed = String::from_utf8_lossy(&o.stdout);
+    assert!(printed.contains("generator = \"terrain_v1\""), "{printed}");
+    assert!(printed.contains("[params.geometry]"), "{printed}");
+
     let o = gen(&[s(&spec), "-o", s(&dir.join("x.glb"))]);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
 }
 
 #[test]
-fn a_terrain_bake_answers_json_with_each_file_hashed() {
+fn a_terrain_bake_answers_json_with_both_maps() {
     let dir = scratch("terrain_json");
     let spec = small_terrain_spec(&dir, "");
     let out = dir.join("out/");
@@ -681,22 +730,44 @@ fn a_terrain_bake_answers_json_with_each_file_hashed() {
         .unwrap();
     assert!(o.status.success(), "{}", text(&o));
     let doc: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
-    assert_eq!(doc["seed"], 7);
-    assert_eq!(doc["resolution"], 64);
-    let files = doc["files"].as_array().unwrap();
-    assert_eq!(files.len(), 2);
-    for f in files {
-        let bytes = std::fs::read(f["path"].as_str().unwrap()).unwrap();
-        assert_eq!(
-            f["sha256"].as_str().unwrap(),
-            flint_core::ContentHash::from_bytes(&bytes).to_hex()
-        );
-    }
-    let shares: f64 = doc["coverage"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["share"].as_f64().unwrap())
-        .sum();
-    assert!((shares - 1.0).abs() < 0.01, "coverage sums to {shares}");
+    assert_eq!(doc["generator"], "terrain_v1", "{doc:#}");
+    assert_eq!(doc["variants"][0]["seed"], 7, "{doc:#}");
+    let files = doc["variants"][0]["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2, "{doc:#}");
+    assert!(files[0].as_str().unwrap().ends_with("output_height.png"));
+    assert!(files[1].as_str().unwrap().ends_with("output_splat.png"));
+}
+
+/// Done-when of #1168: the AI writes a terrain spec, and it bakes.
+#[test]
+fn the_ai_creates_a_terrain() {
+    let dir = scratch("terrain_ai");
+    let out = dir.join("terrain/");
+    let saved = dir.join("hills.procgen.toml");
+    let o = gen(&[
+        "--ai-create",
+        "rolling hills with a river valley",
+        "--ai-generator",
+        "terrain_v1",
+        "--ai-provider",
+        "mock",
+        "-o",
+        s(&out),
+        "--save-spec",
+        s(&saved),
+    ]);
+    assert!(o.status.success(), "{}", text(&o));
+    let height = image::open(out.join("output_height.png")).unwrap();
+    assert_eq!(height.color(), image::ColorType::L16);
+    let splat = image::open(out.join("output_splat.png")).unwrap();
+    assert_eq!(splat.color(), image::ColorType::Rgba8);
+
+    // Its saved spec bakes the same maps again
+    let again = dir.join("again/");
+    let o = gen(&[s(&saved), "-o", s(&again)]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        std::fs::read(out.join("output_height.png")).unwrap(),
+        std::fs::read(again.join("output_height.png")).unwrap()
+    );
 }

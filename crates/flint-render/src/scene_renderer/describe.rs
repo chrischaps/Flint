@@ -61,8 +61,11 @@ impl SceneRenderer {
             panels,
             notes,
             targets: held,
+            page_camera,
             ..
         } = log;
+        // The frame's camera: a page's own, else its one view's
+        let camera = page_camera.or_else(|| views.first().and_then(|v| v.camera.clone()));
         let styles = views.last().map(|v| v.styles.clone()).unwrap_or_default();
         let mut views = views.into_iter();
         let (passes, panels) = if panels.is_empty() {
@@ -76,6 +79,7 @@ impl SceneRenderer {
                 .map(|(i, v)| fc::PanelDescription {
                     name: format!("again {}", i + 1),
                     size: v.size,
+                    camera: v.camera,
                     passes: v.passes.into_iter().map(|p| names.pass(p)).collect(),
                 })
                 .collect();
@@ -86,6 +90,7 @@ impl SceneRenderer {
                 .map(|(v, name)| fc::PanelDescription {
                     name,
                     size: v.size,
+                    camera: v.camera,
                     passes: v.passes.into_iter().map(|p| names.pass(p)).collect(),
                 })
                 .collect();
@@ -129,6 +134,7 @@ impl SceneRenderer {
             casts_shadow,
         };
         let mut described = FrameDescription {
+            camera,
             frame: fc::FrameInfo {
                 index: None,
                 game_time: None,

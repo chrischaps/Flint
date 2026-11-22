@@ -2019,6 +2019,7 @@ dependencies = [
  "flint-import",
  "flint-scene",
  "flint-schema",
+ "flint-terrain",
  "flint-wooze",
  "gltf",
  "image",
@@ -2110,6 +2111,7 @@ dependencies = [
 name = "flint-runtime"
 version = "0.1.0"
 dependencies = [
+ "egui",
  "flint-core",
  "flint-ecs",
  "gilrs",

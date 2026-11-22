@@ -269,7 +269,6 @@ pub(super) fn run_stages(
                     stage.replay_inputs.take().map(|inputs| {
                         crate::commands::render_frame_dump::ReplayFacts {
                             inputs,
-                            camera: &stage.camera,
                             particles: Some(&stage.game.particles().sync),
                         }
                     }),

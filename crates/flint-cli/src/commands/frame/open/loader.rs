@@ -3,7 +3,7 @@
 //! decoded on a worker, made [`Prepared`] (four float channels, the
 //! viewer's upload) and kept, the least recently asked for dropped first.
 
-use super::super::display::{Display, Prepared};
+use super::super::display::{DepthCamera, Display, Prepared};
 use super::super::read;
 use flint_render::frame_capture::ImageDescription;
 use std::collections::{HashMap, VecDeque};
@@ -32,6 +32,8 @@ struct Job {
     path: PathBuf,
     image: ImageDescription,
     exposure: f32,
+    /// The camera a scene depth was drawn from (#1176).
+    camera: Option<DepthCamera>,
 }
 
 /// The images asked for, by their index in the model.
@@ -83,7 +85,14 @@ impl Loader {
     }
 
     /// Ask for an image; it is read once, then kept.
-    pub fn request(&mut self, key: usize, path: PathBuf, image: &ImageDescription, exposure: f32) {
+    pub fn request(
+        &mut self,
+        key: usize,
+        path: PathBuf,
+        image: &ImageDescription,
+        exposure: f32,
+        camera: Option<DepthCamera>,
+    ) {
         match self.slots.get(&key) {
             Some(Slot::Ready(_)) => {
                 self.touch(key);
@@ -96,6 +105,7 @@ impl Loader {
                     path,
                     image: image.clone(),
                     exposure,
+                    camera,
                 };
                 if self.jobs.send(job).is_err() {
                     self.slots
@@ -164,7 +174,7 @@ fn load(job: &Job) -> Slot {
     match read::texels(&job.path, &job.image) {
         Ok(t) => {
             let prepared = Prepared::new(&t, &job.image);
-            let (auto, words) = Display::auto(&prepared, job.exposure);
+            let (auto, words) = Display::auto(&prepared, job.exposure, job.camera);
             Slot::Ready(Arc::new(Loaded {
                 prepared,
                 auto,
@@ -184,7 +194,7 @@ mod tests {
         let mut l = Loader::new(1, 4);
         let mut image = ImageDescription::default();
         image.stored = "png".into();
-        l.request(0, PathBuf::from("no/such/image.png"), &image, 1.0);
+        l.request(0, PathBuf::from("no/such/image.png"), &image, 1.0, None);
         assert!(l.pending());
         l.wait();
         assert!(!l.pending());
@@ -204,7 +214,7 @@ mod tests {
         image.format = "Rgba8Unorm".into();
         let mut l = Loader::new(2, 2);
         for key in 0..3 {
-            l.request(key, path.clone(), &image, 1.0);
+            l.request(key, path.clone(), &image, 1.0, None);
             l.wait();
         }
         assert!(l.get(0).is_none(), "dropped");

@@ -215,6 +215,10 @@ impl SceneRenderer {
         let posts = std::mem::take(&mut self.panel_state.posts);
         let last = layout.panels.len() - 1;
         let mut submissions = 0;
+        // A described page names the camera its panels' are made from (#1176)
+        if let Some(log) = &mut self.frame_log {
+            log.page_camera = Some(crate::frame_replay::CameraState::of(camera));
+        }
         for (i, (spec, rect)) in layout.panels.iter().zip(&rects).enumerate() {
             let size = rect.size();
             let fits = views.get(&spec.name).is_some_and(|v| {

@@ -34,6 +34,7 @@
 //! [`SceneRenderer::describe_next_frame`]: crate::SceneRenderer::describe_next_frame
 //! [`SceneRenderer::describe_frame`]: crate::SceneRenderer::describe_frame
 
+pub use crate::frame_replay::CameraState;
 use crate::gpu_timer::{GpuScope, GpuTimer, GpuTimings};
 use crate::render_stats::RenderStats;
 use serde::{Deserialize, Serialize};
@@ -60,6 +61,13 @@ pub struct FrameDescription {
     /// [`VERSION`] when written by this engine.
     pub version: u32,
     pub frame: FrameInfo,
+    /// The camera the frame drew with (#1176), as the host handed it to
+    /// the renderer: a comic page's own camera, each panel's under its
+    /// [`PanelDescription::camera`]. `None` in a description written before
+    /// it. A replay draws with it: `replay/inputs.json` carries no camera
+    /// of its own since, so the two can't disagree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera: Option<CameraState>,
     /// The frame's totals, as the F2 overlay counts them. `gpu_passes` is
     /// left out: each pass carries its own `gpu_ms`.
     pub stats: RenderStats,
@@ -114,6 +122,7 @@ impl Default for FrameDescription {
             format: FORMAT.to_string(),
             version: VERSION,
             frame: FrameInfo::default(),
+            camera: None,
             stats: RenderStats::default(),
             lights: LightsDescription::default(),
             targets: Vec::new(),
@@ -179,6 +188,25 @@ impl FrameDescription {
     /// The first pass named `name` (a panel's included).
     pub fn pass(&self, name: &str) -> Option<&PassDescription> {
         self.all_passes().into_iter().find(|p| p.name == name)
+    }
+
+    /// The camera `image` was drawn from (#1176): its panel's when a comic
+    /// panel's pass wrote it, else the frame's. `None` for a shadow map's
+    /// layer (a light's view, not the camera's) and for a description that
+    /// names no camera (written before #1176).
+    pub fn camera_of(&self, image: &ImageDescription) -> Option<&CameraState> {
+        if image.layer.is_some() {
+            return None;
+        }
+        fn holds(passes: &[PassDescription], image: &ImageDescription) -> bool {
+            passes
+                .iter()
+                .any(|p| p.images.iter().any(|i| i.file == image.file) || holds(&p.passes, image))
+        }
+        match self.panels.iter().find(|p| holds(&p.passes, image)) {
+            Some(panel) => panel.camera.as_ref(),
+            None => self.camera.as_ref(),
+        }
     }
 
     /// Lay one frame's raw GPU times (`GpuTimer::recorded`'s, not the
@@ -634,6 +662,9 @@ pub struct PanelDescription {
     pub name: String,
     /// Its picture's size in pixels.
     pub size: [u32; 2],
+    /// The camera it drew with (#1176).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera: Option<CameraState>,
     pub passes: Vec<PassDescription>,
 }
 
@@ -663,6 +694,8 @@ pub(crate) struct LoggedPass {
 #[derive(Default)]
 pub(crate) struct LoggedView {
     pub size: [u32; 2],
+    /// The camera its `encode_to` drew with.
+    pub camera: Option<CameraState>,
     pub passes: Vec<LoggedPass>,
     /// The styles its post chain ran, in order.
     pub styles: Vec<StyleDescription>,
@@ -677,6 +710,9 @@ pub(crate) struct FrameLog {
     pub page: Vec<LoggedPass>,
     /// Whether the views are a comic page's panels, by name.
     pub panels: Vec<String>,
+    /// A comic page's own camera, the host's (#1176), which each panel's
+    /// is made from.
+    pub page_camera: Option<CameraState>,
     /// Whether the next pass goes to the page rather than a view.
     pub on_page: bool,
     /// What the description's `notes` say of the frame (a split view).
@@ -697,11 +733,13 @@ impl FrameLog {
         &mut self.views.last_mut().expect("pushed above").passes
     }
 
-    /// A new view: the next `encode_to`'s passes go into it.
-    pub fn begin_view(&mut self, size: [u32; 2]) {
+    /// A new view, drawn from `camera`: the next `encode_to`'s passes go
+    /// into it.
+    pub fn begin_view(&mut self, size: [u32; 2], camera: CameraState) {
         self.on_page = false;
         self.views.push(LoggedView {
             size,
+            camera: Some(camera),
             ..Default::default()
         });
     }
@@ -998,9 +1036,9 @@ mod tests {
     #[test]
     fn a_log_keeps_each_view_apart() {
         let mut log = FrameLog::default();
-        log.begin_view([4, 4]);
+        log.begin_view([4, 4], CameraState::default());
         log.ran("Scene", false);
-        log.begin_view([8, 8]);
+        log.begin_view([8, 8], CameraState::default());
         log.skipped("Bloom", "off");
         assert_eq!(log.views.len(), 2);
         assert_eq!(log.views[1].passes[0].pass.skipped.as_deref(), Some("off"));

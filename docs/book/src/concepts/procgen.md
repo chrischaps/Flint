@@ -175,6 +175,10 @@ One abstract [living](#living-props) form that isn't a tree: a held flame, a fol
 
 The lineage seed fixes everything that makes the form itself: the spine's facing (within ±15° of `facing_deg`), the lobes, the coil's phase and every card. `flint gen` bakes its skinned rest, as for a living tree.
 
+### `terrain_v1`
+
+A terrain's heightmap and splat map, from the terrain editor's recipe (Flint#1168): an image set of a 16-bit greyscale heightmap (`<stem>_height.png`) and an RGBA8 splat map (`<stem>_splat.png`), the bytes `flint_terrain::bake` makes for the terrain editor. Its params are a `.terrain.toml`'s tables: `[params.geometry]` (`width`, `depth`, `height_scale`, `resolution` up to 4096), `[[params.height_layers]]` tagged by `op` (`noise`, `flatten`, `erosion`, each closed to its own keys), `[[params.splat_rules]]` (`layer` 0 to 3, height band, `slope_max`, noise), and the terrain component's `textures` and `grass`, which the bake doesn't read. A `.terrain.toml` loads as this spec with no conversion; see [Terrain](terrain.md#generating-terrain-from-a-spec). With no height layers the terrain is flat, so `flint gen --ai-create ... --ai-provider mock` starts from a template of rolling hills over a valley floor.
+
 ### `sweep_v1`
 
 A profile swept along a path: a rail, a pipe, a moulding, a gutter, a coil. It is the sweep a scene's [`spline_mesh`](scenes.md#spline-meshes) draws, made into one model for `flint gen`, the previewer and a scene's `model.asset`. Example: `specs/examples/brass_coil.procgen.toml`.

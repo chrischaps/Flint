@@ -42,6 +42,8 @@ pub struct ViewState {
     pub channel: Channel,
     /// A depth range set by hand; `None` is the drawn depths'.
     pub depth: Option<(f32, f32)>,
+    /// A range in metres set by hand (#1176); `None` is the drawn one's.
+    pub metres: Option<(f32, f32)>,
     pub wipe: Wipe,
     /// Where the wipe's line is, 0 (left) to 1.
     pub split: f32,
@@ -58,6 +60,7 @@ impl Default for ViewState {
             mode: None,
             channel: Channel::Rgb,
             depth: None,
+            metres: None,
             wipe: Wipe::Off,
             split: 0.5,
             grid_from: 12.0,
@@ -76,6 +79,10 @@ impl ViewState {
         if let Some((lo, hi)) = self.depth {
             d.lo = lo;
             d.hi = hi;
+        }
+        if let (Some((lo, hi)), Some(m)) = (self.metres, &mut d.metres) {
+            m.lo = lo;
+            m.hi = hi;
         }
         d
     }
@@ -294,7 +301,12 @@ pub struct ViewUniforms {
     channel: u32,
     channels: u32,
     srgb_target: u32,
-    _pad: u32,
+    // Mode::Metres (#1176): the camera's planes and the scale's ends, m
+    near: f32,
+    far: f32,
+    lo_m: f32,
+    hi_m: f32,
+    orthographic: u32,
 }
 
 fn uniforms(
@@ -307,6 +319,20 @@ fn uniforms(
     srgb_target: bool,
 ) -> ViewUniforms {
     let size = [p.width as f32, p.height as f32];
+    // Metres with no camera named draws as depth, as `Display::map` does
+    let mode = match (d.mode, &d.metres) {
+        (Mode::Metres, None) => Mode::Depth,
+        (m, _) => m,
+    };
+    let metres = d.metres.unwrap_or(super::super::display::Metres {
+        camera: super::super::display::DepthCamera {
+            near: 0.0,
+            far: 1.0,
+            orthographic: false,
+        },
+        lo: 0.0,
+        hi: 1.0,
+    });
     ViewUniforms {
         origin: [placed.min.x * ppp, placed.min.y * ppp],
         scale: [
@@ -319,15 +345,19 @@ fn uniforms(
         lo: d.lo,
         hi: d.hi,
         max_v: d.max,
-        mode: d.mode.code(),
-        channel: if matches!(d.mode, Mode::Ids | Mode::Depth) {
+        mode: mode.code(),
+        channel: if matches!(d.mode, Mode::Ids | Mode::Depth | Mode::Metres) {
             0
         } else {
             channel.code()
         },
         channels: p.channels as u32,
         srgb_target: srgb_target as u32,
-        _pad: 0,
+        near: metres.camera.near,
+        far: metres.camera.far,
+        lo_m: metres.lo,
+        hi_m: metres.hi,
+        orthographic: metres.camera.orthographic as u32,
     }
 }
 
@@ -573,8 +603,9 @@ mod tests {
 
     #[test]
     fn the_uniforms_are_the_shaders_size() {
-        // View in viewer.wgsl: 3 vec2, 5 f32, 5 u32
-        assert_eq!(std::mem::size_of::<ViewUniforms>(), 64);
+        // View in viewer.wgsl: 3 vec2, 5 f32, 4 u32, 4 f32, 1 u32 (80, a
+        // multiple of vec2's 8)
+        assert_eq!(std::mem::size_of::<ViewUniforms>(), 80);
     }
 
     #[test]

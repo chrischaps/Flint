@@ -222,7 +222,7 @@ Most expensive passes (GPU ms):
   13  Composite   0.006      0          0
 ```
 
-`#` is the pass's place in the frame, the `NN` of its image files. `--top N` lists more or fewer passes. A pass's draws include its layers' (the shadow cascades under `Shadows`).
+`#` is the pass's place in the frame, the `NN` of its image files. `--top N` lists more or fewer passes. A pass's draws include its layers' (the shadow cascades under `Shadows`). A capture written since #1176 also has a `Camera` line after `Frame`: the camera the frame drew with, from the manifest's `camera` (a comic panel's is under its panel), such as `Camera   perspective, fov 50°, near 0.1 m, far 1000 m, at (3.4, 1.7, 9) looking at (0.7, 0.7, 4.2)`. The frozen fixture above was written before it and has none.
 
 | View | What it lists |
 |------|---------------|
@@ -274,7 +274,8 @@ The diff is a report, so it exits 0 whatever it finds.
 |--------|------------|
 | 8-bit PNG | the file, byte for byte |
 | float colour (EXR half) | exposed at the frame's `exposure`, tonemapped with the composite's ACES curve, sRGB-encoded |
-| depth (EXR `Z`) | grey over the depths the frame drew, near white, the clear value black |
+| the scene's depth (EXR `Z`), in a capture that names its camera | metres from the camera, through the manifest's `camera` near and far planes, on a log scale from the nearest drawn (white) to the farthest (dark); the clear value black. The `view` line names the range: `depth 2.67..86.0 m, log scale, near white` |
+| depth in a capture that names no camera (written before #1176), and a shadow map's layer (a light's view, linear already) | grey stretched over the stored depths the frame drew, near white, the clear value black: `depth 0.96265..0.99894 stretched` |
 | one or two float channels | grey, or red and green, as stored in 0..1; a measure past 1 (a distance in metres) on a log scale, so a far sky doesn't black out the rest; centred on mid-grey when a value is negative |
 | integer ids (the style mask, a u32 target) | a colour each, spaced round the hue circle; id 0 black |
 
@@ -1039,6 +1040,16 @@ The camera flags lay themselves over the editor's own framing (the model
 auto-fitted, the terrain from above, the scene's `[camera]`), so a flag left
 out keeps that part of it.
 
+**F1 lists the debug keys, in every editor** (#1170), as it does in the
+player: the same card, the host's key for each of them. An editor's own
+function keys are a table like the player's ([Debug Panels](../guides/debug-panels.md#keys)),
+each with an owner and an action name, and the host looks a press up in it;
+no editor matches an F-key of its own. The scene viewer's are F2 to F4 and
+the procgen previewer's F2 to F5 (the tables below); the other editors have
+none yet, so their card shows F1 alone. A held key doesn't repeat its
+action. The editors read no input config, so `[debug_keys]` rebinds the
+player's keys only.
+
 `--render out.png` writes what the window would show, without the panels, at
 `--width` x `--height`, for every kind of file:
 
@@ -1246,13 +1257,38 @@ See the [Particle Editor guide](../guides/particle-editor.md).
 | Ctrl+Z | Undo the last edit |
 | Ctrl+Shift+Z / Ctrl+Y | Redo it |
 | Escape | Cancel gizmo drag / exit |
-| F2 | Toggle the render stats overlay |
-| F3 | Toggle normal arrows |
-| F4 | Toggle the **Rendering & Effects** menu (all render and post toggles and parameters, debug shading mode, shadows, an authored-vs-viewer-default post switch, DoF follow, and the live Particles controls) |
+| F1 | Show or hide the list of debug keys (`keys`, the host's) |
+| F2 | Toggle the render stats overlay (`stats`) |
+| F3 | Toggle normal arrows (`normal_arrows`) |
+| F4 | Toggle the **Rendering & Effects** menu (all render and post toggles and parameters, debug shading mode, shadows, an authored-vs-viewer-default post switch, DoF follow, and the live Particles controls; `render_panel`) |
 
 The viewer applies the scene's `[post_process]` block on load; the F4 menu's "authored" switch flips between those values and the viewer defaults. The earlier F1 (debug mode), F2 (wireframe overlay) and F4 (shadows) keys were folded into the F4 menu.
 
 When an entity is selected, a **translate gizmo** appears with colored axis arrows (red = X, green = Y, blue = Z) and plane handles. Click and drag an axis or plane to move the entity. Position changes can be undone/redone and saved back to the scene file.
+
+### Procgen Previewer Controls
+
+The previewer of a mesh or texture spec (`flint edit specs/oak_tree.procgen.toml`):
+
+| Input | Action |
+|-------|--------|
+| Left-drag, right-drag, scroll, W/A/S/D, Q/E | Orbit, pan, zoom (Q/E zoom a texture too) |
+| O, `[` / `]` | Toggle auto-orbit, slower / faster |
+| Space | Fit the camera to the mesh; a texture back to 1x, centred |
+| R | A new random seed |
+| T | Tile the texture |
+| Tab | Hide or show the panels |
+| Ctrl+S / Ctrl+Shift+S | Save the spec / save it as (only the changed params are written) |
+| Ctrl+E | Export the output |
+| F1 | Show or hide the list of debug keys (`keys`, the host's) |
+| F2 | Wireframe over the mesh, or back to shaded (`wireframe`) |
+| F3 | Normal arrows (`normal_arrows`) |
+| F4 | The skeleton overlay, for a mesh with a skeleton (`skeleton`) |
+| F5 | The next debug shading mode: PBR, wireframe, normals, depth, UV, ... (`debug_mode`) |
+| Escape | Exit |
+
+F2 to F5 act on a mesh; with a texture spec the card shows them dimmed. F5
+was F1 until #1170 gave F1 one meaning in every tool.
 
 ### Spline Editor Controls (`--spline`)
 
@@ -1265,6 +1301,7 @@ When an entity is selected, a **translate gizmo** appears with colored axis arro
 | Right-drag | Pan camera |
 | Scroll | Zoom |
 | O, `[` / `]` | Toggle auto-orbit, slower / faster |
+| F1 | Show or hide the list of debug keys; the scene viewer's F2 to F4 work here too |
 | Tab / Shift+Tab | Cycle through control points |
 | I | Insert a new control point after selected |
 | Delete | Remove selected control point |
@@ -1316,7 +1353,7 @@ Before anything is generated, the spec's params are checked against its generato
 
 `flint gen` also previews a glyph set: `flint gen fonts/terminal.glyphs.toml -o sheet.png` writes the atlas, each ramp's ink and a specimen as one sheet, and `-o out/` writes the pieces as well. See [Glyph Atlas](../concepts/glyph-atlas.md#looking-at-a-set).
 
-It also bakes a terrain spec, with no window: `flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png` writes the 16-bit heightmap there and `terrain/meadow_splat.png` beside it, the bytes the terrain editor's Ctrl+E export writes; `-o terrain/` names them after the spec's `[meta] name`. A terrain spec takes `-o`, `--seed`, `--strict` (a key nothing reads is then an error, not a warning) and `--dry-run`, and refuses the procgen-only flags. See [Terrain](../concepts/terrain.md#generating-terrain-from-a-spec).
+It also bakes a terrain spec, with no window: a `.terrain.toml` is a `terrain_v1` spec (#1168), so `flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png` writes the 16-bit heightmap as `terrain/meadow_height.png` and the splat map as `terrain/meadow_splat.png`, the bytes the terrain editor's Ctrl+E export writes. Every flag above works on one: `--register`, `--batch`, `--validate`, `--strict`, `--print-spec` (the same recipe as a `*.procgen.toml`) and the AI steps (`--ai-generator terrain_v1`). See [Terrain](../concepts/terrain.md#generating-terrain-from-a-spec).
 
 | Flag | Default | Description |
 |------|---------|-------------|

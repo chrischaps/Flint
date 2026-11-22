@@ -18,7 +18,8 @@ struct View {
     lo: f32,
     hi: f32,
     max_v: f32,
-    // Display::Mode: 0 tonemap, 1 linear, 2 stored, 3 depth, 4 ids, 5 log, 6 signed
+    // Display::Mode: 0 tonemap, 1 linear, 2 stored, 3 depth, 4 ids, 5 log,
+    // 6 signed, 7 metres
     mode: u32,
     // Channel: 0 rgb, 1 r, 2 g, 3 b, 4 a, 5 luma
     channel: u32,
@@ -26,7 +27,12 @@ struct View {
     channels: u32,
     // 1 when the target encodes sRGB on write (so this writes linear)
     srgb_target: u32,
-    _pad: u32,
+    // Metres (#1176): the camera's planes, and the log scale's ends in m
+    near: f32,
+    far: f32,
+    lo_m: f32,
+    hi_m: f32,
+    orthographic: u32,
 };
 
 @group(0) @binding(0) var<uniform> u: View;
@@ -100,9 +106,29 @@ fn curve(x: f32) -> f32 {
     }
 }
 
+// DepthCamera::metres: a stored depth (0 near, 1 far) in metres
+fn metres(d: f32) -> f32 {
+    if (u.orthographic == 1u) {
+        return u.near + d * (u.far - u.near);
+    }
+    return u.near * u.far / (u.far - d * (u.far - u.near));
+}
+
 fn map_texel(p: vec4<f32>, channels: u32) -> vec3<f32> {
     if (u.mode == 4u) {
         return id_colour(u32(max(p.x, 0.0)));
+    }
+    if (u.mode == 7u) {
+        // Metres::scaled: the log of the distance over the drawn range
+        let v = p.x;
+        if (v < 1.0 && v > 0.0 && u.lo_m <= u.hi_m) {
+            let lo = max(u.lo_m, 0.01);
+            let hi = max(u.hi_m, lo);
+            let z = max(metres(v), lo);
+            let t = clamp(log(z / lo) / max(log(hi / lo), 1e-6), 0.0, 1.0);
+            return vec3(1.0 - 0.85 * t);
+        }
+        return vec3(0.0);
     }
     if (u.mode == 3u) {
         let v = p.x;

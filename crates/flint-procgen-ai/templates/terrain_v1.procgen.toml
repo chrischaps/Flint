@@ -1,0 +1,74 @@
+generator = "terrain_v1"
+
+[meta]
+name = "terrain_template"
+description = "Template recipe for mock terrain specs: rolling hills over a flat valley floor, grass low, rock on the upper slopes, scree up high (#1168)"
+version = "1.0.0"
+tags = ["terrain", "hills"]
+
+[seed]
+mode = "random"
+
+[params.geometry]
+width = 256.0
+depth = 256.0
+height_scale = 40.0
+resolution = 256
+
+# Broad hills
+[[params.height_layers]]
+op = "noise"
+noise_type = "perlin"
+octaves = 5
+frequency = 1.6
+persistence = 0.5
+
+# A few ridges along the crests
+[[params.height_layers]]
+op = "noise"
+noise_type = "ridged"
+octaves = 3
+frequency = 2.5
+amplitude = 0.2
+
+# A flat floor where the hills meet: the valley
+[[params.height_layers]]
+op = "flatten"
+height = 0.1
+falloff = 0.12
+mode = "below"
+
+# Rain-carved gullies down the slopes
+[[params.height_layers]]
+op = "erosion"
+kind = "hydraulic"
+iterations = 30
+strength = 0.3
+
+# Layer 0: grass on the low, gentle ground
+[[params.splat_rules]]
+layer = 0
+height_max = 0.6
+slope_max = 0.6
+noise_amount = 0.2
+
+# Layer 1: bare earth along the valley floor
+[[params.splat_rules]]
+layer = 1
+height_max = 0.15
+noise_amount = 0.3
+
+# Layer 2: rock on the upper slopes (a rule fades toward its slope_max,
+# so rock takes the band where grass has given out)
+[[params.splat_rules]]
+layer = 2
+height_min = 0.45
+height_max = 0.85
+slope_max = 4.0
+noise_amount = 0.1
+
+# Layer 3: scree on the high ground
+[[params.splat_rules]]
+layer = 3
+height_min = 0.65
+noise_amount = 0.2

@@ -262,6 +262,110 @@ Each `[[params.control_points]]` entry:
 | `position` | list of numbers | required | [x, y, z] metres |
 | `twist` | number | `0.0` | Banking about the path here, degrees |
 
+### `terrain_v1` (image set, written as PNGs)
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `geometry` | table |  | The terrain's size and the maps' resolution |
+| `grass` | table |  | The terrain component's GPU grass (see the book's Terrain page). Not read by the bake; leave it out unless the terrain should grow grass |
+| `height_layers` | array of tables |  | The height recipe, run in order on a grid starting at 0: `noise` adds fractal noise, `flatten` pulls heights toward a level, `erosion` wears them |
+| `splat_rules` | array of tables |  | Paint the four surface layers: each texel takes every rule whose height and slope it fits, weighted toward the middle of the rule's band, and the weights are normalized. No rules paints all layer 0 |
+| `textures` | table |  | The terrain component's surface textures and material; not read by the bake |
+
+The `[params.geometry]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `chunk_resolution` | integer ≥ 1 | `64` | Quads a side of each mesh chunk the runtime builds; not read by the bake |
+| `depth` | number > 0 | `256.0` | Metres deep (z) |
+| `height_scale` | number ≥ 0 | `50.0` | Metres from height 0 to height 1; also how steep the splat rules' slopes are |
+| `resolution` | integer 2–4096 | `256` | Texels a side of both maps |
+| `width` | number > 0 | `256.0` | Metres across (x) |
+
+The `[params.grass]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `bend_radius` | number | `2.0` |  |
+| `bend_strength` | number | `0.800000011920929` |  |
+| `blade_height` | number | `0.4000000059604645` |  |
+| `blade_width` | number | `0.07999999821186066` |  |
+| `color_base` | list of numbers |  |  |
+| `color_dry` | list of numbers |  |  |
+| `color_tip` | list of numbers |  |  |
+| `density` | number | `8.0` |  |
+| `density_layer` | integer ≥ 0 | `0` |  |
+| `density_source` | `splat` \| `map` | `"splat"` |  |
+| `density_threshold` | number | `0.10000000149011612` |  |
+| `dry_amount` | number | `0.15000000596046448` |  |
+| `enabled` | bool | `false` |  |
+| `fade_start` | number | `60.0` |  |
+| `height_variation` | number | `0.30000001192092896` |  |
+| `max_distance` | number | `80.0` |  |
+| `wind_direction` | list of numbers |  |  |
+| `wind_speed` | number | `1.0` |  |
+| `wind_strength` | number | `0.15000000596046448` |  |
+| `wooze` | bool | `false` |  |
+| `wooze_amplitude` | number | `0.11999999731779099` |  |
+| `wooze_wavelength` | number | `2.5` |  |
+
+Each `[[params.splat_rules]]` entry:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `height_max` | number 0–1 | `1.0` | Highest normalized height the rule paints |
+| `height_min` | number 0–1 | `0.0` | Lowest normalized height the rule paints |
+| `layer` | integer 0–3 | required | The layer painted: 0 to 3 (the splat map's R, G, B, A) |
+| `noise_amount` | number 0–1 | `0.0` | How much seeded noise breaks up the rule's edges |
+| `noise_scale` | number > 0 | `4.0` | Noise features across the terrain |
+| `slope_max` | number ≥ 0 | `1.0` | Steepest slope (rise over run) the rule paints; its weight fades toward it |
+
+The `[params.textures]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `layers` | table |  | Each splat layer's texture |
+| `metallic` | number 0–1 | `0.0` | Metallic factor |
+| `roughness` | number 0–1 | `0.85` | Roughness factor |
+| `texture_tile` | number > 0 | `16.0` | Times each layer's texture repeats across the terrain |
+
+The `[params.textures.layers]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `layer0` | table |  |  |
+| `layer1` | table |  |  |
+| `layer2` | table |  |  |
+| `layer3` | table |  |  |
+
+The `[params.textures.layers.layer0]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `label` | string |  | What the layer is (grass, rock); names its share of the splat map |
+| `path` | string |  | The layer's albedo texture |
+
+The `[params.textures.layers.layer1]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `label` | string |  | What the layer is (grass, rock); names its share of the splat map |
+| `path` | string |  | The layer's albedo texture |
+
+The `[params.textures.layers.layer2]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `label` | string |  | What the layer is (grass, rock); names its share of the splat map |
+| `path` | string |  | The layer's albedo texture |
+
+The `[params.textures.layers.layer3]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `label` | string |  | What the layer is (grass, rock); names its share of the splat map |
+| `path` | string |  | The layer's albedo texture |
+
 ### `texture_v1` (image set, written as PNGs)
 
 | Key | Type | Default | What it does |

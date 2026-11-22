@@ -451,8 +451,8 @@ impl SceneRenderer {
             motion_hold: self.motion_hold.state(&name),
             skinning: Vec::new(),
             // Only while a draw binds an asset's shared palette (an entity
-            // before its first own write): it holds whichever entity wrote
-            // last, which isn't the same entity every run
+            // before its first own write); it is its owner's, the lowest id
+            // that wrote the asset (#1177), so the same every run
             asset_bones: if skinning.bone_binds.values().any(|b| !b.from_entity) {
                 skinning
                     .asset_bone_matrices

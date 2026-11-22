@@ -74,14 +74,14 @@ The workspace has 33 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 3 | `flint-query` | core, ecs | cli, constraint, player |
 | 3 | `flint-runtime` | core, ecs | animation, audio, cli, input-capture, particles, physics, player, script, viewer |
 | 3 | `flint-scene` | asset, core, ecs, schema | android, cli, debug-ui, player, procgen, render, viewer |
-| 3 | `flint-terrain` | core, ecs | cli, debug-ui, player, render, script |
+| 3 | `flint-terrain` | core, ecs | cli, debug-ui, player, procgen, render, script |
 | 4 | `flint-animation` | core, ecs, import, runtime | cli, player, script |
 | 4 | `flint-audio` | core, ecs, runtime | player |
 | 4 | `flint-constraint` | core, ecs, query, schema | cli, viewer |
 | 4 | `flint-input-capture` | core, music, rhythm, runtime | cli, player (optional) |
 | 4 | `flint-particles` | core, ecs, runtime | cli, debug-ui, player, render, viewer |
 | 4 | `flint-physics` | core, ecs, runtime | cli, player, script |
-| 4 | `flint-procgen` | core, geometry, import, scene, schema, wooze | asset-gen, cli, debug-ui (optional), living, player (optional), procgen-ai, viewer |
+| 4 | `flint-procgen` | core, geometry, import, scene, schema, terrain, wooze | asset-gen, cli, debug-ui (optional), living, player (optional), procgen-ai, viewer |
 | 5 | `flint-asset-gen` | ai-core, asset, core, import, procgen | cli |
 | 5 | `flint-living` | core, procgen, wooze | cli, player (optional) |
 | 5 | `flint-procgen-ai` | ai-core, procgen | cli |
