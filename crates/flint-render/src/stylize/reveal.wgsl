@@ -26,7 +26,8 @@ struct Reveal {
     edge: vec4<f32>,
     // ink rgb (in the target's space), unused
     ink: vec4<f32>,
-    // target width, height, 1 / aspect-space extent of the field, unused
+    // target width, height, 1 when inverted (#1180: the style outside the
+    // region), unused
     size: vec4<f32>,
     // rim rgb (in the target's space), rim width in pixels
     rim: vec4<f32>,
@@ -112,6 +113,15 @@ fn field(uv: vec2<f32>, aspect: f32, seed: vec2<f32>, boil: vec2<f32>) -> f32 {
     return f;
 }
 
+// How far field value `fk` is over the cut, in units of `fw`: negative on
+// the style's side, positive on the side the frame it read shows. Inverted
+// (#1180) the style is outside the region, so the sign turns; a negation
+// is exact, so the plain reveal's numbers are what they always were
+fn over(fk: f32, fw: f32) -> f32 {
+    let d = (fk - reveal.shape.w) / fw;
+    return select(d, -d, reveal.size.z > 0.5);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let size = reveal.size.xy;
@@ -124,10 +134,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let f = field(uv, aspect, seed, boil);
 
-    // How far over the threshold, in pixels: negative is inside (the
-    // style), positive outside (the frame it read)
+    // How far over the threshold, in pixels: negative is the style's side
+    // (inside the region, or outside it inverted), positive the frame it
+    // read. `inside` below means the style's side either way
     let fw = max(fwidth(f), 1e-6);
-    let px = (f - reveal.shape.w) / fw;
+    let px = over(f, fw);
     let inside = 1.0 - smoothstep(-0.5, 0.5, px);
 
     // The line: a pen's width that swells and thins along the edge
@@ -176,7 +187,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let r = select(0.5 * w, w, outer);
                 let at = uv + vec2<f32>(cos(turn), sin(turn)) * r / size;
                 let fk = field(at, aspect, seed, boil);
-                near = max(near, smoothstep(-1.0, 1.0, (fk - reveal.shape.w) / fw));
+                near = max(near, smoothstep(-1.0, 1.0, over(fk, fw)));
             }
             rim = inside * near;
         }
@@ -202,7 +213,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let t = f32(k) / 5.0;
                 let fk = field(uv + toward * t, aspect, seed, boil);
                 let w = 1.6 - t;
-                fall += w * (1.0 - smoothstep(-1.5, 1.5, (fk - reveal.shape.w) / fw));
+                fall += w * (1.0 - smoothstep(-1.5, 1.5, over(fk, fw)));
                 weights += w;
             }
             let hug = 1.0 - smoothstep(0.0, 0.3 * reach, px);

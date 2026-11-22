@@ -46,7 +46,8 @@ pub fn set_post_style(
 /// closed), a colour (`tint`: three numbers or `"#rrggbb"`), `enabled`
 /// (true or false), `blend` (0 to 1), `blend_source` (`"own"` or `"tear"`,
 /// #746), `order` (a number), the reveal's
-/// keys (#406: `reveal` 0 to 1, `reveal_shape`, `reveal_ink`,
+/// keys (#406: `reveal` 0 to 1, `reveal_shape`, `reveal_invert` (true or
+/// false, #1180), `reveal_ink`,
 /// `reveal_rim_color`, the `reveal_*` numbers) or, for an HDR style, `feeds_bloom` (true or
 /// false). Setting a parameter doesn't switch the style on.
 ///

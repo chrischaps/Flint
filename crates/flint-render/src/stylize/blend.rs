@@ -362,8 +362,10 @@ impl BlendPass {
             return;
         }
         if let Some(reveal) = frame.config.styles.reveal(frame.descriptor.name) {
-            let amount = reveal.amount.unwrap_or(1.0);
-            if amount < 1.0
+            // Covering the whole frame (reveal 1, or 0 inverted) it is
+            // the style's own result: no draw
+            let coverage = reveal.coverage().unwrap_or(1.0);
+            if coverage < 1.0
                 && self
                     .reveal
                     .draw(frame, encoder, input, output, reveal, blend)

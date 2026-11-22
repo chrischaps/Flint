@@ -646,6 +646,28 @@ scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "pencil:reveal=0,reveal_shape=wipe"]
 matches = ["--no-grid"]
 
+# Inverted (#1180): the style holds the frame outside the region and the
+# plain picture shows inside it, so an iris at 0.3 is the rendered clearing
+# in a circle with glyphs round it and the inked rim between. Inverted, the
+# ends swap: reveal 0 is whole-frame ASCII and reveal 1 the live frame,
+# byte for byte
+[[case]]
+name = "ascii-reveal-iris-invert"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "ascii:reveal=0.3,reveal_shape=iris,reveal_invert=true,reveal_edge=3"]
+
+[[case]]
+name = "ascii-reveal-invert-zero"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "ascii:reveal=0,reveal_shape=iris,reveal_invert=true"]
+matches = ["--no-grid", "--style", "ascii"]
+
+[[case]]
+name = "ascii-reveal-invert-one"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "ascii:reveal=1,reveal_shape=iris,reveal_invert=true"]
+matches = ["--no-grid"]
+
 # Drawn on (#879): under transition = "draw" a blend is a front, not a
 # mix. Half-way, the whole frame has about half of each outline, the
 # hatching a stroke at a time behind it and the paper's wash just begun,

@@ -15,6 +15,9 @@
 //! --style ascii:tint=0.3/1/0.4
 //! --style pencil:reveal=0.5              shown inside half a ragged tear (#406)
 //! --style pencil:reveal=0.4,reveal_shape=wipe,reveal_angle=30
+//! --style ascii:reveal=0.3,reveal_shape=iris,reveal_invert=true
+//!                                        the plain picture in a circle, glyphs
+//!                                        round it (#1180)
 //! ```
 //!
 //! Keys are checked against the style's descriptor: a number for each of
@@ -219,6 +222,7 @@ fn reveal_value(reveal: &super::StyleReveal, key: &str) -> toml::Value {
     match key {
         "reveal" => toml::Value::Float(f64::from(reveal.amount.unwrap_or(0.0))),
         "reveal_shape" => toml::Value::String(reveal.shape().name().to_string()),
+        "reveal_invert" => toml::Value::Boolean(reveal.inverted()),
         "reveal_ink" | "reveal_rim_color" => toml::Value::Array(
             if key == "reveal_ink" {
                 reveal.ink()
@@ -291,6 +295,7 @@ fn reveal_help() -> String {
         "reveal_shape={}",
         super::RevealShape::NAMES.join("|")
     )];
+    keys.push("reveal_invert=true|false".to_string());
     keys.push("reveal_ink=#rrggbb".to_string());
     keys.push("reveal_rim_color=#rrggbb".to_string());
     keys.extend(
@@ -703,9 +708,23 @@ mod tests {
         assert_eq!(r.shape(), super::super::RevealShape::Wipe);
         assert_eq!(r.number("reveal_angle"), 30.0);
         assert!((r.ink()[2] - 0x30 as f32 / 255.0).abs() < 1e-4);
+        assert!(!r.inverted());
+        // Inverted (#1180)
+        let mut config = PostProcessConfig::default();
+        apply_style_spec(
+            &mut config,
+            "ascii:reveal=0.3,reveal_shape=iris,reveal_invert=true",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
+        let r = config.styles.reveal("ascii").unwrap();
+        assert!(r.inverted());
+        assert_eq!(r.shape(), super::super::RevealShape::Iris);
+        assert!((r.coverage().unwrap() - 0.7).abs() < 1e-6);
         // Out of range, a wrong shape or a non-number is refused by name
         for bad in [
             "pencil:reveal=2",
+            "pencil:reveal_invert=sideways",
             "pencil:reveal_shape=star",
             "pencil:reveal_edge=big",
             "pencil:reveal_ink=red",
