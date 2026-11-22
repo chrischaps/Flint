@@ -41,7 +41,8 @@ use std::collections::BTreeMap;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::frame_capture_write::{
-    write_capture, write_capture_on, write_replay, ReplayFiles, WrittenCapture, REPLAY_FILES,
+    write_capture, write_capture_on, write_capture_with, write_replay, ReplayFiles, WrittenCapture,
+    REPLAY_FILES,
 };
 pub use crate::frame_taps::{CaptureTargets, CapturedFrame, CapturedImage, FrameCapture};
 
