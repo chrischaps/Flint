@@ -132,7 +132,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "draw_world_text",
-        "Text at a world point, depth-tested; opts: draw_text's (no layer) plus valign, facing [x, y, z] (a plane's normal; none is a billboard) and up.",
+        "Text at a world point, depth-tested; opts: draw_text's (no layer) plus valign, facing [x, y, z] and up. Without facing it's a billboard and size is points. With facing it's painted on the plane through the point, read only from the side facing points to, and size is the em in world units (0.03 is a line on a screen), as are spacing, stroke, glow and shadow.",
     )
     .arg("x", Num)
     .arg("y", Num)
