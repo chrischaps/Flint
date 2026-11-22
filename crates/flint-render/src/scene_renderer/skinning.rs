@@ -25,6 +25,12 @@ pub(crate) struct SkinningState {
     /// for the per-entity style scissor (#385).
     pub(crate) bone_matrices: HashMap<EntityId, Vec<[[f32; 4]; 4]>>,
     pub(crate) asset_bone_matrices: HashMap<String, Vec<[[f32; 4]; 4]>>,
+    /// Which entity each asset's shared palette is written from (#1177): the
+    /// lowest id that has written the asset. A scene spawns in name order, so
+    /// that is the first by name, the same every run whatever order the
+    /// entities' writes come in; the last writer was a different entity from
+    /// run to run.
+    pub(crate) asset_bone_owner: HashMap<String, EntityId>,
     /// Entities whose shadow follows other bones than they're drawn with.
     pub(crate) shadow_bone_buffers: HashMap<EntityId, wgpu::Buffer>,
     /// Per entity, what each skinned part's vertex colour is multiplied by.
@@ -86,7 +92,9 @@ impl SkinningState {
     /// Each skinned entity gets its own storage buffer (created on first use),
     /// so several entities instancing the same asset can play different clips.
     /// The asset's shared buffer is also written so code paths that draw the
-    /// asset without an entity (previews) keep animating.
+    /// asset without an entity (previews) keep animating, and an entity before
+    /// its own first write draws in a pose; with several entities on one asset
+    /// only its owner writes it (`asset_bone_owner`, #1177).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn update_bone_matrices(
         &mut self,
@@ -124,12 +132,8 @@ impl SkinningState {
         let entity = self.bone_matrices.entry(entity_id).or_default();
         entity.clear();
         entity.extend_from_slice(kept);
-        if let Some(asset) = self.asset_bone_matrices.get_mut(asset_name) {
-            asset.clear();
-            asset.extend_from_slice(kept);
-        } else {
-            self.asset_bone_matrices
-                .insert(asset_name.to_string(), kept.to_vec());
+        if !self.write_asset_palette(entity_id, asset_name, kept) {
+            return;
         }
         // Its sub-meshes share one buffer
         if let Some(mesh) = mesh_cache
@@ -138,6 +142,33 @@ impl SkinningState {
         {
             queue.write_buffer_counted(&mesh.bone_buffer, 0, bytes);
         }
+    }
+
+    /// Copy `kept` into the asset's CPU palette if `entity_id` owns it, taking
+    /// the asset if no lower id has written it yet. Says whether it did, so
+    /// the caller writes the shared GPU buffer only then.
+    fn write_asset_palette(
+        &mut self,
+        entity_id: EntityId,
+        asset_name: &str,
+        kept: &[[[f32; 4]; 4]],
+    ) -> bool {
+        match self.asset_bone_owner.get_mut(asset_name) {
+            Some(owner) if *owner < entity_id => return false,
+            Some(owner) => *owner = entity_id,
+            None => {
+                self.asset_bone_owner
+                    .insert(asset_name.to_string(), entity_id);
+            }
+        }
+        if let Some(asset) = self.asset_bone_matrices.get_mut(asset_name) {
+            asset.clear();
+            asset.extend_from_slice(kept);
+        } else {
+            self.asset_bone_matrices
+                .insert(asset_name.to_string(), kept.to_vec());
+        }
+        true
     }
 
     /// Write part of an entity's own bones, from bone `first`, and nothing else.
@@ -285,6 +316,7 @@ impl SkinningState {
         self.bone_buffers.clear();
         self.bone_matrices.clear();
         self.asset_bone_matrices.clear();
+        self.asset_bone_owner.clear();
         self.shadow_bone_buffers.clear();
         self.part_tints.clear();
         self.part_softness.clear();
@@ -304,4 +336,76 @@ fn create_entity_bones(device: &wgpu::Device, label: &str) -> wgpu::Buffer {
             | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A palette whose every bone is moved along x by `x`, told apart by it.
+    fn palette(x: f32) -> Vec<[[f32; 4]; 4]> {
+        let mut m = [[0.0; 4]; 4];
+        for (i, row) in m.iter_mut().enumerate() {
+            row[i] = 1.0;
+        }
+        m[3][0] = x;
+        vec![m; 3]
+    }
+
+    /// Three entities on one asset (the tavern's bartender and two patrons,
+    /// #1177), written frame after frame in shuffled orders: the asset's
+    /// palette is the lowest id's every frame, so every run agrees.
+    #[test]
+    fn the_asset_palette_is_the_same_whatever_order_entities_write_in() {
+        let ids = [3u64, 7, 12].map(EntityId::from_raw);
+        let orders = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        let asset = "YBotWithIdle.glb";
+        let mut runs = Vec::new();
+        for (run, order) in orders.iter().enumerate() {
+            let mut skinning = SkinningState::default();
+            let mut frames = Vec::new();
+            for frame in 0..4 {
+                // The order turns again from frame to frame
+                for k in 0..3 {
+                    let i = order[(k + frame + run) % 3];
+                    let pose = palette(ids[i].0 as f32 * 100.0 + frame as f32);
+                    skinning.write_asset_palette(ids[i], asset, &pose);
+                }
+                frames.push(skinning.asset_bone_matrices[asset].clone());
+            }
+            assert_eq!(skinning.asset_bone_owner[asset], ids[0]);
+            runs.push(frames);
+        }
+        for (run, frames) in runs.iter().enumerate() {
+            assert_eq!(frames, &runs[0], "run {run} took another palette");
+        }
+        // The owner's pose of that frame, not one it wrote before
+        assert_eq!(runs[0][2], palette(302.0));
+    }
+
+    /// An entity alone on its asset (a preview) keeps animating it, a lower
+    /// id writing later takes it over, and each asset has its own owner.
+    #[test]
+    fn a_lone_entity_owns_its_asset_until_a_lower_id_writes() {
+        let mut skinning = SkinningState::default();
+        let (low, high) = (EntityId::from_raw(2), EntityId::from_raw(9));
+        assert!(skinning.write_asset_palette(high, "a", &palette(1.0)));
+        assert!(skinning.write_asset_palette(high, "a", &palette(2.0)));
+        assert_eq!(skinning.asset_bone_matrices["a"], palette(2.0));
+        assert!(skinning.write_asset_palette(low, "a", &palette(3.0)));
+        assert!(!skinning.write_asset_palette(high, "a", &palette(4.0)));
+        assert_eq!(skinning.asset_bone_matrices["a"], palette(3.0));
+        assert!(skinning.write_asset_palette(high, "b", &palette(5.0)));
+        assert_eq!(skinning.asset_bone_matrices["b"], palette(5.0));
+        // A scene unloaded forgets the owners
+        skinning.clear();
+        assert!(skinning.write_asset_palette(high, "a", &palette(6.0)));
+    }
 }
