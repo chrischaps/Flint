@@ -519,8 +519,9 @@ impl StylesEditor {
                 }
                 if let Some(amount) = next.amount {
                     ui.weak(format!(
-                        "{} at {}",
+                        "{}{} at {}",
                         next.shape().name(),
+                        if next.inverted() { ", inverted," } else { "" },
                         number(amount, false)
                     ));
                 }
@@ -554,8 +555,9 @@ impl StylesEditor {
 
     /// Style `name`'s reveal once its Reveal toggle is flipped `on` or off
     /// from `current`. On: what it was when last switched off, else
-    /// `current`, at `reveal = 1`. Off: nothing, with `current` kept for
-    /// the next time it goes on.
+    /// `current`, covering the whole frame (`reveal = 1`, or 0 inverted,
+    /// #1180). Off: nothing, with `current` kept for the next time it
+    /// goes on.
     fn toggled_reveal(
         &mut self,
         name: &'static str,
@@ -567,7 +569,7 @@ impl StylesEditor {
                 .reveal_stash
                 .remove(name)
                 .unwrap_or_else(|| current.clone());
-            next.amount = Some(1.0);
+            next.amount = Some(if next.inverted() { 0.0 } else { 1.0 });
             next
         } else {
             self.reveal_stash.insert(name, current.clone());
@@ -916,9 +918,10 @@ fn reveal_rows(
     };
 
     // The amount: the toggle in the header puts it there or takes it away
-    let amount_help = "How much of the frame shows the style: 0 none of it (the style leaves \
-                       the chain, so the frame is the live one), 1 all of it. Scripts ease it \
-                       with tween_post_style_param. Scene key: reveal";
+    let amount_help = "How far the region has grown: 0 none of the frame, 1 all of it. The \
+                       style shows inside it (at 0 the style leaves the chain, so the frame is \
+                       the live one), or outside it when Inverted. Scripts ease it with \
+                       tween_post_style_param. Scene key: reveal";
     help(ui.label("Amount"), amount_help, None);
     let mut amount = next.amount.unwrap_or(1.0);
     if help(
@@ -971,6 +974,27 @@ fn reveal_rows(
                 |shape| format!("{:?}", shape.name()),
             )
         }),
+    );
+    ui.end_row();
+
+    // Which side of the edge the style is on (#1180)
+    let invert_help = "Keep the style outside the region instead: the frame it read shows \
+                       through the region as it grows, so an iris opens the plain picture from \
+                       Start x, y. Inverted, Amount 0 is the style everywhere and 1 the live \
+                       frame. Scene key: reveal_invert";
+    help(ui.label("Inverted"), invert_help, None);
+    let mut inverted = next.inverted();
+    if help(ui.checkbox(&mut inverted, ""), invert_help, None).changed() {
+        next.invert = Some(inverted);
+    }
+    if reset_cell(ui, next.invert.is_some_and(|i| i), "false") {
+        next.invert = None;
+    }
+    marked += dot_cell(
+        ui,
+        scene
+            .filter(|s| s.inverted() != next.inverted())
+            .map(|s| s.inverted().to_string()),
     );
     ui.end_row();
 
@@ -1656,6 +1680,18 @@ mod tests {
                 ..Default::default()
             }
         );
+        // An inverted one (#1180) comes back covering the frame too: at 0
+        let inverted = StyleReveal {
+            amount: Some(0.3),
+            shape: Some(RevealShape::Iris),
+            invert: Some(true),
+            ..Default::default()
+        };
+        editor.toggled_reveal("ascii", &inverted, false);
+        let on = editor.toggled_reveal("ascii", &StyleReveal::default(), true);
+        assert_eq!(on.amount, Some(0.0));
+        assert_eq!(on.coverage(), Some(1.0));
+        assert!(on.inverted());
     }
 
     #[test]
