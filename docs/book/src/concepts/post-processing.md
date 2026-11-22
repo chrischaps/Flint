@@ -550,7 +550,7 @@ They run first of the display chain, where the composite drew them, so a prop's 
 
 ![Tron render mode](../images/render-mode-tron.png)
 
-*`tron`: depth and luminance edges glowing over a dimmed scene, and a world-space grid rebuilt from depth that rides the swells.*
+*`tron` on [`reality_tears`](https://github.com/chrischaps/flint-examples/blob/main/reality_tears.scene.toml): depth and luminance edges glowing over a dimmed scene, and a world-space grid rebuilt from depth that rides the swells. The swells' crests draw as lines all the way out to the horizon.*
 
 ![Matrix render mode](../images/render-mode-matrix.png)
 
@@ -575,6 +575,8 @@ They run first of the display chain, where the composite drew them, so a prop's 
 | `drunk` | Sway and a drifting double; its `blend` is how drunk | `sway`, `ghost`, `speed` |
 | `tron` | Glowing edges and a world grid over a ghost of the scene | `glow`, `edges`, `dim`, `sky_dim`, `grid`, `spacing` (m), `pulse`, `reach` (m) |
 | `underwater` | The eye under the sea, below a waterline `depth` metres over it; its `blend` is how far under | `depth` (m, + = under), `churn`, `daylight`, `glow`, `sway` |
+
+`tron`'s silhouettes are where the depth bends, not where it changes (#1181): it takes the second difference of 1 / distance, which is zero across any plane however steeply its depth climbs, so a road or a floor seen at a grazing angle stays wire to the horizon and keeps its grid. Until then it read that climb as a silhouette at every pixel, and a flat ground filled with solid glow from a few tens of metres out. A step of 5% of the distance still reads as a full edge, as it always did. Its grid's lines are as wide as a pixel's footprint allows: they thin as they recede and fade to their average once a pixel spans most of a cell, rather than breaking into dashes.
 
 `drunk` and `underwater` draw their own `blend`, since their sway grows with it; the other three mix by the framework's. The sea's half of the old blood and underwater modes is the `ocean` component's [`tint`](#the-oceans-tint).
 

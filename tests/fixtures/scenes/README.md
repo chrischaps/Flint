@@ -46,4 +46,5 @@ two frames on main too, and this copy draws one of them).
 | `pencil_meadow` | `look-rotoscope-meadow*` (#883): flint-examples' `reveal_tear`'s clearing and meadow as a still, written here with real `light` tables |
 | `pencil_dark_sky` | `look-rotoscope-dark-sky*` (#890): written here, a YBot under the default dark sky with real lights |
 | `pencil_rolling` | `pencil-local` (#544): flint-examples' `pencil_rolling` on 2026-11-17 without its script, the casks posed mid-roll and the crate turned; real `light` tables |
+| `tron_ground` | `reality-tron-ground` (#1181): written here, a 500 m tiled plane seen from 2 m at 5 degrees down and one crate; no light, so the built-in pair |
 | `style_veil_echo`, `style_veil_billboard`, `style_mask_wooze` | `style-veil-echo`, `style-veil-billboard`, `style-mask-wooze[-msaa4]` (#737): written here with real lights. The echo scene's oak is `specs/examples/oak_living.procgen.toml`, found by the asset search from the repo root, so a change to that spec moves `style-veil-echo` |
