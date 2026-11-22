@@ -751,12 +751,8 @@ name = \"x\"
         );
     }
 
-    /// What an editor's window says goes through the log (#1164): no
-    /// `println!` or `eprintln!` in the viewer or a `flint edit` module
-    /// outside its tests, so `--log-format json` and `--quiet` hold for
-    /// every line.
-    #[test]
-    fn no_editor_prints_outside_the_log() {
+    /// Every source file of the viewer and the `flint edit` modules
+    fn editor_sources() -> Vec<PathBuf> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let commands = root.join("flint-cli/src/commands");
         let mut files: Vec<PathBuf> = [
@@ -787,6 +783,16 @@ name = \"x\"
                 }
             }
         }
+        files
+    }
+
+    /// What an editor's window says goes through the log (#1164): no
+    /// `println!` or `eprintln!` in the viewer or a `flint edit` module
+    /// outside its tests, so `--log-format json` and `--quiet` hold for
+    /// every line.
+    #[test]
+    fn no_editor_prints_outside_the_log() {
+        let files = editor_sources();
         let mut found = Vec::new();
         for path in &files {
             let text = without_test_modules(&std::fs::read_to_string(path).unwrap());
@@ -798,6 +804,30 @@ name = \"x\"
             }
         }
         assert!(found.is_empty(), "printed outside the log: {found:#?}");
+    }
+
+    /// #1170: an editor's F-keys are its `Editor::debug_keys`, looked up in
+    /// the host's table (whose F1 lists them), never matched by hand.
+    #[test]
+    fn no_editor_matches_a_function_key_by_hand() {
+        let mut found = Vec::new();
+        for path in editor_sources() {
+            let text = without_test_modules(&std::fs::read_to_string(&path).unwrap());
+            for line in text.lines() {
+                // Split, so this file doesn't name it
+                let needle = concat!("KeyCode", "::F");
+                let hand = line.match_indices(needle).any(|(at, _)| {
+                    line[at + needle.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_digit())
+                });
+                if hand {
+                    found.push(format!("{}: {}", path.display(), line.trim()));
+                }
+            }
+        }
+        assert!(found.is_empty(), "an F-key matched by hand: {found:#?}");
     }
 
     /// `text` with each `#[cfg(test)]` item cut out, braces matched

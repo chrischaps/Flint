@@ -22,6 +22,7 @@ use flint_render::{
     post_process_config_from_def, Camera, FrameInputs, OrbitCameraController, PostProcessConfig,
     RendererConfig, SceneBinding, SceneRenderer,
 };
+use flint_runtime::{DebugKey, DebugKeyGroup};
 use flint_scene::{
     load_failed, load_scene, load_scene_after, CameraDef, PostProcessDef, SceneDocument,
 };
@@ -2549,6 +2550,35 @@ impl ViewerApp {
     }
 }
 
+/// The scene viewer's debug keys (#1170), by action name. The player's F2
+/// and F4 are the same actions; its F3 (the scene's panels) is not.
+const STATS: &str = "stats";
+const NORMAL_ARROWS: &str = "normal_arrows";
+const RENDER_PANEL: &str = "render_panel";
+
+/// The scene viewer's debug keys: F1 (the list) is the host's.
+pub const VIEWER_KEYS: DebugKeyGroup = DebugKeyGroup {
+    owner: "viewer",
+    when: "always",
+    keys: &[
+        DebugKey {
+            action: STATS,
+            key: "F2",
+            does: "Render stats, with the frame-time graph and its hitch counters",
+        },
+        DebugKey {
+            action: NORMAL_ARROWS,
+            key: "F3",
+            does: "Normal arrows on every face",
+        },
+        DebugKey {
+            action: RENDER_PANEL,
+            key: "F4",
+            does: "The Rendering & Effects menu",
+        },
+    ],
+};
+
 impl Editor for ViewerApp {
     fn title(&self) -> String {
         if self.editor.is_some() {
@@ -2732,26 +2762,8 @@ impl Editor for ViewerApp {
                         self.orbit.cancel_snap();
                         self.reset_style_history();
                     }
-                    PhysicalKey::Code(KeyCode::F2) => {
-                        self.show_stats = !self.show_stats;
-                        if self.show_stats {
-                            self.frame_stats.reset();
-                        }
-                    }
-                    PhysicalKey::Code(KeyCode::F3) => {
-                        if let Some(renderer) = &mut self.scene_renderer {
-                            let on = renderer.toggle_normal_arrows();
-                            tracing::info!(target: "viewer", "Normal arrows: {}", if on { "ON" } else { "OFF" });
-                        }
-                    }
-                    // Rendering & Effects menu (ADR 0053): the one home
-                    // for every render/post debug control the old
-                    // F1/F4-F12 keys used to flip blindly, plus their
-                    // non-binary parameters, the authored-post toggle,
-                    // and DoF follow.
-                    PhysicalKey::Code(KeyCode::F4) => {
-                        self.render_panel_open = !self.render_panel_open;
-                    }
+                    // F2-F4 are debug keys: the host's table hands them to
+                    // `on_debug_key` (#1170)
                     _ => return Flow::Pass,
                 }
                 return Flow::Handled;
@@ -2810,6 +2822,33 @@ impl Editor for ViewerApp {
 
     fn frame_timed(&mut self, times: &host::FrameTimes) {
         self.frame_stats.record(times);
+    }
+
+    fn debug_keys(&self) -> Option<DebugKeyGroup> {
+        Some(VIEWER_KEYS)
+    }
+
+    fn on_debug_key(&mut self, action: &str) {
+        match action {
+            STATS => {
+                self.show_stats = !self.show_stats;
+                if self.show_stats {
+                    self.frame_stats.reset();
+                }
+            }
+            NORMAL_ARROWS => {
+                if let Some(renderer) = &mut self.scene_renderer {
+                    let on = renderer.toggle_normal_arrows();
+                    tracing::info!(target: "viewer", "Normal arrows: {}", if on { "ON" } else { "OFF" });
+                }
+            }
+            // Rendering & Effects menu (ADR 0053): the one home for every
+            // render/post debug control the old F1/F4-F12 keys used to flip
+            // blindly, plus their non-binary parameters, the authored-post
+            // toggle, and DoF follow.
+            RENDER_PANEL => self.render_panel_open = !self.render_panel_open,
+            _ => {}
+        }
     }
 
     fn draw(&mut self, target: &Target) {
