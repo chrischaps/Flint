@@ -164,6 +164,8 @@ With a ceiling set, a provider with no price at all is refused, since its cost c
 
 A Meshy model takes minutes. The task is a job in `.flint/jobs/` from the moment Meshy accepts (and bills) it, updated as it is polled. `flint asset job list` shows each one with its status, progress and cost. A run that stops, or a wait that times out (half an hour), leaves the job; `flint asset job resume <id>` waits for it, downloads the model and registers the asset, paying for nothing new.
 
+A Flux texture is a job too. Its default endpoint, `https://queue.fal.run/fal-ai/flux/dev`, is fal's queue: the POST answers at once with a receipt (`request_id`, `status_url`, `response_url`), and the image comes later. Flint checks `status_url` every second until fal says `COMPLETED`, fetches the output from `response_url`, then downloads the image. The job records `response_url`, so `flint asset job resume <id>` can still fetch an image after the run that queued it has stopped. A request fal finishes with an `error` fails its job. A synchronous endpoint (`api_url = "https://fal.run/fal-ai/flux/dev"` under `[providers.flux]`) answers with the image right away and makes no job. With `RUST_LOG=flint_asset_gen=debug`, fal's answers are logged as they arrive.
+
 ## Model Validation
 
 After generating a 3D model, Flint can validate it against a style guide's constraints. The validator imports the GLB file through the same `import_gltf()` pipeline used by the player, then runs the checks `flint gen --validate` runs on procedural output, under the same names (see [Validation](procgen.md#validation) for the full table):

@@ -87,14 +87,6 @@ impl MeshyProvider {
         Ok(task_status(&response))
     }
 
-    fn save(&self, job: &GenerationJob) {
-        if let Some(store) = &self.calls.jobs {
-            if let Err(e) = store.save(job) {
-                tracing::warn!("could not record Meshy job {}: {}", job.id, e);
-            }
-        }
-    }
-
     /// Poll `job`'s task until it is done, then download the GLB, keeping
     /// the job record current at every step.
     fn finish(
@@ -107,23 +99,14 @@ impl MeshyProvider {
             .remote_id
             .clone()
             .ok_or_else(|| FlintError::GenerationError("Job has no remote ID".to_string()))?;
-        let hint = if self.calls.jobs.is_some() {
-            format!(
-                "; it is paid for: `flint asset job resume {}` finishes it",
-                job.id
-            )
-        } else {
-            String::new()
-        };
-        let resume_hint = || hint.clone();
+        let hint = self.calls.resume_hint(job);
         for _ in 0..self.calls.max_polls {
             self.calls.sleep(self.calls.poll_interval);
             let status = match self.poll_task(&task_id) {
                 Ok(s) => s,
                 Err(e) => {
-                    let hint = resume_hint();
                     job.error = Some(e.to_string());
-                    self.save(job);
+                    self.calls.save_job(job);
                     return Err(FlintError::GenerationError(format!("{e}{hint}")));
                 }
             };
@@ -132,7 +115,7 @@ impl MeshyProvider {
                     tracing::info!("Processing... {}%", progress);
                     job.status = JobStatus::Processing;
                     job.progress = progress;
-                    self.save(job);
+                    self.calls.save_job(job);
                 }
                 MeshyTaskStatus::Complete { model_url } => {
                     let url = model_url.ok_or_else(|| {
@@ -150,7 +133,7 @@ impl MeshyProvider {
                     job.progress = 100;
                     job.error = None;
                     job.output_path = Some(output.clone());
-                    self.save(job);
+                    self.calls.save_job(job);
 
                     let hash = flint_core::ContentHash::from_file(&output_path)
                         .map(|h| h.to_prefixed_hex())
@@ -172,7 +155,7 @@ impl MeshyProvider {
                 MeshyTaskStatus::Failed(msg) => {
                     job.status = JobStatus::Failed;
                     job.error = Some(msg.clone());
-                    self.save(job);
+                    self.calls.save_job(job);
                     return Err(FlintError::GenerationError(format!(
                         "Meshy generation failed: {}",
                         msg
@@ -180,13 +163,12 @@ impl MeshyProvider {
                 }
             }
         }
-        let hint = resume_hint();
         let msg = format!(
             "Meshy generation timed out after {} poll attempts",
             self.calls.max_polls
         );
         job.error = Some(msg.clone());
-        self.save(job);
+        self.calls.save_job(job);
         Err(FlintError::GenerationError(format!("{msg}{hint}")))
     }
 }
@@ -275,7 +257,7 @@ impl GenerationProvider for MeshyProvider {
         job.remote_id = Some(task_id.clone());
         job.prompt = Some(prompt);
         job.estimated_usd = Some(cost);
-        self.save(&job);
+        self.calls.save_job(&job);
         tracing::info!("Submitted Meshy task {} (job {})", task_id, job.id);
 
         self.finish(&mut job, output_dir, start)
