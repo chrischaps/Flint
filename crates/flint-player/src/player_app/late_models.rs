@@ -104,8 +104,7 @@ impl PlayerApp {
         let context = self.render_context.take();
         let mut renderer = self.scene_renderer.take();
         let gpu = context.as_ref().map(|c| (&c.device, &c.queue));
-        #[cfg(test)]
-        let gpu = gpu.or(self.test_gpu.map(|g| (&g.device, &g.queue)));
+        let gpu = gpu.or(self.windowless_gpu().map(|g| (&g.device, &g.queue)));
         if let (Some(renderer), Some((device, queue))) = (renderer.as_mut(), gpu) {
             self.load_models_of(&ids, renderer, device, queue);
         }

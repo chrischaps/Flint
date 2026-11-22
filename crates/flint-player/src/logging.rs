@@ -264,7 +264,7 @@ pub struct LoadTallyLayer(LoadTally);
 /// library's (wgpu's Vulkan loader, gilrs' pad mappings) is shown as it
 /// happens and left out of the count, so the summary names the warnings a
 /// game can do something about.
-fn flint_target(target: &str) -> bool {
+pub(crate) fn flint_target(target: &str) -> bool {
     const SHORT: [&str; 12] = [
         "load",
         "transition",

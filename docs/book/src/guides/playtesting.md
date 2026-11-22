@@ -53,10 +53,37 @@ What a line asks is a [flint-query](../concepts/queries.md) condition, the same 
 | `expect persist <key> <op> <value>` | the `persist_*` store holds it: `persist coins >= 3` |
 | `expect log <key> <op> <value>` | a script's `test_log(key, value)` last said it |
 | `expect event <name>` | a `fire_event` (or the engine's own event) of that name has fired. For a `wait`, since the check before it settled, so `tap KeyE` then `wait event door_opened` sees the door the tap opened |
+| `expect frame hud contains "<text>"` | a text the HUD drew on the last frame contains it (`lacks` for none does) |
+| `expect frame style <name> on` | the style reached the last frame drawn (`off`: it didn't) |
+| `expect frame draws <entity>` | the camera drew the entity or a part of it (a model's nodes) on the last frame; `frame draws no <entity>`: it drew none of it |
 
 A field may name one axis of a vector: `transform.position.y`, `velocity.x` (`x`, `y`, `z`, `w`). The operators are `==`, `!=`, `<`, `<=`, `>`, `>=` and `contains`, and a value is a number, `true`/`false` or a quoted string.
 
 The same lines work in `flint play --input-script`: there a failed check is printed with the exit report and the run exits 1.
+
+## Seeing the frame: `--render`
+
+A plain playtest draws nothing, which keeps it quick and runnable anywhere. `--render` gives it a renderer drawing into an offscreen texture instead of a window: the same player, the same frames, but each one drawn, scene and HUD, and never shown. Models load, so a missing one warns as it would in play. Then a playtest can keep pictures and ask what was drawn:
+
+```bash
+flint playtest flint-examples/phase4_runtime.scene.toml --render \
+    --input-script playtests/bar.playtest.txt --exit-after 2 --width 960 --height 540
+```
+
+```text
+0.2  down   KeyA
+0.2  wait   player transform.position.x > 3.6 within 3
+0.2  up     KeyA
+0.3  wait   frame hud contains "Talk to Bartender" within 1
+0.3  expect frame draws bartender
+0.3  screenshot shots/at-the-bar.png
+```
+
+A **`screenshot <file>`** line writes the next frame drawn as a PNG, at the line's time (after any `wait` before it); `--screenshot <file>` with `--screenshot-at <s>` or `--screenshot-every <s>` does the same from the command line, as `flint play`'s flags do. Paths are from the working directory, and the frame is `--width` x `--height` pixels. A screenshot that is never written fails the run (`kind: "screenshot"`), and so does `--screenshot` without `--render`.
+
+A **`frame`** line asks the last frame drawn, so it sees what was on screen at its time. `frame hud` reads the HUD's draw list (what `on_draw_ui` and the UI documents gave it), which a run without `--render` keeps too. `frame style` and `frame draws` ask the renderer, so without `--render` they fail, saying there was no frame. `frame draws` is the camera's culls: a draw with no bounds (a procedural `bounds` box, a wireframe) is never culled, so it always reads drawn. A `#` starts a comment, so a text a line looks for can't hold one.
+
+Two rendered runs of the same scene, script and flags write the same report and the same PNGs, byte for byte.
 
 ## Scripts have a say too
 
@@ -123,18 +150,20 @@ It **fails** on a failed `test_assert`, a `test_fail`, an `expect` or `wait` tha
 
 | Key | What |
 |-----|------|
-| `failures` | every reason it failed: `kind` (`assertion`, `test_fail`, `check`, `script_error`, `scene`, `timeout`, `start`, `load_warning`, `preflight`), the message, and the file and line where there is one |
+| `failures` | every reason it failed: `kind` (`assertion`, `test_fail`, `check`, `script_error`, `scene`, `timeout`, `start`, `load_warning`, `screenshot`, `preflight`), the message, and the file and line where there is one |
 | `checks` | each `expect` and `wait`: its line, when it was due and settled, whether it held, and what was found (`2 matches: door1, door2`, `no entity named \`dor\``) |
 | `assertions`, `verdict`, `log` | what scripts said |
 | `script_errors` | as `flint render --report json` lists them: file, line, column, entity, callback, message, count |
-| `warnings` | the engine's warnings by message, counted while loading and while running |
+| `warnings` | the engine's warnings by message, counted while loading and while running (a library's, such as the Vulkan loader's, are left out, as the load summary leaves them out) |
 | `persist` | the `persist_*` store at the end |
 | `entities` | with `--dump <name>` (repeatable), that entity's components at the end |
 | `perf` | frames, fixed physics steps and game time |
+| `render` | with `--render`: the frame's `width` and `height`, `frames` drawn, and the renderer's `draw_calls` and `culled_draws` summed over them |
+| `screenshots` | each PNG written: `file`, `at` (game time), `width`, `height` |
 
 ## What a playtest leaves out
 
-A playtest is the player without the presentation. There's no renderer, so models aren't loaded and nothing a script reads off a drawn frame (`raycast_meshes`, `world_to_screen`'s last view) means anything. There's no sound device: sounds still load, so a missing file still warns, but none plays. Saves stay in memory: a playtest starts with no save file and writes none. Hot reload is off. `random()` is seeded as in any stepped run (`--seed` picks another), and scripts see a screen of `--width` x `--height` points. A script that reads `timestamp()` still sees the wall clock, and its run won't repeat.
+A playtest is the player without the presentation. Without `--render` there's no renderer, so models aren't loaded and nothing a script reads off a drawn frame (`raycast_meshes`, `world_to_screen`'s last view) means anything; with it, the frame is drawn but never presented, and the F2 to F4 panels, GPU timing and frame captures stay off. There's no sound device: sounds still load, so a missing file still warns, but none plays. Saves stay in memory: a playtest starts with no save file and writes none. Hot reload is off. `random()` is seeded as in any stepped run (`--seed` picks another), and scripts see a screen of `--width` x `--height` points. A script that reads `timestamp()` still sees the wall clock, and its run won't repeat.
 
 ## Flags
 
@@ -149,5 +178,9 @@ A playtest is the player without the presentation. There's no renderer, so model
 | `--dump <entity>` | That entity's components at the end (repeatable) |
 | `--report <file>` | Write the JSON report there too |
 | `--timings` | Wall-clock times in the report |
-| `--width`, `--height` | The screen scripts see, in points (1280 x 720) |
+| `--width`, `--height` | The screen scripts see, in points (1280 x 720); with `--render`, the frame's pixels |
+| `--render` | Draw every frame offscreen: models load, the HUD is painted, screenshots and `frame` checks see it |
+| `--screenshot <file>` | Write the frame at `--screenshot-at` as a PNG (needs `--render`) |
+| `--screenshot-at <s>` | When (default 0) |
+| `--screenshot-every <s>` | Numbered frames every so many seconds from then |
 | `--schemas <dir>` | As for every command |

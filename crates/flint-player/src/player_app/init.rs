@@ -173,6 +173,7 @@ impl PlayerApp {
             outcome: Default::default(),
             #[cfg(test)]
             test_gpu: None,
+            offscreen: None,
             input_layers: InputLayers::new(input_config_override),
             gilrs: None,
             pad_rumble: flint_runtime::PadRumble::new(),
@@ -417,8 +418,7 @@ impl PlayerApp {
         let now = self.core.clock.total_time;
         let running = self.style.look_fade.take();
         let device = self.render_context.as_ref().map(|c| &c.device);
-        #[cfg(test)]
-        let device = device.or(self.test_gpu.map(|g| &g.device));
+        let device = device.or(self.windowless_gpu().map(|g| &g.device));
         if let (Some(renderer), Some(device)) = (self.scene_renderer.as_mut(), device) {
             // From the frame as it is now: a fade under way at this moment
             // of it, not at the last render's (#1157), as a capture lays it
@@ -483,8 +483,7 @@ impl PlayerApp {
         let def = self.look_def(Some(look))?;
         let config = self.post_config_of(Some(&def));
         let device = self.render_context.as_ref().map(|c| &c.device);
-        #[cfg(test)]
-        let device = device.or(self.test_gpu.map(|g| &g.device));
+        let device = device.or(self.windowless_gpu().map(|g| &g.device));
         let (Some(renderer), Some(device)) = (self.scene_renderer.as_mut(), device) else {
             return Ok(Vec::new());
         };

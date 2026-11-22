@@ -913,6 +913,8 @@ impl PlayerApp {
             ScriptEvent::Capture(at) => {
                 self.ask_frame_capture(super::frame_capture::Trigger::Script(at), "capture");
             }
+            // Written from the next frame drawn (#1191)
+            ScriptEvent::Screenshot(path, at) => self.capture.scripted.push((path, at)),
             ScriptEvent::Text(text) => {
                 if self.egui_sees_input() {
                     if let Some(egui_winit) = &mut self.hud.egui_winit {

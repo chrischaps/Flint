@@ -825,10 +825,7 @@ impl super::PlayerApp {
         }
         let device_queue = match &self.render_context {
             Some(c) => Some((&c.device, &c.queue)),
-            #[cfg(test)]
-            None => self.test_gpu.map(|g| (&g.device, &g.queue)),
-            #[cfg(not(test))]
-            None => None,
+            None => self.windowless_gpu().map(|g| (&g.device, &g.queue)),
         };
         if let (Some((device, queue)), Some(renderer)) = (device_queue, &mut self.scene_renderer) {
             let timed = self.core.script.timing();

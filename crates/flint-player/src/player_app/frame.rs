@@ -5,6 +5,7 @@
 
 use super::camera_cut;
 use super::hud_render::render_draw_commands;
+use super::offscreen::HudTarget;
 use super::subsystem::{EncodeCtx, FrameCtx};
 use super::PlayerApp;
 use super::TransitionPhase;
@@ -50,13 +51,11 @@ impl PlayerApp {
         }
     }
 
-    pub(super) fn render(&mut self) {
-        flint_core::scope!("render");
-        // On Android, window may be None between suspended() and resumed()
-        if self.window.is_none() {
-            return;
-        }
-        self.update_render_scale();
+    /// What the frame is drawn with, laid before it is drawn: a look the
+    /// scripts or a panel asked for, a look's cross-fade at this game time,
+    /// then the scripts' post overrides over both. The window's frame and a
+    /// rendered playtest's (#1191) both start here.
+    pub(super) fn lay_frame_looks(&mut self) {
         if let Some((look, seconds)) = self.style.pending_look.take() {
             if let Err(e) = self.fade_to_look(look.as_deref(), seconds) {
                 tracing::warn!("look: {e}");
@@ -66,6 +65,33 @@ impl PlayerApp {
         // this frame's game time (#1157), under the scripts' overrides
         // stamped below
         self.lay_look_fade(self.core.clock.total_time);
+
+        // Apply script-driven post-processing overrides before rendering.
+        // The Rendering & Effects panel's freeze switch (ADR 0053) skips the
+        // stamp entirely so panel edits to contended fields stick; the
+        // drained overrides are plain Options re-filled each tick, so nothing
+        // piles up and un-freezing resumes on the next script write.
+        #[cfg(feature = "debug-hud")]
+        let pp_stamp_frozen = self.post.debug_freeze;
+        #[cfg(not(feature = "debug-hud"))]
+        let pp_stamp_frozen = false;
+        if let Some(renderer) = &mut self.scene_renderer {
+            if !pp_stamp_frozen && self.post.any() {
+                let mut config = renderer.post_process_config().clone();
+                self.post.stamp(&mut config);
+                renderer.set_post_process_config(config);
+            }
+        }
+    }
+
+    pub(super) fn render(&mut self) {
+        flint_core::scope!("render");
+        // On Android, window may be None between suspended() and resumed()
+        if self.window.is_none() {
+            return;
+        }
+        self.update_render_scale();
+        self.lay_frame_looks();
         // The presented frame as a PNG (#583): a capture line on the
         // expression socket, `--record`. Nothing at all while neither asks
         #[cfg(not(target_arch = "wasm32"))]
@@ -99,21 +125,6 @@ impl PlayerApp {
         };
 
         let view = context.frame_view(&output.texture);
-
-        // Apply script-driven post-processing overrides before rendering.
-        // The Rendering & Effects panel's freeze switch (ADR 0053) skips the
-        // stamp entirely so panel edits to contended fields stick; the
-        // drained overrides are plain Options re-filled each tick, so nothing
-        // piles up and un-freezing resumes on the next script write.
-        #[cfg(feature = "debug-hud")]
-        let pp_stamp_frozen = self.post.debug_freeze;
-        #[cfg(not(feature = "debug-hud"))]
-        let pp_stamp_frozen = false;
-        if !pp_stamp_frozen && self.post.any() {
-            let mut config = renderer.post_process_config().clone();
-            self.post.stamp(&mut config);
-            renderer.set_post_process_config(config);
-        }
 
         // Every panel applies its edits and reads back what it shows (#744):
         // one loop, no panel asked its name. What they tell the player comes
@@ -362,10 +373,27 @@ impl PlayerApp {
                 || flint_core::project::shown(&path),
             );
             match self.write_screenshot(&output.texture, &path) {
-                Ok(()) => self.capture.written += 1,
+                Ok(shot) => {
+                    self.capture.written += 1;
+                    self.capture.shots.push(shot);
+                }
                 Err(reason) => {
                     tracing::warn!("screenshot: {reason}");
                     self.capture.note_failure(reason);
+                }
+            }
+        }
+        // An input script's `screenshot <file>` lines (#1191)
+        for path in self.capture.take_scripted() {
+            let _shot = flint_core::frame_notes::begin(
+                flint_core::frame_notes::NoteKind::Screenshot,
+                || flint_core::project::shown(&path),
+            );
+            match self.write_screenshot(&output.texture, &path) {
+                Ok(shot) => self.capture.shots.push(shot),
+                Err(reason) => {
+                    tracing::warn!("screenshot: {reason}");
+                    self.capture.scripted_failures.push(reason);
                 }
             }
         }
@@ -520,7 +548,7 @@ impl PlayerApp {
     /// Single-shot: the first frame at or after `capture.at`. Interval mode:
     /// the first frame at or after `capture.at`, then every `every` seconds,
     /// numbered `<stem>_0001.<ext>`, `<stem>_0002.<ext>`, ...
-    fn capture_path_due(&mut self) -> Option<std::path::PathBuf> {
+    pub(super) fn capture_path_due(&mut self) -> Option<std::path::PathBuf> {
         let base = self.capture.path.clone()?;
         let now = self.core.clock.total_time;
         // Tolerance so `--screenshot-at` means the frame at that time: 210 steps of
@@ -560,7 +588,7 @@ impl PlayerApp {
         &self,
         texture: &wgpu::Texture,
         path: &std::path::Path,
-    ) -> Result<(), String> {
+    ) -> Result<super::ShotWritten, String> {
         let Some(context) = &self.render_context else {
             return Err("no render context".into());
         };
@@ -573,7 +601,19 @@ impl PlayerApp {
         let pixels = context
             .read_surface_rgba(texture)
             .map_err(|e| format!("read-back of {} failed: {e}", path.display()))?;
-        let img = image::RgbaImage::from_raw(texture.width(), texture.height(), pixels)
+        self.save_screenshot(pixels, texture.width(), texture.height(), path)
+    }
+
+    /// Save a frame's RGBA pixels as a PNG at `path`, its folder made: the
+    /// window's screenshots and a rendered playtest's (#1191).
+    pub(super) fn save_screenshot(
+        &self,
+        pixels: Vec<u8>,
+        width: u32,
+        height: u32,
+        path: &std::path::Path,
+    ) -> Result<super::ShotWritten, String> {
+        let img = image::RgbaImage::from_raw(width, height, pixels)
             .ok_or_else(|| format!("pixel buffer size mismatch for {}", path.display()))?;
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -583,14 +623,17 @@ impl PlayerApp {
         }
         img.save(path)
             .map_err(|e| format!("failed to save {}: {e}", path.display()))?;
+        let at = self.core.clock.total_time;
         tracing::info!(
-            "screenshot written: {} ({}x{} at t={:.2}s)",
+            "screenshot written: {} ({width}x{height} at t={at:.2}s)",
             path.display(),
-            texture.width(),
-            texture.height(),
-            self.core.clock.total_time
         );
-        Ok(())
+        Ok(super::ShotWritten {
+            path: path.to_path_buf(),
+            at,
+            width,
+            height,
+        })
     }
 
     pub(super) fn tick(&mut self) {
@@ -671,12 +714,21 @@ impl PlayerApp {
         // egui first (ADR 0082, 0097), then the debug keys (H9) and InputState.
         // Its `expect` and `wait` lines (#714) ask the game as it stands
         // before this frame's step.
+        let drawn = self.capture.last_frame_time.is_some();
         if let Some(script) = &mut self.capture.input_script {
             flint_core::scope!("input_script");
             if self.core.event_log.is_none() && script.has_checks() {
                 self.core.event_log = Some(Vec::new());
             }
-            let probe = super::input_probe::CoreProbe(&self.core);
+            // The last frame drawn, for a `frame` line (#1191): the HUD's
+            // draw list and, once a frame has been drawn, its renderer
+            let probe = super::input_probe::CoreProbe {
+                core: &self.core,
+                frame: super::input_probe::FrameSeen {
+                    hud: &self.hud.draw_commands,
+                    renderer: self.scene_renderer.as_ref().filter(|_| drawn),
+                },
+            };
             let applied = script.apply_probed(self.core.clock.total_time, &mut self.input, &probe);
             for event in applied.events {
                 self.scripted_event(event);
@@ -902,8 +954,13 @@ impl PlayerApp {
 
         // The frame's inputs, and the world read into the draw lists (#739)
         let ppp = self.renderer_pixels_per_point();
-        let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context)
-        else {
+        // The window's device, or a rendered playtest's (#1191)
+        let gpu = match (&self.render_context, self.offscreen) {
+            (Some(c), _) => (&c.device, &c.queue),
+            (None, Some(g)) => (&g.device, &g.queue),
+            (None, None) => return,
+        };
+        let Some(renderer) = &mut self.scene_renderer else {
             return;
         };
         let cam_pos = self.camera.position;
@@ -962,7 +1019,7 @@ impl PlayerApp {
                     &self.core.world,
                 ));
         }
-        renderer.prepare(&context.device, &context.queue, &self.core.world, &inputs);
+        renderer.prepare(gpu.0, gpu.1, &self.core.world, &inputs);
         // Next frame's scripts cast against what this one draws (ADR 0105).
         self.core.script.set_ray_scene(renderer.ray_scene());
     }
@@ -988,7 +1045,11 @@ impl PlayerApp {
         self.post.take_from(&mut self.core.script_requests);
     }
 
-    fn render_hud(&mut self, target_view: &wgpu::TextureView, encoder: &mut wgpu::CommandEncoder) {
+    pub(super) fn render_hud(
+        &mut self,
+        target_view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
         flint_core::scope!("render_hud");
         // The first pass to draw an F2 view lays out what it shows and
         // uploads the glyphs that takes: the pass is timed as a note, so a
@@ -1011,15 +1072,27 @@ impl PlayerApp {
         // The F1 card's table (#717), while the subsystems are here to ask
         let key_table = self.hud.key_table_open.then(|| self.debug_key_table());
 
-        let Some(window) = &self.window else { return };
-        let Some(context) = &self.render_context else {
+        // The window's target, or a rendered playtest's (#1191), which has
+        // no window: egui's input is then the target's size and no events
+        let Some(target) = HudTarget::of(self.render_context.as_ref(), self.offscreen) else {
             return;
         };
-        let Some(egui_winit) = &mut self.hud.egui_winit else {
-            return;
+        let window = self.window.as_ref();
+        let mut egui_winit = match window {
+            Some(_) => match self.hud.egui_winit.as_mut() {
+                Some(state) => Some(state),
+                None => return,
+            },
+            None => None,
         };
 
-        let mut raw_input = egui_winit.take_egui_input(window);
+        let mut raw_input = match (&mut egui_winit, window) {
+            (Some(state), Some(window)) => state.take_egui_input(window),
+            _ => super::offscreen::raw_input(
+                target.size,
+                self.launch.pixels_per_point.unwrap_or(1.0),
+            ),
+        };
         // Under --frame-step egui runs on the game clock too (#435): its
         // animations (a header opening, a tooltip fading) would otherwise
         // follow the wall clock, and a slow capture frame would land them
@@ -1054,8 +1127,8 @@ impl PlayerApp {
             view_proj: self.camera.view_projection_matrix(),
             eye: self.camera.position_array(),
             screen: [
-                context.config.width as f32 / self.hud.egui_ctx.pixels_per_point(),
-                context.config.height as f32 / self.hud.egui_ctx.pixels_per_point(),
+                target.size[0] as f32 / self.hud.egui_ctx.pixels_per_point(),
+                target.size[1] as f32 / self.hud.egui_ctx.pixels_per_point(),
             ],
             px_per_point: self.hud.egui_ctx.pixels_per_point(),
         });
@@ -1068,7 +1141,7 @@ impl PlayerApp {
         let show_stats = stats_view == super::StatsView::Full;
         // The adapter, and on DX12 its shader compiler (#912)
         let gpu_label = if show_stats {
-            flint_render::gpu_select::adapter_short(&context.adapter.get_info())
+            flint_render::gpu_select::adapter_short(&target.adapter_info())
         } else {
             String::new()
         };
@@ -1120,7 +1193,7 @@ impl PlayerApp {
         let mut graph = self.stats.overlay_graph(|| {
             // The display's refresh: the budget line
             clock.vsync_period().or_else(|| {
-                let mhz = window.current_monitor()?.refresh_rate_millihertz()?;
+                let mhz = window?.current_monitor()?.refresh_rate_millihertz()?;
                 (mhz > 0).then(|| 1000.0 / mhz as f64)
             })
         });
@@ -1276,7 +1349,9 @@ impl PlayerApp {
             .egui_fonts_ready
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        egui_winit.handle_platform_output(window, full_output.platform_output);
+        if let (Some(state), Some(window)) = (egui_winit, window) {
+            state.handle_platform_output(window, full_output.platform_output);
+        }
 
         let (paint_jobs, glyphs) = {
             flint_core::scope!("egui_tessellate");
@@ -1291,7 +1366,7 @@ impl PlayerApp {
         };
 
         let screen_descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [context.config.width, context.config.height],
+            size_in_pixels: target.size,
             pixels_per_point: full_output.pixels_per_point,
         };
 
@@ -1316,13 +1391,13 @@ impl PlayerApp {
             flint_core::scope!("egui_upload", paint_jobs.len());
             for (id, deltas) in &full_output.textures_delta.set {
                 for image_delta in deltas {
-                    egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+                    egui_renderer.update_texture(target.device, target.queue, *id, image_delta);
                 }
             }
 
             egui_renderer.update_buffers(
-                &context.device,
-                &context.queue,
+                target.device,
+                target.queue,
                 encoder,
                 &paint_jobs,
                 &screen_descriptor,
@@ -1332,14 +1407,14 @@ impl PlayerApp {
         // World text goes under the HUD, against the scene's depth.
         if !glyphs.is_empty() && ui_scope.is_some() {
             let pipeline = self.hud.world_text_pipeline.get_or_insert_with(|| {
-                super::world_text::WorldTextPipeline::new(&context.device, context.hud_format)
+                super::world_text::WorldTextPipeline::new(target.device, target.hud_format)
             });
             pipeline.draw(
-                &context.device,
-                &context.queue,
+                target.device,
+                target.queue,
                 encoder,
                 target_view,
-                &context.depth_view,
+                target.depth_view,
                 &glyphs,
                 &egui_renderer,
             );
