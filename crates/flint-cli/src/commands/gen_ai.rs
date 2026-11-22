@@ -172,6 +172,27 @@ const GENERATOR_WORDS: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "terrain_v1",
+        &[
+            "terrain",
+            "landscape",
+            "heightmap",
+            "hill",
+            "hills",
+            "mountain",
+            "mountains",
+            "valley",
+            "valleys",
+            "canyon",
+            "plateau",
+            "mesa",
+            "dunes",
+            "highlands",
+            "lowlands",
+            "foothills",
+        ],
+    ),
+    (
         "texture_v1",
         &[
             "texture",
@@ -205,7 +226,8 @@ const GENERATOR_WORDS: &[(&str, &[&str])] = &[
 ];
 
 /// The generator a description most likely wants: a keyword in it, else
-/// what the output's extension can hold (a PNG is a texture).
+/// what the output's extension can hold (a PNG is a texture, or a terrain's
+/// heightmap when the words say terrain).
 pub fn infer_generator(prompt: &str, output: Option<&str>) -> Option<&'static str> {
     let words: Vec<String> = prompt
         .split(|c: char| !c.is_alphanumeric())
@@ -215,7 +237,7 @@ pub fn infer_generator(prompt: &str, output: Option<&str>) -> Option<&'static st
     let png = output.is_some_and(|o| o.to_ascii_lowercase().ends_with(".png"));
     let by_word = GENERATOR_WORDS
         .iter()
-        .filter(|(g, _)| !png || *g == "texture_v1")
+        .filter(|(g, _)| !png || matches!(*g, "texture_v1" | "terrain_v1"))
         .find(|(_, ws)| words.iter().any(|w| ws.contains(&w.as_str())))
         .map(|(g, _)| *g);
     by_word.or(png.then_some("texture_v1"))
@@ -246,7 +268,7 @@ pub fn run_steps(
                     .ok_or_else(|| {
                         anyhow!(
                             "can't tell which generator \"{prompt}\" is for; pass --ai-generator \
-                             (tree_v1, texture_v1, creature_v1)"
+                             (tree_v1, texture_v1, creature_v1, terrain_v1)"
                         )
                     })?
                     .to_string(),
@@ -583,6 +605,16 @@ mod tests {
             Some("texture_v1")
         );
         assert_eq!(infer_generator("a spaceship", Some("x.glb")), None);
+        // Land is a terrain (#1168), ahead of the ground textures' words
+        assert_eq!(
+            infer_generator("rolling hills with a river valley", None),
+            Some("terrain_v1")
+        );
+        assert_eq!(
+            infer_generator("grassy mountains", Some("maps/h.png")),
+            Some("terrain_v1")
+        );
+        assert_eq!(infer_generator("grass", Some("g.png")), Some("texture_v1"));
     }
 
     #[test]

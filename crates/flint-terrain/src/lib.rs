@@ -15,7 +15,7 @@ pub mod spec;
 pub mod splatgen;
 pub mod terrain;
 
-pub use bake::{bake, encode_heightmap_png, encode_splat_png, TerrainMaps};
+pub use bake::{bake, encode_heightmap_png, encode_splat_png, height_samples, TerrainMaps};
 pub use brush::{
     apply_height_brush, apply_splat_brush, ray_heightmap_intersect, BrushParams, HeightBrushMode,
     SplatBrushMode,

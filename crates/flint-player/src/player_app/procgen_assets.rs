@@ -277,6 +277,7 @@ pub fn image_set_name(name: &str, index: usize, semantics: ChannelSemantics) -> 
         ChannelSemantics::Metallic => "metallic",
         ChannelSemantics::Height => "height",
         ChannelSemantics::Mask => "mask",
+        ChannelSemantics::Splat => "splat",
     };
     format!("{name}_{suffix}")
 }
@@ -485,7 +486,8 @@ impl AssetSink for GpuSink<'_> {
             name,
             image.width,
             image.height,
-            &image.pixels,
+            // A terrain_v1 heightmap is 16-bit grey (#1168): drawn as grey
+            &image.to_rgba8(),
             is_normal,
         ) {
             tracing::warn!("Failed to upload procgen texture '{name}': {e}");

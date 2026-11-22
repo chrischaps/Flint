@@ -2019,6 +2019,7 @@ dependencies = [
  "flint-import",
  "flint-scene",
  "flint-schema",
+ "flint-terrain",
  "flint-wooze",
  "gltf",
  "image",

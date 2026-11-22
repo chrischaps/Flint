@@ -500,7 +500,7 @@ impl GenPreviewApp {
             let label = format!("{:?}", img.channel_semantics);
             let color_image = egui::ColorImage::from_rgba_unmultiplied(
                 [img.width as usize, img.height as usize],
-                &img.pixels,
+                &img.to_rgba8(), // a terrain_v1 heightmap is 16-bit grey
             );
             let handle =
                 self.egui_ctx
@@ -1278,7 +1278,9 @@ impl Editor for GenPreviewApp {
         let images: Vec<image::RgbaImage> = self
             .last_images
             .iter()
-            .filter_map(|img| image::RgbaImage::from_raw(img.width, img.height, img.pixels.clone()))
+            .filter_map(|img| {
+                image::RgbaImage::from_raw(img.width, img.height, img.to_rgba8().into_owned())
+            })
             .collect();
         Ok(Some(host::image_sheet(
             &images,

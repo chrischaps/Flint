@@ -95,11 +95,20 @@ pub fn encode_heightmap_png(heights: &[f32], width: u32, depth: u32) -> Result<V
     // export did until #719) swapped every sample's bytes on a little-endian
     // machine: the heightmap read back as static.
     let mut samples = Vec::with_capacity(expected * 2);
-    for &h in heights {
-        let val = (h.clamp(0.0, 1.0) * 65535.0) as u16;
+    for val in height_samples(heights) {
         samples.extend_from_slice(&val.to_ne_bytes());
     }
     encode_png(&samples, width, depth, image::ExtendedColorType::L16)
+}
+
+/// Heights in [0, 1] as the 16-bit samples a heightmap PNG holds: the one
+/// quantization, which `terrain_v1`'s image (#1168) shares, so its PNG is
+/// this module's byte for byte. Values outside [0, 1] are clamped.
+pub fn height_samples(heights: &[f32]) -> Vec<u16> {
+    heights
+        .iter()
+        .map(|&h| (h.clamp(0.0, 1.0) * 65535.0) as u16)
+        .collect()
 }
 
 /// RGBA8 splat weights as a PNG.

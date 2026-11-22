@@ -55,9 +55,9 @@ pub struct GenArgs {
     /// Path to a .procgen.toml spec file (not needed with --ai-create,
     /// --cost-report, --list-generators or --describe), or a .glyphs.toml
     /// glyph set to preview: its atlas, ramps and a specimen as one sheet
-    /// (-o x.png) or every piece (-o dir/), or a .terrain.toml to bake: its
-    /// 16-bit heightmap (-o x.png, or <name>.png in -o dir/) and x_splat.png
-    /// beside it
+    /// (-o x.png) or every piece (-o dir/), or a .terrain.toml, which is a
+    /// terrain_v1 spec: its 16-bit heightmap and splat map, x_height.png and
+    /// x_splat.png for -o x.png
     #[arg(required_unless_present_any = ["ai_create", "cost_report", "list_generators", "describe"])]
     pub spec: Option<String>,
 
@@ -339,13 +339,6 @@ pub fn run(args: GenArgs) -> Result<()> {
         .is_some_and(super::glyph_preview::is_glyph_set)
     {
         return super::glyph_preview::run(&args);
-    }
-    if args
-        .spec
-        .as_deref()
-        .is_some_and(super::terrain_gen::is_terrain_spec)
-    {
-        return super::terrain_gen::run(&args);
     }
     // `--report json` is a JSON line a variant; the global --json is one
     // document for the run, with each variant's report in it
@@ -1058,12 +1051,19 @@ fn write_output(
                 let size = std::fs::metadata(&img_path)?.len();
                 total_size += size;
                 say!(
-                    "  {} ({}x{}, {})",
+                    "  {} ({}x{}{}, {})",
                     img_path.display(),
                     img.width,
                     img.height,
+                    match img.format {
+                        flint_procgen::PixelFormat::L16 => " 16-bit grey",
+                        flint_procgen::PixelFormat::Rgba8 => "",
+                    },
                     format_bytes(size)
                 );
+                if img.channel_semantics == flint_procgen::ChannelSemantics::Splat {
+                    say!("    coverage: {}", splat_coverage(img));
+                }
                 written.push(WrittenFile {
                     role: Some(role),
                     path: img_path,
@@ -1104,6 +1104,25 @@ fn write_output(
         });
     }
     Ok(written)
+}
+
+/// How much of a splat map each layer paints, `layer 0 61.2%, layer 2 ...`:
+/// the mean of each channel, leaving out a layer that paints nothing.
+fn splat_coverage(img: &flint_procgen::ImageData) -> String {
+    let mut sums = [0u64; 4];
+    for texel in img.pixels.as_chunks::<4>().0 {
+        for (sum, &w) in sums.iter_mut().zip(texel) {
+            *sum += u64::from(w);
+        }
+    }
+    let total: u64 = sums.iter().sum::<u64>().max(1);
+    let shares: Vec<String> = sums
+        .iter()
+        .enumerate()
+        .filter(|(_, &s)| s * 2000 >= total)
+        .map(|(i, &s)| format!("layer {i} {:.1}%", s as f64 * 100.0 / total as f64))
+        .collect();
+    shares.join(", ")
 }
 
 /// Resolve output path for batch mode, inserting the seed into the filename.

@@ -1316,7 +1316,7 @@ Before anything is generated, the spec's params are checked against its generato
 
 `flint gen` also previews a glyph set: `flint gen fonts/terminal.glyphs.toml -o sheet.png` writes the atlas, each ramp's ink and a specimen as one sheet, and `-o out/` writes the pieces as well. See [Glyph Atlas](../concepts/glyph-atlas.md#looking-at-a-set).
 
-It also bakes a terrain spec, with no window: `flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png` writes the 16-bit heightmap there and `terrain/meadow_splat.png` beside it, the bytes the terrain editor's Ctrl+E export writes; `-o terrain/` names them after the spec's `[meta] name`. A terrain spec takes `-o`, `--seed`, `--strict` (a key nothing reads is then an error, not a warning) and `--dry-run`, and refuses the procgen-only flags. See [Terrain](../concepts/terrain.md#generating-terrain-from-a-spec).
+It also bakes a terrain spec, with no window: a `.terrain.toml` is a `terrain_v1` spec (#1168), so `flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png` writes the 16-bit heightmap as `terrain/meadow_height.png` and the splat map as `terrain/meadow_splat.png`, the bytes the terrain editor's Ctrl+E export writes. Every flag above works on one: `--register`, `--batch`, `--validate`, `--strict`, `--print-spec` (the same recipe as a `*.procgen.toml`) and the AI steps (`--ai-generator terrain_v1`). See [Terrain](../concepts/terrain.md#generating-terrain-from-a-spec).
 
 | Flag | Default | Description |
 |------|---------|-------------|

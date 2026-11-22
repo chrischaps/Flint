@@ -76,11 +76,12 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
                                                              #   contact sheet (hold-and-glide from the spec's step/glide/stagger,
                                                              #   mesh rebuilt per frame, one fixed camera; --frames 48 --fps 24
                                                              #   --columns N --cell-size 240; byte-identical per machine, #210)
-   flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png  # #719: a terrain spec, no window: 16-bit
-                                                             #   heightmap there + meadow_splat.png beside it (-o dir/ -> <name>.png);
-                                                             #   commands/terrain_gen.rs, routed like a .glyphs.toml; takes -o, --seed,
-                                                             #   --strict (unknown keys fail), --dry-run, --json (seed, coverage, sha256s);
-                                                             #   refuses procgen flags. Same bytes as the editor's Ctrl+E (flint_terrain::bake)
+   flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png  # #1168: a terrain spec is a terrain_v1
+                                                             #   spec (ProcGenSpec::from_file maps a .terrain.toml), so the main path
+                                                             #   takes it: meadow_height.png (16-bit, PixelFormat::L16) + meadow_splat.png,
+                                                             #   --register/--batch/--validate/--strict/--print-spec/AI all apply.
+                                                             #   Same bytes as the editor's Ctrl+E (flint_terrain::bake); #719's own
+                                                             #   route (commands/terrain_gen.rs) is gone
    # --ai-model, --ai-iterations, --ai-generator,
    # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
    # flint_ai_core::CostMeter (re-exported by flint_procgen_ai): priced, appended to
@@ -263,7 +264,7 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen specs/oak_tree.procgen.toml -o tree.glb
    flint gen specs/stone_wall.procgen.toml -o wall.png
    flint gen specs/oak_tree.procgen.toml --dry-run
-   flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/   # heightmap + splat PNGs, no window
+   flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/   # terrain_v1: heightmap + splat PNGs, no window
    ```
    More, and the goldens: `crates/flint-cli/CLAUDE.md`.
 
