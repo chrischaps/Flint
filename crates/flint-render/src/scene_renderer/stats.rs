@@ -329,6 +329,39 @@ impl SceneRenderer {
         self.gpu_timer.as_mut()
     }
 
+    /// The scene pass's draws one frame times at most
+    /// ([`DrawControls::time_draws`](super::DrawControls::time_draws), #1203).
+    pub const DRAW_TIME_BATCH: usize = super::draw_times::BATCH;
+
+    /// The device features per-draw times need: timestamps, and timestamps
+    /// inside a pass.
+    pub const DRAW_TIME_FEATURES: wgpu::Features = super::draw_times::FEATURES;
+
+    /// The draws a pixel at which the overdraw heat map reaches its last
+    /// colour (#1203); each colour before it is half the draws.
+    pub const OVERDRAW_HEAT_TOP: u32 = super::overdraw::HEAT_TOP;
+
+    /// Read the draw times the last submitted frame took (#1203), waiting
+    /// for its GPU, into the times gathered since the last
+    /// [`reset_draw_times`](Self::reset_draw_times), which the next
+    /// described frame lays on its scene draws. `None` when that frame timed
+    /// nothing; it says how many draws the scene pass listed, so a host can
+    /// time the rest a batch a frame.
+    pub fn read_draw_times(&mut self, device: &wgpu::Device) -> Option<crate::DrawTimesRead> {
+        self.draw_times.read(device)
+    }
+
+    /// Why the last frame's asked-for draw times timed nothing (a device
+    /// without `TIMESTAMP_QUERY_INSIDE_PASSES`).
+    pub fn draw_times_refused(&self) -> Option<&'static str> {
+        self.draw_times.refused()
+    }
+
+    /// Forget the gathered draw times.
+    pub fn reset_draw_times(&mut self) {
+        self.draw_times.reset();
+    }
+
     /// End the frame's GPU timing: pick up the times read back so far and
     /// send this frame's back. Call once a frame after the last timed
     /// submission, before presenting. Does nothing while timing is off.

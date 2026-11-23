@@ -557,13 +557,29 @@ impl LayerGroup {
 
 /// The pipeline a pass has bound, so it sets one only when it changes.
 #[derive(Default)]
-struct BoundPipeline<'p>(Option<&'p wgpu::RenderPipeline>);
+struct BoundPipeline<'p> {
+    bound: Option<&'p wgpu::RenderPipeline>,
+    /// The overdraw view's twins (#1203): each pipeline asked for is bound
+    /// as its twin. The draw loop skips a draw with none
+    /// ([`SceneRenderer::twinned`]), so one is always found.
+    twins: Option<&'p Twins>,
+}
+
+/// Each scene pipeline's overdraw twin (#1203).
+pub(super) type Twins = std::collections::HashMap<wgpu::RenderPipeline, wgpu::RenderPipeline>;
 
 impl<'p> BoundPipeline<'p> {
     fn set(&mut self, pass: &mut wgpu::RenderPass<'_>, pipeline: &'p wgpu::RenderPipeline) {
-        if self.0.is_none_or(|b| !std::ptr::eq(b, pipeline)) {
+        let pipeline = match self.twins {
+            Some(twins) => match twins.get(pipeline) {
+                Some(twin) => twin,
+                None => return,
+            },
+            None => pipeline,
+        };
+        if self.bound.is_none_or(|b| !std::ptr::eq(b, pipeline)) {
             pass.set_pipeline(pipeline);
-            self.0 = Some(pipeline);
+            self.bound = Some(pipeline);
         }
     }
 }
@@ -1209,7 +1225,7 @@ impl SceneRenderer {
             }
         } else {
             // The editor grid is drawn in here, after the opaque geometry.
-            self.render_normal_pass(render_pass, phase);
+            self.render_normal_pass(render_pass, phase, None);
         }
 
         // Normal arrows pass (always uses line pipeline)
@@ -1351,14 +1367,32 @@ impl SceneRenderer {
     /// skinned → billboards → grid → sprites → blended statics → blended
     /// skinned → echoes → particles → wireframe. The list's layers in their
     /// order, with what isn't a draw item between them.
-    fn render_normal_pass<'a>(
+    ///
+    /// `twins` draws it as the overdraw view (#1203): every draw of the
+    /// description's list through its pipeline's counting twin, the water
+    /// through its depth-only one, and nothing else (no grid, no overlay).
+    /// Without them the frame's draw times are taken here, if asked.
+    pub(super) fn render_normal_pass<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         phase: RenderPhase,
+        twins: Option<(&'a Twins, &'a Twins)>,
     ) {
+        let (twins, depth_twins) = match twins {
+            Some((t, d)) => (Some(t), Some(d)),
+            None => (None, None),
+        };
+        // The pipeline a draw outside the list's items binds: its twin in
+        // the overdraw view, where one with none draws nothing
+        let pick = |p: &'a wgpu::RenderPipeline| match twins {
+            Some(t) => t.get(p),
+            None => Some(p),
+        };
+        // The frame's draw times count only the frame's own pass (#1203)
+        let timer = twins.is_none().then_some(&self.draw_times);
         // Terrain rendering (early in pass — fills depth buffer for occlusion)
         if phase.draws_opaque() {
-            self.draw_layer(render_pass, Layer::Terrain);
+            self.draw_layer(render_pass, Layer::Terrain, twins);
 
             // Grass rendering (after terrain -- also writes depth)
             if let (Some(gp), Some(render_bg), Some(instance_bg), Some(args)) = (
@@ -1369,12 +1403,15 @@ impl SceneRenderer {
             ) {
                 if self.grass.drawing && !self.draws.grass_cut() {
                     let group = PassGroup::open(render_pass, "Grass");
+                    let slot = timer.and_then(|t| t.before(render_pass));
                     // Bind group 0 (transform): the grass's own view uniforms,
                     // so grass on a game's ground draws with no terrain loaded
                     if let Some(transform_bg) = &self.grass.transform_bind_group {
                         render_pass.set_bind_group(0, transform_bg, &[]);
                     }
-                    render_pass.set_pipeline(&gp.render_pipeline);
+                    if let Some(p) = pick(&gp.render_pipeline) {
+                        render_pass.set_pipeline(p);
+                    }
                     render_pass.set_bind_group(1, render_bg, &[]);
                     render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
                     render_pass.set_bind_group(3, instance_bg, &[]);
@@ -1384,8 +1421,21 @@ impl SceneRenderer {
                         wgpu::IndexFormat::Uint16,
                     );
                     // The count is the compute pass's, culled to the view (ADR 0092)
-                    render_pass.draw_indexed_indirect(args, 0);
+                    if pick(&gp.render_pipeline).is_some() {
+                        render_pass.draw_indexed_indirect(args, 0);
+                    }
+                    if let Some(t) = timer {
+                        t.after(render_pass, slot);
+                    }
                     group.close(render_pass);
+                }
+            } else if self.grass.drawing
+                && self.pipelines.grass.is_some()
+                && !self.draws.grass_cut()
+            {
+                // Listed (`log_scene_draws`) though not drawn
+                if let Some(t) = timer {
+                    t.skip(1);
                 }
             }
         } // end opaque phase (terrain + grass)
@@ -1394,22 +1444,34 @@ impl SceneRenderer {
         // group 3 holds the grab-pass snapshots, or dummies when disabled)
         if self.water_active() && phase.draws_ocean() {
             let group = PassGroup::open(render_pass, "Water");
-            self.water.draw(
-                render_pass,
-                self.pipelines.ocean.as_deref(),
-                &self.lights.bind_group,
-            );
+            match depth_twins {
+                // The overdraw view: the water's depth alone, so what lies
+                // beneath it is tested as in the frame
+                Some(depth) => self.water.draw_through(
+                    render_pass,
+                    self.pipelines.ocean.as_deref(),
+                    &self.lights.bind_group,
+                    |p| depth.get(p),
+                ),
+                None => self.water.draw(
+                    render_pass,
+                    self.pipelines.ocean.as_deref(),
+                    &self.lights.bind_group,
+                ),
+            }
             group.close(render_pass);
         }
 
         if phase.draws_opaque() {
-            self.draw_layer(render_pass, Layer::OpaqueStatic);
-            self.draw_layer(render_pass, Layer::OpaqueSkinned);
+            self.draw_layer(render_pass, Layer::OpaqueStatic, twins);
+            self.draw_layer(render_pass, Layer::OpaqueSkinned, twins);
             // Billboard sprites (after geometry, uses depth test)
-            self.draw_layer(render_pass, Layer::Billboard);
+            self.draw_layer(render_pass, Layer::Billboard, twins);
 
             // After every opaque draw: an overlay, not geometry (#346)
-            self.draw_editor_grid(render_pass);
+            if twins.is_none() {
+                self.draw_editor_grid(render_pass);
+            }
         } // end opaque phase (entities + skinned + billboards + grid)
 
         if !phase.draws_rest() {
@@ -1420,15 +1482,24 @@ impl SceneRenderer {
         if let Some(sp) = &self.pipelines.sprite2d {
             if !self.sprite2d_batches.is_empty() {
                 let group = PassGroup::open(render_pass, "2D sprites");
-                render_pass.set_pipeline(&sp.pipeline);
+                let pipeline = pick(&sp.pipeline);
+                if let Some(p) = pipeline {
+                    render_pass.set_pipeline(p);
+                }
                 render_pass
                     .set_index_buffer(sp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.set_bind_group(0, &sp.uniform_bind_group, &[]);
                 let drawn = self.draws.sprites_drawn();
                 for batch in self.sprite2d_batches.iter().take(drawn) {
+                    let slot = timer.and_then(|t| t.before(render_pass));
                     render_pass.set_bind_group(1, &batch.instance_bind_group, &[]);
                     render_pass.set_bind_group(2, &batch.texture_bind_group, &[]);
-                    render_pass.draw_indexed(0..6, 0, 0..batch.instance_count);
+                    if pipeline.is_some() {
+                        render_pass.draw_indexed(0..6, 0, 0..batch.instance_count);
+                    }
+                    if let Some(t) = timer {
+                        t.after(render_pass, slot);
+                    }
                 }
                 group.close(render_pass);
             }
@@ -1437,15 +1508,15 @@ impl SceneRenderer {
         // Blended PBR entities, then blended skinned ones (each sorted back to
         // front, depth write off; alpha blend draws back faces then front
         // faces so a mesh cannot blend over itself)
-        self.draw_layer(render_pass, Layer::BlendedStatic);
-        self.draw_layer(render_pass, Layer::BlendedSkinned);
+        self.draw_layer(render_pass, Layer::BlendedStatic, twins);
+        self.draw_layer(render_pass, Layer::BlendedSkinned, twins);
         // Living props' echoes (#228)
-        self.draw_layer(render_pass, Layer::Echo);
+        self.draw_layer(render_pass, Layer::Echo, twins);
         // Particle systems (after billboards + transparent, before wireframe overlay)
-        self.draw_layer(render_pass, Layer::Particles);
+        self.draw_layer(render_pass, Layer::Particles, twins);
 
         // Wireframe overlay pass (on top of solid geometry)
-        if self.debug_state.mode == DebugMode::WireframeOverlay {
+        if self.debug_state.mode == DebugMode::WireframeOverlay && twins.is_none() {
             let group = PassGroup::open(render_pass, "Wireframe overlay");
             render_pass.set_pipeline(&self.pipelines.main.overlay_line_pipeline);
             for draw in &self.wireframe_overlay_draws {
@@ -1464,17 +1535,37 @@ impl SceneRenderer {
     /// Draw one layer of the list in the main pass: what the layer sets up
     /// once, then each item this camera draws through the main pass's
     /// selector, then what it puts back.
-    fn draw_layer<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, layer: Layer) {
+    ///
+    /// `twins`: the overdraw view's (#1203), each draw through its
+    /// pipeline's twin and one with none left out; without them, the
+    /// frame's draw times are taken around each draw the list counts.
+    fn draw_layer<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        layer: Layer,
+        twins: Option<&'a Twins>,
+    ) {
         let items = self.draws.layer(layer);
         if !items.iter().any(DrawItem::drawn) {
             return;
         }
+        let timer = twins.is_none().then_some(&self.draw_times);
+        // A layer this GPU can't draw still has its draws listed
+        let listed = || {
+            items
+                .iter()
+                .filter(|i| i.drawn() && self.main_pass_draws(i))
+                .count()
+        };
         match layer {
             // Their pipelines are bound by draw_main, as every other's
             Layer::Terrain => {
                 let (Some(_), Some(mat_bg)) =
                     (&self.pipelines.terrain, &self.terrain.material_bind_group)
                 else {
+                    if let Some(t) = timer {
+                        t.skip(listed());
+                    }
                     return;
                 };
                 render_pass.set_bind_group(1, mat_bg, &[]);
@@ -1482,6 +1573,9 @@ impl SceneRenderer {
             }
             Layer::Billboard => {
                 if self.pipelines.billboard.is_none() {
+                    if let Some(t) = timer {
+                        t.skip(listed());
+                    }
                     return;
                 }
             }
@@ -1493,6 +1587,9 @@ impl SceneRenderer {
             // additive last) and all index one shared instance buffer (ADR 0068).
             Layer::Particles => {
                 let (Some(_), Some(pp)) = (&self.pipelines.particle, &self.particle_buffers) else {
+                    if let Some(t) = timer {
+                        t.skip(listed());
+                    }
                     return;
                 };
                 render_pass
@@ -1508,11 +1605,25 @@ impl SceneRenderer {
         let marks = crate::gpu_labels::draws();
         let mut label = DrawLabel::default();
         let mut state = MainPassState::default();
+        state.bound.twins = twins;
         for item in items.iter().filter(|i| i.drawn()) {
-            if marks && self.main_pass_draws(item) {
+            let listed = self.main_pass_draws(item);
+            if let Some(twins) = twins {
+                if !listed || !self.twinned(item, twins) {
+                    continue;
+                }
+            }
+            if marks && listed {
                 self.draws.mark(render_pass, &mut label, item);
             }
+            let slot = match timer {
+                Some(t) if listed => t.before(render_pass),
+                _ => None,
+            };
             self.draw_main(render_pass, item, &mut state);
+            if let Some(t) = timer {
+                t.after(render_pass, slot);
+            }
         }
         group.close(render_pass);
         match layer {
@@ -1604,6 +1715,26 @@ impl SceneRenderer {
             },
             Draw::Particles(n) => MainPipe::Particles(self.particle_draws.get(*n as usize)?.blend),
         })
+    }
+
+    /// The pipelines the main pass binds for `item` (#1203: the overdraw
+    /// view makes their twins).
+    pub(super) fn item_pipelines(&self, item: &DrawItem) -> Vec<wgpu::RenderPipeline> {
+        let Some(MainPipelines { back, front }) = self
+            .main_pipe(item)
+            .and_then(|pipe| pipe.pipelines(&self.pipelines))
+        else {
+            return Vec::new();
+        };
+        back.into_iter().chain([front]).cloned().collect()
+    }
+
+    /// Whether every pipeline `item` binds has a twin in `twins`.
+    // A wgpu handle hashes and compares by identity, which never changes
+    #[allow(clippy::mutable_key_type)]
+    fn twinned(&self, item: &DrawItem, twins: &Twins) -> bool {
+        let pipelines = self.item_pipelines(item);
+        !pipelines.is_empty() && pipelines.iter().all(|p| twins.contains_key(p))
     }
 
     /// The main pass's selector: one item, through the pipelines its

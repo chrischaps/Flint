@@ -259,6 +259,166 @@ fn hiding_the_lantern_draws_the_scene_written_without_it_and_its_times_are_its_o
     }
 }
 
+/// The replay's `Overdraw` pass's images by target.
+fn overdraw_images(m: &Value) -> Vec<String> {
+    pass_named(m, "Overdraw")["images"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["target"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn each_draws_gpu_time_and_the_overdraw_are_measured_without_moving_a_pixel() {
+    let dir = tmp("measure");
+    let cap = dir.join("two.flintframe");
+    if !capture(&fixture("two_crates.scene.toml"), &cap) {
+        return;
+    }
+    let out = dir.join("measured.flintframe");
+    let r = replay(&cap, &out, &["--draw-times", "--overdraw"]);
+    // Measuring draws nothing differently: the frame and its scene pass
+    // are the captured ones, byte for byte
+    assert_eq!(r["identical"], true, "{r:#}");
+    let m = manifest(&out);
+
+    // Each scene draw's time, unless the adapter has no timestamps inside
+    // passes (said, not failed)
+    let refused = r["refused"].to_string();
+    if refused.contains("TIMESTAMP_QUERY_INSIDE_PASSES") {
+        eprintln!("no timestamps inside passes: draw times skipped");
+    } else {
+        assert_eq!(r["draw_times"]["timed"], 3, "{r:#}");
+        assert_eq!(r["draw_times"]["drawn"], 3);
+        assert_eq!(r["draw_times"]["frames"], 1);
+        let draws = pass_named(&m, "Scene")["draws"].as_array().unwrap().clone();
+        assert_eq!(draws.len(), 3);
+        for d in &draws {
+            let ms = d["gpu_ms"]
+                .as_f64()
+                .unwrap_or_else(|| panic!("untimed: {d:#}"));
+            assert!((0.0..50.0).contains(&ms), "{ms} ms for {}", d["entity"]);
+        }
+        let costliest = r["draw_times"]["costliest"].as_array().unwrap();
+        assert_eq!(costliest.len(), 3);
+        let ms: Vec<f64> = costliest
+            .iter()
+            .map(|c| c["gpu_ms"].as_f64().unwrap())
+            .collect();
+        assert!(ms.windows(2).all(|w| w[0] >= w[1]), "{ms:?}");
+        // `show --sort gpu` lists them costliest first, with the column
+        let o = flint(&[&"frame", &"show", &out, &"--draws", &"--sort", &"gpu"]);
+        let text = ok(&o);
+        assert!(text.contains("GPU ms"), "{text}");
+    }
+    // Without the flag, no draw carries a time
+    let plain = dir.join("plain.flintframe");
+    replay(&cap, &plain, &[]);
+    let plain_m = manifest(&plain);
+    assert!(pass_named(&plain_m, "Scene")["draws"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|d| d.get("gpu_ms").is_none()));
+    assert!(plain_m["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|p| p["name"] != "Overdraw"));
+
+    // The overdraw: its count and heat map, at the scene's size
+    assert_eq!(overdraw_images(&m), ["overdraw_count", "overdraw"]);
+    let o = &r["overdraw"];
+    assert_eq!(o["pixels"], 64 * 36);
+    let max = o["max"].as_u64().unwrap();
+    assert!(max >= 1, "{o:#}");
+    assert!(
+        o["empty"].as_u64().unwrap() > 0,
+        "the sky is no draw: {o:#}"
+    );
+    let heat = image::open(
+        out.join(
+            pass_named(&m, "Overdraw")["images"][1]["file"]
+                .as_str()
+                .unwrap(),
+        ),
+    )
+    .unwrap();
+    assert_eq!((heat.width(), heat.height()), (64, 36));
+
+    // One opaque crate draws each of its pixels once
+    let one = replay(
+        &cap,
+        &dir.join("one.flintframe"),
+        &["--overdraw", "--draws", "1"],
+    );
+    assert_eq!(one["overdraw"]["max"], 1, "{:#}", one["overdraw"]);
+    let shaded_one = 64 * 36 - one["overdraw"]["empty"].as_u64().unwrap();
+    assert!(shaded_one > 0);
+    // and every draw hidden shades nothing
+    let none = replay(
+        &cap,
+        &dir.join("none.flintframe"),
+        &[
+            "--overdraw",
+            "--hide",
+            "crate",
+            "--hide",
+            "ground",
+            "--hide",
+            "lantern",
+        ],
+    );
+    assert_eq!(none["overdraw"]["max"], 0, "{:#}", none["overdraw"]);
+    // The whole frame shades at least what the crate alone did
+    let shaded_all = 64 * 36 - o["empty"].as_u64().unwrap();
+    assert!(shaded_all >= shaded_one, "{shaded_all} < {shaded_one}");
+}
+
+#[test]
+fn more_draws_than_one_query_set_holds_are_timed_a_batch_a_frame() {
+    // 2,100 boxes in a row before the camera: past the 2,048 draws one
+    // query set times, so the replay times them over two frames
+    let dir = tmp("batches");
+    let mut scene = String::from(
+        "[scene]\nname = \"Many boxes\"\n\n[camera]\nposition = [0, 3, 12]\ntarget = [0, 0, 0]\n\n\
+         [entities.sun.light]\ntype = \"directional\"\ndirection = [0.3, 1, 0.2]\n\n",
+    );
+    for i in 0..2100 {
+        let (x, z) = ((i % 60) as f32 * 0.2 - 6.0, (i / 60) as f32 * -0.2);
+        scene.push_str(&format!(
+            "[entities.box_{i:04}.transform]\nposition = [{x}, 0, {z}]\n\n\
+             [entities.box_{i:04}.bounds]\nmin = [-0.05, -0.05, -0.05]\nmax = [0.05, 0.05, 0.05]\n\n"
+        ));
+    }
+    let path = dir.join("many.scene.toml");
+    std::fs::write(&path, scene).unwrap();
+    let cap = dir.join("many.flintframe");
+    if !capture(&path, &cap) {
+        return;
+    }
+    let drawn = scene_draws(&manifest(&cap)).len();
+    assert!(drawn > 2048, "only {drawn} draws");
+    let out = dir.join("timed.flintframe");
+    let r = replay(&cap, &out, &["--draw-times"]);
+    if r["refused"]
+        .to_string()
+        .contains("TIMESTAMP_QUERY_INSIDE_PASSES")
+    {
+        eprintln!("no timestamps inside passes: skipped");
+        return;
+    }
+    assert_eq!(r["identical"], true, "{r:#}");
+    assert_eq!(r["draw_times"]["frames"], 2, "{:#}", r["draw_times"]);
+    assert_eq!(r["draw_times"]["timed"], drawn);
+    assert_eq!(r["draw_times"]["drawn"], drawn);
+    let m = manifest(&out);
+    let draws = pass_named(&m, "Scene")["draws"].as_array().unwrap().clone();
+    let untimed = draws.iter().filter(|d| !d["gpu_ms"].is_number()).count();
+    assert_eq!(untimed, 0, "{untimed} of {drawn} draws untimed");
+}
+
 #[test]
 fn a_capture_whose_model_moved_is_replayed_with_the_model_named() {
     let dir = tmp("moved");
