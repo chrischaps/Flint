@@ -1167,6 +1167,8 @@ mod tests {
             flint_render::frame_capture::CapturedFrame {
                 images: Vec::new(),
                 untapped: Vec::new(),
+                gpu_copy_ms: None,
+                gpu_copies_timed: 0,
                 record_ms: 0.0,
                 wait_ms: None,
                 copy_out_ms: 0.0,

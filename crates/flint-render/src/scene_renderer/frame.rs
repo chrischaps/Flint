@@ -264,7 +264,7 @@ impl SceneRenderer {
             **log = Default::default();
         }
         // and a captured one its copies (#1085)
-        self.reset_frame_taps(queue);
+        self.reset_frame_taps();
         self.take_inputs(queue, inputs);
         self.update_from_world(world, device);
         match inputs.particles {
@@ -447,11 +447,15 @@ impl SceneRenderer {
         // description, while one is asked for (#1084): each part logs its
         // pass where it opens its scope.
         // With them a captured frame's copies (#1085): each pass's targets
-        // are read as it ends (`tap_pass`).
+        // are read as it ends (`tap_pass`), each timed in this queue's
+        // ticks (#1160: a still arms the capture after its `prepare`)
         let mut scopes = crate::frame_capture::FrameScopes {
             timer: self.gpu_timer.take(),
             log: self.frame_log.take(),
-            taps: self.frame_taps.take(),
+            taps: self.frame_taps.take().map(|mut taps| {
+                taps.times_in(queue);
+                taps
+            }),
             // A host's skip and repeat knobs (#1317), else None
             knobs: self.pass_knobs.take(),
         };

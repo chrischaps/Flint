@@ -255,8 +255,9 @@ pub(crate) struct FrameTaps {
     timer: Option<CopyTimer>,
     /// Whether the device has been asked: one that can't time is asked once.
     timer_asked: bool,
-    /// Nanoseconds a timestamp tick, from the queue `prepare` drew with; 0
-    /// until it says, and then nothing is timed.
+    /// Nanoseconds a timestamp tick, from the queue the frame is encoded
+    /// for ([`times_in`](Self::times_in)); 0 until it says, and then nothing
+    /// is timed.
     period_ns: f32,
 }
 
@@ -275,9 +276,8 @@ impl FrameTaps {
         }
     }
 
-    /// Start the frame again: a `prepare` begins the frame being described,
-    /// on `queue`, whose timestamp period the copies' times are read in.
-    pub fn reset(&mut self, queue: &wgpu::Queue) {
+    /// Start the frame again: a `prepare` begins the frame being described.
+    pub fn reset(&mut self) {
         self.view = self.host.clone();
         self.taps.clear();
         self.tapped.clear();
@@ -286,11 +286,18 @@ impl FrameTaps {
         if let Some(timer) = &mut self.timer {
             timer.used = 0;
         }
+    }
+
+    /// Read the copies' timestamps in `queue`'s period: the frame is
+    /// encoded for it (`encode_to`, which every captured frame goes
+    /// through, whether or not its `prepare` came after the capture was
+    /// armed).
+    pub fn times_in(&mut self, queue: &wgpu::Queue) {
         self.period_ns = queue.get_timestamp_period();
     }
 
     /// The timer slot for the next copy: `None` on a device that can't
-    /// time, before `prepare` gave a period, or past [`MAX_TIMED_COPIES`].
+    /// time, before `times_in` gave a period, or past [`MAX_TIMED_COPIES`].
     fn timer_slot(&mut self, device: &wgpu::Device) -> Option<u32> {
         if self.period_ns <= 0.0 {
             return None;

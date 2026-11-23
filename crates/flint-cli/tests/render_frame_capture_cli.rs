@@ -137,6 +137,26 @@ fn a_capture_is_every_passs_image_and_ends_on_the_output() {
         manifest["capture"]["images"].as_u64().unwrap() as usize,
         images.len()
     );
+    // The copies' GPU time (#1160): on an adapter that times, every copy of
+    // this still (armed after its prepare) is timed and the capture's figure
+    // is theirs together; on one that can't, none is
+    let copy_ms: Vec<Option<f64>> = all
+        .iter()
+        .flat_map(|p| p["images"].as_array().unwrap().iter())
+        .map(|i| i["gpu_copy_ms"].as_f64())
+        .collect();
+    let timed = manifest["capture"]["gpu_copies_timed"].as_u64().unwrap() as usize;
+    match manifest["capture"]["gpu_copy_ms"].as_f64() {
+        Some(total) => {
+            assert_eq!(timed, images.len(), "every copy timed");
+            let each: f64 = copy_ms.iter().map(|ms| ms.expect("each image timed")).sum();
+            assert!((total - each).abs() < 1e-6, "{total} against {each}");
+        }
+        None => {
+            assert_eq!(timed, 0);
+            assert!(copy_ms.iter().all(Option::is_none), "{copy_ms:?}");
+        }
+    }
 
     // The last surface image is the output, byte for byte
     let last = images

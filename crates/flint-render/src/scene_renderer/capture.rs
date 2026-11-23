@@ -101,11 +101,10 @@ impl SceneRenderer {
         self.frame_taps.take().map(|t| t.finish())
     }
 
-    /// The frame being captured starts again: a `prepare` begins it, on
-    /// `queue` (the copies' timestamps are read in its period, #1160).
-    pub(super) fn reset_frame_taps(&mut self, queue: &wgpu::Queue) {
+    /// The frame being captured starts again: a `prepare` begins it.
+    pub(super) fn reset_frame_taps(&mut self) {
         if let Some(taps) = &mut self.frame_taps {
-            taps.reset(queue);
+            taps.reset();
         }
     }
 
