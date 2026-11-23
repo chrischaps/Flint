@@ -836,12 +836,14 @@ that two runs write byte for byte. Exit 1 on any failure. The whole story is
 ```bash
 flint playtest flint-examples/phase4_runtime.scene.toml     --input-script flint-examples/playtests/phase4_runtime.playtest.txt --exit-after 8
 flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --json
+flint playtest scenes/level1.scene.toml --test-script playtests/coins.rhai --timeout 30
 flint playtest scenes/level1.scene.toml --render --screenshot shots/t2.png --screenshot-at 2
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--input-script <file>` | Keys, pads and the pointer, and `expect` / `wait` lines that check the game |
+| `--test-script <file>` | A Rhai file of the playtest's own checks, attached to an entity the run spawns in every scene (`playtest`; repeatable, `playtest_2` ...): the whole script API and `test_*`, with nothing added to the scene |
 | `--exit-after <s>` | End at this game time, passing if nothing failed (10 when neither this nor `--timeout` is given) |
 | `--timeout <s>` | End at this game time as a failure: the run should have ended itself (`test_pass()`, `test_fail()`, `quit_game()`) |
 | `--frame-step <s>` | Game seconds a frame (default 1/60) |

@@ -141,6 +141,10 @@ pub struct LaunchOptions {
     /// a playtest's `screen_width()` is its `--width`, not egui's
     /// placeholder). `None` keeps egui's.
     pub headless_screen: Option<(f32, f32)>,
+    /// `flint playtest --test-script` (#1192): Rhai files, each attached
+    /// to an entity the player spawns in every scene it enters (`playtest`,
+    /// then `playtest_2` ...), loaded beside the scene's own scripts.
+    pub test_scripts: Vec<std::path::PathBuf>,
     /// `--inspect-listen` (#713): the loopback socket that answers queries
     /// about the live world, handed to its subsystem at the start.
     #[cfg(not(target_arch = "wasm32"))]
@@ -184,6 +188,7 @@ impl Default for LaunchOptions {
             saves_in_memory: false,
             load_report: false,
             headless_screen: None,
+            test_scripts: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             inspect: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -228,6 +233,7 @@ impl std::fmt::Debug for LaunchOptions {
             saves_in_memory,
             load_report,
             headless_screen,
+            test_scripts,
             #[cfg(not(target_arch = "wasm32"))]
             inspect,
             #[cfg(not(target_arch = "wasm32"))]
@@ -262,7 +268,8 @@ impl std::fmt::Debug for LaunchOptions {
             .field("strict_scripts", strict_scripts)
             .field("saves_in_memory", saves_in_memory)
             .field("load_report", load_report)
-            .field("headless_screen", headless_screen);
+            .field("headless_screen", headless_screen)
+            .field("test_scripts", test_scripts);
         #[cfg(not(target_arch = "wasm32"))]
         s.field("inspect", &inspect.is_some())
             .field("world_dump", &world_dump.is_some());
