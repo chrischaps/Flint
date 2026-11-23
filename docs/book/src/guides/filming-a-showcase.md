@@ -71,14 +71,34 @@ an error, fails the run (exit 1) and names its log.
 | `--tolerance N` | With `--verify`: how many 8-bit levels still count as the same frame (default 0) |
 | `--encode mp4` | Also `<shot>/<take>.mp4` from each take: H.264, BT.709, no sound (needs ffmpeg on `PATH`) |
 | `--dry-run` | Print the takes, their frames and each command line; capture nothing |
+| `--no-disk-check` | Capture even when the estimate passes 90% of the disk's free space |
 | `--schemas DIR` | Schema directories for the player (default: the scene's project's `flint.toml`) |
 | `-- FLAGS` | Anything after `--` goes to every take's `flint play` |
 
 With `--json` the answer is one document: each take's record (`take.json`'s
 fields, its folder, `ok`, and `verify` with `--verify`), `failed` and a
-summary. The run prints a disk estimate first, at about 8 MB a 4K frame:
-the film's 10,940 frames at 60 fps were 77 GB, so big runs go outside the
-repository (`out = "~/flint-film"`; `captures/` is in `.gitignore`).
+summary. The run prints a disk estimate first, at about 8 MB a 4K frame,
+and the free space of the disk under `out`: the film's 10,940 frames at
+60 fps were 77 GB, so big runs go outside the repository
+(`out = "~/flint-film"`; `captures/` is in `.gitignore`).
+
+A run whose estimate passes 90% of that free space stops before the first
+take. Old takes the run replaces count as room, since each take's folder is
+emptied before it is written, and with `--verify` the second run of a take
+counts only while it sits beside the first. The error says what it would
+need and offers the ways out:
+
+```text
+Error: this capture won't fit: it needs ~688.4 GB at once, and the disk under showcase_game\captures\trailer has 420.4 GB free (a run may fill 90% of it)
+ways out:
+  --scale 20        ~172.1 GB: smaller frames, the same layout
+  --shot <id>       fewer shots (the largest, garden, is ~344.2 GB)
+  --out <dir>       a disk with more room
+  --no-disk-check   capture anyway
+```
+
+`--dry-run` prints the same warning and still lists the takes; its JSON
+has a `disk` block (`need_bytes`, `free_bytes`, `reclaimed_bytes`, `fits`).
 
 ### The shot list
 

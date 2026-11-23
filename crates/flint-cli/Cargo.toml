@@ -89,6 +89,14 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 rfd = { workspace = true, optional = true }
 
+# `flint capture` asks the disk under `out` for its free space (#1196): std
+# has no call for it. Both already in the tree, these features included.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 naga = { version = "30.0.2", features = ["wgsl-in"] }
 # A JSON Schema validator, for the test that `flint schema --format json-schema`

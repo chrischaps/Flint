@@ -885,6 +885,7 @@ flint capture flint-examples/tools/showcase/film.toml --shot 02_type --scale 0.5
 | `--tolerance <levels>` | With `--verify`: the largest 8-bit difference that still counts as the same |
 | `--encode mp4` | Also an MP4 a take (H.264, BT.709, no sound; needs ffmpeg on `PATH`) |
 | `--dry-run` | Print each take's frames and `flint play` command line; capture nothing |
+| `--no-disk-check` | Capture even when the estimate (8 MB a 4K frame) passes 90% of the free space under `--out`; without it such a run stops before any take |
 | `--schemas <dir>` | Schema directories for the player (repeatable; default: the scene's project's) |
 
 Words after `--` are added to every take's `flint play` command line.
