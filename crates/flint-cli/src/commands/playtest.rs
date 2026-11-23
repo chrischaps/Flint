@@ -176,6 +176,25 @@ fn summary(report: &PlaytestReport) -> String {
             }
         ));
     }
+    if let Some(save) = &report.save {
+        let found = if save.loaded == "read" {
+            format!(
+                "read {} keys at version {} (the game's {}), at {} by the end",
+                save.keys, save.version, save.game_version, save.version_at_end
+            )
+        } else {
+            "corrupt, so the store began empty".to_string()
+        };
+        out.push_str(&format!(
+            "  from save {}: {found}; the file {}\n",
+            save.file,
+            if save.untouched {
+                "is untouched"
+            } else {
+                "changed"
+            }
+        ));
+    }
     for line in report.failure_lines() {
         out.push_str(&format!("  {line}\n"));
     }

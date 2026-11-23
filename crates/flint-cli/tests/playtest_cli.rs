@@ -404,6 +404,31 @@ fn a_playtest_starts_from_a_save_migrates_it_and_writes_nothing() {
     assert_eq!(fresh["persist"]["visits"], 1);
     assert!(fresh["log"].get("migrated_from").is_none());
     assert!(fresh.get("save").is_none(), "{fresh:#}");
+
+    // The text says where the run began
+    let schemas = schemas();
+    let out = flint(
+        &dir,
+        &[
+            "playtest",
+            "game.scene.toml",
+            "--schemas",
+            &schemas,
+            "--save-from",
+            "saves/returning.toml",
+            "--exit-after",
+            "0.2",
+        ],
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains(
+            "from save saves/returning.toml: read 2 keys at version 1 (the game's 2), \
+             at 2 by the end; the file is untouched"
+        ),
+        "{text}"
+    );
+    assert_eq!(files_under(&dir), before);
 }
 
 /// A save that doesn't parse: the store begins empty and scripts read
