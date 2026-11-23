@@ -74,7 +74,7 @@ pub use player_app::living_props::{
 };
 pub use player_app::playtest::{
     run as playtest, Ended as PlaytestEnded, Failure as PlaytestFailure, PlaytestOptions,
-    PlaytestReport, DEFAULT_STEP as PLAYTEST_STEP,
+    PlaytestReport, SaveReport as PlaytestSave, DEFAULT_STEP as PLAYTEST_STEP,
 };
 pub use player_app::playtest_warnings::warning_layer as playtest_warning_layer;
 #[cfg(feature = "procgen")]
