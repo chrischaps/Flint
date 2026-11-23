@@ -343,6 +343,8 @@ fn diagnose_entities(
     // A loop of parents needs the whole scene to see, and no schema
     if lookup.is_some() {
         found.extend(parent_cycles(scene));
+        // So does which entity is the player
+        found.extend(second_players(scene, registry));
     }
     if let Some(file) = file {
         for d in &mut found {
@@ -416,6 +418,52 @@ fn parent_cycles(scene: &SceneFile) -> Vec<Diagnostic> {
         done.extend(path);
     }
     found
+}
+
+/// `second-player` (#1212): the player is the first entity by name that
+/// carries a `character_controller`, written or from its archetype
+/// (`flint_physics::PhysicsSystem::initialize` walks the world's names in
+/// order and takes the first), and the controller of every other entity is
+/// never read: it doesn't walk, turn or jump. One warning on each of those,
+/// naming the player. A warning: the scene plays, with one player.
+fn second_players(scene: &SceneFile, registry: &SchemaRegistry) -> Vec<Diagnostic> {
+    use flint_core::components::CHARACTER_CONTROLLER;
+    let mut carrying: Vec<&str> = scene
+        .entities
+        .iter()
+        .filter(|(_, entity)| {
+            entity.components.contains_key(CHARACTER_CONTROLLER)
+                || entity
+                    .archetype
+                    .as_deref()
+                    .and_then(|a| registry.get_archetype(a))
+                    .is_some_and(|a| a.components.iter().any(|c| c == CHARACTER_CONTROLLER))
+        })
+        .map(|(name, _)| name.as_str())
+        .collect();
+    carrying.sort_unstable();
+    let Some((player, others)) = carrying.split_first() else {
+        return Vec::new();
+    };
+    others
+        .iter()
+        .map(|&other| {
+            Diagnostic::warning(
+                codes::SECOND_PLAYER,
+                format!(
+                    "`{player}` is the player (the first entity by name with a \
+                     `character_controller`), so this one's controller is never read"
+                ),
+            )
+            .entity(other)
+            .component(CHARACTER_CONTROLLER)
+            .hint(format!(
+                "keep one `character_controller` in the scene; to make `{other}` the player, \
+                 take it off `{player}`. A character a script walks needs none: \
+                 `move_character(id, dx, dy, dz)` moves any collider"
+            ))
+        })
+        .collect()
 }
 
 /// What to do about a table named after a kind of light: nothing reads it,
@@ -1890,6 +1938,67 @@ archetype = "crate"
             .as_deref()
             .unwrap()
             .contains("body_type = \"static\""));
+    }
+
+    /// #1212: two entities with a `character_controller` (one from its
+    /// archetype) are one player, the first by name, as physics picks it;
+    /// the other is told so, naming the player. One alone is no warning,
+    /// and neither is a chunk's pass, which has no whole scene to count.
+    #[test]
+    fn a_second_character_controller_names_the_player() {
+        let schemas: &[(&str, &str)] = &[
+            (
+                "schemas/components/character_controller.toml",
+                "[component.character_controller]\n",
+            ),
+            (
+                "schemas/archetypes/player.toml",
+                "[archetype.player]\ncomponents = [\"transform\", \"character_controller\"]\n",
+            ),
+        ];
+        let two = r#"
+[scene]
+name = "s"
+
+[entities.zed.character_controller]
+move_speed = 3.0
+
+[entities.hero]
+archetype = "player"
+
+[entities.lamp.transform]
+"#;
+        let one = "[scene]\nname = \"s\"\n[entities.hero]\narchetype = \"player\"\n";
+        let mut files: Vec<(&str, &str)> = schemas.to_vec();
+        files.push(("scenes/two.scene.toml", two));
+        files.push(("scenes/one.scene.toml", one));
+        let (found, alone, chunk) = with_scene(&files, |registry, project| {
+            let chunk = SceneFile::parse(two).unwrap();
+            (
+                diagnose(Path::new("scenes/two.scene.toml"), registry, project),
+                diagnose(Path::new("scenes/one.scene.toml"), registry, project),
+                diagnose_scene(&chunk, None, registry),
+            )
+        });
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "warning[second-player] entity 'zed' component 'character_controller': `hero` \
+              is the player (the first entity by name with a `character_controller`), so \
+              this one's controller is never read"
+            ]
+        );
+        assert!(found[0]
+            .hint
+            .as_deref()
+            .unwrap()
+            .contains("take it off `hero`"));
+        assert!(alone.is_empty(), "{alone:?}");
+        assert!(
+            chunk.iter().all(|d| d.code != codes::SECOND_PLAYER),
+            "{chunk:?}"
+        );
     }
 
     /// The loaders say the same things: a reference to nothing doesn't stop

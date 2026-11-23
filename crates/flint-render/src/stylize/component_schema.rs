@@ -147,6 +147,7 @@ pub fn component_schema(d: &StyleDescriptor) -> Option<ComponentSchema> {
         )),
         fields,
         panel: None,
+        retired: Default::default(),
     })
 }
 
@@ -435,6 +436,7 @@ choices = ["lines", "dots"]
             description: Some("open".into()),
             fields: HashMap::new(),
             panel: None,
+            retired: Default::default(),
         });
         let added = add_component_schemas(&styles, &mut registry);
         assert!(added.contains(&"holo556_style".to_string()), "{added:?}");
@@ -449,6 +451,7 @@ choices = ["lines", "dots"]
             description: None,
             fields,
             panel: None,
+            retired: Default::default(),
         };
         registry.register_component(written.clone());
         let added = add_component_schemas(&styles, &mut registry);

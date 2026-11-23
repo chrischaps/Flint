@@ -214,7 +214,6 @@ position = [1.2, 1.0, -17.0]
 [entities.player.character_controller]
 move_speed = 3.6
 jump_force = 5.0
-camera_mode = "first_person"
 
 # --- In the middle: what doesn't grow. One clock, so the lantern stays by the bench ---
 

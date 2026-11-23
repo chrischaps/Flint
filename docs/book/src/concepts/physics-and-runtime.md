@@ -61,7 +61,17 @@ Four component schemas define physics properties:
 - `start_yaw`: the facing the scene starts with, degrees about +Y (0 faces +Z, 90 faces +X)
 - `look_sensitivity` (0.172 degrees per unit of raw mouse motion) and `pitch_limit` (80 degrees from level)
 - `gravity_scale` (1, times the physics world's gravity), `step_height` (0.5, the tallest ledge walked up; 0 turns it off), `snap_to_ground` (0.2; 0 turns it off)
-- `height` (the eye sits at 0.85 of it), and `radius` and `camera_mode`, which nothing reads yet
+- `height` (the eye sits at 0.85 of it). The capsule is the entity's `collider`, and the camera is first person: the `radius` and `camera_mode` fields went in #1212, and a scene that still writes one is told so (`unknown-field`, with why)
+
+**One player.** The player is the first entity by name with a `character_controller`; another one's controller is never read. A scene with two says so at load and in `flint check`:
+
+```text
+warning[second-player] entity 'zed' component 'character_controller': `hero` is the player (the first entity by name with a `character_controller`), so this one's controller is never read
+```
+
+A character a script walks needs no controller: `move_character(id, dx, dy, dz)` moves any entity's collider and slides it along what it meets.
+
+**The actions it reads** are `move_forward`, `move_backward`, `move_left`, `move_right`, `sprint` and `jump`. A game binds its own keys and pads to them in its input config ([Input Configuration Files](#input-configuration-files)); the names themselves are fixed ([ADR 0134](https://github.com/chrischaps/Flint/blob/main/docs/adr/0134-the-character-controller-stays-in-physics-with-fixed-action-names.md)).
 
 Mouse look and the jump press are taken once a frame, and the walk once a fixed step. So a turn is the same at 30, 60 or 144 frames a second, and a jump pressed on a frame that runs no physics step still jumps at the next one.
 

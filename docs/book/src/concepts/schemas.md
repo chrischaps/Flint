@@ -222,6 +222,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `bad-prefab` | error | a `[prefabs.<name>]` instance whose template is missing, doesn't parse, or collides with an entity; the rest of the scene is still checked |
 | `no-schemas` | warning | no schema is loaded at all, so nothing was checked (said once, not per entity) |
 | `needs-component` | warning | a component that does nothing without another the entity lacks: a `collider` with no `rigidbody` (written or from its archetype; a terrain or spline mesh makes its own body). Raised by `flint validate` and at load, and again [while the game runs](#diagnostics-while-the-game-runs) by the system that reads it |
+| `second-player` | warning | a `character_controller` (written or from its archetype) on an entity that is not the player. The player is the first entity by name carrying one; the others' controllers are never read, and each is told which entity is the player. Raised by `flint validate`, `flint check` and at load |
 | `unknown-entity` | error | an `entity` field, or an entity's `parent`, names no entity of the scene; the hint is the nearest name. An empty string is "not set" and passes |
 | `parent-cycle` | error | the entities' `parent`s close into a loop: one parented to itself, or `a` under `b` under `a`. Said once a loop, on its first entity by name, with the chain; the scene does not load |
 | `missing-asset` | error | an `asset` field names no file the project's asset search finds; the hint lists every path tried |
@@ -461,10 +462,15 @@ description = "First-person character controller"
 [component.character_controller.fields]
 move_speed = { type = "f32", default = 5.0, min = 0.0 }
 jump_force = { type = "f32", default = 7.0, min = 0.0 }
-height = { type = "f32", default = 1.8, min = 0.1 }
-radius = { type = "f32", default = 0.4, min = 0.1 }
-camera_mode = { type = "enum", values = ["first_person", "orbit"], default = "first_person" }
+height = { type = "f32", min = 0.1 }
+
+# Fields taken out, each with what a scene still writing one is told (#1212)
+[component.character_controller.retired]
+radius = "nothing read it: the capsule is the entity's `collider` (...); remove it"
+camera_mode = "nothing read it: a character's camera is always first person (...); remove it"
 ```
+
+A `[component.<name>.retired]` table names fields a component no longer has. A scene that still writes one gets `unknown-field`, as for any field the schema doesn't declare, but the message ends `any more` and the hint is the reason written there instead of the nearest field's name. An extension's `retired` adds to the declaring layer's.
 
 ### Sprite
 
@@ -779,11 +785,9 @@ Components:
 
 Defaults:
   [character_controller]
-    camera_mode = "first_person"   [1]
     height = 1.8   [1]
     jump_force = 6   [1]
     move_speed = 7.5   [2]
-    radius = 0.3   [1]
   ...
 ```
 
