@@ -237,9 +237,13 @@ pub(super) fn write(
             .filter(|p| !p.images.is_empty())
             .count();
         let untapped = description.capture.as_ref().map_or(0, |c| c.untapped.len());
+        let copies = description
+            .capture
+            .as_ref()
+            .map_or(String::new(), |c| c.gpu_copy_words());
         said.push(format!(
             "Captured the frame to {dir}: {} images from {passes} passes, {:.1} MB on disk \
-             ({:.1} MB read back){timed}{}",
+             ({:.1} MB read back{copies}){timed}{}",
             written.images,
             written.file_bytes as f64 / 1e6,
             written.raw_bytes as f64 / 1e6,
