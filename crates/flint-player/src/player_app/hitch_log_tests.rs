@@ -9,7 +9,9 @@
 //!
 //! No GPU: the stalls are the script's. The detector's floor is raised to
 //! 60 ms here so a busy machine's own hiccups (several agents build on
-//! this one) don't count: the stalls are 150 ms.
+//! this one) don't count: the stalls are 150 ms. One that does count is
+//! staged at 2.51 s ([`Hiccup`], #1194): its line names the scene's one
+//! script, as every player hitch's line does, and it is no stall.
 
 use super::scene_entry::SceneEntry;
 use super::PlayerApp;
@@ -37,6 +39,29 @@ fn on_update() {
 "#;
 
 const CALM: &str = "fn on_update() { let t = total_time(); }";
+
+/// The machine's own hitch, as a busy one makes (#1194): the frame blocked
+/// 200 ms at sync on the frame game time crosses 2.51 s, outside any script.
+/// Its line names the frame's longest timed callback all the same: the
+/// scene's one script with the fraction of a ms it took, or the reload poll
+/// (`[hot reload]`, 69-169 ms on a loaded machine: 40 of these tests at once).
+struct Hiccup;
+
+impl super::subsystem::Subsystem for Hiccup {
+    fn name(&self) -> &'static str {
+        "hiccup"
+    }
+
+    fn update(&mut self, stage: super::subsystem::Stage, ctx: &mut super::subsystem::StageCtx) {
+        let (t, dt) = (ctx.clock.total_time, ctx.clock.delta_time);
+        if stage == super::subsystem::Stage::Sync && t - dt < HICCUP_AT && t >= HICCUP_AT {
+            let start = std::time::Instant::now();
+            while start.elapsed().as_secs_f64() < 0.2 {}
+        }
+    }
+}
+
+const HICCUP_AT: f64 = 2.51;
 
 fn game(script: &str) -> MemorySource {
     let mut files = MemorySource::new();
@@ -89,6 +114,7 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
     let log = log_path("stall");
     vfs::scoped(Arc::new(game(STALL)), || {
         let mut app = started();
+        app.core.subsystems.push(Box::new(Hiccup));
         app.log_hitches_to(&log).expect("the log opens");
         app.gate_hitches(HitchGate {
             max: Some(0),
@@ -102,9 +128,17 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
             .collect();
+        // A stall's line is the one whose script took the stall's 150 ms
+        // (#1194): `script` names the frame's longest callback on every
+        // player hitch, and this scene has one script, so a busy machine's
+        // own hitch names it too, with the few ms it took. The name too: a
+        // loaded machine's reload poll (`[hot reload]`) can take 150 ms
         let stalls: Vec<&serde_json::Value> = lines
             .iter()
-            .filter(|l| l["script"] == "stall.rhai:on_update")
+            .filter(|l| {
+                l["script"] == "stall.rhai:on_update"
+                    && l["script_ms"].as_f64().is_some_and(|ms| ms >= 150.0)
+            })
             .collect();
         assert_eq!(
             stalls.len(),
@@ -139,9 +173,18 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
             .map(|l| l["startup"].as_bool().unwrap())
             .collect();
         assert_eq!(startup, [true, false, false, false]);
+        // The machine's hitch: logged as the sync's, and no stall
+        let h = lines
+            .iter()
+            .find(|l| (HICCUP_AT..HICCUP_AT + STEP).contains(&l["game_time"].as_f64().unwrap()))
+            .unwrap_or_else(|| panic!("the hiccup is logged: {text}"));
+        assert_eq!(h["phase"], "sync", "{h}");
+        assert!(!stalls.contains(&h), "{h}");
 
-        // The stalls exactly; the totals at least, since a machine busy
-        // enough can add a hitch of its own past the 60 ms floor
+        // The tallies count what the log says the script caused: the
+        // stalls, and on a machine busy enough a call of the script's that
+        // the machine stretched past the 60 ms floor (#1194: 40 of these
+        // tests at once on 24 threads made one in about 50 runs)
         let watch = &app.stats.watch;
         let stall = |t: &super::hitch_watch::Tally| {
             t.all
@@ -150,8 +193,21 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
                 .find(|(k, _)| k == "script stall.rhai:on_update")
                 .map_or(0, |(_, n)| *n)
         };
-        assert_eq!(stall(&watch.run), 3, "{:?}", watch.run);
-        assert_eq!(stall(&watch.startup), 1, "{:?}", watch.startup);
+        let logged = |startup: bool| {
+            lines
+                .iter()
+                .filter(|l| l["startup"] == startup)
+                .filter(|l| {
+                    l["cause"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("script stall.rhai:on_update ")
+                })
+                .count() as u64
+        };
+        assert_eq!(stall(&watch.run), logged(false), "{:?}", watch.run);
+        assert_eq!(stall(&watch.startup), logged(true), "{:?}", watch.startup);
+        assert!(stall(&watch.run) >= 3 && stall(&watch.startup) >= 1);
         let (run, start) = (watch.run.clone(), watch.startup.clone());
         let report = watch.report();
         assert!(
@@ -159,7 +215,10 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
             "{report:?}"
         );
         assert!(
-            report[0].contains("causes: 3 script stall.rhai:on_update"),
+            report[0].contains(&format!(
+                "{} script stall.rhai:on_update",
+                stall(&watch.run)
+            )),
             "{report:?}"
         );
         assert!(
