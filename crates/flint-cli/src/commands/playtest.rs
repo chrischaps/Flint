@@ -60,6 +60,12 @@ pub struct PlaytestArgs {
     #[arg(long)]
     pub strict: bool,
 
+    /// Start from this save file, loaded as the player loads a save (its
+    /// version, `on_persist_migrate`, a file that doesn't parse); the run
+    /// still writes nothing, and the file is left as it is
+    #[arg(long, value_name = "FILE")]
+    pub save_from: Option<PathBuf>,
+
     /// Put this entity's components at the end in the report (repeatable)
     #[arg(long, value_name = "ENTITY", action = clap::ArgAction::Append)]
     pub dump: Vec<String>,
@@ -192,6 +198,7 @@ pub fn run(args: PlaytestArgs) -> Result<()> {
     options.screenshot = args.drawn.screenshot.clone();
     options.screenshot_at = args.drawn.screenshot_at;
     options.screenshot_every = args.drawn.screenshot_every;
+    options.save_from = args.save_from.clone();
 
     output::progress!("playtest: {}", args.scene);
     let mut report = flint_player::playtest(&options);

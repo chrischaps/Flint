@@ -9,7 +9,8 @@
 //! leaves out is presentation: the window, the renderer and the sound
 //! device. A model is not loaded (nothing draws it); a sound is (a missing
 //! file still warns). Saves stay in memory: a playtest starts from no save
-//! file and writes none. Hot reload is off, and `random()` is seeded.
+//! file, or from the one `save_from` names (#1193), and writes none. Hot
+//! reload is off, and `random()` is seeded.
 //!
 //! The run ends at the first of: a script's `test_pass()` or `test_fail()`,
 //! `quit_game()`, a failed scene transition, `exit_after` (the end of a
@@ -73,6 +74,11 @@ pub struct PlaytestOptions {
     pub screenshot: Option<PathBuf>,
     pub screenshot_at: f64,
     pub screenshot_every: Option<f64>,
+    /// Start from this save file (#1193): its text is the default slot's,
+    /// loaded as the player loads a save (its version, the scripts'
+    /// `on_persist_migrate`, a file that doesn't parse), and the file is
+    /// never written.
+    pub save_from: Option<PathBuf>,
 }
 
 impl PlaytestOptions {
@@ -93,6 +99,7 @@ impl PlaytestOptions {
             screenshot: None,
             screenshot_at: 0.0,
             screenshot_every: None,
+            save_from: None,
         }
     }
 }
@@ -121,7 +128,7 @@ pub enum Ended {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Failure {
     /// `assertion`, `test_fail`, `check`, `script_error`, `scene`,
-    /// `timeout`, `start`, `load_warning` or `screenshot`; `preflight` for
+    /// `timeout`, `start`, `load_warning`, `screenshot` or `save_from`; `preflight` for
     /// what `flint playtest --strict` adds from `flint check`.
     pub kind: &'static str,
     pub message: String,
@@ -244,6 +251,31 @@ pub struct ScreenshotReport {
     pub height: u32,
 }
 
+/// The save a run started from (`save_from`, #1193), and what the run left
+/// of it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SaveReport {
+    /// The file, as given.
+    pub file: String,
+    /// What the load found: `read`, or `corrupt` (the text didn't parse,
+    /// the store began empty and scripts see `persist_corrupt()`).
+    pub loaded: &'static str,
+    /// The keys read.
+    pub keys: usize,
+    /// The version the file was saved at (`[meta] version`, 0 with none).
+    pub version: i64,
+    /// The game's version (`[project] save_version`): a file below it is
+    /// migrated by the scripts' `on_persist_migrate(from)`.
+    pub game_version: i64,
+    /// The data's version at the end: the game's once migrated.
+    pub version_at_end: i64,
+    /// Why it didn't parse, when it didn't.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// The file holds the bytes it held before the run.
+    pub untouched: bool,
+}
+
 /// Everything a playtest found, as `flint playtest` writes it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PlaytestReport {
@@ -274,6 +306,9 @@ pub struct PlaytestReport {
     /// The screenshots written, in order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub screenshots: Vec<ScreenshotReport>,
+    /// The save the run started from, with `save_from`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub save: Option<SaveReport>,
 }
 
 impl PlaytestReport {
@@ -328,6 +363,7 @@ fn not_started(options: &PlaytestOptions, why: String) -> PlaytestReport {
         },
         render: None,
         screenshots: Vec::new(),
+        save: None,
     }
 }
 
@@ -366,6 +402,19 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
         .as_deref()
         .map(crate::InputScript::load)
         .transpose()?;
+    let save_seed = options
+        .save_from
+        .as_deref()
+        .map(|file| {
+            let text = flint_core::vfs::read_to_string(file)
+                .with_context(|| format!("--save-from: cannot read {}", file.display()))?;
+            anyhow::Ok(flint_runtime::SaveText {
+                text,
+                from: shown(file),
+                old_place: false,
+            })
+        })
+        .transpose()?;
     #[cfg_attr(not(feature = "living"), allow(unused_mut))]
     let (world, mut scene_file) = flint_scene::load_scene(&scene, &registry)
         .with_context(|| flint_scene::load_failed(&scene))?;
@@ -383,6 +432,7 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
     );
     let launch = &mut app.launch;
     launch.saves_in_memory = true;
+    launch.save_seed = save_seed;
     launch.headless_screen = Some(options.screen);
     launch.window_size = (options.screen.0 as u32, options.screen.1 as u32);
     // An unattended run writes nothing beside the game
@@ -408,6 +458,43 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
         return Err(e).context("the scene did not start");
     }
     Ok(app)
+}
+
+/// A path as a report says it, the same on every platform.
+fn shown(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// What became of the `save_from` file: what loading it found, the data's
+/// version now, and whether the file still holds what it held.
+fn save_report(app: &PlayerApp, options: &PlaytestOptions) -> Option<SaveReport> {
+    let file = options.save_from.as_deref()?;
+    let before = app.launch.save_seed.as_ref()?;
+    let store = &app.core.store;
+    let mut report = SaveReport {
+        file: shown(file),
+        loaded: "read",
+        keys: 0,
+        version: 0,
+        game_version: store.game_version(),
+        version_at_end: store.version(),
+        error: None,
+        untouched: flint_core::vfs::read_to_string(file).ok().as_deref()
+            == Some(before.text.as_str()),
+    };
+    match &app.saves.loaded {
+        Some(flint_runtime::Loaded::Read { keys, version, .. }) => {
+            report.keys = *keys;
+            report.version = *version;
+        }
+        Some(flint_runtime::Loaded::Corrupt(c)) => {
+            report.loaded = "corrupt";
+            report.error = Some(c.error.clone());
+        }
+        // A seed is always there to read
+        _ => {}
+    }
+    Some(report)
 }
 
 /// A rendered run's target in pixels: the screen scripts see, one pixel a
@@ -513,6 +600,16 @@ pub fn run(options: &PlaytestOptions) -> PlaytestReport {
     let messages = warnings::end();
     let mut report = report(&app, options, ended, frames, fixed_steps, messages, wall_ms);
     report.render = drawn;
+    report.save = save_report(&app, options);
+    if let Some(save) = report.save.as_ref().filter(|s| !s.untouched) {
+        report.failures.push(Failure::new(
+            "save_from",
+            "the save file the run started from changed during it".to_string(),
+            Some(save.file.clone()),
+            None,
+        ));
+        report.passed = false;
+    }
     finish(app);
     report
 }
@@ -719,6 +816,7 @@ fn report(
             wall_ms_per_frame: options.timings.then(|| wall_ms / (frames.max(1) as f64)),
         },
         render: None,
+        save: None,
         screenshots: app
             .capture
             .shots

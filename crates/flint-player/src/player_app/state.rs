@@ -131,8 +131,15 @@ pub struct LaunchOptions {
     /// broken game can't exit 0.
     pub strict_scripts: bool,
     /// Keep the `persist_*` store in memory only: read no save and write
-    /// none (#714: a playtest starts from no save, and leaves none).
+    /// none (#714: a playtest starts from no save, and leaves none). Its
+    /// slots are kept in memory too (`persist::MemorySaves`), so a script
+    /// can switch slots and `persist_save()` in a playtest.
     pub saves_in_memory: bool,
+    /// With `saves_in_memory`, the default slot begins as this text, read
+    /// from a file once before the run (#1193: `flint playtest
+    /// --save-from`), and goes through the same load as a real save:
+    /// versions, migration, a corrupt file. The file is never written.
+    pub save_seed: Option<flint_runtime::SaveText>,
     /// `--load-report` or `--perf` (#1092): record each transition's and
     /// chunk's load and say its table (the start-up's is begun before the
     /// app exists, by whoever builds it).
@@ -182,6 +189,7 @@ impl Default for LaunchOptions {
             compare_at_start: None,
             strict_scripts: false,
             saves_in_memory: false,
+            save_seed: None,
             load_report: false,
             headless_screen: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -226,6 +234,7 @@ impl std::fmt::Debug for LaunchOptions {
             compare_at_start,
             strict_scripts,
             saves_in_memory,
+            save_seed,
             load_report,
             headless_screen,
             #[cfg(not(target_arch = "wasm32"))]
@@ -261,6 +270,7 @@ impl std::fmt::Debug for LaunchOptions {
             .field("compare_at_start", compare_at_start)
             .field("strict_scripts", strict_scripts)
             .field("saves_in_memory", saves_in_memory)
+            .field("save_seed", save_seed)
             .field("load_report", load_report)
             .field("headless_screen", headless_screen);
         #[cfg(not(target_arch = "wasm32"))]
@@ -555,6 +565,8 @@ pub(super) struct Saves {
     /// The OS user directory saves and input rebinds go under
     /// (`user_files::config_dir`), a field so a test can name another.
     pub(crate) user_config_dir: Option<std::path::PathBuf>,
+    /// What the run's first load found (a playtest's report says it).
+    pub(super) loaded: Option<flint_runtime::Loaded>,
 }
 
 impl Default for Saves {
@@ -563,6 +575,7 @@ impl Default for Saves {
             debounce: SaveDebounce::default(),
             error: None,
             user_config_dir: crate::user_files::config_dir(),
+            loaded: None,
         }
     }
 }

@@ -110,6 +110,28 @@ fn on_update() {
 
 In `flint play` they cost almost nothing: `test_assert` logs its failure once per place, `test_fail` logs once, and neither ends the game.
 
+## Starting from a save: `--save-from`
+
+A playtest begins with an empty `persist_*` store, which tests a new player. To test a returning one, a save from an older version of the game, or a save that got corrupted, start it from a file:
+
+```bash
+flint playtest scenes/menu.scene.toml --save-from saves/v1_halfway.toml \
+    --input-script playtests/continue.txt --json
+```
+
+The file's text becomes the default slot's and is loaded the way the player loads a save: its `[meta] version` is read, and when it is below the game's `[project] save_version`, the scripts' `on_persist_migrate(from)` runs before any `on_init`. A file that doesn't parse leaves the store empty and `persist_corrupt()` set, as in play. The run still writes nothing. `persist_save()` and slot switches go to memory, a corrupt file is set aside in memory rather than renamed `.bak`, and the file keeps the bytes it had. The report checks this: its `save.untouched` is false, and the run fails with a `save_from` failure, if the file changed while the run was going. A `--save-from` file that isn't there is a run that didn't start (`start_failed`), not an empty store.
+
+The report's `persist` is the store at the end, and `save` says what the load found:
+
+```json
+"save": {
+  "file": "saves/v1_halfway.toml", "loaded": "read", "keys": 2,
+  "version": 1, "game_version": 2, "version_at_end": 2, "untouched": true
+}
+```
+
+`loaded` is `read` or `corrupt` (with the parse `error`). `version_at_end` is the game's version once a script migrated the data, and stays at the file's when nothing did. An input script can check what the migration made with `expect persist gold == 30`.
+
 ## How a run ends and what fails it
 
 A run ends at the first of these:
@@ -150,7 +172,7 @@ It **fails** on a failed `test_assert`, a `test_fail`, an `expect` or `wait` tha
 
 | Key | What |
 |-----|------|
-| `failures` | every reason it failed: `kind` (`assertion`, `test_fail`, `check`, `script_error`, `scene`, `timeout`, `start`, `load_warning`, `screenshot`, `preflight`), the message, and the file and line where there is one |
+| `failures` | every reason it failed: `kind` (`assertion`, `test_fail`, `check`, `script_error`, `scene`, `timeout`, `start`, `load_warning`, `screenshot`, `save_from`, `preflight`), the message, and the file and line where there is one |
 | `checks` | each `expect` and `wait`: its line, when it was due and settled, whether it held, and what was found (`2 matches: door1, door2`, `no entity named \`dor\``) |
 | `assertions`, `verdict`, `log` | what scripts said |
 | `script_errors` | as `flint render --report json` lists them: file, line, column, entity, callback, message, count |
@@ -160,10 +182,11 @@ It **fails** on a failed `test_assert`, a `test_fail`, an `expect` or `wait` tha
 | `perf` | frames, fixed physics steps and game time |
 | `render` | with `--render`: the frame's `width` and `height`, `frames` drawn, and the renderer's `draw_calls` and `culled_draws` summed over them |
 | `screenshots` | each PNG written: `file`, `at` (game time), `width`, `height` |
+| `save` | with `--save-from`: the file, what loading it found, its version, the game's and the data's at the end, and whether the file is `untouched` |
 
 ## What a playtest leaves out
 
-A playtest is the player without the presentation. Without `--render` there's no renderer, so models aren't loaded and nothing a script reads off a drawn frame (`raycast_meshes`, `world_to_screen`'s last view) means anything; with it, the frame is drawn but never presented, and the F2 to F4 panels, GPU timing and frame captures stay off. There's no sound device: sounds still load, so a missing file still warns, but none plays. Saves stay in memory: a playtest starts with no save file and writes none. Hot reload is off. `random()` is seeded as in any stepped run (`--seed` picks another), and scripts see a screen of `--width` x `--height` points. A script that reads `timestamp()` still sees the wall clock, and its run won't repeat.
+A playtest is the player without the presentation. Without `--render` there's no renderer, so models aren't loaded and nothing a script reads off a drawn frame (`raycast_meshes`, `world_to_screen`'s last view) means anything; with it, the frame is drawn but never presented, and the F2 to F4 panels, GPU timing and frame captures stay off. There's no sound device: sounds still load, so a missing file still warns, but none plays. Saves stay in memory: a playtest starts with no save file, or with the one `--save-from` names, and writes none. Hot reload is off. `random()` is seeded as in any stepped run (`--seed` picks another), and scripts see a screen of `--width` x `--height` points. A script that reads `timestamp()` still sees the wall clock, and its run won't repeat.
 
 ## Flags
 
@@ -183,4 +206,5 @@ A playtest is the player without the presentation. Without `--render` there's no
 | `--screenshot <file>` | Write the frame at `--screenshot-at` as a PNG (needs `--render`) |
 | `--screenshot-at <s>` | When (default 0) |
 | `--screenshot-every <s>` | Numbered frames every so many seconds from then |
+| `--save-from <file>` | Start from this save, loaded as the player loads one; the file is left as it is |
 | `--schemas <dir>` | As for every command |

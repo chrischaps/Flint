@@ -837,6 +837,7 @@ that two runs write byte for byte. Exit 1 on any failure. The whole story is
 flint playtest flint-examples/phase4_runtime.scene.toml     --input-script flint-examples/playtests/phase4_runtime.playtest.txt --exit-after 8
 flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --json
 flint playtest scenes/level1.scene.toml --render --screenshot shots/t2.png --screenshot-at 2
+flint playtest scenes/menu.scene.toml --save-from saves/v1_halfway.toml --json
 ```
 
 | Flag | Description |
@@ -847,6 +848,7 @@ flint playtest scenes/level1.scene.toml --render --screenshot shots/t2.png --scr
 | `--frame-step <s>` | Game seconds a frame (default 1/60) |
 | `--seed <n>` | `random()`'s seed (default: every stepped run's) |
 | `--strict` | A warning while the scene loads fails the run, and so does anything `flint check` finds in the scene |
+| `--save-from <file>` | Start from this save file, loaded as the player loads one (its version and `on_persist_migrate`, a file that doesn't parse); the run writes nothing and the file is left as it is |
 | `--dump <entity>` | Put the entity's components at the end in the report (repeatable) |
 | `--report <file>` | Write the JSON report to this file as well |
 | `--timings` | Wall-clock times in the report (two runs then differ) |

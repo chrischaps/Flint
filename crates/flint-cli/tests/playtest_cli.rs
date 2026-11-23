@@ -321,3 +321,139 @@ fn the_text_says_fail_and_each_failure() {
     assert!(text.contains("assertion: "), "{text}");
     assert!(text.contains("game.rhai:1: never"), "{text}");
 }
+
+/// Every file under `dir` with its bytes, to show a run wrote nothing.
+fn files_under(dir: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut found = std::collections::BTreeMap::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for entry in std::fs::read_dir(&d).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                todo.push(path);
+            } else {
+                found.insert(path.clone(), std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    found
+}
+
+/// Version 1 kept `coins`; version 2 keeps `gold`, ten to a coin.
+const MIGRATE: &str = "fn on_persist_migrate(from) {\n\
+    \x20   persist_set(\"gold\", persist_get(\"coins\") * 10);\n\
+    \x20   persist_remove(\"coins\");\n\
+    \x20   test_log(\"migrated_from\", from);\n\
+    }\n\
+    fn on_init() {\n\
+    \x20   test_log(\"version\", persist_version());\n\
+    \x20   let visits = persist_get(\"visits\");\n\
+    \x20   if visits == () { visits = 0; }\n\
+    \x20   persist_set(\"visits\", visits + 1);\n\
+    \x20   persist_save();\n\
+    }\n";
+
+/// #1193: a returning player's save at an older version. The run loads it
+/// as the player would, the scripts migrate it, the report says what the
+/// run made of it, and not one file in the project changed, the save
+/// least of all.
+#[test]
+fn a_playtest_starts_from_a_save_migrates_it_and_writes_nothing() {
+    let dir = project(
+        "save-from",
+        MIGRATE,
+        "0.1 expect persist gold == 30\n0.1 expect persist visits == 5\n",
+    );
+    std::fs::write(dir.join("flint.toml"), "[project]\nsave_version = 2\n").unwrap();
+    std::fs::create_dir_all(dir.join("saves")).unwrap();
+    let save = "coins = 3\nvisits = 4\n\n[meta]\nversion = 1\n";
+    std::fs::write(dir.join("saves/returning.toml"), save).unwrap();
+    let before = files_under(&dir);
+
+    let (out, d) = playtest(
+        &dir,
+        &["--save-from", "saves/returning.toml", "--exit-after", "0.5"],
+    );
+    assert!(out.status.success(), "{d:#}");
+    assert_eq!(d["log"]["migrated_from"], 1);
+    assert_eq!(d["log"]["version"], 2, "on_init sees the migrated data");
+    assert_eq!(d["persist"]["gold"], 30);
+    assert_eq!(d["persist"]["visits"], 5);
+    assert!(d["persist"].get("coins").is_none(), "{d:#}");
+    let s = &d["save"];
+    assert_eq!(s["file"], "saves/returning.toml");
+    assert_eq!(s["loaded"], "read");
+    assert_eq!(s["keys"], 2);
+    assert_eq!(s["version"], 1);
+    assert_eq!(s["game_version"], 2);
+    assert_eq!(s["version_at_end"], 2);
+    assert_eq!(s["untouched"], true);
+    assert!(s.get("error").is_none());
+    assert_eq!(files_under(&dir), before, "the run wrote nothing");
+
+    // The same run again is the same bytes, the save still as it was
+    let (_, again) = playtest(
+        &dir,
+        &["--save-from", "saves/returning.toml", "--exit-after", "0.5"],
+    );
+    assert_eq!(again, d);
+    assert_eq!(files_under(&dir), before);
+
+    // With no save the store begins empty, at the game's version
+    let (_, fresh) = playtest(&dir, &["--exit-after", "0.5"]);
+    assert_eq!(fresh["persist"]["visits"], 1);
+    assert!(fresh["log"].get("migrated_from").is_none());
+    assert!(fresh.get("save").is_none(), "{fresh:#}");
+}
+
+/// A save that doesn't parse: the store begins empty and scripts read
+/// `persist_corrupt()`, as in play, but nothing is renamed `.bak`: the
+/// file stays where it is with its bytes, and the run still passes.
+#[test]
+fn a_corrupt_save_is_reported_to_scripts_and_left_where_it_is() {
+    let dir = project(
+        "save-corrupt",
+        "fn on_init() {\n\
+         \x20   let c = persist_corrupt();\n\
+         \x20   test_assert(c != (), \"the script hears the save was corrupt\");\n\
+         \x20   test_log(\"corrupt_file\", c.file);\n\
+         \x20   test_log(\"keys\", persist_keys().len());\n\
+         \x20   persist_set(\"fresh\", true);\n\
+         \x20   persist_save();\n\
+         }\n",
+        "",
+    );
+    std::fs::write(dir.join("broken.toml"), "coins = [1, 2\n").unwrap();
+    let before = files_under(&dir);
+
+    let (out, d) = playtest(&dir, &["--save-from", "broken.toml", "--exit-after", "0.3"]);
+    assert!(out.status.success(), "{d:#}");
+    assert_eq!(d["log"]["corrupt_file"], "broken.toml");
+    assert_eq!(d["log"]["keys"], 0);
+    assert_eq!(d["persist"]["fresh"], true);
+    assert_eq!(d["save"]["loaded"], "corrupt");
+    assert_eq!(d["save"]["keys"], 0);
+    assert_eq!(d["save"]["untouched"], true);
+    assert!(
+        d["save"]["error"].as_str().unwrap().contains("parse error"),
+        "{d:#}"
+    );
+    assert_eq!(files_under(&dir), before, "no .bak, no new save");
+}
+
+/// A save file that isn't there is a run that didn't start, not an empty
+/// store: the run was asked to begin from that file.
+#[test]
+fn a_missing_save_fails_the_start() {
+    let dir = project("save-missing", "fn on_update() { }\n", "");
+    let (out, d) = playtest(&dir, &["--save-from", "nope.toml"]);
+    assert_eq!(out.status.code(), Some(1), "{d:#}");
+    assert_eq!(d["ended"], "start_failed");
+    assert_eq!(kinds(&d), ["start"]);
+    let message = d["failures"][0]["message"].as_str().unwrap();
+    assert!(
+        message.contains("--save-from: cannot read nope.toml"),
+        "{message}"
+    );
+    assert!(!dir.join("nope.toml").exists());
+}
