@@ -14,7 +14,10 @@ pub struct PlayArgs {
     pub player: flint_player::PlayerArgs,
 }
 
-pub fn run(args: PlayArgs) -> Result<()> {
+pub fn run(mut args: PlayArgs) -> Result<()> {
+    // `--list-keys --json` reads flint's global `--json` (#1184): the
+    // player's own is `flint-player`'s, kept off the flattened args
+    args.player.json = crate::output::json();
     flint_player::launch(args.player)
 }
 
@@ -46,14 +49,14 @@ mod tests {
     }
 
     /// The issue's second box: the two help texts differ only by
-    /// `--bundle` (the global `--project` of every `flint` command is
-    /// flint's own, not the play command's)
+    /// `--bundle` and `--json` (the global `--project` and `--json` of
+    /// every `flint` command are flint's own, not the play command's)
     #[test]
     fn flint_play_takes_every_flint_player_flag_but_bundle() {
         let play = arguments(&Play::command());
         let player: Vec<_> = arguments(&flint_player::PlayerCli::command())
             .into_iter()
-            .filter(|(id, ..)| id != "bundle")
+            .filter(|(id, ..)| id != "bundle" && id != "json")
             .collect();
         assert_eq!(play, player);
         for flag in [
@@ -70,6 +73,41 @@ mod tests {
                 "--{flag}"
             );
         }
+    }
+
+    /// #1184: `flint play --json` is flint's global flag, which a `--json`
+    /// of the player's flattened in would take from it (and then ask for
+    /// `--list-keys`), so `--list-keys --json` reads `output::json()` and
+    /// a plain `flint play --json` reaches the window refusal
+    #[test]
+    fn flint_play_leaves_json_to_the_global_flag() {
+        for words in [
+            &["flint", "play", "--json"][..],
+            &["flint", "play", "--list-keys", "--json"],
+            &["flint", "--json", "play", "--list-keys"],
+        ] {
+            let cli = crate::Cli::try_parse_from(words)
+                .unwrap_or_else(|e| panic!("{words:?}: {}", e.render()));
+            assert!(cli.json, "{words:?}");
+            let crate::Commands::Play(args) = &cli.command else {
+                panic!("{words:?} is not play");
+            };
+            assert!(!args.player.json, "{words:?}: the player's own is unset");
+            let list_keys = words.contains(&"--list-keys");
+            assert_eq!(cli.command.interactive().is_none(), list_keys, "{words:?}");
+        }
+    }
+
+    /// `flint-player` keeps its own `--json`, still only with `--list-keys`
+    #[test]
+    fn flint_player_takes_its_own_json_with_list_keys() {
+        let cli =
+            flint_player::PlayerCli::try_parse_from(["flint-player", "--list-keys", "--json"])
+                .unwrap();
+        assert!(cli.json && cli.args.list_keys);
+        let alone = flint_player::PlayerCli::try_parse_from(["flint-player", "--json"])
+            .expect_err("--json alone is refused");
+        assert!(alone.to_string().contains("--list-keys"), "{alone}");
     }
 
     /// The issue's third box: a scene with `[environment] shadows = false`,

@@ -82,16 +82,13 @@ fn get_field_value(entity: &EntityInfo, field: &str, world: &FlintWorld) -> Opti
         _ => {}
     }
 
-    // Handle nested component fields (e.g., "door.locked")
-    let parts: Vec<&str> = field.split('.').collect();
-    if parts.len() >= 2 {
-        let component_name = parts[0];
-        let field_path = &parts[1..];
-
-        if let Some(components) = world.get_components(entity.id) {
-            if let Some(comp_data) = components.get(component_name) {
-                return extract_toml_value(comp_data, field_path);
-            }
+    // Handle nested component fields (e.g., "door.locked",
+    // "transform.position[2]")
+    let steps = steps(field)?;
+    if let [Step::Key(component_name), field_path @ ..] = steps.as_slice() {
+        if !field_path.is_empty() {
+            let comp_data = world.get_components(entity.id)?.get(component_name)?;
+            return extract_toml_value(comp_data, field_path);
         }
     }
 
@@ -103,22 +100,59 @@ fn get_field_value(entity: &EntityInfo, field: &str, world: &FlintWorld) -> Opti
     None
 }
 
-fn extract_toml_value(value: &toml::Value, path: &[&str]) -> Option<FieldValue> {
-    if path.is_empty() {
-        return toml_to_field_value(value);
-    }
+/// One step of a field path: `.name` or `[n]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Step<'a> {
+    Key(&'a str),
+    Index(usize),
+}
 
-    match value {
-        toml::Value::Table(table) => table
-            .get(path[0])
-            .and_then(|v| extract_toml_value(v, &path[1..])),
-        // A vector's element by its axis: `transform.position.y` (#714)
-        toml::Value::Array(items) => {
-            let i = ["x", "y", "z", "w"].iter().position(|a| *a == path[0])?;
-            items.get(i).and_then(|v| extract_toml_value(v, &path[1..]))
+/// The names a vector's first four elements answer to (#714).
+const AXES: [&str; 4] = ["x", "y", "z", "w"];
+
+/// A field's steps, `path.points[3].x` as `path`, `points`, `[3]`, `x`; `None`
+/// for a spelling the grammar would refuse (a field handed to
+/// [`field_value`] unparsed).
+fn steps(field: &str) -> Option<Vec<Step<'_>>> {
+    let mut out = Vec::new();
+    for part in field.split('.') {
+        let (key, mut rest) = part.split_at(part.find('[').unwrap_or(part.len()));
+        if key.is_empty() {
+            return None; // `[0].x`, `a.` or `a.[0]`
         }
-        _ => None,
+        out.push(Step::Key(key));
+        while let Some(r) = rest.strip_prefix('[') {
+            let (digits, after) = r.split_once(']')?;
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            out.push(Step::Index(digits.parse().ok()?));
+            rest = after;
+        }
+        if !rest.is_empty() {
+            return None;
+        }
     }
+    Some(out)
+}
+
+/// The value at `path` under `value`. A table steps by key; an array by
+/// index or by axis (`.z` is `[2]`). A step that finds nothing, past an
+/// array's end, into a scalar, `[n]` of a table, is no value: no match, as
+/// a missing field is (#1185).
+fn extract_toml_value(value: &toml::Value, path: &[Step]) -> Option<FieldValue> {
+    let Some((step, rest)) = path.split_first() else {
+        return toml_to_field_value(value);
+    };
+    let next = match (value, *step) {
+        (toml::Value::Table(table), Step::Key(key)) => table.get(key),
+        (toml::Value::Array(items), Step::Key(axis)) => {
+            items.get(AXES.iter().position(|a| *a == axis)?)
+        }
+        (toml::Value::Array(items), Step::Index(i)) => items.get(i),
+        _ => None,
+    }?;
+    extract_toml_value(next, rest)
 }
 
 fn toml_to_field_value(value: &toml::Value) -> Option<FieldValue> {
@@ -275,6 +309,94 @@ mod tests {
             "door.style == 'hinged'"
         );
         assert!(crate::parse_condition("door.locked == true and x == 1").is_err());
+    }
+
+    /// #1185: a field steps into a vector by axis or by `[n]`, into a list
+    /// of vectors and back into a table; a step that finds nothing is no
+    /// match, never an error.
+    #[test]
+    fn a_field_reaches_into_arrays_and_a_miss_is_no_match() {
+        let mut world = setup_test_world();
+        let id = world.get_id("door1").unwrap();
+        {
+            let mut c = world.get_components_mut(id).unwrap();
+            c.set("transform", toml::toml! { position = [1, 2.5, 7.0] }.into());
+            c.set(
+                "path",
+                toml::toml! {
+                    points = [[0.0, 0.0, 0.0], [4.0, 1.0, -6.0]]
+                    stops = [{ name = "gate", wait = 2.0 }, { name = "well", wait = 0.5 }]
+                }
+                .into(),
+            );
+        }
+        let door = world
+            .all_entities()
+            .into_iter()
+            .find(|e| e.name == "door1")
+            .unwrap();
+        let holds = |s: &str| entity_matches(&world, &door, &crate::parse_condition(s).unwrap());
+        let found = |s: &str| field_value(&world, &door, s).map(|v| v.to_string());
+
+        // The issue's own query, both spellings; an integer element too.
+        assert!(holds("transform.position.z > 5"));
+        assert!(holds("transform.position[2] > 5"));
+        assert!(holds("transform.position[0] == 1"));
+        assert_eq!(
+            found("transform.position[1]"),
+            found("transform.position.y")
+        );
+        // A list of vectors, and a list of tables.
+        assert!(holds("path.points[1].z < -5"));
+        assert!(holds("path.points[1][0] == 4"));
+        assert!(holds("path.stops[1].name == 'well'"));
+        assert!(holds("path.stops[0].wait >= 2"));
+
+        for miss in [
+            "transform.position[3] == 0",  // past the end
+            "transform.position.w == 0",   // past the end, by axis
+            "transform.position[99] == 0", // far past it
+            "transform.position.q == 0",   // not an axis
+            "door.locked.x == true",       // into a boolean
+            "door.locked[0] == true",      // into a boolean, by index
+            "door.style[0] == 'h'",        // a string is not indexed
+            "path.stops[0][0] == 'gate'",  // `[n]` of a table
+            "path.points == 0",            // a whole array is no value
+            "missing.thing[0] == 0",       // no such component
+        ] {
+            assert!(!holds(miss), "{miss} matched");
+            assert!(!holds(&miss.replace("==", "!=")), "{miss} as != matched");
+        }
+        // `.x` is an axis wherever the value is an array, whatever it holds.
+        assert!(holds("path.stops.x.name == 'gate'"));
+
+        // Through a whole query too: one door is past z = 5.
+        let q = parse_query("entities where transform.position.z > 5").unwrap();
+        let QueryResult::Entities(picked) = execute_query(&world, &q) else {
+            panic!("entities");
+        };
+        assert_eq!(
+            picked.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            ["door1"]
+        );
+    }
+
+    #[test]
+    fn a_field_spelling_the_grammar_refuses_has_no_steps() {
+        assert_eq!(
+            steps("path.points[3].x"),
+            Some(vec![
+                Step::Key("path"),
+                Step::Key("points"),
+                Step::Index(3),
+                Step::Key("x")
+            ])
+        );
+        for bad in [
+            "[0].x", "a.", "a.[0]", "a[", "a[x]", "a[]", "a[1]b", "a[-1]",
+        ] {
+            assert_eq!(steps(bad), None, "{bad}");
+        }
     }
 
     #[test]

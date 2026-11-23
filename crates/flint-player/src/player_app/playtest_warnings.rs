@@ -103,10 +103,15 @@ fn lock() -> std::sync::MutexGuard<'static, Tally> {
 
 struct WarningLayer;
 
-/// Targets whose warnings the report lists elsewhere: scripts' test
-/// failures and script errors.
+/// Targets whose warnings the report doesn't count: scripts' test failures
+/// and script errors (listed elsewhere), and a library's (#1191: the Vulkan
+/// loader's notes as a rendered run makes its device), which the load
+/// summary leaves out too (`logging::flint_target`), so the count is the
+/// warnings a game can do something about.
 fn listed_elsewhere(target: &str) -> bool {
-    target == "script::test" || target == "flint_script::errors"
+    target == "script::test"
+        || target == "flint_script::errors"
+        || !crate::logging::flint_target(target)
 }
 
 #[derive(Default)]

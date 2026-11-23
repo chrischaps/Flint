@@ -953,10 +953,7 @@ impl super::PlayerApp {
     pub(super) fn finish_frame_grabs(&mut self) {
         let device = match &self.render_context {
             Some(c) => Some(&c.device),
-            #[cfg(test)]
-            None => self.test_gpu.map(|g| &g.device),
-            #[cfg(not(test))]
-            None => None,
+            None => self.windowless_gpu().map(|g| &g.device),
         };
         match device {
             Some(device) => self.frame_grabs.finish(device),

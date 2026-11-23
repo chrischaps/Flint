@@ -142,16 +142,10 @@ impl MeshyProvider {
         Ok(task_status(&response))
     }
 
-    fn save(&self, job: &GenerationJob) {
-        if let Some(store) = &self.calls.jobs {
-            if let Err(e) = store.save(job) {
-                tracing::warn!("could not record Meshy job {}: {}", job.id, e);
-            }
-        }
-    }
-
     /// What an error at `stage` adds when the job is kept: what's paid for
-    /// and the command that goes on from there.
+    /// and the command that goes on from there. Before the refine is
+    /// submitted only the preview is paid for, which [`Calls::resume_hint`]
+    /// can't say.
     fn resume_hint(&self, job: &GenerationJob, stage: Stage) -> String {
         if self.calls.jobs.is_none() {
             return String::new();
@@ -161,10 +155,7 @@ impl MeshyProvider {
                 "; the preview is paid for: `flint asset job resume {}` refines it without paying for it again",
                 job.id
             ),
-            _ => format!(
-                "; it is paid for: `flint asset job resume {}` finishes it",
-                job.id
-            ),
+            _ => self.calls.resume_hint(job),
         }
     }
 
@@ -177,7 +168,7 @@ impl MeshyProvider {
             other => other.to_string(),
         };
         job.error = Some(msg.clone());
-        self.save(job);
+        self.calls.save_job(job);
         FlintError::GenerationError(format!("{msg}{hint}"))
     }
 
@@ -204,7 +195,7 @@ impl MeshyProvider {
         job.refine_id = Some(refine_id.clone());
         job.estimated_usd = Some(job.estimated_usd.unwrap_or(0.0) + cost);
         job.error = None;
-        self.save(job);
+        self.calls.save_job(job);
         tracing::info!(
             "Submitted Meshy refine {} of preview {} (job {})",
             refine_id,
@@ -228,18 +219,18 @@ impl MeshyProvider {
                     tracing::info!("Meshy {}: {}%", stage.name(), progress);
                     job.status = JobStatus::Processing;
                     job.progress = stage.progress(progress);
-                    self.save(job);
+                    self.calls.save_job(job);
                 }
                 MeshyTaskStatus::Complete { model_url } => {
                     job.status = JobStatus::Processing;
                     job.progress = stage.progress(100);
-                    self.save(job);
+                    self.calls.save_job(job);
                     return Ok(model_url);
                 }
                 MeshyTaskStatus::Failed(msg) => {
                     job.status = JobStatus::Failed;
                     job.error = Some(msg.clone());
-                    self.save(job);
+                    self.calls.save_job(job);
                     return Err(FlintError::GenerationError(format!(
                         "Meshy {} failed: {}",
                         stage.name(),
@@ -296,7 +287,7 @@ impl MeshyProvider {
         job.progress = 100;
         job.error = None;
         job.output_path = Some(output.clone());
-        self.save(job);
+        self.calls.save_job(job);
 
         let hash = flint_core::ContentHash::from_file(&output_path)
             .map(|h| h.to_prefixed_hex())
@@ -416,7 +407,7 @@ impl GenerationProvider for MeshyProvider {
         job.remote_id = Some(preview_id.clone());
         job.prompt = Some(prompt);
         job.estimated_usd = Some(cost);
-        self.save(&job);
+        self.calls.save_job(&job);
         tracing::info!("Submitted Meshy preview {} (job {})", preview_id, job.id);
 
         self.finish(&mut job, output_dir, start)

@@ -17,7 +17,7 @@ use flint_ai_core::retry::{self, RetryPolicy};
 use flint_ai_core::{CostError, CostMeter, UreqTransport};
 use flint_core::{FlintError, Result};
 
-use crate::job::JobStore;
+use crate::job::{GenerationJob, JobStore};
 
 /// Seconds between a long job's status checks.
 pub const POLL_INTERVAL: Duration = Duration::from_secs(10);
@@ -96,6 +96,29 @@ impl Calls {
         self.poll_interval = interval;
         self.max_polls = max_polls.max(1);
         self
+    }
+
+    /// Write `job` to the job store, if there is one; a failed write is a
+    /// warning, never the generation's error.
+    pub fn save_job(&self, job: &GenerationJob) {
+        if let Some(store) = &self.jobs {
+            if let Err(e) = store.save(job) {
+                tracing::warn!("could not record {} job {}: {}", job.provider, job.id, e);
+            }
+        }
+    }
+
+    /// What an error from a paid job's wait ends with: how to finish it
+    /// (empty with no job store, where nothing could resume it).
+    pub fn resume_hint(&self, job: &GenerationJob) -> String {
+        if self.jobs.is_some() {
+            format!(
+                "; it is paid for: `flint asset job resume {}` finishes it",
+                job.id
+            )
+        } else {
+            String::new()
+        }
     }
 
     /// Wait as the retry policy waits (not at all in a test).

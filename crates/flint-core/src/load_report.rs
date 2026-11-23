@@ -197,6 +197,8 @@ impl Stage {
             | NoteKind::Screenshot
             | NoteKind::StatsOverlay
             | NoteKind::TraceRing
+            // Another thread's work beside the frame (#1178)
+            | NoteKind::CaptureWrite
             // An untimed count of GPU objects (#1091), not load work
             | NoteKind::GpuObjects => return None,
         })

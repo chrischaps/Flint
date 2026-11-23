@@ -358,7 +358,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `draw_line_3d_ex(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, r: num, g: num, b: num, a: num, thickness: num, layer: int)` | — | **Deprecated:** use `draw_line_3d`(x1, y1, z1, x2, y2, z2, `#{color, thickness, layer}`). `draw_line_3d` on a HUD layer. |
 | `draw_world_line(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, r: num, g: num, b: num, a: num, thickness: num)` | — | A line between two world points drawn in the 3D frame, depth-tested; thickness in points. |
 | `draw_world_line(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, opts: map)` | — | A line between two world points in the 3D frame, depth-tested; opts: color, thickness (points, 1). |
-| `draw_world_text(x: num, y: num, z: num, text: str, size: num, opts: map)` | — | Text at a world point, depth-tested; opts: `draw_text`'s (no layer) plus valign, facing \[x, y, z\] (a plane's normal; none is a billboard) and up. |
+| `draw_world_text(x: num, y: num, z: num, text: str, size: num, opts: map)` | — | Text at a world point, depth-tested; opts: `draw_text`'s (no layer) plus valign, facing \[x, y, z\] and up. Without facing it's a billboard and size is points. With facing it's painted on the plane through the point, read only from the side facing points to, and size is the em in world units (0.03 is a line on a screen), as are spacing, stroke, glow and shadow. |
 
 ## view
 

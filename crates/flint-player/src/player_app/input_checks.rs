@@ -11,7 +11,19 @@
 //! 2.0  expect event door_opened                    # a fire_event so far
 //! 1.0  wait player transform.position.x > 4 within 6
 //! 1.0  wait event level_loaded                     # within 10 s, the default
+//! 3.0  expect frame hud contains "Lap 2"           # the last frame's HUD text
+//! 3.0  expect frame hud lacks "Paused"
+//! 3.0  expect frame style ascii on                 # the renderer drew with it
+//! 3.0  expect frame draws door                     # the camera drew the door
+//! 3.0  expect frame draws no ghost
 //! ```
+//!
+//! A `frame` line (#1191) asks the last frame drawn: the HUD's draw list
+//! (what `on_draw_ui` and the UI documents gave it, so a playtest without
+//! a renderer can ask it too), and the renderer's drawn config and draw
+//! list, which only a window or `flint playtest --render` has. A line is
+//! read before the frame's step, so it sees the frame on screen at its time.
+//! A `#` starts a comment there too, so a text can't hold one.
 //!
 //! An `expect` is asked once, at the first frame at or after its time. A
 //! `wait` is asked every frame from its time until it holds, holding back
@@ -60,6 +72,89 @@ pub enum Subject {
     /// (since the run began, for `expect`; for `wait`, since the check
     /// before it settled, so an event a `tap` just before it caused counts).
     Event(String),
+    /// `frame ...` (#1191): what the frame drawn last showed.
+    Frame(FrameCheck),
+}
+
+/// What a `frame` line asks of the last frame drawn (#1191). The HUD is the
+/// draw list the scripts' `on_draw_ui` and UI documents gave it, which a
+/// window or `flint playtest --render` paints; the rest ask the renderer,
+/// so a playtest without `--render` fails them, saying so.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FrameCheck {
+    /// `frame hud contains "<text>"`: a text the HUD drew contains it;
+    /// `frame hud lacks "<text>"`: none does.
+    Hud { text: String, present: bool },
+    /// `frame style <name> on|off`: whether the style reaches the frame
+    /// (on, its blend above 0, and post-processing on).
+    Style { name: String, on: bool },
+    /// `frame draws <entity>`: the camera drew it (it has a draw that no
+    /// cull left out); `frame draws no <entity>`: it drew nothing of it.
+    Draws { entity: String, drawn: bool },
+}
+
+/// What follows the first `n` words of `text`, as written (its spaces
+/// kept), with one pair of surrounding quotes taken off.
+fn after_words_unquoted(text: &str, n: usize) -> String {
+    let mut rest = text.trim_start();
+    for _ in 0..n {
+        rest = rest
+            .split_once(char::is_whitespace)
+            .map_or("", |(_, r)| r)
+            .trim_start();
+    }
+    let rest = rest.trim_end();
+    rest.strip_prefix('"')
+        .and_then(|r| r.strip_suffix('"'))
+        .unwrap_or(rest)
+        .to_string()
+}
+
+/// `frame hud contains "<text>"`, `frame style <name> on|off`, `frame
+/// draws [no] <entity>`.
+fn parse_frame(text: &str, words: &[&str]) -> anyhow::Result<FrameCheck> {
+    const FORMS: &str = "`frame hud contains \"<text>\"`, `frame hud lacks \"<text>\"`, \
+        `frame style <name> on|off` or `frame draws [no] <entity>`";
+    Ok(match words.get(1).copied() {
+        Some("hud") => {
+            let present = match words.get(2).copied() {
+                Some("contains") => true,
+                Some("lacks") => false,
+                _ => anyhow::bail!("`frame hud` takes `contains` or `lacks`: {FORMS}"),
+            };
+            let text = after_words_unquoted(text, 3);
+            if text.is_empty() {
+                anyhow::bail!("`frame hud {}` needs a text", words[2]);
+            }
+            FrameCheck::Hud { text, present }
+        }
+        Some("style") => {
+            let (Some(name), Some(state), None) = (words.get(2), words.get(3), words.get(4)) else {
+                anyhow::bail!("`frame style` takes a style and `on` or `off`");
+            };
+            let on = match *state {
+                "on" => true,
+                "off" => false,
+                _ => anyhow::bail!("`frame style {name}` takes `on` or `off`"),
+            };
+            FrameCheck::Style {
+                name: name.to_string(),
+                on,
+            }
+        }
+        Some("draws") => match &words[2..] {
+            ["no", entity] => FrameCheck::Draws {
+                entity: entity.to_string(),
+                drawn: false,
+            },
+            [entity] => FrameCheck::Draws {
+                entity: entity.to_string(),
+                drawn: true,
+            },
+            _ => anyhow::bail!("`frame draws` takes one entity (`frame draws [no] <entity>`)"),
+        },
+        _ => anyhow::bail!("`frame` asks {FORMS}"),
+    })
 }
 
 /// One `expect` or `wait` line.
@@ -169,6 +264,7 @@ pub fn parse_subject(text: &str) -> anyhow::Result<Subject> {
     Ok(match first {
         "persist" => Subject::Persist(condition(&rest(1), "persist")?),
         "log" => Subject::Logged(condition(&rest(1), "log")?),
+        "frame" => Subject::Frame(parse_frame(text, &words)?),
         "event" => {
             if words.len() != 2 {
                 anyhow::bail!("`event` takes one name");
@@ -335,6 +431,59 @@ mod tests {
         assert!(
             matches!(parse(1, "event door_opened", false).unwrap().subject, Subject::Event(ref n) if n == "door_opened")
         );
+    }
+
+    #[test]
+    fn frame_lines_parse() {
+        let frame = |s: &str| match parse(1, s, false).unwrap().subject {
+            Subject::Frame(f) => f,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            frame("frame hud contains \"Lap  2 of 3\""),
+            FrameCheck::Hud {
+                text: "Lap  2 of 3".into(),
+                present: true
+            }
+        );
+        assert_eq!(
+            frame("frame hud lacks Paused"),
+            FrameCheck::Hud {
+                text: "Paused".into(),
+                present: false
+            }
+        );
+        assert_eq!(
+            frame("frame style ascii off"),
+            FrameCheck::Style {
+                name: "ascii".into(),
+                on: false
+            }
+        );
+        assert_eq!(
+            frame("frame draws no ghost"),
+            FrameCheck::Draws {
+                entity: "ghost".into(),
+                drawn: false
+            }
+        );
+        let w = parse(1, "frame hud contains \"Lap 2\" within 5", true).unwrap();
+        assert_eq!(w.wait, Some(5.0));
+        assert!(matches!(
+            w.subject,
+            Subject::Frame(FrameCheck::Hud { ref text, .. }) if text == "Lap 2"
+        ));
+        for (line, want) in [
+            ("frame", "`frame` asks"),
+            ("frame hud shows x", "contains` or `lacks"),
+            ("frame hud contains", "needs a text"),
+            ("frame style ascii", "a style and `on` or `off`"),
+            ("frame style ascii maybe", "`on` or `off`"),
+            ("frame draws a b", "one entity"),
+        ] {
+            let e = parse(1, line, false).unwrap_err().to_string();
+            assert!(e.contains(want), "{line}: {e}");
+        }
     }
 
     #[test]
