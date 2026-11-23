@@ -8,6 +8,7 @@ pub mod bundle;
 pub mod calibrate;
 pub mod capture;
 mod capture_compare;
+mod capture_disk;
 pub mod check;
 pub mod common_args;
 pub mod dxc;
