@@ -47,6 +47,10 @@ pub struct PlaytestOptions {
     pub schemas: Vec<String>,
     /// An input script's path.
     pub input_script: Option<String>,
+    /// The playtest's own Rhai checks (#1192), each attached to an entity
+    /// it spawns in every scene (`playtest`, `playtest_2` ...): the whole
+    /// script API and the `test_*` functions, with nothing in the scene.
+    pub test_scripts: Vec<PathBuf>,
     /// Game seconds a frame.
     pub frame_step: f64,
     /// `random()`'s seed; `None` is the player's stepped-run seed.
@@ -81,6 +85,7 @@ impl PlaytestOptions {
             scene: scene.into(),
             schemas: Vec::new(),
             input_script: None,
+            test_scripts: Vec::new(),
             frame_step: DEFAULT_STEP,
             seed: None,
             exit_after: None,
@@ -361,6 +366,14 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
             Err(flint_core::FlintError::SchemaDirs(e)) => return Err(e.into()),
             Err(e) => return Err(e).context("Failed to load schemas"),
         };
+    for script in &options.test_scripts {
+        if !flint_core::vfs::exists(script) {
+            anyhow::bail!(
+                "--test-script: no file at {}",
+                flint_core::project::shown(script)
+            );
+        }
+    }
     let input_script = options
         .input_script
         .as_deref()
@@ -390,6 +403,7 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
     launch.scene_file_writable = false;
     app.apply_scene_settings(&scene_file);
     app.capture.input_script = input_script;
+    app.launch.test_scripts = options.test_scripts.clone();
     app.capture.path = options.screenshot.clone();
     app.capture.at = options.screenshot_at;
     app.capture.every = options.screenshot_every;
@@ -408,6 +422,57 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
         return Err(e).context("the scene did not start");
     }
     Ok(app)
+}
+
+/// The name of the entity the `n`th `--test-script` (from 0) is attached
+/// to: `playtest`, then `playtest_2`, `playtest_3` ...
+pub fn test_entity_name(n: usize) -> String {
+    match n {
+        0 => TEST_ENTITY.to_string(),
+        n => format!("{TEST_ENTITY}_{}", n + 1),
+    }
+}
+
+/// What the first `--test-script`'s entity is called.
+pub const TEST_ENTITY: &str = "playtest";
+
+impl PlayerApp {
+    /// Spawn an entity for each of `launch.test_scripts` (#1192) and attach
+    /// the script to it, as given (not searched for), after the scene's
+    /// scripts are pointed at and before they initialize, so its top level
+    /// and `on_init` run with theirs. Each scene the run enters gets them
+    /// afresh (a transition drops the old world's): a script's variables
+    /// start over there, its `test_*` records don't. The entity has a
+    /// `script` component naming the file and nothing else; a scene that
+    /// already has an entity of the name gets a `load` script error.
+    pub(super) fn attach_test_scripts(&mut self) {
+        for (n, path) in self.launch.test_scripts.clone().iter().enumerate() {
+            let name = test_entity_name(n);
+            let shown = flint_core::project::shown(path);
+            let id = match self.core.world.spawn(name.clone()) {
+                Ok(id) => id,
+                Err(_) => {
+                    self.core
+                        .script
+                        .record_error(flint_script::errors::Failure::load(
+                            &shown,
+                            &name,
+                            &format!(
+                                "--test-script: the scene already has an entity named `{name}`"
+                            ),
+                        ));
+                    continue;
+                }
+            };
+            let mut script = toml::map::Map::new();
+            script.insert("source".into(), toml::Value::String(shown));
+            let _ =
+                self.core
+                    .world
+                    .set_component(id, flint_core::components::SCRIPT, script.into());
+            self.core.script.attach_script_file(id, &name, path);
+        }
+    }
 }
 
 /// A rendered run's target in pixels: the screen scripts see, one pixel a

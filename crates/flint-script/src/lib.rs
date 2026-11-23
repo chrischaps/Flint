@@ -117,6 +117,12 @@ impl ScriptSystem {
         self.engine.errors()
     }
 
+    /// Count an error a host found about a script outside any callback (a
+    /// playtest's `--test-script` that has no entity to go on, #1192).
+    pub fn record_error(&mut self, failure: errors::Failure) {
+        self.engine.record_error(failure);
+    }
+
     /// What the scripts' `test_*` calls said so far (#714): assertions by
     /// place, the first `test_pass` / `test_fail`, and `test_log`'s values.
     /// A copy: the record lives in the script context.
@@ -548,6 +554,48 @@ impl ScriptSystem {
                 let entity = format!("entity {}", entity_id.raw());
                 self.engine
                     .record_error(errors::Failure::compile(&file, &entity, &e));
+            }
+        }
+    }
+
+    /// Attach the script at `script_path` (as given, not searched for) to
+    /// `entity_id`, named `entity_name` in its errors and test records: a
+    /// host's own script beside the scene's, such as `flint playtest
+    /// --test-script`'s (#1192). The entity is marked found either way, so
+    /// a `script` component it carries is never searched for by name; a
+    /// file that doesn't read or compile is the script's `load` or
+    /// `compile` error. Its top level and `on_init` run with the scene's
+    /// at the next `initialize`. Not followed by hot reload.
+    pub fn attach_script_file(
+        &mut self,
+        entity_id: flint_core::EntityId,
+        entity_name: &str,
+        script_path: &std::path::Path,
+    ) {
+        self.sync.discovered.insert(entity_id);
+        let file = errors::shown_file(script_path);
+        if !flint_core::vfs::exists(script_path) {
+            self.engine.record_error(errors::Failure::load(
+                &file,
+                entity_name,
+                &format!("no script file at {file}"),
+            ));
+            return;
+        }
+        match self.engine.compile_file(script_path) {
+            Ok(ast) => {
+                tracing::debug!(target: "load", kind = "script", "[script] Loaded: {entity_name} → {file}");
+                self.engine.add_named_script(
+                    entity_id,
+                    ast,
+                    file.clone(),
+                    entity_name,
+                    Some(&file),
+                );
+            }
+            Err(e) => {
+                self.engine
+                    .record_error(errors::Failure::compile(&file, entity_name, &e));
             }
         }
     }
