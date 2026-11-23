@@ -148,21 +148,23 @@ A provider makes only models, textures and sounds. A batch strategy reports any 
 Generation spends money, so every paid call goes through a cost meter (#721), the same one the AI steps of `flint gen` and `flint render --ai-refine` use:
 
 - **`--max-cost <USD>`** on `flint asset generate`, `resolve` and `regenerate` is checked before each call is sent: a call that would take the run's spend past it is refused (`cost ceiling reached ... nothing more was sent`) and never reaches the provider. `resolve` keeps one meter for the whole scene, so an asset over budget is skipped (`over_budget` in its `--json` report; under `ai_then_human` it becomes a task) and a cheaper one after it may still fit. A scene left with an unresolved asset exits 1.
-- **Every paid call is in the ledger**, `.flint/ai_costs.jsonl` at the project root: one JSON object per line with the provider, the endpoint, the asset, the operation (`generate`, `resolve`, `regenerate`), the units billed (`megapixel`, `second`, `task`) and `estimated_usd`. A call is recorded the moment the provider accepts it, so a generation that fails afterwards (a lost download) is still there. `flint asset costs [--since YYYY-MM-DD]` and `flint gen --cost-report` print the same report over it.
-- **Prices are data**, in `flint-ai-core`'s `prices.toml`, dated and with each rate's source: Flux (fal.ai) per megapixel, each image rounded up; ElevenLabs per second of sound asked for; Meshy per textured model (a preview and a refine, 30 credits). Meshy publishes no dollar price for an API credit, so its $0.60 assumes its Pro plan's $0.02; set your plan's in **`.flint/prices.toml`**, which overrides any entry:
+- **Every paid call is in the ledger**, `.flint/ai_costs.jsonl` at the project root: one JSON object per line with the provider, the endpoint, the asset, the operation (`generate`, `resolve`, `regenerate`, or `resume` for a stage a `flint asset job resume` paid for), the units billed (`megapixel`, `second`, `credit`) and `estimated_usd`. A call is recorded the moment the provider accepts it, so a generation that fails afterwards (a lost download) is still there. `flint asset costs [--since YYYY-MM-DD]` and `flint gen --cost-report` print the same report over it.
+- **Prices are data**, in `flint-ai-core`'s `prices.toml`, dated and with each rate's source: Flux (fal.ai) per megapixel, each image rounded up; ElevenLabs per second of sound asked for; Meshy per credit, a textured model being two billed requests recorded apart: a preview (20 credits) and a refine of it (10). Meshy publishes no dollar price for an API credit, so its $0.02 a credit ($0.60 a model) is its Pro plan's; set your plan's in **`.flint/prices.toml`**, which overrides any entry:
 
 ```toml
 # .flint/prices.toml
 [calls.meshy]
-unit = "task"
-usd = 0.45
+unit = "credit"
+usd = 0.015
 ```
+
+A Meshy price in any other unit (`unit = "task"`, as Flint once advised) is read as the price of a whole textured model and split 2:1 between the preview and the refine.
 
 With a ceiling set, a provider with no price at all is refused, since its cost can't be kept under one.
 
 ### Jobs
 
-A Meshy model takes minutes. The task is a job in `.flint/jobs/` from the moment Meshy accepts (and bills) it, updated as it is polled. `flint asset job list` shows each one with its status, progress and cost. A run that stops, or a wait that times out (half an hour), leaves the job; `flint asset job resume <id>` waits for it, downloads the model and registers the asset, paying for nothing new.
+A Meshy model takes minutes, and is two tasks: a **preview**, which turns the prompt into a mesh, then a **refine** of that preview, which textures it (Meshy's v2 API takes the prompt only on the preview, and the refine names it by `preview_task_id`). The model is a job in `.flint/jobs/` from the moment Meshy accepts (and bills) the preview; the job names both tasks (`remote_id` the preview, `refine_id` the refine once it is submitted) and is updated as each is polled, its progress the preview's first half and the refine's second. `flint asset job list` shows each one with its status, progress and cost. A run that stops, or a wait that times out (half an hour a task), leaves the job; `flint asset job resume <id>` goes on from where it was: a job stopped in its preview waits for that preview and pays for the refine alone, one stopped in its refine waits for it and pays for nothing new. Either way it downloads the textured model and registers the asset.
 
 A Flux texture is a job too. Its default endpoint, `https://queue.fal.run/fal-ai/flux/dev`, is fal's queue: the POST answers at once with a receipt (`request_id`, `status_url`, `response_url`), and the image comes later. Flint checks `status_url` every second until fal says `COMPLETED`, fetches the output from `response_url`, then downloads the image. The job records `response_url`, so `flint asset job resume <id>` can still fetch an image after the run that queued it has stopped. A request fal finishes with an `error` fails its job. A synchronous endpoint (`api_url = "https://fal.run/fal-ai/flux/dev"` under `[providers.flux]`) answers with the image right away and makes no job. With `RUST_LOG=flint_asset_gen=debug`, fal's answers are logged as they arrive.
 

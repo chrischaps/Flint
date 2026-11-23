@@ -79,8 +79,28 @@ fn fake_providers() -> (String, Log) {
                         .into_bytes(),
                 ),
                 ("GET", "/img.png") => ("image/png", b"\x89PNG\r\n\x1a\nfake".to_vec()),
-                ("POST", "/meshy") => ("application/json", br#"{"result":"task-7"}"#.to_vec()),
+                // A preview takes the prompt; a refine names a succeeded
+                // preview and takes none (#1187). Anything else is refused.
+                ("POST", "/meshy") => {
+                    let sent: Value = serde_json::from_slice(&body).unwrap_or_default();
+                    match (sent["mode"].as_str(), sent["preview_task_id"].as_str()) {
+                        (Some("preview"), None) if sent["prompt"].is_string() => {
+                            ("application/json", br#"{"result":"task-7"}"#.to_vec())
+                        }
+                        (Some("refine"), Some("task-7")) if sent.get("prompt").is_none() => {
+                            ("application/json", br#"{"result":"task-8"}"#.to_vec())
+                        }
+                        _ => ("text/plain", b"bad request".to_vec()),
+                    }
+                }
                 ("GET", "/meshy/task-7") => (
+                    "application/json",
+                    serde_json::json!({"status": "SUCCEEDED", "progress": 100,
+                        "model_urls": {"glb": format!("{base2}/preview.glb")}})
+                    .to_string()
+                    .into_bytes(),
+                ),
+                ("GET", "/meshy/task-8") => (
                     "application/json",
                     serde_json::json!({"status": "SUCCEEDED", "progress": 100,
                         "model_urls": {"glb": format!("{base2}/m.glb")}})
@@ -310,8 +330,21 @@ fn a_meshy_generate_is_a_job_the_job_list_shows() {
     assert_eq!(jobs[0]["id"], job_id);
     assert_eq!(jobs[0]["provider"], "meshy");
     assert_eq!(jobs[0]["remote_id"], "task-7");
+    assert_eq!(jobs[0]["refine_id"], "task-8");
     assert_eq!(jobs[0]["status"], "complete");
-    assert_eq!(jobs[0]["estimated_usd"], 0.60);
+    assert!((jobs[0]["estimated_usd"].as_f64().unwrap() - 0.60).abs() < 1e-9);
+    assert_eq!(
+        std::fs::read(
+            generated["output"]
+                .as_str()
+                .map(|p| dir.join(p))
+                .unwrap_or_default()
+        )
+        .ok()
+        .as_deref(),
+        Some(&b"glTF fake"[..]),
+        "{generated:#}"
+    );
 
     // A complete job resumes to itself.
     let (out, resumed) = flint(&dir, &["asset", "job", "resume", job_id]);
