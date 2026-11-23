@@ -689,6 +689,86 @@ fn a_window_command_refuses_json() {
     }
 }
 
+/// #1199's table, row by row, with `--json` where a user puts it: before
+/// `play` it is flint's global flag, after it clap used to hand it to the
+/// player's own (#717), which asked for `--list-keys` (exit 2) or was
+/// refused as a window (#1184 made the global the only one). `--list-keys`
+/// opens no window, so it answers; a plain play refuses either way.
+#[test]
+fn play_answers_json_only_for_its_key_table_wherever_json_goes() {
+    let top = scratch("play_json");
+    assert!(flint(&top, &["init", "game"]).status.success());
+    let dir = top.join("game");
+    let scene = "scenes/main.scene.toml";
+    let stdout = |out: &Output| String::from_utf8_lossy(&out.stdout).into_owned();
+
+    // Rows 1 and 2: the table, the same bytes whichever side --json is on
+    let after = flint(&dir, &["play", "--list-keys", "--json", scene]);
+    let before = flint(&dir, &["--json", "play", "--list-keys", scene]);
+    for (words, out) in [
+        ("play --list-keys --json", &after),
+        ("--json play --list-keys", &before),
+    ] {
+        assert!(
+            out.status.success(),
+            "`flint {words}` exit {:?}:\n{}{}",
+            out.status.code(),
+            stdout(out),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let table: Value = serde_json::from_str(&stdout(&after)).expect("one JSON document");
+    assert!(table["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|k| k["action"] == "keys"));
+    assert_eq!(stdout(&after), stdout(&before));
+
+    // Rows 3 and 4: a plain play is a window, refused with exit 1 and an
+    // error document, never clap's "--list-keys is required" (exit 2).
+    // --exit-after only bounds the test if the refusal ever stops holding.
+    for words in [
+        &["play", "--json", scene, "--exit-after", "1"][..],
+        &["--json", "play", scene, "--exit-after", "1"],
+    ] {
+        let out = flint(&dir, words);
+        assert_eq!(out.status.code(), Some(1), "`flint {}`", words.join(" "));
+        let error: Value = serde_json::from_str(&stdout(&out)).expect("one JSON document");
+        let message = error["error"]["message"].as_str().unwrap();
+        assert!(message.contains("opens a window"), "{message}");
+    }
+
+    // Row 5: flint-player's own --json prints the same table. Its exe sits
+    // beside flint's when the workspace was built (plain `cargo test`); a
+    // `-p flint-cli` run may not have it, or may have an old one
+    let player =
+        Path::new(FLINT).with_file_name(format!("flint-player{}", std::env::consts::EXE_SUFFIX));
+    if !player.exists() {
+        eprintln!(
+            "no {}: flint-player's table is not compared",
+            player.display()
+        );
+        return;
+    }
+    let out = Command::new(&player)
+        .args([scene, "--list-keys", "--json"])
+        .current_dir(&dir)
+        .output()
+        .expect("flint-player runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout(&out),
+        stdout(&after),
+        "flint play's table is not flint-player's (an old {}? cargo build -p flint-player)",
+        player.display()
+    );
+}
+
 #[test]
 fn a_command_line_mistake_is_one_error_document() {
     let dir = scratch("usage");
