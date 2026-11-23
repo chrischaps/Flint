@@ -207,8 +207,9 @@ So:
 - The capturing frame, and those until its read-back lands, are marked in
   the frame history (`capturing`), so the hitch detector (#1076) skips them.
 - What stays on the frame's GPU timeline is the copies themselves (4.1-4.5
-  ms for the tavern's 110 MB, warm). `flint render` may wait: it's headless
-  and has no frame to keep.
+  ms for the tavern's 110 MB, warm; timed in the shipped capture, #1160:
+  3.8 ms for its 98.7 MB and 9.3-10.5 ms for the grove's 214.8 MB, below).
+  `flint render` may wait: it's headless and has no frame to keep.
 
 ### 6. Replay draws with the normal host and says how close it came
 
@@ -327,10 +328,76 @@ tavern, two of the grove):
 | skinning | YBot: 1 palette, 16.4 KB | 38 bone + 121 echo palettes, 2.6 MB |
 | replay: load and draw | 105-122 ms | 1.9 s (debug: 13 s) |
 
-The grove's GPU wait didn't fall on a second capture as the tavern's did,
-and wasn't looked into: #1085 should time the copies with the GPU timer.
 Shadow layers are most of a plain scene's bytes and almost nothing
 compressed (a cleared map). A spot light's layer is kept even with no spot.
+
+**What the copies cost on the GPU, and why the grove's wait didn't fall**
+(#1160). The shipped capture times each copy with two timestamps of its
+own query set (the frame's timer keeps its 32 scopes for the passes) and
+writes them to the manifest: each image's `gpu_copy_ms`, and
+`capture.gpu_copy_ms` for them all. Measured on another machine than the
+spike's: NVIDIA GeForce RTX 4070, Vulkan, release, 1920 x 1080, the
+tavern at `--time 2` and the grove at `--time 3`, four runs each over two
+sessions:
+
+| | tavern_hub | woozy_grove_grass |
+|---|---|---|
+| images (the shipped capture reads more than the spike's list) | 17 | 24 |
+| read back | 98.7 MB | 214.8 MB |
+| the copies on the GPU (`capture.gpu_copy_ms`) | 3.84 ms three times; 9.18 in the first run of a session | 9.32-10.46 ms |
+| the frame's own passes on the GPU (their `gpu_ms` summed) | 2.1-2.6 ms | 7.0-16.6 ms (Kuwahara 4.3-10.2 of it) |
+| `capture.wait_ms` in `flint render` | 0.015-0.096 ms | 0.016-0.03 ms |
+| copy out of mapped memory | 18.7-29.4 ms | 73.1-132.9 ms |
+
+A full-size half-float target (16.6 MB) or a shadow cascade copies in
+0.64 ms, 26 GB/s, and the tavern's copies all run at that rate once warm.
+In each grove run two or three copies took 1.0-1.95 ms instead: Kuwahara's
+ping in three of the four runs, and once each the style edges, Contour's
+ping, the fog veil, Kuwahara's tensor blur and the surface (1.09 against
+0.32). Which ones changes from run to run, and why wasn't measured. A pass
+whose work is still draining when its closing timestamp is written would
+put its tail on the copy after it. That fits Kuwahara's ping, the first
+copy after the grove's heaviest pass, but not every case.
+
+The spike's 53-58 ms was not the copies. It read the frame's pixels
+first, so the GPU was idle; then one submission of every copy into
+buffers made for it, a map of each, and `poll(Wait)`.
+`tests/gpu_timer.rs::spike_shaped_copies_of_the_tavern_and_the_grove`
+(`--ignored`, `--release`) does that again with each scene's images at
+their sizes, with timestamps around the copies, and splits the wait into
+the GPU finishing and the buffers mapping (three runs; the copies took up
+to twice as long on the runs where the machine was busy):
+
+| spike-shaped, three rounds | tavern (99 MB) | grove (215 MB) |
+|---|---|---|
+| mapping, after the GPU is done | 0.01-0.04 ms | 0.02-0.06 ms |
+| the copies (timestamps) | 3.8-9.4 ms | 8.5-18.9 ms |
+| submit to GPU done, cold | 10.2-29.8 ms | 15.3-39.2 ms |
+| ...a second round, the first's buffers dropped (as the spike's were) | 4.2-10.8 ms | 10.6-17.7 ms |
+| ...a second and third, every round's buffers held | 7.0-28.0 ms | 16.2-42.8 ms |
+
+So the wait is all on the queue, almost none of it mapping, and what it
+holds besides the copies goes with how much staging memory is new to the
+process, not with how many bytes are copied. A round that can take the
+memory the last one gave back waits about as long as its copies (tavern
+4.4 ms against 3.9, grove 11.1 against 8.6 on a quiet run). A round of
+new memory waits 3-30 ms more, more as the process holds more, so it
+doesn't fall on a second capture. That is the grove's shape in the spike. Most likely it is the
+driver making the new allocations resident before the submission runs. The
+timestamps show only that it falls outside the copies, so that cause is
+inferred. On this machine, with the buffers dropped between rounds as the
+spike dropped them, the grove's wait does fall. The spike's laptop
+(8 GB, with the grove's own textures, grass and 2.6 MB of palettes beside
+176 MB of staging) evidently couldn't reuse the freed memory for the next
+capture. That wasn't checked on the spike's machine.
+
+What it means for the shipped design (decision 5): the copies run inside
+the captured frame, so `flint render`'s wait is gone (it waits for the
+frame's pixels, which already include the copies), and the player polls.
+A capture's GPU cost is the copies, which its manifest now states: 3.8 ms
+for the tavern and 9.3-10.5 ms for the grove at 1080p on an RTX 4070,
+and more in a session's first capture while its staging is new memory
+(the tavern's 9.18 ms).
 
 ## Alternatives considered
 

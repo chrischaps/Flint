@@ -25,6 +25,7 @@
 //! flint-examples since #984: `flint-examples/tools/showcase/film.toml`.
 
 use super::capture_compare::{compare_folders, Comparison};
+use super::capture_disk::{self as disk, Room};
 use crate::output::{self, progress, say};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -85,6 +86,10 @@ pub struct CaptureArgs {
     /// Print the takes, their frames and command lines, and capture nothing
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Capture even when the estimate passes 90% of the disk's free space
+    #[arg(long)]
+    pub no_disk_check: bool,
 
     /// Schema directories for the player (the whole list; default: the
     /// scene's project's flint.toml)
@@ -304,6 +309,15 @@ impl TakePlan {
 
     pub fn label(&self) -> String {
         format!("{}/{}", self.shot, self.take)
+    }
+
+    /// Its frames' bytes on disk, estimated (`capture_disk::take_bytes`).
+    pub fn bytes(&self) -> f64 {
+        disk::take_bytes(self.frames(), self.width, self.height)
+    }
+
+    fn again_folder(&self) -> PathBuf {
+        self.folder.with_file_name(format!("{}.again", self.take))
     }
 
     fn step(&self) -> f64 {
@@ -608,26 +622,28 @@ pub fn run(args: CaptureArgs) -> Result<()> {
 
     let runs = if args.verify { 2 } else { 1 };
     let frames: usize = plans.iter().map(TakePlan::frames).sum::<usize>() * runs;
-    // A 4K PNG of the showcase film averaged 7 MB (#436); say 8 MB
-    let bytes: f64 = plans
-        .iter()
-        .map(|p| p.frames() as f64 * 8e6 * (p.width as f64 * p.height as f64) / (3840.0 * 2160.0))
-        .sum::<f64>()
-        * runs as f64;
+    let bytes = plans.iter().map(TakePlan::bytes).sum::<f64>() * runs as f64;
+    let room = room_for(&out, &plans, args.verify);
     let header = format!(
-        "{title}: {} takes, {frames} frames{}, into {} (~{:.1} GB)",
+        "{title}: {} takes, {frames} frames{}, into {} (~{:.1} GB{})",
         plans.len(),
         if args.verify { " (each twice)" } else { "" },
         shown(&out),
-        bytes / 1e9
+        bytes / 1e9,
+        room.map(|r| format!(", {} free there", disk::size(r.free as f64)))
+            .unwrap_or_default()
     );
 
     let flint = std::env::current_exe().context("finding the flint executable")?;
     if args.dry_run {
-        return dry_run(&header, &out, &plans, &flint, &args);
+        return dry_run(&header, &out, &plans, &flint, &args, room);
     }
     if args.encode.is_some() && !ffmpeg_present() {
         bail!("--encode needs ffmpeg on PATH (https://ffmpeg.org/download.html)");
+    }
+    // A disk that fills mid-run leaves a take half-written hours in (#1196)
+    if let Some(room) = room.filter(|r| !r.fits() && !args.no_disk_check) {
+        bail!("{}", wont_fit(&room, &out, &plans, &args));
     }
 
     say!("{header}");
@@ -637,7 +653,7 @@ pub fn run(args: CaptureArgs) -> Result<()> {
         let mut record = capture_take(p, &p.folder, &flint, &args)?;
         failed |= !record.ok;
         if args.verify {
-            let again = p.folder.with_file_name(format!("{}.again", p.take));
+            let again = p.again_folder();
             let second = capture_take(p, &again, &flint, &args)?;
             failed |= !second.ok;
             let cmp = compare_folders(&p.folder, &again)?;
@@ -731,18 +747,99 @@ pub fn run(args: CaptureArgs) -> Result<()> {
     }
 }
 
+/// The run's need against the free space of the disk under `out`, or
+/// `None` where the platform can't say (#1196).
+fn room_for(out: &Path, plans: &[TakePlan], verify: bool) -> Option<Room> {
+    let free = disk::free_bytes(out)?;
+    let once: f64 = plans.iter().map(TakePlan::bytes).sum();
+    // With --verify a take's second run lives beside it only until the two
+    // compare; one that matched is deleted before the next take
+    let again = if verify {
+        plans.iter().map(TakePlan::bytes).fold(0.0, f64::max)
+    } else {
+        0.0
+    };
+    // Each take's folder (and its .again) is emptied before it is written
+    let reclaimed = plans
+        .iter()
+        .flat_map(|p| [p.folder.clone(), p.again_folder()])
+        .filter(|f| holds_a_take(f))
+        .map(|f| disk::bytes_under(&f))
+        .sum();
+    Some(Room {
+        need: once + again,
+        free,
+        reclaimed,
+    })
+}
+
+/// Why a run won't fit, and the ways out.
+fn wont_fit(room: &Room, out: &Path, plans: &[TakePlan], args: &CaptureArgs) -> String {
+    let mut text = format!(
+        "this capture won't fit: it needs ~{} at once, and the disk under {} has {} free \
+         (a run may fill {:.0}% of it",
+        disk::size(room.need),
+        shown(out),
+        disk::size(room.free as f64),
+        disk::FILL * 100.0
+    );
+    // Old player logs alone aren't worth a word
+    if room.reclaimed >= 1_000_000 {
+        text.push_str(&format!(
+            ", plus the {} of old takes it replaces",
+            disk::size(room.reclaimed as f64)
+        ));
+    }
+    text.push_str(")\nways out:");
+    let mut ways: Vec<(String, String)> = Vec::new();
+    if args.width.is_some() || args.height.is_some() {
+        ways.push(("--width/--height".into(), "smaller frames".into()));
+    } else if let Some((s, need)) = room.scale_that_fits() {
+        ways.push((
+            format!("--scale {}", args.scale * s),
+            format!("~{}: smaller frames, the same layout", disk::size(need)),
+        ));
+    }
+    let mut shots: Vec<(&str, f64)> = Vec::new();
+    for p in plans {
+        match shots.iter_mut().find(|(id, _)| *id == p.shot) {
+            Some((_, b)) => *b += p.bytes(),
+            None => shots.push((&p.shot, p.bytes())),
+        }
+    }
+    if shots.len() > 1 {
+        // The first of equals: max_by would name the last
+        if let Some((id, b)) = shots.iter().rev().max_by(|a, b| a.1.total_cmp(&b.1)) {
+            ways.push((
+                "--shot <id>".into(),
+                format!("fewer shots (the largest, {id}, is ~{})", disk::size(*b)),
+            ));
+        }
+    }
+    ways.push(("--out <dir>".into(), "a disk with more room".into()));
+    ways.push(("--no-disk-check".into(), "capture anyway".into()));
+    for (flag, what) in ways {
+        text.push_str(&format!("\n  {flag:<17} {what}"));
+    }
+    text
+}
+
 fn dry_run(
     header: &str,
     out: &Path,
     plans: &[TakePlan],
     flint: &Path,
     args: &CaptureArgs,
+    room: Option<Room>,
 ) -> Result<()> {
     let exe = flint
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "flint".into());
     let mut text = format!("{header}\n");
+    if let Some(r) = room.filter(|r| !r.fits()) {
+        text.push_str(&format!("{}\n", wont_fit(&r, out, plans, args)));
+    }
     let mut takes = Vec::new();
     for p in plans {
         let input = p.input.as_ref().map(|_| p.folder.join("input.txt"));
@@ -778,7 +875,17 @@ fn dry_run(
     }
     output::emit(&output::Answer::new(
         text,
-        json!({ "dry_run": true, "out": out.display().to_string(), "takes": takes }),
+        json!({
+            "dry_run": true,
+            "out": out.display().to_string(),
+            "disk": room.map(|r| json!({
+                "need_bytes": r.need.round() as u64,
+                "free_bytes": r.free,
+                "reclaimed_bytes": r.reclaimed,
+                "fits": r.fits(),
+            })),
+            "takes": takes,
+        }),
     ))
 }
 
@@ -842,18 +949,26 @@ fn round(v: f64, places: i32) -> f64 {
 
 /// Empties `folder` for a take, refusing one that holds anything but a
 /// past take's files.
+/// Whether `folder` is a take's, which a capture may empty: empty, or
+/// holding a `take.json`, or only frames and a player log.
+fn holds_a_take(folder: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return false;
+    };
+    let entries: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    entries.is_empty()
+        || entries.iter().any(|n| n == "take.json")
+        || entries
+            .iter()
+            .all(|n| n.starts_with("frame_") || n == "player.log")
+}
+
 fn fresh_folder(folder: &Path) -> Result<()> {
     if folder.exists() {
-        let entries: Vec<_> = std::fs::read_dir(folder)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        let a_take = entries.is_empty()
-            || entries.iter().any(|n| n == "take.json")
-            || entries
-                .iter()
-                .all(|n| n.starts_with("frame_") || n == "player.log");
-        if !a_take {
+        if !holds_a_take(folder) {
             bail!(
                 "{} holds files that aren't a take's; capture into another --out",
                 folder.display()

@@ -430,6 +430,8 @@ impl PlayerApp {
             &self.core.scene_path,
             &mut self.core.script,
         );
+        // A playtest's own checks (#1192), on entities of their own
+        self.attach_test_scripts();
         self.core
             .script
             .set_current_scene(&self.core.scene_path, &self.core.project);

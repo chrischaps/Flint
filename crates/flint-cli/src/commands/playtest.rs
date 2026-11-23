@@ -6,6 +6,7 @@
 //! ```bash
 //! flint playtest flint-examples/phase4_runtime.scene.toml \
 //!     --input-script flint-examples/playtests/phase4_runtime.input --exit-after 6
+//! flint playtest scenes/level1.scene.toml --test-script playtests/coins.rhai --timeout 30
 //! flint playtest scenes/level1.scene.toml --timeout 30 --report out.json
 //! flint playtest scenes/level1.scene.toml --strict --dump player --json
 //! flint playtest scenes/level1.scene.toml --render --screenshot out/t2.png --screenshot-at 2
@@ -36,6 +37,12 @@ pub struct PlaytestArgs {
     /// `--input-script`)
     #[arg(long, value_name = "FILE")]
     pub input_script: Option<String>,
+
+    /// The playtest's own Rhai checks (repeatable): each is attached to an
+    /// entity the run spawns in every scene (`playtest`, `playtest_2` ...),
+    /// with the whole script API and `test_*`, and ships with nothing
+    #[arg(long, value_name = "FILE", action = clap::ArgAction::Append)]
+    pub test_script: Vec<PathBuf>,
 
     /// Game seconds a frame
     #[arg(long, default_value_t = flint_player::PLAYTEST_STEP, value_name = "S")]
@@ -123,7 +130,29 @@ fn preflight(args: &PlaytestArgs, report: &mut PlaytestReport) -> Result<serde_j
     let mut subject = Subject::scene(Path::new(&args.scene), &args.schemas);
     subject.strict = true;
     subject.script_api = Some(check::scripts::ScriptApiArgs::default().api()?);
-    let found = check::run(&subject, Checks::ALL);
+    let mut found = check::run(&subject, Checks::ALL);
+    // The playtest's own scripts (#1192), held to the script API as the
+    // scene's are, importing from where the scene's would. One that isn't
+    // there is the run's start failure already.
+    let scene = Path::new(&args.scene);
+    let project = flint_core::project::Project::for_scene(scene);
+    let scene_dir = scene
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let test_scripts = args
+        .test_script
+        .iter()
+        .filter(|path| path.is_file())
+        .map(|path| {
+            flint_script::check::ScriptFile::in_scene(path.clone(), project.clone(), scene_dir)
+        })
+        .collect();
+    if let Some(api) = &subject.script_api {
+        let (diagnostics, read) = check::scripts::check(api, test_scripts);
+        found.diagnostics.extend(diagnostics);
+        found.scripts.extend(read);
+    }
     for d in &found.diagnostics {
         report.failures.push(PlaytestFailure::new(
             "preflight",
@@ -205,6 +234,7 @@ pub fn run(args: PlaytestArgs) -> Result<()> {
     let mut options = PlaytestOptions::new(args.scene.clone());
     options.schemas = args.schemas.clone();
     options.input_script = args.input_script.clone();
+    options.test_scripts = args.test_script.clone();
     options.frame_step = args.frame_step;
     options.seed = args.seed;
     options.exit_after = args.exit_after;

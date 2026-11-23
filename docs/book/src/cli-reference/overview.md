@@ -836,6 +836,7 @@ that two runs write byte for byte. Exit 1 on any failure. The whole story is
 ```bash
 flint playtest flint-examples/phase4_runtime.scene.toml     --input-script flint-examples/playtests/phase4_runtime.playtest.txt --exit-after 8
 flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --json
+flint playtest scenes/level1.scene.toml --test-script playtests/coins.rhai --timeout 30
 flint playtest scenes/level1.scene.toml --render --screenshot shots/t2.png --screenshot-at 2
 flint playtest scenes/menu.scene.toml --save-from saves/v1_halfway.toml --json
 ```
@@ -843,6 +844,7 @@ flint playtest scenes/menu.scene.toml --save-from saves/v1_halfway.toml --json
 | Flag | Description |
 |------|-------------|
 | `--input-script <file>` | Keys, pads and the pointer, and `expect` / `wait` lines that check the game |
+| `--test-script <file>` | A Rhai file of the playtest's own checks, attached to an entity the run spawns in every scene (`playtest`; repeatable, `playtest_2` ...): the whole script API and `test_*`, with nothing added to the scene |
 | `--exit-after <s>` | End at this game time, passing if nothing failed (10 when neither this nor `--timeout` is given) |
 | `--timeout <s>` | End at this game time as a failure: the run should have ended itself (`test_pass()`, `test_fail()`, `quit_game()`) |
 | `--frame-step <s>` | Game seconds a frame (default 1/60) |
@@ -885,6 +887,7 @@ flint capture flint-examples/tools/showcase/film.toml --shot 02_type --scale 0.5
 | `--tolerance <levels>` | With `--verify`: the largest 8-bit difference that still counts as the same |
 | `--encode mp4` | Also an MP4 a take (H.264, BT.709, no sound; needs ffmpeg on `PATH`) |
 | `--dry-run` | Print each take's frames and `flint play` command line; capture nothing |
+| `--no-disk-check` | Capture even when the estimate (8 MB a 4K frame) passes 90% of the free space under `--out`; without it such a run stops before any take |
 | `--schemas <dir>` | Schema directories for the player (repeatable; default: the scene's project's) |
 
 Words after `--` are added to every take's `flint play` command line.
