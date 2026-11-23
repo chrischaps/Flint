@@ -1,3 +1,0 @@
-### `flint playtest --save-from <file>` starts a playtest from a save (#1193)
-**What changed.** A playtest can begin from a save file instead of an empty store: the file is loaded as the player loads a save (its `[meta] version`, the scripts' `on_persist_migrate(from)`, `persist_corrupt()` for a file that doesn't parse), and the run still writes nothing, so the file keeps its bytes. The report gains a `save` section (what the load found, the versions, `untouched`). A playtest's slots are now kept in memory, so `persist_save()` and `persist_slot(name)` work in one where before they had no save location.
-**What to do.** Nothing. To test a returning player, a migration or a corrupt save, pass `--save-from` with a copy of that save.
