@@ -716,6 +716,12 @@ sync +9.1 ms (also: reload poll 1.2 ms)
 render +40.0 ms (also: pipeline build 3.0 ms the frame before)
 ```
 
+The frame before's notes are there as a guess at work whose GPU share lands late; their own time was the frame before's. So when the hitch's own script took half of its excess, measured inside the frame, they don't count toward the half, and on a loaded machine a slow reload poll the frame before no longer outvotes a script that stalled:
+
+```text
+script stall.rhai:on_update 150.0 ms (also: reload poll 111.7 ms the frame before)
+```
+
 A note with no time (none of the engine's today) can't be weighed, so it is named. Notes are made only on the player's frame thread and only while the history records. Otherwise each call site costs a flag read, about 1 ns. Collecting a frame's notes costs 2 to 3 ns. The F2 graph and the hitch log are what show them.
 
 `FLINT_HITCH_FACTOR` (at least 1, default 2) and `FLINT_HITCH_FLOOR_MS` (default 24) change the thresholds.
