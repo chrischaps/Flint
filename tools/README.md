@@ -39,11 +39,8 @@ CLAUDE.md asks.
 | `make_sphere_glb.py` | `demo/models/Sphere.glb`, a UV sphere for the ASCII edge tests (#267) | | standard library |
 | `test-models/double_sided_card.py` | `tests/fixtures/models/DoubleSidedCard.glb`, the glTF `doubleSided` fixture (#623) | | standard library |
 | `test-models/double_sided_palm.py` | `demo/models/palm_{two,one}_sided.glb` for `demo/double_sided.scene.toml` (#623) | | standard library |
-| **The showcase film** (`showcase/CLAUDE.md`) | | | |
-| `showcase/build_scenes.py` | Writes `demo/film/*.scene.toml` from the set and each beat; `--check` for staleness | | standard library |
-| `showcase/music.py` (`score.py`, `synth.py`) | The film's score: synthesizes stems, then mixes them | `flint music render` | numpy, scipy (matplotlib for the plot), flint |
-| `showcase/cut.py` | Cuts the takes into the master, web and reel files; `--capture` shoots a cut's takes with `flint capture` | `flint capture` | numpy, Pillow, ffmpeg |
-| `showcase/check_cut.py` | Checks the encoded files frame by frame, and their sound | | numpy, ffmpeg |
+| **The showcase film** | | | |
+| `flint-examples/film/` | Not here: the film's scenes, shot list, score (`music.py`, `score.py`, `synth.py`) and editor (`cut.py`, `check_cut.py`) are flint-examples' (#984, #1195; its `CLAUDE.md`) | `flint capture`, `flint music render` | numpy, scipy, Pillow, ffmpeg |
 | **The web player** | | | |
 | `play-site/build.py` | Assembles play.chaps.dev from `play-site/games.toml` (#103) | `flint export web` | flint, a trunk build of the player |
 | `web-touch/ipad.mjs` | Plays a game on an emulated iPad over CDP and reports FROZEN or LIVE (docs/design/web.md) | | Node 22+, Chrome |

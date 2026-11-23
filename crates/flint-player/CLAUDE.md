@@ -1,6 +1,6 @@
 # flint-player: extensions, UI, input, capture, perf, web (moved out of the root CLAUDE.md by #755)
 
-The input system and touch controls are evaluated in flint-runtime; their notes are here beside the player that drives them. Web audio's code is in flint-audio (`crates/flint-audio/CLAUDE.md` has the audio clock). Android has one note, in `scripts/CLAUDE.md` (`cargo ndk -p flint-android`). `flint export web`: `crates/flint-cli/CLAUDE.md`. The showcase film rig: `flint-examples/tools/showcase/CLAUDE.md`.
+The input system and touch controls are evaluated in flint-runtime; their notes are here beside the player that drives them. Web audio's code is in flint-audio (`crates/flint-audio/CLAUDE.md` has the audio clock). Android has one note, in `scripts/CLAUDE.md` (`cargo ndk -p flint-android`). `flint export web`: `crates/flint-cli/CLAUDE.md`. The showcase film rig: `flint-examples/film/CLAUDE.md`.
 
 ## Extensions and script UI
 

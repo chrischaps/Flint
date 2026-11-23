@@ -22,7 +22,8 @@
 //!
 //! This was the showcase film's `tools/showcase/capture.py` and
 //! `compare.py`; the film's list, in this format, lives with the film in
-//! flint-examples since #984: `flint-examples/tools/showcase/film.toml`.
+//! flint-examples since #984, beside its set since #1195:
+//! `flint-examples/film/film.toml`.
 
 use super::capture_compare::{compare_folders, Comparison};
 use crate::output::{self, progress, say};
@@ -1185,7 +1186,7 @@ fps = 20
     }
 
     /// A list shaped like the showcase film's (flint-examples'
-    /// `tools/showcase/film.toml` since #984: a 4K master laid out on a
+    /// `film/film.toml` since #1195: a 4K master laid out on a
     /// 1920-point canvas, scenes named from the list's folder, a beat shot
     /// two ways), over the frozen fixture scenes: every take plans, each
     /// scene is found, and a point is two pixels.

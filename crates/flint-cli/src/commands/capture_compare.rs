@@ -1,6 +1,6 @@
 //! Two captures of one take, frame by frame (`flint capture --verify`,
 //! #722; was the showcase film's `compare.py`, #435, whose rig is
-//! `flint-examples/tools/showcase/` since #984).
+//! `flint-examples/film/` since #1195).
 //!
 //! Frames pair by name. For each pair: how many pixels differ, and the
 //! largest difference in any colour channel in 8-bit levels. A take is

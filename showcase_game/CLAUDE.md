@@ -1,6 +1,6 @@
 # showcase_game: The Overgrown Ruins (moved out of the root CLAUDE.md by #992)
 
-The example game, kept in the checkout as a project of its own. The film rig moved with the examples (#984): `flint-examples/tools/showcase/CLAUDE.md`, in that repository.
+The example game, kept in the checkout as a project of its own. The film rig moved with the examples (#984): `flint-examples/film/CLAUDE.md`, in that repository.
 
 ## In the checkout (#760)
 
