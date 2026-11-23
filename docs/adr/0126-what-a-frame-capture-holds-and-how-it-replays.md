@@ -350,12 +350,14 @@ sessions:
 | copy out of mapped memory | 18.7-29.4 ms | 73.1-132.9 ms |
 
 A full-size half-float target (16.6 MB) or a shadow cascade copies in
-0.64 ms, 26 GB/s. The few slower ones are each the first copy after a
-heavy pass (the grove's `fog_veil` 1.28 ms, Kuwahara's ping 1.40-1.95, the
-surface 0.96 against 0.32 in the tavern). Most likely a pass's closing
-timestamp is written before its last work drains, so its tail lands on the
-copy after it (inferred, not measured apart). The two together are right;
-the split between them leans toward the copy.
+0.64 ms, 26 GB/s, and the tavern's copies all run at that rate once warm.
+In each grove run two or three copies took 1.0-1.95 ms instead: Kuwahara's
+ping in three of the four runs, and once each the style edges, Contour's
+ping, the fog veil, Kuwahara's tensor blur and the surface (1.09 against
+0.32). Which ones changes from run to run, and why wasn't measured. A pass
+whose work is still draining when its closing timestamp is written would
+put its tail on the copy after it. That fits Kuwahara's ping, the first
+copy after the grove's heaviest pass, but not every case.
 
 The spike's 53-58 ms was not the copies. It read the frame's pixels
 first, so the GPU was idle; then one submission of every copy into
