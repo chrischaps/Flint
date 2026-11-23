@@ -22,7 +22,7 @@
 //! the wall clock only with `timings`.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use serde::Serialize;
@@ -62,8 +62,17 @@ pub struct PlaytestOptions {
     pub dump: Vec<String>,
     /// Put wall-clock times in the report (then no two runs are alike).
     pub timings: bool,
-    /// The screen scripts see, in points.
+    /// The screen scripts see, in points; with `render`, the frame's
+    /// pixels too.
     pub screen: (f32, f32),
+    /// Draw every frame offscreen (#1191): models load, the HUD is painted,
+    /// and screenshots and `frame` checks see what was drawn.
+    pub render: bool,
+    /// Write the frame at `screenshot_at` (or every `screenshot_every`
+    /// from it, numbered) as a PNG here; needs `render`.
+    pub screenshot: Option<PathBuf>,
+    pub screenshot_at: f64,
+    pub screenshot_every: Option<f64>,
 }
 
 impl PlaytestOptions {
@@ -80,6 +89,10 @@ impl PlaytestOptions {
             dump: Vec::new(),
             timings: false,
             screen: (1280.0, 720.0),
+            render: false,
+            screenshot: None,
+            screenshot_at: 0.0,
+            screenshot_every: None,
         }
     }
 }
@@ -108,8 +121,8 @@ pub enum Ended {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Failure {
     /// `assertion`, `test_fail`, `check`, `script_error`, `scene`,
-    /// `timeout`, `start` or `load_warning`; `preflight` for what `flint
-    /// playtest --strict` adds from `flint check`.
+    /// `timeout`, `start`, `load_warning` or `screenshot`; `preflight` for
+    /// what `flint playtest --strict` adds from `flint check`.
     pub kind: &'static str,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -206,6 +219,31 @@ pub struct PerfReport {
     pub wall_ms_per_frame: Option<f64>,
 }
 
+/// What a rendered run drew (#1191), on game time: the target and the
+/// draws summed over its frames.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RenderReport {
+    pub width: u32,
+    pub height: u32,
+    /// Frames drawn: every frame the run stepped.
+    pub frames: u64,
+    /// The renderer's draw calls summed over the frames (the F2 overlay's
+    /// `Draw calls`), and the draws the culls left out.
+    pub draw_calls: u64,
+    pub culled_draws: u64,
+}
+
+/// A screenshot the run wrote.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ScreenshotReport {
+    /// As asked for, `/`-separated.
+    pub file: String,
+    /// The game time of the frame it holds.
+    pub at: f64,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// Everything a playtest found, as `flint playtest` writes it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PlaytestReport {
@@ -230,6 +268,12 @@ pub struct PlaytestReport {
     /// entity that isn't there is `null`.
     pub entities: BTreeMap<String, Value>,
     pub perf: PerfReport,
+    /// What was drawn, with `render`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub render: Option<RenderReport>,
+    /// The screenshots written, in order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub screenshots: Vec<ScreenshotReport>,
 }
 
 impl PlaytestReport {
@@ -282,6 +326,8 @@ fn not_started(options: &PlaytestOptions, why: String) -> PlaytestReport {
             wall_ms: None,
             wall_ms_per_frame: None,
         },
+        render: None,
+        screenshots: Vec::new(),
     }
 }
 
@@ -298,6 +344,14 @@ fn warnings_report(messages: Vec<Warning>) -> WarningsReport {
 fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
     if options.frame_step.is_nan() || options.frame_step <= 0.0 {
         anyhow::bail!("--frame-step must be over 0 (got {})", options.frame_step);
+    }
+    if options.screenshot.is_some() && !options.render {
+        anyhow::bail!("--screenshot needs --render: a playtest without it draws no frame");
+    }
+    if let Some(every) = options.screenshot_every {
+        if every.is_nan() || every <= 0.0 {
+            anyhow::bail!("--screenshot-every must be over 0 (got {every})");
+        }
     }
     let scene = options.scene.clone();
     let scene_path = Path::new(&scene);
@@ -336,13 +390,43 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
     launch.scene_file_writable = false;
     app.apply_scene_settings(&scene_file);
     app.capture.input_script = input_script;
+    app.capture.path = options.screenshot.clone();
+    app.capture.at = options.screenshot_at;
+    app.capture.every = options.screenshot_every;
     app.step_frames(Some(options.frame_step), options.seed);
     app.set_schemas(registry, schema_dirs);
     // Every named event, for the input script's `event` lines
     app.core.event_log = Some(Vec::new());
-    app.enter_scene(SceneEntry::Start)
-        .context("the scene did not start")?;
+    // A rendered run (#1191): a renderer on an offscreen target before the
+    // scene enters, so its models, styles and fonts load onto it
+    if options.render {
+        let (w, h) = target_size(options);
+        app.use_offscreen(super::offscreen::lend(w, h).context("--render")?);
+    }
+    if let Err(e) = app.enter_scene(SceneEntry::Start) {
+        finish(app);
+        return Err(e).context("the scene did not start");
+    }
     Ok(app)
+}
+
+/// A rendered run's target in pixels: the screen scripts see, one pixel a
+/// point.
+fn target_size(options: &PlaytestOptions) -> (u32, u32) {
+    (
+        options.screen.0.round().max(1.0) as u32,
+        options.screen.1.round().max(1.0) as u32,
+    )
+}
+
+/// The run is over: its offscreen target, if it drew on one, goes back for
+/// the next run once the player that drew into it is gone.
+fn finish(app: PlayerApp) {
+    let gpu = app.offscreen();
+    drop(app);
+    if let Some(gpu) = gpu {
+        super::offscreen::give_back(gpu);
+    }
 }
 
 /// Play `options.scene` headless until it ends, and say how it went.
@@ -367,6 +451,16 @@ pub fn run(options: &PlaytestOptions) -> PlaytestReport {
     };
     let mut frames = 0u64;
     let mut fixed_steps = 0u64;
+    let mut drawn = options.render.then(|| {
+        let (width, height) = target_size(options);
+        RenderReport {
+            width,
+            height,
+            frames: 0,
+            draw_calls: 0,
+            culled_draws: 0,
+        }
+    });
     let ended = loop {
         let now = app.core.clock.total_time;
         if let Some(t) = exit_after {
@@ -382,6 +476,15 @@ pub fn run(options: &PlaytestOptions) -> PlaytestReport {
         app.tick();
         frames += 1;
         fixed_steps += app.core.fixed_steps as u64;
+        if let Some(drawn) = &mut drawn {
+            app.render_offscreen();
+            drawn.frames += 1;
+            if let Some(renderer) = &app.scene_renderer {
+                let stats = renderer.collect_stats();
+                drawn.draw_calls += stats.draw_calls as u64;
+                drawn.culled_draws += stats.culled_draws as u64;
+            }
+        }
         if app.core.script.test_decided() {
             let passed = app
                 .core
@@ -408,7 +511,10 @@ pub fn run(options: &PlaytestOptions) -> PlaytestReport {
     }
     let wall_ms = wall.elapsed().as_secs_f64() * 1000.0;
     let messages = warnings::end();
-    report(&app, options, ended, frames, fixed_steps, messages, wall_ms)
+    let mut report = report(&app, options, ended, frames, fixed_steps, messages, wall_ms);
+    report.render = drawn;
+    finish(app);
+    report
 }
 
 fn report(
@@ -508,6 +614,21 @@ fn report(
             at: Some(now),
         });
     }
+    // The screenshots asked for that aren't on disk (#1191)
+    for why in app
+        .capture
+        .scripted_missing()
+        .into_iter()
+        .chain(app.capture.flag_missing())
+    {
+        failures.push(Failure {
+            kind: "screenshot",
+            message: why,
+            file: None,
+            line: None,
+            at: None,
+        });
+    }
     if options.strict {
         for w in messages.iter().filter(|w| w.at_load > 0) {
             failures.push(Failure {
@@ -597,5 +718,17 @@ fn report(
             wall_ms: options.timings.then_some(wall_ms),
             wall_ms_per_frame: options.timings.then(|| wall_ms / (frames.max(1) as f64)),
         },
+        render: None,
+        screenshots: app
+            .capture
+            .shots
+            .iter()
+            .map(|s| ScreenshotReport {
+                file: s.path.to_string_lossy().replace('\\', "/"),
+                at: s.at,
+                width: s.width,
+                height: s.height,
+            })
+            .collect(),
     }
 }

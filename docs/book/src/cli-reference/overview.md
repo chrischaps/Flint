@@ -574,6 +574,7 @@ An input script plays its events at set game times. `#` starts a comment:
 10.0  look    40 -10             # raw mouse motion, for mouse-look
 10.5  look    300 0 1.5          # spread over 1.5 s
 11.0  capture frame              # capture the next frame for the frame debugger (#1086)
+11.5  screenshot shots/door.png  # the next frame drawn, scene and HUD, as a PNG (#1191)
 12.0  expect  door door.open == true          # ask the game (flint-query's conditions)
 12.0  wait    player transform.position.z > 9 within 5   # hold what follows until it holds
 ```
@@ -582,8 +583,11 @@ An input script plays its events at set game times. `#` starts a comment:
 once at its time, a `wait` every frame until it holds, holding back the
 lines after it (they then play that much later). A failed one is printed
 with the exit report and makes the run exit 1. Their forms (an entity's
-field, `entities where`, `persist`, `log`, `event`) are in
-[Playtesting](../guides/playtesting.md), which is where they are most use.
+field, `entities where`, `persist`, `log`, `event`, and `frame` for what the
+last frame drew) are in [Playtesting](../guides/playtesting.md), which is
+where they are most use. `screenshot <file>` writes the next frame drawn to
+the file (from the working directory, as `--screenshot`); one never written
+fails the run.
 
 `pull` sets an analog button's travel, as a real pad's trigger sends it: a
 `gamepad_button` binding to `RightTrigger2` reads 0.6, not the 0 or 1 that
@@ -821,8 +825,9 @@ cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
 
 ## The `playtest` Command
 
-Play a scene with no window, GPU or sound device, on a fixed clock, and
-report whether it passed: every `expect` and `wait` of the input script,
+Play a scene with no window, GPU or sound device (or, with `--render`, a
+GPU drawing every frame offscreen), on a fixed clock, and report whether
+it passed: every `expect` and `wait` of the input script,
 every `test_assert`, `test_fail` and `test_pass` of the scripts, every script
 error with its file and line, and the engine's warnings, as one JSON document
 that two runs write byte for byte. Exit 1 on any failure. The whole story is
@@ -831,6 +836,7 @@ that two runs write byte for byte. Exit 1 on any failure. The whole story is
 ```bash
 flint playtest flint-examples/phase4_runtime.scene.toml     --input-script flint-examples/playtests/phase4_runtime.playtest.txt --exit-after 8
 flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --json
+flint playtest scenes/level1.scene.toml --render --screenshot shots/t2.png --screenshot-at 2
 ```
 
 | Flag | Description |
@@ -844,7 +850,11 @@ flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --js
 | `--dump <entity>` | Put the entity's components at the end in the report (repeatable) |
 | `--report <file>` | Write the JSON report to this file as well |
 | `--timings` | Wall-clock times in the report (two runs then differ) |
-| `--width <w>`, `--height <h>` | The screen scripts see, in points (1280 x 720) |
+| `--width <w>`, `--height <h>` | The screen scripts see, in points (1280 x 720); with `--render`, the frame's pixels |
+| `--render` | Draw every frame offscreen, scene and HUD, with no window: models load, and screenshots and the input script's `frame` lines see what was drawn |
+| `--screenshot <file>` | Write the frame at `--screenshot-at` as a PNG (needs `--render`) |
+| `--screenshot-at <s>` | The game time of that frame (default 0) |
+| `--screenshot-every <s>` | Numbered frames every so many game seconds from `--screenshot-at` |
 | `--schemas <dir>` | Schema directories (repeatable); without it, the project's |
 ## The `capture` Command
 

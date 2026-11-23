@@ -8,13 +8,17 @@
 //!     --input-script flint-examples/playtests/phase4_runtime.input --exit-after 6
 //! flint playtest scenes/level1.scene.toml --timeout 30 --report out.json
 //! flint playtest scenes/level1.scene.toml --strict --dump player --json
+//! flint playtest scenes/level1.scene.toml --render --screenshot out/t2.png --screenshot-at 2
 //! ```
 //!
 //! The run is `flint_player::playtest` (the player's frames with no window,
 //! GPU or sound device); this command adds the terminal's text, the
 //! `--report` file and, under `--strict`, `flint check`'s findings on the
 //! scene before it plays, which catch what a run with no renderer can't
-//! (a model that isn't there).
+//! (a model that isn't there). `--render` (#1191) draws every frame
+//! offscreen through the player's renderer and HUD, so models load and
+//! `--screenshot` and an input script's `screenshot` and `frame` lines see
+//! what was drawn.
 
 use crate::check::{self, Checks, Subject};
 use crate::output::{self, say};
@@ -68,16 +72,43 @@ pub struct PlaytestArgs {
     #[arg(long)]
     pub timings: bool,
 
-    /// The screen scripts see, in points
+    /// The screen scripts see, in points (with --render, the frame's
+    /// pixels too)
     #[arg(long, default_value_t = 1280)]
     pub width: u32,
     #[arg(long, default_value_t = 720)]
     pub height: u32,
 
+    #[command(flatten)]
+    pub drawn: DrawnArgs,
+
     /// Schema directories, later ones overriding earlier (repeatable).
     /// Without it: the project's flint.toml `schemas`, else discovery
     #[arg(long, action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
+}
+
+/// What a rendered playtest draws (#1191), apart so the args struct stays
+/// small (#990).
+#[derive(clap::Args)]
+pub struct DrawnArgs {
+    /// Draw every frame offscreen, with no window: models load, the HUD is
+    /// painted, and screenshots and `frame` checks see what was drawn
+    #[arg(long)]
+    pub render: bool,
+
+    /// Write the frame at --screenshot-at as a PNG here (needs --render);
+    /// with --screenshot-every, numbered frames from it
+    #[arg(long, value_name = "FILE")]
+    pub screenshot: Option<PathBuf>,
+
+    /// The game time of the --screenshot frame
+    #[arg(long, default_value_t = 0.0, value_name = "SECONDS")]
+    pub screenshot_at: f64,
+
+    /// A --screenshot every this many game seconds from --screenshot-at
+    #[arg(long, value_name = "SECONDS")]
+    pub screenshot_every: Option<f64>,
 }
 
 /// `flint check` on the scene, under `--strict`: its findings, and a
@@ -124,6 +155,21 @@ fn summary(report: &PlaytestReport) -> String {
         report.warnings.while_running,
         if report.warnings.counted { "" } else { " (not counted)" }
     ));
+    if let Some(drawn) = &report.render {
+        out.push_str(&format!(
+            "  drew {} frames at {}x{}, {} draw calls; {} screenshot{}\n",
+            drawn.frames,
+            drawn.width,
+            drawn.height,
+            drawn.draw_calls,
+            report.screenshots.len(),
+            if report.screenshots.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
+    }
     for line in report.failure_lines() {
         out.push_str(&format!("  {line}\n"));
     }
@@ -142,6 +188,10 @@ pub fn run(args: PlaytestArgs) -> Result<()> {
     options.dump = args.dump.clone();
     options.timings = args.timings;
     options.screen = (args.width as f32, args.height as f32);
+    options.render = args.drawn.render;
+    options.screenshot = args.drawn.screenshot.clone();
+    options.screenshot_at = args.drawn.screenshot_at;
+    options.screenshot_every = args.drawn.screenshot_every;
 
     output::progress!("playtest: {}", args.scene);
     let mut report = flint_player::playtest(&options);

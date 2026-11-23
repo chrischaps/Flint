@@ -142,8 +142,7 @@ impl PlayerApp {
         let context = self.render_context.take();
         let mut renderer = self.scene_renderer.take();
         let gpu = context.as_ref().map(|c| (&c.device, &c.queue));
-        #[cfg(test)]
-        let gpu = gpu.or(self.test_gpu.map(|g| (&g.device, &g.queue)));
+        let gpu = gpu.or(self.windowless_gpu().map(|g| (&g.device, &g.queue)));
         let grass = match (renderer.as_mut(), gpu) {
             (Some(renderer), Some((device, queue))) => self.stage_scene(renderer, device, queue),
             _ => None,

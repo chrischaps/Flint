@@ -94,6 +94,7 @@ mod look_read_tests;
 #[cfg(not(target_arch = "wasm32"))]
 mod loopback;
 mod missing_features;
+pub(crate) mod offscreen;
 mod pacing;
 mod perf;
 mod perf_report;
@@ -229,6 +230,23 @@ pub struct CaptureConfig {
     /// The same frames' dt and present-to-present times, reported as a
     /// spread so uneven pacing shows at an even mean.
     pub(crate) perf_pacing: pacing::Pacing,
+    /// Screenshots an input script's `screenshot <file>` lines asked for
+    /// (#1191), each with the game time its line played at: written from
+    /// the next frame drawn, the window's or a rendered playtest's.
+    pub(crate) scripted: Vec<(std::path::PathBuf, f64)>,
+    /// Scripted screenshots that didn't reach the disk, each with why.
+    pub(crate) scripted_failures: Vec<String>,
+    /// Every screenshot written, in order: a playtest's report lists them.
+    pub(crate) shots: Vec<ShotWritten>,
+}
+
+/// A screenshot on disk: where, at what game time, and its size.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ShotWritten {
+    pub path: std::path::PathBuf,
+    pub at: f64,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Frames a single screenshot is retried on after a failed read-back or
@@ -247,6 +265,28 @@ impl CaptureConfig {
     /// (ADR 0110's amendment).
     pub fn is_capture(&self) -> bool {
         self.path.is_some() || self.exit_after.is_some() || self.input_script.is_some()
+    }
+
+    /// Every input-script `screenshot` line that left no file (#1191), each
+    /// with why: its write failed, or no frame was drawn after it.
+    pub(crate) fn scripted_missing(&self) -> Vec<String> {
+        let mut out = self.scripted_failures.clone();
+        for (path, at) in &self.scripted {
+            out.push(format!(
+                "screenshot {} (asked at t={at:.3} s) was never written: no frame was drawn after it",
+                path.display()
+            ));
+        }
+        out
+    }
+
+    /// The input script's screenshots due on this frame: every one asked
+    /// for since the last frame drawn.
+    pub(crate) fn take_scripted(&mut self) -> Vec<std::path::PathBuf> {
+        std::mem::take(&mut self.scripted)
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect()
     }
 
     /// A single shot is due (its time reached) but not yet on disk, and
@@ -273,6 +313,16 @@ impl CaptureConfig {
     /// Why a run that asked for screenshots didn't get them all, if it
     /// didn't: none written, or (in a sequence) any frame lost.
     pub fn missing(&self) -> Option<String> {
+        // An input script's `screenshot` lines (#1191): one that failed,
+        // or was asked for after the last frame drawn
+        if let Some(why) = self.scripted_missing().into_iter().next() {
+            return Some(why);
+        }
+        self.flag_missing()
+    }
+
+    /// [`missing`](Self::missing) for `--screenshot` alone.
+    pub(crate) fn flag_missing(&self) -> Option<String> {
         let path = self.path.as_ref()?;
         let why = || match (&self.last_failure, self.last_frame_time) {
             (Some(reason), _) => reason.clone(),
@@ -387,6 +437,11 @@ pub struct PlayerApp {
     /// surface, so tests hand the renderer's device and queue over here.
     #[cfg(test)]
     test_gpu: Option<&'static flint_render::HeadlessContext>,
+    /// The windowless target a rendered playtest draws into (#1191): its
+    /// device and colour and depth textures, which `render_offscreen`
+    /// draws the frame and the HUD into as `render` draws the swapchain's.
+    /// Lent from `offscreen::lend` for the run.
+    offscreen: Option<&'static flint_render::HeadlessContext>,
 
     // Input config layering + remap persistence
     input_layers: state::InputLayers,
