@@ -1,11 +1,14 @@
 //! Meshy 3D model generation provider
 //!
-//! Generates 3D models via the Meshy v2 text-to-3d API. A model takes
-//! minutes, so the task is billed when Meshy accepts it and then polled.
-//! With a job store in its `Calls`, the task is a [`GenerationJob`] from the
-//! moment it is accepted, updated as it is polled: a run that stops (or
-//! times out) leaves a job `flint asset job resume <id>` finishes without
-//! paying again (#721).
+//! Generates 3D models via the Meshy v2 text-to-3d API. A textured model is
+//! two tasks, each billed when Meshy accepts it (#1187): a **preview** (the
+//! prompt to a mesh) and, once that has succeeded, a **refine** of it
+//! (`preview_task_id`: the mesh textured). Each takes minutes and is polled.
+//! With a job store in its `Calls`, the model is a [`GenerationJob`] from the
+//! moment the preview is accepted, updated as each task is polled and
+//! naming both tasks: a run that stops (or times out) at either stage
+//! leaves a job `flint asset job resume <id>` finishes without paying for
+//! what was already paid for (#721).
 
 use crate::calls::{cost_error, endpoint_label, Calls};
 use crate::config::FlintConfig;
@@ -18,6 +21,44 @@ use std::collections::HashMap;
 use std::path::Path;
 
 const DEFAULT_MESHY_URL: &str = "https://api.meshy.ai/openapi/v2/text-to-3d";
+
+/// What a preview costs on Meshy's default model (meshy-7.1), in credits.
+const PREVIEW_CREDITS: f64 = 20.0;
+/// What a refine costs at the default 2K textures, in credits.
+const REFINE_CREDITS: f64 = 10.0;
+
+/// The two tasks of a textured model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Preview,
+    Refine,
+}
+
+impl Stage {
+    fn name(self) -> &'static str {
+        match self {
+            Stage::Preview => "preview",
+            Stage::Refine => "refine",
+        }
+    }
+
+    fn credits(self) -> f64 {
+        match self {
+            Stage::Preview => PREVIEW_CREDITS,
+            Stage::Refine => REFINE_CREDITS,
+        }
+    }
+
+    /// The job's progress for this task's: the preview is the first half,
+    /// the refine the second.
+    fn progress(self, task: u8) -> u8 {
+        let half = task.min(100) / 2;
+        match self {
+            Stage::Preview => half,
+            Stage::Refine => 50 + half,
+        }
+    }
+}
 
 /// Meshy provider for AI 3D model generation
 pub struct MeshyProvider {
@@ -54,25 +95,39 @@ impl MeshyProvider {
         req.with_header("Authorization", format!("Bearer {}", self.api_key))
     }
 
-    /// Submit a text-to-3d task (the paid call) and return the task ID
-    fn submit_task(&self, prompt: &str, negative: Option<&str>) -> Result<String> {
-        let mut payload = serde_json::json!({
-            "mode": "refine",
-            "prompt": prompt,
-            "should_remesh": true
-        });
-        if let Some(neg) = negative {
-            payload["negative_prompt"] = serde_json::json!(neg);
+    /// What `credits` count in the unit Meshy's price names: credits when
+    /// the table prices a credit (the built-in table's), else a share of one
+    /// textured model, so a project's `unit = "task"` price (#721's advice)
+    /// still charges its price for the two tasks together.
+    fn units(&self, credits: f64) -> f64 {
+        match self.calls.meter.prices().call_price("meshy") {
+            Some(p) if p.unit != "credit" => credits / (PREVIEW_CREDITS + REFINE_CREDITS),
+            _ => credits,
         }
-        let req = self.auth(HttpRequest::post_json(&self.api_url, &payload));
-        let response = self.calls.request_json(&req, "Meshy API request")?;
+    }
+
+    /// The ledger's `model` for a stage's task: the endpoint and the stage.
+    fn ledger_model(&self, stage: Stage) -> String {
+        format!(
+            "{} {}",
+            endpoint_label(&self.api_url, "meshy"),
+            stage.name()
+        )
+    }
+
+    /// POST a task (a paid call) and return its ID
+    fn post_task(&self, payload: &serde_json::Value, stage: Stage) -> Result<String> {
+        let req = self.auth(HttpRequest::post_json(&self.api_url, payload));
+        let what = format!("Meshy {} request", stage.name());
+        let response = self.calls.request_json(&req, &what)?;
         response
             .get("result")
             .and_then(|r| r.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| {
                 FlintError::GenerationError(format!(
-                    "Unexpected Meshy submit response: {}",
+                    "Unexpected Meshy {} response: {}",
+                    stage.name(),
                     serde_json::to_string_pretty(&response).unwrap_or_default()
                 ))
             })
@@ -87,107 +142,170 @@ impl MeshyProvider {
         Ok(task_status(&response))
     }
 
-    fn save(&self, job: &GenerationJob) {
-        if let Some(store) = &self.calls.jobs {
-            if let Err(e) = store.save(job) {
-                tracing::warn!("could not record Meshy job {}: {}", job.id, e);
-            }
+    /// What an error at `stage` adds when the job is kept: what's paid for
+    /// and the command that goes on from there. Before the refine is
+    /// submitted only the preview is paid for, which [`Calls::resume_hint`]
+    /// can't say.
+    fn resume_hint(&self, job: &GenerationJob, stage: Stage) -> String {
+        if self.calls.jobs.is_none() {
+            return String::new();
+        }
+        match (stage, job.refine_id.is_some()) {
+            (Stage::Refine, false) => format!(
+                "; the preview is paid for: `flint asset job resume {}` refines it without paying for it again",
+                job.id
+            ),
+            _ => self.calls.resume_hint(job),
         }
     }
 
-    /// Poll `job`'s task until it is done, then download the GLB, keeping
-    /// the job record current at every step.
+    /// Keep `e` in the job and return it with the resume hint.
+    fn fail(&self, job: &mut GenerationJob, stage: Stage, e: FlintError) -> FlintError {
+        let hint = self.resume_hint(job, stage);
+        // A generation error's own words, so the prefix isn't said twice.
+        let msg = match e {
+            FlintError::GenerationError(m) => m,
+            other => other.to_string(),
+        };
+        job.error = Some(msg.clone());
+        self.calls.save_job(job);
+        FlintError::GenerationError(format!("{msg}{hint}"))
+    }
+
+    /// Submit the refine of `job`'s succeeded preview: a paid call, asked of
+    /// the meter first and recorded the moment Meshy accepts it.
+    fn submit_refine(&self, job: &mut GenerationJob, preview_id: &str) -> Result<()> {
+        let units = self.units(Stage::Refine.credits());
+        if let Err(e) = self.calls.meter.admit_call("meshy", units) {
+            return Err(self.fail(job, Stage::Refine, cost_error(e)));
+        }
+        let payload = serde_json::json!({
+            "mode": "refine",
+            "preview_task_id": preview_id,
+            "enable_pbr": true
+        });
+        let refine_id = match self.post_task(&payload, Stage::Refine) {
+            Ok(id) => id,
+            Err(e) => return Err(self.fail(job, Stage::Refine, e)),
+        };
+        let cost = self
+            .calls
+            .meter
+            .record_call("meshy", &self.ledger_model(Stage::Refine), units);
+        job.refine_id = Some(refine_id.clone());
+        job.estimated_usd = Some(job.estimated_usd.unwrap_or(0.0) + cost);
+        job.error = None;
+        self.calls.save_job(job);
+        tracing::info!(
+            "Submitted Meshy refine {} of preview {} (job {})",
+            refine_id,
+            preview_id,
+            job.id
+        );
+        Ok(())
+    }
+
+    /// Poll `task_id`, `job`'s task at `stage`, until it succeeds, keeping
+    /// the job record current at every step. Returns its GLB's URL.
+    fn wait(&self, job: &mut GenerationJob, task_id: &str, stage: Stage) -> Result<Option<String>> {
+        for _ in 0..self.calls.max_polls {
+            self.calls.sleep(self.calls.poll_interval);
+            let status = match self.poll_task(task_id) {
+                Ok(s) => s,
+                Err(e) => return Err(self.fail(job, stage, e)),
+            };
+            match status {
+                MeshyTaskStatus::Processing(progress) => {
+                    tracing::info!("Meshy {}: {}%", stage.name(), progress);
+                    job.status = JobStatus::Processing;
+                    job.progress = stage.progress(progress);
+                    self.calls.save_job(job);
+                }
+                MeshyTaskStatus::Complete { model_url } => {
+                    job.status = JobStatus::Processing;
+                    job.progress = stage.progress(100);
+                    self.calls.save_job(job);
+                    return Ok(model_url);
+                }
+                MeshyTaskStatus::Failed(msg) => {
+                    job.status = JobStatus::Failed;
+                    job.error = Some(msg.clone());
+                    self.calls.save_job(job);
+                    return Err(FlintError::GenerationError(format!(
+                        "Meshy {} failed: {}",
+                        stage.name(),
+                        msg
+                    )));
+                }
+            }
+        }
+        let msg = format!(
+            "Meshy {} timed out after {} poll attempts",
+            stage.name(),
+            self.calls.max_polls
+        );
+        Err(self.fail(job, stage, FlintError::GenerationError(msg)))
+    }
+
+    /// Take `job` from wherever it is to a downloaded GLB: wait for its
+    /// preview and submit the refine unless that is done, then wait for the
+    /// refine and download what it made.
     fn finish(
         &self,
         job: &mut GenerationJob,
         output_dir: &Path,
         start: std::time::Instant,
     ) -> Result<GenerateResult> {
-        let task_id = job
+        let preview_id = job
             .remote_id
             .clone()
             .ok_or_else(|| FlintError::GenerationError("Job has no remote ID".to_string()))?;
-        let hint = if self.calls.jobs.is_some() {
-            format!(
-                "; it is paid for: `flint asset job resume {}` finishes it",
-                job.id
-            )
-        } else {
-            String::new()
-        };
-        let resume_hint = || hint.clone();
-        for _ in 0..self.calls.max_polls {
-            self.calls.sleep(self.calls.poll_interval);
-            let status = match self.poll_task(&task_id) {
-                Ok(s) => s,
-                Err(e) => {
-                    let hint = resume_hint();
-                    job.error = Some(e.to_string());
-                    self.save(job);
-                    return Err(FlintError::GenerationError(format!("{e}{hint}")));
-                }
-            };
-            match status {
-                MeshyTaskStatus::Processing(progress) => {
-                    tracing::info!("Processing... {}%", progress);
-                    job.status = JobStatus::Processing;
-                    job.progress = progress;
-                    self.save(job);
-                }
-                MeshyTaskStatus::Complete { model_url } => {
-                    let url = model_url.ok_or_else(|| {
-                        FlintError::GenerationError("No GLB URL in completion response".to_string())
-                    })?;
-                    std::fs::create_dir_all(output_dir)?;
-                    let output_path = output_dir.join(format!("{}.glb", job.asset_name));
-                    let glb = self
-                        .calls
-                        .request(&HttpRequest::get(url), "Meshy model download")?;
-                    std::fs::write(&output_path, &glb.body)?;
-
-                    let output = output_path.to_string_lossy().to_string();
-                    job.status = JobStatus::Complete;
-                    job.progress = 100;
-                    job.error = None;
-                    job.output_path = Some(output.clone());
-                    self.save(job);
-
-                    let hash = flint_core::ContentHash::from_file(&output_path)
-                        .map(|h| h.to_prefixed_hex())
-                        .ok();
-                    let mut metadata = HashMap::new();
-                    metadata.insert("task_id".to_string(), task_id);
-                    if self.calls.jobs.is_some() {
-                        metadata.insert("job_id".to_string(), job.id.clone());
-                    }
-                    return Ok(GenerateResult {
-                        output_path: output,
-                        prompt_used: job.prompt.clone().unwrap_or_default(),
-                        provider: "meshy".to_string(),
-                        duration_secs: start.elapsed().as_secs_f64(),
-                        content_hash: hash,
-                        metadata,
-                    });
-                }
-                MeshyTaskStatus::Failed(msg) => {
-                    job.status = JobStatus::Failed;
-                    job.error = Some(msg.clone());
-                    self.save(job);
-                    return Err(FlintError::GenerationError(format!(
-                        "Meshy generation failed: {}",
-                        msg
-                    )));
-                }
-            }
+        if job.refine_id.is_none() {
+            self.wait(job, &preview_id, Stage::Preview)?;
+            self.submit_refine(job, &preview_id)?;
         }
-        let hint = resume_hint();
-        let msg = format!(
-            "Meshy generation timed out after {} poll attempts",
-            self.calls.max_polls
-        );
-        job.error = Some(msg.clone());
-        self.save(job);
-        Err(FlintError::GenerationError(format!("{msg}{hint}")))
+        let refine_id = job
+            .refine_id
+            .clone()
+            .expect("the refine is submitted by now");
+        let url = self.wait(job, &refine_id, Stage::Refine)?.ok_or_else(|| {
+            FlintError::GenerationError("No GLB URL in completion response".to_string())
+        })?;
+        std::fs::create_dir_all(output_dir)?;
+        let output_path = output_dir.join(format!("{}.glb", job.asset_name));
+        let glb = match self
+            .calls
+            .request(&HttpRequest::get(url), "Meshy model download")
+        {
+            Ok(glb) => glb,
+            Err(e) => return Err(self.fail(job, Stage::Refine, e)),
+        };
+        std::fs::write(&output_path, &glb.body)?;
+
+        let output = output_path.to_string_lossy().to_string();
+        job.status = JobStatus::Complete;
+        job.progress = 100;
+        job.error = None;
+        job.output_path = Some(output.clone());
+        self.calls.save_job(job);
+
+        let hash = flint_core::ContentHash::from_file(&output_path)
+            .map(|h| h.to_prefixed_hex())
+            .ok();
+        let mut metadata = HashMap::new();
+        metadata.insert("task_id".to_string(), refine_id);
+        metadata.insert("preview_task_id".to_string(), preview_id);
+        if self.calls.jobs.is_some() {
+            metadata.insert("job_id".to_string(), job.id.clone());
+        }
+        Ok(GenerateResult {
+            output_path: output,
+            prompt_used: job.prompt.clone().unwrap_or_default(),
+            provider: "meshy".to_string(),
+            duration_secs: start.elapsed().as_secs_f64(),
+            content_hash: hash,
+            metadata,
+        })
     }
 }
 
@@ -216,12 +334,16 @@ fn task_status(response: &serde_json::Value) -> MeshyTaskStatus {
                 .and_then(|u| u.as_str())
                 .map(|s| s.to_string()),
         },
-        "FAILED" | "EXPIRED" => MeshyTaskStatus::Failed(
+        "FAILED" | "CANCELED" | "EXPIRED" => MeshyTaskStatus::Failed(
             response
                 .get("task_error")
                 .and_then(|e| e.get("message"))
                 .and_then(|m| m.as_str())
-                .unwrap_or("Unknown error")
+                .unwrap_or(if status == "CANCELED" {
+                    "the task was canceled"
+                } else {
+                    "Unknown error"
+                })
                 .to_string(),
         ),
         _ => MeshyTaskStatus::Processing(progress),
@@ -244,9 +366,9 @@ impl GenerationProvider for MeshyProvider {
         Ok(ProviderStatus::Available)
     }
 
-    /// One task per model.
+    /// A textured model: its preview and its refine.
     fn billed_units(&self, _request: &GenerateRequest) -> f64 {
-        1.0
+        self.units(PREVIEW_CREDITS + REFINE_CREDITS)
     }
 
     fn generate(
@@ -257,26 +379,36 @@ impl GenerationProvider for MeshyProvider {
     ) -> Result<GenerateResult> {
         let start = std::time::Instant::now();
         let prompt = self.build_prompt(request, style);
-        let negative = style.and_then(|s| s.negative()).map(|s| s.to_string());
+        if style.and_then(|s| s.negative()).is_some() {
+            // The v2 API documents no negative prompt (#1187).
+            tracing::info!("Meshy takes no negative prompt; the style guide's is not sent");
+        }
         std::fs::create_dir_all(output_dir)?;
 
-        let units = self.billed_units(request);
+        // The whole model is asked for up front: a preview the budget
+        // couldn't refine would be paid for and of no use.
         self.calls
             .meter
-            .admit_call("meshy", units)
+            .admit_call("meshy", self.billed_units(request))
             .map_err(cost_error)?;
-        let task_id = self.submit_task(&prompt, negative.as_deref())?;
-        // Meshy accepted the task: it's billed, and from here a job.
-        let cost =
-            self.calls
-                .meter
-                .record_call("meshy", &endpoint_label(&self.api_url, "meshy"), units);
+        let payload = serde_json::json!({
+            "mode": "preview",
+            "prompt": prompt,
+            "should_remesh": true
+        });
+        let preview_id = self.post_task(&payload, Stage::Preview)?;
+        // Meshy accepted the preview: it's billed, and from here a job.
+        let cost = self.calls.meter.record_call(
+            "meshy",
+            &self.ledger_model(Stage::Preview),
+            self.units(Stage::Preview.credits()),
+        );
         let mut job = GenerationJob::new("meshy", &request.name);
-        job.remote_id = Some(task_id.clone());
+        job.remote_id = Some(preview_id.clone());
         job.prompt = Some(prompt);
         job.estimated_usd = Some(cost);
-        self.save(&job);
-        tracing::info!("Submitted Meshy task {} (job {})", task_id, job.id);
+        self.calls.save_job(&job);
+        tracing::info!("Submitted Meshy preview {} (job {})", preview_id, job.id);
 
         self.finish(&mut job, output_dir, start)
     }
@@ -338,184 +470,5 @@ pub fn parse_meshy_poll(json: &str) -> Result<(String, u8, Option<String>)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::job::JobStore;
-    use crate::providers::test_support::{calls_over, request, temp_dir, test_config};
-    use flint_ai_core::{HttpResponse, Method, ScriptedTransport};
-
-    #[test]
-    fn test_parse_meshy_submit_response() {
-        let json = r#"{"result":"018d2158-xxxx-yyyy-zzzz-aabbccddee"}"#;
-        let task_id = parse_meshy_submit(json).unwrap();
-        assert_eq!(task_id, "018d2158-xxxx-yyyy-zzzz-aabbccddee");
-    }
-
-    #[test]
-    fn test_parse_meshy_poll_pending() {
-        let json = r#"{"status":"PENDING","progress":25}"#;
-        let (status, progress, url) = parse_meshy_poll(json).unwrap();
-        assert_eq!(status, "PENDING");
-        assert_eq!(progress, 25);
-        assert!(url.is_none());
-    }
-
-    #[test]
-    fn test_parse_meshy_poll_complete() {
-        let json = r#"{
-            "status": "SUCCEEDED",
-            "progress": 100,
-            "model_urls": {
-                "glb": "https://example.com/model.glb",
-                "fbx": "https://example.com/model.fbx"
-            }
-        }"#;
-        let (status, progress, url) = parse_meshy_poll(json).unwrap();
-        assert_eq!(status, "SUCCEEDED");
-        assert_eq!(progress, 100);
-        assert_eq!(url.unwrap(), "https://example.com/model.glb");
-    }
-
-    #[test]
-    fn test_parse_meshy_poll_failed() {
-        let json = r#"{
-            "status": "FAILED",
-            "progress": 50,
-            "task_error": {"message": "Generation failed due to content policy"}
-        }"#;
-        let (status, progress, _) = parse_meshy_poll(json).unwrap();
-        assert_eq!(status, "FAILED");
-        assert_eq!(progress, 50);
-        assert_eq!(
-            task_status(&serde_json::from_str(json).unwrap()),
-            MeshyTaskStatus::Failed("Generation failed due to content policy".into())
-        );
-    }
-
-    fn json(v: serde_json::Value) -> std::result::Result<HttpResponse, String> {
-        ScriptedTransport::json(v)
-    }
-
-    #[test]
-    fn a_generate_is_a_job_from_submit_to_download() {
-        let script = ScriptedTransport::new(vec![
-            json(serde_json::json!({"result": "task-1"})),
-            json(serde_json::json!({"status": "IN_PROGRESS", "progress": 40})),
-            json(serde_json::json!({"status": "SUCCEEDED", "progress": 100,
-                "model_urls": {"glb": "http://meshy.test/m.glb"}})),
-            Ok(HttpResponse::bytes(b"glTF fake".to_vec())),
-        ]);
-        let dir = temp_dir("meshy");
-        let store = JobStore::new(dir.join("jobs"));
-        let (calls, meter) = calls_over(&script, None);
-        let meshy = MeshyProvider::from_config(
-            &test_config("meshy", "http://meshy.test/openapi/v2/text-to-3d"),
-            calls.with_jobs(store.clone()),
-        )
-        .unwrap();
-        let result = meshy
-            .generate(&request("chair", AssetKind::Model), None, &dir.join("out"))
-            .unwrap();
-        assert_eq!(std::fs::read(&result.output_path).unwrap(), b"glTF fake");
-
-        let sent = script.requests();
-        assert_eq!(sent[0].header("authorization"), Some("Bearer test-key"));
-        assert_eq!(sent[1].method, Method::Get);
-        assert_eq!(
-            sent[1].url,
-            "http://meshy.test/openapi/v2/text-to-3d/task-1"
-        );
-
-        let jobs = store.list().unwrap();
-        assert_eq!(jobs.len(), 1);
-        let job = &jobs[0];
-        assert_eq!(job.remote_id.as_deref(), Some("task-1"));
-        assert_eq!(job.status, JobStatus::Complete);
-        assert_eq!(job.progress, 100);
-        assert_eq!(
-            job.output_path.as_deref(),
-            Some(result.output_path.as_str())
-        );
-        assert_eq!(result.metadata["job_id"], job.id);
-        // One task at the table's $0.60, the same in the job and the ledger.
-        assert_eq!(meter.calls(), 1);
-        assert!((job.estimated_usd.unwrap() - 0.60).abs() < 1e-12);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn a_timed_out_job_is_kept_and_resumed_without_paying_again() {
-        let script = ScriptedTransport::new(vec![
-            json(serde_json::json!({"result": "task-2"})),
-            json(serde_json::json!({"status": "IN_PROGRESS", "progress": 10})),
-            json(serde_json::json!({"status": "IN_PROGRESS", "progress": 60})),
-        ]);
-        let dir = temp_dir("meshy-resume");
-        let store = JobStore::new(dir.join("jobs"));
-        let (calls, meter) = calls_over(&script, None);
-        let calls = calls
-            .with_jobs(store.clone())
-            .with_polling(std::time::Duration::ZERO, 2);
-        let meshy = MeshyProvider::from_config(&test_config("meshy", "http://meshy.test/t"), calls)
-            .unwrap();
-        let e = meshy
-            .generate(&request("table", AssetKind::Model), None, &dir.join("out"))
-            .unwrap_err();
-        let job = store.list().unwrap().remove(0);
-        assert!(e.to_string().contains("timed out"), "{e}");
-        assert!(
-            e.to_string()
-                .contains(&format!("flint asset job resume {}", job.id)),
-            "{e}"
-        );
-        assert_eq!(job.status, JobStatus::Processing);
-        assert_eq!(job.progress, 60);
-
-        // A later run picks the task up where it was.
-        let script = ScriptedTransport::new(vec![
-            json(serde_json::json!({"status": "SUCCEEDED",
-                "model_urls": {"glb": "http://meshy.test/t.glb"}})),
-            Ok(HttpResponse::bytes(b"glTF".to_vec())),
-        ]);
-        let (calls, meter2) = calls_over(&script, None);
-        let meshy = MeshyProvider::from_config(
-            &test_config("meshy", "http://meshy.test/t"),
-            calls.with_jobs(store.clone()),
-        )
-        .unwrap();
-        let result = meshy.resume(&job, &dir.join("out")).unwrap();
-        assert!(result.output_path.ends_with("table.glb"));
-        assert_eq!(store.load(&job.id).unwrap().status, JobStatus::Complete);
-        assert_eq!(meter.calls(), 1);
-        assert_eq!(meter2.calls(), 0, "a resume pays for nothing");
-        assert!(script.requests().iter().all(|r| r.method == Method::Get));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn a_failed_task_marks_its_job_failed() {
-        let script = ScriptedTransport::new(vec![
-            json(serde_json::json!({"result": "task-3"})),
-            json(serde_json::json!({"status": "FAILED", "task_error": {"message": "policy"}})),
-        ]);
-        let dir = temp_dir("meshy-fail");
-        let store = JobStore::new(dir.join("jobs"));
-        let (calls, _) = calls_over(&script, None);
-        let meshy = MeshyProvider::from_config(
-            &test_config("meshy", "http://meshy.test/t"),
-            calls.with_jobs(store.clone()),
-        )
-        .unwrap();
-        let e = meshy
-            .generate(&request("x", AssetKind::Model), None, &dir)
-            .unwrap_err();
-        assert_eq!(
-            e.to_string(),
-            "Generation error: Meshy generation failed: policy"
-        );
-        let job = store.list().unwrap().remove(0);
-        assert_eq!(job.status, JobStatus::Failed);
-        assert_eq!(job.error.as_deref(), Some("policy"));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-}
+#[path = "meshy_tests.rs"]
+mod tests;

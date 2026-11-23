@@ -10,6 +10,12 @@
 //! reveal_shape = "tear" # tear, wipe, iris or panel
 //! ```
 //!
+//! `reveal_invert = true` (#1180) keeps the style outside the region
+//! instead: the region still grows with `reveal`, and what shows through
+//! it is the frame the style read, so an iris opens the plain picture from
+//! a point while the style holds the rest. Inverted, `reveal` 0 is the
+//! style everywhere and 1 the live frame.
+//!
 //! ```rhai
 //! tween_post_style_param("pencil", "reveal", 1.0, 4.0);
 //! ```
@@ -192,9 +198,10 @@ pub fn style_paper(
 const SHADOW_POINTS: f32 = 14.0;
 
 /// Every key the reveal reads, in the order a table writes them.
-pub const KEYS: [&str; 14] = [
+pub const KEYS: [&str; 15] = [
     "reveal",
     "reveal_shape",
+    "reveal_invert",
     "reveal_ink",
     "reveal_rim_color",
     "reveal_scale",
@@ -221,6 +228,9 @@ pub struct StyleReveal {
     /// `reveal`, 0 to 1.
     pub amount: Option<f32>,
     pub shape: Option<RevealShape>,
+    /// `reveal_invert` (#1180): the style outside the region, the frame
+    /// it read inside.
+    pub invert: Option<bool>,
     /// `reveal_ink`, in display values.
     pub ink: Option<[f32; 3]>,
     /// `reveal_rim_color`, in display values (#876); `None` is the
@@ -241,6 +251,20 @@ impl StyleReveal {
 
     pub fn ink(&self) -> [f32; 3] {
         self.ink.unwrap_or(DEFAULT_INK)
+    }
+
+    /// Whether the style is kept outside the region (#1180).
+    pub fn inverted(&self) -> bool {
+        self.invert.unwrap_or(false)
+    }
+
+    /// How much of the frame the style covers, from none (0) to all (1):
+    /// `reveal`, or `1 - reveal` when [`inverted`](Self::inverted). At 0
+    /// the style leaves its chain and at 1 the reveal draws nothing, so
+    /// those ends are exact whichever way the region faces.
+    pub fn coverage(&self) -> Option<f32> {
+        self.amount
+            .map(|a| if self.inverted() { 1.0 - a } else { a })
     }
 
     /// The rim's colour: `reveal_rim_color` as set, else `paper` (the
@@ -299,6 +323,14 @@ impl StyleReveal {
                     )
                 })?);
             }
+            "reveal_invert" => {
+                // A number too, so a script's 0 or 1 sets it
+                let on = value
+                    .as_bool()
+                    .or_else(|| number().map(|n| n != 0.0))
+                    .ok_or_else(|| format!("{key} must be true or false"))?;
+                self.invert = Some(on);
+            }
             "reveal_ink" | "reveal_rim_color" => {
                 let rgb = super::color_from_toml(value)
                     .ok_or_else(|| format!("{key} must be a colour: [r, g, b] or \"#rrggbb\""))?
@@ -326,6 +358,11 @@ impl StyleReveal {
     pub fn set_text(&mut self, key: &str, text: &str) -> Result<bool, String> {
         let value = match key {
             "reveal_shape" => toml::Value::String(text.to_string()),
+            "reveal_invert" => match text {
+                "true" | "on" | "1" => toml::Value::Boolean(true),
+                "false" | "off" | "0" => toml::Value::Boolean(false),
+                _ => return Err(format!("{key} must be true or false, not '{text}'")),
+            },
             "reveal_ink" | "reveal_rim_color" => match super::color_from_text(text) {
                 Some(rgb) => toml::Value::Array(
                     rgb.iter()
@@ -365,6 +402,9 @@ impl StyleReveal {
         }
         if let Some(s) = self.shape {
             out.push_str(&format!("reveal_shape = \"{}\"\n", s.name()));
+        }
+        if let Some(invert) = self.invert {
+            out.push_str(&format!("reveal_invert = {invert}\n"));
         }
         if let Some(ink) = self.ink {
             let [r, g, b] = ink.map(float);
@@ -436,7 +476,12 @@ impl StyleReveal {
                 self.number("reveal_seed"),
             ],
             ink: [ink[0], ink[1], ink[2], 0.0],
-            size: [width.max(1) as f32, height.max(1) as f32, 0.0, 0.0],
+            size: [
+                width.max(1) as f32,
+                height.max(1) as f32,
+                if self.inverted() { 1.0 } else { 0.0 },
+                0.0,
+            ],
             rim: [rim[0], rim[1], rim[2], self.number("reveal_rim") * ppp],
             shadow: [self.number("reveal_shadow"), SHADOW_POINTS * ppp, 0.0, 0.0],
         }
@@ -482,6 +527,7 @@ pub struct RevealUniform {
     pub place: [f32; 4],
     pub edge: [f32; 4],
     pub ink: [f32; 4],
+    /// target width, height, 1 when inverted (#1180), unused
     pub size: [f32; 4],
     /// rim rgb (in the target's space), rim width in pixels (#876)
     pub rim: [f32; 4],
@@ -601,6 +647,13 @@ impl RevealPass {
             });
         pipelines.push((format, pipeline.clone()));
         pipeline
+    }
+
+    /// Build the draw's pipeline at `format` now, if it isn't built
+    /// (#1159), so the first frame a reveal lies between 0 and 1 builds
+    /// nothing.
+    pub(super) fn warm(&self, device: &wgpu::Device, format: wgpu::TextureFormat) {
+        self.pipeline(device, format);
     }
 
     /// The slot this draw writes, or `None` when the frame has used them
@@ -767,6 +820,57 @@ mod tests {
         assert!(t.reveal("pencil").is_none() && t.shows("pencil"));
     }
 
+    /// #1180: inverted, the style covers `1 - reveal` of the frame, so
+    /// reveal 1 leaves the chain (the live frame) and reveal 0 draws no
+    /// reveal (the style's own frame): the plain reveal's ends, swapped.
+    #[test]
+    fn an_inverted_reveal_swaps_which_end_is_the_style() {
+        let mut r = StyleReveal::default();
+        r.set("reveal", &0.3.into(), false).unwrap();
+        assert_eq!(r.coverage(), Some(0.3));
+        assert!(r.set_text("reveal_invert", "true").unwrap());
+        assert!(r.inverted());
+        assert!((r.coverage().unwrap() - 0.7).abs() < 1e-6);
+        assert!(r.set_text("reveal_invert", "maybe").is_err());
+        assert!(
+            r.set("reveal_invert", &1.0.into(), false).unwrap(),
+            "a script's 1"
+        );
+        assert!(r.inverted());
+        assert!(r.set("reveal_invert", &"yes".into(), false).is_err());
+
+        let shows = |amount: f64, invert: bool| {
+            let mut s = super::super::StyleSettings::default();
+            s.set_reveal("ascii", "reveal", &amount.into(), true)
+                .unwrap();
+            s.set_reveal("ascii", "reveal_invert", &invert.into(), true)
+                .unwrap();
+            (s.shows("ascii"), s.reveal("ascii").unwrap().coverage())
+        };
+        assert_eq!(shows(0.0, false), (false, Some(0.0)));
+        assert_eq!(shows(1.0, true), (false, Some(0.0)), "the live frame");
+        assert_eq!(shows(1.0, false), (true, Some(1.0)));
+        assert_eq!(shows(0.0, true), (true, Some(1.0)), "the style's frame");
+
+        // The shader turns the sign by the uniform's size.z
+        let u = |r: &StyleReveal| r.uniform(64, 32, 0.0, 1.0, 1.0, false, DEFAULT_PAPER);
+        assert_eq!(u(&r).size, [64.0, 32.0, 1.0, 0.0]);
+        r.invert = Some(false);
+        assert_eq!(u(&r).size, [64.0, 32.0, 0.0, 0.0]);
+        r.invert = None;
+        let plain = u(&r);
+        r.invert = Some(true);
+        let inverted = u(&r);
+        assert_eq!(
+            RevealUniform {
+                size: plain.size,
+                ..inverted
+            },
+            plain,
+            "nothing else in the uniform moves: the region is the same, only its side"
+        );
+    }
+
     #[test]
     fn the_boil_steps_on_post_time() {
         let r = StyleReveal {
@@ -840,7 +944,9 @@ mod tests {
         r.set("reveal_rim", &3.0.into(), false).unwrap();
         r.set("reveal_shadow", &0.4.into(), false).unwrap();
         r.set("reveal_rim_color", &"#ffffff".into(), false).unwrap();
+        r.set("reveal_invert", &true.into(), false).unwrap();
         let text = r.toml_lines();
+        assert!(text.contains("reveal_invert = true\n"), "{text}");
         let table: toml::Table = toml::from_str(&text).unwrap();
         let mut back = StyleReveal::default();
         for (k, v) in &table {

@@ -20,7 +20,9 @@
 //! buffer), each shadow map layer that was drawn as its own image, each
 //! bloom step, each style's output and every target of the style chain's
 //! table ([`StyleTargets`](crate::stylize::StyleTargets)) the style asked for
-//! while it drew (a user style's own targets included). A target a pass
+//! while it drew (a user style's own targets included), each texture a style
+//! holds itself and noted as it drew ([`HeldTargets`](crate::stylize::HeldTargets),
+//! #1161), and the editor's selection mask. A target a pass
 //! wrote that isn't read (a buffer, a multisampled texture) is named with
 //! why in [`CaptureDescription::untapped`](crate::frame_capture::CaptureDescription::untapped).
 //!

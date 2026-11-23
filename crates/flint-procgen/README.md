@@ -123,6 +123,53 @@ Every key, generated from the generators' own schemas by `cargo run -p flint-pro
 | `materials` | table |  | Named materials, as [params.materials.<name>] tables; body parts and limb chains pick one by name |
 | `symmetry` | `bilateral` \| `none` | `"none"` | Symmetry mode for mirroring |
 
+Each `[[params.body_parts]]` entry:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `bone` | string | required | The bone it rides, by name |
+| `dimensions` | list of numbers | `[1.0, 1.0, 1.0]` | Metres, read by shape: an ellipsoid's [x, y, z] radii; a sphere's [radius, _, _]; a capsule's [radius, height, _]; a tapered cylinder's [bottom radius, top radius, height] |
+| `material` | string | `"default"` | A `materials` name; one with no table there is the default material |
+| `offset` | list of numbers | `[0.0, 0.0, 0.0]` | The shape's centre from its bone, [x, y, z] metres in the bone's space |
+| `shape` | `ellipsoid` \| `sphere` \| `capsule` \| `tapered_cylinder` | required | The solid; `dimensions` sizes it |
+
+Each `[[params.bones]]` entry:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `name` | string | required | What body parts, limb chains and later bones call it |
+| `parent` | string |  | The bone it hangs from, defined above it; none makes it a root |
+| `position` | list of numbers | `[0.0, 0.0, 0.0]` | Where it sits in its parent's space, [x, y, z] metres |
+| `rotation` | list of numbers | `[0.0, 0.0, 0.0]` | Euler angles in degrees [pitch, yaw, roll] |
+
+Each `[[params.limb_chains]]` entry:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `attach_offset` | list of numbers | `[0.0, 0.0, 0.0]` | Where the first segment starts, [x, y, z] metres in the parent bone's space; the mirrored chain flips x |
+| `material` | string | `"default"` | A `materials` name; one with no table there is the default material |
+| `mirror` | bool | `false` | Make a left chain too: x and the segments' yaw and roll flipped |
+| `name` | string | required | Names its bones: `<name>_0`, `<name>_1`, ... (`<name>_R_0` and `<name>_L_0` when mirrored) |
+| `parent_bone` | string | required | The bone the chain's first segment hangs from |
+| `segments` | array of tables | required | Root to tip, each a bone and a tapered cylinder; each starts at the end of the one before, down its local -y |
+
+Each `[[params.limb_chains.segments]]` entry:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `length` | number | required | Metres along the segment |
+| `radius_end` | number | required | Radius at its tip end, metres |
+| `radius_start` | number | required | Radius at the segment's root end, metres |
+| `rest_angles` | list of numbers | `[0.0, 0.0, 0.0]` | The segment's bend from the one before at rest, Euler degrees [pitch, yaw, roll] |
+
+Each `[params.materials.<name>]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `base_color` | hex colour | `"#808080"` | Base colour, sRGB hex |
+| `metallic` | number 0–1 | `0.0` | PBR metallic |
+| `roughness` | number 0–1 | `0.5` | PBR roughness |
+
 ### `form_v1` (mesh, written as GLB)
 
 | Key | Type | Default | What it does |
@@ -195,7 +242,7 @@ Only when `card_layout` is `scatter`:
 |---|---|---|---|
 | `closed` | bool | `false` | A loop: the last control point joins the first, and there are no end caps. A spline file's `[spline] closed` defaults to true; this to false, since a swept model is more often a run with two ends |
 | `color` | hex colour | `"#808080"` | Base colour, sRGB hex |
-| `control_points` | array of tables |  | The path, as `[[params.control_points]]` tables written as a `.spline.toml`'s are: `position = [x, y, z]` in metres, `twist` (banking, degrees, default 0) and `gap_after` (no geometry from here to the next point, default false) |
+| `control_points` | array of tables | required | The path, as `[[params.control_points]]` tables written as a `.spline.toml`'s are, at least two |
 | `height` | number >0 to 100 | `0.2` | Without a `profile`, the height of a box cross-section, metres |
 | `metallic` | number 0–1 | `0.0` | PBR metallic |
 | `offset` | list of numbers | `[0.0, 0.0]` | [right, up] metres from the path to the profile's centre, in the path's own frame |
@@ -206,6 +253,118 @@ Only when `card_layout` is `scatter`:
 | `spacing` | number 0.01–100 | `0.5` | Metres between the path's samples: smaller is a smoother bend and more triangles |
 | `texture_length` | number >0 to 1000 |  | Metres of sweep per texture repeat (v); on a loop nudged so the repeats meet at the seam. Unset: the profile's width |
 | `width` | number >0 to 100 | `0.2` | Without a `profile`, the width of a box cross-section, metres |
+
+Each `[[params.control_points]]` entry:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `gap_after` | bool | `false` | No geometry from this point to the next |
+| `position` | list of numbers | required | [x, y, z] metres |
+| `twist` | number | `0.0` | Banking about the path here, degrees |
+
+### `terrain_v1` (image set, written as PNGs)
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `geometry` | table |  | The terrain's size and the maps' resolution |
+| `grass` | table |  | The terrain component's GPU grass (see the book's Terrain page). Not read by the bake; leave it out unless the terrain should grow grass |
+| `height_layers` | array of tables |  | The height recipe, run in order on a grid starting at 0: `noise` adds fractal noise, `flatten` pulls heights toward a level, `erosion` wears them |
+| `splat_rules` | array of tables |  | Paint the four surface layers: each texel takes every rule whose height and slope it fits, weighted toward the middle of the rule's band, and the weights are normalized. No rules paints all layer 0 |
+| `textures` | table |  | The terrain component's surface textures and material; not read by the bake |
+
+The `[params.geometry]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `chunk_resolution` | integer ≥ 1 | `64` | Quads a side of each mesh chunk the runtime builds; not read by the bake |
+| `depth` | number > 0 | `256.0` | Metres deep (z) |
+| `height_scale` | number ≥ 0 | `50.0` | Metres from height 0 to height 1; also how steep the splat rules' slopes are |
+| `resolution` | integer 2–4096 | `256` | Texels a side of both maps |
+| `width` | number > 0 | `256.0` | Metres across (x) |
+
+The `[params.grass]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `bend_radius` | number | `2.0` |  |
+| `bend_strength` | number | `0.800000011920929` |  |
+| `blade_height` | number | `0.4000000059604645` |  |
+| `blade_width` | number | `0.07999999821186066` |  |
+| `color_base` | list of numbers |  |  |
+| `color_dry` | list of numbers |  |  |
+| `color_tip` | list of numbers |  |  |
+| `density` | number | `8.0` |  |
+| `density_layer` | integer ≥ 0 | `0` |  |
+| `density_source` | `splat` \| `map` | `"splat"` |  |
+| `density_threshold` | number | `0.10000000149011612` |  |
+| `dry_amount` | number | `0.15000000596046448` |  |
+| `enabled` | bool | `false` |  |
+| `fade_start` | number | `60.0` |  |
+| `height_variation` | number | `0.30000001192092896` |  |
+| `max_distance` | number | `80.0` |  |
+| `wind_direction` | list of numbers |  |  |
+| `wind_speed` | number | `1.0` |  |
+| `wind_strength` | number | `0.15000000596046448` |  |
+| `wooze` | bool | `false` |  |
+| `wooze_amplitude` | number | `0.11999999731779099` |  |
+| `wooze_wavelength` | number | `2.5` |  |
+
+Each `[[params.splat_rules]]` entry:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `height_max` | number 0–1 | `1.0` | Highest normalized height the rule paints |
+| `height_min` | number 0–1 | `0.0` | Lowest normalized height the rule paints |
+| `layer` | integer 0–3 | required | The layer painted: 0 to 3 (the splat map's R, G, B, A) |
+| `noise_amount` | number 0–1 | `0.0` | How much seeded noise breaks up the rule's edges |
+| `noise_scale` | number > 0 | `4.0` | Noise features across the terrain |
+| `slope_max` | number ≥ 0 | `1.0` | Steepest slope (rise over run) the rule paints; its weight fades toward it |
+
+The `[params.textures]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `layers` | table |  | Each splat layer's texture |
+| `metallic` | number 0–1 | `0.0` | Metallic factor |
+| `roughness` | number 0–1 | `0.85` | Roughness factor |
+| `texture_tile` | number > 0 | `16.0` | Times each layer's texture repeats across the terrain |
+
+The `[params.textures.layers]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `layer0` | table |  |  |
+| `layer1` | table |  |  |
+| `layer2` | table |  |  |
+| `layer3` | table |  |  |
+
+The `[params.textures.layers.layer0]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `label` | string |  | What the layer is (grass, rock); names its share of the splat map |
+| `path` | string |  | The layer's albedo texture |
+
+The `[params.textures.layers.layer1]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `label` | string |  | What the layer is (grass, rock); names its share of the splat map |
+| `path` | string |  | The layer's albedo texture |
+
+The `[params.textures.layers.layer2]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `label` | string |  | What the layer is (grass, rock); names its share of the splat map |
+| `path` | string |  | The layer's albedo texture |
+
+The `[params.textures.layers.layer3]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `label` | string |  | What the layer is (grass, rock); names its share of the splat map |
+| `path` | string |  | The layer's albedo texture |
 
 ### `texture_v1` (image set, written as PNGs)
 
@@ -258,12 +417,12 @@ Only when `pattern` is `voronoi_brick` or `perlin_organic` or `tiling_grid`:
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `base_color` | hex colour | `"#735A47"` | Albedo of the cells (stones, tiles, bands), sRGB hex; each cell gets its own shade of it |
+| `base_color` | hex colour | `"#B3A090"` | Albedo of the cells (stones, tiles, bands), sRGB hex; each cell gets its own shade of it |
 | `color_variation` | number ≥ 0 | `0.06` | How far each cell's lightness strays from base_color (saturation moves by half that; hue stays) |
 | `detail_octaves` | integer ≥ 1 | `4` | Octaves in the detail field, each twice as fine; any finer than 4 px are dropped |
 | `detail_scale` | number ≥ 0 | `8.0` | Detail lattice cells across the texture width (first octave) |
 | `detail_strength` | number ≥ 0 | `0.1` | RMS brightness change in the albedo (0.1 = 10%); also scales the detail's relief and roughness |
-| `mortar_color` | hex colour | `"#40382E"` | Albedo in the grooves between cells (strata lines on perlin_organic), sRGB hex |
+| `mortar_color` | hex colour | `"#898176"` | Albedo in the grooves between cells (strata lines on perlin_organic), sRGB hex |
 | `mortar_threshold` | number ≥ 0 |  | distance_to_edge below which mortar colour and roughness blend in; default 0.5 (half the groove) for voronoi_brick and tiling_grid, 0.05 (strata lines) for perlin_organic |
 | `normal_strength` | number ≥ 0 | `1.0` | Depth of the normal map's relief; 0 is flat |
 | `roughness_base` | number 0–1 | `0.75` | Roughness of the cells' faces |
@@ -274,7 +433,7 @@ Only when `pattern` is `voronoi_brick` or `tiling_grid`:
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `height_variation` | number 0–1 | `0.3` | Per-cell random height, 0 flat to 1 the most; shows in the normal map |
+| `height_variation` | number 0–1 |  | Per-cell random height, 0 flat to 1 the most; shows in the normal map. Default 0.3 for voronoi_brick, 0.2 for tiling_grid |
 
 ### `tree_v1` (mesh, written as GLB)
 
@@ -465,7 +624,7 @@ Reads `cell_id`; writes `r`, `g`, `b`.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `base_color` | hex colour | `"#735947"` | Albedo of the cells, hex; each cell gets its own shade of it |
+| `base_color` | hex colour | `"#B3A090"` | Albedo of the cells, hex; each cell gets its own shade of it |
 | `variation` | number 0–1 | `0.12` | How far each cell's lightness strays (saturation by half that; hue stays) |
 
 ### `mortar_color` (Mortar Color)
@@ -476,7 +635,7 @@ Reads `edge_dist`; modifies `r`, `g`, `b`.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `color` | hex colour | `"#40382E"` | Albedo of the mortar, hex |
+| `color` | hex colour | `"#898176"` | Albedo of the mortar, hex |
 | `threshold` | number 0–1 | `0.06` | The edge_dist below which the mortar colour blends in |
 
 ### `derive_normal` (Derive Normal)
@@ -544,7 +703,7 @@ Reads `<input>`; writes `r`, `g`, `b`.
 |---|---|---|---|
 | `input` | string | `"input"` | Channel (0–1) that picks the colour |
 | `interpolation` | `linear` \| `constant` \| `ease` | `"linear"` | Between stops: linear blends, constant holds each stop's colour up to the next, ease blends with an S-curve |
-| `stops` | array of tables |  | The ramp's colours, as [[params.ops.stops]] tables, at least one; sorted by position |
+| `stops` | array of tables | required | The ramp's colours, as [[params.ops.stops]] tables, at least one; sorted by position |
 
 Each `[[params.ops.stops]]` entry:
 
@@ -605,7 +764,7 @@ Writes `<output>`.
 
 Write a Voronoi (Worley) distance field, and optionally each pixel's cell.
 
-Writes `<output>`.
+Writes `<output>`, `<cell_output>`.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
@@ -751,7 +910,6 @@ Modifies `cell_id`, `edge_dist`, `mask`.
 | `octaves` | integer 1–8 | `1` | FBM octaves of the displacing noise; 1 is the sharpest grain |
 | `strength` | number 0–0.5 | `0.02` | How far an edge is pushed, in texture widths; fades toward the cell's interior |
 | `threshold` | number 0–1 | `0.3` | How sparse the chips are: a slow noise gates the erosion, which happens only where it's above this; 0 erodes everywhere, 1 nowhere |
-
 <!-- op-catalog:end -->
 
 ## Runtime integration

@@ -457,7 +457,10 @@ impl SceneRenderer {
         };
         self.begin_view_taps(&scopes);
         if let Some(log) = scopes.log() {
-            log.begin_view(self.surface_size.into());
+            log.begin_view(
+                self.surface_size.into(),
+                crate::frame_replay::CameraState::of(camera),
+            );
         }
         // The depth the scene draws against, in the description's names
         let sd = self.scene_depth_id();
@@ -994,8 +997,9 @@ impl SceneRenderer {
                     self.log_selection_draws(pass, &selection);
                 }
                 scopes.note("Selection mask", |p| {
-                    p.reads(&[sd]);
+                    p.reads(&[sd]).writes(&["selection_mask"]);
                 });
+                self.tap_pass(device, &mut scopes, encoder, "Selection mask");
             }
         } else {
             scopes.skip("Selection mask", || "nothing selected".to_string());
@@ -1038,7 +1042,7 @@ impl SceneRenderer {
                 self.encode_selection_outline(queue, encoder, target_view);
                 scopes.end(encoder, scope);
                 scopes.note("Selection outline", |p| {
-                    p.writes(&["surface"]);
+                    p.reads(&["selection_mask"]).writes(&["surface"]);
                 });
                 self.tap_pass(device, &mut scopes, encoder, "Selection outline");
             }

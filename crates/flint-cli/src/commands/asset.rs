@@ -658,6 +658,12 @@ fn run_job(cmd: JobCommands) -> Result<()> {
             say!("  Asset: {}", job.asset_name);
             say!("  Status: {:?}", job.status);
             say!("  Progress: {}%", job.progress);
+            if let Some(ref task) = job.remote_id {
+                say!("  Task: {}", task);
+            }
+            if let Some(ref refine) = job.refine_id {
+                say!("  Refine: {} (of the task above)", refine);
+            }
             say!("  Submitted: {}", job.submitted_at);
             if let Some(ref prompt) = job.prompt {
                 say!("  Prompt: {}", prompt);
@@ -716,6 +722,9 @@ fn run_job_resume(store: &JobStore, id: &str, output: Option<&str>) -> Result<()
         generation: Default::default(),
     });
     let calls = project_calls(&project, None)?.with_jobs(store.clone());
+    // A resume may pay for a stage the run didn't reach (Meshy's refine of a
+    // paid preview, #1187): its ledger line names the asset.
+    calls.meter.set_context(&job.asset_name, "resume");
     let provider = flint_asset_gen::providers::create_provider(&job.provider, &config, &calls)?;
     let out_dir = match output {
         Some(d) => std::path::PathBuf::from(d),
@@ -729,7 +738,11 @@ fn run_job_resume(store: &JobStore, id: &str, output: Option<&str>) -> Result<()
         job.status,
         job.progress
     );
-    let result = provider.resume(&job, &out_dir)?;
+    let resumed = provider.resume(&job, &out_dir);
+    if calls.meter.calls() > 0 {
+        progress!("  {}", super::ai_costs::spent_line(&calls.meter));
+    }
+    let result = resumed?;
     let kind = provider
         .supported_kinds()
         .first()

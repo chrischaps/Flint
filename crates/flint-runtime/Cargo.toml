@@ -12,6 +12,9 @@ description = "Game loop, input, and event system for Flint engine"
 # turn it on (#221, #748). Off, `pad` is a stand-in whose `Gilrs::new()`
 # always fails.
 gamepad = ["dep:gilrs"]
+# The F1 card, `debug_key_card` (#1170): the debug key table painted with
+# egui, for the player and the editors alike. Off, the table has no UI.
+egui = ["dep:egui"]
 
 [dependencies]
 web-time = { workspace = true }
@@ -21,6 +24,7 @@ toml = { workspace = true }
 winit = { workspace = true }
 serde = { workspace = true }
 gilrs = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
 
 [lints]
 workspace = true

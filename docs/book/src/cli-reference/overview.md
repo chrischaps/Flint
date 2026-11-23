@@ -222,7 +222,7 @@ Most expensive passes (GPU ms):
   13  Composite   0.006      0          0
 ```
 
-`#` is the pass's place in the frame, the `NN` of its image files. `--top N` lists more or fewer passes. A pass's draws include its layers' (the shadow cascades under `Shadows`).
+`#` is the pass's place in the frame, the `NN` of its image files. `--top N` lists more or fewer passes. A pass's draws include its layers' (the shadow cascades under `Shadows`). A capture written since #1176 also has a `Camera` line after `Frame`: the camera the frame drew with, from the manifest's `camera` (a comic panel's is under its panel), such as `Camera   perspective, fov 50°, near 0.1 m, far 1000 m, at (3.4, 1.7, 9) looking at (0.7, 0.7, 4.2)`. The frozen fixture above was written before it and has none.
 
 | View | What it lists |
 |------|---------------|
@@ -274,7 +274,8 @@ The diff is a report, so it exits 0 whatever it finds.
 |--------|------------|
 | 8-bit PNG | the file, byte for byte |
 | float colour (EXR half) | exposed at the frame's `exposure`, tonemapped with the composite's ACES curve, sRGB-encoded |
-| depth (EXR `Z`) | grey over the depths the frame drew, near white, the clear value black |
+| the scene's depth (EXR `Z`), in a capture that names its camera | metres from the camera, through the manifest's `camera` near and far planes, on a log scale from the nearest drawn (white) to the farthest (dark); the clear value black. The `view` line names the range: `depth 2.67..86.0 m, log scale, near white` |
+| depth in a capture that names no camera (written before #1176), and a shadow map's layer (a light's view, linear already) | grey stretched over the stored depths the frame drew, near white, the clear value black: `depth 0.96265..0.99894 stretched` |
 | one or two float channels | grey, or red and green, as stored in 0..1; a measure past 1 (a distance in metres) on a log scale, so a far sky doesn't black out the rest; centred on mid-grey when a value is negative |
 | integer ids (the style mask, a u32 target) | a colour each, spaced round the hue circle; id 0 black |
 
@@ -412,7 +413,7 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
 | `--list-gpus` | Print available GPU adapters and exit |
 | `--list-keys` | Print the debug keys after the scene's input layers (each key, action, owner, what it does, when it acts, and any the game's bindings take) and exit. F1 shows the same in a running game ([Debug Keys](../concepts/physics-and-runtime.md#debug-keys)) |
-| `--json` | With `--list-keys`: the table as JSON, for agents |
+| `--json` | With `--list-keys`: the table as JSON, for agents. Under `flint play` this is flint's global `--json`, so it may come before `play` too, and without `--list-keys` it is refused as for any window command; `flint-player` takes its own, only with `--list-keys` |
 | `--style <name[:k=v,...]>` | Turn a registered style on over the scene's post-processing, as `flint render --style` does: `ascii`, `ascii:cell=12,ramp=blocks`, `ascii:off` (off everywhere, entities' own included, #376). Repeatable; a later word wins. Written over every scene again after a transition, so it survives them (#328) |
 | `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain, the tear and the reality styles) at this many seconds |
 | `--motion-hold <rate>` | Motion on twos for the whole frame (#405): every entity's drawn position and pose, and the post time styles read, change only this many times a second (12 = on twos at 24 fps). Over every scene's `[post_process] motion_hold`, kept through transitions. See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
@@ -481,7 +482,10 @@ set of flags (`flint_player::PlayerArgs`) and launch through one function
 Every flag below, the capture and quality ones included, works on either, and
 a scene plays the same under both. Among them: `--msaa <1|4>` (default `1`)
 for multisample anti-aliasing of the scene passes, `--render-scale` and
-`--quality`, and `--procgen-defer`, which shows placeholders for a scene's
+`--quality`, `--vsync off|mailbox|fifo`, `--frame-latency 1..3` and
+`--no-pacing` for how frames reach the display (#1149: each over its old
+variable, `FLINT_VSYNC`, `FLINT_FRAME_LATENCY` and `FLINT_PACING`, which are
+read only when the flag isn't given), and `--procgen-defer`, which shows placeholders for a scene's
 procgen assets at once and generates them over the following frames instead
 of during load (see [Specs in Scenes](../concepts/procgen.md#specs-in-scenes)).
 
@@ -570,6 +574,7 @@ An input script plays its events at set game times. `#` starts a comment:
 10.0  look    40 -10             # raw mouse motion, for mouse-look
 10.5  look    300 0 1.5          # spread over 1.5 s
 11.0  capture frame              # capture the next frame for the frame debugger (#1086)
+11.5  screenshot shots/door.png  # the next frame drawn, scene and HUD, as a PNG (#1191)
 12.0  expect  door door.open == true          # ask the game (flint-query's conditions)
 12.0  wait    player transform.position.z > 9 within 5   # hold what follows until it holds
 ```
@@ -578,8 +583,11 @@ An input script plays its events at set game times. `#` starts a comment:
 once at its time, a `wait` every frame until it holds, holding back the
 lines after it (they then play that much later). A failed one is printed
 with the exit report and makes the run exit 1. Their forms (an entity's
-field, `entities where`, `persist`, `log`, `event`) are in
-[Playtesting](../guides/playtesting.md), which is where they are most use.
+field, `entities where`, `persist`, `log`, `event`, and `frame` for what the
+last frame drew) are in [Playtesting](../guides/playtesting.md), which is
+where they are most use. `screenshot <file>` writes the next frame drawn to
+the file (from the working directory, as `--screenshot`); one never written
+fails the run.
 
 `pull` sets an analog button's travel, as a real pad's trigger sends it: a
 `gamepad_button` binding to `RightTrigger2` reads 0.6, not the 0 or 1 that
@@ -817,8 +825,9 @@ cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
 
 ## The `playtest` Command
 
-Play a scene with no window, GPU or sound device, on a fixed clock, and
-report whether it passed: every `expect` and `wait` of the input script,
+Play a scene with no window, GPU or sound device (or, with `--render`, a
+GPU drawing every frame offscreen), on a fixed clock, and report whether
+it passed: every `expect` and `wait` of the input script,
 every `test_assert`, `test_fail` and `test_pass` of the scripts, every script
 error with its file and line, and the engine's warnings, as one JSON document
 that two runs write byte for byte. Exit 1 on any failure. The whole story is
@@ -827,6 +836,7 @@ that two runs write byte for byte. Exit 1 on any failure. The whole story is
 ```bash
 flint playtest flint-examples/phase4_runtime.scene.toml     --input-script flint-examples/playtests/phase4_runtime.playtest.txt --exit-after 8
 flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --json
+flint playtest scenes/level1.scene.toml --render --screenshot shots/t2.png --screenshot-at 2
 ```
 
 | Flag | Description |
@@ -840,7 +850,11 @@ flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --js
 | `--dump <entity>` | Put the entity's components at the end in the report (repeatable) |
 | `--report <file>` | Write the JSON report to this file as well |
 | `--timings` | Wall-clock times in the report (two runs then differ) |
-| `--width <w>`, `--height <h>` | The screen scripts see, in points (1280 x 720) |
+| `--width <w>`, `--height <h>` | The screen scripts see, in points (1280 x 720); with `--render`, the frame's pixels |
+| `--render` | Draw every frame offscreen, scene and HUD, with no window: models load, and screenshots and the input script's `frame` lines see what was drawn |
+| `--screenshot <file>` | Write the frame at `--screenshot-at` as a PNG (needs `--render`) |
+| `--screenshot-at <s>` | The game time of that frame (default 0) |
+| `--screenshot-every <s>` | Numbered frames every so many game seconds from `--screenshot-at` |
 | `--schemas <dir>` | Schema directories (repeatable); without it, the project's |
 ## The `capture` Command
 
@@ -1036,6 +1050,16 @@ The camera flags lay themselves over the editor's own framing (the model
 auto-fitted, the terrain from above, the scene's `[camera]`), so a flag left
 out keeps that part of it.
 
+**F1 lists the debug keys, in every editor** (#1170), as it does in the
+player: the same card, the host's key for each of them. An editor's own
+function keys are a table like the player's ([Debug Panels](../guides/debug-panels.md#keys)),
+each with an owner and an action name, and the host looks a press up in it;
+no editor matches an F-key of its own. The scene viewer's are F2 to F4 and
+the procgen previewer's F2 to F5 (the tables below); the other editors have
+none yet, so their card shows F1 alone. A held key doesn't repeat its
+action. The editors read no input config, so `[debug_keys]` rebinds the
+player's keys only.
+
 `--render out.png` writes what the window would show, without the panels, at
 `--width` x `--height`, for every kind of file:
 
@@ -1048,8 +1072,13 @@ flint edit flint-examples/stylize_props.scene.toml --render props.png --no-grid 
 
 A texture generator's or a texture pipeline's still is its output maps side by
 side, in the order the editor's tabs list them, and the command prints that
-order. The track editor's spline handles are drawn by its panels, so its still
-is the scene from the editor's camera.
+order. The track editor's still is the scene from the editor's camera with the
+spline over it, as the window draws it: the curve, the thin polygon joining
+its control points, and each point as a numbered white disc.
+
+```bash
+flint edit flint-examples/sweep_garden.scene.toml --spline --render track.png  # the track and its handles
+```
 
 ### GPU Selection
 
@@ -1158,6 +1187,23 @@ target yet, so nothing copies it into a build for you.
 | `--spline` | `false` | Open the spline/track editor instead of the viewer (scene) |
 | `--auto-orbit` | `false` | Start with the turntable auto-orbit on (scene/model/procgen); toggle with **O**, speed with `[` / `]` |
 | `--motion-hold <rate>` | (the scene's) | Motion on twos for the whole frame (#871), as `--set post.motion_hold=<rate>` is on `flint render`: the scene viewer and the model previewer draw positions and poses on ticks, this many a second (0 = off). See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
+| `--log-format <text\|json>` | `text` | How the editor writes what it says, to stderr, as the player does: `json` is one object a line with `timestamp`, `level`, `target`, `message` and the event's fields (#1164) |
+| `--quiet` | `false` | Say only warnings and errors: no load summary or the window's notices |
+
+The editors write what they say through the player's log (see
+[What the player says](#what-the-player-says)): a scene, in the viewer or the
+track editor, says its load in one line once its models are in, and again
+after each hot reload,
+
+```text
+INFO load: Loaded tests/fixtures/scenes/stylize_props.scene.toml: 8 entities, 2 models, 2 particle effects in 140 ms; no warnings
+```
+
+and the window's own notices (saves, reloads, undo, the F4 toggles, the
+auto-orbit speed) are info lines of target `viewer`. The default filter is
+`warn,rfd=off,load=info,script=info,viewer=info`; `RUST_LOG=load=debug` lists each
+file a load reads again. A `--render` still answers `Rendered ...` on stdout
+as before.
 
 ### Model Previewer Flags
 
@@ -1221,13 +1267,38 @@ See the [Particle Editor guide](../guides/particle-editor.md).
 | Ctrl+Z | Undo the last edit |
 | Ctrl+Shift+Z / Ctrl+Y | Redo it |
 | Escape | Cancel gizmo drag / exit |
-| F2 | Toggle the render stats overlay |
-| F3 | Toggle normal arrows |
-| F4 | Toggle the **Rendering & Effects** menu (all render and post toggles and parameters, debug shading mode, shadows, an authored-vs-viewer-default post switch, DoF follow, and the live Particles controls) |
+| F1 | Show or hide the list of debug keys (`keys`, the host's) |
+| F2 | Toggle the render stats overlay (`stats`) |
+| F3 | Toggle normal arrows (`normal_arrows`) |
+| F4 | Toggle the **Rendering & Effects** menu (all render and post toggles and parameters, debug shading mode, shadows, an authored-vs-viewer-default post switch, DoF follow, and the live Particles controls; `render_panel`) |
 
 The viewer applies the scene's `[post_process]` block on load; the F4 menu's "authored" switch flips between those values and the viewer defaults. The earlier F1 (debug mode), F2 (wireframe overlay) and F4 (shadows) keys were folded into the F4 menu.
 
 When an entity is selected, a **translate gizmo** appears with colored axis arrows (red = X, green = Y, blue = Z) and plane handles. Click and drag an axis or plane to move the entity. Position changes can be undone/redone and saved back to the scene file.
+
+### Procgen Previewer Controls
+
+The previewer of a mesh or texture spec (`flint edit specs/oak_tree.procgen.toml`):
+
+| Input | Action |
+|-------|--------|
+| Left-drag, right-drag, scroll, W/A/S/D, Q/E | Orbit, pan, zoom (Q/E zoom a texture too) |
+| O, `[` / `]` | Toggle auto-orbit, slower / faster |
+| Space | Fit the camera to the mesh; a texture back to 1x, centred |
+| R | A new random seed |
+| T | Tile the texture |
+| Tab | Hide or show the panels |
+| Ctrl+S / Ctrl+Shift+S | Save the spec / save it as (only the changed params are written) |
+| Ctrl+E | Export the output |
+| F1 | Show or hide the list of debug keys (`keys`, the host's) |
+| F2 | Wireframe over the mesh, or back to shaded (`wireframe`) |
+| F3 | Normal arrows (`normal_arrows`) |
+| F4 | The skeleton overlay, for a mesh with a skeleton (`skeleton`) |
+| F5 | The next debug shading mode: PBR, wireframe, normals, depth, UV, ... (`debug_mode`) |
+| Escape | Exit |
+
+F2 to F5 act on a mesh; with a texture spec the card shows them dimmed. F5
+was F1 until #1170 gave F1 one meaning in every tool.
 
 ### Spline Editor Controls (`--spline`)
 
@@ -1240,6 +1311,7 @@ When an entity is selected, a **translate gizmo** appears with colored axis arro
 | Right-drag | Pan camera |
 | Scroll | Zoom |
 | O, `[` / `]` | Toggle auto-orbit, slower / faster |
+| F1 | Show or hide the list of debug keys; the scene viewer's F2 to F4 work here too |
 | Tab / Shift+Tab | Cycle through control points |
 | I | Insert a new control point after selected |
 | Delete | Remove selected control point |
@@ -1291,7 +1363,7 @@ Before anything is generated, the spec's params are checked against its generato
 
 `flint gen` also previews a glyph set: `flint gen fonts/terminal.glyphs.toml -o sheet.png` writes the atlas, each ramp's ink and a specimen as one sheet, and `-o out/` writes the pieces as well. See [Glyph Atlas](../concepts/glyph-atlas.md#looking-at-a-set).
 
-It also bakes a terrain spec, with no window: `flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png` writes the 16-bit heightmap there and `terrain/meadow_splat.png` beside it, the bytes the terrain editor's Ctrl+E export writes; `-o terrain/` names them after the spec's `[meta] name`. A terrain spec takes `-o`, `--seed`, `--strict` (a key nothing reads is then an error, not a warning) and `--dry-run`, and refuses the procgen-only flags. See [Terrain](../concepts/terrain.md#generating-terrain-from-a-spec).
+It also bakes a terrain spec, with no window: a `.terrain.toml` is a `terrain_v1` spec (#1168), so `flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png` writes the 16-bit heightmap as `terrain/meadow_height.png` and the splat map as `terrain/meadow_splat.png`, the bytes the terrain editor's Ctrl+E export writes. Every flag above works on one: `--register`, `--batch`, `--validate`, `--strict`, `--print-spec` (the same recipe as a `*.procgen.toml`) and the AI steps (`--ai-generator terrain_v1`). See [Terrain](../concepts/terrain.md#generating-terrain-from-a-spec).
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -1306,7 +1378,7 @@ It also bakes a terrain spec, with no window: `flint gen flint-examples/rolling_
 | `--validate` | `false` | Validate output after generation |
 | `--strict` | `false` | Treat warnings as failures |
 | `--list-generators` | `false` | List every generator: output, revision, parameter count, whether it can live (no spec) |
-| `--describe <generator>` | (none) | Print every parameter a generator reads, grouped by the mode that reads it; `texture_v1`'s ops too (no spec). With the global `--json`, either catalog is one document: `--describe`'s is the schema itself |
+| `--describe <generator>` | (none) | Print every parameter a generator reads, grouped by the mode that reads it, a nested table's keys under the key that holds it (`bones[].name`); `texture_v1`'s ops too (no spec). With the global `--json`, either catalog is one document: `--describe`'s is the schema itself |
 | `--markdown` | `false` | With `--describe`: Markdown tables, as the flint-procgen README's catalog |
 | `--style-guide <path>` | (none) | Style guide TOML for validation constraints |
 | `--report <fmt>` | `human` | Validation report format: `human`, or `json` (one object per variant on stdout, with each check's `actual` and `limit`; human output moves to stderr). Requires `--validate` |

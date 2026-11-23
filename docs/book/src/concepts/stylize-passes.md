@@ -863,6 +863,7 @@ flint render flint-examples/reveal_tear.scene.toml --sweep pencil.reveal=0.15,0.
 |---|---|---|
 | `reveal` | none | How far the region has grown, 0 to 1. With no `reveal` there is no region, whatever the other keys say. |
 | `reveal_shape` | `tear` | `tear`: a ragged hole that rips open from a point. `wipe`: a ragged line that crosses the frame. `iris`: a circle from a point, its rim wobbling a little. `panel`: a straight rectangle the screen's shape, from a point out to every edge (the comic-panel cut). |
+| `reveal_invert` | `false` | Keep the style outside the region instead of inside it (#1180): the frame the style read shows through the region as it grows. Inverted, `reveal = 0` is the style everywhere and 1 the live frame. |
 | `reveal_x`, `reveal_y` | 0.5, 0.5 | Where a tear, iris or panel starts, as a share of the frame (y down). |
 | `reveal_angle` | 0 | A wipe's direction of travel in degrees: 0 from the left edge to the right, 90 from the top down. |
 | `reveal_ragged` | by shape | How far the edge strays from the shape, as a share of the frame: tear 0.3, wipe 0.12, iris 0.05, panel 0. |
@@ -891,12 +892,19 @@ flint render flint-examples/reveal_tear.scene.toml --sweep pencil.reveal=0.15,0.
   *`flint render tests/fixtures/scenes/stylize_props_plain.scene.toml --no-grid --style pencil:reveal=0.5,reveal_shape=wipe,reveal_angle=20 --style-time 0.6 --sweep pencil.reveal_rim=0,4 --sweep pencil.reveal_shadow=0,0.5 --sweep-crop 760,380,440,440`.*
 
   Each is found by asking the region itself rather than trusting a distance worked out from the field's slope, which holds only right at the edge: a pixel is rim when some point on a ring round it, as wide as the rim, is outside, and the live side is shadowed by how much of the region lies back toward the light within the shadow's reach. So a pinhole casts a pinhole's shadow, and the sheet is not flecked with paper where the noise dips toward the cut without crossing it. They cost more than the line: with `--gpu-time 200` at 1080p on an RTX 4070, pencil at `reveal = 0.5` went from 0.585 ms p50 to 0.776 ms with `reveal_rim = 3`, 0.698 ms with `reveal_shadow = 0.4`, and 0.848 ms with both.
+- **Inverted, the picture opens from a point** (#1180). A reveal always grows its region from the start point, and without `reveal_invert` the style is what grows. With `reveal_invert = true` the style holds the rest of the frame and the plain picture shows inside the region: the whole frame in glyphs, then the sun coming up and the rendered world spreading out from it through an inked iris. The edge, its ink, the rim (on the style's side, so round the hole) and the shadow (cast into the hole) are drawn as before; the shader only turns which side of the cut is the style's.
+
+  ```bash
+  flint render tests/fixtures/scenes/stylize_props_plain.scene.toml --no-grid --style ascii:reveal=0.3,reveal_shape=iris,reveal_invert=true
+  ```
+
+  The ends are exact the other way round: inverted, `reveal = 1` leaves the chain (the live frame) and `reveal = 0` draws no reveal (the style's own frame). Ease it from 0 to 1 to open the picture: `tween_post_style_param("ascii", "reveal", 1.0, 6.0)` with the table's `reveal_invert = true` and `reveal = 0`. In F4 it is the Reveal group's **Inverted** checkbox, and switching the group on writes the amount that covers the frame with the style (0 inverted).
 - **One call animates it.** `tween_post_style_param("pencil", "reveal", 1.0, 4.0)` eases the reveal from where it is (0 for a style that has none) to 1 ([Scripting → Whole-frame styles](scripting.md#whole-frame-styles)). [`flint-examples/reveal_tear.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/reveal_tear.scene.toml) starts live, tears open into pencil over 4 s, and pulls the live frame back in with a wipe.
 - **Deterministic.** The edge is the frame tear's noise (`tear_mask.wgsl`'s `fbm` and `value_noise`, with ridged teeth so it reads as torn paper, not a cut), on screen position and `reveal_boil` steps of post time. The same `--style-time` draws the same edge, byte for byte; the next step redraws its teeth.
 - **The ends are exact.** At `reveal = 0` the style leaves its stage's chain, as at `blend = 0`, so the frame is the live one byte for byte and costs nothing. At 1 the reveal draws nothing, so the frame is the style's own. In between the amount grows the region about with the share of the frame it covers; a tear's last scraps of live picture linger in the corners until the end.
 - **With `blend`.** Inside the region the style shows by its `blend`; outside, not at all. The ink is drawn at the blend too.
 - **How and what it costs.** The stage draws it in place of the [blend](#blending-a-whole-frame-style): after the style, one full-screen draw puts what the style read back outside the region and lays the ink, premultiplied, in the style's own GPU timing scope. Each revealing style takes a 256-byte slot of one uniform buffer (16 a frame), so nothing is allocated per frame. Measured with `--gpu-time 200` at 1080p on an RTX 4070: pencil's pass went from 0.477 to 0.568 ms p50 with `reveal = 0.5`, about 0.09 ms for the reveal, against 0.024 ms for a plain `blend = 0.5`.
-- **Goldens.** `pencil-reveal-tear-half` pins the half-torn frame at post time 0.6, `pencil-reveal-torn-paper` the same tear with `reveal_rim = 3` and `reveal_shadow = 0.4`, `pencil-reveal-panel` a panel, and `pencil-reveal-zero` compares reveal 0 with the frame without the style.
+- **Goldens.** `pencil-reveal-tear-half` pins the half-torn frame at post time 0.6, `pencil-reveal-torn-paper` the same tear with `reveal_rim = 3` and `reveal_shadow = 0.4`, `pencil-reveal-panel` a panel, and `pencil-reveal-zero` compares reveal 0 with the frame without the style. `ascii-reveal-iris-invert` pins an inverted iris at 0.3, and `ascii-reveal-invert-zero` / `-one` hold inverted 0 and 1 to whole-frame ASCII and the frame without it.
 
 ### Style blends and the frame's tear
 
@@ -1224,7 +1232,7 @@ What crosses, and how:
 
 The fade writes only what the two looks set differently. Whatever else moves the config meanwhile keeps moving: a script's `set_post_process` overrides are stamped over the fade each frame, and a style a script tweens that neither look touches is left to the tween. At the end the config is exactly what the cut would have drawn, and `look_faded` fires. A scene transition drops a fade in progress.
 
-`flint render --scripts --time T` captures a fade at T, from the game time the script asked: [`flint-examples/look_fade.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/look_fade.scene.toml) holds each look for 1.5 s and fades for 2, so `--time 2.5` is halfway from graphite to watercolor.
+A fade is timed from the game time the script asked it at: the frame drawn at that moment is where it starts, and the frame at the asked time plus its seconds is where it ends. `flint render --scripts --time T` captures a fade at T with the values the player draws at T, every look the scripts asked before T laid in the order asked (#1157), so a fade asked after a cut starts from the cut's look, not from the look the scene file authors. [`flint-examples/look_fade.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/look_fade.scene.toml) holds each look for 1.5 s and fades for 2, so `--time 2.5` is halfway from graphite to watercolor.
 
 ![flint-examples/look_fade.scene.toml in flint-player: graphite fading into watercolor over two seconds, at 1.0, 2.0, 2.5, 3.0 and 3.7 s of game time; the HUD bar is time, the picture eases](../images/look-fade-player.jpg)
 
@@ -1253,6 +1261,18 @@ fn on_event(name, data) {
 Nothing is shown and `get_look()` still answers the look drawn. Each style is built once whoever asks: a look that is built or building already costs nothing, and the frame that sets a look whose styles are still building waits for that build rather than starting another, so it never pays more than it would have. A switch made right after `prepare_look` therefore still stops; give it the time a build takes (about a second for ASCII on a fast machine). In the tour above, preparing its five looks at `on_init` left no frame over 50 ms at the `ascii_noir` beat in seven runs on the two backends, and none at the others but one of 50.3 ms, spent in `set_look` itself, not in a build.
 
 On the web there are no threads, so `prepare_look` builds at the call: make it where a stop is hidden, behind a loading screen or a fade to black. A Rust host calls `SceneRenderer::prepare_styles(device, &config)` with the config it will show, or `PlayerApp::prepare_look(name)`.
+
+A scene can say the same in its file, and the player prepares them when the scene loads, before its first frame:
+
+```toml
+[post_process]
+preload_looks = ["graphite", "ink_wash", "watercolor"]   # looks a script will set_look
+preload_styles = ["matrix", "tron"]                      # styles a script will set_post_style
+```
+
+A style is more than its own pipelines. The stage draws a style's `blend`, its [reveal](#revealing-a-whole-frame-style) and its tear (`blend_source = "tear"`) with pipelines of its own, built the first time a frame needs each: the first frame a sheet waiting at `reveal = 0` starts to tear open used to stop for that build (92 ms in one film). Preparing builds those too: the ones a style's table asks for, and for a preloaded look or style every one of them, whatever its table says at load, since a fade blends a look in and a script may tween a reveal or tear a style in later. A scene's own styles get theirs at its entry with no key at all. `preload_styles` is for styles nothing switches on until a script does: the reality styles (`matrix`, `tron`) a render mode tears in, a `set_post_style` at a story beat. A name the search can't find is warned about at load and skipped. A preloaded look's file is read once, at load, so the cut reads nothing from the disk; edit one while the scene plays and the edit shows at its next load. Rust hosts pass the names to `SceneRenderer::prepare_styles_with(device, &config, &names)`.
+
+Measured on a bench that cuts through Kindling's four looks every 1.5 s (`graphite`, `ink_wash`, `watercolor`, `coloured_pencil`) in a debug build, Vulkan, RTX 4070, a fresh shader cache each run: without `preload_looks` the first cut took 750 to 1150 ms (pencil's pipelines) and watercolor's 102 to 228 ms over six runs; with it every one of the 24 cuts took 16.2 to 18.4 ms, a refresh, and no run had a hitch. Plaintext's beats (a pencil sheet tearing in, then `matrix` and `tron` switched on and torn in) hitched 61 to 92 ms at `matrix` in five runs out of five without `preload_styles`, and in none with it.
 
 **`--sweep KEY=V1,V2,...`** renders the same frame once per value and lays the frames out as one labelled contact sheet, four across, in the ASCII style's built-in glyphs. KEY can be:
 

@@ -43,6 +43,7 @@ pub use generator::{GenerationCost, Generator, LivingGenerator};
 pub use generators::creature::CreatureGenerator;
 pub use generators::register_built_in_generators;
 pub use generators::sweep::SweepGenerator;
+pub use generators::terrain::TerrainGenerator;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
 // The living props' runtime (their rings, clocks, knobs and blending) is
@@ -78,14 +79,14 @@ pub use spec::{
 // What flint-living's echoes read of a spec's (#1024)
 pub use spec::{slide_shown, MAX_ECHOES, MAX_ECHO_SPREAD};
 pub use types::{
-    BoundingBox, BranchSegment, ChannelSemantics, ImageData, MaterialData, MeshData, SubMesh,
-    Vertex,
+    BoundingBox, BranchSegment, ChannelSemantics, ImageData, MaterialData, MeshData, PixelFormat,
+    SubMesh, Vertex,
 };
 
 pub use model::{read_model, read_png, Model, ModelLayout, ModelMesh};
 pub use param_ui::{
-    param_reference_markdown, param_reference_text, parse_param_schema, ParamCondition,
-    ParamFieldSpec, ParamFieldType,
+    param_reference_markdown, param_reference_markdown_in, param_reference_text,
+    parse_param_schema, ParamCondition, ParamFieldSpec, ParamFieldType,
 };
 pub use params::{
     parse_path, prop_type, schema_at, string_enum, validate_params, NumBounds, ParamIssue, PathStep,

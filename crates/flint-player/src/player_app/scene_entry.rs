@@ -142,8 +142,7 @@ impl PlayerApp {
         let context = self.render_context.take();
         let mut renderer = self.scene_renderer.take();
         let gpu = context.as_ref().map(|c| (&c.device, &c.queue));
-        #[cfg(test)]
-        let gpu = gpu.or(self.test_gpu.map(|g| (&g.device, &g.queue)));
+        let gpu = gpu.or(self.windowless_gpu().map(|g| (&g.device, &g.queue)));
         let grass = match (renderer.as_mut(), gpu) {
             (Some(renderer), Some((device, queue))) => self.stage_scene(renderer, device, queue),
             _ => None,
@@ -293,6 +292,9 @@ impl PlayerApp {
         renderer.set_post_process_config(self.scene_post_config());
         renderer.ensure_style_resources(device);
         renderer.ensure_fxaa_resources(device);
+        // What a later frame would build on the frame it first shows:
+        // the stage draws, `preload_looks`, `preload_styles` (#1159)
+        self.preload_scene_styles(renderer, device);
         // Comic panels (#880, ADR 0120): the scene's [panels], or one view,
         // replacing the last scene's layout and its panels' views
         renderer.set_panels(

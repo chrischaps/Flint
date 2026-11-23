@@ -232,7 +232,78 @@ impl TearBlend {
     }
 }
 
+/// Which of [`BlendPass`]'s draws a style will want (#1159): the plain
+/// blend (its `blend` under 1), the reveal (it has one) and the tear (it
+/// follows the tear). Each is a pipeline a target format, built the first
+/// time a frame draws it unless [`BlendPass::warm`] built it before.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Draws {
+    pub blend: bool,
+    pub reveal: bool,
+    pub tear: bool,
+}
+
+impl Draws {
+    /// Every draw: what a style named to preload gets, whatever its
+    /// table says now, since a script may tween its blend or reveal or
+    /// tear it later.
+    pub const ALL: Draws = Draws {
+        blend: true,
+        reveal: true,
+        tear: true,
+    };
+
+    /// The draws `config` asks of style `name` as it stands.
+    pub fn of(config: &crate::postprocess::PostProcessConfig, name: &str) -> Draws {
+        let styles = &config.styles;
+        Draws {
+            blend: styles.blend(name) < 1.0,
+            reveal: styles.reveal(name).is_some(),
+            tear: styles.follows_tear(name),
+        }
+    }
+
+    /// Both sets' draws.
+    pub fn or(self, other: Draws) -> Draws {
+        Draws {
+            blend: self.blend || other.blend,
+            reveal: self.reveal || other.reveal,
+            tear: self.tear || other.tear,
+        }
+    }
+
+    /// These draws but those in `other`.
+    pub fn minus(self, other: Draws) -> Draws {
+        Draws {
+            blend: self.blend && !other.blend,
+            reveal: self.reveal && !other.reveal,
+            tear: self.tear && !other.tear,
+        }
+    }
+
+    pub fn any(self) -> bool {
+        self.blend || self.reveal || self.tear
+    }
+}
+
 impl BlendPass {
+    /// Build `draws`' pipelines at `format` now (#1159), as their first
+    /// frame would: a worker of [`StyleSet::prepare`](super::StyleSet::prepare)
+    /// calls it, so the frame a style first blends, reveals or tears
+    /// builds nothing. A frame that needs one meanwhile waits on its lock
+    /// for this build rather than starting its own.
+    pub(super) fn warm(&self, device: &wgpu::Device, format: wgpu::TextureFormat, draws: Draws) {
+        if draws.blend {
+            self.pipeline(device, format);
+        }
+        if draws.reveal {
+            self.reveal.warm(device, format);
+        }
+        if draws.tear {
+            self.tear.pipeline(device, format);
+        }
+    }
+
     fn pipeline(
         &self,
         device: &wgpu::Device,
@@ -291,8 +362,10 @@ impl BlendPass {
             return;
         }
         if let Some(reveal) = frame.config.styles.reveal(frame.descriptor.name) {
-            let amount = reveal.amount.unwrap_or(1.0);
-            if amount < 1.0
+            // Covering the whole frame (reveal 1, or 0 inverted) it is
+            // the style's own result: no draw
+            let coverage = reveal.coverage().unwrap_or(1.0);
+            if coverage < 1.0
                 && self
                     .reveal
                     .draw(frame, encoder, input, output, reveal, blend)

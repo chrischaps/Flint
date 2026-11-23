@@ -270,6 +270,15 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
                 .with(flint_player::playtest_warning_layer())
                 .init();
         }
+        // The editors' windows say what they say through the player's
+        // subscriber, and the scene viewer its one load summary (#1164)
+        Commands::Edit(edit) => edit.log.init(),
+        Commands::Serve { .. }
+        | Commands::SplineEdit(_)
+        | Commands::Preview(_)
+        | Commands::GenPreview(_)
+        | Commands::TerrainEdit(_)
+        | Commands::TexEdit(_) => edit_router::EditLogArgs::default().init(),
         _ => default_logging(),
     }
     output::set_json(cli.json);
@@ -419,7 +428,8 @@ impl Commands {
                 music::MusicCommands::Chart(music::ChartCommands::Play(_)) => "music chart play",
                 _ => return None,
             },
-            Commands::Play(_) => "play",
+            // `--list-keys` prints the debug-key table and exits (#717, #1184)
+            Commands::Play(args) if !args.player.list_keys => "play",
             Commands::Preview(args) if args.render.is_none() => "preview",
             Commands::GenPreview(_) => "gen-preview",
             Commands::TerrainEdit(_) => "terrain-edit",

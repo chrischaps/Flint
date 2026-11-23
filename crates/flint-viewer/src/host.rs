@@ -1,6 +1,7 @@
 //! The editors' one host (#712): the window, the GPU, egui, the event loop,
-//! frame timing, the orbit camera's input, a file watch, and the offscreen
-//! `--render` still, for every editor `flint edit` opens.
+//! frame timing, the orbit camera's input, a file watch, the debug keys and
+//! F1's card of them (#1170), and the offscreen `--render` still, for every
+//! editor `flint edit` opens.
 //!
 //! Each editor (the scene viewer and track editor here; the model,
 //! procgen, texture-graph, terrain and particle editors in flint-cli) is an
@@ -21,11 +22,12 @@ use flint_render::{
     AcquireFrame, Camera, DepthTarget, HeadlessContext, OrbitCameraController, RenderContext,
     RendererConfig, SceneRenderer,
 };
+use flint_runtime::{DebugKey, DebugKeyGroup, DebugKeyTable, InputConfig};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 /// The device an editor draws with, a window's or an offscreen target's.
@@ -333,6 +335,15 @@ pub trait Editor {
     /// once a frame (the host runs egui in one pass).
     fn ui(&mut self, _ui: &mut egui::Ui) {}
 
+    /// What the editor paints over its view that is part of the picture,
+    /// not a panel: the track editor's spline and its handles (#1154). The
+    /// window paints it after [`Editor::ui`], in the same egui pass (and
+    /// hides it with the panels); a `--render` still paints it over the
+    /// view, where the panels are left out. Paint it in screen points over
+    /// the whole context (`ctx.content_rect()`): a still is one pixel a
+    /// point.
+    fn overlay(&mut self, _ctx: &egui::Context) {}
+
     /// Prepare a `--render` still: by default one frame at rest. An editor
     /// whose still is not its 3D view (a texture) returns the picture.
     fn still(&mut self, _options: &StillOptions) -> Result<Option<image::RgbaImage>> {
@@ -344,6 +355,70 @@ pub trait Editor {
     fn still_note(&self) -> Option<String> {
         None
     }
+
+    /// The editor's debug keys (#1170), declared as the player declares
+    /// its own: an action name, a default key, what it does. The host looks
+    /// a press up in the table (its own F1 first) and hands the editor the
+    /// action in [`Editor::on_debug_key`]; F1 shows the whole table. No
+    /// editor matches an F-key by hand.
+    fn debug_keys(&self) -> Option<DebugKeyGroup> {
+        None
+    }
+
+    /// Whether the editor's debug keys act now (the procgen previewer's
+    /// need a mesh). Off, F1 shows them dimmed, with the group's `when`.
+    fn debug_keys_live(&self) -> bool {
+        true
+    }
+
+    /// One of [`Editor::debug_keys`]' actions, pressed (never a repeat).
+    fn on_debug_key(&mut self, _action: &str) {}
+}
+
+/// The host's own debug key action: show or hide the table.
+pub const SHOW_KEYS_ACTION: &str = "keys";
+
+/// The host's debug keys, in every editor: F1 is the list of keys, as it is
+/// in the player, so it means one thing in every tool.
+pub const HOST_KEYS: DebugKeyGroup = DebugKeyGroup {
+    owner: "editor",
+    when: "always",
+    keys: &[DebugKey {
+        action: SHOW_KEYS_ACTION,
+        key: "F1",
+        does: "Show or hide this list of debug keys",
+    }],
+};
+
+/// What the F1 card says under an editor's keys.
+const CARD_FOOTER: &str = "F1 again closes this \u{b7} flint play's F1 lists a game's keys";
+
+/// An editor's debug keys: the host's F1, then the editor's own group
+/// (live or not). No input config: the editors read none, so the defaults
+/// stand.
+pub fn debug_key_table(editor: Option<DebugKeyGroup>, live: bool) -> DebugKeyTable {
+    let always: &dyn Fn(&str) -> bool = &|_| true;
+    let editor_live: &dyn Fn(&str) -> bool = &move |_| live;
+    let groups = std::iter::once((HOST_KEYS, always)).chain(editor.map(|g| (g, editor_live)));
+    DebugKeyTable::build(groups, &InputConfig::default())
+}
+
+/// Who a press of `key` belongs to, if it is a debug key: the host's own
+/// action, or the editor's.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DebugPress {
+    Host(&'static str),
+    Editor(&'static str),
+}
+
+/// Look a press up in `table`.
+pub fn debug_press(table: &DebugKeyTable, key: KeyCode, shift: bool) -> Option<DebugPress> {
+    let entry = table.lookup(key, shift)?;
+    Some(if entry.owner == HOST_KEYS.owner {
+        DebugPress::Host(entry.action)
+    } else {
+        DebugPress::Editor(entry.action)
+    })
 }
 
 /// Open `editor` in a window and run it until it closes.
@@ -369,6 +444,8 @@ pub fn run(editor: impl Editor, options: HostOptions) -> Result<()> {
         timer: FrameTimer::default(),
         refresh_ms: None,
         watch: None,
+        modifiers: ModifiersState::empty(),
+        key_table_open: false,
         error: None,
     };
     event_loop.run_app(&mut host)?;
@@ -379,7 +456,8 @@ pub fn run(editor: impl Editor, options: HostOptions) -> Result<()> {
 }
 
 /// Draw `editor` offscreen at the options' size: its `init`, the camera
-/// flags, its `still` and its `draw`, the panels left out.
+/// flags, its `still` and its `draw`, then its [`Editor::overlay`], the
+/// panels left out.
 pub fn render_still(
     editor: &mut impl Editor,
     options: &HostOptions,
@@ -404,10 +482,90 @@ pub fn render_still(
         depth: context.depth_target(),
         gpu: &gpu,
     });
+    paint_still_overlay(editor, &egui, &context);
     let pixels =
         pollster::block_on(context.read_pixels()).context("Failed to read rendered pixels")?;
     image::RgbaImage::from_raw(width, height, pixels)
         .context("Failed to create image from pixel data")
+}
+
+/// Paint `editor`'s [`Editor::overlay`] over a still's view, as the window
+/// paints it: one egui pass at one pixel a point on a clock of 0, into the
+/// target's plain view so it blends in display space as the window's does
+/// (#428, `HeadlessContext::hud_view`). An editor that paints nothing over
+/// its view gets no egui renderer and no pass, so its still is the bare
+/// view, byte for byte.
+fn paint_still_overlay(editor: &mut impl Editor, egui: &egui::Context, context: &HeadlessContext) {
+    let mut input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(context.width as f32, context.height as f32),
+        )),
+        time: Some(0.0),
+        ..Default::default()
+    };
+    input
+        .viewports
+        .entry(egui::ViewportId::ROOT)
+        .or_default()
+        .native_pixels_per_point = Some(1.0);
+    // A real frame: its texture updates are uploaded below (#944)
+    #[allow(clippy::disallowed_methods)]
+    let mut output = egui.run_ui(input, |ui| editor.overlay(ui.ctx()));
+    let jobs = egui.tessellate(std::mem::take(&mut output.shapes), output.pixels_per_point);
+    if jobs.is_empty() {
+        // Nothing to upload them for: egui 0.36 asserts on a dropped delta
+        output.textures_delta.clear();
+        return;
+    }
+    let (device, queue) = (&context.device, &context.queue);
+    let mut renderer = egui_wgpu::Renderer::new(
+        device,
+        context.format.remove_srgb_suffix(),
+        egui_wgpu::RendererOptions {
+            depth_stencil_format: None,
+            msaa_samples: 1,
+            dithering: false,
+            ..Default::default()
+        },
+    );
+    let screen = egui_wgpu::ScreenDescriptor {
+        size_in_pixels: [context.width, context.height],
+        pixels_per_point: output.pixels_per_point,
+    };
+    for (id, deltas) in &output.textures_delta.set {
+        for delta in deltas {
+            renderer.update_texture(device, queue, *id, delta);
+        }
+    }
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Editor still overlay"),
+    });
+    renderer.update_buffers(device, queue, &mut encoder, &jobs, &screen);
+    let view = context.hud_view();
+    {
+        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Editor still overlay Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        let mut pass = pass.forget_lifetime();
+        renderer.render(&mut pass, &jobs, &screen);
+    }
+    queue.submit(std::iter::once(encoder.finish()));
+    // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+    output.textures_delta.clear();
 }
 
 /// The camera flags over the editor's framing, its aspect the target's.
@@ -588,6 +746,10 @@ struct Host<E: Editor> {
     /// when the window moves, so it is asked of the monitor it moved to
     refresh_ms: Option<Option<f32>>,
     watch: Option<FileWatch>,
+    /// Shift held, for a debug key's chord
+    modifiers: ModifiersState,
+    /// F1's card is up
+    key_table_open: bool,
     /// Why the editor couldn't open, returned from [`run`]
     error: Option<anyhow::Error>,
 }
@@ -665,6 +827,28 @@ impl<E: Editor> Host<E> {
         self.gpu = Some(gpu);
     }
 
+    /// The editor's debug keys now: the host's F1 and the editor's group.
+    fn debug_key_table(&self) -> DebugKeyTable {
+        debug_key_table(self.editor.debug_keys(), self.editor.debug_keys_live())
+    }
+
+    /// A key pressed: whether it was a debug key, acted on (unless it is a
+    /// repeat) and so kept from the editor and the orbit.
+    fn debug_key(&mut self, key: KeyCode, repeat: bool) -> bool {
+        let table = self.debug_key_table();
+        let Some(press) = debug_press(&table, key, self.modifiers.shift_key()) else {
+            return false;
+        };
+        if !repeat {
+            match press {
+                DebugPress::Host(SHOW_KEYS_ACTION) => self.key_table_open = !self.key_table_open,
+                DebugPress::Host(_) => {}
+                DebugPress::Editor(action) => self.editor.on_debug_key(action),
+            }
+        }
+        true
+    }
+
     /// The host's own keys and the orbit camera's input, for an event the
     /// editor passed on.
     fn default_event(&mut self, event: &WindowEvent) {
@@ -684,18 +868,19 @@ impl<E: Editor> Host<E> {
                 match key.physical_key {
                     PhysicalKey::Code(KeyCode::KeyO) => {
                         orbit.auto_orbit = !orbit.auto_orbit;
-                        println!(
+                        tracing::info!(
+                            target: "viewer",
                             "Auto-orbit: {}",
                             if orbit.auto_orbit { "ON" } else { "OFF" }
                         );
                     }
                     PhysicalKey::Code(KeyCode::BracketRight) => {
                         orbit.adjust_auto_orbit_speed(1.5);
-                        println!("Auto-orbit speed: {:.2} rad/s", orbit.auto_orbit_speed);
+                        tracing::info!(target: "viewer", "Auto-orbit speed: {:.2} rad/s", orbit.auto_orbit_speed);
                     }
                     PhysicalKey::Code(KeyCode::BracketLeft) => {
                         orbit.adjust_auto_orbit_speed(1.0 / 1.5);
-                        println!("Auto-orbit speed: {:.2} rad/s", orbit.auto_orbit_speed);
+                        tracing::info!(target: "viewer", "Auto-orbit speed: {:.2} rad/s", orbit.auto_orbit_speed);
                     }
                     _ => {}
                 }
@@ -790,10 +975,20 @@ impl<E: Editor> Host<E> {
             return;
         };
         let raw_input = egui_winit.take_egui_input(window);
+        // F1's card (#1170), over the panels
+        let key_table = self
+            .key_table_open
+            .then(|| debug_key_table(self.editor.debug_keys(), self.editor.debug_keys_live()));
         let editor = &mut self.editor;
         // A real frame: its texture updates are uploaded below (#944)
         #[allow(clippy::disallowed_methods)]
-        let mut output = self.egui.run_ui(raw_input, |ui| editor.ui(ui));
+        let mut output = self.egui.run_ui(raw_input, |ui| {
+            editor.ui(ui);
+            editor.overlay(ui.ctx());
+            if let Some(table) = &key_table {
+                flint_runtime::debug_key_card::paint(ui.ctx(), table, CARD_FOOTER);
+            }
+        });
         egui_winit.handle_platform_output(window, std::mem::take(&mut output.platform_output));
 
         let paint_jobs = self
@@ -869,6 +1064,9 @@ impl<E: Editor> ApplicationHandler for Host<E> {
             Flow::Handled => return,
             Flow::Exit => return event_loop.exit(),
         }
+        if let WindowEvent::ModifiersChanged(modifiers) = &event {
+            self.modifiers = modifiers.state();
+        }
         if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
             if egui_winit.on_window_event(window, &event).consumed {
                 return;
@@ -886,6 +1084,14 @@ impl<E: Editor> ApplicationHandler for Host<E> {
                 // WASD/QE held for the keyboard orbit, whatever the editor does
                 if let Some((_, orbit)) = self.editor.orbit() {
                     orbit.handle_key_event(key);
+                }
+                // A debug key (#1170) is the table's: the editor never sees it
+                if let (ElementState::Pressed, PhysicalKey::Code(code)) =
+                    (key.state, key.physical_key)
+                {
+                    if self.debug_key(code, key.repeat) {
+                        return;
+                    }
                 }
             }
             _ => {}
@@ -973,6 +1179,59 @@ pub fn image_sheet(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1170: F1 is the host's list of keys in every editor, one with no
+    /// keys of its own too; the scene viewer's F2-F4 reach it by action.
+    #[test]
+    fn f1_is_the_list_in_every_editor_and_the_viewers_keys_are_its_own() {
+        let bare = debug_key_table(None, true);
+        assert_eq!(
+            debug_press(&bare, KeyCode::F1, false),
+            Some(DebugPress::Host(SHOW_KEYS_ACTION))
+        );
+        assert_eq!(debug_press(&bare, KeyCode::F2, false), None);
+
+        let viewer = debug_key_table(Some(crate::app::VIEWER_KEYS), true);
+        for (key, action) in [
+            (KeyCode::F2, "stats"),
+            (KeyCode::F3, "normal_arrows"),
+            (KeyCode::F4, "render_panel"),
+        ] {
+            assert_eq!(
+                debug_press(&viewer, key, false),
+                Some(DebugPress::Editor(action))
+            );
+        }
+        assert_eq!(
+            debug_press(&viewer, KeyCode::F1, false),
+            Some(DebugPress::Host(SHOW_KEYS_ACTION))
+        );
+        assert!(
+            viewer
+                .entries
+                .iter()
+                .all(|e| e.standing == flint_runtime::Standing::Active),
+            "no clash, nothing the built-in actions take: {viewer:#?}"
+        );
+        assert!(
+            viewer.text().contains("normal_arrows  viewer"),
+            "{}",
+            viewer.text()
+        );
+    }
+
+    /// An editor whose keys don't act now (a texture in the previewer)
+    /// keeps them out of the way, and F1 still answers.
+    #[test]
+    fn keys_not_live_pass_on_and_f1_still_lists_them() {
+        let table = debug_key_table(Some(crate::app::VIEWER_KEYS), false);
+        assert_eq!(debug_press(&table, KeyCode::F2, false), None);
+        assert_eq!(
+            debug_press(&table, KeyCode::F1, false),
+            Some(DebugPress::Host(SHOW_KEYS_ACTION))
+        );
+        assert_eq!(table.entries.len(), 4, "listed, dimmed");
+    }
 
     #[test]
     fn camera_flags_lay_over_the_editors_framing() {

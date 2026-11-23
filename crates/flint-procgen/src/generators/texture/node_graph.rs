@@ -394,6 +394,11 @@ fn infer_output_connections(nodes: &[TextureNode], output_idx: usize) -> Vec<Con
 
 /// Resolve dynamic placeholders like `<target>` and `<source>` in a channel
 /// list to the actual channel names from the node's parameters.
+///
+/// A placeholder whose parameter is unset (an optional channel, such as
+/// `voronoi_texture`'s `<cell_output>`) stays as written, so it matches no
+/// channel and infers no wire. It used to read as `height`, which wired such
+/// a pin to whatever wrote or read height (#1166).
 fn resolve_channels(node: &TextureNode, channels: &[&str]) -> Vec<String> {
     channels
         .iter()
@@ -404,7 +409,7 @@ fn resolve_channels(node: &TextureNode, channels: &[&str]) -> Vec<String> {
                     params
                         .get(param_name)
                         .and_then(|v| v.as_str())
-                        .unwrap_or("height")
+                        .unwrap_or(ch)
                         .to_string()
                 } else {
                     ch.to_string()
@@ -542,6 +547,35 @@ mod tests {
         let conns = infer_connections(&nodes);
         // cell_height reads cell_id from brick_grid
         assert!(conns.iter().any(|c| c.from_node == 0 && c.to_node == 1));
+    }
+
+    /// The voronoi's cell port is a pin (#1166): set, the editor wires it to
+    /// the op that reads those cells; unset, it wires to nothing (it used to
+    /// resolve to `height` and wire to whatever read height).
+    #[test]
+    fn a_voronoi_cell_pin_wires_only_when_set() {
+        let with_cells: Vec<toml::Value> = vec![
+            toml::toml! { type = "voronoi_texture" output = "dist" cell_output = "cell_id" }.into(),
+            toml::toml! { type = "cell_height" variation = 0.3 }.into(),
+        ];
+        let (nodes, conns) = ops_to_graph(&with_cells, &["albedo".into()]).unwrap();
+        assert_eq!(nodes[0].output_channels(), ["<output>", "<cell_output>"]);
+        assert!(
+            conns
+                .iter()
+                .any(|c| c.from_node == 0 && c.from_pin == 1 && c.to_node == 1),
+            "cell_height's cell_id is wired from the cell pin: {conns:?}"
+        );
+
+        let without: Vec<toml::Value> = vec![
+            toml::toml! { type = "voronoi_texture" output = "dist" }.into(),
+            toml::toml! { type = "derive_normal" strength = 1.0 }.into(),
+        ];
+        let (_, conns) = ops_to_graph(&without, &["normal".into()]).unwrap();
+        assert!(
+            !conns.iter().any(|c| c.from_node == 0 && c.to_node == 1),
+            "an unset cell pin isn't wired to derive_normal's height: {conns:?}"
+        );
     }
 
     #[test]

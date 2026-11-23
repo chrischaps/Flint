@@ -75,8 +75,9 @@ pub struct PlayerArgs {
     /// Quality settings as `key=value,...`, applied over --msaa and
     /// --render-scale (FlintKart#55). Keys: render_scale, render_scale_auto,
     /// msaa, shadows, shadow_resolution, shadow_cascades, shadow_distance,
-    /// post_process, bloom, ssao, ssao_samples, fog, volumetric. Scripts
-    /// change them while running with set_quality()
+    /// post_process, bloom, ssao, ssao_samples, fog, volumetric, lod_scale,
+    /// draw_distance_scale. Scripts change them while running with
+    /// set_quality()
     #[arg(long, value_name = "KEY=VALUE,...")]
     pub quality: Option<String>,
 
@@ -135,9 +136,18 @@ pub struct PlayerArgs {
     #[arg(long)]
     pub list_keys: bool,
 
-    /// With --list-keys: the table as JSON
-    #[arg(long, requires = "list_keys")]
+    /// With --list-keys: the table as JSON. Not a flag here (#1184): each
+    /// binary sets it from its own `--json`, `flint-player`'s from
+    /// `PlayerCli::json` and `flint play`'s from flint's global one, which
+    /// a flag of the same name flattened in would take from it
+    #[arg(skip)]
     pub json: bool,
+
+    /// `--vsync off|mailbox|fifo`, `--frame-latency 1..3` and
+    /// `--no-pacing`: how frames reach the display (#1149), over
+    /// FLINT_VSYNC, FLINT_FRAME_LATENCY and FLINT_PACING
+    #[command(flatten)]
+    pub present: crate::PresentArgs,
 
     /// `--width`/`--height`, `--position`, `--borderless`, `--always-on-top`
     /// and `--no-activate`: the window's size and place, its frame, whether
@@ -354,13 +364,18 @@ pub struct PlayerCli {
     #[arg(long, value_name = "FILE")]
     pub bundle: Option<PathBuf>,
 
+    /// With --list-keys: the table as JSON
+    #[arg(long, requires = "list_keys")]
+    pub json: bool,
+
     #[command(flatten)]
     pub args: PlayerArgs,
 }
 
 impl PlayerCli {
     /// Play what the command line names, from a bundle or the disk.
-    pub fn run(self) -> Result<()> {
+    pub fn run(mut self) -> Result<()> {
+        self.args.json = self.json;
         match self.bundle {
             Some(bundle) => launch_bundle(self.args, &bundle),
             None => launch(self.args),
@@ -630,6 +645,8 @@ impl PlayerArgs {
         launch.scene_file_writable = !from_bundle;
         launch.window_size = args.window.size();
         launch.window_options = args.window.clone();
+        // How the window presents (#1149): over FLINT_VSYNC and friends
+        args.present.apply(launch);
         launch.expression_feed = expression_feed;
         #[cfg(not(target_arch = "wasm32"))]
         {

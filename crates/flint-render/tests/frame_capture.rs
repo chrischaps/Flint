@@ -324,6 +324,81 @@ fn a_frame_nobody_captures_is_the_frame_it_was() {
 }
 
 #[test]
+fn the_selection_mask_and_the_textures_ascii_holds_are_read() {
+    let gpu = gpu_or_skip!();
+    let world = world();
+    let crate_id = world.get_id("crate").unwrap();
+    let make = || {
+        let mut r = gpu.renderer();
+        let mut config = r.post_process_config().clone();
+        let errors = flint_render::stylize::apply_style_specs(
+            &mut config,
+            &["ascii:edges=1,cell=6".into()],
+            r.styles(),
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        r.set_post_process_config(config);
+        r.set_selected_entity(Some(crate_id));
+        r
+    };
+    let mut plain = make();
+    gpu.frame(&mut plain, &world);
+    let before = gpu.frame(&mut plain, &world);
+
+    // A frame first, so the captured one draws with last frame's edges
+    let mut renderer = make();
+    gpu.frame(&mut renderer, &world);
+    let (d, frame, pixels) = gpu.captured(&mut renderer, &world);
+    assert_eq!(pixels, before, "capturing changed the picture");
+
+    let on = |target: &str| {
+        d.all_passes()
+            .into_iter()
+            .find(|p| p.images.iter().any(|i| i.target == target))
+            .map(|p| p.name.clone())
+    };
+    // The selection outline's mask, on its own pass, read by the outline
+    assert_eq!(on("selection_mask").as_deref(), Some("Selection mask"));
+    let outline = d.pass("Selection outline").unwrap();
+    assert!(outline.reads.iter().any(|r| r == "selection_mask"));
+    let mask = d
+        .images()
+        .into_iter()
+        .find(|i| i.target == "selection_mask")
+        .unwrap();
+    let read = frame.image(mask).unwrap();
+    assert!(
+        read.bytes.iter().any(|&b| b > 0),
+        "the selected crate is in the mask"
+    );
+    // ASCII's own textures, on its pass: the edge cells and the history
+    // they were drawn from
+    let ascii = on("ascii.edge_cells").expect("the edge cells are read");
+    for target in [
+        "ascii.edge_slots",
+        "ascii.edge_thin",
+        "ascii.edge_cells.past",
+        "ascii.edge_slots.past",
+    ] {
+        assert_eq!(on(target).as_ref(), Some(&ascii), "{target}");
+    }
+    // Each is in the frame's targets, at the size it was read at
+    for image in d.images() {
+        let listed = d.targets.iter().find(|t| t.id == image.target);
+        assert!(listed.is_some(), "{} isn't a target", image.target);
+        assert_eq!(listed.unwrap().size, image.size, "{}", image.target);
+    }
+    assert!(
+        !frame
+            .untapped
+            .iter()
+            .any(|u| u.contains("selection") || u.contains("ascii.")),
+        "{:?}",
+        frame.untapped
+    );
+}
+
+#[test]
 fn a_host_that_polls_gets_its_images_and_is_told_what_it_held_back() {
     let gpu = gpu_or_skip!();
     let world = world();

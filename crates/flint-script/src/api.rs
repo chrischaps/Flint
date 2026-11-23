@@ -18,6 +18,9 @@ mod audio;
 pub mod builder;
 mod camera;
 mod camera_2d;
+mod camera_rig;
+#[cfg(test)]
+mod camera_rig_tests;
 mod chunk;
 mod convert;
 mod data;
@@ -90,6 +93,7 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     physics::register(api);
     nav::register(api);
     camera::register(api);
+    camera_rig::register(api);
     post_process::register(api);
     quality::register(api);
     math::register(api);

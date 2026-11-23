@@ -98,15 +98,18 @@ Splat maps can be painted manually in any image editor that supports RGBA channe
 A `.terrain.toml` spec describes both maps as a recipe: `[geometry]` (size, height and resolution), a list of `[[height_layers]]` run in order (`op = "noise"`, `"flatten"` or `"erosion"`), and `[[splat_rules]]` that paint each layer by height, slope and noise. [`flint-examples/rolling_meadow.terrain.toml`](https://github.com/chrischaps/flint-examples/blob/main/rolling_meadow.terrain.toml) is one. Shape it by eye in the terrain editor (`flint edit x.terrain.toml`), or bake it from the command line:
 
 ```bash
-flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png   # heightmap + terrain/meadow_splat.png
-flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/             # terrain/rolling_meadow.png + _splat.png
-flint gen flint-examples/rolling_meadow.terrain.toml --seed 12 --dry-run     # what it would write
-flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/ --json      # seed, coverage, each file's SHA-256
+flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png   # terrain/meadow_height.png + meadow_splat.png
+flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/             # terrain/output_height.png + output_splat.png
+flint gen flint-examples/rolling_meadow.terrain.toml --seed 12 --dry-run     # what it would write, and the cost
+flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png --register   # kept in the project's store, reused
+flint gen --describe terrain_v1                                              # every key, its default and range
 ```
 
-The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the same resolution; point the `terrain` component's `heightmap` and `splat_map` at them. Both are the bytes the editor's Ctrl+E export writes, and the same spec and seed bake the same bytes every run. The summary says how much of the ground each layer covers, named by its texture's `label`.
+A terrain spec is a procgen spec for the `terrain_v1` generator (Flint#1168). `flint gen` reads a `.terrain.toml` as one: `[meta]` and `[seed]` stay where they are, and the other tables are its `[params]`, so `--print-spec` writes the same recipe as a `*.procgen.toml` (`generator = "terrain_v1"`, `[params.geometry]`, `[[params.height_layers]]`), which bakes the same maps. Everything a procgen spec has, a terrain spec has: `--register` keeps both maps in the project's store and hands them back while the spec, seed and generator are unchanged; `--batch` makes variants by seed; `--validate` reads the written maps back; and the AI steps write and refine recipes (`flint gen --ai-create "rolling hills with a river valley" --ai-generator terrain_v1 -o terrain/`, where a word such as hills, mountains or valley picks `terrain_v1` without the flag).
 
-A key nothing reads is reported with its path and the key it was probably meant to be (``height_layers[1].octave: unknown key in `height_layers[1]`; did you mean `octaves`?``), as is a splat rule for a layer past 3. With `--strict` either is an error, before anything is written.
+The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the same resolution, written as `<stem>_height.png` and `<stem>_splat.png`; point the `terrain` component's `heightmap` and `splat_map` at them. Both are the bytes the editor's Ctrl+E export writes (the one bake, `flint_terrain::bake`, makes both), and the same spec and seed bake the same bytes every run. The summary says how much of the ground each layer covers.
+
+The spec is checked against `terrain_v1`'s schema before anything is baked, by path. A key nothing reads is a warning with the key it was probably meant to be (``warning: `height_layers[1].octave` is not a parameter of the noise layer (did you mean `octaves`?)``), and `--strict` makes it an error. A value the bake can't use is an error that stops the run: a splat rule for a layer past 3, a `noise_type` that isn't one, a resolution over 4096. The terrain editor lists the same lines under its Save buttons while the file has them.
 
 ## Texture Tiling
 

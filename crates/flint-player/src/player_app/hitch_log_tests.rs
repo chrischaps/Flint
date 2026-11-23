@@ -273,6 +273,52 @@ fn a_hitch_capture_passes_over_the_start_unless_asked_to_take_it() {
     });
 }
 
+/// #1178: a hitch while a capture's writer runs (each frame noted `capture
+/// write`, as `FrameCaptures::poll` notes it) is passed over by
+/// `--capture-on-hitch`, which takes the next one after the write.
+#[test]
+fn a_hitch_capture_passes_over_a_hitch_while_a_capture_writes() {
+    use flint_core::frame_notes::{self, NoteKind};
+    vfs::scoped(Arc::new(game(STALL)), || {
+        let mut app = started();
+        app.capture_frames(Vec::new(), 1, None);
+        play_to(&mut app, 2.5);
+        // The writer runs from 2.5 s to 3.5 s, over the stall at 3.01 s
+        while app.core.clock.total_time < 3.5 {
+            frame_notes::note(
+                NoteKind::CaptureWrite,
+                || "a-t2.500.flintframe".into(),
+                None,
+            );
+            app.tick();
+        }
+        let during = app
+            .stats
+            .hitches
+            .hitches()
+            .back()
+            .cloned()
+            .expect("the stall at 3 s");
+        assert!(during.during_capture_write());
+        assert!(
+            during.cause_line().contains("also: capture write"),
+            "the script's stall, beside the write: {}",
+            during.cause_line()
+        );
+        assert!(app.frame_captures.queued_hitches().is_empty());
+        assert_eq!(app.frame_captures.on_hitch, 1, "not spent on it");
+
+        play_to(&mut app, 4.5);
+        let asked = app.frame_captures.queued_hitches();
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        assert!(
+            asked[0].game_time >= 4.0,
+            "the stall at 4 s, after the write: {:?}",
+            asked[0]
+        );
+    });
+}
+
 /// Leaves for scene B on the frame game time crosses 3.01 s.
 const LEAVE: &str = r#"
 fn on_update() {

@@ -24,7 +24,7 @@ use std::rc::Rc;
 use serde_json::{json, Value};
 
 use super::ops::{OpPortInfo, TextureOp};
-use crate::generators::util::parse_hex_color;
+use crate::generators::util::{linear_to_hex, parse_hex_color};
 use crate::{ProcGenError, Result};
 
 /// One texture op: what it's called, what it touches, what it takes, and how
@@ -204,7 +204,7 @@ impl OpDescriptor {
                 ParamKind::Bool(d) => toml::Value::Boolean(d),
                 ParamKind::Text(Some(d)) => toml::Value::String(d.into()),
                 ParamKind::Choice { default, .. } => toml::Value::String(default.into()),
-                ParamKind::Color(c) => toml::Value::String(hex(c)),
+                ParamKind::Color(c) => toml::Value::String(linear_to_hex(c)),
                 ParamKind::Text(None) | ParamKind::Tables { .. } => continue,
             };
             map.insert(p.key.into(), value);
@@ -244,7 +244,7 @@ fn param_schema(p: &ParamDesc) -> Value {
         ParamKind::Color(c) => json!({
             "type": "string",
             "pattern": "^#?[0-9a-fA-F]{6,8}$",
-            "default": hex(c)
+            "default": linear_to_hex(c)
         }),
         ParamKind::Tables { title, items, .. } => {
             let mut item = object_schema(items);
@@ -273,19 +273,8 @@ fn param_schema(p: &ParamDesc) -> Value {
 
 /// An `f32` as the `f64` its shortest decimal reads as: `0.04`, not
 /// `0.03999999910593033`.
-fn shortest(v: f32) -> f64 {
+pub(super) fn shortest(v: f32) -> f64 {
     v.to_string().parse().unwrap_or(v as f64)
-}
-
-/// The nearest 8-bit `#RRGGBB` (with `AA` unless opaque) of a 0–1 colour.
-fn hex(c: [f32; 4]) -> String {
-    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-    let rgb = format!("#{:02X}{:02X}{:02X}", byte(c[0]), byte(c[1]), byte(c[2]));
-    if byte(c[3]) == 255 {
-        rgb
-    } else {
-        format!("{rgb}{:02X}", byte(c[3]))
-    }
 }
 
 // ─── Parsing ──────────────────────────────────────────────────────────────
@@ -561,13 +550,11 @@ pub fn op_reference_markdown() -> String {
             line[..1].make_ascii_uppercase();
             out.push_str(&format!("{line}.\n\n"));
         }
-        out.push_str(&crate::param_reference_markdown(&op.param_schema()));
-        for p in op.params {
-            if let ParamKind::Tables { items, .. } = p.kind {
-                out.push_str(&format!("\nEach `[[params.ops.{}]]` entry:\n\n", p.key));
-                out.push_str(&crate::param_reference_markdown(&object_schema(items)));
-            }
-        }
+        // A `tables` key's entries follow, as `[[params.ops.<key>]]`
+        out.push_str(&crate::param_reference_markdown_in(
+            &op.param_schema(),
+            "params.ops",
+        ));
     }
     out
 }

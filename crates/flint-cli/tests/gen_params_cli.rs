@@ -167,6 +167,41 @@ fn describe_gives_texture_v1_each_op_with_its_ports() {
     assert!(text.contains("ports: writes cell_id"), "{text}");
 }
 
+/// A key holding tables lists their keys too (#1173): an agent learns
+/// `limb_chains[].segments` from `--describe`, not from a validator error.
+#[test]
+fn describe_lists_the_keys_of_nested_tables() {
+    let o = flint(&["gen", "--describe", "creature_v1"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let text = stdout(&o);
+    let line = |name: &str| {
+        text.lines()
+            .find(|l| l.trim_start().starts_with(&format!("{name} ")))
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+            .unwrap_or_else(|| panic!("no {name} in\n{text}"))
+    };
+    assert_eq!(
+        line("limb_chains[].segments"),
+        "limb_chains[].segments array of tables, required"
+    );
+    assert_eq!(
+        line("limb_chains[].segments[].length"),
+        "limb_chains[].segments[].length number, required"
+    );
+    assert_eq!(line("bones[].name"), "bones[].name string, required");
+    assert_eq!(
+        line("materials.<name>.roughness"),
+        "materials.<name>.roughness number 0–1, default 0.5"
+    );
+
+    let md = stdout(&flint(&["gen", "--describe", "sweep_v1", "--markdown"]));
+    assert!(
+        md.contains("Each `[[params.control_points]]` entry:"),
+        "{md}"
+    );
+    assert!(md.contains("| `twist` | number | `0.0` |"), "{md}");
+}
+
 #[test]
 fn describing_an_unknown_generator_fails_suggesting_the_name() {
     let o = flint(&["gen", "--describe", "tree"]);

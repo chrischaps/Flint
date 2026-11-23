@@ -1912,7 +1912,7 @@ impl SceneRenderer {
             let edges =
                 pp.styles
                     .encode_edges(&both, frame, encoder, &mut |label, encoder, run| {
-                        self.run_style_part(device, scopes, label, encoder, run, None, None)
+                        self.run_style_part(device, scopes, label, encoder, run, None, None, None)
                     });
             frame.edges = edges;
             scopes.note(crate::stylize::edges::EDGE_LABEL, |p| {
@@ -1949,7 +1949,8 @@ impl SceneRenderer {
                 &mut |label, encoder, run| {
                     let dst = dst_of(&hdr_dsts, label);
                     let refuse = history_refusal(scopes.knobs.is_some(), &hdr_styles, label);
-                    self.run_style_part(device, scopes, label, encoder, run, dst, refuse)
+                    let held = held_of(scopes.taps.is_some(), &hdr_styles, label);
+                    self.run_style_part(device, scopes, label, encoder, run, dst, refuse, held)
                 },
             ),
             _ => None,
@@ -2228,7 +2229,8 @@ impl SceneRenderer {
                 &mut |label, encoder, run| {
                     let dst = dst_of(&display_dsts, label);
                     let refuse = history_refusal(scopes.knobs.is_some(), &display_styles, label);
-                    self.run_style_part(device, scopes, label, encoder, run, dst, refuse)
+                    let held = held_of(scopes.taps.is_some(), &display_styles, label);
+                    self.run_style_part(device, scopes, label, encoder, run, dst, refuse, held)
                 },
             );
             log_style_steps(
@@ -2379,6 +2381,26 @@ fn history_refusal(
             .iter()
             .any(|(d, p)| d.label == label && p.keeps_history()))
     .then_some(crate::pass_knobs::KEEPS_HISTORY)
+}
+
+/// Where the style drawing as `label` notes the textures it holds itself,
+/// while the frame is captured (#1161): `None` on every other frame, and for
+/// a part that is no style's own (a blend, the ownership cut).
+fn held_of<'a>(
+    capturing: bool,
+    styles: &[(
+        &crate::stylize::StyleDescriptor,
+        &'a dyn crate::stylize::StylePass,
+    )],
+    label: &str,
+) -> Option<&'a crate::stylize::HeldTargets> {
+    if !capturing {
+        return None;
+    }
+    styles
+        .iter()
+        .find(|(d, _)| d.label == label)
+        .and_then(|(_, p)| p.held_targets())
 }
 
 /// A style stage's slot as the description names its target: the stage's

@@ -60,8 +60,12 @@ impl SceneRenderer {
             page,
             panels,
             notes,
+            targets: held,
+            page_camera,
             ..
         } = log;
+        // The frame's camera: a page's own, else its one view's
+        let camera = page_camera.or_else(|| views.first().and_then(|v| v.camera.clone()));
         let styles = views.last().map(|v| v.styles.clone()).unwrap_or_default();
         let mut views = views.into_iter();
         let (passes, panels) = if panels.is_empty() {
@@ -75,6 +79,7 @@ impl SceneRenderer {
                 .map(|(i, v)| fc::PanelDescription {
                     name: format!("again {}", i + 1),
                     size: v.size,
+                    camera: v.camera,
                     passes: v.passes.into_iter().map(|p| names.pass(p)).collect(),
                 })
                 .collect();
@@ -85,6 +90,7 @@ impl SceneRenderer {
                 .map(|(v, name)| fc::PanelDescription {
                     name,
                     size: v.size,
+                    camera: v.camera,
                     passes: v.passes.into_iter().map(|p| names.pass(p)).collect(),
                 })
                 .collect();
@@ -93,7 +99,13 @@ impl SceneRenderer {
 
         let mut stats = self.collect_stats();
         stats.resolution = self.surface_size.into();
-        let targets = self.frame_targets();
+        let mut targets = self.frame_targets();
+        // What the styles hold themselves, as the capture read them (#1161)
+        for t in held {
+            if !targets.iter().any(|k| k.id == t.id) {
+                targets.push(t);
+            }
+        }
         let style_target_bytes = self.style_target_entries().iter().map(|t| t.bytes).sum();
         let config = self.effective_post_process_config();
         let post_process = flint_schema::post_effects::params()
@@ -122,6 +134,7 @@ impl SceneRenderer {
             casts_shadow,
         };
         let mut described = FrameDescription {
+            camera,
             frame: fc::FrameInfo {
                 index: None,
                 game_time: None,
@@ -215,6 +228,13 @@ impl SceneRenderer {
                     bytes: t.bytes,
                 });
             }
+        }
+        if let Some(t) = self
+            .selection_outline
+            .as_ref()
+            .and_then(|o| o.mask_texture())
+        {
+            out.push(fc::target("selection_mask", t));
         }
         let (color, depth) = self.msaa.textures();
         if let Some(t) = color {
@@ -349,7 +369,7 @@ impl SceneRenderer {
             return Some("lod");
         };
         let d = distance_to_box(eye, lod.ref_min, lod.ref_max);
-        let far = lod.band.draw_distance * self.lod_settings.draw_distance_scale;
+        let far = lod.band.draw_distance * self.quality.draw_distance_scale;
         Some(if d >= far { "draw distance" } else { "lod" })
     }
 

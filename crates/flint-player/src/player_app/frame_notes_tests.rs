@@ -228,6 +228,77 @@ fn a_look_switched_on_mid_run_notes_each_pipeline_it_builds() {
     });
 }
 
+/// A scene that will cut to graphite later, and says so (#1159).
+const SCENE_PRELOADS: &str = r#"
+[scene]
+name = "Preloads"
+
+[post_process]
+preload_looks = ["graphite"]
+
+[entities.card]
+[entities.card.transform]
+position = [0.0, 0.0, 0.0]
+"#;
+
+/// #1159: a scene that preloads its look builds the look's styles at its
+/// entry, off the frame thread, and the frame a script cuts to it notes
+/// no style or pipeline build: the cut costs what a cut to a look already
+/// drawn does. Without `preload_looks` the same cut builds pencil on its
+/// frame (the test above).
+#[test]
+fn a_cut_to_a_preloaded_look_builds_nothing_on_its_frame() {
+    let Some(gpu) = super::scene_entry_tests::gpu() else {
+        flint_render::gpu_select::skip_without_gpu("preloaded looks");
+        return;
+    };
+    let mut files = game();
+    files.insert("game/scenes/a.scene.toml", SCENE_PRELOADS);
+    vfs::scoped(Arc::new(files), || {
+        let mut app = started(Some(gpu));
+        // The workers build while frames go on; each frame's style pass
+        // takes in what has arrived (a headless tick draws nothing, so the
+        // test calls it as `render` does), and none builds pencil itself
+        let since = std::time::Instant::now();
+        loop {
+            let renderer = app.scene_renderer.as_ref().unwrap();
+            if renderer.style_built("pencil") && renderer.styles_preparing().is_empty() {
+                break;
+            }
+            assert!(
+                since.elapsed() < std::time::Duration::from_secs(120),
+                "graphite's styles never arrived: {:?}",
+                renderer.styles_preparing()
+            );
+            app.tick();
+            flint_core::frame_notes::listen(true);
+            let renderer = app.scene_renderer.as_mut().unwrap();
+            renderer.ensure_style_resources(&gpu.device);
+            let mut notes = Vec::new();
+            flint_core::frame_notes::take(&mut notes);
+            assert!(
+                notes.iter().all(|n| n.kind != NoteKind::StyleBuild),
+                "a frame built a style the scene preloads: {notes:#?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        for _ in 0..3 {
+            app.tick();
+        }
+        let asked_in = app.stats.perf.frames_begun - 1;
+        app.set_look(Some("graphite")).unwrap();
+        app.tick();
+        app.tick();
+        for index in [asked_in, asked_in + 1] {
+            let built: Vec<FrameNote> = notes_of(&app, index)
+                .into_iter()
+                .filter(|n| matches!(n.kind, NoteKind::StyleBuild | NoteKind::PipelineBuild))
+                .collect();
+            assert!(built.is_empty(), "the cut's frame built: {built:#?}");
+        }
+    });
+}
+
 #[test]
 fn a_frame_of_two_physics_steps_says_so() {
     vfs::scoped(Arc::new(game()), || {

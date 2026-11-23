@@ -50,6 +50,39 @@ impl SceneRenderer {
     /// Timing (`fps`, `frame_time_ms`) and `resolution` are left at zero —
     /// the caller fills these from their own timing and context.
     /// `scene_resolution` is the renderer's own.
+    /// Whether the last frame drew any of `entities` (#1191, a playtest's
+    /// `frame draws`, which asks of an entity and its descendants: a
+    /// model's nodes): `None` when the draw list holds nothing of them,
+    /// `Some(false)` when every draw they have was culled (frustum, level
+    /// of detail, draw distance, hidden). Read after a frame is encoded,
+    /// before the next `prepare` rebuilds the list. A draw with no bounds
+    /// (a procedural box, a wireframe) is never culled (ADR 0074).
+    pub fn entities_drawn(&self, entities: &[flint_core::EntityId]) -> Option<bool> {
+        let mut found = None;
+        let ours = |i: &&DrawItem| i.entity.is_some_and(|e| entities.contains(&e));
+        for item in self.draws.iter().filter(ours) {
+            if item.drawn() {
+                return Some(true);
+            }
+            found = Some(false);
+        }
+        found
+    }
+
+    /// Whether style `name` reached the last frame (#1191, a playtest's
+    /// `frame style`): post-processing on, the style on over the frame or
+    /// for an entity asking for it, and a blend and reveal that leave some
+    /// of it in the picture. `None` for a name no registered style has.
+    pub fn style_drawn(&self, name: &str) -> Option<bool> {
+        let style = self.styles().find(name)?;
+        let config = self.effective_post_process_config();
+        Some(
+            config.enabled
+                && style.is_on(config, &self.style_mask.ids)
+                && config.styles.shows_in(name, config),
+        )
+    }
+
     pub fn collect_stats(&self) -> crate::render_stats::RenderStats {
         use crate::grass_pipeline::BLADE_INDEX_COUNT;
 

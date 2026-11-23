@@ -719,6 +719,66 @@ fn a_look_fade_is_captured_at_each_moment_of_it() {
     );
 }
 
+/// Kindling's shape (#1157): the scene authors one look, a script cuts to a
+/// second and later fades to a third. The cut and the fade are taken at the
+/// same capture, so a capture that laid only the last request faded from the
+/// authored look, not from the cut's.
+const THREE_LOOKS: &str = r#"
+let cut = false;
+let faded = false;
+fn on_update() {
+    let t = total_time();
+    if !cut && t >= 0.5 { set_look("graphite"); cut = true; }
+    if !faded && t >= 1.0 { set_look("ink_wash", 2.0); faded = true; }
+}
+"#;
+
+/// A scene that authors `look`, and a script set to `THREE_LOOKS`.
+fn author_look(dir: &Path, look: &str) {
+    std::fs::write(
+        dir.join("floor.scene.toml"),
+        format!("{SCENE}\n[post_process]\nlook = \"{look}\"\n"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("scripts/tint.rhai"), THREE_LOOKS).unwrap();
+}
+
+/// #1157: a fade's source is the look on screen when it was asked. At the
+/// midpoint of a graphite to ink wash fade, a scene authoring blueprint
+/// (cut to graphite first) draws what a scene authoring graphite does,
+/// byte for byte; before the fix it drew blueprint's white lines on blue.
+#[test]
+fn a_fade_after_a_cut_starts_from_the_cut_not_the_authored_look() {
+    let dir = project("three_looks");
+    author_look(&dir, "blueprint");
+    let args = |t: &'static str| ["--scripts", "--time", t];
+    let o = render(&dir, "blueprint_mid.png", &args("2"));
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    ok(&render(&dir, "blueprint_at_start.png", &args("0")));
+    ok(&render(&dir, "graphite_held.png", &args("0.9")));
+    ok(&render(&dir, "ink_wash_arrived.png", &args("3")));
+    author_look(&dir, "graphite");
+    ok(&render(&dir, "graphite_mid.png", &args("2")));
+    let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
+    assert!(
+        read("blueprint_mid.png") == read("graphite_mid.png"),
+        "the fade's middle depends on the look authored before the cut"
+    );
+    for other in [
+        "blueprint_at_start.png",
+        "graphite_held.png",
+        "ink_wash_arrived.png",
+    ] {
+        assert!(
+            read("blueprint_mid.png") != read(other),
+            "the fade's middle is {other}"
+        );
+    }
+}
+
 /// #497: a capture's scripts read the look it draws with (`--look` here,
 /// over the scene's none) from `on_init`, and the one they set from the
 /// frame after the capture applied it; `list_looks()` has the built-ins.

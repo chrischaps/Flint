@@ -20,6 +20,7 @@ use flint_procgen::{
 use flint_render::{
     Camera, DebugMode, OrbitCameraController, RendererConfig, SceneRenderer, Vertex as RenderVertex,
 };
+use flint_runtime::{DebugKey, DebugKeyGroup};
 use flint_viewer::host::{
     self, Editor, Flow, Gpu, HostOptions, InitCx, StillOptions, Target, Tick,
 };
@@ -500,7 +501,7 @@ impl GenPreviewApp {
             let label = format!("{:?}", img.channel_semantics);
             let color_image = egui::ColorImage::from_rgba_unmultiplied(
                 [img.width as usize, img.height as usize],
-                &img.pixels,
+                &img.to_rgba8(), // a terrain_v1 heightmap is 16-bit grey
             );
             let handle =
                 self.egui_ctx
@@ -1080,6 +1081,42 @@ impl GenPreviewApp {
 
 // ─── The host's editor (#712) ───────────────────────────────────────────────
 
+/// The procgen previewer's debug keys (#1170), by action name.
+const WIREFRAME: &str = "wireframe";
+const NORMAL_ARROWS: &str = "normal_arrows";
+const SKELETON: &str = "skeleton";
+const DEBUG_MODE: &str = "debug_mode";
+
+/// The procgen previewer's debug keys. F1 is the host's, the list of keys,
+/// as in the player and every editor: the debug-mode cycle F1 once was here
+/// is F5.
+const PREVIEW_KEYS: DebugKeyGroup = DebugKeyGroup {
+    owner: "procgen preview",
+    when: "a mesh spec",
+    keys: &[
+        DebugKey {
+            action: WIREFRAME,
+            key: "F2",
+            does: "Wireframe over the mesh, or back to shaded",
+        },
+        DebugKey {
+            action: NORMAL_ARROWS,
+            key: "F3",
+            does: "Normal arrows on every face",
+        },
+        DebugKey {
+            action: SKELETON,
+            key: "F4",
+            does: "The skeleton overlay, for a mesh with a skeleton",
+        },
+        DebugKey {
+            action: DEBUG_MODE,
+            key: "F5",
+            does: "The next debug shading mode: PBR, wireframe, normals, depth, UV, ...",
+        },
+    ],
+};
+
 impl Editor for GenPreviewApp {
     fn title(&self) -> String {
         format!("Flint Gen Preview \u{2014} {}", self.spec.meta.name)
@@ -1168,64 +1205,62 @@ impl Editor for GenPreviewApp {
                     self.texture_tiled = !self.texture_tiled;
                 }
             }
-            PhysicalKey::Code(KeyCode::F1) => {
-                if let Some(renderer) = &mut self.scene_renderer {
-                    let next = renderer.debug_state().mode.next();
-                    renderer.set_debug_mode(next);
-                    println!("Debug mode: {}", next.label());
-                    if let (Some(world), Some(context)) = (&self.last_world, &self.render_context) {
-                        renderer.prepare(
-                            &context.device,
-                            &context.queue,
-                            world,
-                            &flint_render::FrameInputs::default(),
-                        );
-                    }
-                }
-            }
-            PhysicalKey::Code(KeyCode::F2) => {
-                if let Some(renderer) = &mut self.scene_renderer {
-                    let mode = if renderer.debug_state().mode == DebugMode::WireframeOverlay {
-                        DebugMode::Pbr
-                    } else {
-                        DebugMode::WireframeOverlay
-                    };
-                    renderer.set_debug_mode(mode);
-                    println!("Debug mode: {}", mode.label());
-                    if let (Some(world), Some(context)) = (&self.last_world, &self.render_context) {
-                        renderer.prepare(
-                            &context.device,
-                            &context.queue,
-                            world,
-                            &flint_render::FrameInputs::default(),
-                        );
-                    }
-                }
-            }
-            PhysicalKey::Code(KeyCode::F3) => {
-                if let Some(renderer) = &mut self.scene_renderer {
-                    let on = renderer.toggle_normal_arrows();
-                    println!("Normal arrows: {}", if on { "ON" } else { "OFF" });
-                    if let (Some(world), Some(context)) = (&self.last_world, &self.render_context) {
-                        renderer.prepare(
-                            &context.device,
-                            &context.queue,
-                            world,
-                            &flint_render::FrameInputs::default(),
-                        );
-                    }
-                }
-            }
-            PhysicalKey::Code(KeyCode::F4) => {
-                if let Some(renderer) = &mut self.scene_renderer {
-                    let on = renderer.toggle_skeleton_overlay();
-                    println!("Skeleton overlay: {}", if on { "ON" } else { "OFF" });
-                }
-                self.update_skeleton_overlay();
-            }
+            // F2-F5 are debug keys: the host's table hands them to
+            // `on_debug_key`, and its F1 lists them (#1170)
             _ => return Flow::Pass,
         }
         Flow::Handled
+    }
+
+    fn debug_keys(&self) -> Option<DebugKeyGroup> {
+        Some(PREVIEW_KEYS)
+    }
+
+    /// The keys draw over a mesh: a texture spec has none.
+    fn debug_keys_live(&self) -> bool {
+        self.last_mesh.is_some()
+    }
+
+    fn on_debug_key(&mut self, action: &str) {
+        let Some(renderer) = &mut self.scene_renderer else {
+            return;
+        };
+        match action {
+            WIREFRAME => {
+                let mode = if renderer.debug_state().mode == DebugMode::WireframeOverlay {
+                    DebugMode::Pbr
+                } else {
+                    DebugMode::WireframeOverlay
+                };
+                renderer.set_debug_mode(mode);
+                tracing::info!(target: "viewer", "Debug mode: {}", mode.label());
+            }
+            NORMAL_ARROWS => {
+                let on = renderer.toggle_normal_arrows();
+                tracing::info!(target: "viewer", "Normal arrows: {}", if on { "ON" } else { "OFF" });
+            }
+            SKELETON => {
+                let on = renderer.toggle_skeleton_overlay();
+                tracing::info!(target: "viewer", "Skeleton overlay: {}", if on { "ON" } else { "OFF" });
+                self.update_skeleton_overlay();
+                return;
+            }
+            DEBUG_MODE => {
+                let next = renderer.debug_state().mode.next();
+                renderer.set_debug_mode(next);
+                tracing::info!(target: "viewer", "Debug mode: {}", next.label());
+            }
+            _ => return,
+        }
+        // The mode and the arrows draw from what is prepared
+        if let (Some(world), Some(context)) = (&self.last_world, &self.render_context) {
+            renderer.prepare(
+                &context.device,
+                &context.queue,
+                world,
+                &flint_render::FrameInputs::default(),
+            );
+        }
     }
 
     fn update(&mut self, tick: Tick) {
@@ -1278,7 +1313,9 @@ impl Editor for GenPreviewApp {
         let images: Vec<image::RgbaImage> = self
             .last_images
             .iter()
-            .filter_map(|img| image::RgbaImage::from_raw(img.width, img.height, img.pixels.clone()))
+            .filter_map(|img| {
+                image::RgbaImage::from_raw(img.width, img.height, img.to_rgba8().into_owned())
+            })
             .collect();
         Ok(Some(host::image_sheet(
             &images,
@@ -1386,6 +1423,41 @@ fn spec_text_for_save(path: &Path, spec: &ProcGenSpec) -> Result<String, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1170: F1 is the list here as in the player, so the debug-mode cycle
+    /// it used to be moved to F5; F2-F4 kept their keys.
+    #[test]
+    fn f1_is_the_list_and_the_previewers_keys_are_f2_to_f5() {
+        use flint_viewer::host::{debug_key_table, debug_press, DebugPress, SHOW_KEYS_ACTION};
+        let table = debug_key_table(Some(PREVIEW_KEYS), true);
+        assert_eq!(
+            debug_press(&table, KeyCode::F1, false),
+            Some(DebugPress::Host(SHOW_KEYS_ACTION))
+        );
+        for (key, action) in [
+            (KeyCode::F2, WIREFRAME),
+            (KeyCode::F3, NORMAL_ARROWS),
+            (KeyCode::F4, SKELETON),
+            (KeyCode::F5, DEBUG_MODE),
+        ] {
+            assert_eq!(
+                debug_press(&table, key, false),
+                Some(DebugPress::Editor(action))
+            );
+        }
+        assert!(table
+            .entries
+            .iter()
+            .all(|e| e.standing == flint_runtime::Standing::Active));
+        // A texture spec has no mesh to draw them over
+        let texture = debug_key_table(Some(PREVIEW_KEYS), false);
+        assert_eq!(debug_press(&texture, KeyCode::F2, false), None);
+        assert!(
+            texture.text().contains("in a mesh spec"),
+            "{}",
+            texture.text()
+        );
+    }
 
     /// #194's done-when, through the code Ctrl+S runs: open the commented
     /// example oak, move one slider, save; one line of the file changes.

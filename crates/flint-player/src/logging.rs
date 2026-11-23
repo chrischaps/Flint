@@ -14,6 +14,10 @@
 //! | `music`      | music and rhythm sessions                               |
 //! | `player`     | the player's own notices: debug keys, looks, bundles    |
 //! | `listen`     | `--expression-listen`'s socket opening, after the first frame (#584) |
+//! | `viewer`     | `flint edit`'s windows: saves, reloads, toggles, notices (#1164) |
+//!
+//! `flint edit` installs the same subscriber over a filter of its own
+//! ([`init_filtered`]) and says the same load summary ([`say_loaded`]).
 //!
 //! `RUST_LOG` replaces the filter whole (`RUST_LOG=load=debug` lists every
 //! file again). A load's summary is counted by [`LoadTallyLayer`], which
@@ -83,11 +87,23 @@ impl LogArgs {
 /// on a terminal, and the load tally. Does nothing when a subscriber is
 /// already installed (a game binary that set its own).
 pub fn init(args: &LogArgs) {
+    init_filtered(args, args.default_filter());
+}
+
+/// [`init`] over `default_filter` (RUST_LOG still replaces it), for a host
+/// whose targets aren't the player's: `flint edit`'s windows (#1164).
+pub fn init_filtered(args: &LogArgs, default_filter: &str) {
     let filter = std::env::var("RUST_LOG")
         .ok()
         .filter(|f| !f.trim().is_empty());
     let ansi = std::io::IsTerminal::is_terminal(&std::io::stderr());
-    let (subscriber, tally) = subscriber(args, filter.as_deref(), std::io::stderr, ansi);
+    let (subscriber, tally) = subscriber_over(
+        args.log_format,
+        default_filter,
+        filter.as_deref(),
+        std::io::stderr,
+        ansi,
+    );
     // `try_init`, not `set_global_default`: it routes the `log` crate's
     // records (flint-animation's) through the same subscriber
     if tracing_subscriber::util::SubscriberInitExt::try_init(subscriber).is_ok() {
@@ -106,10 +122,25 @@ pub fn subscriber<W>(
 where
     W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
 {
+    subscriber_over(args.log_format, args.default_filter(), filter, writer, ansi)
+}
+
+/// [`subscriber`] written in `format`, showing `default_filter` unless
+/// `filter` (RUST_LOG's syntax) replaces it.
+pub fn subscriber_over<W>(
+    format: LogFormat,
+    default_filter: &str,
+    filter: Option<&str>,
+    writer: W,
+    ansi: bool,
+) -> (impl Subscriber + Send + Sync, LoadTally)
+where
+    W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
+{
     let filter = filter
         .and_then(|f| EnvFilter::try_new(f).ok())
-        .unwrap_or_else(|| EnvFilter::new(args.default_filter()));
-    let fmt: Box<dyn Layer<Registry> + Send + Sync> = match args.log_format {
+        .unwrap_or_else(|| EnvFilter::new(default_filter));
+    let fmt: Box<dyn Layer<Registry> + Send + Sync> = match format {
         LogFormat::Text => tracing_subscriber::fmt::layer()
             .with_writer(writer)
             .with_ansi(ansi)
@@ -145,6 +176,39 @@ where
     S: Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
     INSTALLED.get_or_init(LoadTally::default).layer()
+}
+
+/// Start a load's count afresh, so the next [`say_loaded`] holds only
+/// what that load read and raised (a transition, an editor's reload)
+pub fn begin_load_count() {
+    if let Some(tally) = installed_tally() {
+        tally.take();
+    }
+}
+
+/// The scene is up: its entities, each kind of file it loaded, how long
+/// it took and the warnings on the way, as one `load` line (#716). With no
+/// tally installed (a game's own subscriber, the web) it says the entities
+/// alone. `scene` is the file as `flint_core::project::shown` names it.
+pub fn say_loaded(scene: &str, entities: usize) {
+    let Some(summary) = installed_tally().map(|t| t.take()) else {
+        tracing::info!(target: "load", scene = %scene, entities, "Loaded {scene}: {entities} entities");
+        return;
+    };
+    let loaded = summary.loaded();
+    let problems = summary.problems();
+    let ms = summary.ms.unwrap_or(0.0).round() as u64;
+    // The figures as fields for `--log-format json`; the sentence has
+    // each kind by name
+    tracing::info!(
+        target: "load",
+        scene = %scene,
+        entities,
+        warnings = summary.warnings,
+        errors = summary.errors,
+        ms,
+        "Loaded {scene}: {entities} entities, {loaded} in {ms} ms; {problems}"
+    );
 }
 
 /// How many of the first warnings a summary repeats
@@ -200,8 +264,8 @@ pub struct LoadTallyLayer(LoadTally);
 /// library's (wgpu's Vulkan loader, gilrs' pad mappings) is shown as it
 /// happens and left out of the count, so the summary names the warnings a
 /// game can do something about.
-fn flint_target(target: &str) -> bool {
-    const SHORT: [&str; 11] = [
+pub(crate) fn flint_target(target: &str) -> bool {
+    const SHORT: [&str; 12] = [
         "load",
         "transition",
         "perf",
@@ -213,6 +277,7 @@ fn flint_target(target: &str) -> bool {
         "expression",
         "inspect",
         "loopback",
+        "viewer",
     ];
     target.starts_with("flint") || SHORT.contains(&target)
 }
@@ -562,6 +627,34 @@ mod tests {
             assert_eq!(second.problems(), "no warnings");
             assert_eq!(second.loaded(), "nothing from files");
         });
+    }
+
+    /// `flint edit`'s subscriber (#1164): its own filter shows the window's
+    /// `viewer` lines and the summary, not each file, and a `viewer`
+    /// warning is the engine's, so the summary counts it
+    #[test]
+    fn an_editor_filter_shows_its_target_and_the_summary_counts_its_warnings() {
+        let buffer = Buffer::default();
+        let (subscriber, tally) = subscriber_over(
+            LogFormat::Text,
+            "warn,load=info,viewer=info",
+            None,
+            buffer.clone(),
+            false,
+        );
+        tracing::subscriber::with_default(subscriber, || {
+            a_load();
+            tracing::warn!(target: "viewer", "look: no look named 'nope'");
+            tracing::info!(target: "viewer", "Saved scene to a.scene.toml");
+        });
+        let text = buffer.text();
+        assert!(text.contains("Saved scene to"), "{text}");
+        assert!(text.contains("Loaded scene 'Test'"), "{text}");
+        assert!(!text.contains("Loaded model: crate"), "{text}");
+        assert!(!text.contains("[perf]"), "not the player's filter: {text}");
+        let summary = tally.take();
+        assert_eq!(summary.warnings, 2, "{:?}", summary.first);
+        assert!(summary.problems().contains("look: no look named"));
     }
 
     #[test]

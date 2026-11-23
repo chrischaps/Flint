@@ -5,7 +5,8 @@
 //! - `asset resolve --max-cost` refuses the call that would pass it, before
 //!   it is sent (the server never sees it);
 //! - every call that was sent is in the ledger, and `asset costs` adds it up;
-//! - a Meshy generate is a job `asset job list` shows.
+//! - a Meshy generate is a job `asset job list` shows, and so is a Flux
+//!   generate, which fal queues (#1186).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -56,15 +57,50 @@ fn fake_providers() -> (String, Log) {
             let _ = reader.read_exact(&mut body);
             log2.lock().unwrap().push(format!("{method} {path}"));
             let (kind, bytes): (&str, Vec<u8>) = match (method.as_str(), path.as_str()) {
+                // fal's queue (#1186): a receipt, a status, the output.
                 ("POST", "/fal-ai/flux/dev") => (
+                    "application/json",
+                    serde_json::json!({"status": "IN_QUEUE", "request_id": "req-1",
+                        "response_url": format!("{base2}/fal-ai/flux/requests/req-1"),
+                        "status_url": format!("{base2}/fal-ai/flux/requests/req-1/status"),
+                        "queue_position": 0})
+                    .to_string()
+                    .into_bytes(),
+                ),
+                ("GET", "/fal-ai/flux/requests/req-1/status") => (
+                    "application/json",
+                    br#"{"status":"COMPLETED","request_id":"req-1","metrics":{"inference_time":1.0}}"#
+                        .to_vec(),
+                ),
+                ("GET", "/fal-ai/flux/requests/req-1") => (
                     "application/json",
                     serde_json::json!({"images": [{"url": format!("{base2}/img.png")}], "seed": 1})
                         .to_string()
                         .into_bytes(),
                 ),
                 ("GET", "/img.png") => ("image/png", b"\x89PNG\r\n\x1a\nfake".to_vec()),
-                ("POST", "/meshy") => ("application/json", br#"{"result":"task-7"}"#.to_vec()),
+                // A preview takes the prompt; a refine names a succeeded
+                // preview and takes none (#1187). Anything else is refused.
+                ("POST", "/meshy") => {
+                    let sent: Value = serde_json::from_slice(&body).unwrap_or_default();
+                    match (sent["mode"].as_str(), sent["preview_task_id"].as_str()) {
+                        (Some("preview"), None) if sent["prompt"].is_string() => {
+                            ("application/json", br#"{"result":"task-7"}"#.to_vec())
+                        }
+                        (Some("refine"), Some("task-7")) if sent.get("prompt").is_none() => {
+                            ("application/json", br#"{"result":"task-8"}"#.to_vec())
+                        }
+                        _ => ("text/plain", b"bad request".to_vec()),
+                    }
+                }
                 ("GET", "/meshy/task-7") => (
+                    "application/json",
+                    serde_json::json!({"status": "SUCCEEDED", "progress": 100,
+                        "model_urls": {"glb": format!("{base2}/preview.glb")}})
+                    .to_string()
+                    .into_bytes(),
+                ),
+                ("GET", "/meshy/task-8") => (
                     "application/json",
                     serde_json::json!({"status": "SUCCEEDED", "progress": 100,
                         "model_urls": {"glb": format!("{base2}/m.glb")}})
@@ -294,12 +330,74 @@ fn a_meshy_generate_is_a_job_the_job_list_shows() {
     assert_eq!(jobs[0]["id"], job_id);
     assert_eq!(jobs[0]["provider"], "meshy");
     assert_eq!(jobs[0]["remote_id"], "task-7");
+    assert_eq!(jobs[0]["refine_id"], "task-8");
     assert_eq!(jobs[0]["status"], "complete");
-    assert_eq!(jobs[0]["estimated_usd"], 0.60);
+    assert!((jobs[0]["estimated_usd"].as_f64().unwrap() - 0.60).abs() < 1e-9);
+    assert_eq!(
+        std::fs::read(
+            generated["output"]
+                .as_str()
+                .map(|p| dir.join(p))
+                .unwrap_or_default()
+        )
+        .ok()
+        .as_deref(),
+        Some(&b"glTF fake"[..]),
+        "{generated:#}"
+    );
 
     // A complete job resumes to itself.
     let (out, resumed) = flint(&dir, &["asset", "job", "resume", job_id]);
     assert!(out.status.success(), "{resumed:#}");
     assert_eq!(resumed["status"], "complete");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_flux_generate_follows_the_queue_and_is_a_job() {
+    let (base, log) = fake_providers();
+    let dir = project("flux", &base);
+    let (out, generated) = flint(
+        &dir,
+        &[
+            "asset",
+            "generate",
+            "texture",
+            "-d",
+            "a brick wall",
+            "--name",
+            "brick",
+            "--provider",
+            "flux",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{generated:#}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "POST /fal-ai/flux/dev",
+            "GET /fal-ai/flux/requests/req-1/status",
+            "GET /fal-ai/flux/requests/req-1",
+            "GET /img.png",
+        ]
+    );
+    let png = std::fs::read(generated["output"].as_str().unwrap()).unwrap();
+    assert_eq!(png, b"\x89PNG\r\n\x1a\nfake");
+    let job_id = generated["job"]
+        .as_str()
+        .expect("the generate names its job");
+
+    let (_, list) = flint(&dir, &["asset", "job", "list"]);
+    let jobs = list["jobs"].as_array().unwrap();
+    assert_eq!(jobs.len(), 1, "{list:#}");
+    assert_eq!(jobs[0]["id"], job_id);
+    assert_eq!(jobs[0]["provider"], "flux");
+    assert_eq!(jobs[0]["remote_id"], "req-1");
+    assert_eq!(jobs[0]["status"], "complete");
+    assert_eq!(jobs[0]["estimated_usd"], 0.05);
     let _ = std::fs::remove_dir_all(dir);
 }

@@ -56,6 +56,35 @@ pub fn srgb_to_linear(c: f32) -> f32 {
     }
 }
 
+/// Convert a single linear channel value to sRGB, clamped to 0–1: the
+/// inverse of [`srgb_to_linear`].
+pub fn linear_to_srgb(c: f32) -> f32 {
+    let c = c.clamp(0.0, 1.0);
+    if c <= 0.003_130_8 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// The hex string [`parse_hex_color`] reads as the nearest 8-bit colour to
+/// `c`, a linear RGBA colour: `#RRGGBB` with RGB encoded to sRGB, plus `AA`
+/// unless opaque (alpha isn't encoded, as the parser doesn't decode it).
+///
+/// A schema shows a linear default through this (#1165): writing the bytes
+/// of the floats themselves, `#735A47` for `[0.45, 0.35, 0.28]`, names a
+/// colour that parses to about 0.17 and renders far darker than the default.
+pub fn linear_to_hex(c: [f32; 4]) -> String {
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let srgb = |v: f32| byte(linear_to_srgb(v));
+    let rgb = format!("#{:02X}{:02X}{:02X}", srgb(c[0]), srgb(c[1]), srgb(c[2]));
+    if byte(c[3]) == 255 {
+        rgb
+    } else {
+        format!("{rgb}{:02X}", byte(c[3]))
+    }
+}
+
 /// Parse a 2-character hex string into a u8.
 pub fn u8_from_hex(s: &str, channel: &str) -> Result<u8> {
     u8::from_str_radix(s, 16).map_err(|_| ProcGenError::InvalidParameter {

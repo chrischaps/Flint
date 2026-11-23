@@ -1,4 +1,5 @@
-//! Job tracking for generations that take minutes (Meshy's models).
+//! Job tracking for generations that wait in a provider's queue (Meshy's
+//! models, which take minutes; Flux's images, queued on fal, #1186).
 //!
 //! A job is written to `.flint/jobs/<id>.job.toml` the moment the provider
 //! accepts (and bills) the task, and updated as it is polled, so a paid task
@@ -24,9 +25,18 @@ pub enum JobStatus {
 pub struct GenerationJob {
     /// Unique job ID (UUID)
     pub id: String,
-    /// Provider-specific remote job ID (if any)
+    /// Provider-specific remote job ID (if any): for Meshy, the preview task
     #[serde(default)]
     pub remote_id: Option<String>,
+    /// Where the provider's result is fetched, when its id alone doesn't
+    /// say (fal's `response_url`; its status is this plus `/status`)
+    #[serde(default)]
+    pub remote_url: Option<String>,
+    /// The task that builds on `remote_id`'s, once it is submitted: Meshy's
+    /// refine of its preview (#1187). A job with none resumes at the first
+    /// stage, without paying for it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refine_id: Option<String>,
     /// Provider name
     pub provider: String,
     /// Asset name being generated
@@ -47,7 +57,7 @@ pub struct GenerationJob {
     /// Output path once complete
     #[serde(default)]
     pub output_path: Option<String>,
-    /// What the submit was recorded as costing in the ledger
+    /// What its submits were recorded as costing in the ledger, summed
     #[serde(default)]
     pub estimated_usd: Option<f64>,
 }
@@ -58,6 +68,8 @@ impl GenerationJob {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             remote_id: None,
+            remote_url: None,
+            refine_id: None,
             provider: provider.to_string(),
             asset_name: asset_name.to_string(),
             status: JobStatus::Submitted,

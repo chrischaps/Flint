@@ -329,10 +329,13 @@ impl Generator for SweepGenerator {
             "properties": {
                 "control_points": { "type": "array", "minItems": 2,
                     "items": { "type": "object", "required": ["position"], "properties": {
-                        "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
-                        "twist": { "type": "number" },
-                        "gap_after": { "type": "boolean" } } },
-                    "description": "The path, as `[[params.control_points]]` tables written as a `.spline.toml`'s are: `position = [x, y, z]` in metres, `twist` (banking, degrees, default 0) and `gap_after` (no geometry from here to the next point, default false)" },
+                        "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3,
+                            "description": "[x, y, z] metres" },
+                        "twist": { "type": "number", "default": 0.0,
+                            "description": "Banking about the path here, degrees" },
+                        "gap_after": { "type": "boolean", "default": false,
+                            "description": "No geometry from this point to the next" } } },
+                    "description": "The path, as `[[params.control_points]]` tables written as a `.spline.toml`'s are, at least two" },
                 "closed": { "type": "boolean", "default": false,
                     "description": "A loop: the last control point joins the first, and there are no end caps. A spline file's `[spline] closed` defaults to true; this to false, since a swept model is more often a run with two ends" },
                 "spacing": { "type": "number", "minimum": 0.01, "maximum": 100.0, "default": 0.5,

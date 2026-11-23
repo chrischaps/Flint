@@ -32,6 +32,7 @@
 //! 10.2  touch  2 1150 620         # a second finger, at the same time
 //! 11.0  lift   2                  # finger 2 up
 //! 12.0  capture frame              # capture the next frame (#1086)
+//! 12.5  screenshot out/door.png    # the next frame drawn, as a PNG (#1191)
 //! 13.0  expect door door.open == true          # what the run should show
 //! 13.0  wait   player transform.position.z > 9 within 5
 //! ```
@@ -39,6 +40,11 @@
 //! `capture frame` asks the player to capture the next frame for the frame
 //! debugger (#1086), as the debug key does: a `.flintframe` folder under
 //! `--capture-dir`, or `captures/` at the project's root.
+//!
+//! `screenshot <file>` (#1191) writes the next frame drawn, scene and HUD,
+//! to `file` (from the working directory, as `--screenshot`), in a window
+//! or a rendered playtest (`flint playtest --render`); one never written
+//! (a playtest with no `--render`) fails the run.
 //!
 //! `expect` and `wait` (#714) ask the game, in flint-query's conditions,
 //! rather than play into it: an `expect` once at its time, a `wait` every
@@ -135,6 +141,10 @@ pub enum ScriptEvent {
     Touch(u64, TouchPhase, f64, f64),
     /// `capture frame` (#1086): capture the next frame. The line's time.
     Capture(f64),
+    /// `screenshot <file>` (#1191): write the next frame drawn to `file`
+    /// (a path from the working directory, as `--screenshot`'s). The
+    /// line's time.
+    Screenshot(std::path::PathBuf, f64),
 }
 
 /// What one frame of the script did, beyond writing `InputState`.
@@ -213,6 +223,8 @@ enum Action {
     FingerUp(u64),
     /// `capture frame` (#1086), at the time the line plays.
     Capture,
+    /// `screenshot <file>` (#1191): the next frame drawn, as a PNG.
+    Screenshot(std::path::PathBuf),
     /// An `expect` or `wait` line (#714).
     Check(Box<Check>),
 }
@@ -439,6 +451,10 @@ impl InputScript {
                     "frame" => events.push((t, Action::Capture)),
                     _ => return Err(bad("capture takes `frame`")),
                 },
+                "screenshot" => events.push((
+                    t,
+                    Action::Screenshot(std::path::PathBuf::from(after_words(line, 2).trim())),
+                )),
                 _ => return Err(bad("unknown verb")),
             }
         }
@@ -606,6 +622,9 @@ impl InputScript {
                 Action::Text(text) => out.events.push(ScriptEvent::Text(text.clone())),
                 // At the time it plays, which a `wait` before it may have moved
                 Action::Capture => out.events.push(ScriptEvent::Capture(*t)),
+                Action::Screenshot(path) => {
+                    out.events.push(ScriptEvent::Screenshot(path.clone(), *t))
+                }
                 Action::Look(dx, dy, over) => {
                     if *over > 0.0 {
                         self.sweeps.push(Sweep {

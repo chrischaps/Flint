@@ -51,12 +51,14 @@ usd = 0.025
 source = "https://fal.ai/models/fal-ai/flux/dev"
 
 [calls.meshy]
-# A textured model is two billed requests: Text to 3D preview (20 credits on
-# meshy-7.1 / meshy-6) and refine (10 credits at 2K/4K). Meshy publishes no
-# dollar price for an API credit; $0.02 is its Pro plan's ($20 for 1,000).
-# Set your plan's rate in .flint/prices.toml.
-unit = "task"
-usd = 0.60
+# A textured model is two billed requests (#1187): Text to 3D preview (20
+# credits on meshy-7.1 / meshy-6) and refine (10 credits at 2K/4K), each
+# recorded as its own call. Meshy publishes no dollar price for an API
+# credit; $0.02 is its Pro plan's ($20 for 1,000). Set your plan's rate in
+# .flint/prices.toml. A price whose unit is not "credit" (#721's "task") is
+# for a whole textured model, split 2:1 between the two.
+unit = "credit"
+usd = 0.02
 source = "https://docs.meshy.ai/en/api/pricing"
 
 [calls.elevenlabs]

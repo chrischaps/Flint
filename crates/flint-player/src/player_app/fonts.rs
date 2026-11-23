@@ -12,16 +12,30 @@
 //! name = "display"                     # alias → FontFamily::Name("display")
 //! file = "BarlowCondensed-BlackItalic.ttf"
 //!
+//! [[font]]
+//! name = "terminal"                    # a path from the manifest's folder (#1179)
+//! file = "ofl/VT323/VT323-Regular.ttf"
+//!
 //! [egui]                               # optional (ADR 0081)
 //! proportional = "body"                # egui's default text face
 //! monospace = "code"                   # egui's monospace face
 //! ```
+//!
+//! An alias's `file` is a file name in `fonts/`, or a relative path with a
+//! folder in it, read from the manifest's own folder (below it, or beside it
+//! with `../`), so a face a glyph set keeps in `fonts/ofl/` is a HUD font
+//! without a second copy. A path's face is registered under the alias alone.
 //!
 //! The `[egui]` names are families (a file stem or an alias). The named face
 //! goes first in egui's `Proportional` or `Monospace` family, ahead of egui's
 //! own fonts, so a game's egui UI draws in it and keeps egui's fonts for the
 //! glyphs it lacks. Every named family keeps egui's proportional fonts as
 //! fallbacks the same way.
+//!
+//! A script names egui's two families as `"proportional"` and `"monospace"`
+//! (#1179; [`family_of`]): text in a fixed pitch with no font file of the
+//! game's, and the game's own `[egui] monospace` face when it names one. A
+//! project family of either name comes first.
 //!
 //! An extension can add fonts of its own with `PlayerExtension::fonts`,
 //! which edits the definitions before Flint installs them, so they survive
@@ -142,28 +156,58 @@ pub fn parse_egui_defaults(text: &str) -> EguiDefaults {
     }
 }
 
+/// The `font_data` key an alias's `file` names: the file's stem for a file
+/// in `fonts/`, or, for a relative path with a folder in it (#1179), the
+/// path itself with forward slashes (`ofl/VT323/VT323-Regular.ttf`), which
+/// no stem can be. `None` for an absolute path, which a manifest may not
+/// name.
+fn alias_key(file: &str) -> Option<String> {
+    let spelled = file.replace('\\', "/");
+    let path = Path::new(&spelled);
+    if spelled.starts_with('/') || path.is_absolute() || path.has_root() || spelled.contains(':') {
+        return None;
+    }
+    let key = vfs::normalize(path);
+    if key.contains('/') {
+        return Some(key);
+    }
+    Path::new(&key)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+}
+
 /// Resolve the family table for a set of font files plus manifest aliases.
-/// Keys are family names (file stems first, then aliases); values are the
-/// `font_data` key each family points at (always a file stem). Aliases whose
-/// file is not among `stems` are dropped with a warning; an alias may not
-/// shadow a real stem.
-pub fn resolve_families(stems: &[String], aliases: &[FontAlias]) -> BTreeMap<String, String> {
+/// `keys` are the `font_data` keys read: file stems, and the paths aliases
+/// named (`alias_key`). Families are the stems, then the aliases; values
+/// are the key each family points at. Aliases whose file was not read are
+/// dropped with a warning; an alias may not shadow a real stem.
+pub fn resolve_families(keys: &[String], aliases: &[FontAlias]) -> BTreeMap<String, String> {
+    let stems: Vec<&String> = keys.iter().filter(|k| !k.contains('/')).collect();
     let mut families: BTreeMap<String, String> =
-        stems.iter().map(|s| (s.clone(), s.clone())).collect();
+        stems.iter().map(|s| ((*s).clone(), (*s).clone())).collect();
     for alias in aliases {
-        let target = Path::new(&alias.file)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if !stems.contains(&target) {
+        let Some(target) = alias_key(&alias.file) else {
             tracing::warn!(
-                "fonts.toml: alias `{}` points at `{}`, which is not in fonts/",
+                "fonts.toml: alias `{}` names `{}`, an absolute path; a file is named from the manifest's folder",
+                alias.name,
+                alias.file
+            );
+            continue;
+        };
+        if !keys.contains(&target) {
+            let place = if target.contains('/') {
+                "which could not be read"
+            } else {
+                "which is not in fonts/"
+            };
+            tracing::warn!(
+                "fonts.toml: alias `{}` points at `{}`, {place}",
                 alias.name,
                 alias.file
             );
             continue;
         }
-        if stems.contains(&alias.name) {
+        if stems.contains(&&alias.name) {
             tracing::warn!(
                 "fonts.toml: alias `{}` shadows a font file of the same name; ignored",
                 alias.name
@@ -211,10 +255,18 @@ impl ProjectFonts {
         )
     }
 
-    /// Read the files: `(stem -> bytes, aliases, egui defaults)`. Of two
-    /// files of one stem (`Body.ttf` near, `Body.otf` far) the nearer is
-    /// kept.
-    fn read(&self) -> (BTreeMap<String, Vec<u8>>, Vec<FontAlias>, EguiDefaults) {
+    /// Read the files: `(key -> bytes, aliases, egui defaults, paths read
+    /// for aliases)`. Of two files of one stem (`Body.ttf` near, `Body.otf`
+    /// far) the nearer is kept. A file an alias names by a path (#1179) is
+    /// read from the manifest's folder and keyed by that path.
+    fn read(
+        &self,
+    ) -> (
+        BTreeMap<String, Vec<u8>>,
+        Vec<FontAlias>,
+        EguiDefaults,
+        Vec<PathBuf>,
+    ) {
         let mut data = BTreeMap::new();
         for face in &self.faces {
             let Some(stem) = face.path.file_stem() else {
@@ -231,11 +283,40 @@ impl ProjectFonts {
                 Err(e) => tracing::warn!("fonts: failed to read {}: {e}", face.path.display()),
             }
         }
-        let manifest = self.manifest.as_ref().map(vfs::read_to_string);
-        match manifest {
-            Some(Ok(text)) => (data, parse_manifest(&text), parse_egui_defaults(&text)),
-            _ => (data, Vec::new(), EguiDefaults::default()),
+        let Some(manifest) = &self.manifest else {
+            return (data, Vec::new(), EguiDefaults::default(), Vec::new());
+        };
+        let text = match vfs::read_to_string(manifest) {
+            Ok(text) => text,
+            Err(e) => {
+                tracing::warn!("fonts: failed to read {}: {e}", manifest.display());
+                return (data, Vec::new(), EguiDefaults::default(), Vec::new());
+            }
+        };
+        let aliases = parse_manifest(&text);
+        let folder = manifest.parent().unwrap_or(Path::new(""));
+        let mut linked = Vec::new();
+        for alias in &aliases {
+            let Some(key) = alias_key(&alias.file).filter(|k| k.contains('/')) else {
+                continue;
+            };
+            if data.contains_key(&key) {
+                continue;
+            }
+            let path = PathBuf::from(vfs::normalize(&folder.join(&key)));
+            match vfs::read(&path) {
+                Ok(bytes) => {
+                    data.insert(key, bytes);
+                    linked.push(path);
+                }
+                Err(e) => tracing::warn!(
+                    "fonts.toml: alias `{}`: failed to read {}: {e}",
+                    alias.name,
+                    path.display()
+                ),
+            }
         }
+        (data, aliases, parse_egui_defaults(&text), linked)
     }
 }
 
@@ -298,16 +379,16 @@ pub fn project_font_definitions(scene_path: &str) -> egui::FontDefinitions {
 /// The font definitions for what a scene sees (see `build_definitions`):
 /// egui's defaults when it sees no font file.
 pub fn font_definitions(fonts: &ProjectFonts) -> egui::FontDefinitions {
-    if fonts.faces.is_empty() {
+    if fonts.faces.is_empty() && fonts.manifest.is_none() {
         return egui::FontDefinitions::default();
     }
-    let (data, aliases, defaults) = fonts.read();
-    let stems: Vec<String> = data.keys().cloned().collect();
-    let families = resolve_families(&stems, &aliases);
+    let (data, aliases, defaults, linked) = fonts.read();
+    let keys: Vec<String> = data.keys().cloned().collect();
+    let families = resolve_families(&keys, &aliases);
     if !families.is_empty() {
         let mut folders: Vec<String> = Vec::new();
-        for face in &fonts.faces {
-            let folder = face.path.parent().unwrap_or(Path::new(""));
+        for file in fonts.faces.iter().map(|f| &f.path).chain(&linked) {
+            let folder = file.parent().unwrap_or(Path::new(""));
             let folder = flint_core::project::shown(folder);
             if !folders.contains(&folder) {
                 folders.push(folder);
@@ -340,6 +421,27 @@ pub fn script_families(defs: &egui::FontDefinitions) -> HashSet<String> {
         .collect()
 }
 
+/// The name a script gives egui's monospace family (#1179).
+pub const MONOSPACE: &str = "monospace";
+/// The name a script gives egui's proportional family, the default.
+pub const PROPORTIONAL: &str = "proportional";
+
+/// The family a script's `font` names, or `None` for a name nothing has: a
+/// named family `is_named` knows (a project file, an alias, an extension's),
+/// then [`MONOSPACE`] and [`PROPORTIONAL`] for egui's own two. Drawing
+/// (`resolve_font_id`) and measuring (`text_measurer`) both ask it, so the
+/// two agree on every name.
+pub fn family_of(name: &str, is_named: impl Fn(&str) -> bool) -> Option<egui::FontFamily> {
+    if is_named(name) {
+        return Some(egui::FontFamily::Name(name.into()));
+    }
+    match name {
+        MONOSPACE => Some(egui::FontFamily::Monospace),
+        PROPORTIONAL => Some(egui::FontFamily::Proportional),
+        _ => None,
+    }
+}
+
 /// Resolve a script-facing family name to an egui `FontId`, falling back to
 /// the default proportional font (and warning once per unknown name).
 pub fn resolve_font_id(
@@ -348,20 +450,23 @@ pub fn resolve_font_id(
     known: &HashSet<String>,
     warned: &mut HashSet<String>,
 ) -> egui::FontId {
-    match font {
-        Some(name) if known.contains(name) => {
-            egui::FontId::new(size, egui::FontFamily::Name(name.into()))
-        }
-        Some(name) => {
+    let Some(name) = font else {
+        return egui::FontId::proportional(size);
+    };
+    match family_of(name, |n| known.contains(n)) {
+        Some(family) => egui::FontId::new(size, family),
+        None => {
             if warned.insert(name.to_string()) {
+                let mut names: Vec<&str> = known.iter().map(|s| s.as_str()).collect();
+                names.sort_unstable();
+                names.extend([MONOSPACE, PROPORTIONAL]);
                 tracing::warn!(
-                    "font `{name}` not found under fonts/ (known: {:?}); using default",
-                    known
+                    "font `{name}` not found under fonts/ (known: {}); using default",
+                    names.join(", ")
                 );
             }
             egui::FontId::proportional(size)
         }
-        None => egui::FontId::proportional(size),
     }
 }
 
@@ -384,9 +489,13 @@ pub fn text_measurer(
                 return (chars * size * 0.6 + spacing * (chars - 1.0).max(0.0), size);
             }
             ctx.fonts_mut(|f| {
+                let families = &f.definitions().families;
                 let family = font
-                    .map(|n| egui::FontFamily::Name(n.into()))
-                    .filter(|fam| f.definitions().families.contains_key(fam))
+                    .and_then(|n| {
+                        family_of(n, |n| {
+                            families.contains_key(&egui::FontFamily::Name(n.into()))
+                        })
+                    })
                     .unwrap_or(egui::FontFamily::Proportional);
                 let job = text_layout_job(
                     text,
@@ -463,7 +572,7 @@ mod tests {
                 deep.manifest.as_deref(),
                 Some(Path::new("game/fonts/fonts.toml"))
             );
-            let (data, aliases, _) = deep.read();
+            let (data, aliases, _, _) = deep.read();
             assert_eq!(data["Display"], b"act display");
             assert_eq!(data["Body"], b"project body");
             assert_eq!(data["SHOUT"], b"capitals");
@@ -670,6 +779,166 @@ monospace = 3
         assert_eq!(warned.len(), 1);
         let id = resolve_font_id(12.0, None, &known, &mut warned);
         assert_eq!(id, egui::FontId::proportional(12.0));
+    }
+
+    /// #1179: `"monospace"` and `"proportional"` are egui's two families, a
+    /// project family of the name comes first, and neither is warned about.
+    #[test]
+    fn egui_families_have_names_scripts_can_give() {
+        let mut warned = HashSet::new();
+        let none = HashSet::new();
+        let id = resolve_font_id(18.0, Some("monospace"), &none, &mut warned);
+        assert_eq!(id, egui::FontId::monospace(18.0));
+        let id = resolve_font_id(18.0, Some("proportional"), &none, &mut warned);
+        assert_eq!(id, egui::FontId::proportional(18.0));
+        assert!(warned.is_empty(), "{warned:?}");
+
+        let own: HashSet<String> = ["monospace".to_string()].into_iter().collect();
+        let id = resolve_font_id(18.0, Some("monospace"), &own, &mut warned);
+        assert_eq!(id.family, egui::FontFamily::Name("monospace".into()));
+        assert_eq!(family_of("Monospace", |_| false), None, "names are exact");
+    }
+
+    /// #1179's done-when: one `measure_text` of fixed-pitch text in egui's
+    /// monospace face with no font file of the game's: every glyph the same
+    /// width, and the width the HUD's own layout of it draws.
+    #[test]
+    fn monospace_text_measures_as_it_draws_one_cell_a_glyph() {
+        let ctx = egui::Context::default();
+        let _ = flint_debug_ui::run_headless_frame(&ctx, egui::RawInput::default(), |_| {});
+        let measure = text_measurer(ctx.clone(), None);
+        let narrow = measure("iiiiiiii", 20.0, Some("monospace"), 0.0);
+        let wide = measure("MMMMMMMM", 20.0, Some("monospace"), 0.0);
+        let toml = measure("seed = 42", 20.0, Some("monospace"), 0.0);
+        assert!(narrow.0 > 0.0);
+        assert_eq!(narrow.0, wide.0, "a fixed pitch");
+        let cell = narrow.0 / 8.0;
+        // egui rounds a galley's width to its pixel grid: a hundredth of a point
+        assert!((toml.0 - cell * 9.0).abs() < 0.05, "{toml:?} vs {cell}");
+
+        // The proportional face is not fixed: `i` is narrower than `M`.
+        let p_narrow = measure("iiiiiiii", 20.0, Some("proportional"), 0.0);
+        let p_wide = measure("MMMMMMMM", 20.0, Some("proportional"), 0.0);
+        assert!(p_narrow.0 < p_wide.0 * 0.6, "{p_narrow:?} {p_wide:?}");
+        assert_eq!(p_narrow, measure("iiiiiiii", 20.0, None, 0.0));
+
+        // What the HUD draws: the same job through `resolve_font_id`.
+        let id = resolve_font_id(
+            20.0,
+            Some("monospace"),
+            &HashSet::new(),
+            &mut HashSet::new(),
+        );
+        let drawn = ctx.fonts_mut(|f| {
+            f.layout_job(text_layout_job("seed = 42", id, egui::Color32::WHITE, 0.0))
+                .size()
+        });
+        assert_eq!((drawn.x, drawn.y), toml);
+    }
+
+    /// #1179: an alias's `file` may be a path from the manifest's folder,
+    /// below it or beside it, so a face a glyph set keeps in `fonts/ofl/`
+    /// is a HUD font without a second copy. It is registered under the
+    /// alias alone; a path that can't be read, or an absolute one, drops.
+    #[test]
+    fn an_alias_names_a_face_below_or_beside_fonts_by_its_path() {
+        use flint_core::vfs::MemorySource;
+        let mut files = MemorySource::new();
+        files.insert("game/flint.toml", "");
+        files.insert("game/fonts/Body.ttf", "body");
+        files.insert("game/fonts/ofl/VT323/VT323-Regular.ttf", "vt323");
+        files.insert("game/vendor/Cutive.ttf", "cutive");
+        files.insert(
+            "game/fonts/fonts.toml",
+            r#"
+[[font]]
+name = "terminal"
+file = "ofl/VT323/VT323-Regular.ttf"
+
+[[font]]
+name = "typewriter"
+file = "../vendor/Cutive.ttf"
+
+[[font]]
+name = "ghost"
+file = "ofl/Nope/Nope.ttf"
+
+[[font]]
+name = "rooted"
+file = "/etc/fonts/x.ttf"
+
+[egui]
+monospace = "terminal"
+"#,
+        );
+        files.insert("game/levels/a.scene.toml", "");
+        vfs::scoped(Arc::new(files), || {
+            let fonts = ProjectFonts::for_scene("game/levels/a.scene.toml");
+            let (data, aliases, defaults, linked) = fonts.read();
+            assert_eq!(data["ofl/VT323/VT323-Regular.ttf"], b"vt323");
+            assert_eq!(data["../vendor/Cutive.ttf"], b"cutive");
+            assert_eq!(data.len(), 3, "{:?}", data.keys().collect::<Vec<_>>());
+            let shown: Vec<String> = linked
+                .iter()
+                .map(|p| flint_core::project::shown(p))
+                .collect();
+            assert_eq!(
+                shown,
+                [
+                    "game/fonts/ofl/VT323/VT323-Regular.ttf",
+                    "game/vendor/Cutive.ttf"
+                ]
+            );
+
+            let keys: Vec<String> = data.keys().cloned().collect();
+            let families = resolve_families(&keys, &aliases);
+            let names: Vec<&str> = families.keys().map(|s| s.as_str()).collect();
+            assert_eq!(
+                names,
+                ["Body", "terminal", "typewriter"],
+                "no path is a family"
+            );
+            assert_eq!(families["terminal"], "ofl/VT323/VT323-Regular.ttf");
+
+            let defs = build_definitions(data, &families, &defaults);
+            let mono = &defs.families[&egui::FontFamily::Monospace];
+            assert_eq!(mono[0], "ofl/VT323/VT323-Regular.ttf", "[egui] reaches it");
+            assert_eq!(font_definitions(&fonts).families.len(), defs.families.len());
+        });
+    }
+
+    /// A manifest whose only faces are paths still loads: no font file in
+    /// `fonts/` itself is no reason to skip it.
+    #[test]
+    fn a_manifest_of_paths_alone_loads() {
+        use flint_core::vfs::MemorySource;
+        let mut files = MemorySource::new();
+        files.insert("game/flint.toml", "");
+        files.insert("game/fonts/ofl/VT323/VT323-Regular.ttf", "vt323");
+        files.insert(
+            "game/fonts/fonts.toml",
+            "[[font]]\nname = \"terminal\"\nfile = \"ofl/VT323/VT323-Regular.ttf\"\n",
+        );
+        files.insert("game/a.scene.toml", "");
+        vfs::scoped(Arc::new(files), || {
+            let fonts = ProjectFonts::for_scene("game/a.scene.toml");
+            assert!(fonts.faces.is_empty());
+            let defs = font_definitions(&fonts);
+            assert!(script_families(&defs).contains("terminal"));
+        });
+    }
+
+    #[test]
+    fn alias_keys_are_stems_or_paths() {
+        assert_eq!(alias_key("Body.ttf").as_deref(), Some("Body"));
+        assert_eq!(alias_key("./Body.ttf").as_deref(), Some("Body"));
+        assert_eq!(
+            alias_key("ofl\\VT323\\VT323-Regular.ttf").as_deref(),
+            Some("ofl/VT323/VT323-Regular.ttf")
+        );
+        assert_eq!(alias_key("a/../B.ttf").as_deref(), Some("B"));
+        assert_eq!(alias_key("/abs/x.ttf"), None);
+        assert_eq!(alias_key("C:/fonts/x.ttf"), None);
     }
 
     #[test]

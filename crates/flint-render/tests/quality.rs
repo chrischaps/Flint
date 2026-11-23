@@ -491,6 +491,58 @@ fn the_shadow_settings_hold_through_a_resolution_change() {
     assert_eq!(renderer.collect_stats().shadow_draw_calls, 0);
 }
 
+/// The distance levers are quality keys (#1149): `set_quality` moves what
+/// the LOD cull draws, and `set_lod_settings` (a script's `set_lod_scale`)
+/// is read back through `quality()`, so the two are one state.
+#[test]
+fn the_distance_levers_are_quality_keys() {
+    let gpu = gpu_or_skip!();
+    let (mut renderer, mut world) = scene(&gpu);
+    // The slab stops drawing 4 m out; the default camera is about 15 m away
+    let slab = world.get_id("slab").unwrap();
+    let mut lod = toml::Table::new();
+    lod.insert("draw_distance".into(), 4.0.into());
+    world.set_component(slab, "lod", lod.into()).unwrap();
+
+    let plain = gpu.frame(&mut renderer, &world);
+    assert_eq!(
+        renderer.collect_stats().lod_culled_draws,
+        1,
+        "past its draw distance"
+    );
+
+    let far = QualitySettings {
+        draw_distance_scale: 10.0,
+        lod_scale: 0.5,
+        ..*renderer.quality()
+    };
+    let applied = renderer.set_quality(gpu.device, &far);
+    assert_eq!(
+        (applied.lod_scale, applied.draw_distance_scale),
+        (0.5, 10.0)
+    );
+    let s = renderer.lod_settings();
+    assert_eq!((s.lod_scale, s.draw_distance_scale), (0.5, 10.0));
+    let drawn = gpu.frame(&mut renderer, &world);
+    assert_eq!(
+        renderer.collect_stats().lod_culled_draws,
+        0,
+        "40 m reaches it"
+    );
+    assert!(differing(&plain, &drawn, 2) > 50, "the slab is drawn");
+
+    // The script's setter is the same two keys
+    renderer.set_lod_settings(flint_render::LodSettings {
+        lod_scale: 2.0,
+        draw_distance_scale: 1.0,
+    });
+    assert_eq!(renderer.quality().lod_scale, 2.0);
+    assert_eq!(renderer.quality().draw_distance_scale, 1.0);
+    let again = gpu.frame(&mut renderer, &world);
+    assert_eq!(renderer.collect_stats().lod_culled_draws, 1);
+    assert_eq!(differing(&plain, &again, 0), 0, "back to the first frame");
+}
+
 /// A skinned quad of half-width `half` at height `y`, every vertex on the
 /// one joint, so a bone matrix moves it whole.
 fn skinned_square(name: &str, half: f32, y: f32) -> flint_import::ImportResult {

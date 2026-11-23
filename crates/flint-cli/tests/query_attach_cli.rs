@@ -147,6 +147,69 @@ fn a_query_prints_the_same_for_a_file_and_a_running_game() {
     assert_eq!(file[0]["name"], "cellar_door");
 }
 
+/// The names `query` picks, read from its JSON.
+fn names(out: &str) -> Vec<String> {
+    let doc: serde_json::Value = serde_json::from_str(out).unwrap();
+    doc.as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// #1185: "where is the player" asked by selecting on it. A field steps
+/// into a vector by axis or by `[n]`, of a file and of a running game
+/// alike; a step past the end, or into a value that isn't an array, picks
+/// nothing and is not an error.
+#[test]
+fn a_query_selects_by_one_element_of_a_vector_in_a_file_and_a_running_game() {
+    let root = project("vector");
+    let (world, _) =
+        flint_scene::load_scene(root.join("hall.scene.toml"), &SchemaRegistry::new()).unwrap();
+    let world = Arc::new(Mutex::new(world));
+    let listener = InspectListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().port().to_string();
+    let _frames = Frames::run(listener, world.clone());
+    let file = |q: &str| stdout(&flint(&root, &["query", q, "--scene", "hall.scene.toml"]));
+    let live = |q: &str| stdout(&flint(&root, &["query", q, "--attach", &port]));
+
+    for (q, want) in [
+        (
+            "entities where transform.position.z > 5",
+            &["front_door"][..],
+        ),
+        ("entities where transform.position[2] > 5", &["front_door"]),
+        ("entities where transform.position.y == 1", &["player"]),
+        (
+            "entities where transform.position[0] == 0",
+            &["front_door", "player"],
+        ),
+        // Past the end, by axis and by index; into a boolean.
+        ("entities where transform.position.w == 0", &[]),
+        ("entities where transform.position[3] != 0", &[]),
+        ("entities where door.locked.x == true", &[]),
+        ("entities where door.locked[0] == true", &[]),
+    ] {
+        let from_file = file(q);
+        assert_eq!(names(&from_file), want, "{q}");
+        assert_eq!(live(q), from_file, "{q}");
+    }
+
+    // The player walks up the hall: the game says so, the file still doesn't.
+    {
+        let mut world = world.lock().unwrap();
+        let player = world.get_id("player").unwrap();
+        world.get_components_mut(player).unwrap().set_field(
+            "transform",
+            "position",
+            toml::Value::Array(vec![0.into(), 1.into(), toml::Value::Float(8.5)]),
+        );
+    }
+    let ahead = "entities where transform.position.z > 5";
+    assert_eq!(names(&live(ahead)), ["front_door", "player"]);
+    assert_eq!(names(&file(ahead)), ["front_door"]);
+}
+
 #[test]
 fn a_refusal_from_the_game_fails_the_command_with_its_reason() {
     let root = project("refusal");

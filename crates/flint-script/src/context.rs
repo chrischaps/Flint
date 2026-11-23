@@ -859,6 +859,9 @@ pub struct ScriptCallContext {
     pub camera_follow: CameraFollowState,
     /// Persistent screen shake state
     pub shake: ShakeState,
+    /// The 3D camera rig's shake, hand-held camera and shot lists (#1158),
+    /// laid over the camera asked for when the requests are taken
+    pub camera_rig: crate::rig::CameraRig,
     /// Set of currently loaded chunk IDs (synced from PlayerApp before scripts run)
     pub loaded_chunk_ids: HashSet<String>,
     /// The modules an optional feature owns that may run now (#698): what
@@ -986,6 +989,7 @@ impl ScriptCallContext {
             text_measurer: None,
             camera_follow: CameraFollowState::default(),
             shake: ShakeState::default(),
+            camera_rig: crate::rig::CameraRig::default(),
             loaded_chunk_ids: HashSet::new(),
             enabled_modules: Vec::new(),
             module_state: Default::default(),
@@ -1121,10 +1125,18 @@ impl ScriptCallContext {
     /// commands in the order they were made, then this frame's requests
     /// (camera, post-processing, time scale...), one command each, for
     /// those asked for. A distance scale asked for reads back from here on
-    /// (`get_lod_scale()`) until the host says what it applied.
+    /// (`get_lod_scale()`) until the host says what it applied. A camera
+    /// asked for takes the rig's shake and hand-held jitter here, after
+    /// every script's own position and target (#1158).
     pub fn take_commands(&mut self) -> Vec<ScriptCommand> {
         let mut out = std::mem::take(&mut self.commands);
-        let r = std::mem::take(&mut self.requests);
+        let mut r = std::mem::take(&mut self.requests);
+        self.camera_rig.shake_requested(
+            self.total_time,
+            &mut r.camera,
+            self.camera_position,
+            self.camera_direction,
+        );
         if r.camera != CameraOverrides::default() {
             out.push(ScriptCommand::SetCamera { camera: r.camera });
         }

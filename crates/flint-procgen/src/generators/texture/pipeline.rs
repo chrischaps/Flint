@@ -944,6 +944,117 @@ height = "blend_noise.height"
         }
     }
 
+    /// Every value of `field`'s channel, as bits, for exact comparison.
+    fn channel_bits(field: &TextureField, name: &str) -> Vec<u32> {
+        let (w, h) = (field.width, field.height);
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| field.get(name, x, y).to_bits())
+            .collect()
+    }
+
+    /// A graph-mode op reads a `voronoi_texture`'s `cell_output` by node id
+    /// (#1166): by its name and by its placeholder, each the cells the op
+    /// writes, coloured as the sequential spec colours them.
+    #[test]
+    fn dag_pipeline_reads_a_voronoi_cell_output() {
+        // The cell output is a 0-1 value a cell, so a colour ramp shows it.
+        let ramp = r##"
+[[params.ops.stops]]
+position = 0.0
+color = "#203060"
+[[params.ops.stops]]
+position = 1.0
+color = "#F0C040"
+"##;
+        let sequential = pipeline_spec(&format!(
+            r##"
+output_maps = ["albedo"]
+
+[[params.ops]]
+type = "voronoi_texture"
+output = "dist"
+cell_output = "cells"
+scale = 6.0
+
+[[params.ops]]
+type = "color_ramp"
+input = "cells"
+{ramp}"##
+        ));
+        let map_params = TextureMapParams::from_toml(&sequential.params).unwrap();
+        let (want_maps, want_snaps) =
+            run_pipeline_with_snapshots(&sequential.params, &map_params, &mut SeededRng::new(42))
+                .unwrap();
+        let cells = channel_bits(&want_snaps[0], "cells");
+        let distinct: std::collections::HashSet<_> = cells.iter().collect();
+        assert!(distinct.len() > 4, "the voronoi writes many cells");
+        let colours: std::collections::HashSet<_> = want_maps[0].pixels.chunks(4).collect();
+        assert!(colours.len() > 4, "the ramp colours each cell its own");
+
+        for reference in ["cells.cells", "cells.<cell_output>"] {
+            let graph = pipeline_spec(&format!(
+                r##"
+output_maps = ["albedo"]
+
+[[params.ops]]
+type = "voronoi_texture"
+id = "cells"
+output = "dist"
+cell_output = "cells"
+scale = 6.0
+
+[[params.ops]]
+type = "color_ramp"
+id = "color"
+input = "cell_value"
+[params.ops.inputs]
+cell_value = "{reference}"
+{ramp}"##
+            ));
+            let (maps, snaps) =
+                run_pipeline_with_snapshots(&graph.params, &map_params, &mut SeededRng::new(42))
+                    .unwrap();
+            assert_eq!(
+                channel_bits(&snaps[0], "cells/cells"),
+                cells,
+                "{reference}: the node's scoped copy holds its cells"
+            );
+            assert_eq!(
+                channel_bits(&snaps[1], "cell_value"),
+                cells,
+                "{reference}: color_ramp read the voronoi's cells"
+            );
+            assert_eq!(
+                maps[0].pixels, want_maps[0].pixels,
+                "{reference}: the graph colours each cell as the sequential spec does"
+            );
+        }
+    }
+
+    /// With `cell_output` unset, a graph-mode `voronoi_texture` copies out
+    /// only its distance: the optional port is skipped (#1166).
+    #[test]
+    fn dag_pipeline_skips_an_unset_cell_output() {
+        let spec = pipeline_spec(
+            r##"
+output_maps = ["roughness"]
+
+[[params.ops]]
+type = "voronoi_texture"
+id = "cells"
+output = "roughness"
+"##,
+        );
+        let map_params = TextureMapParams::from_toml(&spec.params).unwrap();
+        let (_, snaps) =
+            run_pipeline_with_snapshots(&spec.params, &map_params, &mut SeededRng::new(42))
+                .unwrap();
+        let mut names: Vec<_> = snaps[0].channel_names().into_iter().collect();
+        names.sort();
+        assert_eq!(names, ["cells/roughness", "roughness"]);
+    }
+
     #[test]
     fn dag_pipeline_backward_compat_no_ids() {
         // Spec without any id fields should use sequential mode
@@ -1389,7 +1500,7 @@ octaves = 5
             }
         }
         assert!(md.contains("Each `[[params.ops.stops]]` entry:"));
-        assert!(md.contains("| `base_color` | hex colour | `\"#735947\"` |"));
+        assert!(md.contains("| `base_color` | hex colour | `\"#B3A090\"` |"));
     }
 
     #[test]

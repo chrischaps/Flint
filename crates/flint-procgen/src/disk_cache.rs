@@ -76,7 +76,7 @@ pub struct DiskStats {
 const MAGIC: &[u8; 4] = b"FPGC";
 /// Bump when the encoding (or anything in `GeneratorOutput`'s types) changes
 /// shape: every file written under another version is then a miss.
-pub const DISK_FORMAT: u32 = 1;
+pub const DISK_FORMAT: u32 = 2; // 2: `ImageData::format` (#1168)
 const HEADER_LEN: usize = 8;
 const EXTENSION: &str = "fpgc";
 

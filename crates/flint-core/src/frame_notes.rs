@@ -96,11 +96,16 @@ pub enum NoteKind {
     /// what, `3 buffers, 2 bind groups`). A count, not a time: see
     /// [`NoteKind::is_count`].
     GpuObjects,
+    /// A frame capture's writer thread was encoding and writing while the
+    /// frame ran (#1178; `detail`: the folder). Untimed: the frame thread
+    /// never waits on it, it only shares the machine with it. See
+    /// [`NoteKind::is_background`].
+    CaptureWrite,
 }
 
 impl NoteKind {
     /// Every kind, in the order above.
-    pub const ALL: [NoteKind; 26] = [
+    pub const ALL: [NoteKind; 27] = [
         NoteKind::ModelLoad,
         NoteKind::TextureLoad,
         NoteKind::PipelineBuild,
@@ -127,6 +132,7 @@ impl NoteKind {
         NoteKind::StatsOverlay,
         NoteKind::TraceRing,
         NoteKind::GpuObjects,
+        NoteKind::CaptureWrite,
     ];
 
     /// The words a log line or an overlay names it by.
@@ -158,7 +164,18 @@ impl NoteKind {
             NoteKind::StatsOverlay => "stats overlay",
             NoteKind::TraceRing => "trace ring",
             NoteKind::GpuObjects => "gpu objects",
+            NoteKind::CaptureWrite => "capture write",
         }
+    }
+
+    /// Whether the work ran on another thread beside the frame rather than
+    /// on it (#1178: a capture's writer). The frame thread didn't wait on
+    /// it, so it has no `ms`, and it slows a frame only by sharing the
+    /// cores and the disk: a hitch names it as its likely cause unless a
+    /// script took the time, whose own stall it then stands beside
+    /// (`also: capture write`).
+    pub fn is_background(self) -> bool {
+        matches!(self, NoteKind::CaptureWrite)
     }
 
     /// Whether a note of this kind counts what the frame did rather than

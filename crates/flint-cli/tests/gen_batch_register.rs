@@ -380,6 +380,50 @@ fn a_texture_spec_registers_every_map() {
     assert!(dir.join("tex/wall_6_normal.png").is_file());
 }
 
+/// Done-when of #1168: a `.terrain.toml` registers its two maps and reuses
+/// them like any procgen output.
+#[test]
+fn a_terrain_spec_registers_and_reuses_its_maps() {
+    let dir = project("terrain");
+    let src = std::fs::read_to_string(
+        repo_root().join("tests/fixtures/scenes/terrain/rolling_meadow.terrain.toml"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("meadow.terrain.toml"),
+        src.replace("resolution = 512", "resolution = 64"),
+    )
+    .unwrap();
+    let args = [
+        "meadow.terrain.toml",
+        "-o",
+        "terrain/meadow.png",
+        "--register",
+    ];
+    let first = ok(gen_in(&dir, &args));
+    assert!(first.contains("Registered: "), "{first}");
+    for map in ["height", "splat"] {
+        let p = props(&dir.join(format!("terrain/meadow_{map}.png.asset.toml")));
+        assert_eq!(p["generator"].as_str(), Some("terrain_v1"));
+        assert_eq!(p["seed"].as_integer(), Some(7));
+        assert_eq!(p["map"].as_str(), Some(map));
+    }
+    assert_eq!(store_blobs(&dir), 2);
+    let height = std::fs::read(dir.join("terrain/meadow_height.png")).unwrap();
+
+    let second = ok(gen_in(&dir, &args));
+    assert!(second.contains("Cached: "), "{second}");
+
+    // A lost map comes back from the store, the same bytes
+    std::fs::remove_file(dir.join("terrain/meadow_height.png")).unwrap();
+    let third = ok(gen_in(&dir, &args));
+    assert!(third.contains("restored 1"), "{third}");
+    assert_eq!(
+        std::fs::read(dir.join("terrain/meadow_height.png")).unwrap(),
+        height
+    );
+}
+
 #[test]
 fn flags_that_would_be_ignored_are_refused() {
     let dir = project("refused");

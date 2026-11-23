@@ -218,19 +218,24 @@ impl Generator for CreatureGenerator {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "name": { "type": "string" },
-                            "parent": { "type": "string" },
+                            "name": { "type": "string",
+                                "description": "What body parts, limb chains and later bones call it" },
+                            "parent": { "type": "string",
+                                "description": "The bone it hangs from, defined above it; none makes it a root" },
                             "position": {
                                 "type": "array",
                                 "items": { "type": "number" },
                                 "minItems": 3,
-                                "maxItems": 3
+                                "maxItems": 3,
+                                "default": [0.0, 0.0, 0.0],
+                                "description": "Where it sits in its parent's space, [x, y, z] metres"
                             },
                             "rotation": {
                                 "type": "array",
                                 "items": { "type": "number" },
                                 "minItems": 3,
                                 "maxItems": 3,
+                                "default": [0.0, 0.0, 0.0],
                                 "description": "Euler angles in degrees [pitch, yaw, roll]"
                             }
                         },
@@ -243,18 +248,31 @@ impl Generator for CreatureGenerator {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "bone": { "type": "string" },
+                            "bone": { "type": "string",
+                                "description": "The bone it rides, by name" },
                             "shape": {
                                 "type": "string",
-                                "enum": ["ellipsoid", "sphere", "capsule", "tapered_cylinder"]
+                                "enum": ["ellipsoid", "sphere", "capsule", "tapered_cylinder"],
+                                "description": "The solid; `dimensions` sizes it"
                             },
                             "dimensions": {
                                 "type": "array",
                                 "items": { "type": "number" },
                                 "minItems": 3,
-                                "maxItems": 3
+                                "maxItems": 3,
+                                "default": [1.0, 1.0, 1.0],
+                                "description": "Metres, read by shape: an ellipsoid's [x, y, z] radii; a sphere's [radius, _, _]; a capsule's [radius, height, _]; a tapered cylinder's [bottom radius, top radius, height]"
                             },
-                            "material": { "type": "string" }
+                            "offset": {
+                                "type": "array",
+                                "items": { "type": "number" },
+                                "minItems": 3,
+                                "maxItems": 3,
+                                "default": [0.0, 0.0, 0.0],
+                                "description": "The shape's centre from its bone, [x, y, z] metres in the bone's space"
+                            },
+                            "material": { "type": "string", "default": "default",
+                                "description": "A `materials` name; one with no table there is the default material" }
                         },
                         "required": ["bone", "shape"]
                     }
@@ -265,18 +283,44 @@ impl Generator for CreatureGenerator {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "name": { "type": "string" },
-                            "parent_bone": { "type": "string" },
-                            "mirror": { "type": "boolean", "default": false },
+                            "name": { "type": "string",
+                                "description": "Names its bones: `<name>_0`, `<name>_1`, ... (`<name>_R_0` and `<name>_L_0` when mirrored)" },
+                            "parent_bone": { "type": "string",
+                                "description": "The bone the chain's first segment hangs from" },
+                            "attach_offset": {
+                                "type": "array",
+                                "items": { "type": "number" },
+                                "minItems": 3,
+                                "maxItems": 3,
+                                "default": [0.0, 0.0, 0.0],
+                                "description": "Where the first segment starts, [x, y, z] metres in the parent bone's space; the mirrored chain flips x"
+                            },
+                            "mirror": { "type": "boolean", "default": false,
+                                "description": "Make a left chain too: x and the segments' yaw and roll flipped" },
+                            "material": { "type": "string", "default": "default",
+                                "description": "A `materials` name; one with no table there is the default material" },
                             "segments": {
                                 "type": "array",
+                                "description": "Root to tip, each a bone and a tapered cylinder; each starts at the end of the one before, down its local -y",
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "length": { "type": "number" },
-                                        "radius_start": { "type": "number" },
-                                        "radius_end": { "type": "number" }
-                                    }
+                                        "length": { "type": "number",
+                                            "description": "Metres along the segment" },
+                                        "radius_start": { "type": "number",
+                                            "description": "Radius at the segment's root end, metres" },
+                                        "radius_end": { "type": "number",
+                                            "description": "Radius at its tip end, metres" },
+                                        "rest_angles": {
+                                            "type": "array",
+                                            "items": { "type": "number" },
+                                            "minItems": 3,
+                                            "maxItems": 3,
+                                            "default": [0.0, 0.0, 0.0],
+                                            "description": "The segment's bend from the one before at rest, Euler degrees [pitch, yaw, roll]"
+                                        }
+                                    },
+                                    "required": ["length", "radius_start", "radius_end"]
                                 }
                             }
                         },
@@ -290,9 +334,12 @@ impl Generator for CreatureGenerator {
                         "type": "object",
                         "title": "creature material",
                         "properties": {
-                            "base_color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#808080" },
-                            "roughness": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 },
-                            "metallic": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 }
+                            "base_color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#808080",
+                                "description": "Base colour, sRGB hex" },
+                            "roughness": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5,
+                                "description": "PBR roughness" },
+                            "metallic": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0,
+                                "description": "PBR metallic" }
                         },
                         "additionalProperties": false
                     }

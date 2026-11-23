@@ -358,7 +358,6 @@ pub(super) fn render_still(
                             },
                             &world,
                         ),
-                        camera: &camera,
                         particles: particle_sim.as_ref().map(|p| &p.sync),
                     }),
                 )?;

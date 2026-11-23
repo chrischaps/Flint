@@ -622,3 +622,132 @@ fn a_frame_that_needs_a_style_still_preparing_waits_for_it() {
     assert!(renderer.styles_preparing().is_empty());
     assert_eq!(drawn, fresh);
 }
+
+/// `style`'s table on, with `reveal` at `amount` (#406), in `config`.
+fn with_reveal(
+    mut config: flint_render::PostProcessConfig,
+    style: &str,
+    amount: f64,
+) -> flint_render::PostProcessConfig {
+    config.styles.set_enabled(style, true);
+    config
+        .styles
+        .set_reveal(style, "reveal", &toml::Value::Float(amount), true)
+        .expect("a reveal key");
+    config
+}
+
+/// Draw frames of `renderer` until `labels` are each built once, none of
+/// those frames building one itself: what a worker builds ahead.
+fn draw_until_built(frame: &Frame, renderer: &mut SceneRenderer, labels: &[&str]) {
+    let world = box_world();
+    let since = std::time::Instant::now();
+    while labels.iter().any(|l| count(l).built == 0) {
+        assert!(
+            since.elapsed() < std::time::Duration::from_secs(120),
+            "never built ahead: {:?}",
+            labels.iter().map(|l| (*l, count(l))).collect::<Vec<_>>()
+        );
+        let ((), built) = noted(|| {
+            frame.draw(renderer, &world, &camera(0.08));
+        });
+        assert!(
+            !built.iter().any(|n| labels.iter().any(|l| n.contains(l))),
+            "a frame built what was building ahead: {built:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// #1159: a scene whose style waits at `reveal = 0` has its reveal draw
+/// built ahead with its styles, so the first frame the reveal lies
+/// between 0 and 1 (Plaintext's tear opening: 92 ms of "pipeline build
+/// Style Reveal Pipeline") builds nothing, and draws what a reveal built
+/// on its own frame draws.
+#[test]
+fn a_reveal_waiting_at_0_is_built_ahead_and_its_first_frame_builds_nothing() {
+    let Some(lease) = shared_gpu::lease_alone() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let frame = Frame::new(&lease.gpu.device, &lease.gpu.queue);
+    let world = box_world();
+    pipeline_cache::set_enabled(false);
+    pipeline_cache::reset_counts();
+    const REVEAL: &str = "Style Reveal Pipeline";
+
+    // Without: the first frame half revealed builds the reveal draw
+    let mut fresh = plain(&frame);
+    let half = with_reveal(fresh.post_process_config().clone(), "invert", 0.5);
+    fresh.set_post_process_config(half.clone());
+    let (fresh_bytes, built) = noted(|| frame.draw(&mut fresh, &world, &camera(0.08)));
+    assert!(
+        built.iter().any(|n| n.contains(REVEAL)),
+        "the control frame didn't build its reveal: {built:?}"
+    );
+    pipeline_cache::reset_counts();
+
+    // With: the scene's own table, reveal 0, prepared at its entry
+    let mut renderer = plain(&frame);
+    let waiting = with_reveal(renderer.post_process_config().clone(), "invert", 0.0);
+    renderer.set_post_process_config(waiting.clone());
+    renderer.ensure_style_resources(frame.device);
+    renderer.prepare_styles(frame.device, &waiting);
+    draw_until_built(&frame, &mut renderer, &[REVEAL]);
+
+    // The tear opens: nothing to build, the same bytes
+    renderer.set_post_process_config(half);
+    let (drawn, built) = noted(|| frame.draw(&mut renderer, &world, &camera(0.08)));
+    assert!(
+        built.is_empty(),
+        "the reveal's first frame built: {built:?}"
+    );
+    assert_eq!(count(REVEAL).built, 1, "built again on the frame");
+    assert_eq!(drawn, fresh_bytes, "the prepared reveal draws other bytes");
+}
+
+/// #1159: a style named to preload (`preload_styles`) is built with every
+/// draw the stage gives a style, whatever its table says then: the blend,
+/// the reveal and the tear's. Plaintext switched `matrix` and `tron` on
+/// mid-film and tore them in; that frame now builds nothing.
+#[test]
+fn a_preloaded_style_gets_every_stage_draw_built_ahead() {
+    let Some(lease) = shared_gpu::lease_alone() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let frame = Frame::new(&lease.gpu.device, &lease.gpu.queue);
+    let world = box_world();
+    pipeline_cache::set_enabled(false);
+    pipeline_cache::reset_counts();
+    const DRAWS: [&str; 3] = [
+        "Style Blend Pipeline",
+        "Style Reveal Pipeline",
+        "Style Tear Blend Pipeline",
+    ];
+
+    let mut renderer = plain(&frame);
+    let mut later = renderer.post_process_config().clone();
+    later.styles.set_enabled("matrix", true);
+    let started = renderer.prepare_styles_with(frame.device, &later, &["matrix"]);
+    assert!(started.contains(&"matrix"), "started {started:?}");
+    draw_until_built(&frame, &mut renderer, &DRAWS);
+    let since = std::time::Instant::now();
+    while !renderer.style_built("matrix") {
+        assert!(since.elapsed() < std::time::Duration::from_secs(120));
+        frame.draw(&mut renderer, &world, &camera(0.08));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    // The script switches it on and tears it in: nothing to build
+    later.styles.set_follows_tear("matrix", true);
+    later.tear = 0.5;
+    renderer.set_post_process_config(later);
+    let ((), built) = noted(|| {
+        frame.draw(&mut renderer, &world, &camera(0.08));
+    });
+    assert!(built.is_empty(), "the torn matrix's frame built: {built:?}");
+    for label in DRAWS {
+        assert_eq!(count(label).built, 1, "{label} built twice");
+    }
+}

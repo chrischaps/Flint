@@ -34,9 +34,11 @@ pub use pattern::{Pattern, PatternCell, PatternField, SeamSteps};
 pub use voronoi::{VoronoiBrickParams, VoronoiBrickPattern};
 
 use crate::generator::{GenerationCost, Generator};
+use crate::generators::util::linear_to_hex;
 use crate::output::{GeneratorOutput, OutputKind};
 use crate::spec::ProcGenSpec;
 use crate::{ProcGenError, Result, SeededRng};
+use descriptor::shortest;
 
 /// The patterns that build a field and run the map derivation over it
 /// (`"pipeline"` runs its ops instead).
@@ -144,21 +146,38 @@ impl Generator for TextureGenerator {
         // The fixed patterns run the map derivation; a pipeline's ops replace it.
         let derive = |prop| only(&LEGACY_PATTERNS, prop);
 
+        // Every default is the parser's own (#1165): a key left out takes its
+        // struct's `Default`, so the schema reads them from there rather than
+        // repeating them, and `every_schema_default_is_what_the_parser_applies`
+        // renders each one both ways. A colour is linear floats; the schema
+        // shows the sRGB hex that parses back to the nearest 8-bit colour.
+        let m = TextureMapParams::default();
+        let vb = VoronoiBrickParams::default();
+        let og = PerlinOrganicParams::default();
+        let tg = TilingGridParams::default();
+        // One key, a default per pattern: like `mortar_threshold`, it can't
+        // carry a single `default`, so the description gives both.
+        let height_variation = format!(
+            "Per-cell random height, 0 flat to 1 the most; shows in the normal map. Default {} for voronoi_brick, {} for tiling_grid",
+            shortest(vb.height_variation),
+            shortest(tg.height_variation)
+        );
+
         json!({
             "type": "object",
             "properties": {
-                "width": { "type": "integer", "minimum": 1, "default": 512, "description": "Image width in pixels" },
-                "height": { "type": "integer", "minimum": 1, "default": 512, "description": "Image height in pixels" },
+                "width": { "type": "integer", "minimum": 1, "default": m.width, "description": "Image width in pixels" },
+                "height": { "type": "integer", "minimum": 1, "default": m.height, "description": "Image height in pixels" },
                 "pattern": {
                     "type": "string",
                     "enum": ["voronoi_brick", "perlin_organic", "tiling_grid", "pipeline"],
-                    "default": "voronoi_brick",
+                    "default": m.pattern,
                     "description": "The base shape: Voronoi stones, layered organic noise, a grid of tiles, or a pipeline of ops"
                 },
                 "output_maps": {
                     "type": "array",
                     "items": { "type": "string", "enum": ["albedo", "normal", "roughness"] },
-                    "default": ["albedo", "normal", "roughness"],
+                    "default": m.output_maps,
                     "description": "Which PBR maps to write; each becomes <stem>_<map>.png"
                 },
                 "ops": only(&["pipeline"], json!({
@@ -166,35 +185,35 @@ impl Generator for TextureGenerator {
                     "items": pipeline::ops_items_schema(),
                     "description": "The pipeline's operations, run in order (or as a graph when an op has an `id`); each type's keys are in `op_schema`"
                 })),
-                "seamless": { "type": "boolean", "default": true, "description": "Tile without a seam. In a pipeline, noise and repeating ops round their frequencies to whole cycles per tile (simplex cross-fades); false keeps the unwrapped fields" },
-                "base_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#735A47", "description": "Albedo of the cells (stones, tiles, bands), sRGB hex; each cell gets its own shade of it" })),
-                "color_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.06, "description": "How far each cell's lightness strays from base_color (saturation moves by half that; hue stays)" })),
-                "mortar_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#40382E", "description": "Albedo in the grooves between cells (strata lines on perlin_organic), sRGB hex" })),
+                "seamless": { "type": "boolean", "default": m.seamless, "description": "Tile without a seam. In a pipeline, noise and repeating ops round their frequencies to whole cycles per tile (simplex cross-fades); false keeps the unwrapped fields" },
+                "base_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": linear_to_hex(m.base_color), "description": "Albedo of the cells (stones, tiles, bands), sRGB hex; each cell gets its own shade of it" })),
+                "color_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": shortest(m.color_variation), "description": "How far each cell's lightness strays from base_color (saturation moves by half that; hue stays)" })),
+                "mortar_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": linear_to_hex(m.mortar_color), "description": "Albedo in the grooves between cells (strata lines on perlin_organic), sRGB hex" })),
                 "mortar_threshold": derive(json!({ "type": "number", "minimum": 0.0, "description": "distance_to_edge below which mortar colour and roughness blend in; default 0.5 (half the groove) for voronoi_brick and tiling_grid, 0.05 (strata lines) for perlin_organic" })),
-                "roughness_base": derive(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.75, "description": "Roughness of the cells' faces" })),
-                "roughness_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.05, "description": "Per-cell random spread of roughness" })),
-                "roughness_mortar": derive(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5, "description": "Roughness in the grooves" })),
-                "normal_strength": derive(json!({ "type": "number", "minimum": 0.0, "default": 1.0, "description": "Depth of the normal map's relief; 0 is flat" })),
-                "detail_scale": derive(json!({ "type": "number", "minimum": 0.0, "default": 8.0, "description": "Detail lattice cells across the texture width (first octave)" })),
-                "detail_octaves": derive(json!({ "type": "integer", "minimum": 1, "default": 4, "description": "Octaves in the detail field, each twice as fine; any finer than 4 px are dropped" })),
-                "detail_strength": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.1, "description": "RMS brightness change in the albedo (0.1 = 10%); also scales the detail's relief and roughness" })),
-                "cell_count": voronoi(json!({ "type": "integer", "minimum": 1, "default": 12, "description": "Voronoi cells (stones) across the whole texture" })),
+                "roughness_base": derive(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": shortest(m.roughness_base), "description": "Roughness of the cells' faces" })),
+                "roughness_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": shortest(m.roughness_variation), "description": "Per-cell random spread of roughness" })),
+                "roughness_mortar": derive(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": shortest(m.roughness_mortar), "description": "Roughness in the grooves" })),
+                "normal_strength": derive(json!({ "type": "number", "minimum": 0.0, "default": shortest(m.normal_strength), "description": "Depth of the normal map's relief; 0 is flat" })),
+                "detail_scale": derive(json!({ "type": "number", "minimum": 0.0, "default": shortest(m.detail_scale), "description": "Detail lattice cells across the texture width (first octave)" })),
+                "detail_octaves": derive(json!({ "type": "integer", "minimum": 1, "default": m.detail_octaves, "description": "Octaves in the detail field, each twice as fine; any finer than 4 px are dropped" })),
+                "detail_strength": derive(json!({ "type": "number", "minimum": 0.0, "default": shortest(m.detail_strength), "description": "RMS brightness change in the albedo (0.1 = 10%); also scales the detail's relief and roughness" })),
+                "cell_count": voronoi(json!({ "type": "integer", "minimum": 1, "default": vb.cell_count, "description": "Voronoi cells (stones) across the whole texture" })),
                 "cell_size": voronoi(json!({ "type": "number", "exclusiveMinimum": 0.0, "description": "Typical stone size in pixels; overrides cell_count" })),
                 "irregularity": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "1 - regularity; give one or the other" })),
-                "mortar_width": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.02, "description": "Full width of the groove between stones, as a fraction of the texture width" })),
-                "regularity": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0, "description": "0 scatters the stones at random, 1 relaxes them into an even layout" })),
-                "height_variation": only(&["voronoi_brick", "tiling_grid"], json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3, "description": "Per-cell random height, 0 flat to 1 the most; shows in the normal map" })),
-                "noise_type": organic(json!({ "type": "string", "enum": ["perlin", "simplex"], "default": "perlin", "description": "Noise basis: perlin, or simplex (fewer grid artefacts)" })),
-                "octaves": organic(json!({ "type": "integer", "minimum": 1, "default": 6, "description": "Noise octaves layered into the bands; more adds finer detail" })),
-                "frequency": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 4.0, "description": "Noise lattice cells across the texture for the first octave; rounded to a whole number when seamless" })),
-                "lacunarity": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 2.0, "description": "Frequency multiplier from one octave to the next" })),
-                "persistence": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.5, "description": "Amplitude multiplier from one octave to the next; lower is smoother" })),
-                "height_bands": organic(json!({ "type": "integer", "minimum": 1, "default": 8, "description": "Bands the noise height is cut into; each band is a cell with its own shade" })),
-                "columns": grid(json!({ "type": "integer", "minimum": 1, "default": 4, "description": "Tiles across" })),
-                "rows": grid(json!({ "type": "integer", "minimum": 1, "default": 4, "description": "Tiles down" })),
-                "gap_width": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.05, "description": "Grout between tiles, as a fraction of a tile" })),
-                "jitter": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 0.5, "default": 0.0, "description": "How far each tile strays from the grid, 0 none to 0.5" })),
-                "noise_strength": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.03, "description": "Fine surface noise on each tile's height" }))
+                "mortar_width": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": shortest(vb.mortar_width), "description": "Full width of the groove between stones, as a fraction of the texture width" })),
+                "regularity": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": shortest(vb.regularity), "description": "0 scatters the stones at random, 1 relaxes them into an even layout" })),
+                "height_variation": only(&["voronoi_brick", "tiling_grid"], json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "description": height_variation })),
+                "noise_type": organic(json!({ "type": "string", "enum": ["perlin", "simplex"], "default": og.noise_type, "description": "Noise basis: perlin, or simplex (fewer grid artefacts)" })),
+                "octaves": organic(json!({ "type": "integer", "minimum": 1, "default": og.octaves, "description": "Noise octaves layered into the bands; more adds finer detail" })),
+                "frequency": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": og.frequency, "description": "Noise lattice cells across the texture for the first octave; rounded to a whole number when seamless" })),
+                "lacunarity": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": og.lacunarity, "description": "Frequency multiplier from one octave to the next" })),
+                "persistence": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": og.persistence, "description": "Amplitude multiplier from one octave to the next; lower is smoother" })),
+                "height_bands": organic(json!({ "type": "integer", "minimum": 1, "default": og.height_bands, "description": "Bands the noise height is cut into; each band is a cell with its own shade" })),
+                "columns": grid(json!({ "type": "integer", "minimum": 1, "default": tg.columns, "description": "Tiles across" })),
+                "rows": grid(json!({ "type": "integer", "minimum": 1, "default": tg.rows, "description": "Tiles down" })),
+                "gap_width": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": shortest(tg.gap_width), "description": "Grout between tiles, as a fraction of a tile" })),
+                "jitter": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 0.5, "default": shortest(tg.jitter), "description": "How far each tile strays from the grid, 0 none to 0.5" })),
+                "noise_strength": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": shortest(tg.noise_strength), "description": "Fine surface noise on each tile's height" }))
             },
             "additionalProperties": false
         })
@@ -702,7 +721,9 @@ base = 0.75
                 if now > min { now - 1 } else { now + 3 }.into()
             }
             "number" => {
-                let unset = if max.is_some() { 0.3 } else { 12.0 };
+                // Off any per-pattern default (height_variation is 0.3 for
+                // voronoi_brick), so a nudge from "unset" moves something.
+                let unset = if max.is_some() { 0.65 } else { 12.0 };
                 let now = current
                     .and_then(|v| v.as_float())
                     .or(prop["default"].as_f64());
@@ -731,6 +752,92 @@ base = 0.75
             }
             "string" => "#20A0C0".into(),
             t => panic!("no nudge for {t}"),
+        }
+    }
+
+    /// A schema default is a promise too (#1165): writing it into a spec, as
+    /// `flint edit` does, renders what leaving the key out renders. Checked
+    /// for every key with a default under every pattern that reads it, all
+    /// three maps. A colour default can only be the nearest 8-bit hex to the
+    /// parser's linear floats, so it may move a channel by one; the schema
+    /// used to show the floats' own bytes (`#735A47`), which parse to about
+    /// 0.17 where the default is 0.45, and moved the albedo by up to 86.
+    #[test]
+    fn every_schema_default_is_what_the_parser_applies() {
+        let schema = TextureGenerator.param_schema();
+        let props = schema["properties"].as_object().unwrap();
+        let maps = |spec: &ProcGenSpec| {
+            TextureGenerator
+                .generate(spec, &mut SeededRng::new(42))
+                .unwrap()
+                .into_image_set()
+                .unwrap()
+        };
+        let mut checked = 0;
+        for pattern in LEGACY_PATTERNS {
+            let bare = texture_spec(pattern);
+            let before = maps(&bare);
+            for (key, prop) in props {
+                let Some(default) = prop.get("default") else {
+                    continue;
+                };
+                let reads = prop["x-when"]["pattern"]
+                    .as_array()
+                    .is_none_or(|ps| ps.iter().any(|p| p == pattern));
+                // The spec sets its own size and pattern; those three are
+                // held to the parser below.
+                if !reads || bare.params.get(key).is_some() {
+                    continue;
+                }
+                let mut spec = bare.clone();
+                let value: toml::Value = serde_json::from_value(default.clone())
+                    .unwrap_or_else(|e| panic!("{key}: {e}"));
+                spec.params
+                    .as_table_mut()
+                    .unwrap()
+                    .insert(key.clone(), value);
+                let slack = if prop["pattern"].is_string() { 1 } else { 0 };
+                for (a, b) in before.iter().zip(maps(&spec)) {
+                    let worst = a
+                        .pixels
+                        .iter()
+                        .zip(&b.pixels)
+                        .map(|(x, y)| x.abs_diff(*y))
+                        .max()
+                        .unwrap();
+                    assert!(
+                        worst <= slack,
+                        "{pattern}: {key} = {default} moves {:?} by up to {worst}",
+                        a.channel_semantics
+                    );
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked >= 40, "only {checked} defaults checked");
+
+        let unset = TextureMapParams::from_toml(&toml::Value::Table(Default::default())).unwrap();
+        assert_eq!(props["width"]["default"], unset.width);
+        assert_eq!(props["height"]["default"], unset.height);
+        assert_eq!(props["pattern"]["default"], unset.pattern);
+    }
+
+    /// A linear colour's hex parses back to the nearest 8-bit colour: its
+    /// sRGB bytes round-trip, and the default's floats sit within half a
+    /// step of what the hex reads as.
+    #[test]
+    fn a_linear_colour_hex_parses_back_to_its_nearest_colour() {
+        use crate::generators::util::{linear_to_srgb, parse_hex_color};
+        let m = TextureMapParams::default();
+        assert_eq!(linear_to_hex(m.base_color), "#B3A090");
+        assert_eq!(linear_to_hex(m.mortar_color), "#898176");
+        for c in [m.base_color, m.mortar_color, [0.0, 0.002, 1.0, 0.5]] {
+            let back = parse_hex_color(&linear_to_hex(c)).unwrap();
+            for i in 0..3 {
+                let step = (linear_to_srgb(c[i]) - linear_to_srgb(back[i])).abs() * 255.0;
+                assert!(step <= 0.5 + 1e-4, "{c:?}[{i}] is {step} steps off");
+            }
+            assert_eq!(linear_to_hex(back), linear_to_hex(c));
         }
     }
 

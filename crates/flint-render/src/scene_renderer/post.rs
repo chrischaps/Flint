@@ -218,6 +218,8 @@ impl SceneRenderer {
     /// - `post_process`, `bloom`, `ssao`, `ssao_samples`, `fog`,
     ///   `volumetric` cap the post config: off turns the effect off, on
     ///   leaves it as set.
+    /// - `lod_scale`, `draw_distance_scale`: the distance levers, as
+    ///   [`set_lod_settings`](Self::set_lod_settings) sets them (#1149).
     pub fn set_quality(
         &mut self,
         device: &wgpu::Device,
@@ -282,17 +284,33 @@ impl SceneRenderer {
         device: &wgpu::Device,
         config: &PostProcessConfig,
     ) -> Vec<&'static str> {
+        self.prepare_styles_with(device, config, &[])
+    }
+
+    /// [`prepare_styles`](Self::prepare_styles), with every stage draw
+    /// built for the styles named in `every_draw` (#1159): the blend, the
+    /// reveal and the tear, whatever their tables in `config` say now. A
+    /// frame otherwise builds each the first time a style's `reveal` lies
+    /// between 0 and 1 (Plaintext's tear: 92 ms), its `blend` drops under 1
+    /// or it follows the tear. A scene's `[post_process] preload_styles`.
+    pub fn prepare_styles_with(
+        &mut self,
+        device: &wgpu::Device,
+        config: &PostProcessConfig,
+        every_draw: &[&str],
+    ) -> Vec<&'static str> {
         flint_core::scope!("prepare_styles");
         let Some(pp) = &mut self.postprocess_pipeline else {
             return Vec::new();
         };
         let surface_format = pp.surface_format;
-        pp.styles.prepare(
+        pp.styles.prepare_with(
             device,
             surface_format,
             config,
             &self.style_mask.ids,
             &self.styles,
+            every_draw,
         )
     }
 
