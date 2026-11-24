@@ -196,6 +196,9 @@ fn check_all(
     if with_styles.is_some() {
         say_user_styles_clamp(&mut found, memo.styles_for(scene_dir));
     }
+    if checks.schema || checks.styles {
+        say_unmasked_user_styles(&mut found, memo.styles_for(scene_dir));
+    }
     if strict {
         diagnostic::promote_strict(&mut found);
     }
@@ -708,6 +711,36 @@ fn say_user_styles_clamp(found: &mut [Diagnostic], styles: &flint_render::styliz
             Some(range) => format!("{range}; {clamped}"),
             None => clamped,
         });
+    }
+}
+
+/// A `<name>_style` on an entity, where the user style `name` reads no
+/// mask, is the warning a drawing host gives it (#1320), not an
+/// `unknown-component` error asking for a schema file: the style has no
+/// component, so the table does nothing.
+fn say_unmasked_user_styles(
+    found: &mut [Diagnostic],
+    styles: &flint_render::stylize::StyleRegistry,
+) {
+    for d in found
+        .iter_mut()
+        .filter(|d| d.code == codes::UNKNOWN_COMPONENT)
+    {
+        let Some(component) = d.component.clone() else {
+            continue;
+        };
+        let said = styles
+            .iter()
+            .filter(|s| styles.is_user_style(s.name))
+            .find_map(|s| {
+                flint_render::stylize::component_schema::unmasked_style_component(s, &component)
+            });
+        if let Some(said) = said {
+            let (file, entity) = (d.file.take(), d.entity.take());
+            *d = said;
+            d.file = file;
+            d.entity = entity;
+        }
     }
 }
 
