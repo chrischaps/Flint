@@ -107,6 +107,13 @@ fn a_script_reads_the_beat_and_bar_of_a_suite_with_no_chart() {
         .unwrap();
     let project = flint_core::project::Project::for_scene(std::path::Path::new(&scene));
     let mut game = HeadlessGame::new(world, &scene, project);
+    game.start_subsystems(
+        Default::default(),
+        crate::CaptureStart {
+            scripts: true,
+            ..Default::default()
+        },
+    );
     game.start_scripts(true, None, (320.0, 180.0), &PostProcessConfig::default());
     let mut camera = Camera::new();
 

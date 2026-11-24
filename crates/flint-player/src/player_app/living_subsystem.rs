@@ -118,6 +118,9 @@ impl LivingSubsystem {
     /// that asks to wooze. A scene that asks for shallow wooze or woozy grass
     /// with no field to drive it is told so, once, here.
     pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+        if let Some(capture) = ctx.capture.as_deref_mut() {
+            return Self::in_capture(ctx.living, ctx.resolver, ctx.script, capture);
+        }
         let wooze = living_props::field_of(ctx.scene.wooze.as_ref());
         let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
         shallow_wooze::warn_without_a_field(ctx.world, wooze.as_ref());
@@ -168,16 +171,34 @@ impl LivingSubsystem {
     /// One frame of living props, on `dt` of the living clock: the clock and
     /// the field, the boil, the poses, shallow wooze and grass on the same
     /// field and `dt`, then new lineages and the blends.
-    /// The subsystem a capture's grove runs on: its field (the scene's
-    /// `[wooze]` with any sweep's knobs over it), and whether it's a capture
-    /// of a moment, which draws shallow wooze.
-    pub(crate) fn for_capture(wooze: Option<flint_wooze::WoozeField>, moment: bool) -> Self {
-        Self {
+    /// The subsystem a capture's grove runs on (`flint render`, #1252), if
+    /// the scene has living props or the capture a wooze field (the scene's
+    /// `[wooze]` with any sweep's knobs over it, which it takes). As the
+    /// player's first frame, the props read the field without moving: every
+    /// pose is made at once, off the frame budget. A capture of a moment
+    /// draws shallow wooze.
+    fn in_capture(
+        props: &mut flint_living::LivingProps,
+        resolver: &flint_procgen::ProcGenResolver,
+        script: &mut flint_script::ScriptSystem,
+        capture: &mut super::headless_game::CaptureStart,
+    ) -> Option<Box<dyn Subsystem>> {
+        let wooze = capture.wooze.take();
+        if props.is_empty() && wooze.is_none() {
+            return None;
+        }
+        props.step_now(resolver, 0.0, wooze.as_ref().map(|field| (field, 0.0)));
+        let mut living = Self {
             wooze,
-            capture: Some(Capture { shallow: moment }),
+            capture: Some(Capture {
+                shallow: capture.moment,
+            }),
             scene_token: next_scene_token(),
             ..Default::default()
-        }
+        };
+        // For on_init's reads of the field (#505), as the player's scene start
+        living.publish_reading(script, 0.0);
+        Some(Box::new(living))
     }
 
     pub(super) fn tick(&mut self, ctx: &mut StageCtx, dt: f64) {
@@ -590,4 +611,39 @@ fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
     value
         .as_table()
         .ok_or_else(|| format!("{value} isn't a map of knobs"))
+}
+
+/// What `flint render` reads of a capture's grove: the field's clock and
+/// the blends the stage writes before each capture. Here, beside the
+/// subsystem, so `headless_game.rs` names none (#1252).
+impl super::headless_game::HeadlessGame {
+    fn living(&self) -> Option<&LivingSubsystem> {
+        self.core.subsystems.find::<LivingSubsystem>()
+    }
+
+    /// The wooze field and the time its clock has reached, with one.
+    pub fn wooze(&self) -> Option<(&flint_wooze::WoozeField, f64)> {
+        let living = self.living()?;
+        Some((living.wooze.as_ref()?, living.wooze_time))
+    }
+
+    /// Blend every prop where its clock stands and write what moved, as a
+    /// frame of the player does.
+    pub fn upload_living(
+        &mut self,
+        renderer: &mut flint_render::SceneRenderer,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
+        let core = &mut self.core;
+        if let Some(living) = core.subsystems.find_mut::<LivingSubsystem>() {
+            living_props::upload_blends(
+                &mut core.living_props,
+                &mut living.blend,
+                renderer,
+                device,
+                queue,
+            );
+        }
+    }
 }

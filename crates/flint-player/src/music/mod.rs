@@ -82,11 +82,16 @@ fn base_dir(project: &Project, comp: &toml::Value, scene_path: &str) -> PathBuf 
 
 /// The scene's music subsystem, if it has a `music_session`: the rhythm
 /// game's for a component with a `chart` (in a build with the `rhythm`
-/// feature), the music's otherwise.
+/// feature), the music's otherwise. In a capture (`flint render
+/// --scripts`), the music's alone and only for scripts that run: the beat
+/// on the game clock, no sound, no chart judged (#1252).
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+    if ctx.capture.as_ref().is_some_and(|c| !c.scripts) {
+        return None;
+    }
     let comp = component_in(ctx.world)?;
     let base = base_dir(ctx.project, &comp, ctx.scene_path);
-    if comp_str(&comp, "chart").is_some() {
+    if ctx.capture.is_none() && comp_str(&comp, "chart").is_some() {
         #[cfg(feature = "rhythm")]
         return Some(Box::new(rhythm::RhythmSubsystem::new(base, comp, ctx)));
         #[cfg(not(feature = "rhythm"))]
@@ -95,25 +100,6 @@ pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
              its chart isn't judged"
         );
     }
-    match MusicSubsystem::new(&base, &comp) {
-        Ok(music) => Some(Box::new(music)),
-        Err(e) => {
-            tracing::warn!(target: "music", "{e}");
-            None
-        }
-    }
-}
-
-/// The subsystem for a stepped capture (`flint render --scripts`): the beat
-/// on the game clock, no sound. `None` for a scene without music or whose
-/// suite doesn't load.
-pub(crate) fn for_capture(
-    world: &FlintWorld,
-    project: &Project,
-    scene_path: &str,
-) -> Option<Box<dyn Subsystem>> {
-    let comp = component_in(world)?;
-    let base = base_dir(project, &comp, scene_path);
     match MusicSubsystem::new(&base, &comp) {
         Ok(music) => Some(Box::new(music)),
         Err(e) => {
