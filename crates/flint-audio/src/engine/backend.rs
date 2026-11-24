@@ -98,10 +98,13 @@ pub(crate) trait MixerBackend {
     fn sound_length(&self, name: &str) -> Option<f64>;
 
     /// Make a bus the engine's table declares, under `parent` (`None`: the
-    /// main track). The built-in two exist from the start; this comes for
-    /// each other bus, in number order.
-    fn add_bus(&mut self, bus: Bus, parent: Option<Bus>, db: Decibels) -> Result<()>;
+    /// main track), its low-pass at `lowpass` Hz (#1218). The built-in two
+    /// exist from the start, open; this comes for each other bus, in
+    /// number order.
+    fn add_bus(&mut self, bus: Bus, parent: Option<Bus>, db: Decibels, lowpass: f32) -> Result<()>;
     fn set_bus_volume(&mut self, bus: Bus, db: Decibels, tween_secs: f64);
+    /// A bus's own low-pass cutoff, Hz (#1218).
+    fn set_bus_lowpass(&mut self, bus: Bus, hz: f32, tween_secs: f64);
     fn set_filter_cutoff(&mut self, hz: f32, tween_secs: f64);
 
     fn create_listener(&mut self, pos: glam::Vec3, orientation: glam::Quat) -> Result<()>;
@@ -177,10 +180,11 @@ impl MixerBackend for Silent {
         None
     }
     // The engine remembers the table and the volumes for the mixer to come.
-    fn add_bus(&mut self, _: Bus, _: Option<Bus>, _: Decibels) -> Result<()> {
+    fn add_bus(&mut self, _: Bus, _: Option<Bus>, _: Decibels, _: f32) -> Result<()> {
         Ok(())
     }
     fn set_bus_volume(&mut self, _: Bus, _: Decibels, _: f64) {}
+    fn set_bus_lowpass(&mut self, _: Bus, _: f32, _: f64) {}
     fn set_filter_cutoff(&mut self, _: f32, _: f64) {}
     fn create_listener(&mut self, _: glam::Vec3, _: glam::Quat) -> Result<()> {
         Ok(())

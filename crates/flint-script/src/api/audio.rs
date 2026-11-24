@@ -190,6 +190,19 @@ pub(crate) fn register(api: &mut ScriptApi) {
     });
 
     m.func(
+        "set_bus_lowpass",
+        "A mixer bus's own low-pass cutoff in Hz (20000 for none, as low as 10), by name: it muffles the bus and the buses under it and nothing else, and holds until changed.",
+    )
+    .arg("bus", Str)
+    .arg("cutoff_hz", Num)
+    .run(|call, (bus, cutoff_hz)| {
+        call.ctx().commands.push(ScriptCommand::SetBusLowpass {
+            bus: bus.to_string(),
+            hz: cutoff_hz,
+        });
+    });
+
+    m.func(
         "set_audio_lowpass",
         "The master bus low-pass cutoff in Hz (20000 for none), held until changed.",
     )

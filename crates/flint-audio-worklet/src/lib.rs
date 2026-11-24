@@ -14,6 +14,7 @@
 //! `cargo build -p flint-audio-worklet --target wasm32-unknown-unknown
 //! --profile worklet` before each build (crates/flint-player/Trunk.toml).
 
+pub mod bus_filter;
 pub mod protocol;
 
 #[cfg(target_arch = "wasm32")]
@@ -35,6 +36,7 @@ use kira::{
     AudioManager, AudioManagerSettings, Decibels, Easing, Frame, Panning, PlaybackRate, Tween,
 };
 
+use bus_filter::{BusFilterBuilder, BusFilterHandle};
 use protocol::{Command, Reader, Target};
 
 /// A kira backend with no device: it hands the renderer back so the
@@ -69,20 +71,34 @@ fn vec3(p: [f32; 3]) -> glam::Vec3 {
     glam::Vec3::from_array(p)
 }
 
+/// A bus's track: at `db`, through its own low-pass at `lowpass` Hz
+/// (#1218), as `flint_audio`'s kira mixer makes one.
+fn bus_track(db: f32, lowpass: f32) -> (TrackBuilder, BusFilterHandle) {
+    let mut builder = TrackBuilder::new().volume(Decibels(db));
+    let filter = builder.add_effect(BusFilterBuilder {
+        cutoff: lowpass as f64,
+    });
+    (builder, filter)
+}
+
+/// A bus low-pass's cutoff when it is open, Hz.
+pub const LOWPASS_OPEN: f32 = bus_filter::OPEN as f32;
+
 /// One-shots are swept for finished ones every this many renders (128
 /// frames each, so about every 0.1 s).
 const SWEEP_EVERY: u32 = 32;
 
 /// kira, set up as `flint_audio::AudioEngine` sets it up on the desktop (a
 /// low-pass on the main track, music and SFX buses under it, and the
-/// game's own buses after them), driven by commands instead of calls.
+/// game's own buses after them, each with its own low-pass), driven by
+/// commands instead of calls.
 pub struct Mixer {
     manager: AudioManager<Capture>,
     renderer: Renderer,
     filter: FilterHandle,
     /// By number: [`protocol::BUS_SFX`], [`protocol::BUS_MUSIC`], then each
-    /// [`Command::BusNew`] in turn (#730).
-    buses: Vec<TrackHandle>,
+    /// [`Command::BusNew`] in turn (#730), with each bus's low-pass (#1218).
+    buses: Vec<(TrackHandle, BusFilterHandle)>,
     listener: Option<ListenerHandle>,
     sounds: HashMap<u32, StaticSoundData>,
     tracks: HashMap<u32, SpatialTrackHandle>,
@@ -112,8 +128,12 @@ impl Mixer {
                 .cutoff(20_000.0),
         );
         let mut manager = AudioManager::new(settings).ok()?;
-        let sfx = manager.add_sub_track(TrackBuilder::new()).ok()?;
-        let music = manager.add_sub_track(TrackBuilder::new()).ok()?;
+        let mut builtin = || {
+            let (track, filter) = bus_track(0.0, LOWPASS_OPEN);
+            Some((manager.add_sub_track(track).ok()?, filter))
+        };
+        let sfx = builtin()?;
+        let music = builtin()?;
         let renderer = slot.lock().ok()?.take()?;
         Some(Self {
             manager,
@@ -188,7 +208,7 @@ impl Mixer {
     }
 
     fn bus(&mut self, bus: u8) -> Option<&mut TrackHandle> {
-        self.buses.get_mut(bus as usize)
+        self.buses.get_mut(bus as usize).map(|(track, _)| track)
     }
 
     fn spatial_track(
@@ -218,17 +238,26 @@ impl Mixer {
             Command::BusVolume { bus, db, tween: t } => {
                 self.bus(bus)?.set_volume(Decibels(db), tween(t));
             }
-            Command::BusNew { bus, parent, db } => {
+            Command::BusNew {
+                bus,
+                parent,
+                db,
+                lowpass,
+            } => {
                 // Numbered in order, so a number is never two buses.
                 if bus as usize != self.buses.len() {
                     return None;
                 }
-                let builder = TrackBuilder::new().volume(Decibels(db));
+                let (builder, filter) = bus_track(db, lowpass);
                 let track = match parent {
                     protocol::BUS_MAIN => self.manager.add_sub_track(builder).ok()?,
                     parent => self.bus(parent)?.add_sub_track(builder).ok()?,
                 };
-                self.buses.push(track);
+                self.buses.push((track, filter));
+            }
+            Command::BusLowpass { bus, hz, tween: t } => {
+                let (_, filter) = self.buses.get_mut(bus as usize)?;
+                filter.set_cutoff(hz as f64, tween(t));
             }
             Command::Listener { pos, quat } => {
                 let orientation = glam::Quat::from_array(quat);
@@ -489,11 +518,13 @@ mod tests {
                 bus: 3,
                 parent: BUS_MAIN,
                 db: 0.0,
+                lowpass: LOWPASS_OPEN,
             },
             Command::BusNew {
                 bus: 2,
                 parent: BUS_SFX,
                 db: -6.0,
+                lowpass: LOWPASS_OPEN,
             },
             Command::Play {
                 voice: 1,
@@ -527,6 +558,88 @@ mod tests {
             tween: 0.0,
         }]));
         assert_eq!(m.errors, 2);
+    }
+
+    /// A 3 kHz tone, mono, a second long: bright enough that an 800 Hz
+    /// low-pass takes most of it.
+    fn bright() -> Vec<f32> {
+        (0..44_100)
+            .map(|i| (i as f32 * 3000.0 * std::f32::consts::TAU / 44_100.0).sin() * 0.5)
+            .collect()
+    }
+
+    /// #1218: each bus has its own low-pass. Turned down on sfx it
+    /// muffles sfx (and a bus under it) and leaves music alone; a bus made
+    /// with a cutoff starts there.
+    #[test]
+    fn a_bus_lowpass_muffles_its_bus_and_not_the_others() {
+        let mut m = Mixer::new(RATE).unwrap();
+        m.load_sound(1, 44_100, 1, &bright());
+        let play = |voice, bus| Command::Play {
+            voice,
+            sound: 1,
+            target: Target::Bus(bus),
+            db: 0.0,
+            rate: 1.0,
+            pan: 0.0,
+            looping: true,
+        };
+        let stop = |voice| Command::VoiceStop { voice, tween: 0.0 };
+        // Each bus alone: what it sounds like open.
+        let alone = |m: &mut Mixer, voice, bus| {
+            m.apply(&batch(&[play(voice, bus)]));
+            loudness(m, 4);
+            let (l, _) = loudness(m, 40);
+            m.apply(&batch(&[stop(voice)]));
+            loudness(m, 4);
+            l
+        };
+        m.apply(&batch(&[Command::BusNew {
+            bus: 2,
+            parent: BUS_SFX,
+            db: 0.0,
+            lowpass: LOWPASS_OPEN,
+        }]));
+        let open = alone(&mut m, 1, BUS_SFX);
+        assert!((open - 0.3536).abs() < 0.01, "open, the tone: {open}");
+        assert!((alone(&mut m, 2, BUS_MUSIC) - open).abs() < 0.005);
+
+        m.apply(&batch(&[Command::BusLowpass {
+            bus: BUS_SFX,
+            hz: 800.0,
+            tween: 0.0,
+        }]));
+        let sfx = alone(&mut m, 3, BUS_SFX);
+        let child = alone(&mut m, 4, 2);
+        let music = alone(&mut m, 5, BUS_MUSIC);
+        // Two poles at 800 Hz: 3 kHz is down about 23 dB.
+        assert!(sfx < open * 0.1, "sfx muffled: {sfx} vs {open}");
+        assert!(child < open * 0.1, "and the bus under it: {child}");
+        assert!((music - open).abs() < 0.005, "music untouched: {music}");
+
+        // Open again, and a bus made muffled.
+        m.apply(&batch(&[
+            Command::BusLowpass {
+                bus: BUS_SFX,
+                hz: LOWPASS_OPEN,
+                tween: 0.0,
+            },
+            Command::BusNew {
+                bus: 3,
+                parent: BUS_MAIN,
+                db: 0.0,
+                lowpass: 800.0,
+            },
+        ]));
+        assert!((alone(&mut m, 6, BUS_SFX) - open).abs() < 0.005);
+        assert!(alone(&mut m, 7, 3) < open * 0.1);
+        // A bus the mixer doesn't have is an error.
+        m.apply(&batch(&[Command::BusLowpass {
+            bus: 9,
+            hz: 800.0,
+            tween: 0.0,
+        }]));
+        assert_eq!(m.errors, 1);
     }
 
     #[test]

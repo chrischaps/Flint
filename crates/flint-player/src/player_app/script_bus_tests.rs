@@ -127,6 +127,7 @@ fn a_bus_declared_in_flint_toml_is_made_played_on_and_turned_down_by_name() {
                 bus: 3,
                 parent: protocol::BUS_MAIN,
                 db: (20.0 * 0.8f32.log10()),
+                lowpass: 20_000.0,
             }),
             "voice is made under the main track at its volume: {sent:?}"
         );
@@ -134,6 +135,7 @@ fn a_bus_declared_in_flint_toml_is_made_played_on_and_turned_down_by_name() {
             bus: 2,
             parent: protocol::BUS_SFX,
             db: 0.0,
+            lowpass: 20_000.0,
         }));
         assert!(
             sent.iter().any(|c| matches!(

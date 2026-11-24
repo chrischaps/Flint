@@ -42,11 +42,19 @@ pub enum Command {
     },
     /// A game's bus (#730): `bus` is the next number after the buses there
     /// are, under `parent` (a bus made earlier, or [`BUS_MAIN`]), starting
-    /// at `db`.
+    /// at `db` with its low-pass at `lowpass` Hz (#1218; 20000 is open).
     BusNew {
         bus: u8,
         parent: u8,
         db: f32,
+        lowpass: f32,
+    },
+    /// A bus's own low-pass cutoff, Hz (#1218): every bus has one, the
+    /// built-in two included.
+    BusLowpass {
+        bus: u8,
+        hz: f32,
+        tween: f32,
     },
     /// Place the listener, making it if there is none yet.
     Listener {
@@ -194,10 +202,11 @@ mod op {
     pub const VOICE_RESUME: u8 = 17;
     pub const VOICE_WATCH: u8 = 18;
     pub const BUS_NEW: u8 = 19;
+    pub const BUS_LOWPASS: u8 = 20;
     /// The highest op: every one from 1 to this reads back
     /// (`every_op_reads_back`).
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const LAST: u8 = BUS_NEW;
+    pub const LAST: u8 = BUS_LOWPASS;
 }
 
 struct Writer<'a>(&'a mut Vec<u8>);
@@ -234,8 +243,16 @@ impl Command {
             Command::BusVolume { bus, db, tween } => {
                 w.u8(op::BUS_VOLUME).u8(bus).f32(db).f32(tween);
             }
-            Command::BusNew { bus, parent, db } => {
-                w.u8(op::BUS_NEW).u8(bus).u8(parent).f32(db);
+            Command::BusNew {
+                bus,
+                parent,
+                db,
+                lowpass,
+            } => {
+                w.u8(op::BUS_NEW).u8(bus).u8(parent).f32(db).f32(lowpass);
+            }
+            Command::BusLowpass { bus, hz, tween } => {
+                w.u8(op::BUS_LOWPASS).u8(bus).f32(hz).f32(tween);
             }
             Command::Listener { pos, quat } => {
                 w.u8(op::LISTENER).f32s(&pos).f32s(&quat);
@@ -385,6 +402,12 @@ impl<'a> Reader<'a> {
                 bus: self.u8()?,
                 parent: self.u8()?,
                 db: self.f32()?,
+                lowpass: self.f32()?,
+            },
+            op::BUS_LOWPASS => Command::BusLowpass {
+                bus: self.u8()?,
+                hz: self.f32()?,
+                tween: self.f32()?,
             },
             op::LISTENER => Command::Listener {
                 pos: self.vec3()?,
@@ -499,11 +522,18 @@ mod tests {
                 bus: 2,
                 parent: BUS_MAIN,
                 db: -3.0,
+                lowpass: 20_000.0,
             },
             Command::BusNew {
                 bus: 3,
                 parent: BUS_SFX,
                 db: 0.0,
+                lowpass: 2_500.0,
+            },
+            Command::BusLowpass {
+                bus: BUS_SFX,
+                hz: 800.0,
+                tween: 0.016,
             },
             Command::Listener {
                 pos: [1.0, 2.0, 3.0],

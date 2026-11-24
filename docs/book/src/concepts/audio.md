@@ -52,16 +52,22 @@ volume = 0.7
 
 [audio.buses.music]          # a built-in bus takes a starting volume, not a parent
 volume = 0.8
+duck = { under = "voice", by_db = -9, attack = 0.08, release = 0.6 }
+
+[audio.buses.radio]
+parent = "sfx"
+lowpass = 3000               # starts muffled: its own low-pass, Hz
 ```
 
 ```
 main  ──┬── sfx       (the default: one-shots and sources that name no bus)
-        │    └── ui
-        ├── music
+        │    ├── ui
+        │    └── radio   (low-pass 3000 Hz)
+        ├── music        (ducks 9 dB while voice plays)
         └── voice
 ```
 
-A bus's `parent` is another bus, or `master` (the default) for the main track; `volume` is where it starts, linear, 1 by default. A bus's volume scales everything under it, its children's buses included. A mistake in the table (a parent that isn't a bus, a loop, an unknown key, a negative volume) is an error naming `flint.toml` and the key, and the game keeps the buses it had. The game's buses are numbered after the built-in two, by name with each parent first, and are made in the mixer whether it runs on this thread or in the browser's worklet.
+A bus's `parent` is another bus, or `master` (the default) for the main track; `volume` is where it starts, linear, 1 by default; `lowpass` is its own low-pass cutoff in Hz, from 10 to 20000 (open, the default). A bus's volume and low-pass act on everything under it, its children's buses included. A mistake in the table (a parent that isn't a bus, a loop, an unknown key, a negative volume, a cutoff out of range, a duck under no bus) is an error naming `flint.toml` and the key, and the game keeps the buses it had. The game's buses are numbered after the built-in two, by name with each parent first, and are made in the mixer whether it runs on this thread or in the browser's worklet.
 
 Opt a source into a bus in the scene:
 
@@ -73,7 +79,14 @@ loop = true
 autoplay = true
 ```
 
-A script names a bus in `play_sound`'s options (`#{ bus: "voice" }`) and turns one up or down by name with `set_bus_volume("voice", 0.5)`. A name that is no bus is reported once: a sound plays on `sfx`, and `set_bus_volume` changes nothing.
+A script names a bus in `play_sound`'s options (`#{ bus: "voice" }`), turns one up or down by name with `set_bus_volume("voice", 0.5)` and muffles one with `set_bus_lowpass("sfx", 800)` (back with `20000`). A name that is no bus is reported once: a sound plays on `sfx`, and `set_bus_volume` and `set_bus_lowpass` change nothing.
+
+### Ducking
+
+A bus with a `duck` dips while anything plays on its `under` bus, or on a bus under that one, and comes back once nothing does: `by_db` down (0 or less, -9 by default) over `attack` seconds (0.08), back over `release` (0.6). Only `under` is required. Music under dialogue is the usual one: a script plays its line on `voice` and the score makes room, with no fade written in the script that speaks.
+
+The engine knows what it started on each bus, so a duck needs no metering: a script's sounds (until they end or are stopped), placed one-shots, an extension's or a trigger's one-shot (for its length), and `audio_source`s that are playing (not paused out of earshot or at volume 0). A line played at volume 0 still ducks; a loop an extension plays itself doesn't. The dip multiplies the volume the game asked for, so `set_bus_volume` while ducked keeps the dip, and it reaches the mixer as a bus volume, here or in the browser's worklet. A bus can't duck under itself, nor under a bus above or below it (its own sounds would duck it).
+
 
 The CLI's flags scale the built-in two from where the game starts them:
 
@@ -89,6 +102,9 @@ turned the music down does not have their fades overridden.
 The master low-pass applies to every bus, so `set_audio_lowpass` muffles the
 entire mix — score included — which is what you want when the effect is
 "something is between you and the world" rather than "the sfx got quieter".
+A bus's own `set_bus_lowpass` is the other case: the world underwater while
+the score plays on clear. A bus whose low-pass is open costs nothing; one
+that is muffled costs about as much as a voice.
 
 When the page holds the game (it is hidden, or paused by the browser), every bus under the main track fades out and comes back to the volume it was at.
 
@@ -214,6 +230,7 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 | `set_sound_volume(handle, volume, fade)` | Fade it there over `fade` seconds |
 | `is_sound_playing(handle)` | Whether that sound is still playing, as the frame began: `true` from the frame after `play_sound` until it ends or is stopped |
 | `set_bus_volume(bus, volume)` | Set a [mixer bus](#mixer-buses)'s volume by name (`"music"`, `"voice"`...): it scales every sound on the bus and on the buses under it |
+| `set_bus_lowpass(bus, cutoff_hz)` | Set a [mixer bus](#mixer-buses)'s own low-pass by name: `set_bus_lowpass("sfx", 800)` muffles the bus and the buses under it, nothing else; `20000` opens it |
 | `audio_position(entity)` | Seconds into the sound the entity's `audio_source` is playing, wrapped for a loop, on the mixer's clock; `-1.0` before it has started and after it ends. See [Keeping time with the music](#keeping-time-with-the-music) |
 | `audio_output_latency()` | How long after it is mixed a sound is heard, seconds, where the platform says (the browser); `-1.0` where it doesn't (the desktop) |
 

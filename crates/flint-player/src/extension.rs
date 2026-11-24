@@ -541,6 +541,12 @@ impl<'a> ExtensionAudio<'a> {
         self.system.set_bus_volume(bus, volume);
     }
 
+    /// Set a mixer bus's own low-pass cutoff, Hz (20000 is open, as low as
+    /// 10; #1218): it muffles the bus and the buses under it, nothing else.
+    pub fn set_bus_lowpass(&mut self, bus: Bus, hz: f64) {
+        self.system.set_bus_lowpass(bus, hz);
+    }
+
     /// A bus by name: `sfx`, `music`, or one the game's `flint.toml`
     /// declares under `[audio.buses]` (#730), for [`SoundOptions::bus`] and
     /// [`set_bus_volume`](Self::set_bus_volume).
@@ -914,6 +920,8 @@ mod tests {
         audio.play("click", &placed).unwrap();
         assert!(audio.play("missing", &SoundOptions::new()).is_err());
         audio.set_bus_volume(Bus::SFX, 0.25);
+        audio.set_bus_lowpass(Bus::SFX, 800.0);
+        assert_eq!(system.engine.bus_lowpass(Bus::SFX), Some(800.0));
         // Scripts and audio_sources read the same cache.
         assert!(system.engine.has_sound("click"));
     }

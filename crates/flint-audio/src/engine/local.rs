@@ -4,52 +4,73 @@
 use super::backend::{Held, MixerBackend, On, Unhosted, Voice};
 use super::{tween_ms, AudioBackend, MixCounts};
 use crate::bus::Bus;
+use crate::bus_filter::{BusFilterBuilder, BusFilterHandle, OPEN};
 use crate::handle::{SoundHandle, SpatialTrack};
 use crate::pan::Falloff;
 use flint_core::{FlintError, Result};
+use kira::backend::Backend;
 use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
 use kira::sound::static_sound::StaticSoundData;
 use kira::track::{SpatialTrackBuilder, SpatialTrackDistances, TrackBuilder, TrackHandle};
 use kira::{AudioManager, Decibels, Easing};
 use web_time::Instant;
 
+/// A kira backend a [`Local`] mix can run on: [`AudioBackend`], which lends
+/// its manager to content with its own clock, or (in tests) one that hands
+/// back the renderer, so what the mixer here makes can be heard (#1218).
+pub(crate) trait Hosts: Backend + Sized {
+    fn lend(
+        manager: &mut AudioManager<Self>,
+    ) -> std::result::Result<&mut AudioManager<AudioBackend>, Unhosted>;
+}
+
+impl Hosts for AudioBackend {
+    fn lend(
+        manager: &mut AudioManager<Self>,
+    ) -> std::result::Result<&mut AudioManager<AudioBackend>, Unhosted> {
+        Ok(manager)
+    }
+}
+
 /// kira, here: its manager, the master filter and the buses, by number.
-pub(crate) struct Local {
-    manager: AudioManager<AudioBackend>,
+pub(crate) struct Local<B: Hosts = AudioBackend> {
+    manager: AudioManager<B>,
     filter: FilterHandle,
-    /// Every bus, by number (`None`: kira refused to make it, and what
-    /// would play on it says so). The built-in two hang off the main track,
-    /// and so does every other bus without a parent.
-    buses: Vec<Option<TrackHandle>>,
+    /// Every bus, by number, with its own low-pass (#1218; `None`: kira
+    /// refused to make it, and what would play on it says so). The
+    /// built-in two hang off the main track, and so does every other bus
+    /// without a parent.
+    buses: Vec<Option<(TrackHandle, BusFilterHandle)>>,
     /// How many buses hang off another bus: kira counts those among the
     /// parent's sub-tracks, beside the spatial tracks.
     child_buses: usize,
     listener: Option<kira::listener::ListenerHandle>,
 }
 
-impl Local {
-    /// Open kira on [`AudioBackend`] with the main track's low-pass at
-    /// `cutoff` and the two built-in buses; `None` with no device.
-    #[cfg(any(feature = "device", target_arch = "wasm32"))]
-    pub(crate) fn open(
-        mut settings: kira::AudioManagerSettings<AudioBackend>,
-        cutoff: f64,
-    ) -> Option<Self> {
+impl<B: Hosts> Local<B> {
+    /// Open kira on `B` with the main track's low-pass at `cutoff` and the
+    /// two built-in buses; `None` with no device.
+    pub(crate) fn open(mut settings: kira::AudioManagerSettings<B>, cutoff: f64) -> Option<Self>
+    where
+        B::Error: std::fmt::Display,
+    {
         let filter = settings.main_track_builder.add_effect(
             FilterBuilder::new()
                 .mode(FilterMode::LowPass)
                 .cutoff(cutoff),
         );
-        let mut manager = AudioManager::<AudioBackend>::new(settings)
+        let mut manager = AudioManager::<B>::new(settings)
             .map_err(|e| tracing::warn!("No audio device available ({e}), running silent"))
             .ok()?;
         let buses = Bus::BUILT_IN
             .iter()
             .map(|name| {
+                let (track, filter) = bus_track(Decibels::IDENTITY, OPEN as f32);
                 manager
-                    .add_sub_track(TrackBuilder::new())
+                    .add_sub_track(track)
                     .map_err(|e| tracing::warn!("Failed to create the {name} bus: {e}"))
                     .ok()
+                    .map(|t| (t, filter))
             })
             .collect();
         Some(Self {
@@ -62,6 +83,10 @@ impl Local {
     }
 
     fn bus(&mut self, bus: Bus) -> Result<&mut TrackHandle> {
+        self.bus_and_filter(bus).map(|(track, _)| track)
+    }
+
+    fn bus_and_filter(&mut self, bus: Bus) -> Result<&mut (TrackHandle, BusFilterHandle)> {
         self.buses
             .get_mut(bus.index())
             .and_then(Option::as_mut)
@@ -83,11 +108,21 @@ impl Local {
     }
 }
 
+/// A bus's track: at `db`, through its own low-pass at `lowpass` Hz
+/// (#1218), as the worklet's mixer makes one.
+fn bus_track(db: Decibels, lowpass: f32) -> (TrackBuilder, BusFilterHandle) {
+    let mut builder = TrackBuilder::new().volume(db);
+    let filter = builder.add_effect(BusFilterBuilder {
+        cutoff: lowpass as f64,
+    });
+    (builder, filter)
+}
+
 fn play_error(name: &str, e: impl std::fmt::Display) -> FlintError {
     FlintError::AudioError(format!("Failed to play '{name}': {e}"))
 }
 
-impl MixerBackend for Local {
+impl<B: Hosts> MixerBackend for Local<B> {
     fn name(&self) -> &'static str {
         "main thread"
     }
@@ -115,14 +150,14 @@ impl MixerBackend for Local {
         None
     }
 
-    fn add_bus(&mut self, bus: Bus, parent: Option<Bus>, db: Decibels) -> Result<()> {
+    fn add_bus(&mut self, bus: Bus, parent: Option<Bus>, db: Decibels, lowpass: f32) -> Result<()> {
         if bus.index() != self.buses.len() {
             return Err(FlintError::AudioError(format!(
                 "bus {} made out of order",
                 bus.index()
             )));
         }
-        let builder = TrackBuilder::new().volume(db);
+        let (builder, filter) = bus_track(db, lowpass);
         let track = match parent {
             None => self.manager.add_sub_track(builder),
             Some(p) => {
@@ -131,8 +166,14 @@ impl MixerBackend for Local {
             }
         }
         .map_err(|e| FlintError::AudioError(format!("bus {}: {e}", bus.index())))?;
-        self.buses.push(Some(track));
+        self.buses.push(Some((track, filter)));
         Ok(())
+    }
+
+    fn set_bus_lowpass(&mut self, bus: Bus, hz: f32, tween_secs: f64) {
+        if let Ok((_, filter)) = self.bus_and_filter(bus) {
+            filter.set_cutoff(hz as f64, tween_ms((tween_secs * 1000.0) as u64));
+        }
     }
 
     fn set_bus_volume(&mut self, bus: Bus, db: Decibels, tween_secs: f64) {
@@ -226,7 +267,7 @@ impl MixerBackend for Local {
     fn clear_oneshots(&mut self) {}
 
     fn add_counts(&self, counts: &mut MixCounts, held: &Held) -> Option<()> {
-        for bus in self.buses.iter().flatten() {
+        for (bus, _) in self.buses.iter().flatten() {
             counts.voices += bus.num_sounds();
             counts.tracks += bus.num_sub_tracks();
         }
@@ -245,6 +286,6 @@ impl MixerBackend for Local {
     }
 
     fn host(&mut self) -> std::result::Result<&mut AudioManager<AudioBackend>, Unhosted> {
-        Ok(&mut self.manager)
+        B::lend(&mut self.manager)
     }
 }
