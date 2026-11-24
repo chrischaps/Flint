@@ -33,7 +33,7 @@ const FLAT_WEIGHT: f32 = 0.3;
 
 // The pixel's row, or -1 when it isn't drawn with tensor flow
 fn tensor_slot(uv: vec2<f32>) -> i32 {
-    let slot = slot_of(mask_id(mask_px(uv)));
+    let slot = slot_of(flint_mask_id(uv));
     if passes_through(slot) || u32(pencil_rows[slot].e.w + 0.5) != 2u {
         return -1;
     }

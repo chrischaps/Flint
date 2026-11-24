@@ -541,6 +541,8 @@ const PREP_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
     "edges_read.wgsl",
     "style_image_layer.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "pencil_common.wgsl",
     "pencil_prep.wgsl"
 );
@@ -548,6 +550,9 @@ const DRAW_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
     "pencil_fade.wgsl",
     "style_image_layer.wgsl",
+    "noise.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "pencil_common.wgsl",
     "style_image.wgsl",
     "pencil.wgsl"
@@ -560,6 +565,9 @@ const DRAW_ON_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
     "pencil_draw_on.wgsl",
     "style_image_layer.wgsl",
+    "noise.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "pencil_common.wgsl",
     "style_image.wgsl",
     "pencil.wgsl"
@@ -567,6 +575,8 @@ const DRAW_ON_SHADER: kit::Wgsl = kit::wgsl!(
 const FLOW_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
     "style_image_layer.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "pencil_common.wgsl",
     "pencil_flow.wgsl"
 );

@@ -226,16 +226,16 @@ const MAX_SNAP_GRIDS: u32 = 8u;
 // never reads them, so full-screen ASCII costs what it did when the table
 // lived in the uniform.
 @group(0) @binding(1) var<storage, read> variants: array<Variant>;
-@group(0) @binding(2) var<storage, read> slots: array<u32>;
+@group(0) @binding(2) var<storage, read> flint_slots: array<u32>;
 
 // The variant slot of mask id `id`: 0 (the whole frame) past the table
 fn slot_of(id: u32) -> u32 {
     // Id 0 is no styled entity, the whole frame's: most of a frame's
     // pixels, spared the table read (#337)
-    if id == 0u || id >= arrayLength(&slots) {
+    if id == 0u {
         return 0u;
     }
-    return slots[id];
+    return flint_slot(id);
 }
 
 // A variant's flag: its silhouette snaps to whole cells (#338)

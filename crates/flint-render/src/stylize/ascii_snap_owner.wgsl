@@ -23,7 +23,7 @@
 
 // The variant cell pass's group: the picture (unread) and the mask
 @group(1) @binding(0) var owner_input: texture_2d<f32>;
-@group(1) @binding(1) var owner_mask: texture_2d<u32>;
+@group(1) @binding(1) var flint_mask_texture: texture_2d<u32>;
 
 struct OwnerVertex {
     @builtin(position) position: vec4<f32>,
@@ -42,9 +42,7 @@ fn vs_owner(@builtin(vertex_index) vi: u32, @builtin(instance_index) slot: u32) 
 
 // As the glyph pass's `mask_texel`
 fn owner_mask_texel(p: vec2<f32>) -> vec2<u32> {
-    let msize = vec2<i32>(textureDimensions(owner_mask));
-    let mp = vec2<i32>(floor(p * vec2<f32>(msize) / u.size));
-    return textureLoad(owner_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).rg;
+    return flint_mask_load(flint_mask_texel_of(p, u.size));
 }
 
 // The snapping variant on the band's grid that holds the cell: of the

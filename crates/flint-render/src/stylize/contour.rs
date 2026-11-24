@@ -153,7 +153,7 @@ impl Contour {
         let pipeline = kit::fullscreen_pipeline(
             device,
             "Contour Pipeline",
-            &kit::shader(device, "Contour Shader", kit::wgsl!("prelude_core.wgsl", "edges_read.wgsl", "contour.wgsl")),
+            &kit::shader(device, "Contour Shader", kit::wgsl!("prelude_core.wgsl", "noise.wgsl", "edges_read.wgsl", "contour.wgsl")),
             &[&uniform_bgl, &scene_bgl, &depth_bgl],
             HDR_FORMAT,
         );

@@ -11,7 +11,7 @@
 @group(0) @binding(0) var<storage, read> owners: array<u32>;
 @group(1) @binding(0) var input_tex: texture_2d<f32>;
 @group(1) @binding(1) var input_sampler: sampler;
-@group(2) @binding(0) var style_mask: texture_2d<u32>;
+@group(2) @binding(0) var flint_mask_texture: texture_2d<u32>;
 
 const NONE: u32 = 0xffffffffu;
 
@@ -32,14 +32,12 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) style: u32) 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let size = vec2<f32>(textureDimensions(input_tex));
-    let msize = vec2<i32>(textureDimensions(style_mask));
     let px = vec2<i32>(in.position.xy);
     // The mask is the scene's size, smaller than the output at the display
     // stage under a render scale: read it by UV
     let uv = in.position.xy / size;
-    let mp = clamp(vec2<i32>(uv * vec2<f32>(msize)), vec2<i32>(0), msize - 1);
-    let m = textureLoad(style_mask, mp, 0);
-    let id = m.r;
+    let m = flint_mask_load(flint_mask_texel(uv));
+    let id = m.x;
     if id == 0u || id >= arrayLength(&owners) {
         discard;
     }
@@ -47,7 +45,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if owner == NONE || owner == in.style {
         discard;
     }
-    let blend = f32(m.g) / 65535.0;
+    let blend = flint_mask_blend(m);
     if blend <= 0.0 {
         discard;
     }
@@ -93,9 +91,7 @@ fn owner_of(id: u32) -> u32 {
 
 // The mask under output pixel `p`, as ASCII reads it (`mask_texel`)
 fn mask_under(p: vec2<f32>, size: vec2<f32>) -> vec2<u32> {
-    let msize = vec2<i32>(textureDimensions(style_mask));
-    let mp = vec2<i32>(floor(p * vec2<f32>(msize) / size));
-    return textureLoad(style_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).rg;
+    return flint_mask_load(flint_mask_texel_of(p, size));
 }
 
 @fragment
@@ -110,7 +106,7 @@ fn fs_cells(in: VertexOutput) -> @location(0) vec4<f32> {
     let snapper = cells.style.x;
     let size = vec2<f32>(textureDimensions(input_tex));
     let m = mask_under(p, size);
-    let own = owner_of(m.r);
+    let own = owner_of(m.x);
     let cell = cells.grid.xy;
     let cell_min = floor((p - cells.grid.zw) / cell) * cell + cells.grid.zw;
     var foreign = 0u;
@@ -143,7 +139,7 @@ fn fs_cells(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
     var owner = own;
-    var blend = f32(m.g) / 65535.0;
+    var blend = flint_mask_blend(m);
     let foreign_own = own != NONE && own != snapper;
     if f32(16u - foreign) + 1e-3 >= cells.held.x {
         // The snapping style holds the cell

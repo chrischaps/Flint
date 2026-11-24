@@ -52,29 +52,7 @@ const NUM_SECTORS: u32 = 8u;
 const BOIL_CELLS: f32 = 18.0;
 const BOIL_FINE_CELLS: f32 = 64.0;
 
-// A hash of a lattice point and a drawing: integer, so it reads the same on every
-// GPU. The contour pass has the same one.
-fn hash(x: i32, y: i32, seed: u32) -> f32 {
-    var h = (u32(x) * 1597334677u) ^ (u32(y) * 3812015801u) ^ (seed * 2798796415u);
-    h = (h ^ (h >> 16u)) * 2654435769u;
-    h = (h ^ (h >> 15u)) * 2246822519u;
-    h = h ^ (h >> 16u);
-    return f32(h) / 4294967295.0;
-}
-
-// Smooth value noise in 0..1.
-fn noise(p: vec2<f32>, seed: u32) -> f32 {
-    let cell = floor(p);
-    let f = p - cell;
-    let u = f * f * (3.0 - 2.0 * f);
-    let x = i32(cell.x);
-    let y = i32(cell.y);
-    let a = hash(x, y, seed);
-    let b = hash(x + 1, y, seed);
-    let c = hash(x, y + 1, seed);
-    let d = hash(x + 1, y + 1, seed);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
+// The boil's noise is stylize/noise.wgsl's flint_vnoise (#1256)
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -90,11 +68,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let q = in.uv * vec2<f32>(tx.y / tx.x, 1.0);
         let seed = params.boil_seed;
         let wander = vec2<f32>(
-            noise(q * BOIL_CELLS, seed) + 0.5 * noise(q * BOIL_FINE_CELLS + 17.0, seed),
-            noise(q * BOIL_CELLS + 41.0, seed) + 0.5 * noise(q * BOIL_FINE_CELLS + 73.0, seed),
+            flint_vnoise(q * BOIL_CELLS, seed) + 0.5 * flint_vnoise(q * BOIL_FINE_CELLS + 17.0, seed),
+            flint_vnoise(q * BOIL_CELLS + 41.0, seed) + 0.5 * flint_vnoise(q * BOIL_FINE_CELLS + 73.0, seed),
         ) - 0.75;
         uv = in.uv + wander * 2.0 * params.boil * params.radius * tx;
-        stroke_turn = (noise(q * BOIL_CELLS + 29.0, seed) - 0.5) * 1.6 * params.boil;
+        stroke_turn = (flint_vnoise(q * BOIL_CELLS + 29.0, seed) - 0.5) * 1.6 * params.boil;
     }
 
     // Sample blurred structure tensor (explicit LOD — no derivative requirement)

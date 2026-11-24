@@ -25,30 +25,20 @@
 // the cell state is (CELL_OFFSET): `u.dissolve[i]` = (slot, first row,
 // rows, columns), and its row's `dissolve_row` is the first row + 1.
 
-fn cell_hash(c: vec2<f32>) -> f32 {
-    return fract(sin(dot(c, vec2<f32>(127.1, 311.7))) * 43758.5453);
-}
-
-fn value_noise(q: vec2<f32>) -> f32 {
-    let i = floor(q);
-    let f = fract(q);
-    let s = f * f * (3.0 - 2.0 * f);
-    return mix(
-        mix(cell_hash(i), cell_hash(i + vec2<f32>(1.0, 0.0)), s.x),
-        mix(cell_hash(i + vec2<f32>(0.0, 1.0)), cell_hash(i + vec2<f32>(1.0, 1.0)), s.x),
-        s.y,
-    );
-}
+// The noise and the hash are stylize/noise.wgsl's (#1256; a sin() hash
+// before, which reads differently GPU to GPU)
+const DISSOLVE_SEED: u32 = 0u;
 
 // A cell's place in the dissolve order, 0..1: half patch noise a few cells
 // across (so glyphs arrive in patches that grow, like a tear spreading),
 // half per-cell hash (so a patch's edge is ragged). The sum of two
 // near-uniform values is triangular; its CDF maps it back to uniform.
 fn dissolve_order(cell: vec2<f32>) -> f32 {
-    let n = value_noise(cell * 0.3) * 0.65 + value_noise(cell * 0.6 + vec2<f32>(31.0, 7.0)) * 0.35;
+    let n = flint_vnoise(cell * 0.3, DISSOLVE_SEED) * 0.65
+        + flint_vnoise(cell * 0.6 + vec2<f32>(31.0, 7.0), DISSOLVE_SEED) * 0.35;
     // Value noise piles up in the middle; spread it back toward 0..1
     let patches = clamp((n - 0.5) * 2.0 + 0.5, 0.0, 1.0);
-    let s = 0.5 * (patches + cell_hash(cell + vec2<f32>(17.0, 5.0)));
+    let s = 0.5 * (patches + flint_hash1(i32(cell.x), i32(cell.y), DISSOLVE_SEED + 1u));
     let u = select(1.0 - 2.0 * (1.0 - s) * (1.0 - s), 2.0 * s * s, s < 0.5);
     return clamp(u, 0.0, 0.9999);
 }

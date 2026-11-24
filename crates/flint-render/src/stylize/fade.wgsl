@@ -14,7 +14,7 @@
 // (unstyled, an opt-out, or a style that isn't registered)
 @group(0) @binding(0) var<storage, read> owners: array<u32>;
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
-@group(2) @binding(0) var style_mask: texture_2d<u32>;
+@group(2) @binding(0) var flint_mask_texture: texture_2d<u32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -35,13 +35,11 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = in.position.xy;
     let size = vec2<i32>(textureDimensions(input_texture));
-    let msize = vec2<i32>(textureDimensions(style_mask));
-    let mp = vec2<i32>(floor(p * vec2<f32>(msize) / vec2<f32>(size)));
-    let m = textureLoad(style_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).rg;
+    let m = flint_mask_load(flint_mask_texel_of(p, vec2<f32>(size)));
     if m.x == 0u || m.x >= arrayLength(&owners) || owners[m.x] != in.me {
         discard;
     }
-    let blend = f32(m.y) / 65535.0;
+    let blend = flint_mask_blend(m);
     if blend >= 1.0 {
         discard;
     }
