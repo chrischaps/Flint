@@ -46,6 +46,7 @@ impl SamplerMarks {
     /// Mark the hitches of a log written to `log`, whose `wall_time`
     /// counts from `zero`. A mark that can't be made is said, never fatal:
     /// the log is the run's output, the marks a help.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the web opens no log
     pub(crate) fn open(log: &Path, zero: Instant) -> Self {
         match platform::Marks::open(log, zero) {
             Ok((marks, said)) => Self {
@@ -133,8 +134,16 @@ mod platform {
             // `wall_time` 0 on the monotonic clock: now, less the time since
             let since = Instant::now().saturating_duration_since(zero);
             let zero_ns = monotonic_ns().saturating_sub(since.as_nanos() as u64);
+            // Readable too: a mapping needs a descriptor open for reading
+            // (`File::create` alone is write-only, and mmap says EACCES)
             #[allow(clippy::disallowed_methods)] // a write: the run's output, beside the log
-            let mut file = File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let mut file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&path)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
             // A mapping of an empty file fails: the zero's line comes first
             writeln!(file, "{zero_ns} {zero_ns} flint wall_time 0")
                 .and_then(|_| file.flush())
@@ -344,7 +353,11 @@ mod tests {
         let before = platform::monotonic_ns();
         let mut marks = SamplerMarks::open(&dir.join("hitches.jsonl"), zero);
         let file = dir.join(format!("marker-{}.txt", std::process::id()));
-        assert!(marks.said().contains("marker-"), "{}", marks.said());
+        assert!(
+            marks.said().starts_with("samply marker file "),
+            "{}",
+            marks.said()
+        );
         let h = Hitch {
             index: 150,
             at: 2.5,
