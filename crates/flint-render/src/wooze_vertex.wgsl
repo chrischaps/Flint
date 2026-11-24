@@ -1,21 +1,11 @@
 // Shallow wooze (#215): the vertex stage of a woozy draw, standard and skinned.
 //
-// These are vs_main and vs_skinned with one line added. They pair with the
-// fragment stages of shader.wgsl and skinned_shader.wgsl, which stay as they are.
-// The transform here is the same uniform those read, seen through a longer struct:
-// the drift lives in the slot's last 48 bytes, past where anything else looks.
-
-struct WoozyTransform {
-    view_proj: mat4x4<f32>,
-    model: mat4x4<f32>,
-    model_inv_transpose: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    _pad: f32,
-    wooze: ShallowWooze,
-};
-
-@group(0) @binding(0)
-var<uniform> transform: WoozyTransform;
+// These are vs_main and vs_skinned with one call added (`drifted`). They pair
+// with the fragment stages of shader.wgsl and skinned_shader.wgsl, which stay as
+// they are. The transform is mesh_vertex.wgsl's with its drift field on
+// (`wgsl_sources::wooze_vertex`): the same uniform those read, seen through a
+// longer struct, the drift in the slot's last 48 bytes, past where anything else
+// looks.
 
 // Bind group 3: bone matrices, in the skinned variant only.
 @group(3) @binding(0)
@@ -49,12 +39,11 @@ struct VertexOutput {
 fn vs_wooze(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    let rest = transform.model * vec4<f32>(in.position, 1.0);
-    let world_pos = rest.xyz + wooze_offset(rest.xyz, transform.wooze);
-    out.clip_position = transform.view_proj * vec4<f32>(world_pos, 1.0);
+    let world_pos = drifted(world_of(vec4<f32>(in.position, 1.0)));
+    out.clip_position = clip_of(world_pos);
     out.color = in.color;
-    out.normal = normalize((transform.model_inv_transpose * vec4<f32>(in.normal, 0.0)).xyz);
-    out.world_pos = world_pos;
+    out.normal = world_normal_of(in.normal);
+    out.world_pos = world_pos.xyz;
     out.uv = in.uv;
 
     return out;
@@ -64,19 +53,15 @@ fn vs_wooze(in: VertexInput) -> VertexOutput {
 fn vs_skinned_wooze(in: SkinnedVertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    let skin_mat = bone_matrices[in.joint_indices.x] * in.joint_weights.x
-                 + bone_matrices[in.joint_indices.y] * in.joint_weights.y
-                 + bone_matrices[in.joint_indices.z] * in.joint_weights.z
-                 + bone_matrices[in.joint_indices.w] * in.joint_weights.w;
+    let skin_mat = skin_transform(in.joint_indices, in.joint_weights);
     let skinned_pos = skin_mat * vec4<f32>(in.position, 1.0);
     let skinned_normal = normalize((skin_mat * vec4<f32>(in.normal, 0.0)).xyz);
 
-    let rest = transform.model * skinned_pos;
-    let world_pos = rest.xyz + wooze_offset(rest.xyz, transform.wooze);
-    out.clip_position = transform.view_proj * vec4<f32>(world_pos, 1.0);
+    let world_pos = drifted(world_of(skinned_pos));
+    out.clip_position = clip_of(world_pos);
     out.color = in.color;
-    out.normal = normalize((transform.model_inv_transpose * vec4<f32>(skinned_normal, 0.0)).xyz);
-    out.world_pos = world_pos;
+    out.normal = world_normal_of(skinned_normal);
+    out.world_pos = world_pos.xyz;
     out.uv = in.uv;
 
     return out;

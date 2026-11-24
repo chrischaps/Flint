@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn shadow_shader_wgsl_parses() {
-        let source = include_str!("shadow_shader.wgsl");
+        let source = crate::wgsl_sources::SHADOW;
         naga::front::wgsl::parse_str(source).expect("shadow_shader.wgsl failed to parse");
     }
 
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn particle_shader_wgsl_parses_and_validates() {
-        let source = include_str!("particle_shader.wgsl");
+        let source = crate::wgsl_sources::PARTICLE;
         let module =
             naga::front::wgsl::parse_str(source).expect("particle_shader.wgsl failed to parse");
         naga::valid::Validator::new(
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn skinned_wire_shader_wgsl_parses() {
-        let source = include_str!("skinned_wire_shader.wgsl");
+        let source = crate::wgsl_sources::WIRE;
         naga::front::wgsl::parse_str(source).expect("skinned_wire_shader.wgsl failed to parse");
     }
 

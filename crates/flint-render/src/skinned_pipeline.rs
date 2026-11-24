@@ -128,7 +128,7 @@ impl SkinnedPipeline {
         // left of the old outline shader)
         let wire_shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Skinned Wire Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("skinned_wire_shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::WIRE.into()),
         });
 
         // Alpha-blended meshes draw in two passes, back faces first (cull front) then
