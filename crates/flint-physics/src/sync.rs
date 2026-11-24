@@ -11,9 +11,10 @@
 //! or cylinder scaled alike in x and z, and a `mesh` or `convex`, and
 //! approximated (with a warning, once) for the rest.
 
-use crate::layers::{CollisionLayers, LayerMask, DEFAULT_LAYER};
+use crate::layers::{CollisionLayers, LayerMask};
 use crate::world::PhysicsWorld;
 use crate::ColliderMesh;
+use flint_core::collision_layers::{self, LayerUse};
 use flint_core::components as comp;
 use flint_core::diagnostic::{codes, Diagnostic};
 use flint_core::toml_util::toml_f32;
@@ -270,12 +271,23 @@ impl PhysicsSync {
     /// `collider.layer` (one name, `default` when unsaid) and
     /// `collider.mask` (a list of names, every layer when unsaid). A name
     /// that is no layer is reported once and left out (a mask) or read as
-    /// `default` (the layer).
+    /// `default` (the layer), in the words `flint check` says it in before
+    /// the game runs (`flint_core::collision_layers::unknown_layer`, #1220).
     pub(crate) fn groups_of(&self, col: &ComponentView) -> InteractionGroups {
-        let names: Vec<&str> = self.layers.names().collect();
-        let layer = col.choice("layer", &names, DEFAULT_LAYER);
-        let membership = self.layers.bit(layer).unwrap_or(LayerMask::from_bits(1));
+        let on_default = LayerMask::from_bits(1);
+        let membership = match col.opt_str("layer") {
+            None => on_default,
+            Some(name) => self.layers.bit(name).unwrap_or_else(|| {
+                col.report("layer", || self.unknown_layer(name, LayerUse::Layer));
+                on_default
+            }),
+        };
         InteractionGroups::new(membership.group(), self.mask_of(col).group())
+    }
+
+    fn unknown_layer(&self, name: &str, used: LayerUse) -> Diagnostic {
+        let names: Vec<&str> = self.layers.names().collect();
+        collision_layers::unknown_layer(name, &names, used)
     }
 
     fn mask_of(&self, col: &ComponentView) -> LayerMask {
@@ -298,13 +310,7 @@ impl PhysicsSync {
             match item.as_str() {
                 Some(name) => match self.layers.bit(name) {
                     Some(bit) => bits |= bit.bits(),
-                    None => col.report(&field, || {
-                        Diagnostic::error(
-                            codes::BAD_ENUM_VALUE,
-                            format!("\"{name}\" is not a collision layer"),
-                        )
-                        .hint(format!("{}; it is left out", self.layers.unknown(name)))
-                    }),
+                    None => col.report(&field, || self.unknown_layer(name, LayerUse::Mask)),
                 },
                 None => col.report(&field, || {
                     Diagnostic::error(
