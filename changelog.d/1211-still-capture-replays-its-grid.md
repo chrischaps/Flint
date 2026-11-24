@@ -1,0 +1,3 @@
+### `flint frame replay` draws the floor grid when the capture did (#1211)
+**What changed.** A still `flint render --frame-capture` draws the floor grid unless `--no-grid`, and its replay always drew without it, so the scene pass replayed off by the grid's pixels (1,893 of 14,400 on `stylize_props` at 160 x 90). A capture's `replay/inputs.json` now records `renderer.grid`, and the replay draws the grid when it is `true`. A capture written before this reads `false` and replays as it always did.
+**What to do.** Nothing. To replay an older still capture that drew the grid exactly, capture it again.

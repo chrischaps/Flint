@@ -14,8 +14,8 @@
 //! - **What the renderer keeps across frames**, as data: motion holds' kept
 //!   matrices and ticks (a fresh `MotionHold` would draw the live matrix),
 //!   part tints, softness and which entities' echoes only lighten, the drawn
-//!   config's style settings, the quality, MSAA, render scale, debug mode and
-//!   the selected entity.
+//!   config's style settings, the quality, MSAA, render scale, debug mode,
+//!   the selected entity and whether the floor grid was drawn.
 //!
 //! Everything is keyed by entity **name** (ADR 0126: ids move between a
 //! captured world and its replay). A host starts one with
@@ -138,6 +138,10 @@ pub struct ReplayRenderer {
     pub debug_mode: String,
     /// The entity the selection outline draws round, by name.
     pub selected: Option<String>,
+    /// Whether the floor grid was drawn (`set_show_grid`; a still `flint
+    /// render` draws it unless `--no-grid`, #1211). A capture from before
+    /// this field reads `false`, as its replay always drew.
+    pub grid: bool,
     pub motion_hold: MotionHoldState,
     /// The palette index of `replay/skinning.bin` ([`PaletteEntry`]).
     pub skinning: Vec<PaletteEntry>,
@@ -990,5 +994,8 @@ mod tests {
         // A field a later engine adds is no reason to refuse it
         let old: ReplayRenderer = serde_json::from_str(r#"{"msaa":1,"later":true}"#).unwrap();
         assert_eq!(old.msaa, 1);
+        // A capture from before the grid was recorded replays as it always
+        // did, without one (#1211)
+        assert!(!old.grid);
     }
 }
