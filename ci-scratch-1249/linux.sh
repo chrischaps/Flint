@@ -49,15 +49,25 @@ python3 $S/perfstats.py perf.fp.txt flint-player > out/perf-fp-$UNWIND.json
 
 # 5. perf --call-graph dwarf, and Hotspot reading it (the plain build only).
 if [ "$UNWIND" = eh_frame ]; then
-  timeout 180 xvfb-run -a perf record -F 499 --call-graph dwarf -o perf.dwarf.data $EXE $SCENE --exit-after 12 \
+  timeout 180 xvfb-run -a perf record -F 199 --call-graph dwarf -o perf.dwarf.data $EXE $SCENE --exit-after 12 \
     > out/perf-dwarf-record.log 2>&1
-  timeout 900 perf script -i perf.dwarf.data > perf.dwarf.txt 2> out/perf-dwarf-script.log
+  ls -la perf.dwarf.data >> out/perf-dwarf-record.log
+  start=$(date +%s)
+  timeout 1200 perf script -i perf.dwarf.data --no-inline > perf.dwarf.txt 2> out/perf-dwarf-script.log
+  echo "perf script exit $? in $(( $(date +%s) - start )) s" >> out/perf-dwarf-script.log
+  head -c 200000 perf.dwarf.txt > out/perf-dwarf-head.txt
   python3 $S/perfstats.py perf.dwarf.txt flint-player > out/perf-dwarf.json
+  # samply can read the same perf.data and unwind it itself
+  timeout 600 samply import --save-only -o out/samply-import-dwarf.json.gz perf.dwarf.data > out/samply-import.log 2>&1
+  echo "samply import exit $?" >> out/samply-import.log
+  # Hotspot: open the recording on Xvfb, give it time to parse, photograph the screen
   hotspot --version > out/hotspot.log 2>&1
-  timeout 900 xvfb-run -a hotspot --exportTo out/hotspot.perfparser perf.dwarf.data >> out/hotspot.log 2>&1
+  timeout 400 xvfb-run -a -s "-screen 0 1600x1000x24" bash -c '
+    echo "DISPLAY=$DISPLAY"
+    hotspot perf.dwarf.data & h=$!
+    for t in 60 120 180 240; do sleep 60; import -window root out/hotspot-$t.png; done
+    kill $h' >> out/hotspot.log 2>&1
   echo "hotspot exit $?" >> out/hotspot.log
-  ls -la out/hotspot.perfparser >> out/hotspot.log 2>&1
-  rm -f out/hotspot.perfparser.keep
 fi
 ls -la out
 exit 0

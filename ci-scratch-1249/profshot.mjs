@@ -16,6 +16,8 @@ const chrome = spawn(chromePath, [
   '--headless=new', `--remote-debugging-port=${port}`,
   `--user-data-dir=${mkdtempSync(join(tmpdir(), 'profshot-'))}`,
   '--no-first-run', '--no-default-browser-check', '--window-size=1600,1000',
+  // an https page fetching samply's 127.0.0.1 server: a person's Chrome asks; headless can't
+  '--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults,BlockInsecurePrivateNetworkRequests',
   'about:blank',
 ], { stdio: 'ignore' });
 
@@ -38,6 +40,7 @@ const send = (method, params = {}) => new Promise((r) => {
 });
 const evaluate = async (expr) => {
   const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true });
+  if (r.result?.exceptionDetails) console.error('evaluate threw:', JSON.stringify(r.result.exceptionDetails).slice(0, 800));
   return r.result?.result?.value;
 };
 
@@ -103,6 +106,7 @@ async function load(u, waitForSymbols) {
     stable = key && key === last && !busy ? stable + 1 : 0;
     last = key;
     if (stable >= (waitForSymbols ? 5 : 2)) break;
+    if (i % 20 === 0) console.error(`t=${i}s has window.profile: ${await evaluate('!!window.profile')} text: ${text.slice(0, 300).replace(/\s+/g, ' ')}`);
   }
   return stats;
 }
@@ -114,10 +118,16 @@ async function shot(file) {
 
 await send('Page.enable');
 await send('Runtime.enable');
+await send('Log.enable');
+ws.addEventListener('message', (ev) => {
+  const m = JSON.parse(ev.data);
+  if (m.method === 'Log.entryAdded') console.error('page log:', m.params.entry.level, m.params.entry.text.slice(0, 300));
+  if (m.method === 'Runtime.exceptionThrown') console.error('page exception:', JSON.stringify(m.params).slice(0, 500));
+});
 const stats = await load(url, true);
-writeFileSync(`${out}-stats.json`, JSON.stringify(stats, null, 2));
-console.log(JSON.stringify(stats, null, 2));
 await shot(`${out}-calltree.png`);
+writeFileSync(`${out}-stats.json`, JSON.stringify(stats ?? null, null, 2));
+console.log(JSON.stringify(stats ?? null, null, 2));
 const main = stats?.threads.find((t) => t.isMainThread) || stats?.threads[0];
 const flame = url.replace('/?symbolServer', '/flame-graph/?symbolServer') + (main ? `&thread=${main.index}` : '');
 await load(flame, true);
