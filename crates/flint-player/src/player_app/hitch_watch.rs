@@ -21,6 +21,7 @@
 use super::frame_history::FrameHistory;
 use super::hitch::{Cause, Hitch, HitchDetector};
 use super::os_pacing::OsPacing;
+use super::sampler_marks::SamplerMarks;
 use crate::hitch_args::{HitchClass, HitchGate, STARTUP_SECS};
 use serde::Serialize;
 use std::io::Write;
@@ -274,6 +275,9 @@ struct Log {
     written: u64,
     /// The first write that failed: the log stops there, said once.
     failed: Option<String>,
+    /// Each hitch on a sampling profiler's timeline too (#1250); `None`
+    /// for a log a test reads.
+    marks: Option<SamplerMarks>,
 }
 
 impl Log {
@@ -329,7 +333,16 @@ impl HitchWatch {
             out,
             written: 0,
             failed: None,
+            marks: None,
         });
+    }
+
+    /// Mark each hitch where a sampler records it as well (#1250).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the web opens no file
+    pub(crate) fn mark_for_samplers(&mut self, marks: SamplerMarks) {
+        if let Some(log) = &mut self.log {
+            log.marks = Some(marks);
+        }
     }
 
     /// The detector has judged this frame's newest record and found
@@ -353,7 +366,13 @@ impl HitchWatch {
                 } else {
                     self.run.add(h);
                 }
-                if self.log.is_some() {
+                if let Some(log) = &mut self.log {
+                    // Marked now, the frame after it: the line waits for
+                    // the frames after, and an ETW event is stamped when
+                    // it is written
+                    if let Some(marks) = &mut log.marks {
+                        marks.hitch(h);
+                    }
                     self.pending.push(LogLine::of(h, startup, history));
                 }
             }
@@ -538,8 +557,13 @@ impl HitchWatch {
                 .as_ref()
                 .map(|e| format!(", stopped: {e}"))
                 .unwrap_or_default();
+            let marks = log
+                .marks
+                .as_ref()
+                .map(|m| format!("; sampler marks: {}", m.said()))
+                .unwrap_or_default();
             lines.push(format!(
-                "[perf] hitch log: {} ({} {}{failed})",
+                "[perf] hitch log: {} ({} {}{failed}){marks}",
                 log.name,
                 log.written,
                 plural(log.written, "line", "lines")
@@ -645,6 +669,8 @@ impl super::PlayerApp {
         self.stats
             .watch
             .log_to(path.display().to_string(), Box::new(file));
+        let marks = super::sampler_marks::SamplerMarks::open(path, self.stats.perf.start);
+        self.stats.watch.mark_for_samplers(marks);
         self.watch_hitches();
         Ok(())
     }

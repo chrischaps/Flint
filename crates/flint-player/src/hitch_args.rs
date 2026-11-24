@@ -57,7 +57,10 @@ pub struct HitchArgs {
     /// its frame, game and wall time, ms, the median it stood out from,
     /// missed refreshes, player or elsewhere, the worst phase and script,
     /// the engine's notes and the eight frames either side. Times every
-    /// script callback, as --perf does. Desktop only
+    /// script callback, as --perf does. Each hitch is also marked on a
+    /// sampling profiler's timeline (#1250): samply's marker-<pid>.txt
+    /// beside FILE on Linux, ETW events from the Flint.Player provider on
+    /// Windows. Desktop only
     #[arg(long, value_name = "FILE")]
     pub hitch_log: Option<std::path::PathBuf>,
 

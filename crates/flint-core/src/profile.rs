@@ -244,6 +244,10 @@ mod off {
     /// Records a ring holds by default, as the recorder's build says.
     pub const DEFAULT_RING_CAPACITY: usize = 1 << 16;
 
+    /// Bytes of detail text a ring keeps a record, as the recorder's build
+    /// says.
+    pub const TEXT_BYTES_PER_RECORD: usize = 32;
+
     /// Nothing to size: the recorder is not in this build.
     pub fn set_ring_capacity(_records: usize) {}
 
@@ -398,10 +402,19 @@ mod recorder {
     }
 
     /// Records a thread's ring holds unless [`set_ring_capacity`] says
-    /// otherwise: 65 536, 2.6 MB a thread.
+    /// otherwise: 65 536, 2.6 MB of records a thread, and 2.1 MB of text
+    /// beside them once the thread records a text detail.
     pub const DEFAULT_RING_CAPACITY: usize = 1 << 16;
-    /// Bytes of detail text a thread's ring holds.
-    const TEXT_CAPACITY: usize = 64 * 1024;
+    /// Bytes of detail text a ring keeps for each record it holds (#1259),
+    /// so the text lasts as long as the records that name it: a ring of
+    /// text-detail scopes keeps every one's text while each is 32 bytes or
+    /// less. A Ruins frame's 105 scopes write about 700 bytes of text (34
+    /// details at ~20 bytes), 6.7 a record, so there the text outlasts its
+    /// records nearly five times over. It was a fixed 64 KB, which held
+    /// the last ~100 frames' details against the records' ~600. Taken at
+    /// the thread's first text detail, so a thread that writes none pays
+    /// nothing for it, and grown with the ring.
+    pub const TEXT_BYTES_PER_RECORD: usize = 32;
 
     /// Turns recording on or off for every thread.
     pub fn set_recording(on: bool) {
@@ -623,8 +636,29 @@ mod recorder {
         records: Vec<Record>,
         next: usize,
         written: u64,
+        /// The details' text: a ring of [`Ring::text_capacity`] bytes (or,
+        /// unbounded, every byte), taken at the first text detail.
         text: Vec<u8>,
         text_written: u64,
+        /// The oldest text position a growth kept: what lay before it had
+        /// been overwritten already, though the grown ring would reach it.
+        text_kept_from: u64,
+    }
+
+    /// Writes `bytes` into the ring `buf` at absolute position `at`.
+    fn write_wrapped(buf: &mut [u8], at: u64, bytes: &[u8]) {
+        let start = (at % buf.len() as u64) as usize;
+        let first = bytes.len().min(buf.len() - start);
+        buf[start..start + first].copy_from_slice(&bytes[..first]);
+        buf[..bytes.len() - first].copy_from_slice(&bytes[first..]);
+    }
+
+    /// The `len` bytes of the ring `buf` from absolute position `at`, as the
+    /// two slices they lie in.
+    fn read_wrapped(buf: &[u8], at: u64, len: usize) -> (&[u8], &[u8]) {
+        let start = (at % buf.len() as u64) as usize;
+        let first = len.min(buf.len() - start);
+        (&buf[start..start + first], &buf[..len - first])
     }
 
     impl Ring {
@@ -637,7 +671,14 @@ mod recorder {
                 written: 0,
                 text: Vec::new(),
                 text_written: 0,
+                text_kept_from: 0,
             }
+        }
+
+        /// Bytes of detail text it holds at most: [`TEXT_BYTES_PER_RECORD`]
+        /// for each record; `None` for every byte.
+        pub fn text_capacity(&self) -> Option<usize> {
+            self.capacity().map(|cap| cap * TEXT_BYTES_PER_RECORD)
         }
 
         /// The thread's name (or its id, unnamed).
@@ -695,8 +736,25 @@ mod recorder {
             let cap = (self.cap * 2).min(max);
             self.records.reserve_exact(cap - self.records.len());
             self.next = self.records.len();
+            self.grow_text(cap * TEXT_BYTES_PER_RECORD);
             self.cap = cap;
             Some((cap, clock::now().saturating_sub(before)))
+        }
+
+        /// The text ring at `bytes`, every byte still held kept at its
+        /// absolute position, so each record's text reads as before.
+        fn grow_text(&mut self, bytes: usize) {
+            if self.text.is_empty() {
+                return;
+            }
+            let held = self.text_written.min(self.text.len() as u64);
+            let from = self.text_written - held;
+            let mut text = vec![0; bytes];
+            let (a, b) = read_wrapped(&self.text, from, held as usize);
+            write_wrapped(&mut text, from, a);
+            write_wrapped(&mut text, from + a.len() as u64, b);
+            self.text = text;
+            self.text_kept_from = from;
         }
 
         fn push_text(&mut self, s: &str) -> Detail {
@@ -711,13 +769,11 @@ mod recorder {
                 };
             }
             if self.text.is_empty() {
-                self.text.resize(TEXT_CAPACITY, 0);
+                self.text.resize(self.cap * TEXT_BYTES_PER_RECORD, 0);
             }
-            let len = s.len().min(u16::MAX as usize).min(TEXT_CAPACITY);
+            let len = s.len().min(u16::MAX as usize).min(self.text.len());
             let at = self.text_written;
-            for (i, b) in s.as_bytes()[..len].iter().enumerate() {
-                self.text[((at + i as u64) % TEXT_CAPACITY as u64) as usize] = *b;
-            }
+            write_wrapped(&mut self.text, at, &s.as_bytes()[..len]);
             self.text_written += len as u64;
             Detail::Text {
                 at,
@@ -754,24 +810,28 @@ mod recorder {
         }
 
         /// The oldest text position still held: text written before it
-        /// has been overwritten.
+        /// has been overwritten, by the ring lapping it or before a growth
+        /// (`text_kept_from`).
         fn text_held_from(&self) -> u64 {
             if self.unbounded() {
                 0
             } else {
-                self.text_written.saturating_sub(TEXT_CAPACITY as u64)
+                self.text_written
+                    .saturating_sub(self.text.len() as u64)
+                    .max(self.text_kept_from)
             }
         }
 
         /// The `len` bytes of text from absolute position `at`, as the two
         /// slices of the ring they lie in. `at` must be held.
         fn text_slices(&self, at: u64, len: usize) -> (&[u8], &[u8]) {
+            if len == 0 {
+                return (&[], &[]);
+            }
             if self.unbounded() {
                 return (&self.text[at as usize..at as usize + len], &[]);
             }
-            let start = (at % TEXT_CAPACITY as u64) as usize;
-            let first = len.min(TEXT_CAPACITY - start);
-            (&self.text[start..start + first], &self.text[..len - first])
+            read_wrapped(&self.text, at, len)
         }
 
         /// The text written at `at`, unless it has been overwritten since.
@@ -1386,7 +1446,7 @@ mod recorder {
             let mut r = record_at(0);
             r.detail = ring.push_text("models/oak.glb");
             ring.push(r);
-            let filler = "x".repeat(TEXT_CAPACITY);
+            let filler = "x".repeat(DEFAULT_RING_CAPACITY * TEXT_BYTES_PER_RECORD);
             ring.push_text(&filler);
             for start in 1..100_000 {
                 ring.push(record_at(start));
@@ -1409,7 +1469,8 @@ mod recorder {
             ring.push(lost);
             // Text up to five bytes short of the text ring's end, so the
             // next detail straddles it and the first is overwritten
-            ring.push_text(&"x".repeat(TEXT_CAPACITY - 5 - "models/oak.glb".len()));
+            let text_cap = ring.text_capacity().unwrap();
+            ring.push_text(&"x".repeat(text_cap - 5 - "models/oak.glb".len()));
             let mut straddles = record_at(1);
             straddles.detail = ring.push_text("scripts/door.rhai");
             ring.push(straddles);
@@ -1435,7 +1496,7 @@ mod recorder {
 
             let copy = ring.copy_from(None);
             // The ring records on after the copy; the copy keeps its text
-            ring.push_text(&"y".repeat(TEXT_CAPACITY));
+            ring.push_text(&"y".repeat(text_cap));
             let read = Records {
                 ns_per_tick: 1.0,
                 since_ns: None,
@@ -1517,11 +1578,159 @@ mod recorder {
         fn text_overwritten_since_reads_as_none() {
             let mut ring = Ring::new("t".into(), 4);
             let first = ring.push_text("models/oak.glb");
-            let filler = "x".repeat(TEXT_CAPACITY);
+            let filler = "x".repeat(ring.text_capacity().unwrap());
             ring.push_text(&filler);
             let mut r = record_at(0);
             r.detail = first;
             assert_eq!(ring.detail(&r), None);
+        }
+
+        /// A scope with a text detail, as `enter_with` and its drop push it:
+        /// the text at the scope's start, the record at its close.
+        fn push_scope_with_text(ring: &mut Ring, start: u64, text: &str) {
+            let mut r = record_at(start);
+            r.detail = ring.push_text(text);
+            ring.push(r);
+        }
+
+        /// The `i`th detail of a fill: 32 bytes, the most each record is
+        /// sure to keep, and each one different.
+        fn script_named(i: u64) -> String {
+            format!("{:x<32}", format!("scripts/door_{i:08}.rhai"))
+        }
+
+        #[test]
+        fn a_full_ring_of_text_details_keeps_its_oldest_records_text() {
+            // #1259: the default ring filled, and half lapped, with scopes
+            // that each carry 32 bytes of text
+            let mut ring = Ring::new("t".into(), DEFAULT_RING_CAPACITY);
+            let pushed = DEFAULT_RING_CAPACITY as u64 * 3 / 2;
+            for i in 0..pushed {
+                push_scope_with_text(&mut ring, i, &script_named(i));
+            }
+            assert_eq!(ring.held(), DEFAULT_RING_CAPACITY);
+            assert_eq!(ring.text_capacity(), Some(2 << 20), "2 MiB of text");
+            let oldest = ring.records().next().unwrap();
+            assert_eq!(oldest.start, pushed - DEFAULT_RING_CAPACITY as u64);
+            assert_eq!(
+                ring.detail(oldest),
+                Some(script_named(oldest.start)),
+                "the oldest record held still names its script"
+            );
+            assert!(
+                ring.records()
+                    .all(|r| ring.detail(r) == Some(script_named(r.start))),
+                "and so does every record after it"
+            );
+        }
+
+        #[test]
+        fn a_ruins_frame_of_details_lasts_as_long_as_its_records() {
+            // #1096's scopes in a frame of the Overgrown Ruins: 105 scopes,
+            // 34 of them with text (a script's file, a post pass's label, a
+            // stage), about 700 bytes. 64 KB of text held ~100 frames of it
+            // against the records' ~600.
+            let texts: Vec<String> = (0..34)
+                .map(|i| match i % 3 {
+                    0 => format!("scripts/overgrown_ruins_{i:02}.rhai"),
+                    1 => format!("encode_part bloom {i:02}"),
+                    _ => format!("subsystems {i:02}"),
+                })
+                .collect();
+            let bytes: usize = texts.iter().map(String::len).sum();
+            assert!((600..800).contains(&bytes), "{bytes} bytes a frame");
+            let mut ring = Ring::new("main".into(), DEFAULT_RING_CAPACITY);
+            let frames = 2 * DEFAULT_RING_CAPACITY as u64 / 105;
+            let mut start = 0;
+            for _ in 0..frames {
+                for scope in 0..105 {
+                    match texts.get(scope) {
+                        Some(text) => push_scope_with_text(&mut ring, start, text),
+                        None => {
+                            ring.push(record_at(start));
+                        }
+                    }
+                    start += 1;
+                }
+            }
+            let texts_held = ring
+                .records()
+                .filter(|r| matches!(r.detail, Detail::Text { .. }));
+            let (held, lost) = texts_held.fold((0, 0), |(held, lost), r| {
+                (held + 1, lost + ring.detail(r).is_none() as usize)
+            });
+            assert!(held > 20_000, "{held} details held");
+            assert_eq!(lost, 0, "no record held has lost its text");
+        }
+
+        /// What a growth costs, with and without the text beside the
+        /// records (#1259): `cargo test -p flint-core --release --features
+        /// trace --lib ring_growth_cost -- --ignored --nocapture`.
+        #[test]
+        #[ignore]
+        fn ring_growth_cost() {
+            const FROM: usize = 327_680;
+            let full = |text: bool| {
+                let mut ring = Ring::new("t".into(), FROM);
+                for i in 0..FROM as u64 {
+                    if text {
+                        push_scope_with_text(&mut ring, i, &script_named(i));
+                    } else {
+                        ring.push(record_at(i));
+                    }
+                }
+                ring
+            };
+            for text in [false, true] {
+                let mut least = f64::MAX;
+                for _ in 0..5 {
+                    let mut ring = full(text);
+                    let start = std::time::Instant::now();
+                    ring.grow_if_short(u64::MAX, FROM * 2).unwrap();
+                    least = least.min(start.elapsed().as_secs_f64() * 1e3);
+                }
+                let what = if text {
+                    "records and text"
+                } else {
+                    "records alone"
+                };
+                println!("{FROM} to {} records, {what}: {least:.2} ms", FROM * 2);
+            }
+        }
+
+        #[test]
+        fn a_grown_ring_keeps_its_text_and_holds_twice_as_much() {
+            let mut ring = Ring::new("t".into(), 4);
+            // Five laps' worth of text in a ring of four: its text has
+            // wrapped, so the oldest text is not at the buffer's start
+            for i in 0..8 {
+                push_scope_with_text(&mut ring, i, &script_named(i));
+            }
+            let overwritten = Record {
+                detail: Detail::Text { at: 0, len: 32 },
+                ..record_at(0)
+            };
+            assert!(ring.grow_if_short(100, 8).is_some(), "doubled");
+            assert_eq!(ring.text_capacity(), Some(8 * TEXT_BYTES_PER_RECORD));
+            assert_eq!(ring.text.len(), 8 * TEXT_BYTES_PER_RECORD);
+            assert_eq!(
+                ring.detail(&overwritten),
+                None,
+                "text lost before the growth stays lost, though the grown ring reaches it"
+            );
+            for i in 8..12 {
+                push_scope_with_text(&mut ring, i, &script_named(i));
+            }
+            let starts: Vec<u64> = ring.records().map(|r| r.start).collect();
+            assert_eq!(starts, (4..12).collect::<Vec<_>>());
+            for r in ring.records() {
+                assert_eq!(
+                    ring.detail(r),
+                    Some(script_named(r.start)),
+                    "record {}",
+                    r.start
+                );
+            }
         }
     }
 }
@@ -1751,10 +1960,70 @@ mod tests {
     }
 }
 
-/// What a scope costs, recording and not (#1096): `cargo test -p flint-core
-/// --release --features trace --lib scope_cost -- --ignored --nocapture`.
-#[cfg(all(test, any(debug_assertions, feature = "trace")))]
-mod cost {
+/// What a scope costs here, recording and not (#1096, #1266): the one
+/// bench, which the test below and the web player's `?scope_bench=1` both
+/// run, so a browser's figure is the desktop's measured the same way.
+pub mod cost {
+    use web_time::Instant;
+
+    /// Each figure is the least over [`ScopeCost::rounds`] rounds, in
+    /// nanoseconds a call, nothing subtracted (`bare_ns` is the loop alone).
+    #[derive(Debug, Clone, serde::Serialize)]
+    pub struct ScopeCost {
+        /// The loop with no scope in it
+        pub bare_ns: f64,
+        /// `scope!` with the recorder compiled in, not recording
+        pub off_ns: f64,
+        /// `scope!`, recording
+        pub on_ns: f64,
+        /// `scope!` with a count, recording
+        pub counted_ns: f64,
+        /// `scope!` with a file name, recording
+        pub named_ns: f64,
+        /// Two reads of `Instant::now()`: a scope's two clock reads where
+        /// the clock is `Instant` (`performance.now()` in a browser)
+        pub clock_pair_ns: f64,
+        /// The smallest step `Instant` was seen to take, in nanoseconds:
+        /// a scope shorter than it may read as 0
+        pub clock_step_ns: f64,
+        /// The median of those steps
+        pub clock_step_median_ns: f64,
+        /// How long each measure ran a round, at least
+        pub round_ms: f64,
+        pub rounds: u32,
+    }
+
+    impl ScopeCost {
+        /// One line, as the test and the web console print it.
+        pub fn line(&self) -> String {
+            format!(
+                "per scope: bare loop {:.1} ns, not recording {:.1} ns, recording {:.1} ns, \
+                 with a count {:.1} ns, with a file name {:.1} ns; two clock reads {:.1} ns; \
+                 the clock steps by {} (median {}); best of {} rounds of {:.0} ms",
+                self.bare_ns,
+                self.off_ns,
+                self.on_ns,
+                self.counted_ns,
+                self.named_ns,
+                self.clock_pair_ns,
+                step(self.clock_step_ns),
+                step(self.clock_step_median_ns),
+                self.rounds,
+                self.round_ms,
+            )
+        }
+    }
+
+    fn step(ns: f64) -> String {
+        if ns >= 1e6 {
+            format!("{:.2} ms", ns / 1e6)
+        } else if ns >= 1e3 {
+            format!("{:.1} us", ns / 1e3)
+        } else {
+            format!("{ns:.0} ns")
+        }
+    }
+
     #[inline(never)]
     fn scoped(n: u64) -> u64 {
         crate::scope!("bench");
@@ -1773,44 +2042,134 @@ mod cost {
         std::hint::black_box(file.len())
     }
 
-    fn per_call(f: impl Fn(u64)) -> f64 {
-        const N: u64 = 2_000_000;
-        let start = std::time::Instant::now();
-        for i in 0..N {
-            f(i);
-        }
-        start.elapsed().as_nanos() as f64 / N as f64
+    #[inline(never)]
+    fn clock_pair() -> u128 {
+        let a = Instant::now();
+        let b = Instant::now();
+        std::hint::black_box(b.duration_since(a).as_nanos())
     }
 
+    /// Calls `f` in batches until `round_ms` have passed, then ns a call.
+    /// Timed by the run, not by the call, so a clock as coarse as a
+    /// browser's (100 us, 1 ms) still divides a long enough round finely.
+    fn per_call(round_ms: f64, f: impl Fn(u64)) -> f64 {
+        const BATCH: u64 = 1000;
+        let start = Instant::now();
+        let mut calls = 0u64;
+        loop {
+            for i in 0..BATCH {
+                f(calls + i);
+            }
+            calls += BATCH;
+            let ms = start.elapsed().as_secs_f64() * 1e3;
+            if ms >= round_ms {
+                return ms * 1e6 / calls as f64;
+            }
+        }
+    }
+
+    /// The clock's steps: read it until it changes, `want` times (or for
+    /// 200 ms), and keep each change's size.
+    fn clock_steps(want: usize) -> (f64, f64) {
+        let begun = Instant::now();
+        let mut steps = Vec::with_capacity(want);
+        let mut last = Instant::now();
+        while steps.len() < want && begun.elapsed().as_millis() < 200 {
+            let now = Instant::now();
+            let d = now.duration_since(last).as_nanos();
+            if d > 0 {
+                steps.push(d as f64);
+                last = now;
+            }
+        }
+        if steps.is_empty() {
+            return (0.0, 0.0);
+        }
+        steps.sort_by(f64::total_cmp);
+        (steps[0], steps[steps.len() / 2])
+    }
+
+    /// Measure a scope on this thread: each measure for `round_ms` a round,
+    /// `rounds` rounds, the least kept. Recording is on while it runs and
+    /// as it was after, and its records go to this thread's ring, so run it
+    /// before anything reads the ring (a test thread of its own, the web
+    /// page before its recorder starts). `None` without the recorder.
+    pub fn measure(round_ms: f64, rounds: u32) -> Option<ScopeCost> {
+        if !super::COMPILED_IN {
+            return None;
+        }
+        let was = super::recording();
+        let rounds = rounds.max(1);
+        let mut best = [f64::INFINITY; 6];
+        for _ in 0..rounds {
+            let mut take = |i: usize, ns: f64| best[i] = best[i].min(ns);
+            take(
+                0,
+                per_call(round_ms, |i| {
+                    std::hint::black_box(i + 1);
+                }),
+            );
+            super::set_recording(false);
+            take(
+                1,
+                per_call(round_ms, |i| {
+                    scoped(i);
+                }),
+            );
+            super::set_recording(true);
+            take(
+                2,
+                per_call(round_ms, |i| {
+                    scoped(i);
+                }),
+            );
+            take(
+                3,
+                per_call(round_ms, |i| {
+                    counted(i as usize);
+                }),
+            );
+            take(
+                4,
+                per_call(round_ms, |_| {
+                    named("scripts/kart.rhai");
+                }),
+            );
+            take(
+                5,
+                per_call(round_ms, |_| {
+                    clock_pair();
+                }),
+            );
+        }
+        super::set_recording(was);
+        let (clock_step_ns, clock_step_median_ns) = clock_steps(2000);
+        Some(ScopeCost {
+            bare_ns: best[0],
+            off_ns: best[1],
+            on_ns: best[2],
+            counted_ns: best[3],
+            named_ns: best[4],
+            clock_pair_ns: best[5],
+            clock_step_ns,
+            clock_step_median_ns,
+            round_ms,
+            rounds,
+        })
+    }
+
+    /// `cargo test -p flint-core --release --features trace --lib scope_cost
+    /// -- --ignored --nocapture`. Ignored: it turns recording off and on,
+    /// which every thread's scopes share.
+    #[cfg(all(test, any(debug_assertions, feature = "trace")))]
     #[test]
     #[ignore]
     fn scope_cost() {
         std::thread::Builder::new()
             .name("profile-cost".into())
             .spawn(|| {
-                let bare = per_call(|i| {
-                    std::hint::black_box(i + 1);
-                });
-                super::set_recording(false);
-                let off = per_call(|i| {
-                    scoped(i);
-                });
-                super::set_recording(true);
-                let on = per_call(|i| {
-                    scoped(i);
-                });
-                let on_count = per_call(|i| {
-                    counted(i as usize);
-                });
-                let on_named = per_call(|_| {
-                    named("scripts/kart.rhai");
-                });
-                super::set_recording(false);
-                println!(
-                    "per scope: bare loop {bare:.1} ns, not recording {off:.1} ns, \
-                     recording {on:.1} ns, with a count {on_count:.1} ns, \
-                     with a file name {on_named:.1} ns"
-                );
+                let cost = measure(200.0, 5).expect("the recorder is in this build");
+                println!("{}", cost.line());
             })
             .unwrap()
             .join()
