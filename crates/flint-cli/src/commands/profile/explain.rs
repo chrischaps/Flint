@@ -3,37 +3,30 @@
 //! The frame is held against the trace's normal frames
 //! ([`stats::normal_frames`]): each scope key's time in it against that
 //! key's median there, a frame it didn't run in counting 0. The answer is
-//! found by walking down the frame thread's tree from the frame's excess:
-//! at each level the child with the largest excess is taken while it
-//! carries at least half of its parent's ([`CARRIES`]), so the walk stops
-//! at the deepest scope that still explains the frame, not at `tick`,
-//! which every frame's excess is inside. When no outermost scope carries
-//! it, the time was outside any scope (a wait in `acquire` or `present`),
-//! and the phases say which.
+//! [`Profile::carrier`], the walk the profiler tab's Compare rings (#1287):
+//! down the frame thread's paths from the frame's excess, at each level
+//! into the child with the largest excess over its median while it carries
+//! at least half of its parent's ([`CARRIES`]), so the walk stops at the
+//! deepest scope that still explains the frame, not at `tick`, which every
+//! frame's excess is inside. When no outermost scope carries it, the time
+//! was outside any scope (a wait in `acquire` or `present`), and the phases
+//! say which.
 
-use super::frame_tree::{tree, Node};
-use super::read::Trace;
 use super::stats::{self, ms, round, signed};
 use super::{about, about_json, pick_frame, ExplainArgs};
 use crate::commands::frame::table::Table;
+use crate::commands::trace::profile::{Profile, CARRIES, FLOOR_MS};
+use crate::commands::trace::Trace;
 use crate::output::{self, Answer};
 use anyhow::Result;
 use serde_json::{json, Value};
-use std::collections::HashMap;
-
-/// How much of its parent's excess a scope must carry for the walk to go
-/// into it.
-pub(crate) const CARRIES: f64 = 0.5;
-
-/// Excess under this many ms is noise, whatever its share.
-const FLOOR_MS: f64 = 0.25;
 
 /// Rows under this many ms of excess aren't listed.
 const LIST_MS: f64 = 0.05;
 
 pub fn run(args: ExplainArgs) -> Result<()> {
-    let trace = Trace::open(&args.trace)?;
-    let (text, doc) = explain(&trace, &args.frame, args.limit)?;
+    let p = Profile::new(Trace::open(&args.trace)?);
+    let (text, doc) = explain(&p, &args.frame, args.limit)?;
     output::emit(&Answer::new(text, doc))
 }
 
@@ -59,10 +52,14 @@ impl Against {
     }
 }
 
-pub(crate) fn explain(trace: &Trace, which: &str, limit: usize) -> Result<(String, Value)> {
+pub(crate) fn explain(p: &Profile, which: &str, limit: usize) -> Result<(String, Value)> {
+    let trace = &p.trace;
     let pos = pick_frame(trace, which)?;
     let span = &trace.frames[pos];
-    let normal = stats::normal_frames(trace, Some(pos));
+    // The tab's baseline, but for the frame asked about, which a normal
+    // frame isn't held to: for a hitch or a slow frame, the tab's exactly
+    let base = p.baseline_except(Some(pos));
+    let normal = &base.normal;
     let n = normal.positions.len();
     let all: Vec<_> = trace.threads.iter().collect();
     let per = stats::per_frame(trace, &all, true);
@@ -86,45 +83,29 @@ pub(crate) fn explain(trace: &Trace, which: &str, limit: usize) -> Result<(Strin
             }
         })
         .collect();
-    let by_key: HashMap<String, usize> = keys
-        .iter()
-        .enumerate()
-        .map(|(i, a)| (a.key.clone(), i))
-        .collect();
 
     let frame_ms = span.ms();
     let excess = frame_ms - normal.median_ms;
 
-    // The frame thread: the one whose outermost scopes hold the most time
-    let mut roots: Vec<(usize, Node)> = trace
-        .threads
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (i, tree(t, span.frame)))
-        .collect();
-    roots.sort_by_key(|r| std::cmp::Reverse(r.1.incl_ns));
-    let (frame_thread, root) = roots.swap_remove(0);
-    let node_excess = |node: &Node| {
-        let median = by_key.get(&node.key).map_or(0.0, |&i| keys[i].median_ms);
-        node.incl_ns as f64 / 1e6 - median
-    };
-    let mut path: Vec<&Node> = Vec::new();
-    let mut carried = excess;
-    let mut at = &root;
-    while let Some(best) = at
-        .children
-        .iter()
-        .max_by(|a, b| node_excess(a).total_cmp(&node_excess(b)))
-    {
-        let e = node_excess(best);
-        if e < FLOOR_MS || e < carried * CARRIES {
-            break;
+    // Where the excess went: the walk the tab's Compare rings, over the
+    // paths of the thread whose outermost scopes held the most of it
+    let carried = p
+        .carrier(&base, pos)
+        .expect("a trace with scopes has a thread");
+    let frame_thread = carried.thread;
+    let path: Vec<&str> = carried.paths.iter().map(|&q| p.key(q)).collect();
+    let culprit: Option<Against> = carried.paths.last().map(|&q| {
+        let at = p.path_frame(q, pos).unwrap_or_default();
+        Against {
+            key: p.key(q).to_string(),
+            this_ms: at.incl_ns as f64 / 1e6,
+            self_ms: at.self_ns as f64 / 1e6,
+            calls: at.calls,
+            median_ms: base.median_ns[q as usize] as f64 / 1e6,
+            median_self_ms: base.median_self_ns[q as usize] as f64 / 1e6,
+            ran_in: base.ran_in[q as usize] as usize,
         }
-        path.push(best);
-        carried = e;
-        at = best;
-    }
-    let culprit: Option<Against> = path.last().map(|node| keys[by_key[&node.key]].clone());
+    });
     let culprit = culprit.as_ref();
 
     // The phases against theirs
@@ -182,10 +163,7 @@ pub(crate) fn explain(trace: &Trace, which: &str, limit: usize) -> Result<(Strin
             signed(excess)
         ));
         if path.len() > 1 {
-            let chain: Vec<&str> = path[..path.len() - 1]
-                .iter()
-                .map(|n| n.key.as_str())
-                .collect();
+            let chain = &path[..path.len() - 1];
             said.push(format!(
                 "inside {} on {}",
                 chain.join(" > "),
@@ -350,7 +328,7 @@ pub(crate) fn explain(trace: &Trace, which: &str, limit: usize) -> Result<(Strin
         "culprit": culprit.filter(|_| excess >= FLOOR_MS).map(|c| {
             let mut v = row(c);
             v["only_here"] = json!(c.ran_in == 0);
-            v["path"] = json!(path.iter().map(|n| n.key.as_str()).collect::<Vec<_>>());
+            v["path"] = json!(path);
             v["thread"] = json!(trace.threads[frame_thread].name);
             v
         }),

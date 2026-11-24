@@ -1,10 +1,10 @@
 //! `flint profile top`: every scope's time over the trace (or `--frames`),
 //! by total, self, worst call or calls.
 
-use super::read::Trace;
 use super::stats::{self, ms, round};
 use super::{about, about_json, parse_range, TopArgs, TopSort};
 use crate::commands::frame::table::Table;
+use crate::commands::trace::Trace;
 use crate::output::{self, Answer};
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
@@ -32,16 +32,18 @@ fn top(trace: &Trace, args: &TopArgs) -> Result<(String, Value)> {
         Some(r) => parse_range(r)?,
         None => (0, u32::MAX),
     };
-    let positions: Vec<usize> = (0..trace.frames.len())
+    let positions: Vec<usize> = trace
+        .covered()
         .filter(|&i| (from..=to).contains(&trace.frames[i].frame))
         .collect();
     if positions.is_empty() {
+        let covered = trace.covered_frames();
         let held = match &trace.coverage {
             Some(c) => c.line(&trace.frames),
             None => format!(
                 "it holds frames {}..{}",
-                trace.frames[0].frame,
-                trace.frames[trace.frames.len() - 1].frame
+                covered[0].frame,
+                covered[covered.len() - 1].frame
             ),
         };
         bail!(

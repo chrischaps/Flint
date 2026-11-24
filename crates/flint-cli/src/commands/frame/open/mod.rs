@@ -39,7 +39,7 @@ mod viewer;
 mod window;
 
 use super::read::Capture;
-use super::trace::Trace;
+use crate::commands::trace::Trace;
 use crate::output;
 use anyhow::{bail, Context, Result};
 use clap::{Args, ValueEnum};
@@ -171,7 +171,7 @@ fn open_path(path: &Path) -> Result<window::Opened> {
     if named_json {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {shown}"))?;
         if Trace::looks_like(&text) {
-            let trace = Trace::read(&text).with_context(|| shown.clone())?;
+            let trace = Trace::parse(text.as_bytes(), &shown)?;
             return Ok(window::Opened {
                 capture: None,
                 trace: Some((trace, shown)),

@@ -7,7 +7,7 @@
 use super::profile::{ProfileStart, Profiler};
 use super::ui::{apply_style, ink, App, Start};
 use crate::commands::frame::read::Capture;
-use crate::commands::frame::trace::Trace;
+use crate::commands::trace::Trace;
 use egui::{Key, RichText};
 
 /// What the window was opened on.
@@ -175,7 +175,7 @@ impl Tabs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::frame::trace::tests::sample;
+    use crate::commands::trace::tests::sample;
     use egui::{Pos2, Rect, Vec2};
     use std::path::Path;
 

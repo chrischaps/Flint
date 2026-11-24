@@ -17,8 +17,8 @@
 
 use super::ui::{elided, ink};
 use crate::commands::frame::open::timing::band_of;
-use crate::commands::frame::trace::profile::{is_script, Profile, ScopeStat, StatSort};
-use crate::commands::frame::trace::Trace;
+use crate::commands::trace::profile::{is_script, Profile, ScopeStat, StatSort};
+use crate::commands::trace::Trace;
 use egui::{Align, Color32, FontId, Key, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use flint_debug_ui::widgets::{
     band_legend, Band, FrameGraph, GraphFrame, GraphLayout, HITCH_COLOR,
@@ -95,6 +95,8 @@ const NEUTRAL: Color32 = Color32::from_rgb(112, 114, 122);
 const ON_BAR: Color32 = Color32::from_rgb(16, 17, 20);
 /// The budget line the strip draws: a 60 Hz frame.
 const BUDGET_MS: f32 = 1000.0 / 60.0;
+/// The ring round the bar that carries a frame's excess under Compare.
+const CARRIER_RING: Color32 = Color32::from_rgb(255, 214, 120);
 
 /// What the pointer is over in the chart.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -221,15 +223,6 @@ impl Profiler {
         // before the scopes gives way to the worst hitch after them
         let covered = self.p.first_covered;
         let kept = |r: &usize| *r >= covered;
-        let worst_covered_hitch = || {
-            (0..self.p.trace.hitches.len())
-                .filter(|&h| self.p.hitch_row(h).is_some_and(|r| kept(&r)))
-                .max_by(|&a, &b| {
-                    let (a, b) = (&self.p.trace.hitches[a], &self.p.trace.hitches[b]);
-                    a.judged_ms.total_cmp(&b.judged_ms)
-                })
-                .and_then(|h| self.p.hitch_row(h))
-        };
         let capture_hitch = || {
             start
                 .capture_hitch
@@ -243,15 +236,9 @@ impl Profiler {
                 .and_then(|h| self.p.hitch_row(h))
                 .filter(kept)
         };
-        // The one a trace saved for a hitch was saved for, else the worst
-        let meant_hitch = || {
-            self.p
-                .trace
-                .meant_hitch()
-                .and_then(|h| self.p.hitch_row(h))
-                .filter(kept)
-                .or_else(worst_covered_hitch)
-        };
+        // The one a trace saved for a hitch was saved for, else the worst:
+        // `flint profile`'s `hitch`, from the one reader (rows are its frames)
+        let meant_hitch = || self.p.trace.meant_hitch_frame();
         let capture_frame = || {
             start
                 .capture_frame
@@ -816,8 +803,17 @@ impl Profiler {
                 }
                 s.push_str(&format!(
                     "  ·  hitch over a {:.1} ms median: {}",
-                    h.median_ms, h.cause
+                    h.median_ms.unwrap_or(0.0),
+                    h.cause
                 ));
+            }
+            if let Some((ti, i)) = self
+                .compare
+                .then(|| self.p.hottest(self.sel.start))
+                .flatten()
+            {
+                let path = self.p.facts[ti].path[i];
+                s.push_str(&format!("  ·  carried by {}", self.p.key(path)));
             }
             s
         } else {
@@ -1211,6 +1207,10 @@ impl Profiler {
         } else {
             None
         };
+        let hot: Vec<(usize, usize)> = match baseline {
+            Some(_) => rows.clone().filter_map(|r| self.p.hottest(r)).collect(),
+            None => Vec::new(),
+        };
 
         // The frames under the chart: the chosen ones lit, a line where each begins
         for r in rows.clone() {
@@ -1371,7 +1371,10 @@ impl Profiler {
                         text = ink::FAINT;
                     }
                 }
-                if x1 - x0 < 1.0 {
+                // Under Compare, the bar that carries its frame's excess:
+                // `flint profile explain`'s answer, ringed
+                let carries = baseline.is_some() && hot.contains(&(ti, i));
+                if x1 - x0 < 1.0 && !carries {
                     let d = s.depth as usize;
                     if x0.floor() > dust[d] {
                         dust[d] = x0.floor();
@@ -1405,6 +1408,14 @@ impl Profiler {
                         2.0,
                         Stroke::new(1.5, Color32::WHITE),
                         egui::StrokeKind::Inside,
+                    );
+                }
+                if carries {
+                    painter.rect_stroke(
+                        br.expand(1.5),
+                        3.0,
+                        Stroke::new(2.0, CARRIER_RING),
+                        egui::StrokeKind::Outside,
                     );
                 }
                 if ptr.is_some_and(|p| br.contains(p)) {
@@ -1602,9 +1613,9 @@ impl Profiler {
         let body = FontId::proportional(12.0);
         let mono = FontId::monospace(11.0);
         let mut out = Vec::new();
-        let share = |ns: u64, frame: u32| -> String {
-            self.p
-                .row_of(frame)
+        let share = |ns: u64, frame: Option<u32>| -> String {
+            frame
+                .and_then(|f| self.p.row_of(f))
                 .map(|r| {
                     let row = &self.p.rows[r];
                     let f = (row.end_ns - row.start_ns).max(1);
@@ -1636,11 +1647,11 @@ impl Profiler {
                         body.clone(),
                     ));
                 }
-                out.push((share(s.dur_ns, s.frame), ink::TEXT, body.clone()));
+                out.push((share(s.dur_ns, Some(s.frame)), ink::TEXT, body.clone()));
                 out.push((
                     format!(
                         "self {} ms  ·  {} thread",
-                        ms_text(facts.self_ns[i]),
+                        ms_text(self.p.trace.threads[ti].self_ns[i]),
                         self.p.trace.threads[ti].name
                     ),
                     ink::DIM,
@@ -1680,6 +1691,14 @@ impl Profiler {
                         ink::DIM
                     };
                     out.push((words, c, body.clone()));
+                    if self.p.row_of(s.frame).and_then(|r| self.p.hottest(r)) == Some((ti, i)) {
+                        out.push((
+                            "carries the frame's excess: what `flint profile explain` answers"
+                                .into(),
+                            CARRIER_RING,
+                            body.clone(),
+                        ));
+                    }
                 }
                 out.push((self.p.path_text(facts.path[i]), ink::FAINT, mono));
             }
@@ -1717,7 +1736,8 @@ impl Profiler {
                 out.push((
                     format!(
                         "hitch: {:.1} ms over a {:.1} ms median",
-                        hi.judged_ms, hi.median_ms
+                        hi.judged(),
+                        hi.median_ms.unwrap_or(0.0)
                     ),
                     HITCH_COLOR,
                     strong,
@@ -1823,7 +1843,7 @@ fn group_digits(n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::frame::trace::tests::sample;
+    use crate::commands::trace::tests::sample;
 
     fn tab(start: ProfileStart) -> Profiler {
         Profiler::new(Trace::read(&sample()).unwrap(), "t.json".into(), &start)
@@ -1906,7 +1926,7 @@ mod tests {
         let line = t.profile().coverage.clone().unwrap();
         assert!(
             line.starts_with("scopes cover frames 1..2")
-                && line.contains("the main ring wrapped, so the 1 frame before them has none"),
+                && line.contains("the main ring wrapped, so the 1 frame before them has no scopes"),
             "{line}"
         );
         // Asked for a frame before them: shown, and said
@@ -1938,16 +1958,70 @@ mod tests {
         t.p.rows[sel.start].index
     }
 
+    /// #1287's done-when: the fixture's three staged causes, each frame
+    /// opened in the tab under Compare and explained by `flint profile
+    /// explain`. The bar the tab rings, at full heat, is the scope explain
+    /// names; where explain finds no scope (frame 105's wait in acquire),
+    /// the tab rings nothing.
+    #[test]
+    fn explains_answer_is_the_bar_compare_rings_hottest() {
+        use crate::commands::profile::explain::explain;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/traces/stall.trace.json");
+        let read = || Trace::open(&path).unwrap();
+        let explained = Profile::new(read());
+        for (frame, says) in [
+            (105, None),
+            (109, Some("import_model (models/whale.glb)")),
+            (113, Some("stall.rhai:on_update")),
+        ] {
+            let (_, doc) = explain(&explained, &frame.to_string(), 12).unwrap();
+            let answer = doc["culprit"]["scope"].as_str();
+            assert_eq!(answer, says, "explain on frame {frame}: {}", doc["answer"]);
+
+            let t = Profiler::new(
+                read(),
+                "stall.trace.json".into(),
+                &ProfileStart {
+                    frame: Some(FrameChoice::Index(frame)),
+                    compare: true,
+                    ..Default::default()
+                },
+            );
+            let row = t.selection().start;
+            assert_eq!(t.p.rows[row].index, frame);
+            let ringed = t.p.hottest(row);
+            let key = ringed.map(|(ti, i)| t.p.key(t.p.facts[ti].path[i]));
+            assert_eq!(key, says, "the tab's ring on frame {frame}");
+            if let Some((ti, i)) = ringed {
+                let b = t.p.baseline_if_made().unwrap();
+                let hottest = t.p.facts[ti].rows[row]
+                    .clone()
+                    .map(|j| b.heat[ti][j])
+                    .fold(0.0f32, f32::max);
+                assert_eq!(b.heat[ti][i], hottest, "tinted hottest of its frame");
+                assert_eq!(t.tinted(ti, i, NEUTRAL).0, HITCH_COLOR);
+                assert!(t
+                    .selection_words()
+                    .contains(&format!("carried by {}", says.unwrap())));
+            }
+        }
+        // And `hitch` is one frame both ways (#1289), the one explained
+        let (_, doc) = explain(&explained, "hitch", 12).unwrap();
+        let t = Profiler::new(read(), "s".into(), &ProfileStart::default());
+        assert_eq!(doc["frame"]["frame"], t.p.rows[t.selection().start].index);
+    }
+
     #[test]
     fn the_tab_and_flint_profile_mean_one_hitch() {
-        use crate::commands::frame::trace::tests::{three_hitches, SAVED_ON_SECOND};
-        use crate::commands::profile::{pick_frame, read};
+        use crate::commands::profile::pick_frame;
+        use crate::commands::trace::tests::{three_hitches, SAVED_ON_SECOND};
         // #1289: saved for its second hitch, the tab opened on the worst
         // (105) and `flint profile` on the last (117); both mean 114 now.
         // On exit both mean the worst.
         for (reason, meant) in [(SAVED_ON_SECOND, 114), ("exit", 105)] {
             let text = three_hitches(reason);
-            let profile = read::Trace::parse(text.as_bytes(), "t.json").unwrap();
+            let profile = Trace::read(&text).unwrap();
             let explained = profile.frames[pick_frame(&profile, "hitch").unwrap()].frame;
             for frame in [None, Some(FrameChoice::Hitch)] {
                 let start = ProfileStart {
@@ -1962,7 +2036,7 @@ mod tests {
 
     #[test]
     fn a_capture_opens_on_its_own_frame_or_the_hitch_it_was_taken_on() {
-        use crate::commands::frame::trace::tests::three_hitches;
+        use crate::commands::trace::tests::three_hitches;
         let text = three_hitches("capture");
         // Not taken on a hitch: the frame it holds, not the worst
         let own = ProfileStart {
@@ -2031,7 +2105,7 @@ mod tests {
 
     #[test]
     fn under_compare_a_stalls_path_is_vermillion_and_the_rest_quiet() {
-        use crate::commands::frame::trace::tests::synthetic;
+        use crate::commands::trace::tests::synthetic;
         let trace = Trace::read(&synthetic(300, 14, 150)).unwrap();
         let t = Profiler::new(
             trace,
@@ -2068,7 +2142,7 @@ mod tests {
     #[test]
     #[ignore]
     fn profiler_cost() {
-        use crate::commands::frame::trace::tests::synthetic;
+        use crate::commands::trace::tests::synthetic;
         let text = synthetic(300, 14, 150);
         let began = std::time::Instant::now();
         let trace = Trace::read(&text).unwrap();

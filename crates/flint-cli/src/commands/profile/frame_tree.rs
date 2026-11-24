@@ -1,10 +1,10 @@
 //! `flint profile frame`: one frame's scope tree, thread by thread, as an
 //! indented table, siblings of one name merged, short scopes left out.
 
-use super::read::{Detail, Thread, Trace};
 use super::stats::{self, ms, round};
 use super::{about, about_json, pick_frame, FrameArgs};
 use crate::commands::frame::table::Table;
+use crate::commands::trace::{Detail, Thread, Trace};
 use crate::output::{self, Answer};
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -55,17 +55,15 @@ impl Node {
 
 /// The tree of `thread`'s scopes that closed in `frame`, under a root
 /// holding their outermost time.
-pub(crate) fn tree(thread: &Thread, frame: u32) -> Node {
+pub(crate) fn tree(trace: &Trace, thread: &Thread, frame: u32) -> Node {
     let mut root = Node::default();
-    for (i, s) in thread.scopes.iter().enumerate() {
-        if s.frame != frame {
-            continue;
-        }
+    for i in thread.in_frame(frame) {
+        let s = &thread.scopes[i];
         let mut node = &mut root;
-        for key in thread.ancestors(i, true) {
+        for key in trace.ancestors(thread, i, true) {
             node = node.child(&key);
         }
-        let node = node.child(&s.key(true));
+        let node = node.child(&trace.key(s, true));
         node.incl_ns += s.dur_ns;
         node.self_ns += thread.self_ns[i];
         node.calls += s.calls();
@@ -114,7 +112,7 @@ fn view(trace: &Trace, args: &FrameArgs) -> Result<(String, Value)> {
 
     let mut json_threads = Vec::new();
     for t in &threads {
-        let mut root = tree(t, span.frame);
+        let mut root = tree(trace, t, span.frame);
         if root.children.is_empty() {
             continue;
         }
@@ -214,7 +212,7 @@ fn view(trace: &Trace, args: &FrameArgs) -> Result<(String, Value)> {
     if !gpu.is_empty() {
         let said: Vec<String> = gpu
             .iter()
-            .map(|g| format!("{} {}", g.name, ms(g.dur_ns as f64 / 1e6)))
+            .map(|g| format!("{} {}", trace.name(g.name), ms(g.dur_ns as f64 / 1e6)))
             .collect();
         text.push_str(&format!("gpu: {} ms ({})\n", ms(gpu_ms), said.join(", ")));
     }
@@ -248,7 +246,7 @@ fn view(trace: &Trace, args: &FrameArgs) -> Result<(String, Value)> {
         "phases": phase_json,
         "gpu": {
             "ms": round(gpu_ms),
-            "passes": gpu.iter().map(|g| json!({"pass": g.name, "ms": round(g.dur_ns as f64 / 1e6)})).collect::<Vec<_>>(),
+            "passes": gpu.iter().map(|g| json!({"pass": trace.name(g.name), "ms": round(g.dur_ns as f64 / 1e6)})).collect::<Vec<_>>(),
         },
         "notes": notes.iter().map(|n| json!({"kind": n.kind, "detail": n.detail, "ms": n.ms, "depth": n.depth})).collect::<Vec<_>>(),
     });

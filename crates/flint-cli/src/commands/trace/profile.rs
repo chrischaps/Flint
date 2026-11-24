@@ -1,31 +1,41 @@
 //! What a trace is worked into once it is read: frames as rows, each
-//! scope's parent, path, self time and system, and the questions the
-//! profiler tab asks of a selection of frames (#1099).
+//! scope's path and system, and the questions `flint profile` and the
+//! profiler tab ask of a selection of frames (#1099, #1287).
 //!
-//! - A **row** is a frame of the `frames` track (or, for a trace without
-//!   one, of the scopes' `frame` numbers), with its phases folded into the
-//!   F2 overlay's bands and the hitch on it, if any.
-//! - A scope's **path** is its thread and the names from its root down
-//!   (`main / tick / script::update / stall.rhai:on_update`): what the
-//!   median frame is compared by, since one name can be called from more
-//!   than one place.
+//! - A **row** is a frame of [`Trace::frames`] (one row a frame, in the
+//!   same order), with its phases folded into the F2 overlay's bands and
+//!   the hitch on it, if any.
+//! - A scope's **path** is its thread and the keys from its root down
+//!   (`main / tick / script::update / stall.rhai:on_update`, a text detail
+//!   splitting a key as [`Trace::key`] does): what the median frame is
+//!   compared by, since one name can be called from more than one place.
 //! - A scope's **system** is the overlay's band of the phase it ran inside
 //!   on the frame thread (so the two tools colour one moment alike), else
 //!   one read from its name, else none (`tick`, which spans the frame).
 //! - [`Profile::stats`] is every scope name over a range of rows: count,
 //!   total, mean, p90, worst. [`Profile::series`] is one name's time in
-//!   each row. [`Profile::baseline`] is each path's median time a frame,
-//!   which [`Profile::excess_ns`] compares a frame's with: the visual twin
-//!   of `flint profile explain` (#1098).
+//!   each row.
+//! - [`Baseline`] is each path's median a frame over the normal frames
+//!   ([`normal_frames`], the rule `flint profile explain` holds a frame to),
+//!   with every scope's excess over it and the heat Compare tints by.
+//!   [`Profile::carrier`] walks a frame's paths down from its excess to the
+//!   deepest one that still carries it: `flint profile explain`'s answer,
+//!   and the bar the tab's Compare rings ([`Profile::hottest`]). One walk
+//!   over one median, so the two can't name different scopes for a hitch.
 
-use super::{Scope, Trace};
+use super::stats::{normal_frames, quantile, Normal};
+use super::{Scope, Trace, ROOT};
 use crate::commands::frame::open::timing::band_of;
 use flint_debug_ui::widgets::{Band, BANDS};
 use std::collections::HashMap;
 use std::ops::Range;
 
-/// No parent.
-pub const ROOT: u32 = u32::MAX;
+/// How much of its parent's excess a path must carry for the walk to go
+/// into it.
+pub const CARRIES: f64 = 0.5;
+
+/// Excess under this many ms is noise, whatever its share.
+pub const FLOOR_MS: f64 = 0.25;
 
 /// A frame, as a row of the strip.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,24 +61,31 @@ impl FrameRow {
     }
 }
 
-/// A distinct path: a name under a parent path, on one thread.
+/// A distinct path: a key under a parent path, on one thread.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathInfo {
+    /// The scopes' name, an index into [`Trace::names`].
     pub name: u32,
+    /// Its key, an index into [`Profile::keys`].
+    pub key: u32,
     pub parent: u32,
     pub thread: u16,
+}
+
+/// A path's share of one row.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PathFrame {
+    pub incl_ns: u64,
+    pub self_ns: u64,
+    pub calls: u32,
 }
 
 /// What is known of each scope beyond the file, parallel to a thread's
 /// `scopes`.
 #[derive(Debug, Clone, Default)]
 pub struct ScopeFacts {
-    /// Its parent, an index into the same thread's scopes, or [`ROOT`].
-    pub parent: Vec<u32>,
     /// Its path, an index into [`Profile::paths`].
     pub path: Vec<u32>,
-    /// Its duration less its children's, ns.
-    pub self_ns: Vec<u64>,
     /// Its system, or `None` (a scope across phases).
     pub band: Vec<Option<Band>>,
     /// Each row's scopes, as a range of the thread's (they are sorted by
@@ -102,10 +119,17 @@ pub enum StatSort {
     Worst,
 }
 
-/// Each path's median time a frame over every row, ns (absent counts as 0).
+/// Each path's median a frame over the normal frames (a frame it didn't
+/// run in counting 0), ns, and what that makes of every scope.
 #[derive(Debug, Clone, Default)]
 pub struct Baseline {
+    /// The frames held to, and their median frame.
+    pub normal: Normal,
+    /// By path: its median inclusive and self time, and the normal frames
+    /// it ran in.
     pub median_ns: Vec<u64>,
+    pub median_self_ns: Vec<u64>,
+    pub ran_in: Vec<u32>,
     /// The median frame's length, ms.
     pub median_frame_ms: f32,
     /// Each scope's path's excess in its frame, ns, by thread then scope:
@@ -114,6 +138,26 @@ pub struct Baseline {
     /// Each scope's heat, 0 (as usual) to 1 (the frame's excess): what
     /// Compare tints a bar by. Laid out as `excess_ns`.
     pub heat: Vec<Vec<f32>>,
+}
+
+impl Baseline {
+    /// A path's excess in a row, ms.
+    pub fn excess_ms(&self, p: &Profile, path: u32, row: usize) -> f64 {
+        (p.path_ns(path, row) as f64 - self.median_ns[path as usize] as f64) / 1e6
+    }
+}
+
+/// Where a frame's excess went: the walk [`Profile::carrier`] takes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Carried {
+    /// The frame's excess over the normal frames' median, ms.
+    pub frame_excess_ms: f64,
+    /// The thread walked: the one whose outermost scopes held the most of
+    /// the frame.
+    pub thread: usize,
+    /// The paths from the outermost down; the last carries the excess.
+    /// Empty when no scope carries it (a wait outside any scope).
+    pub paths: Vec<u32>,
 }
 
 /// A trace worked out.
@@ -126,14 +170,20 @@ pub struct Profile {
     pub frame_thread: Option<usize>,
     pub facts: Vec<ScopeFacts>,
     pub paths: Vec<PathInfo>,
-    /// Each path's time in each row it appears in, (row, ns), by row.
-    path_rows: Vec<Vec<(u32, u64)>>,
+    /// Every path's key, once: a name, or a name and its text detail.
+    pub keys: Vec<String>,
+    /// Each path's children, and each thread's outermost paths.
+    children: Vec<Vec<u32>>,
+    roots: Vec<Vec<u32>>,
+    /// Each path's share of each row it appears in, by row.
+    path_rows: Vec<Vec<(u32, PathFrame)>>,
     baseline: Option<Baseline>,
+    /// Each row's [`Profile::hottest`], laid with the baseline.
+    hot: Vec<Option<(usize, usize)>>,
     /// The first row with all its scopes: 0 unless a ring lost part of
     /// the look-back (#1288), when the rows before it lack theirs.
     pub first_covered: usize,
-    /// What the strip and the tab say when it isn't 0: `scopes cover
-    /// frames 5729..5932 (0.85 s of 5 s): the main ring wrapped`.
+    /// What the strip and the tab say when it isn't 0: [`super::Coverage::line`].
     pub coverage: Option<String>,
 }
 
@@ -206,71 +256,80 @@ impl Profile {
                 (0..trace.threads.len()).max_by_key(|&i| trace.threads[i].scopes.len())
             });
 
+        // A key a scope name (and a text detail), once
+        let mut keys: Vec<String> = Vec::new();
+        let mut key_ids: HashMap<String, u32> = HashMap::new();
+        let mut name_key: Vec<Option<u32>> = vec![None; trace.names.len()];
+        let mut key_of = |s: &Scope| -> u32 {
+            let plain = s.text().is_none();
+            if plain {
+                if let Some(k) = name_key[s.name as usize] {
+                    return k;
+                }
+            }
+            let text = trace.key(s, true);
+            let k = *key_ids.entry(text.clone()).or_insert_with(|| {
+                keys.push(text);
+                (keys.len() - 1) as u32
+            });
+            if plain {
+                name_key[s.name as usize] = Some(k);
+            }
+            k
+        };
+
         let mut paths: Vec<PathInfo> = Vec::new();
         let mut path_ids: HashMap<(u32, u32, u16), u32> = HashMap::new();
-        let mut path_rows: Vec<Vec<(u32, u64)>> = Vec::new();
+        let mut path_rows: Vec<Vec<(u32, PathFrame)>> = Vec::new();
+        let mut children: Vec<Vec<u32>> = Vec::new();
+        let mut roots: Vec<Vec<u32>> = vec![Vec::new(); trace.threads.len()];
         let mut facts = Vec::with_capacity(trace.threads.len());
         for (ti, thread) in trace.threads.iter().enumerate() {
             let n = thread.scopes.len();
             let mut f = ScopeFacts {
-                parent: vec![ROOT; n],
                 path: vec![0; n],
-                self_ns: thread.scopes.iter().map(|s| s.dur_ns).collect(),
                 band: vec![None; n],
                 rows: Vec::new(),
                 max_depth: 0,
             };
-            // Parents: the scopes are by frame, start, depth, so the
-            // innermost open scope that holds a scope is its parent
-            let mut stack: Vec<usize> = Vec::new();
-            for (i, s) in thread.scopes.iter().enumerate() {
-                while let Some(&top) = stack.last() {
-                    let p = &thread.scopes[top];
-                    if p.frame == s.frame && p.depth < s.depth && s.start_ns < p.end_ns() {
-                        break;
-                    }
-                    stack.pop();
-                }
-                let parent = stack.last().copied();
+            // Paths from the roots down: a parent's before its children's
+            for &i in &thread.by_start {
+                let (i, s) = (i as usize, &thread.scopes[i as usize]);
                 f.max_depth = f.max_depth.max(s.depth);
-                let parent_path = parent.map_or(ROOT, |p| f.path[p]);
-                if let Some(p) = parent {
-                    f.parent[i] = p as u32;
-                    f.self_ns[p] = f.self_ns[p].saturating_sub(s.dur_ns);
-                }
-                let key = (parent_path, s.name, ti as u16);
-                let path = *path_ids.entry(key).or_insert_with(|| {
-                    paths.push(PathInfo {
-                        name: s.name,
-                        parent: parent_path,
-                        thread: ti as u16,
+                let parent_path = thread.parent_of(i).map_or(ROOT, |p| f.path[p]);
+                let key = key_of(s);
+                let path = *path_ids
+                    .entry((parent_path, key, ti as u16))
+                    .or_insert_with(|| {
+                        paths.push(PathInfo {
+                            name: s.name,
+                            key,
+                            parent: parent_path,
+                            thread: ti as u16,
+                        });
+                        path_rows.push(Vec::new());
+                        children.push(Vec::new());
+                        let id = (paths.len() - 1) as u32;
+                        match parent_path {
+                            ROOT => roots[ti].push(id),
+                            p => children[p as usize].push(id),
+                        }
+                        id
                     });
-                    path_rows.push(Vec::new());
-                    (paths.len() - 1) as u32
-                });
                 f.path[i] = path;
                 if let Some(&row) = row_of.get(&s.frame) {
-                    let list = &mut path_rows[path as usize];
-                    match list.last_mut() {
-                        Some((r, ns)) if *r == row as u32 => *ns += s.dur_ns,
-                        _ => list.push((row as u32, s.dur_ns)),
-                    }
-                }
-                // A summed record is a leaf (#1288): it may overlap a
-                // sibling, whose children must not take it for a parent
-                if s.summed.is_none() {
-                    stack.push(i);
+                    path_rows[path as usize].push((
+                        row as u32,
+                        PathFrame {
+                            incl_ns: s.dur_ns,
+                            self_ns: thread.self_ns[i],
+                            calls: s.calls(),
+                        },
+                    ));
                 }
             }
             // Each row's range of scopes
-            f.rows = rows
-                .iter()
-                .map(|r| {
-                    let a = thread.scopes.partition_point(|s| s.frame < r.index);
-                    let b = thread.scopes.partition_point(|s| s.frame <= r.index);
-                    a..b
-                })
-                .collect();
+            f.rows = rows.iter().map(|r| thread.in_frame(r.index)).collect();
             // Systems: the phase it ran inside, on the frame thread
             for (i, s) in thread.scopes.iter().enumerate() {
                 let name = trace.name(s.name);
@@ -291,41 +350,21 @@ impl Profile {
             }
             facts.push(f);
         }
-        let (first_covered, coverage) = match trace.covered_from() {
-            Some((from_ns, threads)) => {
-                let first = rows.partition_point(|r| r.start_ns < from_ns);
-                if first == 0 {
-                    (0, None)
-                } else {
-                    // A cut so late no row is whole: the last, as it is
-                    let first = first.min(rows.len().saturating_sub(1));
-                    let last = rows.len() - 1;
-                    let to = trace
-                        .header
-                        .get("window_to_ms")
-                        .and_then(serde_json::Value::as_f64)
-                        .map(|ms| (ms * 1e6) as u64)
-                        .unwrap_or(rows[last].end_ns);
-                    let covered_s = to.saturating_sub(from_ns) as f64 / 1e9;
-                    let of = trace
-                        .header
-                        .get("seconds")
-                        .and_then(serde_json::Value::as_f64)
-                        .filter(|s| *s > 0.0)
-                        .map_or(String::new(), |s| format!(" of {s:.0} s"));
-                    let line = format!(
-                        "scopes cover frames {}..{} ({covered_s:.2} s{of}): the {threads} ring wrapped, \
-                         so the {first} frame{} before them {} none",
-                        rows[first].index,
-                        rows[last].index,
-                        if first == 1 { "" } else { "s" },
-                        if first == 1 { "has" } else { "have" },
-                    );
-                    (first, Some(line))
+        // One entry a row, by row
+        for list in &mut path_rows {
+            list.sort_by_key(|(r, _)| *r);
+            list.dedup_by(|b, a| {
+                if a.0 != b.0 {
+                    return false;
                 }
-            }
-            None => (0, None),
-        };
+                a.1.incl_ns += b.1.incl_ns;
+                a.1.self_ns += b.1.self_ns;
+                a.1.calls += b.1.calls;
+                true
+            });
+        }
+        let first_covered = trace.covered().start;
+        let coverage = trace.coverage.as_ref().map(|c| c.line(&trace.frames));
         Self {
             trace,
             rows,
@@ -333,20 +372,24 @@ impl Profile {
             frame_thread,
             facts,
             paths,
+            keys,
+            children,
+            roots,
             path_rows,
             baseline: None,
+            hot: Vec::new(),
             first_covered,
             coverage,
         }
     }
 
-    /// The rows the scopes cover (all of them, unless a ring wrapped).
-    pub fn covered(&self) -> Range<usize> {
-        self.first_covered..self.rows.len()
-    }
-
     pub fn name(&self, id: u32) -> &str {
         self.trace.name(id)
+    }
+
+    /// A path's key: `script::call (scripts/stall.rhai)`.
+    pub fn key(&self, path: u32) -> &str {
+        &self.keys[self.paths[path as usize].key as usize]
     }
 
     pub fn scope(&self, thread: usize, i: usize) -> &Scope {
@@ -369,7 +412,7 @@ impl Profile {
 
     /// The row a hitch is on.
     pub fn hitch_row(&self, hitch: usize) -> Option<usize> {
-        self.rows.iter().position(|r| r.hitch == Some(hitch))
+        self.trace.hitch_frame(hitch)
     }
 
     /// The rows that hitched, in order.
@@ -381,8 +424,7 @@ impl Profile {
 
     /// The longest row the scopes cover.
     pub fn worst_row(&self) -> Option<usize> {
-        self.covered()
-            .max_by_key(|&r| self.rows[r].end_ns - self.rows[r].start_ns)
+        self.trace.worst_frame()
     }
 
     /// A path written out: `tick / script::update / stall.rhai:on_update`.
@@ -484,89 +526,22 @@ impl Profile {
             if info.name != name {
                 continue;
             }
-            for &(row, ns) in &self.path_rows[p] {
-                out[row as usize] += ns as f32 / 1e6;
+            for &(row, pf) in &self.path_rows[p] {
+                out[row as usize] += pf.incl_ns as f32 / 1e6;
             }
         }
         out
     }
 
-    /// Each path's median time a frame, worked out on first use.
+    /// The baseline over every normal frame, worked out on first use: what
+    /// the tab's Compare tints by.
     pub fn baseline(&mut self) -> &Baseline {
         if self.baseline.is_none() {
-            let n = self.rows.len();
-            let median_ns: Vec<u64> = self
-                .path_rows
-                .iter()
-                .map(|list| {
-                    // The rows a path is absent from count as zero
-                    let zeros = n.saturating_sub(list.len());
-                    let mid = n / 2;
-                    if n == 0 || mid < zeros {
-                        return 0;
-                    }
-                    let mut v: Vec<u64> = list.iter().map(|&(_, ns)| ns).collect();
-                    v.sort_unstable();
-                    v[(mid - zeros).min(v.len() - 1)]
-                })
+            let b = self.baseline_except(None);
+            self.hot = (0..self.rows.len())
+                .map(|r| self.carrier_scope(&b, r))
                 .collect();
-            let mut lengths: Vec<u64> = self.rows.iter().map(|r| r.end_ns - r.start_ns).collect();
-            lengths.sort_unstable();
-            let median_frame_ms = lengths
-                .get(lengths.len() / 2)
-                .map_or(0.0, |&l| l as f32 / 1e6);
-            let excess_ns = self
-                .trace
-                .threads
-                .iter()
-                .enumerate()
-                .map(|(ti, t)| {
-                    let paths = &self.facts[ti].path;
-                    t.scopes
-                        .iter()
-                        .enumerate()
-                        .map(|(i, s)| match self.row_of.get(&s.frame) {
-                            Some(&row) => {
-                                let path = paths[i];
-                                self.path_ns(path, row) as i64 - median_ns[path as usize] as i64
-                            }
-                            None => 0,
-                        })
-                        .collect()
-                })
-                .collect::<Vec<Vec<i64>>>();
-            // How hot each bar is: its excess against a scale of how far the
-            // whole frame ran over the median (so the cause of a 100 ms
-            // hitch is as red as that of a 10 ms one), never under half the
-            // median frame or half a millisecond (so a calm frame's noise
-            // stays grey)
-            let heat = self
-                .trace
-                .threads
-                .iter()
-                .enumerate()
-                .map(|(ti, t)| {
-                    t.scopes
-                        .iter()
-                        .enumerate()
-                        .map(|(i, s)| {
-                            let row_excess = self
-                                .row_of
-                                .get(&s.frame)
-                                .map_or(0.0, |&r| self.rows[r].ms() - median_frame_ms);
-                            let scale = (row_excess * 0.6).max(median_frame_ms * 0.5).max(0.5);
-                            let excess = excess_ns[ti][i] as f32 / 1e6;
-                            (excess / scale).clamp(0.0, 1.0).powf(0.7)
-                        })
-                        .collect()
-                })
-                .collect();
-            self.baseline = Some(Baseline {
-                median_ns,
-                median_frame_ms,
-                excess_ns,
-                heat,
-            });
+            self.baseline = Some(b);
         }
         self.baseline.as_ref().unwrap()
     }
@@ -576,13 +551,102 @@ impl Profile {
         self.baseline.as_ref()
     }
 
+    /// The baseline over the normal frames but `except` (the frame `flint
+    /// profile explain` was asked about, so a normal frame isn't held to
+    /// itself; a hitch or a slow frame isn't normal either way, so for one
+    /// this is [`Profile::baseline`] exactly).
+    pub fn baseline_except(&self, except: Option<usize>) -> Baseline {
+        let normal = normal_frames(&self.trace, except);
+        let n = normal.positions.len();
+        let mut is_normal = vec![false; self.rows.len()];
+        for &p in &normal.positions {
+            is_normal[p] = true;
+        }
+        let (mut median_ns, mut median_self_ns, mut ran_in) = (
+            Vec::with_capacity(self.paths.len()),
+            Vec::with_capacity(self.paths.len()),
+            Vec::with_capacity(self.paths.len()),
+        );
+        for list in &self.path_rows {
+            let (mut incl, mut own) = (Vec::new(), Vec::new());
+            for (row, pf) in list {
+                if is_normal[*row as usize] {
+                    incl.push(pf.incl_ns as f64);
+                    own.push(pf.self_ns as f64);
+                }
+            }
+            median_ns.push(quantile(&incl, n, 0.5).round() as u64);
+            median_self_ns.push(quantile(&own, n, 0.5).round() as u64);
+            ran_in.push(incl.len() as u32);
+        }
+        let median_frame_ms = normal.median_ms as f32;
+        let excess_ns = self
+            .trace
+            .threads
+            .iter()
+            .enumerate()
+            .map(|(ti, t)| {
+                let paths = &self.facts[ti].path;
+                t.scopes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| match self.row_of.get(&s.frame) {
+                        Some(&row) => {
+                            let path = paths[i];
+                            self.path_ns(path, row) as i64 - median_ns[path as usize] as i64
+                        }
+                        None => 0,
+                    })
+                    .collect()
+            })
+            .collect::<Vec<Vec<i64>>>();
+        // How hot each bar is: its excess against a scale of how far the
+        // whole frame ran over the median (so the cause of a 100 ms hitch
+        // is as red as that of a 10 ms one), never under half the median
+        // frame or half a millisecond (so a calm frame's noise stays grey)
+        let heat = self
+            .trace
+            .threads
+            .iter()
+            .enumerate()
+            .map(|(ti, t)| {
+                t.scopes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let row_excess = self
+                            .row_of
+                            .get(&s.frame)
+                            .map_or(0.0, |&r| self.rows[r].ms() - median_frame_ms);
+                        let scale = (row_excess * 0.6).max(median_frame_ms * 0.5).max(0.5);
+                        let excess = excess_ns[ti][i] as f32 / 1e6;
+                        (excess / scale).clamp(0.0, 1.0).powf(0.7)
+                    })
+                    .collect()
+            })
+            .collect();
+        Baseline {
+            normal,
+            median_ns,
+            median_self_ns,
+            ran_in,
+            median_frame_ms,
+            excess_ns,
+            heat,
+        }
+    }
+
     /// A path's time in `row`, ns.
     pub fn path_ns(&self, path: u32, row: usize) -> u64 {
+        self.path_frame(path, row).map_or(0, |pf| pf.incl_ns)
+    }
+
+    /// A path's share of `row`, if it ran there.
+    pub fn path_frame(&self, path: u32, row: usize) -> Option<PathFrame> {
         let list = &self.path_rows[path as usize];
-        match list.binary_search_by_key(&(row as u32), |&(r, _)| r) {
-            Ok(i) => list[i].1,
-            Err(_) => 0,
-        }
+        list.binary_search_by_key(&(row as u32), |&(r, _)| r)
+            .ok()
+            .map(|i| list[i].1)
     }
 
     /// How much longer than the median frame's a scope's path took in its
@@ -591,6 +655,71 @@ impl Profile {
         let b = self.baseline.as_ref()?;
         self.row_of(self.scope(thread, i).frame)?;
         Some(b.excess_ns[thread][i])
+    }
+
+    /// Where `row`'s excess went, against `b`: on the thread whose
+    /// outermost scopes held the most of the frame, from its roots down,
+    /// into the child of largest excess while that carries at least
+    /// [`CARRIES`] of its parent's and [`FLOOR_MS`], so the walk stops at
+    /// the deepest path that still explains the frame, not at `tick`, which
+    /// every frame's excess is inside.
+    pub fn carrier(&self, b: &Baseline, row: usize) -> Option<Carried> {
+        let held = |paths: &[u32]| -> u64 { paths.iter().map(|&p| self.path_ns(p, row)).sum() };
+        // The first thread of the most, in track order
+        let mut thread = None;
+        for t in 0..self.roots.len() {
+            if thread.is_none_or(|best: usize| held(&self.roots[t]) > held(&self.roots[best])) {
+                thread = Some(t);
+            }
+        }
+        let thread = thread?;
+        let frame_excess_ms = self.rows.get(row)?.ms() as f64 - b.normal.median_ms;
+        let mut paths = Vec::new();
+        let mut carried = frame_excess_ms;
+        let mut under: &[u32] = &self.roots[thread];
+        loop {
+            let best = under
+                .iter()
+                .copied()
+                .filter(|&p| self.path_frame(p, row).is_some())
+                .map(|p| (p, b.excess_ms(self, p, row)))
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            let Some((p, e)) = best else { break };
+            if e < FLOOR_MS || e < carried * CARRIES {
+                break;
+            }
+            paths.push(p);
+            carried = e;
+            under = &self.children[p as usize];
+        }
+        Some(Carried {
+            frame_excess_ms,
+            thread,
+            paths,
+        })
+    }
+
+    /// The bar Compare rings in `row`: the longest scope of the path that
+    /// carries the frame's excess ([`Profile::carrier`] over
+    /// [`Profile::baseline`]), as (thread, scope). Needs the baseline; none
+    /// when no scope carries it or the frame is no slower than usual.
+    pub fn hottest(&self, row: usize) -> Option<(usize, usize)> {
+        self.hot.get(row).copied().flatten()
+    }
+
+    /// The longest scope of the path that carries `row`'s excess over `b`.
+    pub fn carrier_scope(&self, b: &Baseline, row: usize) -> Option<(usize, usize)> {
+        let c = self.carrier(b, row)?;
+        if c.frame_excess_ms < FLOOR_MS {
+            return None;
+        }
+        let path = *c.paths.last()?;
+        let range = self.facts[c.thread].rows.get(row)?.clone();
+        let scopes = &self.trace.threads[c.thread].scopes;
+        range
+            .filter(|&i| self.facts[c.thread].path[i] == path)
+            .max_by_key(|&i| scopes[i].dur_ns)
+            .map(|i| (c.thread, i))
     }
 
     /// The span of time `rows` covers, ns.
@@ -614,38 +743,13 @@ impl Profile {
     }
 }
 
-/// The frames as rows: the `frames` track, else every scope thread's
-/// `frame` numbers, each from its first start to its last end.
+/// The frames as rows, one a frame of [`Trace::frames`].
 fn rows_of(trace: &Trace) -> Vec<FrameRow> {
-    let mut spans: Vec<(u32, u64, u64)> = trace
+    let mut rows: Vec<FrameRow> = trace
         .frames
         .iter()
-        .map(|f| (f.index, f.start_ns, f.end_ns))
-        .collect();
-    if spans.is_empty() {
-        let mut by: HashMap<u32, (u64, u64)> = HashMap::new();
-        for t in &trace.threads {
-            for s in &t.scopes {
-                let e = by.entry(s.frame).or_insert((s.start_ns, s.end_ns()));
-                e.0 = e.0.min(s.start_ns);
-                e.1 = e.1.max(s.end_ns());
-            }
-        }
-        spans = by.into_iter().map(|(f, (a, b))| (f, a, b)).collect();
-        spans.sort_by_key(|s| s.1);
-    }
-    // One row a frame index (a frames track never repeats one, but be sure)
-    let mut seen = std::collections::HashSet::new();
-    spans.retain(|s| seen.insert(s.0));
-    let range_of = |list: &[super::Span], frame: u32| {
-        let a = list.partition_point(|s| s.frame < frame);
-        let b = list.partition_point(|s| s.frame <= frame);
-        a..b
-    };
-    let mut rows: Vec<FrameRow> = spans
-        .into_iter()
-        .map(|(index, start_ns, end_ns)| {
-            let phases = range_of(&trace.phases, index);
+        .map(|f| {
+            let phases = trace.spans_in(&trace.phases, f.frame);
             let mut bands = [0.0f32; BANDS];
             let mut sum = 0.0;
             for p in &trace.phases[phases.clone()] {
@@ -653,25 +757,22 @@ fn rows_of(trace: &Trace) -> Vec<FrameRow> {
                 bands[band_of(trace.name(p.name)) as usize] += ms;
                 sum += ms;
             }
-            let ms = (end_ns.saturating_sub(start_ns)) as f32 / 1e6;
+            let ms = f.dur_ns as f32 / 1e6;
             bands[Band::Elsewhere as usize] = (ms - sum).max(0.0);
             FrameRow {
-                index,
-                start_ns,
-                end_ns: end_ns.max(start_ns),
+                index: f.frame,
+                start_ns: f.start_ns,
+                end_ns: f.end_ns(),
                 bands,
                 hitch: None,
                 phases,
-                gpu: range_of(&trace.gpu, index),
+                gpu: trace.spans_in(&trace.gpu, f.frame),
             }
         })
         .collect();
-    // A hitch's mark spans its frame: the row its middle falls in
-    for (h, hitch) in trace.hitches.iter().enumerate() {
-        let mid = hitch.start_ns + hitch.dur_ns / 2;
-        let i = rows.partition_point(|r| r.start_ns <= mid);
-        if i > 0 && mid < rows[i - 1].end_ns {
-            rows[i - 1].hitch = Some(h);
+    for (h, row) in trace.hitch_frames().into_iter().enumerate() {
+        if let Some(r) = row {
+            rows[r].hitch = Some(h);
         }
     }
     rows
@@ -718,22 +819,27 @@ mod tests {
         let stall = find(&p, 0, "stall.rhai:on_update", 2);
         let update = find(&p, 0, "script::update", 2);
         let tick = find(&p, 0, "tick", 2);
-        let f = &p.facts[0];
-        assert_eq!(f.parent[stall], update as u32);
-        assert_eq!(f.parent[update], tick as u32);
-        assert_eq!(f.parent[tick], ROOT);
+        let (f, main) = (&p.facts[0], &p.trace.threads[0]);
+        assert_eq!(main.parent_of(stall), Some(update));
+        assert_eq!(main.parent_of(update), Some(tick));
+        assert_eq!(main.parent_of(tick), None);
         assert_eq!(
             p.path_text(f.path[stall]),
             "tick / script::update / stall.rhai:on_update"
+        );
+        assert_eq!(
+            p.key(f.path[stall]),
+            "stall.rhai:on_update (scripts/stall.rhai)",
+            "a path's key is explain's, detail and all"
         );
         // The same path in every frame
         assert_eq!(
             f.path[find(&p, 0, "stall.rhai:on_update", 0)],
             f.path[stall]
         );
-        assert_eq!(f.self_ns[update], 200_000);
+        assert_eq!(main.self_ns[update], 200_000);
         // tick less its two children
-        assert_eq!(f.self_ns[tick], 39_700_000 - 31_200_000 - 6_000_000);
+        assert_eq!(main.self_ns[tick], 39_700_000 - 31_200_000 - 6_000_000);
         // The phase it ran in colours it; tick spans phases
         assert_eq!(f.band[stall], Some(Band::Scripts));
         assert_eq!(f.band[find(&p, 0, "render", 2)], Some(Band::Render));
@@ -782,6 +888,8 @@ mod tests {
             .unwrap() as u32;
         assert_eq!(p.series(stall), vec![1.0, 1.0, 31.0]);
         let b = p.baseline();
+        // Held to frame 1 alone: not an edge, not the hitch
+        assert_eq!(b.normal.positions, vec![1]);
         assert_eq!(b.median_frame_ms, 10.0);
         let i = find(&p, 0, "stall.rhai:on_update", 2);
         assert_eq!(p.excess_ns(0, i), Some(30_000_000));
@@ -789,6 +897,31 @@ mod tests {
         assert_eq!(p.excess_ns(0, normal), Some(0));
         let render = find(&p, 0, "render", 2);
         assert_eq!(p.excess_ns(0, render), Some(0));
+    }
+
+    #[test]
+    fn the_excess_is_carried_down_to_the_deepest_path_that_holds_it() {
+        let mut p = profile();
+        p.baseline();
+        let b = p.baseline_if_made().unwrap();
+        let c = p.carrier(b, 2).unwrap();
+        assert_eq!(c.thread, 0);
+        assert_eq!(c.frame_excess_ms, 30.0);
+        let keys: Vec<&str> = c.paths.iter().map(|&q| p.key(q)).collect();
+        assert_eq!(
+            keys,
+            [
+                "tick",
+                "script::update",
+                "stall.rhai:on_update (scripts/stall.rhai)"
+            ]
+        );
+        assert_eq!(
+            p.hottest(2),
+            Some((0, find(&p, 0, "stall.rhai:on_update", 2)))
+        );
+        // A frame no slower than usual has no carrier to ring
+        assert_eq!(p.hottest(1), None);
     }
 
     #[test]
@@ -801,7 +934,7 @@ mod tests {
         let p = Profile::new(Trace::read(text).unwrap());
         assert_eq!(p.rows.len(), 2);
         assert_eq!((p.rows[1].start_ns, p.rows[1].end_ns), (10_000, 15_000));
-        assert_eq!(p.facts[0].parent[2], 1);
+        assert_eq!(p.trace.threads[0].parent_of(2), Some(1));
         assert_eq!(p.rows_touching(0, 10_500), 0..2);
         assert_eq!(p.row_at(12_000), Some(1));
     }
@@ -823,10 +956,10 @@ mod tests {
         let text = format!("{{\"traceEvents\":[{}]}}", events.join(","));
         let p = Profile::new(Trace::read(&text).unwrap());
         let at = |name: &str| find(&p, 0, name, 0);
-        let f = &p.facts[0];
-        assert_eq!(f.parent[at("get_field()")], at("on_update") as u32);
-        assert_eq!(f.parent[at("clamp()")], at("helper()") as u32);
-        assert_eq!(f.self_ns[at("on_update")], 20_000);
+        let main = &p.trace.threads[0];
+        assert_eq!(main.parent_of(at("get_field()")), Some(at("on_update")));
+        assert_eq!(main.parent_of(at("clamp()")), Some(at("helper()")));
+        assert_eq!(main.self_ns[at("on_update")], 20_000);
         let stats = p.stats(0..p.rows.len());
         let gf = stats
             .iter()

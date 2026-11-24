@@ -30,7 +30,6 @@ pub(crate) mod read;
 pub(crate) mod replay;
 mod show;
 pub(crate) mod table;
-pub(crate) mod trace;
 
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
