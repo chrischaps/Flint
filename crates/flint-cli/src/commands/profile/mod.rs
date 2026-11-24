@@ -18,18 +18,20 @@
 //! Every view answers the global `--json` with one document carrying the
 //! numbers its text shows. Frames are named by the trace's own frame index
 //! (each scope's `frame`, what Perfetto shows in its args).
+//!
+//! The file is read by `commands::trace`, the profiler tab's reader too
+//! (#1287): the same frames, parents, coverage and `hitch`, and `explain`'s
+//! answer is the tab's [`crate::commands::trace::profile::Profile::carrier`].
 
 mod diff;
-mod explain;
+pub(crate) mod explain;
 mod frame_tree;
-pub(crate) mod read;
 pub(crate) mod stats;
 mod top;
 
-use crate::commands::frame::trace::{meant_hitch, HitchMark};
+use crate::commands::trace::{FrameSpan, Trace};
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand, ValueEnum};
-use read::Trace;
 use std::path::PathBuf;
 
 #[derive(Args)]
@@ -145,74 +147,50 @@ pub fn run(args: ProfileArgs) -> Result<()> {
     }
 }
 
-/// Which frame a view asked for, as a position in `trace.frames`.
+/// Which frame a view asked for, as a position in `trace.frames`: always
+/// one the scopes cover.
 pub(crate) fn pick_frame(trace: &Trace, which: &str) -> Result<usize> {
     let worst = || {
-        (0..trace.frames.len())
-            .max_by(|&a, &b| trace.frames[a].dur_ns.cmp(&trace.frames[b].dur_ns))
+        trace
+            .worst_frame()
             .expect("a trace with scopes has a frame")
     };
     let held = || {
+        let f = trace.covered_frames();
         let (a, b) = (
-            trace.frames.first().map_or(0, |f| f.frame),
-            trace.frames.last().map_or(0, |f| f.frame),
+            f.first().map_or(0, |f| f.frame),
+            f.last().map_or(0, |f| f.frame),
         );
         format!("frames {a}..{b}")
     };
     match which {
         "worst" => Ok(worst()),
-        "hitch" => {
-            // The profiler tab's rule (#1289): the hitch a `--trace-on-hitch`
-            // file was saved for, else the worst
-            let frames = trace.hitch_frames();
-            let marks: Vec<HitchMark> = trace
-                .hitches
-                .iter()
-                .zip(&frames)
-                .map(|(h, f)| HitchMark {
-                    game_time: h.game_time,
-                    // A mark with no judgement: its frame's length
-                    judged_ms: h
-                        .judged_ms
-                        .unwrap_or_else(|| f.map_or(0.0, |f| trace.frames[f].ms())),
-                })
-                .collect();
-            let reason = trace.header.get("reason").and_then(|v| v.as_str());
-            let meant = meant_hitch(reason, &marks).and_then(|h| frames[h]);
-            // A hitch before the scopes begin has no frame here (#1288):
-            // the worst one after them, as the tab chooses
-            let worst_covered = || {
-                (0..marks.len())
-                    .filter(|&h| frames[h].is_some())
-                    .max_by(|&a, &b| marks[a].judged_ms.total_cmp(&marks[b].judged_ms))
-                    .and_then(|h| frames[h])
-            };
-            if let Some(pos) = meant.or_else(worst_covered) {
-                return Ok(pos);
-            }
+        // The profiler tab's frame too (#1289): the hitch a
+        // `--trace-on-hitch` file was saved for, else the worst, of those
+        // the scopes cover (#1288)
+        "hitch" => trace.meant_hitch_frame().ok_or_else(|| {
             let w = worst();
-            bail!(
+            anyhow::anyhow!(
                 "{} holds no hitch the detector found; its worst frame is {} ({:.1} ms): \
                  ask for `worst`",
                 trace.path,
                 trace.frames[w].frame,
                 trace.frames[w].ms()
             )
-        }
+        }),
         n => {
             let Ok(n) = n.parse::<u32>() else {
                 bail!("`{n}` is not a frame: give a frame index, `worst` or `hitch`");
             };
-            if let Some(c) = trace.coverage.as_ref().filter(|c| c.before(n)) {
-                bail!(
+            match (trace.position(n), &trace.coverage) {
+                (Some(pos), Some(c)) if pos < c.first => bail!(
                     "frame {n} is in {} but before its scopes begin: {}",
                     trace.path,
                     c.line(&trace.frames)
-                );
+                ),
+                (Some(pos), _) => Ok(pos),
+                (None, _) => bail!("frame {n} is not in {}: it holds {}", trace.path, held()),
             }
-            trace.position(n).ok_or_else(|| {
-                anyhow::anyhow!("frame {n} is not in {}: it holds {}", trace.path, held())
-            })
         }
     }
 }
@@ -274,16 +252,17 @@ pub(crate) fn coverage_json(trace: &Trace) -> serde_json::Value {
     let Some(c) = &trace.coverage else {
         return serde_json::Value::Null;
     };
-    let first = |f: &[read::FrameSpan]| f.first().map(|f| f.frame);
-    let last = |f: &[read::FrameSpan]| f.last().map(|f| f.frame);
+    let first = |f: &[FrameSpan]| f.first().map(|f| f.frame);
+    let last = |f: &[FrameSpan]| f.last().map(|f| f.frame);
+    let covered = trace.covered_frames();
     serde_json::json!({
         "line": c.line(&trace.frames),
         "from_ms": stats::round(c.from_ns as f64 / 1e6),
         "threads": c.threads,
         "covered_s": stats::round(c.covered_s),
         "window_s": c.window_s,
-        "frames": { "first": first(&trace.frames), "last": last(&trace.frames), "count": trace.frames.len() },
-        "in_file": { "first": first(&c.all), "last": last(&c.all), "count": c.all.len() },
+        "frames": { "first": first(covered), "last": last(covered), "count": covered.len() },
+        "in_file": { "first": first(&trace.frames), "last": last(&trace.frames), "count": trace.frames.len() },
     })
 }
 
@@ -304,7 +283,7 @@ pub(crate) fn about_json(trace: &Trace) -> serde_json::Value {
         "adapter": pick("adapter"),
         "engine_commit": pick("engine_commit"),
         "project_commit": pick("project_commit"),
-        "frames": trace.frames.len(),
+        "frames": trace.covered().len(),
         "frames_from_scopes": trace.frames_derived,
         "threads": trace.thread_names(),
         "coverage": coverage_json(trace),

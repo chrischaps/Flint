@@ -68,6 +68,7 @@ pub mod style_sheet;
 pub mod sweep;
 pub mod terrain_edit;
 pub mod tex_edit;
+pub(crate) mod trace;
 pub mod validate;
 pub mod validate_suite;
 pub mod variants;

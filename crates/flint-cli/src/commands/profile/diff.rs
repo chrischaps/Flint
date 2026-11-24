@@ -7,10 +7,10 @@
 //! own spread, [`NOISE_SE`]) is marked `~` and, without `--all`, not
 //! listed, since run-to-run spread can make it.
 
-use super::read::Trace;
 use super::stats::{self, ms, round, signed};
 use super::{about_json, DiffArgs};
 use crate::commands::frame::table::Table;
+use crate::commands::trace::Trace;
 use crate::output::{self, Answer};
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -37,9 +37,11 @@ struct Side {
 fn side(trace: &Trace, thread: Option<&str>) -> Result<Side> {
     let threads = trace.threads_named(thread)?;
     let per = stats::per_frame(trace, &threads, false);
-    let len = trace.frames.len();
-    let positions: Vec<usize> = (0..len)
-        .filter(|&i| len <= 2 || (i != 0 && i + 1 != len))
+    // The covered frames but their edges, whose scopes may be cut
+    let covered = trace.covered();
+    let (len, first) = (covered.len(), covered.start);
+    let positions: Vec<usize> = covered
+        .filter(|&i| len <= 2 || (i != first && i + 1 != first + len))
         .collect();
     let keys = stats::values(&per, &positions, |k| k.incl_ms())
         .into_iter()
