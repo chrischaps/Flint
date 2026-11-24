@@ -41,7 +41,7 @@ struct ThinUniforms {
 @group(3) @binding(0) var past_slots: texture_2d<u32>;
 // The style mask (#493; a 1x1 unstyled texel while no entity asks for the
 // style), at the scene's resolution
-@group(3) @binding(1) var thin_mask: texture_2d<u32>;
+@group(3) @binding(1) var flint_mask_texture: texture_2d<u32>;
 
 // Whether the edge cell at texel `c` drew a line last frame: its thinned
 // line, which the slot texel keeps in its lowest bits
@@ -66,9 +66,7 @@ fn drawn_cell(c: vec2<i32>) -> bool {
     let lo = max(cell * t.cell + t.origin, vec2<f32>(0.0));
     let hi = min((cell + 1.0) * t.cell + t.origin, t.size);
     let p = floor((lo + hi) * 0.5) + 0.5;
-    let msize = vec2<i32>(textureDimensions(thin_mask));
-    let mp = vec2<i32>(floor(p * vec2<f32>(msize) / t.size));
-    let m = textureLoad(thin_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).rg;
+    let m = flint_mask_load(flint_mask_texel_of(p, t.size));
     let slot = slot_of(m.x);
     if slot == 0u {
         return t.whole_frame == 1u;

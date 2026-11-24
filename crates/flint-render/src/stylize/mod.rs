@@ -200,6 +200,9 @@ pub(crate) fn registry_index(styles: &StyleRegistry, d: &StyleDescriptor) -> Opt
 }
 
 #[cfg(test)]
+mod shared_wgsl_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

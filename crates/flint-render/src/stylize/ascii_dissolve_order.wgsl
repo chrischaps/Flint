@@ -2,12 +2,10 @@
 // ascii_dissolve.wgsl come first.
 
 // Binding 0 is the picture, unread here
-@group(1) @binding(1) var order_mask: texture_2d<u32>;
+@group(1) @binding(1) var flint_mask_texture: texture_2d<u32>;
 
 fn order_slot(p: vec2<f32>) -> u32 {
-    let msize = vec2<i32>(textureDimensions(order_mask));
-    let mp = vec2<i32>(floor(p * vec2<f32>(msize) / u.size));
-    return slot_of(textureLoad(order_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).r);
+    return slot_of(flint_mask_load(flint_mask_texel_of(p, u.size)).x);
 }
 
 // Pixels a side a cell's scan reads at most (#554): a cell is at most 32

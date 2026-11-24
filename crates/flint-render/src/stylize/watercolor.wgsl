@@ -54,12 +54,12 @@ struct PaintUniforms {
 // The variant table (#740, the framework's): a row a variant, and the row
 // of each mask id, as long as the frame needs
 @group(0) @binding(1) var<storage, read> paint_rows: array<Row>;
-@group(0) @binding(2) var<storage, read> paint_slots: array<u32>;
+@group(0) @binding(2) var<storage, read> flint_slots: array<u32>;
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
 @group(1) @binding(1) var input_sampler: sampler;
 @group(2) @binding(0) var wash_texture: texture_2d<f32>;
 @group(2) @binding(1) var wash_sampler: sampler;
-@group(3) @binding(0) var mask_texture: texture_2d<u32>;
+@group(3) @binding(0) var flint_mask_texture: texture_2d<u32>;
 @group(3) @binding(1) var depth_texture: texture_depth_2d;
 // The paper stack (#390, #547), a blank texel while none is named
 @group(3) @binding(2) var paper_texture: texture_2d_array<f32>;
@@ -80,26 +80,12 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-// --- noise: integer-hashed value noise, the same on every run and GPU ---
+// --- noise: stylize/noise.wgsl's value noise (#1256), under the paint's seed ---
 
-fn hash(p: vec2<i32>) -> f32 {
-    var h = (bitcast<u32>(p.x) * 1597334677u) ^ (bitcast<u32>(p.y) * 3812015801u);
-    h = (h ^ (h >> 16u)) * 2246822519u;
-    h = (h ^ (h >> 13u)) * 3266489917u;
-    h = h ^ (h >> 16u);
-    return f32(h) * (1.0 / 4294967295.0);
-}
+const PAINT_SEED: u32 = 0u;
 
 fn vnoise(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = p - i;
-    let u = f * f * (3.0 - 2.0 * f);
-    let c = vec2<i32>(i);
-    let a = hash(c);
-    let b = hash(c + vec2<i32>(1, 0));
-    let d = hash(c + vec2<i32>(0, 1));
-    let e = hash(c + vec2<i32>(1, 1));
-    return mix(mix(a, b, u.x), mix(d, e, u.x), u.y);
+    return flint_vnoise(p, PAINT_SEED);
 }
 
 // Two octaves, -1..1 on each axis: where a read wanders to
@@ -130,17 +116,10 @@ fn turbulence(pt: vec2<f32>) -> f32 {
 
 // --- the mask and the depth, read by UV (both at scene resolution) ---
 
-fn mask_at(uv: vec2<f32>) -> u32 {
-    let dims = vec2<i32>(textureDimensions(mask_texture));
-    let c = clamp(vec2<i32>(uv * vec2<f32>(dims)), vec2<i32>(0), dims - 1);
-    return textureLoad(mask_texture, c, 0).r;
-}
-
+// The mask is read through mask_read.wgsl, the slots through mask_slot.wgsl
+// (#1256); a slot past the rows is the scene's
 fn slot_of(id: u32) -> u32 {
-    if (id >= arrayLength(&paint_slots)) {
-        return 0u;
-    }
-    let slot = paint_slots[id];
+    let slot = flint_slot(id);
     return select(0u, slot, slot < params.row_count);
 }
 
@@ -179,10 +158,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Where this pixel's paint comes from: the mask read at a wobbled
     // position, so a painted silhouette wanders over its surroundings
-    let home = slot_of(mask_at(in.uv));
+    let home = slot_of(flint_mask_id(in.uv));
     let r0 = paint_rows[home];
     let reach = wobble_field(pt / r0.wobble_scale) * r0.wobble * to_uv;
-    let slot = slot_of(mask_at(in.uv + reach));
+    let slot = slot_of(flint_mask_id(in.uv + reach));
     if (!painted(slot)) {
         // Unpainted. If the pixel itself is a painted entity's, its paint
         // wandered off: show what's beside it, as the wash would

@@ -66,12 +66,12 @@ fn strokes(p: vec2<f32>, ang: f32, layer: u32, seed: u32, row: PencilRow, grow: 
     let along = dot(p, dir);
     var across = dot(p, vec2<f32>(-dir.y, dir.x));
     // A slow bend, shared by neighbouring strokes like a hand's drift
-    let bend = vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u));
+    let bend = flint_vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u));
     across += (bend - 0.5) * 2.0 * row.c.w * 0.6;
 
     let r = floor(across / spacing);
     let ri = i32(r);
-    let h = hash3(ri, i32(layer), seed);
+    let h = flint_hash3(ri, i32(layer), seed);
     let off = across - (r + 0.5 + (h.x - 0.5) * 0.4) * spacing;
 
     // Dashes along the stroke, each its own length, a few left out
@@ -79,7 +79,7 @@ fn strokes(p: vec2<f32>, ang: f32, layer: u32, seed: u32, row: PencilRow, grow: 
     let s = (along + h.z * len) / len;
     let seg = floor(s);
     let x = s - seg;
-    let hs = hash3(ri, i32(seg), seed + layer * 104729u + 17u);
+    let hs = flint_hash3(ri, i32(seg), seed + layer * 104729u + 17u);
     if hs.x < 0.1 {
         return 0.0;
     }
@@ -102,19 +102,19 @@ fn stroke_drawn(p: vec2<f32>, ang: f32, layer: u32, seed: u32, row: PencilRow, a
     let dir = vec2<f32>(cos(ang), sin(ang));
     let along = dot(p, dir);
     var across = dot(p, vec2<f32>(-dir.y, dir.x));
-    let bend = vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u));
+    let bend = flint_vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u));
     across += (bend - 0.5) * 2.0 * row.c.w * 0.6;
 
     let r = floor(across / spacing);
     let ri = i32(r);
-    let h = hash3(ri, i32(layer), seed);
+    let h = flint_hash3(ri, i32(layer), seed);
     let off = across - (r + 0.5 + (h.x - 0.5) * 0.4) * spacing;
 
     let len = spacing * (8.0 + 16.0 * h.y);
     let s = (along + h.z * len) / len;
     let seg = floor(s);
     let x = s - seg;
-    let hs = hash3(ri, i32(seg), seed + layer * 104729u + 17u);
+    let hs = flint_hash3(ri, i32(seg), seed + layer * 104729u + 17u);
     // The dash's turn is the order at its middle
     let mid = vec2<f32>(along - (x - 0.5) * len, across - off);
     let at = mid.x * dir + mid.y * vec2<f32>(-dir.y, dir.x);
@@ -191,20 +191,20 @@ fn world_strokes(q: vec2<f32>, ang: f32, layer: u32, seed: u32, s: f32, k: i32, 
     let dir = vec2<f32>(cos(ang), sin(ang));
     let along = dot(q, dir);
     var across = dot(q, vec2<f32>(-dir.y, dir.x));
-    let bend = vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u) ^ pcg(bitcast<u32>(k)));
+    let bend = flint_vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u) ^ flint_pcg(bitcast<u32>(k)));
     across += (bend - 0.5) * 2.0 * wob;
 
     let r = floor(across / spacing);
     let id = row_identity(i32(r), k);
-    let salt = pcg(bitcast<u32>(id.y) + 0x9e3779b9u);
-    let h = hash3(id.x, i32(layer), seed ^ salt);
+    let salt = flint_pcg(bitcast<u32>(id.y) + 0x9e3779b9u);
+    let h = flint_hash3(id.x, i32(layer), seed ^ salt);
     let off = across - (r + 0.5 + (h.x - 0.5) * 0.4) * spacing;
 
     let len = spacing * (8.0 + 16.0 * h.y);
     let t = (along + h.z * len) / len;
     let seg = floor(t);
     let x = t - seg;
-    let hs = hash3(id.x, i32(seg), (seed + layer * 104729u + 17u) ^ salt);
+    let hs = flint_hash3(id.x, i32(seg), (seed + layer * 104729u + 17u) ^ salt);
     if hs.x < 0.1 {
         return 0.0;
     }
@@ -226,20 +226,20 @@ fn world_stroke_drawn(q: vec2<f32>, ang: f32, layer: u32, seed: u32, s: f32, k: 
     let dir = vec2<f32>(cos(ang), sin(ang));
     let along = dot(q, dir);
     var across = dot(q, vec2<f32>(-dir.y, dir.x));
-    let bend = vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u) ^ pcg(bitcast<u32>(k)));
+    let bend = flint_vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u) ^ flint_pcg(bitcast<u32>(k)));
     across += (bend - 0.5) * 2.0 * wob;
 
     let r = floor(across / spacing);
     let id = row_identity(i32(r), k);
-    let salt = pcg(bitcast<u32>(id.y) + 0x9e3779b9u);
-    let h = hash3(id.x, i32(layer), seed ^ salt);
+    let salt = flint_pcg(bitcast<u32>(id.y) + 0x9e3779b9u);
+    let h = flint_hash3(id.x, i32(layer), seed ^ salt);
     let off = across - (r + 0.5 + (h.x - 0.5) * 0.4) * spacing;
 
     let len = spacing * (8.0 + 16.0 * h.y);
     let t = (along + h.z * len) / len;
     let seg = floor(t);
     let x = t - seg;
-    let hs = hash3(id.x, i32(seg), (seed + layer * 104729u + 17u) ^ salt);
+    let hs = flint_hash3(id.x, i32(seg), (seed + layer * 104729u + 17u) ^ salt);
     let mid = vec2<f32>(along - (x - 0.5) * len, across - off);
     let at = mid.x * dir + mid.y * vec2<f32>(-dir.y, dir.x);
     let order = draw_order(at, spacing * ORDER_ROWS, u32(row.i.w));
@@ -283,8 +283,8 @@ const ORDER_KNOTS = array<f32, 9>(0.0, 0.3105, 0.3864, 0.4464, 0.5015, 0.556, 0.
 // is reached, 0..1; `scale` is the field's feature size in p's units
 fn draw_order(p: vec2<f32>, scale: f32, seed: u32) -> f32 {
     let q = p / max(scale, 1e-6);
-    let s = pcg(seed ^ 0x6a09e667u);
-    let n = 0.65 * vnoise(q, s) + 0.35 * vnoise(q * 2.03 + 17.0, s + 1u);
+    let s = flint_pcg(seed ^ 0x6a09e667u);
+    let n = 0.65 * flint_vnoise(q, s) + 0.35 * flint_vnoise(q * 2.03 + 17.0, s + 1u);
     var knots = ORDER_KNOTS;
     var lo = 0.0;
     for (var k = 1; k < 9; k++) {
@@ -345,7 +345,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let wdx = dpdx(wp.xyz);
     let wdy = dpdy(wp.xyz);
     let src = textureLoad(input_texture, px, 0);
-    let id = mask_id(mask_px(in.uv));
+    let id = flint_mask_id(in.uv);
     let slot = slot_of(id);
     if passes_through(slot) {
         return src;
@@ -367,7 +367,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // the drawing is whole, as a fade draws it
     var front = u.front;
     if row.i.z > 0.5 && slot != 0u {
-        front *= mask_blend(mask_px(in.uv));
+        front *= flint_mask_blend(flint_mask_load(flint_mask_texel(in.uv)));
     }
     let drawing = DRAW_ON && front < 1.0;
     // Above 1 tells the strokes to draw whole
@@ -511,8 +511,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // first where `sketchy` asks
     let wob = row.c.w * ppp;
     let freq = 1.0 / (row.a.x * 7.0);
-    let w1 = vec2<f32>(vnoise(pt * freq, seed + 101u), vnoise(pt * freq, seed + 202u)) - 0.5;
-    let w2 = vec2<f32>(vnoise(pt * freq * 1.3, seed + 303u), vnoise(pt * freq * 1.3, seed + 404u)) - 0.5;
+    let w1 = vec2<f32>(flint_vnoise(pt * freq, seed + 101u), flint_vnoise(pt * freq, seed + 202u)) - 0.5;
+    let w2 = vec2<f32>(flint_vnoise(pt * freq * 1.3, seed + 303u), flint_vnoise(pt * freq * 1.3, seed + 404u)) - 0.5;
     let reach = max(row.b.w * 0.5 * ppp, 0.5);
     var line1 = 0.0;
     var line2 = 0.0;
@@ -532,7 +532,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         line1 *= drawn(at, draw_order(p + w1 * 2.0 * wob / ppp, order_scale, order_seed), 0.02);
         line2 *= drawn(at, draw_order(p + w2 * 3.0 * wob / ppp, order_scale, order_seed), 0.02);
     }
-    let pressure = 0.65 + 0.35 * vnoise(pt * freq * 2.0, seed + 505u);
+    let pressure = 0.65 + 0.35 * flint_vnoise(pt * freq * 2.0, seed + 505u);
     var contour = max(line1, line2 * row.d.x * 0.7) * pressure * row.b.z;
     // Clutter (#883): where the lines would already merge into a fill, over
     // a disc two outline widths across and over one three times that, they
@@ -566,9 +566,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         tooth = smoothstep(0.2, 0.75, hgt);
         paper = row.e.xyz * img_paper_tint(c) * (1.0 - grain * 0.5 * (0.5 - hgt));
     } else {
-        let fine = vnoise(pt * 0.9, 7u);
-        let mid = vnoise(pt * 0.21, 11u);
-        let broad = vnoise(pt * 0.03, 13u);
+        let fine = flint_vnoise(pt * 0.9, 7u);
+        let mid = flint_vnoise(pt * 0.21, 11u);
+        let broad = flint_vnoise(pt * 0.03, 13u);
         paper_noise = 0.45 * fine + 0.35 * mid + 0.2 * broad;
         tooth = smoothstep(0.2, 0.75, fine * 0.7 + mid * 0.3);
         paper = row.e.xyz * (1.0 - grain * 0.12 * (1.0 - paper_noise));

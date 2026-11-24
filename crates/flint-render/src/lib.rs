@@ -181,11 +181,12 @@ mod tests {
         for source in [
             concat!(
                 include_str!("stylize/prelude_core.wgsl"),
+                include_str!("stylize/noise.wgsl"),
                 include_str!("stylize/edges_read.wgsl"),
                 include_str!("stylize/contour.wgsl")
             ),
             concat!(
-                include_str!("stylize/prelude_core.wgsl"),
+                include_str!("stylize/noise.wgsl"),
                 include_str!("stylize/kuwahara.wgsl")
             ),
         ] {

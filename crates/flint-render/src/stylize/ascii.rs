@@ -862,11 +862,15 @@ fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::Bi
 
 const CELLS_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "mask_slot.wgsl",
     "ascii_common.wgsl",
     "ascii_cells.wgsl"
 );
 pub(crate) const GLYPH_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "noise.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "ascii_common.wgsl",
     "../palette.wgsl",
     "ascii_dissolve.wgsl",
@@ -875,22 +879,30 @@ pub(crate) const GLYPH_SHADER: kit::Wgsl = kit::wgsl!(
 );
 const EDGE_OUTLINE_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "ascii_edge_source.wgsl",
     "ascii_edge_outline.wgsl"
 );
 const EDGE_CELLS_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "ascii_edge_source.wgsl",
     "ascii_edge_cells.wgsl"
 );
 const EDGE_VIEW_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "ascii_edge_source.wgsl",
     "ascii_edge_view.wgsl",
     "ascii_edge_slot.wgsl"
 );
 const EDGE_THIN_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "ascii_common.wgsl",
     "ascii_edge_slot.wgsl",
     "ascii_edge_thin.wgsl"
@@ -901,33 +913,45 @@ const EDGE_CORNER_SHADER: kit::Wgsl = kit::wgsl!(
 );
 const DISSOLVE_ORDER_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "noise.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "ascii_common.wgsl",
     "ascii_dissolve.wgsl",
     "ascii_dissolve_order.wgsl"
 );
 const DISSOLVE_RANK_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "noise.wgsl",
+    "mask_slot.wgsl",
     "ascii_common.wgsl",
     "ascii_dissolve.wgsl",
     "ascii_dissolve_rank.wgsl"
 );
 const VARIANT_CELLS_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "ascii_common.wgsl",
     "ascii_variant_cells.wgsl"
 );
 const SNAP_OWNER_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "ascii_common.wgsl",
     "ascii_snap_owner.wgsl"
 );
 const STATS_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "mask_read.wgsl",
+    "mask_slot.wgsl",
     "ascii_common.wgsl",
     "ascii_stats.wgsl"
 );
 const STATS_RESOLVE_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "mask_slot.wgsl",
     "ascii_common.wgsl",
     "ascii_stats_resolve.wgsl"
 );

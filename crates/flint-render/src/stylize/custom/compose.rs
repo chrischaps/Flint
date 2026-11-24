@@ -66,14 +66,10 @@ struct StylePixel {
 "#,
     // The helpers built-in styles include too (#743): one text for both
     include_str!("../prelude_core.wgsl"),
-    r#"
-// A cheap, stable hash of a cell: 0..1
-fn flint_hash(p: vec2<f32>) -> f32 {
-    let q = fract(p * vec2<f32>(123.34, 456.21));
-    let r = q + dot(q, q + 45.32);
-    return fract(r.x * r.y);
-}
-"#
+    // The hash and value noise the built-in styles boil and grain with
+    // (#1256): `flint_hash`, `flint_hash1`, `flint_hash3`, `flint_vnoise`
+    "\n",
+    include_str!("../noise.wgsl"),
 );
 
 pub(super) fn prelude_sample(stage: StyleStage) -> String {
@@ -121,37 +117,28 @@ fn flint_world_pos(uv: vec2<f32>) -> vec3<f32> {
 }
 "#;
 
-pub(super) const PRELUDE_MASK: &str = r#"
+pub(super) const PRELUDE_MASK: &str = concat!(
+    r#"
 @group(2) @binding(1) var flint_mask_texture: texture_2d<u32>;
 
-fn flint_mask_texel(uv: vec2<f32>) -> vec2<i32> {
-    let dims = vec2<i32>(textureDimensions(flint_mask_texture));
-    return clamp(vec2<i32>(uv * vec2<f32>(dims)), vec2<i32>(0), dims - 1);
-}
-
-// The style mask id at uv (0 = no style; #263)
-fn flint_mask_id(uv: vec2<f32>) -> u32 {
-    return textureLoad(flint_mask_texture, flint_mask_texel(uv), 0).r;
-}
-
-// Mask id -> this style's settings row + 1; 0 for a pixel that isn't one
-// of this style's entities (or one opted out)
-fn flint_slot(id: u32) -> u32 {
-    if (id >= arrayLength(&flint_slots)) {
-        return 0u;
-    }
-    return flint_slots[id];
-}
-
+"#,
+    // The mask and slot readers the built-in styles include (#1256):
+    // `flint_mask_texel`, `flint_mask_id`, `flint_mask_load`, ..., and
+    // `flint_slot` (mask id -> this style's settings row + 1; 0 for a pixel
+    // that isn't one of this style's entities, or one opted out)
+    include_str!("../mask_read.wgsl"),
+    "\n",
+    include_str!("../mask_slot.wgsl"),
+    r#"
 // How much of this style the entity at uv asks for: 0 where it isn't this
 // style's (a `style_mask` or `<name>_style` naming it), else its blend
 // 0..1 (#278)
 fn flint_style_blend(uv: vec2<f32>) -> f32 {
-    let m = textureLoad(flint_mask_texture, flint_mask_texel(uv), 0);
-    if (flint_slot(m.r) == 0u) {
+    let m = flint_mask_load(flint_mask_texel(uv));
+    if (flint_slot(m.x) == 0u) {
         return 0.0;
     }
-    return f32(m.g) / 65535.0;
+    return flint_mask_blend(m);
 }
 
 // The settings of the entity at uv (#414): its `<name>_style` fields, else
@@ -161,7 +148,8 @@ fn flint_params_at(uv: vec2<f32>) -> Params {
     let s = flint_slot(flint_mask_id(uv));
     return flint_params.rows[max(s, 1u) - 1u];
 }
-"#;
+"#
+);
 
 pub(super) const PRELUDE_EDGES: &str = r#"
 @group(2) @binding(2) var flint_edges_texture: texture_2d<f32>;

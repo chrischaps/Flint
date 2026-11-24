@@ -22,7 +22,7 @@
 // the picture is the same to the bit.
 
 @group(1) @binding(0) var cell_input: texture_2d<f32>;
-@group(1) @binding(1) var cell_mask: texture_2d<u32>;
+@group(1) @binding(1) var flint_mask_texture: texture_2d<u32>;
 
 // As the glyph pass's `shown_entity`
 fn cell_shown(p: vec2<i32>) -> vec3<f32> {
@@ -37,9 +37,7 @@ fn cell_id(p: vec2<f32>) -> u32 {
     if !in_mask_rect(p) {
         return 0u;
     }
-    let msize = vec2<i32>(textureDimensions(cell_mask));
-    let mp = vec2<i32>(floor(p * vec2<f32>(msize) / u.size));
-    return textureLoad(cell_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).r;
+    return flint_mask_load(flint_mask_texel_of(p, u.size)).x;
 }
 
 struct Entries {

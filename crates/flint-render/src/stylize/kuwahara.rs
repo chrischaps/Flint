@@ -131,7 +131,7 @@ impl Kuwahara {
         let pipeline = kit::fullscreen_pipeline(
             device,
             "Kuwahara Pipeline",
-            &kit::shader(device, "Kuwahara Shader", kit::wgsl!("kuwahara.wgsl")),
+            &kit::shader(device, "Kuwahara Shader", kit::wgsl!("noise.wgsl", "kuwahara.wgsl")),
             &[&uniform_bgl, &sampled_bgl, &sampled_bgl],
             d.format,
         );

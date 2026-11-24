@@ -39,9 +39,9 @@ struct EdgeSource {
 
 // Each mask id's variant slot (#336, the glyph pass's `slots`): non-zero
 // for every per-entity variant's id
-@group(0) @binding(1) var<storage, read> slots: array<u32>;
+@group(0) @binding(1) var<storage, read> flint_slots: array<u32>;
 @group(1) @binding(0) var shared_edges: texture_2d<f32>;
-@group(1) @binding(1) var mask: texture_2d<u32>;
+@group(1) @binding(1) var flint_mask_texture: texture_2d<u32>;
 @group(1) @binding(2) var scene_depth: texture_depth_2d;
 
 // A mask id drawn in this style (#266): the plain `ascii` id, or one the
@@ -53,16 +53,14 @@ fn is_ours(id: u32) -> bool {
     if id == u.src.plain_id {
         return true;
     }
-    return id < arrayLength(&slots) && slots[id] != 0u;
+    return flint_slot(id) != 0u;
 }
 
 // The mask id under depth pixel `q`; the mask may differ in size from the
 // depth, so it is read by UV.
 fn id_at(q: vec2<i32>, size: vec2<i32>) -> u32 {
-    let msize = vec2<i32>(textureDimensions(mask));
     let uv = (vec2<f32>(clamp(q, vec2<i32>(0), size - vec2<i32>(1))) + 0.5) / vec2<f32>(size);
-    let m = clamp(vec2<i32>(uv * vec2<f32>(msize)), vec2<i32>(0), msize - vec2<i32>(1));
-    return textureLoad(mask, m, 0).x;
+    return flint_mask_id(uv);
 }
 
 // The view distance at depth pixel `q` (the sky stopped just short of the

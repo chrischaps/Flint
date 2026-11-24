@@ -134,6 +134,7 @@ fn wgsl(name: &str, stage: StyleStage, inputs: Inputs) -> String {
          //                                 in the same space as p.color\n\
          //   flint_luma(rgb) -> f32        perceived brightness\n\
          //   flint_hash(v: vec2) -> f32    a stable 0..1 noise\n\
+         //   flint_vnoise(p, seed) -> f32  smooth value noise, the built-ins' boil\n\
          //   flint_to_display(rgb), flint_to_linear(rgb)   sRGB encode / decode\n",
     );
     let mut tries = String::new();

@@ -20,7 +20,7 @@ struct MaskViewUniforms {
 @group(0) @binding(0) var<uniform> params: MaskViewUniforms;
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
 @group(1) @binding(1) var input_sampler: sampler;
-@group(2) @binding(0) var style_mask: texture_2d<u32>;
+@group(2) @binding(0) var flint_mask_texture: texture_2d<u32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -52,10 +52,6 @@ fn id_color(id: u32) -> vec3<f32> {
     return vec3<f32>(0.25) + 0.75 * c;
 }
 
-fn mask_at(p: vec2<i32>, size: vec2<i32>) -> u32 {
-    return textureLoad(style_mask, clamp(p, vec2<i32>(0), size - 1), 0).r;
-}
-
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let src = textureSample(input_texture, input_sampler, in.uv);
@@ -63,9 +59,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let shown = select(rgb, flint_to_display(rgb), params.srgb > 0.5);
     let luma = flint_luma(shown);
 
-    let size = vec2<i32>(textureDimensions(style_mask));
+    let size = flint_mask_size();
     let p = vec2<i32>(in.uv * vec2<f32>(size));
-    let id = mask_at(p, size);
+    let id = flint_mask_load(p).x;
 
     var out: vec3<f32>;
     if id == 0u {
@@ -74,7 +70,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // The hue, shaded by the scene so form still reads, and as strong
         // as the entity's blend (#278): a half-faded prop is half its hue
         let shade = mix(1.0, 0.35 + 0.9 * luma, params.shading);
-        let blend = f32(textureLoad(style_mask, clamp(p, vec2<i32>(0), size - 1), 0).g) / 65535.0;
+        let blend = flint_mask_blend(flint_mask_load(p));
         out = mix(vec3<f32>(luma * params.dim), id_color(id) * shade, blend);
     }
 
@@ -85,7 +81,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         var edge = false;
         for (var dy = -r; dy <= r; dy++) {
             for (var dx = -r; dx <= r; dx++) {
-                if mask_at(p + vec2<i32>(dx, dy), size) != id {
+                if flint_mask_load(p + vec2<i32>(dx, dy)).x != id {
                     edge = true;
                 }
             }
