@@ -260,8 +260,8 @@ A schema file inside a Flint engine checkout (the engine's repository, or the `e
 | `bad-emitter` | error | an inline `particle_emitter` has a key the emitter doesn't read or a value it can't use (a curve or range of the wrong form, a zero lifetime, an unknown shape), named by entity and key; it replaces the schema's `unknown-field`, `bad-type` and `bad-enum-value` for that component, so one mistake is said once, in the emitter's words (the schema declares every key the emitter reads, its many-form keys as `any`) |
 | `bad-input-config` | error | the input config the scene or the manifest names does not parse |
 | `bad-user-style` | error | a user style does not load or its shader does not compile (a warning for what the style's own check only warns about) |
-| `bad-style-setting` | warning | `[post_process.styles]` names a style, a key or a value there is not |
-| `bad-look` | error | the look a scene names is not found, or does not fit under the scene's keys |
+| `bad-style-setting` | warning | `[post_process.styles]` names a style, a key or a value there is not; in a look, a style no folder that can take the look has (a game's own Rust style is known only to its binary, so this is a warning there too) |
+| `bad-look` | error | the look a scene names is not found, or does not fit under the scene's keys; or a look file the project holds does not read |
 | `bad-wooze` | error | the scene's `[wooze]` table, or the preset it names, is wrong |
 | `bad-species` | error | a `[living.species.<spec>]` table is wrong, or no living prop grows from that spec |
 | `bad-field` | error | a field the scene declares (`[field.<name>]`) has a key or zone that is wrong, named by the field and the key (`weather.keys.wind`) or zone (`weather.zone.storm`) as the field; the player warns and plays without the part that's wrong ([Scripting](scripting.md#fields-a-scene-declares)) |

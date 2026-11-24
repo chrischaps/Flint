@@ -34,6 +34,7 @@
 //! | every other file a scene, prefab, effect, glyph set, chunk, style or script names | `flint bundle` | `missing-file` `toml-parse` |
 //! | user styles load and compile | `flint bundle` | `bad-user-style` |
 //! | `[post_process.styles]`, the look | `flint validate`, `flint bundle` | `bad-style-setting` `bad-look` |
+//! | every look file the subject holds reads, and its tables for user and game styles name a style some folder that can take it has | new (#1272, [`looks`]) | `bad-look` `bad-style-setting` |
 //! | `[wooze]`, `[living.species]` | `flint validate` | `bad-wooze` `bad-species` |
 //! | `[field.<name>]`, each declared field's keys and zones | new (#1014, [`scene`]) | `bad-field` |
 //! | constraints, and that each can be evaluated | `flint validate`; the second is new | `constraint` `bad-constraint` |
@@ -47,6 +48,7 @@
 //! for the files they name ([`references`]).
 
 pub mod cargo;
+mod looks;
 mod references;
 pub mod report;
 pub mod scene;
@@ -508,6 +510,10 @@ pub fn run(subject: &Subject, checks: Checks) -> Report {
                     .filter(|key| references::is_scanned(key) && !key.ends_with(".scene.toml")),
             );
         }
+    }
+    if checks.styles {
+        // Every look the subject holds, named by a scene or not (#1272)
+        found.extend(looks::check(subject, &files, &mut memo));
     }
     if checks.files {
         found.extend(references::check(subject, &files));

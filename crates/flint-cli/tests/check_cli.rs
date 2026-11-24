@@ -902,3 +902,136 @@ fn fix_and_dry_run_answer_in_json() {
     let after = std::fs::read_to_string(dir.join(path)).unwrap();
     assert!(after.contains("brightness = 10.0"), "{after}");
 }
+
+// ── #1272: a look's tables for user styles, judged by the project ─────
+
+const HOLOGRAM: &str = "version = 1\nname = \"hologram\"\nshader = \"hologram.wgsl\"\n\
+    [params.glow]\ndefault = 1.0\nmin = 0.0\nmax = 4.0\n";
+
+const PASSTHROUGH: &str = "fn style(p: StylePixel) -> vec4<f32> {\n    return p.color;\n}\n";
+
+/// A project with the user style `hologram` and `looks`, its scene taking
+/// `scene_look` when given.
+fn looks_project(name: &str, looks: &[(&str, &str)], scene_look: Option<&str>) -> PathBuf {
+    let scene = match scene_look {
+        Some(look) => format!("[scene]\nname = \"Dock\"\n\n[post_process]\nlook = \"{look}\"\n"),
+        None => "[scene]\nname = \"Dock\"\n".to_string(),
+    };
+    let mut files: Vec<(String, String)> = vec![
+        ("scenes/dock.scene.toml".into(), scene),
+        ("styles/hologram.shader.toml".into(), HOLOGRAM.into()),
+        ("styles/hologram.wgsl".into(), PASSTHROUGH.into()),
+    ];
+    files.extend(
+        looks
+            .iter()
+            .map(|(look, text)| (format!("styles/{look}.look.toml"), text.to_string())),
+    );
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(p, t)| (p.as_str(), t.as_str()))
+        .collect();
+    project(name, &files)
+}
+
+/// The diagnostics about look files: code, file, message.
+fn look_findings(doc: &serde_json::Value) -> Vec<(String, String, String)> {
+    doc["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| {
+            d["file"]
+                .as_str()
+                .is_some_and(|f| f.ends_with(".look.toml"))
+        })
+        .map(|d| {
+            (
+                d["code"].as_str().unwrap().to_string(),
+                d["file"].as_str().unwrap().to_string(),
+                d["message"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Done when #1272: `flint check` on a project whose look names a style no
+/// folder of the project has reports it, naming the look file, whether a
+/// scene takes the look or not; a look naming the project's own user style
+/// passes, and a key that style doesn't take is named too.
+#[test]
+fn a_looks_style_no_folder_has_is_reported_on_the_look() {
+    let good = "[post_process.styles.hologram]\nglow = 2.0\n";
+    let typo = "[post_process.styles.hologramm]\nglow = 2.0\n";
+    let bad_key = "[post_process.styles.hologram]\nglwo = 2.0\n";
+
+    // A look naming the project's user style passes
+    let dir = looks_project("look-user-style", &[("dusk", good)], None);
+    let o = flint(&dir, &["check", "--json"]);
+    let doc = json(&o);
+    assert_eq!(look_findings(&doc), [], "{doc:#}");
+    assert_eq!(o.status.code(), Some(0), "{doc:#}");
+
+    // A style no folder has, named by no scene
+    let dir = looks_project(
+        "look-unknown-style",
+        &[("dusk", good), ("neon", typo)],
+        None,
+    );
+    let o = flint(&dir, &["check", "--json"]);
+    let doc = json(&o);
+    let found = look_findings(&doc);
+    assert_eq!(found.len(), 1, "{doc:#}");
+    let (code, file, message) = &found[0];
+    assert_eq!(code, "bad-style-setting");
+    assert_eq!(file, "styles/neon.look.toml");
+    assert!(
+        message.contains("look 'neon'")
+            && message.contains("unknown style 'hologramm'")
+            && message.contains("did you mean `hologram`?"),
+        "{message}"
+    );
+    // A warning: a game's Rust style is its binary's to know
+    assert_eq!(o.status.code(), Some(0), "{doc:#}");
+    let text = stdout(&flint(&dir, &["check"]));
+    assert!(text.contains("styles/neon.look.toml"), "{text}");
+    assert!(text.contains("warning[bad-style-setting]"), "{text}");
+
+    // Named by the scene: still once, on the look
+    let dir = looks_project("look-unknown-style-taken", &[("neon", typo)], Some("neon"));
+    let doc = json(&flint(&dir, &["check", "--json"]));
+    let found = look_findings(&doc);
+    assert_eq!(found.len(), 1, "{doc:#}");
+    assert_eq!(found[0].1, "styles/neon.look.toml");
+    // ... and checking the scene alone finds it too
+    let doc = json(&flint(&dir, &["check", "scenes/dock.scene.toml", "--json"]));
+    assert_eq!(look_findings(&doc).len(), 1, "{doc:#}");
+
+    // A key the user style doesn't take
+    let dir = looks_project("look-user-style-key", &[("dusk", bad_key)], None);
+    let doc = json(&flint(&dir, &["check", "--json"]));
+    let found = look_findings(&doc);
+    assert_eq!(found.len(), 1, "{doc:#}");
+    assert!(found[0].2.contains("glwo"), "{found:?}");
+}
+
+/// A look file that doesn't read is a `bad-look` on its file, named by a
+/// scene or not: the player's Look picker would skip it.
+#[test]
+fn a_look_file_that_doesnt_read_is_a_bad_look() {
+    let dir = looks_project(
+        "look-unreadable",
+        &[("dusk", "[post_process]\nbloom_intensty = 0.2\n")],
+        None,
+    );
+    let o = flint(&dir, &["check", "--json"]);
+    let doc = json(&o);
+    let found = look_findings(&doc);
+    assert_eq!(found.len(), 1, "{doc:#}");
+    assert_eq!(found[0].0, "bad-look");
+    assert!(
+        found[0].2.contains("did you mean 'bloom_intensity'"),
+        "{found:?}"
+    );
+    assert_eq!(o.status.code(), Some(1), "{doc:#}");
+}
