@@ -39,14 +39,22 @@
 //!   A wrapped function is two call levels deep, so a profiled call runs
 //!   with twice Rhai's call-level limit (`ScriptEngine::call`): a recursion
 //!   fails at the depth it would untimed. Not wrapped, so inside their
-//!   caller's time: callbacks (the callback's own scope), functions with a
-//!   `this` type or reading `this` (a wrapper can't pass `this` on),
-//!   closures (Rhai 1.24 keeps a closure's definition in the expression
-//!   that makes it, never looking it up by name) and an imported module's
-//!   functions (the module resolver's, compiled once for every script).
+//!   caller's time: callbacks (the callback's own scope) and functions with
+//!   a `this` type or reading `this` (a wrapper can't pass `this` on).
+//! - **Closures** (#1281): Rhai 1.24 keeps a closure's definition in the
+//!   expression that makes it, never looking it up by name, so the profiled
+//!   copy rewrites those expressions: each closure a function body makes is
+//!   a wrapper curried with the original ([`Closures`]), named by its line,
+//!   `<source>:closure at line 12`.
+//! - **An imported module's functions** (#1281): a module is evaluated once
+//!   and shared by every script, so the resolver keeps a second, profiled
+//!   form of it, made by [`profiled`] before `Module::eval_ast_as_new`, and
+//!   an import gets that form while this thread [`counting`]
+//!   (`VfsModuleResolver`). Named by the import: `menu::open()`.
 //!
 //! Names are interned once a run ([`id_of`]): an engine function as
-//! `name()`, a script's as `<source>:<name>()`. Records go to a per-thread sink, which
+//! `name()`, a script's as `<source>:<name>()`, a module's as
+//! `<import>::<name>()`. Records go to a per-thread sink, which
 //! [`begin`] switches on and [`end`] drains, so engines on other threads
 //! (tests) never mix.
 
@@ -258,6 +266,14 @@ pub(crate) fn begin(trace: bool) -> bool {
     true
 }
 
+/// Whether this thread is counting: a profiled call is under way, so an
+/// `import` it runs is served the module's profiled form
+/// (`VfsModuleResolver`, #1281).
+#[inline]
+pub(crate) fn counting() -> bool {
+    ON.with(Cell::get)
+}
+
 /// Stop counting and hand what was counted since [`begin`] to `out`, in
 /// the order each function was first called. Called while the callback's
 /// scope is still open: the engine calls it made are recorded inside it.
@@ -415,14 +431,60 @@ pub(crate) fn is_inner(name: &str) -> bool {
         .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// `calls` (a script's callable AST, `ScriptInstance::calls`) with each of
-/// its functions timed: a wrapper of the same name and parameters that
-/// opens a guard and calls the original under [`INNER_PREFIX`]`<id>`. Left
-/// as they are: what the module doc lists. `None` when nothing is left to wrap or the wrappers didn't
-/// compile; the script is then called on `calls`, untimed inside.
-pub(crate) fn profiled(engine: &rhai::Engine, calls: &AST, source: &str) -> Option<AST> {
+/// Whose functions [`profiled`] times, which names their records.
+#[derive(Clone, Copy)]
+pub(crate) enum Naming<'a> {
+    /// A script, by its source: `scripts/hud.rhai:draw_bar()`.
+    Script(&'a str),
+    /// An imported module, by the path its `import` gave: `menu::open()`
+    /// (#1281). Its renamed bodies are private, so the module exports what
+    /// it did.
+    Module(&'a str),
+}
+
+impl<'a> Naming<'a> {
+    fn function(self, name: &str) -> String {
+        match self {
+            Naming::Script(source) => format!("{source}:{name}()"),
+            Naming::Module(path) => format!("{path}::{name}()"),
+        }
+    }
+
+    /// A closure has no name, so its line is its name (#1281): two on one
+    /// line are one record.
+    fn closure(self, line: Option<usize>) -> String {
+        let at = line.map_or_else(|| "?".to_string(), |l| l.to_string());
+        match self {
+            Naming::Script(source) => format!("{source}:closure at line {at}"),
+            Naming::Module(path) => format!("{path}::closure at line {at}"),
+        }
+    }
+
+    fn source(self) -> &'a str {
+        match self {
+            Naming::Script(s) | Naming::Module(s) => s,
+        }
+    }
+}
+
+/// `calls` (a script's callable AST, `ScriptInstance::calls`, or a module's
+/// whole AST) with each of its functions timed: a wrapper of the same name
+/// and parameters that opens a guard and calls the original under
+/// [`INNER_PREFIX`]`<id>`; and each closure made in a function body timed
+/// ([`Closures`]). Left as they are: what the module doc lists. `None` when
+/// nothing is left to time or the wrappers didn't compile; the script is
+/// then called on `calls`, untimed inside.
+pub(crate) fn profiled(engine: &rhai::Engine, calls: &AST, naming: Naming) -> Option<AST> {
     use std::fmt::Write;
-    let defs: Vec<_> = calls.iter_fn_def().cloned().collect();
+    let source = naming.source();
+    // Every closure made in a body becomes a timed one first, so a wrapped
+    // function's renamed body and an unwrapped one (a callback) both make
+    // timed closures
+    let mut closures = Closures::new(engine, calls, naming);
+    let defs: Vec<rhai::Shared<rhai::ScriptFuncDef>> = calls
+        .iter_fn_def()
+        .map(|def| closures.in_def(def))
+        .collect();
     // Which defs get a wrapper: (index, id)
     let mut wrapped: Vec<(usize, FnId)> = Vec::new();
     let mut text = String::new();
@@ -430,7 +492,7 @@ pub(crate) fn profiled(engine: &rhai::Engine, calls: &AST, source: &str) -> Opti
         if !wants_wrapper(def) {
             continue;
         }
-        let id = id_of(&format!("{source}:{}()", def.name));
+        let id = id_of(&naming.function(&def.name));
         let params = def
             .params
             .iter()
@@ -443,7 +505,7 @@ pub(crate) fn profiled(engine: &rhai::Engine, calls: &AST, source: &str) -> Opti
         );
         wrapped.push((i, id));
     }
-    if wrapped.is_empty() {
+    if wrapped.is_empty() && closures.timed == 0 {
         return None;
     }
     let compiled = match engine.compile(&text) {
@@ -468,6 +530,11 @@ pub(crate) fn profiled(engine: &rhai::Engine, calls: &AST, source: &str) -> Opti
         let wrapper = wrappers.get(format!("__flint_w_{i}").as_str())?;
         let mut inner = (**def).clone();
         inner.name = format!("{INNER_PREFIX}{id}").into();
+        if matches!(naming, Naming::Module(_)) {
+            // Callable from the module's own functions (its environment
+            // holds the whole lib), never exported as `menu::__flint_fn_9`
+            inner.access = rhai::FnAccess::Private;
+        }
         lib.set_script_fn(inner);
         let mut outer = (***wrapper).clone();
         outer.name = def.name.clone();
@@ -494,12 +561,242 @@ fn wants_wrapper(def: &rhai::ScriptFuncDef) -> bool {
         .iter()
         .any(|c| c.name == def.name.as_str());
     // A closure (`anon$<hash>`) carries its definition in the expression
-    // that makes it, so a wrapper under its name would never be called: its
-    // time stays its caller's
-    if def.name.starts_with("anon$") {
+    // that makes it, so a wrapper under its name would never be called:
+    // [`Closures`] times it where it is made
+    if is_closure(def) {
         return false;
     }
-    // A function's Debug form names every node it holds; `ThisPtr` is a
-    // read of `this`. Once a script, never a frame.
-    !callback && !format!("{:?}", def.body).contains("ThisPtr")
+    !callback && !reads_this(def)
+}
+
+/// Whether `def` is a closure's (`|x| ..`), which Rhai names `anon$<hash>`.
+fn is_closure(def: &rhai::ScriptFuncDef) -> bool {
+    def.name.starts_with("anon$")
+}
+
+/// Whether `def` reads `this`, which a wrapper can't pass on. A function's
+/// Debug form names every node it holds; `ThisPtr` is a read of `this`.
+/// Once a script, never a frame.
+fn reads_this(def: &rhai::ScriptFuncDef) -> bool {
+    format!("{:?}", def.body).contains("ThisPtr")
+}
+
+/// Times the closures a script's function bodies make (#1281). Rhai 1.24
+/// keeps a closure's definition in the expression that makes it, a
+/// constant function pointer (`FnPtr` to the definition itself, never
+/// looked up by name), curried with what it captures. Each such constant
+/// becomes a constant pointer to a wrapper, curried with the original:
+///
+/// `|v| v + sum` is `fn __flint_fn_<id>(__flint_f, sum, v) {
+///     let __flint_fn_timer = __flint_fn_enter(<id>); call(__flint_f, sum, v) }`
+///
+/// with `__flint_f` the original closure, so the value is still one
+/// self-contained pointer: kept in a variable and called after profiling
+/// ends, it runs (its guard then opens nothing). The wrapper takes every
+/// parameter, the captured ones included (they are curried after it, as
+/// they were onto the original), and hands them on through `call(f, ..)`'s
+/// function form, which, unlike a method call's arguments, keeps a
+/// captured variable's shared value shared: the closure's writes to it
+/// still reach the caller's variable. A closure inside a closure is timed
+/// too (its maker's body is rewritten first). Left as they are: a closure
+/// reading `this`, one in the top level (run once, untimed) and one Rhai
+/// folded into a constant array or map.
+struct Closures<'e> {
+    engine: &'e rhai::Engine,
+    naming: Naming<'e>,
+    /// The closures' definitions by name, from the AST's lib (Rhai keeps a
+    /// copy there, under the pointer's name)
+    defs: HashMap<rhai::ImmutableString, rhai::Shared<rhai::ScriptFuncDef>>,
+    /// Each closure's definition with its own body's closures timed, made
+    /// once a closure however many places make it
+    timed_defs: HashMap<rhai::ImmutableString, rhai::Shared<rhai::ScriptFuncDef>>,
+    /// Closures made timed: none, and [`profiled`] may have nothing to do
+    timed: usize,
+}
+
+impl<'e> Closures<'e> {
+    fn new(engine: &'e rhai::Engine, ast: &AST, naming: Naming<'e>) -> Self {
+        let defs = ast
+            .iter_fn_def()
+            .filter(|d| is_closure(d))
+            .map(|d| (d.name.clone(), d.clone()))
+            .collect();
+        Self {
+            engine,
+            naming,
+            defs,
+            timed_defs: HashMap::new(),
+            timed: 0,
+        }
+    }
+
+    /// `def` with every closure its body makes timed: itself when it makes
+    /// none (or is a closure's, reached only where it is made).
+    fn in_def(
+        &mut self,
+        def: &rhai::Shared<rhai::ScriptFuncDef>,
+    ) -> rhai::Shared<rhai::ScriptFuncDef> {
+        if is_closure(def) || self.defs.is_empty() {
+            return def.clone();
+        }
+        let before = self.timed;
+        let mut copy = (**def).clone();
+        self.block(&mut copy.body);
+        if self.timed == before {
+            def.clone()
+        } else {
+            rhai::Shared::new(copy)
+        }
+    }
+
+    fn block(&mut self, block: &mut rhai::StmtBlock) {
+        for stmt in block.statements_mut().iter_mut() {
+            self.stmt(stmt);
+        }
+    }
+
+    /// Every expression `stmt` holds, as `Stmt::walk` reaches them.
+    fn stmt(&mut self, stmt: &mut rhai::Stmt) {
+        use rhai::Stmt;
+        match stmt {
+            Stmt::Var(x, ..) => self.expr(&mut x.1),
+            Stmt::If(x, ..) | Stmt::While(x, ..) | Stmt::Do(x, ..) | Stmt::TryCatch(x, ..) => {
+                self.expr(&mut x.expr);
+                self.block(&mut x.body);
+                self.block(&mut x.branch);
+            }
+            Stmt::Switch(x, ..) => {
+                let (expr, cases) = &mut **x;
+                self.expr(expr);
+                for case in cases.expressions.iter_mut() {
+                    self.expr(&mut case.lhs);
+                    self.expr(&mut case.rhs);
+                }
+            }
+            Stmt::For(x, ..) => {
+                self.expr(&mut x.2.expr);
+                self.block(&mut x.2.body);
+                self.block(&mut x.2.branch);
+            }
+            Stmt::Assignment(x) => {
+                self.expr(&mut x.1.lhs);
+                self.expr(&mut x.1.rhs);
+            }
+            Stmt::FnCall(call, ..) => {
+                for arg in call.args.iter_mut() {
+                    self.expr(arg);
+                }
+            }
+            Stmt::Block(block) => self.block(block),
+            Stmt::Expr(e) => self.expr(e),
+            Stmt::BreakLoop(Some(e), ..) | Stmt::Return(Some(e), ..) => self.expr(e),
+            Stmt::Import(x, ..) => self.expr(&mut x.0),
+            // Noop, Export, Share, a bare break or return: no expression
+            _ => {}
+        }
+    }
+
+    /// Every expression inside `expr`, a method call's arguments too (which
+    /// `Expr::walk` skips, #998), each closure made timed.
+    fn expr(&mut self, expr: &mut rhai::Expr) {
+        use rhai::Expr;
+        match expr {
+            Expr::DynamicConstant(value, pos) => {
+                if let Some(timed) = self.timed_closure(value, *pos) {
+                    **value = timed;
+                }
+            }
+            Expr::InterpolatedString(items, ..) | Expr::Array(items, ..) => {
+                for e in items.iter_mut() {
+                    self.expr(e);
+                }
+            }
+            Expr::Map(map, ..) => {
+                for (_, e) in map.0.iter_mut() {
+                    self.expr(e);
+                }
+            }
+            Expr::Index(x, ..) | Expr::Dot(x, ..) => {
+                self.expr(&mut x.lhs);
+                self.expr(&mut x.rhs);
+            }
+            Expr::And(items, ..) | Expr::Or(items, ..) | Expr::Coalesce(items, ..) => {
+                for e in items.iter_mut() {
+                    self.expr(e);
+                }
+            }
+            Expr::FnCall(call, ..) | Expr::MethodCall(call, ..) => {
+                for arg in call.args.iter_mut() {
+                    self.expr(arg);
+                }
+            }
+            Expr::Stmt(block) => self.block(block),
+            // Constants, variables, properties, `this`: no expression. No
+            // `Expr::Custom` either: Flint registers no custom syntax, and
+            // the web build's Rhai has none (`no_custom_syntax`)
+            _ => {}
+        }
+    }
+
+    /// The timed form of a constant that is a closure: a pointer to its
+    /// wrapper, curried with the closure (see [`Closures`]). `None` for any
+    /// other constant, and for a closure left untimed.
+    fn timed_closure(
+        &mut self,
+        value: &rhai::Dynamic,
+        pos: rhai::Position,
+    ) -> Option<rhai::Dynamic> {
+        use std::fmt::Write;
+        if !value.is_fnptr() {
+            return None;
+        }
+        let ptr = value.clone().try_cast::<rhai::FnPtr>()?;
+        if !ptr.is_anonymous() {
+            return None;
+        }
+        let def = self.defs.get(ptr.fn_name())?.clone();
+        if reads_this(&def) {
+            return None;
+        }
+        // Its own body's closures first, once a definition
+        let inner = match self.timed_defs.get(&def.name) {
+            Some(d) => d.clone(),
+            None => {
+                let mut copy = (*def).clone();
+                self.block(&mut copy.body);
+                let d = rhai::Shared::new(copy);
+                self.timed_defs.insert(def.name.clone(), d.clone());
+                d
+            }
+        };
+        let mut original = rhai::FnPtr::from(inner);
+        for v in ptr.iter_curry() {
+            original.add_curry(v.clone());
+        }
+        let id = id_of(&self.naming.closure(pos.line()));
+        let mut text = format!("fn {INNER_PREFIX}{id}(__flint_f");
+        let mut args = String::from("__flint_f");
+        for p in def.params.iter() {
+            let _ = write!(text, ", {p}");
+            let _ = write!(args, ", {p}");
+        }
+        let _ = write!(text, ") {{ let {GUARD} = {ENTER}({id}); call({args}) }}");
+        let compiled = match self.engine.compile(&text) {
+            Ok(ast) => ast,
+            Err(e) => {
+                tracing::warn!(
+                    target: "script",
+                    "{}: a closure at line {:?} can't be timed: {e}",
+                    self.naming.source(),
+                    pos.line()
+                );
+                return None;
+            }
+        };
+        let wrapper = compiled.iter_fn_def().next()?.clone();
+        let mut timed = rhai::FnPtr::from(wrapper);
+        timed.add_curry(rhai::Dynamic::from(original));
+        self.timed += 1;
+        Some(rhai::Dynamic::from(timed))
+    }
 }
