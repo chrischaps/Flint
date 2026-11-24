@@ -40,4 +40,10 @@ out = {
     "stallAvgDepth": round(sum(len(s["frames"]) for s in stall) / len(stall), 1) if stall else 0,
     "deepestStall": [x.split(" (")[0] for x in deepest["frames"]][:80],
 }
+groups = {}
+for s in mine:
+    h = s["head"].split()
+    groups.setdefault(" ".join(h[:2]), []).append(len(s["frames"]))
+out["byThread"] = sorted(([k, len(v), round(sum(v) / len(v), 1), max(v)] for k, v in groups.items()),
+                         key=lambda r: -r[1])[:4]
 print(json.dumps(out, indent=2))

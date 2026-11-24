@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        unwind: [eh_frame, fp]
+        unwind: [eh_frame]
     env:
       UNWIND: ${{ matrix.unwind }}
       CARGO_INCREMENTAL: "0"
@@ -46,8 +46,8 @@ jobs:
           readelf -S target/profiling/flint-player | grep -E "eh_frame|debug_line" || true
       - name: cargo install --locked samply
         run: cargo install --locked samply && samply --version
-      - name: Run the book's commands
-        run: bash ci-scratch-1249/linux.sh
+      - name: perf dwarf
+        run: bash ci-scratch-1249/dwarf.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -56,6 +56,7 @@ jobs:
 
   windows:
     name: windows (elevated)
+    if: false
     runs-on: windows-latest
     timeout-minutes: 120
     env:
