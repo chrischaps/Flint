@@ -1,7 +1,0 @@
-# Declared by name only: an open schema (ADR 0115), so the scene loader
-# knows the name. Its fields are checked against the schema the style's
-# .shader.toml makes (#556), which takes this one's place in `flint check`
-# and `flint validate` and which the renderer warns with when it binds the
-# scene. A game's own user style needs no file like this for those.
-[component.hologram_style]
-description = "Per-entity settings of the user style flint-examples/styles/hologram.shader.toml. Its fields are the style's [params] (each with its range), enabled, blend and blend_source, checked against the schema the style makes when it loads (#556); open here so the scene loader knows the name"

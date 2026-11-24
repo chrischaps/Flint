@@ -198,6 +198,7 @@ pub fn user_style_component_problems(
             continue;
         }
         let Some(schema) = component_schema(d) else {
+            found.extend(unmasked_style_components(world, d));
             continue;
         };
         let mut lines: Vec<(String, Diagnostic)> = Vec::new();
@@ -220,6 +221,52 @@ pub fn user_style_component_problems(
         found.extend(lines.into_iter().map(|(_, d)| d));
     }
     found
+}
+
+/// What an entity's `<name>_style` is when the user style `name` reads no
+/// mask (no `inputs = ["mask"]`): a whole-frame style has no component, so
+/// the table does nothing. One warning an entity, by name, worded the same
+/// in `flint check` ([`unmasked_style_component`]) and a drawing host.
+fn unmasked_style_components(world: &FlintWorld, d: &StyleDescriptor) -> Vec<Diagnostic> {
+    let component = super::custom::component_name(d.name);
+    let Some(warning) = unmasked_style_component(d, &component) else {
+        return Vec::new();
+    };
+    let mut names: Vec<&str> = world
+        .entities_with_component(&component)
+        .iter()
+        .map(|&id| world.get_name(id).unwrap_or("?"))
+        .collect();
+    names.sort_unstable();
+    names
+        .into_iter()
+        .map(|name| warning.clone().entity(name))
+        .collect()
+}
+
+/// The warning for a `component` written on an entity when it is the
+/// component name of `d`, a style that reads no mask (#1320). The loader
+/// leaves a `<name>_style` to the user style a scene can see, and this is
+/// what says the table does nothing.
+pub fn unmasked_style_component(d: &StyleDescriptor, component: &str) -> Option<Diagnostic> {
+    if d.component.is_some() || super::custom::component_name(d.name) != component {
+        return None;
+    }
+    Some(
+        Diagnostic::warning(
+            flint_core::diagnostic::codes::BAD_STYLE_SETTING,
+            format!(
+                "the user style '{}' reads no mask, so it is a whole-frame style and \
+                 `{component}` on an entity does nothing",
+                d.name
+            ),
+        )
+        .component(component.to_string())
+        .hint(format!(
+            "to style entities with it, add \"mask\" to `inputs` in {}.shader.toml",
+            d.name
+        )),
+    )
 }
 
 /// [`user_style_component_problems`] as the lines a drawing host logs

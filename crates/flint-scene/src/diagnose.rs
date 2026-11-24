@@ -2184,4 +2184,46 @@ archetype = "player"
         assert_eq!(found[0].severity, Severity::Warning);
         assert_eq!(found[0].file, None);
     }
+
+    /// #1320: a `<name>_style` that a user style the scene can see owns
+    /// (`styles/dusk.shader.toml`, with no schema file) is no
+    /// `unknown-component` when a host loads the scene. Its schema is made
+    /// when the style loads, after the scene, and binding judges it then.
+    /// One no style owns is still unknown, and `diagnose` (what
+    /// `flint check` runs, with the styles' schemas already registered) is
+    /// unchanged.
+    #[test]
+    fn a_user_styles_component_is_left_to_the_style_when_a_host_loads() {
+        let scene = r#"
+[scene]
+name = "Dusk"
+
+[entities.box.dusk_style]
+amount = 1.0
+
+[entities.crate.dawn_style]
+amount = 1.0
+"#;
+        let files = [
+            ("scenes/a.scene.toml", scene),
+            (
+                "scenes/styles/dusk.shader.toml",
+                "version = 1\nname = \"dusk\"\n",
+            ),
+        ];
+        let unknown = |found: &[Diagnostic]| -> Vec<String> {
+            found
+                .iter()
+                .filter(|d| d.code == codes::UNKNOWN_COMPONENT)
+                .map(|d| d.component.clone().unwrap_or_default())
+                .collect()
+        };
+        let (loaded, diagnosed) = with_scene(&files, |registry, project| {
+            let path = Path::new("scenes/a.scene.toml");
+            let (_, _, loaded) = crate::load_scene_diagnosed(path, registry).unwrap();
+            (loaded, diagnose(path, registry, project))
+        });
+        assert_eq!(unknown(&loaded), ["dawn_style"]);
+        assert_eq!(unknown(&diagnosed), ["dusk_style", "dawn_style"]);
+    }
 }

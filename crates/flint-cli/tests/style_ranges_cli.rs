@@ -1,8 +1,8 @@
 //! #492: a scene entity's per-entity style field outside its range is
 //! named by `flint check` and `flint validate`, with the entity, the field
 //! and the range: a built-in style's (`ascii_style`, colours too) through
-//! the component's schema file, a user style's (`hologram_style`, whose
-//! schema file is open) through the schema its `.shader.toml` makes (#556),
+//! the component's schema file, a user style's (`hologram_style`, which
+//! has no schema file since #1320) through the schema its `.shader.toml` makes (#556),
 //! which also names a misspelt field and a value of the wrong type, and
 //! which `flint render` warns with when it binds the scene.
 
@@ -40,7 +40,7 @@ fn repo() -> PathBuf {
 }
 
 /// A project naming the engine's schemas (and the examples' layer, which
-/// declares `hologram_style` open), with the hologram user style and the
+/// declared `hologram_style` open until #1320), with the hologram user style and the
 /// scene: one folder a test, since they run side by side.
 fn project(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
