@@ -1777,6 +1777,7 @@ dependencies = [
  "glam",
  "hound",
  "image",
+ "libc",
  "miniz_oxide",
  "naga",
  "notify",
@@ -1790,6 +1791,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wgpu",
+ "windows-sys 0.61.2",
  "winit",
 ]
 

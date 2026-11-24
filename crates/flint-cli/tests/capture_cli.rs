@@ -162,3 +162,47 @@ fn a_list_naming_a_missing_scene_stops_before_any_take() {
     assert!(err.contains("a/main: no scene"), "{err}");
     assert!(!dir.join("captures").exists());
 }
+
+/// #1196's done-when: a run whose estimate passes the free space stops
+/// before any take, and says why. Two hours of 100,000-pixel-square frames
+/// at 30 fps, two shots of it, is about 2,000 TB at 8 MB a 4K frame: past
+/// any disk.
+#[test]
+fn a_run_that_wont_fit_on_the_disk_stops_before_any_take() {
+    let dir = scratch("too_big");
+    std::fs::write(dir.join("a.scene.toml"), "[scene]\nname = \"a\"\n").unwrap();
+    let list = "[capture]\nwidth = 100000\nheight = 100000\n\n\
+                [[shot]]\nid = \"one\"\nscene = \"a.scene.toml\"\nseconds = 3600\n\n\
+                [[shot]]\nid = \"two\"\nscene = \"a.scene.toml\"\nseconds = 3600\n";
+    std::fs::write(dir.join("shots.toml"), list).unwrap();
+
+    let out = flint(&dir, &["capture", "shots.toml"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    for words in [
+        "this capture won't fit: it needs ~",
+        "GB free",
+        "--shot <id>       fewer shots (the largest, one, is ~",
+        "--out <dir>",
+        "--no-disk-check",
+    ] {
+        assert!(err.contains(words), "no {words:?} in:\n{err}");
+    }
+    assert!(!dir.join("captures").exists(), "a take was started");
+
+    // Under --json the refusal is the error document, and nothing ran
+    let out = flint(&dir, &["--json", "capture", "shots.toml"]);
+    assert_eq!(out.status.code(), Some(1));
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let message = doc["error"]["message"].as_str().unwrap();
+    assert!(message.contains("won't fit"), "{doc:#}");
+    assert!(!dir.join("captures").exists());
+
+    // A dry run says so and still prints the plan
+    let out = flint(&dir, &["--json", "capture", "shots.toml", "--dry-run"]);
+    assert!(out.status.success());
+    let plan: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(plan["disk"]["fits"], false, "{plan:#}");
+    assert!(plan["disk"]["free_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(plan["takes"].as_array().unwrap().len(), 2);
+}

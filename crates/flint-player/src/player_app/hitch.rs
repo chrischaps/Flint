@@ -298,8 +298,19 @@ impl Hitch {
         }) {
             return true;
         }
-        let ms: f32 = top.iter().filter_map(|n| n.note.ms).sum();
-        ms >= self.excess_ms() * PLAYER_SHARE
+        // A script that took the share itself, timed inside this frame,
+        // outweighs the frame before's notes (#1194): their time was the
+        // frame before's, and they are here as a guess at its GPU work
+        // landing late. A loaded machine's 112 ms reload poll there named a
+        // 150 ms script stall; this frame's own notes still count.
+        let share = self.excess_ms() * PLAYER_SHARE;
+        let measured = self.blamed_script().is_some_and(|(_, ms)| ms >= share);
+        let ms: f32 = top
+            .iter()
+            .filter(|n| !(measured && n.frame_before))
+            .filter_map(|n| n.note.ms)
+            .sum();
+        ms >= share
     }
 
     /// The engine's events in a line, whether or not they account for the
@@ -1639,6 +1650,90 @@ mod tests {
         run.frames(60, steady(HZ60_MS));
         assert_eq!(run.frame(stall), 1);
         assert!(!run.detector.last().unwrap().during_capture_write());
+        frame_notes::listen(false);
+    }
+
+    /// #1194, from `hitch_log_tests` on a busy machine: a script that
+    /// stalled 150 ms, with a hot-reload poll slow enough to be noted on
+    /// its frame and the frame before. Together they are 6 ms of a hitch
+    /// 150 ms over: the script's, the polls named after it.
+    /// `"cause":"reload poll 1 scripts watched, 2.8 ms; reload poll 1
+    /// scripts watched, 3.4 ms (frame before)"`
+    #[test]
+    fn a_script_stall_is_not_blamed_on_the_reload_polls_beside_it() {
+        use flint_core::frame_notes::{self, NoteKind};
+        let poll = |ms: f32| {
+            frame_notes::note(
+                NoteKind::ReloadPoll,
+                || "1 scripts watched".into(),
+                Some(ms),
+            )
+        };
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        poll(3.4);
+        run.frame(steady(HZ60_MS));
+        poll(2.8);
+        let stall = F {
+            scripts: 151.0,
+            ..steady(HZ60_MS + 150.0)
+        };
+        assert_eq!(
+            run.frame_scripts(stall, &[("scripts/stall.rhai:on_update", 150.0)]),
+            1
+        );
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "script stall.rhai:on_update 150.0 ms \
+             (also: reload poll 2.8 ms; reload poll 3.4 ms the frame before)"
+        );
+        assert_eq!(h.cause_key(), "script stall.rhai:on_update");
+        // The notes in a line, as the issue saw them, for whoever asks
+        assert_eq!(
+            h.likely_cause(),
+            "reload poll 1 scripts watched, 2.8 ms; \
+             reload poll 1 scripts watched, 3.4 ms (frame before)"
+        );
+
+        // A loaded machine (40 of `hitch_log_tests` at once): the poll took
+        // 111.7 ms on the frame before, its own hitch. Over half this
+        // frame's excess, but the frame before's time: the script's 150 ms
+        // were measured in this one.
+        run.frames(120, steady(HZ60_MS));
+        poll(111.7);
+        let slow_poll = F {
+            scripts: 112.7,
+            ..steady(HZ60_MS + 111.7)
+        };
+        run.frame_scripts(slow_poll, &[("[hot reload]", 111.7)]);
+        assert_eq!(
+            run.frame_scripts(stall, &[("scripts/stall.rhai:on_update", 150.0)]),
+            1
+        );
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "script stall.rhai:on_update 150.0 ms \
+             (also: reload poll 111.7 ms the frame before)"
+        );
+        assert_eq!(h.cause_key(), "script stall.rhai:on_update");
+
+        // This frame's own note that covers the share is still the cause,
+        // script or no script: a model the script loaded inside its call
+        run.frames(120, steady(HZ60_MS));
+        frame_notes::note(
+            NoteKind::ModelLoad,
+            || "models/crate.glb".into(),
+            Some(140.0),
+        );
+        assert_eq!(
+            run.frame_scripts(stall, &[("scripts/stall.rhai:on_update", 150.0)]),
+            1
+        );
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "model load models/crate.glb, 140.0 ms");
         frame_notes::listen(false);
     }
 

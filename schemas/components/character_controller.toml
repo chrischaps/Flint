@@ -1,10 +1,11 @@
 # First-person player movement (flint-physics `character.rs`). Defaults are
 # the reader's own fallbacks (#792). `height` has none: with no height the
 # camera sits 1.5 above the entity, with one it sits at 0.85 x height, so a
-# default would move the eye. `radius` and `camera_mode` are read by nothing
-# yet (the capsule comes from the collider). Look and the jump press are
-# taken once a frame, the walk once a physics step (#728), so a turn is the
-# same at any frame rate.
+# default would move the eye. Look and the jump press are taken once a
+# frame, the walk once a physics step (#728), so a turn is the same at any
+# frame rate. One entity carrying it is the player, the first by name; a
+# second is `second-player` at load (#1212). The action names it reads are
+# fixed (ADR 0134).
 [component.character_controller]
 description = "Player movement, look, jump and first-person eye height"
 
@@ -19,5 +20,9 @@ gravity_scale = { type = "f32", default = 1.0, description = "The physics world'
 step_height = { type = "f32", default = 0.5, min = 0.0, description = "Tallest ledge walked up without a jump, in units; 0 turns stepping off" }
 snap_to_ground = { type = "f32", default = 0.2, min = 0.0, description = "Furthest the character is held down onto the ground going down a slope or step, in units; 0 turns it off" }
 height = { type = "f32", min = 0.1, description = "Character height; the eye sits at 0.85 x height (1.5 above the entity when unset)" }
-radius = { type = "f32", min = 0.01, description = "Character capsule radius (not read yet: the collider sets the capsule)" }
-camera_mode = { type = "enum", values = ["first_person", "orbit"], description = "Camera mode for this character (not read yet)" }
+
+# Taken out in #1212: nothing ever read them. A scene still writing one is
+# told this, not the nearest field's name.
+[component.character_controller.retired]
+radius = "nothing read it: the capsule is the entity's `collider` (`shape = \"capsule\"`, `size = [diameter, height, diameter]`); remove it"
+camera_mode = "nothing read it: a character's camera is always first person, its eye at 0.85 x `height`; remove it"

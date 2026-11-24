@@ -208,7 +208,7 @@ flint render flint-examples/stylize_props.scene.toml --frame-capture props.flint
 ```
 
 ```text
-Captured the frame to props.flintframe: 26 images from 10 passes, 5.1 MB on disk (143.0 MB read back), GPU-timed
+Captured the frame to props.flintframe: 33 images from 11 passes, 6.0 MB on disk (178.0 MB read back, copied in 8.10 ms on the GPU), GPU-timed
 ```
 
 ```text
@@ -228,13 +228,13 @@ props.flintframe/
 
 - **Each target is kept once, exactly**: 8-bit targets as PNG, 16-bit integers (the style mask) as a 16-bit PNG, half floats (the HDR chain) as OpenEXR half, depth and 32-bit floats as OpenEXR f32 (channel `Z` for depth), the EXRs ZIP-compressed. No viewable copy sits beside an EXR: `flint frame image <capture> <pass> -o x.png` makes one (HDR tonemapped, depth stretched to grey, ids coloured; [The `frame` Command](../cli-reference/overview.md#the-frame-command)). An EXR opens in most image tools too.
 - **Read where it's written.** Each copy is made right after the pass, in the frame's own encoder, because the chain reuses its targets: a style stage's two pings, and bloom's mips, which the upsample writes over. So a ping written by two styles is two images, and bloom's are `threshold`, each `down` and each `up`. A multisampled target is read through its resolve (the HDR buffer), each shadow map layer that was drawn is its own image (a sun's cascades, a casting spot's `spot_shadow`), and a style's own targets are whatever it asked the chain's table for while it drew, so a user style's are there too. A style that holds textures of its own notes each as it draws it (`StylePass::held_targets`, #1161): ASCII's edge cells, slots, thinned lines and outlines, the past edge cells and slots it read (`ascii.edge_cells.past`, only on a frame that followed on from the last), its tone statistics, variant cells, snap owners and dissolve state, each only on a frame that drew it. With `--select`, the `Selection mask` pass's `selection_mask` is read too; the `Selection outline` pass lists it under `reads`. Over a `--time` span the last frame is captured, so `--time 0..0.25` gives ASCII two frames to keep history from.
-- **In the manifest**, each pass's `images` lists `target`, `step`, `layer`, `format`, `size`, `file` and `stored` (`png`, `png16`, `exr-half`, `exr-f32`, `exr-u32`, or `raw` for a format nothing else holds). `frame.capturing` is true. `capture` says what it cost: images, bytes read back and on disk, the targets a pass wrote that weren't read and why (`grass_instances` is a buffer), and the milliseconds spent recording the copies, waiting, copying out and encoding.
+- **In the manifest**, each pass's `images` lists `target`, `step`, `layer`, `format`, `size`, `file` and `stored` (`png`, `png16`, `exr-half`, `exr-f32`, `exr-u32`, or `raw` for a format nothing else holds). `frame.capturing` is true. `capture` says what it cost: images, bytes read back and on disk, the targets a pass wrote that weren't read and why (`grass_instances` is a buffer), and the milliseconds spent recording the copies, waiting, copying out and encoding. **The copies' GPU time** (#1160) is there too: each image's `gpu_copy_ms`, and `capture.gpu_copy_ms` for them all (`gpu_copies_timed` says how many were timed). They're timed on the capture's own timestamps, so the frame's GPU timer still times every pass, and they're `null` on an adapter without timestamp queries. A few copies a frame can read up to three times their size's worth, a different few each run, so compare the total rather than one image's. Bloom's step copies are inside Bloom's own `gpu_ms`.
 - **The last `surface` image is the output.** A pass that writes after it (the depth upscale below render scale 1) still follows it in the folder. A comic page's panels each have their own `surface`, the panel's picture, and the page's is the `Panels` pass's.
 - **A folder that holds anything but a capture is refused**, so a wrong path can't empty it; an earlier capture there is replaced.
 
 `flint frame show <capture>` reads it back as text or `--json`: the summary, each pass, each draw by entity, each target. `flint frame diff <a> <b>` names what changed between two, down to each entity's draws and each pass image's pixels ([The `frame` Command](../cli-reference/overview.md#the-frame-command)). `flint frame open <capture>` opens it in a window: the passes as a tree, each pass's image with zoom, exposure and a texel readout, its draws, and the frame's times ([The Frame Debugger](frame-debugger.md)).
 
-The capture costs only the frame that asked: no other frame makes a copy or a buffer, and every golden is byte-identical. The capturing frame does pay: the copies stay on its GPU timeline, and reading them back is the raw size of every target (72 MB for the tavern at 1280 x 720), which a headless render waits for. A host captures with `renderer.capture_next_frame(CaptureTargets { surface, depth })` (its own output and depth, each made with `COPY_SRC`), then after the submit `take_frame_capture()`, `map()` and `poll(&device)` on later frames until it says ready (never waiting), `read()`, `describe_frame(..)`, and `flint_render::frame_capture::write_capture(dir, &mut description, frame)` off the frame thread.
+The capture costs only the frame that asked: no other frame makes a copy or a buffer, and every golden is byte-identical. The capturing frame does pay: the copies stay on its GPU timeline (at 1920 x 1080 on an RTX 4070, 3.8 ms for the tavern's 98.7 MB and 9.3-10.5 ms for the woozy grove's 214.8 MB, more on a session's first capture), and reading them back is the raw size of every target (72 MB for the tavern at 1280 x 720). A headless render's `wait_ms` is next to nothing, since it reads the frame's pixels first and the copies were in that frame. [ADR 0126](https://github.com/chrischaps/Flint/blob/main/docs/adr/0126-what-a-frame-capture-holds-and-how-it-replays.md)'s measured section has the numbers, and why the spike's separate read-back waited 55 ms on the grove. A host captures with `renderer.capture_next_frame(CaptureTargets { surface, depth })` (its own output and depth, each made with `COPY_SRC`), then after the submit `take_frame_capture()`, `map()` and `poll(&device)` on later frames until it says ready (never waiting), `read()`, `describe_frame(..)`, and `flint_render::frame_capture::write_capture(dir, &mut description, frame)` off the frame thread.
 
 ### Capturing from the running player
 
@@ -674,6 +674,15 @@ A hitch is the player's when the player's own work (every phase but `acquire` an
 
 The swapchain has two waits, and neither is the player's. **`acquire`** is the wait for the next image to draw into, taken just before the renderer encodes (#1123). It is where a compositor that holds the presentation engine shows up: on one machine a single acquire took 515 ms while the frame's encoding took under 30. It is also where a full swapchain waits for a free image, under `FLINT_VSYNC=0` or when the GPU is behind, so a GPU-heavy look reads as `elsewhere` there and not as `render`. **`present`** is the wait handing the finished image back. An `elsewhere` hitch names the longer of the two (`elsewhere, acquire 515.6 ms`). Before #1123 the acquire was counted in `render`, so such a frame read as the renderer's work. The counts run over the session and over the frames kept: hitches, hitches a minute, the worst frame, the time since the last hitch and the longest stretch without one.
 
+**A window the OS holds back.** Under vsync, Windows throttles the presents of a window it doesn't show: one behind other windows, or a background job's opened with `--no-activate`. Every frame then stands 250 to 580 ms, nearly all of it in `acquire`, while the player's own work and the GPU's are a few ms each (#1200, an RTX 5070 laptop). Those frames really did stand that long, so the detector judges them as it should, and a 100 ms script stall against a 400 ms median is no hitch: `--capture-on-hitch`, the hitch log and `--max-hitches` find nothing. So the player says when it happens. A frame is **held by the OS** when, under vsync, it stood at least 100 ms and four refreshes, the player's own work was under a quarter of it and the GPU's time, where timed, under half. When at least half the frames after the first 2 s are held (and at least five), the console says so once, and `--exit-after`'s report adds a line under its hitch count:
+
+```text
+[perf] hitches: 0 in 5.0 s after t=2 s
+[perf] frames held by the OS: 12 of 12 after t=2 s, at ~412 ms (the player's work 3.1 ms): the window is hidden or behind others and its presents are throttled, so no hitch can stand out (the hitch log, --capture-on-hitch and --max-hitches see none); FLINT_VSYNC=off measures real frame times
+```
+
+A display that really refreshes slowly (Fifo paced at 7 Hz by a virtual display) stands one refresh a frame and isn't counted, nor is a game whose own work takes the time. To look for hitches in a run whose window won't show, as an agent's `--no-activate` runs on Windows usually are, set `FLINT_VSYNC=off` (or pass `--vsync off`): the frames then take what the work takes, and `--capture-on-hitch=4` caught both of #1200's stalls (101 ms against a 0.65 ms median). A minimised window draws nothing at all, so its run waits until the window comes back.
+
 Whose time it was doesn't say why. Each frame also keeps **notes**: what the engine did on it, said by the code that did it, with how long it took. A hitch keeps the notes of its own frame and of the frame before (the GPU's share of a frame's work lands a frame late), and names them as its likely cause, or says `no engine event`. A transition that loaded a model reads:
 
 ```text
@@ -714,6 +723,12 @@ The notes are named as a hitch's cause only when their times together cover at l
 scene transition b.scene.toml, 151.2 ms
 sync +9.1 ms (also: reload poll 1.2 ms)
 render +40.0 ms (also: pipeline build 3.0 ms the frame before)
+```
+
+The frame before's notes are there as a guess at work whose GPU share lands late; their own time was the frame before's. So when the hitch's own script took half of its excess, measured inside the frame, they don't count toward the half, and on a loaded machine a slow reload poll the frame before no longer outvotes a script that stalled:
+
+```text
+script stall.rhai:on_update 150.0 ms (also: reload poll 111.7 ms the frame before)
 ```
 
 A note with no time (none of the engine's today) can't be weighed, so it is named. Notes are made only on the player's frame thread and only while the history records. Otherwise each call site costs a flag read, about 1 ns. Collecting a frame's notes costs 2 to 3 ns. The F2 graph and the hitch log are what show them.
