@@ -677,7 +677,7 @@ snapshot is written, and leaves (the second snapshot, shortened):
           "components": ["character_controller", "collider", "rigidbody", "script", "transform"],
           "data": {
             "transform": {"position": [-0.0073, 0.86, 4.2899], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
-            "character_controller": {"camera_mode": "first_person", "move_speed": 5.0, "...": "..."}
+            "character_controller": {"height": 1.8, "move_speed": 5.0, "...": "..."}
           }
         }
       ]

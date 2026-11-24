@@ -90,7 +90,6 @@ position = [0.0, 1.0, -9.0]
 [entities.walker.character_controller]
 move_speed = 2.6
 jump_force = 4.5
-camera_mode = "first_person"
 
 # --- The palms: an avenue toward the sun, then a grove around a clearing ---
 
