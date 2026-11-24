@@ -917,7 +917,7 @@ The profile (in the root `Cargo.toml`) is release's code with line tables in eve
 
 It writes `target/profiling/`, beside `target/release/` and sharing nothing with it. A cold build took 3 min 46 s and 2.7 GB on a 24-thread machine. `flint-player.exe` is 73 MB of that and its PDB 187 MB (release's PDB is 30 MB). Delete `target/profiling` when you're done with it.
 
-**Frame pointers** are not a profile setting on stable Cargo, and none of the samplers here needs them. On Windows, every sampler walks the stack from the unwind tables every x64 binary carries: the screenshot below was taken without frame pointers. samply on Linux unwinds from `.eh_frame`, which Rust always emits. `perf record --call-graph fp` is the exception. For it, build on Linux with `RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p flint-player`. There `.cargo/config.toml` sets no flags for the variable to replace. Changing the variable rebuilds the whole profile.
+**Frame pointers** are not a profile setting on stable Cargo, and none of the samplers here needs them. On Windows, every sampler walks the stack from the unwind tables every x64 binary carries: the screenshot below was taken without frame pointers. samply on Linux unwinds from `.eh_frame`, which Rust always emits: sampling the script stall below on Linux, the plain profiling build's stacks held 35.8 frames and a frame-pointer build's 35.2 (57.6 and 56.9 functions with the inlined ones), so frame pointers bought nothing. `perf record --call-graph fp` is the exception. Without frame pointers its stall stacks stopped 2.3 frames up, inside Rhai's timer, and never reached Flint; with them they held 38.8 and ran up through `flint_script`'s `ScriptEngine::call_updates`. For it, build on Linux with `RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p flint-player`. There `.cargo/config.toml` sets no flags for the variable to replace. Changing the variable rebuilds the whole profile.
 
 **A game binary** in its own workspace gets the profile only from its own root `Cargo.toml`. Cargo reads `[profile.*]` only from the root of the workspace it builds, as it does `[patch]` ([Upgrading the Engine](upgrading-the-engine.md#cargo)). Copy the three lines:
 
@@ -934,18 +934,18 @@ Then `cargo build --profile profiling` writes `target/profiling/<your-game>`.
 Windows' samplers read the kernel's sampling events (ETW), and only an Administrator, or a service running as one, can start those. Each sampler finds `flint_player.pdb` beside the exe.
 
 - **Superluminal** (commercial, made for games): launch `target\profiling\flint-player.exe` from it, with the game's folder as the working directory and the scene as the argument. It shows each thread's waits beside its samples, which a CPU sampler alone can't ([below](#lining-a-sample-up-with-a-hitch)).
-- **samply** (free, `cargo install --locked samply`), from an Administrator terminal:
+- **samply** (free, `cargo install --locked samply`), from an Administrator terminal. It records through `xperf.exe`, which comes with the [Windows Performance Toolkit](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/) (in the Windows ADK's installer, uncheck everything else), and says so when it can't find it:
 
   ```powershell
-  samply record target\profiling\flint-player.exe examples\hitch_metronome.scene.toml --exit-after 12 --hitch-log hitches.jsonl
+  samply record target\profiling\flint-player.exe flint-examples\hitch_metronome.scene.toml --exit-after 12 --hitch-log hitches.jsonl
   ```
 
-  When the player exits, samply opens the profile in the [Firefox Profiler](https://profiler.firefox.com) in your browser and serves its symbols from your machine. Started from a terminal that isn't elevated, it printed nothing and waited.
+  When the player exits, samply stops xperf and reads its trace (47 s on a 4-core CI runner, so give it time), writes `profile.json.gz` in the folder it ran in, opens that in the [Firefox Profiler](https://profiler.firefox.com) in your browser, and serves its symbols from your machine until Ctrl+C. `samply load profile.json.gz` opens it again later. Started from a terminal that isn't elevated, samply asks Windows for Administrator for its recording helper, through a UAC prompt, and waits for the answer: in a session where that prompt never reached anyone, it printed nothing and waited.
 - **Without Administrator**, Visual Studio 2022's collector samples, because its service already runs elevated. Any edition works if its profiling tools are installed; replace `Community` in the path with yours. From the project's folder in PowerShell (the `/launchArgs` paths can't hold spaces):
 
   ```powershell
   $vsd = "C:\Program Files\Microsoft Visual Studio\2022\Community\Team Tools\DiagnosticsHub\Collector"
-  & "$vsd\VSDiagnostics.exe" start 7 "/launch:$PWD\target\profiling\flint-player.exe" "/launchArgs:$PWD\examples\hitch_metronome.scene.toml --exit-after 12 --hitch-log $PWD\hitches.jsonl" "/loadConfig:$vsd\AgentConfigs\CpuUsageHigh.json"
+  & "$vsd\VSDiagnostics.exe" start 7 "/launch:$PWD\target\profiling\flint-player.exe" "/launchArgs:$PWD\flint-examples\hitch_metronome.scene.toml --exit-after 12 --hitch-log $PWD\hitches.jsonl" "/loadConfig:$vsd\AgentConfigs\CpuUsageHigh.json"
   # when the player has exited:
   & "$vsd\VSDiagnostics.exe" stop 7 "/output:$PWD\metronome.diagsession"
   & "$vsd\VSDiagnostics.exe" expandDiagSession "$PWD\metronome.diagsession"
@@ -956,14 +956,23 @@ Windows' samplers read the kernel's sampling events (ETW), and only an Administr
 
 ### On Linux
 
-samply records through perf events, which need `kernel.perf_event_paranoid` at 1 or lower (`sudo sysctl kernel.perf_event_paranoid=1`). samply tells you when it's higher.
+samply records through perf events, which need `kernel.perf_event_paranoid` at 1 or lower (`sudo sysctl kernel.perf_event_paranoid=1`, until the next reboot). samply tells you when it's higher: Ubuntu sets 4, and samply then prints the level, a command that lowers it, and exits.
 
 ```sh
 cargo build --profile profiling -p flint-player
 samply record ./target/profiling/flint-player flint-examples/hitch_metronome.scene.toml --exit-after 12 --hitch-log hitches.jsonl
 ```
 
-`perf record --call-graph dwarf` and [Hotspot](https://github.com/KDAB/hotspot) read the same build.
+As on Windows, samply writes `profile.json.gz` when the player exits, opens it in the Firefox Profiler and serves its symbols until Ctrl+C. Each frame names its function and its file, but from the line tables, which hold no paths: the stall reads `tick`, `run_scripts`, `call_updates`, where Windows reads `flint_player::player_app::PlayerApp::tick()` and `flint_script::engine::ScriptEngine::call_updates()`. Filter on the bare name.
+
+`perf record --call-graph dwarf` recorded this build but didn't read it back. With Ubuntu 24.04's perf 7.0, built with libdw's unwinder, `perf script` named almost none of the player's frames and its stacks stopped after a few. Not one sample showed the stall that `--call-graph fp` found in a fifth of them. The recording itself was sound: `samply import` unwinds the same file, to 15 frames a sample at perf's default 8 KB of stack and to 24 with `--call-graph dwarf,65528` (the most perf copies), as deep as `samply record`. So record with samply, or hand perf's recording to it:
+
+```sh
+perf record -F 199 --call-graph dwarf,65528 -o perf.data ./target/profiling/flint-player flint-examples/hitch_metronome.scene.toml --exit-after 12
+samply import perf.data
+```
+
+[Hotspot](https://github.com/KDAB/hotspot) opens the same `perf.data` with its own parser.
 
 ### Lining a sample up with a hitch
 
