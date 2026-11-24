@@ -58,7 +58,7 @@
 
 use super::frame_history::FrameHistory;
 use super::perf::{script_name, Phase};
-use flint_core::frame_notes::FrameNote;
+use flint_core::frame_notes::{FrameNote, NoteKind};
 use std::collections::VecDeque;
 
 /// The frames before a frame it is judged against: two seconds at 60 fps.
@@ -249,9 +249,18 @@ impl Hitch {
     }
 
     /// The outermost engine events (a transition, not each model it
-    /// loaded), this frame's first, then by time, longest first. Work on
-    /// another thread that ran through both frames (#1178: one capture's
-    /// write) is named once, as this frame's.
+    /// loaded), this frame's first, then by time, longest first, and the
+    /// ones that can't weigh ([`weighs`]) last. Work on another thread that
+    /// ran through both frames (#1178: one capture's write) is named once,
+    /// as this frame's.
+    ///
+    /// A tool's note from the frame before is left out (#1274): a tool
+    /// waits for its own work (#1129), so none of a screenshot's read-back
+    /// or a trace ring's growth is in this frame, and naming it here named
+    /// a screenshot twice, once for its own hitch and once for a stall the
+    /// frame after. The F2 overlay is kept, though it never weighs: its
+    /// next frames do draw more HUD than before it opened, unnoted, so it
+    /// is the hint beside a stall there (`also: stats overlay ..`).
     fn top_events(&self) -> Vec<&HitchNote> {
         let on_this_frame = |n: &HitchNote| {
             self.notes.iter().any(|o| {
@@ -262,13 +271,20 @@ impl Hitch {
             .engine_events()
             .filter(|n| n.note.depth == 0)
             .filter(|n| !(n.frame_before && n.note.kind.is_background() && on_this_frame(n)))
+            .filter(|n| {
+                !(n.frame_before
+                    && n.note.kind.is_tooling()
+                    && n.note.kind != NoteKind::StatsOverlay)
+            })
             .collect();
         top.sort_by(|a, b| {
-            a.frame_before.cmp(&b.frame_before).then(
-                b.note
-                    .ms
-                    .unwrap_or(-1.0)
-                    .total_cmp(&a.note.ms.unwrap_or(-1.0)),
+            weighs(b).cmp(&weighs(a)).then(
+                a.frame_before.cmp(&b.frame_before).then(
+                    b.note
+                        .ms
+                        .unwrap_or(-1.0)
+                        .total_cmp(&a.note.ms.unwrap_or(-1.0)),
+                ),
             )
         });
         top
@@ -284,6 +300,7 @@ impl Hitch {
     /// to be blamed. A 1.2 ms reload poll in a frame 10 ms over doesn't.
     /// A note that wasn't timed can't be weighed, so it is named, as before.
     fn events_explain(&self, top: &[&HitchNote]) -> bool {
+        let top: Vec<&HitchNote> = top.iter().copied().filter(|n| weighs(n)).collect();
         if top.is_empty() {
             return false;
         }
@@ -450,6 +467,15 @@ impl Hitch {
             Cause::Tooling { .. } => "tooling".to_string(),
         }
     }
+}
+
+/// Whether a hitch's note may count toward the half of its excess that
+/// makes the engine's events its cause. A tool's note from the frame
+/// before never does (#1129, #1274): its time was its own frame's, which
+/// had its own `tooling` hitch. [`Hitch::top_events`] sorts these last, so
+/// a hitch its events explain is keyed by one that weighed.
+fn weighs(n: &HitchNote) -> bool {
+    !(n.frame_before && n.note.kind.is_tooling())
 }
 
 /// The first [`CAUSES_NAMED`] notes, each as `name` says, then "N more".
@@ -1943,6 +1969,163 @@ mod tests {
         assert_eq!(h.cause_line(), "stats overlay opened, 95.0 ms");
         assert_eq!(run.detector.session().hitches, 1, "not the game's");
         assert_eq!(run.detector.session().tooling, 1);
+        frame_notes::listen(false);
+    }
+
+    /// #1274, `hitch_metronome` with a screenshot every 2 s: the one at
+    /// t = 6.0 s landed on the frame before the 6 s stall. The screenshot
+    /// got its own `tooling` hitch; the stall after it named the
+    /// screenshot again, for 74.8 ms of a 104 ms excess it never touched.
+    /// `{"frame":1355,"ms":77.96,"class":"tooling","cause":"screenshot
+    /// .../m_0004.png, 74.8 ms"}`
+    /// `{"frame":1356,"ms":107.08,"class":"player","phase":"scripts",
+    /// "phase_ms":100.2,"script":"stall.rhai:on_update","script_ms":100.11,
+    /// "cause":"screenshot .../m_0004.png, 74.8 ms (frame before)"}`
+    #[test]
+    fn a_script_stall_after_a_screenshot_names_the_script() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(240, steady(HZ240_MS));
+        frame_notes::note(
+            NoteKind::Screenshot,
+            || "shots/m_0004.png".into(),
+            Some(74.79),
+        );
+        let shot = F {
+            present: 75.0,
+            ..steady(77.96)
+        };
+        assert_eq!(run.frame(shot), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "screenshot shots/m_0004.png, 74.8 ms");
+
+        let stall = F {
+            scripts: 100.2,
+            steps: 4,
+            ..steady(107.08)
+        };
+        assert_eq!(
+            run.frame_scripts(stall, &[("scripts/stall.rhai:on_update", 100.11)]),
+            1
+        );
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.class(), "player");
+        assert_eq!(h.cause_line(), "script stall.rhai:on_update 100.1 ms");
+        assert_eq!(h.cause_key(), "script stall.rhai:on_update");
+        // The screenshot is still on the hitch's notes, for the log
+        assert!(h
+            .notes
+            .iter()
+            .any(|n| n.frame_before && n.note.kind == NoteKind::Screenshot));
+        assert_eq!(run.detector.session().hitches, 1);
+        assert_eq!(run.detector.session().tooling, 1);
+        frame_notes::listen(false);
+    }
+
+    /// #1274's seam without a script to outweigh it (#1194 covers a script
+    /// timed inside the frame): a render stall the frame after a
+    /// screenshot. The screenshot waited for its own read-back, so none of
+    /// its 74.8 ms is in this frame: the render's, named alone.
+    #[test]
+    fn a_render_stall_after_a_screenshot_is_the_renders() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(240, steady(HZ240_MS));
+        frame_notes::note(
+            NoteKind::Screenshot,
+            || "shots/m_0004.png".into(),
+            Some(74.79),
+        );
+        run.frame(F {
+            present: 75.0,
+            ..steady(77.96)
+        });
+        // A pipeline the frame before built on the CPU still weighs, as its
+        // GPU time can land here (#1124); a tool's never does
+        assert_eq!(
+            run.frame(F {
+                render: 60.0,
+                ..steady(64.0)
+            }),
+            1
+        );
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "render +58.0 ms");
+        assert_eq!(h.cause_key(), "render");
+        assert_eq!(h.likely_cause(), NO_ENGINE_EVENT);
+
+        // The trace recorder's ring grown on the frame before: the same
+        run.frames(240, steady(HZ240_MS));
+        frame_notes::note(NoteKind::TraceRing, || "main".into(), Some(70.0));
+        run.frame(F {
+            render: 72.0,
+            ..steady(75.0)
+        });
+        run.frame(F {
+            render: 60.0,
+            ..steady(64.0)
+        });
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "render +58.0 ms");
+
+        // With a real note beside it, the real note is the cause and the
+        // tool is left out of the line
+        run.frames(240, steady(HZ240_MS));
+        frame_notes::note(NoteKind::PipelineBuild, || "pbr".into(), Some(40.0));
+        frame_notes::note(
+            NoteKind::Screenshot,
+            || "shots/m_0005.png".into(),
+            Some(74.79),
+        );
+        run.frame(F {
+            present: 75.0,
+            render: 42.0,
+            ..steady(120.0)
+        });
+        run.frame(F {
+            render: 60.0,
+            ..steady(64.0)
+        });
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "pipeline build pbr, 40.0 ms (frame before)");
+        assert_eq!(h.cause_key(), "pipeline build");
+        frame_notes::listen(false);
+    }
+
+    /// The F2 overlay is the one tool whose cost does run on: its next
+    /// frames draw more HUD than before it opened (4 to 8 ms in debug),
+    /// with no note of their own. Its note's time is still its own frame's,
+    /// so it never covers the next frame's excess: a stall there is named
+    /// by whose time it was, with the overlay beside it as the hint.
+    #[test]
+    fn a_stall_after_the_overlay_opened_names_the_overlay_beside_it() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        frame_notes::note(NoteKind::StatsOverlay, || "opened".into(), Some(95.0));
+        run.frame(F {
+            render: 97.0,
+            ..steady(100.0)
+        });
+        let stall = F {
+            scripts: 60.0,
+            ..steady(HZ60_MS + 59.0)
+        };
+        assert_eq!(
+            run.frame_scripts(stall, &[("scripts/stall.rhai:on_update", 60.0)]),
+            1
+        );
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "script stall.rhai:on_update 60.0 ms \
+             (also: stats overlay 95.0 ms the frame before)"
+        );
+        assert_eq!(h.cause_key(), "script stall.rhai:on_update");
+        assert_eq!(h.class(), "player");
         frame_notes::listen(false);
     }
 }
