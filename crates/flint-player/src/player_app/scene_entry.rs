@@ -86,6 +86,10 @@ impl PlayerApp {
             // input config, whose game_id names the save folder of a game
             // with no `[project] id`. A transition keeps the store.
             self.load_persistent_store();
+            // The player's own bus volumes (#1217), before the scene's
+            // sounds load and its scripts start, so the first note and
+            // on_init both have them. Placed by the same id as the saves.
+            self.load_user_audio();
         }
 
         // The project's collision layers and the mesh colliders' triangles,

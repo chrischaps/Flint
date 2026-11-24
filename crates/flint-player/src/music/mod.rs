@@ -60,13 +60,6 @@ pub(crate) fn component_in(world: &FlintWorld) -> Option<toml::Value> {
     found
 }
 
-/// Whether the world plays music, which on the web mixes on the main
-/// thread (#730): a suite clocks itself on kira's manager.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-pub(crate) fn plays_music(world: &FlintWorld) -> bool {
-    !world.entities_with_component(MUSIC_SESSION).is_empty()
-}
-
 /// A string field of the component; empty or whitespace counts as absent.
 pub(crate) fn comp_str(comp: &toml::Value, key: &str) -> Option<String> {
     comp.get(key)
@@ -188,9 +181,14 @@ pub(crate) struct MusicSubsystem {
     events: Option<EventScript>,
     base: PathBuf,
     latency_ms: Option<f64>,
-    /// The suite on the shared manager; `None` with no device, where the
-    /// beat still counts on the game clock.
+    /// The suite on the engine's mixer (kira here, or the browser's
+    /// worklet, #1216); `None` with no device, where the beat still counts
+    /// on the game clock.
     session: Option<SuiteSession>,
+    /// The mixer the session was started on (`AudioEngine::mixer_epoch`):
+    /// when the mix moves (the worklet failing), its handles went with the
+    /// old one and the suite starts again on the new.
+    hosted_on: u32,
     /// The beat on the game clock (a stepped capture, no device).
     game_clock: GameClockMusic,
     /// Whether a start has been tried with a device there, so a failed one
@@ -244,26 +242,38 @@ impl MusicSubsystem {
             base: base.to_path_buf(),
             latency_ms,
             session: None,
+            hosted_on: 0,
             tried_with_device: false,
             charted: comp_str(comp, "chart").is_some(),
         })
     }
 
-    /// Start the suite on the shared manager, once there's a device.
+    /// Start the suite on the engine's mixer, once there's a device.
     fn start(&mut self, audio: Option<&mut flint_audio::engine::AudioEngine>) {
+        let Some(audio) = audio else { return };
+        if self.session.is_some() && audio.mixer_epoch() != self.hosted_on {
+            // Its handles went with the mixer they were made on
+            tracing::warn!(target: "music",
+                "suite '{}': the mix moved to the {}; starting it again there",
+                self.manifest.id,
+                audio.mixer_name()
+            );
+            self.session = None;
+            self.tried_with_device = false;
+        }
         if self.session.is_some() || self.tried_with_device {
             return;
         }
-        let Some(audio) = audio else { return };
         let stems = flint_music::session::FileStems::new(&self.base);
         // Hosted on the engine's mixer (#730): not while silent (the web's
-        // Begin is still to come), and not in the browser's worklet.
-        let Ok(started) = audio
-            .host(|manager| SuiteSession::start(&self.manifest, manager, &stems, self.latency_ms))
+        // Begin is still to come); in the browser, in its worklet (#1216).
+        let Ok(started) =
+            audio.host(|mixer| SuiteSession::start(&self.manifest, mixer, &stems, self.latency_ms))
         else {
             return;
         };
         self.tried_with_device = true;
+        self.hosted_on = audio.mixer_epoch();
         match started {
             Ok(mut session) => {
                 if let Some(events) = &self.events {
@@ -273,8 +283,9 @@ impl MusicSubsystem {
                 }
                 let buses: Vec<&str> = self.manifest.buses_in_order().map(|(n, _)| n).collect();
                 tracing::info!(target: "music",
-                    "suite '{}' playing: {} bus(es) ({}), {}",
+                    "suite '{}' playing on the {}: {} bus(es) ({}), {}",
                     self.manifest.id,
+                    audio.mixer_name(),
                     buses.len(),
                     buses.join(", "),
                     match self.latency_ms {

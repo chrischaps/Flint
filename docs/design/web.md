@@ -1838,8 +1838,12 @@ thread talks to it by `postMessage`:
   error, no `ready` within 4 s), `AudioEngine::poll` notices, starts the old
   main-thread stream, and `AudioSystem` replays its sources. `?mixer=main`
   asks for the main thread outright, for comparisons. A scene with a
-  `music_session` also stays on the main thread: the suite clocks itself on
-  kira's manager (`manager_mut`), which only exists there.
+  `music_session` mixes in the worklet too since #1216 (ADR 0135): the suite
+  plays on `flint_audio::clocked::ClockedMixer`, whose remote side is the
+  `ClockNew`/`StemBusNew`/`StemPlay`/`..At` commands, and its clock's ticks
+  come back in the worklet's reports. Until #1216 it stayed on the main
+  thread. If the worklet fails, the suite starts again on the main-thread
+  mixer (`AudioEngine::mixer_epoch`).
 - The worklet's `AudioContext` asks for `latencyHint: "balanced"` and runs at
   the device's own rate (48 kHz on most phones), so the browser no longer
   resamples kira's 44.1 kHz output.

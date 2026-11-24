@@ -59,6 +59,11 @@ Not recorded in the surviving text.
   only where kira mixes on this thread; the worklet's `MixerBackend::host`
   answers `Unhosted::Worklet`, so the web still mixes a music scene on the
   main thread. The drop order above is unchanged.
+- Since then (#1216, [ADR 0135](0135-clocked-content-plays-on-a-mixer-seam.md)):
+  `host` lends a `ClockedMixer` instead of the kira manager, and the
+  worklet implements it, so a music scene in the browser plays in the
+  worklet with everything else. One mixer still plays music and world sound,
+  and handles still drop before the engine.
 
 ## Measured
 

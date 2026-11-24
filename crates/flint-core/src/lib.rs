@@ -14,11 +14,13 @@
 //! - `profile` - `scope!`, one profiler scope reaching Tracy and Flint's own recorder (ADR 0128)
 //! - `env` - Every `FLINT_*` environment switch, in one table with typed getters (#715)
 //! - `style_field` - The screen field a style's blend can follow (#859)
+//! - `collision_layers` - Collision layer names, and what a collider naming none is told (#1220)
 //! - `field` - Named numbers as one function of place and time: zones, falloff, ramps (ADR 0123)
 #![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 pub mod bundle;
 pub mod callbacks;
+pub mod collision_layers;
 pub mod components;
 pub mod diagnostic;
 pub mod env;

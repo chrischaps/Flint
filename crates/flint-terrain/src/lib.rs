@@ -27,7 +27,7 @@ pub use heightmap::Heightmap;
 pub use procgen::generate_heightmap;
 pub use spec::{SpecIssue, TerrainSpec};
 pub use splatgen::generate_splat_map;
-pub use terrain::{Terrain, TerrainConfig};
+pub use terrain::{HeightGrid, Terrain, TerrainConfig};
 
 #[cfg(test)]
 mod tests {

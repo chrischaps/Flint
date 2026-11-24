@@ -15,14 +15,15 @@
 //! and `every_op_reads_back` checks the reader).
 
 use crate::bus::Bus;
+use crate::clocked::ClockedMixer;
 use crate::handle::{SoundHandle, SpatialTrack};
 use crate::pan::Falloff;
 use flint_core::Result;
 use kira::sound::static_sound::StaticSoundData;
-use kira::{AudioManager, Decibels};
+use kira::Decibels;
 use web_time::Instant;
 
-use super::{AudioBackend, MixCounts};
+use super::MixCounts;
 
 /// One sound to start: the engine's decoded copy of it when it keeps one,
 /// and how it plays. `db` already has the master volume in it.
@@ -50,22 +51,18 @@ pub(crate) struct Held {
     pub keyed: usize,
 }
 
-/// Why a mixer can't host content that builds its own kira graph (a music
-/// suite, ADR 0017).
+/// Why a mixer can't host clocked content (a music suite, ADR 0017). Every
+/// mixer with a device hosts it since #1216, the browser's worklet too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unhosted {
     /// No device yet (or none at all).
     Silent,
-    /// The mix runs in the browser's worklet, which has no command for a
-    /// clock or a stem; the scene mixes on the main thread instead.
-    Worklet,
 }
 
 impl std::fmt::Display for Unhosted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Unhosted::Silent => "no audio device",
-            Unhosted::Worklet => "the browser's worklet mixer hosts no clocked content",
         })
     }
 }
@@ -141,9 +138,9 @@ pub(crate) trait MixerBackend {
     /// How long after it is mixed a sound is heard, seconds, if known.
     fn output_latency(&self) -> Option<f64>;
 
-    /// The kira manager content with its own clock and tracks starts on
-    /// (a music suite), or why there is none here.
-    fn host(&mut self) -> std::result::Result<&mut AudioManager<AudioBackend>, Unhosted>;
+    /// The mixer content with its own clock and stem buses starts on (a
+    /// music suite, #1216), or why there is none here.
+    fn host(&mut self) -> std::result::Result<&mut dyn ClockedMixer, Unhosted>;
 }
 
 /// No mixer: before the device opens (the web's Begin), or with none.
@@ -221,7 +218,7 @@ impl MixerBackend for Silent {
     fn output_latency(&self) -> Option<f64> {
         None
     }
-    fn host(&mut self) -> std::result::Result<&mut AudioManager<AudioBackend>, Unhosted> {
+    fn host(&mut self) -> std::result::Result<&mut dyn ClockedMixer, Unhosted> {
         Err(Unhosted::Silent)
     }
 }

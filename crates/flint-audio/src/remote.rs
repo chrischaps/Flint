@@ -133,7 +133,7 @@ impl Link {
         self.0.lock().ok()?.reports.get(&voice).copied()
     }
 
-    fn forget_voice(&self, voice: u32) {
+    pub(crate) fn forget_voice(&self, voice: u32) {
         if let Ok(mut s) = self.0.lock() {
             s.reports.remove(&voice);
         }

@@ -309,6 +309,55 @@ fn a_scaled_mesh_collider_is_remade_from_the_cache() {
     assert!((aabb.maxs.x - 1.0).abs() < 1e-5, "{aabb:?}");
 }
 
+#[test]
+fn a_collider_made_again_from_late_triangles_still_hears_its_scale() {
+    // #1222 makes a collider again when its triangles come after its body
+    // (a new handle): the new one is watched as the first was
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+    let rock = spawn(
+        &mut world,
+        "rock",
+        "[transform]\nposition = [0, 0, 0]\n[rigidbody]\nbody_type = \"static\"\n\
+         [collider]\nshape = \"convex\"\nsize = [0.2, 0.2, 0.2]\n",
+    );
+    sys.initialize(&mut world).unwrap();
+    let first = sys.sync.collider_map[&rock];
+    sys.set_collider_mesh(
+        rock,
+        Arc::new(ColliderMesh {
+            positions: vec![
+                [-0.5, -0.5, -0.5],
+                [0.5, -0.5, -0.5],
+                [0.5, 0.5, -0.5],
+                [-0.5, 0.5, -0.5],
+                [-0.5, -0.5, 0.5],
+                [0.5, -0.5, 0.5],
+                [0.5, 0.5, 0.5],
+                [-0.5, 0.5, 0.5],
+            ],
+            triangles: vec![],
+        }),
+    );
+    steps(&mut sys, &mut world, 1);
+    let remade = sys.sync.collider_map[&rock];
+    assert_ne!(remade, first, "made again on a new handle");
+    set(&mut world, rock, "transform", "scale", "[3, 3, 3]");
+    steps(&mut sys, &mut world, 1);
+    let h = sys.sync.collider_map[&rock];
+    let aabb = sys
+        .physics_world
+        .collider_set
+        .get(h)
+        .unwrap()
+        .shared_shape()
+        .compute_local_aabb();
+    assert!(
+        (aabb.maxs.x - 1.5).abs() < 1e-5,
+        "the 1 m hull at 3x: {aabb:?}"
+    );
+}
+
 // ----------------------------------------------------------------------
 // Done when: a frame where nothing changed reads no more than it does now
 // ----------------------------------------------------------------------

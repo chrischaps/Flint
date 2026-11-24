@@ -574,6 +574,8 @@ pub(super) struct Saves {
     pub(crate) user_config_dir: Option<std::path::PathBuf>,
     /// What the run's first load found (a playtest's report says it).
     pub(super) loaded: Option<flint_runtime::Loaded>,
+    /// The player's own bus volumes' file and its write (#1217).
+    pub(super) audio: super::user_audio::UserAudio,
 }
 
 impl Default for Saves {
@@ -583,6 +585,7 @@ impl Default for Saves {
             error: None,
             user_config_dir: crate::user_files::config_dir(),
             loaded: None,
+            audio: Default::default(),
         }
     }
 }

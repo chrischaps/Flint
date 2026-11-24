@@ -234,7 +234,7 @@ props.flintframe/
 
 `flint frame show <capture>` reads it back as text or `--json`: the summary, each pass, each draw by entity, each target. `flint frame diff <a> <b>` names what changed between two, down to each entity's draws and each pass image's pixels ([The `frame` Command](../cli-reference/overview.md#the-frame-command)). `flint frame open <capture>` opens it in a window: the passes as a tree, each pass's image with zoom, exposure and a texel readout, its draws, and the frame's times ([The Frame Debugger](frame-debugger.md)).
 
-The capture costs only the frame that asked: no other frame makes a copy or a buffer, and every golden is byte-identical. The capturing frame does pay: the copies stay on its GPU timeline (at 1920 x 1080 on an RTX 4070, 3.8 ms for the tavern's 98.7 MB and 9.3-10.5 ms for the woozy grove's 214.8 MB, more on a session's first capture), and reading them back is the raw size of every target (72 MB for the tavern at 1280 x 720). A headless render's `wait_ms` is next to nothing, since it reads the frame's pixels first and the copies were in that frame. [ADR 0126](https://github.com/chrischaps/Flint/blob/main/docs/adr/0126-what-a-frame-capture-holds-and-how-it-replays.md)'s measured section has the numbers, and why the spike's separate read-back waited 55 ms on the grove. A host captures with `renderer.capture_next_frame(CaptureTargets { surface, depth })` (its own output and depth, each made with `COPY_SRC`), then after the submit `take_frame_capture()`, `map()` and `poll(&device)` on later frames until it says ready (never waiting), `read()`, `describe_frame(..)`, and `flint_render::frame_capture::write_capture(dir, &mut description, frame)` off the frame thread.
+The capture costs only the frame that asked: no other frame makes a copy or a buffer, and every golden is byte-identical. The capturing frame does pay: the copies stay on its GPU timeline (at 1920 x 1080 on an RTX 4070, 3.8 ms for the tavern's 98.7 MB and 9.3-10.5 ms for the woozy grove's 214.8 MB, more on a session's first capture), and reading them back is the raw size of every target (72 MB for the tavern at 1280 x 720). A headless render's `wait_ms` is next to nothing, since it reads the frame's pixels first and the copies were in that frame. [ADR 0126](https://github.com/chrischaps/Flint/blob/main/docs/adr/0126-what-a-frame-capture-holds-and-how-it-replays.md)'s measured section has the numbers, and why the spike's separate read-back waited 55 ms on the grove. A host captures with `renderer.capture_next_frame(CaptureTargets { surface, depth })` (its own output and depth, each made with `COPY_SRC`), then after the submit `renderer.take_frame_capture()` for the `FrameCapture`, `capture.map()` and `capture.poll(&device)` on later frames until it says ready (never waiting), `capture.read()`, `renderer.describe_frame(..)`, and `flint_render::frame_capture::write_capture(dir, &mut description, frame)` off the frame thread.
 
 ### Capturing from the running player
 
@@ -350,7 +350,7 @@ fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
 }
 ```
 
-`set_gpu_timing(device, queue, on)` returns whether timing is on, false where the device can't time. While F2 is open the player times the frame itself, and it stops again when F2 closes, unless the game had already turned it on.
+`renderer.set_gpu_timing(device, queue, on)` returns whether timing is on, false where the device can't time. While F2 is open the player times the frame itself, and it stops again when F2 closes, unless the game had already turned it on.
 
 A host that drives `SceneRenderer` itself can time its own work in the same frame. It scopes it with the timer and ends each frame once:
 
@@ -647,7 +647,7 @@ A mean frame time hides uneven frames. `--exit-after N` prints two spreads besid
 [perf] present to present: p50 6.2 p90 29.6 p99 51.7 max 52.1 ms, 226 of 479 over 1.5x p50
 ```
 
-`dt` is what the game steps by. `present to present` is the wall time between one `present()` returning and the next, which is when the swapchain let the CPU through.
+`dt` is what the game steps by. `present to present` is the wall time between one `SurfaceTexture::present()` returning and the next, which is when the swapchain let the CPU through.
 
 With vsync (Fifo), every shown frame stays on screen for a whole number of refreshes. But the CPU can be let through in bursts: on a hybrid-GPU laptop (the dGPU renders and the iGPU drives the panel), frames came 6, 6, 6, then 45 ms apart at a 60 Hz mean. Stepping by those makes each shown frame move 6, 6, 6, then 45 ms of game time, which is judder. So under Fifo the player paces the clock: it passes the window's monitor refresh to `GameClock::set_vsync_period`, and each frame's `delta_time` is a whole number of refresh periods, as many as keep game time on the wall clock and at least one. Game time can run up to 100 ms ahead of the wall clock inside a burst. A stall over 250 ms passes through as one clamped step, as it would unpaced. Frames that come faster on average than that refresh (the wrong monitor, or not really vsynced) fall back to the raw time. `GameClock::raw_delta_time` always has the unpaced wall time.
 
@@ -655,7 +655,7 @@ Switches: `FLINT_PACING=0` turns pacing off, `FLINT_FRAME_LATENCY=1..3` sets the
 
 ### Hitches
 
-A hitch is one frame, and an average hides it. The player keeps its last 600 frames whether or not `--perf` is on: each frame's phases, script times (when they're timed), the clock's raw and paced time, the time from one `present()` to the next, the physics steps that ran and the GPU time. Recording costs about 0.65 µs a frame in an optimized build and allocates nothing once the 600 slots are full.
+A hitch is one frame, and an average hides it. The player keeps its last 600 frames whether or not `--perf` is on: each frame's phases, script times (when they're timed), the clock's raw and paced time, the time from one `SurfaceTexture::present()` to the next, the physics steps that ran and the GPU time. Recording costs about 0.65 µs a frame in an optimized build and allocates nothing once the 600 slots are full.
 
 Each frame is judged as the next one begins. It is a hitch when its time is over both twice the median of the 120 frames before it and that median plus 24 ms. The factor alone would flag a 4 ms frame among 2 ms ones, and the floor alone a 100 ms frame among 70 ms ones.
 

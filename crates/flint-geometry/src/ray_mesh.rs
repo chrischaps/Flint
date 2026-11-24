@@ -123,6 +123,21 @@ impl RayMesh {
         self.tris.is_empty()
     }
 
+    /// The vertex positions the mesh was built from.
+    pub fn positions(&self) -> &[[f32; 3]] {
+        &self.positions
+    }
+
+    /// The triangles a ray can meet, as indices into
+    /// [`positions`](Self::positions), in the order they were given (those
+    /// left out at build are not here). A physics collider takes these
+    /// (#1222), so what a ray meets and what a body rests on are one set.
+    pub fn triangles(&self) -> Vec<[u32; 3]> {
+        let mut tris = self.tris.clone();
+        tris.sort_unstable_by_key(|&(_, index)| index);
+        tris.into_iter().map(|(t, _)| t).collect()
+    }
+
     /// The box round every triangle, as `(min, max)`. `None` when empty.
     pub fn bounds(&self) -> Option<([f32; 3], [f32; 3])> {
         self.nodes.first().map(|n| (n.min, n.max))

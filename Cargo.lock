@@ -1906,6 +1906,8 @@ dependencies = [
 name = "flint-music"
 version = "0.1.0"
 dependencies = [
+ "flint-audio",
+ "flint-audio-worklet",
  "flint-core",
  "hound",
  "kira",
@@ -1941,6 +1943,7 @@ dependencies = [
  "flint-runtime",
  "flint-scene",
  "flint-schema",
+ "flint-terrain",
  "rapier3d",
  "thiserror 2.0.18",
  "toml",

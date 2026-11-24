@@ -5,6 +5,7 @@ use super::backend::{Held, MixerBackend, On, Unhosted, Voice};
 use super::{tween_ms, AudioBackend, MixCounts};
 use crate::bus::Bus;
 use crate::bus_filter::{BusFilterBuilder, BusFilterHandle, OPEN};
+use crate::clocked::ClockedMixer;
 use crate::handle::{SoundHandle, SpatialTrack};
 use crate::pan::Falloff;
 use flint_core::{FlintError, Result};
@@ -16,18 +17,19 @@ use kira::{AudioManager, Decibels, Easing};
 use web_time::Instant;
 
 /// A kira backend a [`Local`] mix can run on: [`AudioBackend`], which lends
-/// its manager to content with its own clock, or (in tests) one that hands
-/// back the renderer, so what the mixer here makes can be heard (#1218).
+/// its manager to content with its own clock (a music suite plays on it as
+/// a [`ClockedMixer`], #1216), or (in tests) one that hands back the
+/// renderer, so what the mixer here makes can be heard (#1218).
 pub(crate) trait Hosts: Backend + Sized {
     fn lend(
         manager: &mut AudioManager<Self>,
-    ) -> std::result::Result<&mut AudioManager<AudioBackend>, Unhosted>;
+    ) -> std::result::Result<&mut dyn ClockedMixer, Unhosted>;
 }
 
 impl Hosts for AudioBackend {
     fn lend(
         manager: &mut AudioManager<Self>,
-    ) -> std::result::Result<&mut AudioManager<AudioBackend>, Unhosted> {
+    ) -> std::result::Result<&mut dyn ClockedMixer, Unhosted> {
         Ok(manager)
     }
 }
@@ -285,7 +287,7 @@ impl<B: Hosts> MixerBackend for Local<B> {
         None
     }
 
-    fn host(&mut self) -> std::result::Result<&mut AudioManager<AudioBackend>, Unhosted> {
+    fn host(&mut self) -> std::result::Result<&mut dyn ClockedMixer, Unhosted> {
         B::lend(&mut self.manager)
     }
 }

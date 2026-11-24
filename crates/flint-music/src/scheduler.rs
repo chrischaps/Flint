@@ -1,19 +1,17 @@
 //! Lookahead scheduler: events queued in musical time, landing on the grid.
 //!
-//! kira's clock-timed `Tween`s do the sample-accurate landing; the scheduler's
-//! job is to hold events beyond a lookahead horizon, resolve musical time to
-//! a sample position **once, at push** (via the Conductor — a resolved event
-//! never re-interprets time), and issue the kira commands as events enter the
-//! horizon. Section transitions and a timeline jump's re-entries are
+//! The mixer's clock-timed ramps do the sample-accurate landing; the
+//! scheduler's job is to hold events beyond a lookahead horizon, resolve
+//! musical time to a sample position **once, at push** (via the Conductor —
+//! a resolved event never re-interprets time), and issue the mixer commands
+//! as events enter the horizon. Section transitions and a timeline jump's re-entries are
 //! consumers of this same queue.
 
 use crate::conductor::Conductor;
 use crate::mixer::BusMixer;
-use kira::clock::{ClockHandle, ClockTime};
-use kira::{StartTime, Tween};
+use flint_audio::clocked::{Ramp, Start};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::time::Duration;
 
 /// When an event should land, in any of the Conductor's time vocabularies.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -145,15 +143,14 @@ impl Scheduler {
     }
 
     /// Issue every pending event within `now_sample + horizon` as a
-    /// clock-timed kira command (or immediately, with a warning, if its time
-    /// has already passed). Returns what was issued, in order.
+    /// clock-timed mixer command (or immediately, with a warning, if its
+    /// time has already passed). Returns what was issued, in order.
     /// `tick_base` maps suite samples to clock ticks (`tick = sample +
     /// tick_base`): the pre-roll length, plus the session's timeline offset
     /// after a timeline jump ([`crate::session::SuiteSession::schedule_jump`]).
     pub fn pump(
         &mut self,
         now_sample: i64,
-        clock: &ClockHandle,
         tick_base: i64,
         mixer: &mut BusMixer,
     ) -> Vec<FiredEvent> {
@@ -172,20 +169,13 @@ impl Scheduler {
                     key.sample,
                     now_sample
                 );
-                StartTime::Immediate
+                Start::Now
             } else {
                 // Suite sample -> clock tick via the caller's base (pre-roll
                 // plus any timeline jump's offset).
-                StartTime::ClockTime(ClockTime::from_ticks_u64(
-                    clock,
-                    (key.sample + tick_base) as u64,
-                ))
+                Start::Tick((key.sample + tick_base) as u64)
             };
-            let tween = |ramp_ms: f64| Tween {
-                start_time,
-                duration: Duration::from_secs_f64(ramp_ms.max(0.0) / 1000.0),
-                ..Default::default()
-            };
+            let tween = |ramp_ms: f64| Ramp::at(start_time, ramp_ms.max(0.0) / 1000.0);
             match (&ev.action, ev.bus.as_deref()) {
                 (BusAction::Marker(_), _) => {}
                 (action, Some(bus_name)) => match mixer.bus_mut(bus_name) {

@@ -88,6 +88,11 @@ const SHARED: &[File] = &[
     ("AGENTS.md", template!("shared/agents.md")),
     ("bundle.toml", template!("shared/bundle.toml")),
     ("config/input.toml", template!("shared/config/input.toml")),
+    ("ui/pause.ui.toml", template!("shared/ui/pause.ui.toml")),
+    (
+        "ui/pause.style.toml",
+        template!("shared/ui/pause.style.toml"),
+    ),
     (".gitignore", template!("shared/gitignore")),
     // Folders git would not keep empty. The game's schemas start empty:
     // the engine's are named by flint.toml, not copied.
@@ -95,6 +100,22 @@ const SHARED: &[File] = &[
     ("schemas/archetypes/.gitkeep", ""),
     ("renders/.gitignore", "*\n!.gitignore\n"),
 ];
+
+/// The engine's menu helpers (#731), which every template's HUD imports
+/// (`import "menu"`). The search finds `scripts/lib/` in the project, then
+/// in `engine/`, never in a checkout named by path, so a project with no
+/// `engine/` carries this copy of the engine's own file (#1228). With
+/// `--engine subtree` the engine's is found and nothing is copied.
+const MENU_LIB: File = (
+    "scripts/lib/menu.rhai",
+    concat!(
+        "// A copy of the engine's scripts/lib/menu.rhai, written by `flint init`.\n",
+        "// Once the engine is a subtree at engine/, delete it: the same import\n",
+        "// then finds the engine's own, which follows engine updates.\n",
+        "//\n",
+        include_str!("../../../../scripts/lib/menu.rhai")
+    ),
+);
 
 impl Template {
     fn name(self) -> &'static str {
@@ -158,9 +179,11 @@ impl Template {
     /// The web page's controls line.
     fn controls(self) -> &'static str {
         match self {
-            Template::Walk => "WASD to walk, mouse to look, Space to jump, H for help",
-            Template::Blank => "H for help",
-            Template::TwoD => "WASD to move, H for help",
+            Template::Walk => {
+                "WASD to walk, mouse to look, Space to jump, H for help, Esc to pause"
+            }
+            Template::Blank => "H for help, Esc to pause",
+            Template::TwoD => "WASD to move, H for help, Esc to pause",
         }
     }
 
@@ -315,6 +338,11 @@ pub fn run(args: InitArgs) -> Result<()> {
         ),
     };
     let template = args.template;
+    // Where `import "menu"` finds the menu helpers
+    let menu_lib = match args.engine {
+        EngineMode::Subtree => "engine/scripts/lib/menu.rhai",
+        _ => MENU_LIB.0,
+    };
     let values: &[(&str, &str)] = &[
         // Sections first: they hold the keys below
         ("engine_section", engine_section.trim_end()),
@@ -324,6 +352,7 @@ pub fn run(args: InitArgs) -> Result<()> {
         ("template_blurb", template.blurb()),
         ("scripts_note", template.scripts_note()),
         ("controls", template.controls()),
+        ("menu_lib", menu_lib),
         ("template", template.name()),
         ("engine", engine_dir.as_deref().unwrap_or("")),
         ("schemas", &schemas),
@@ -333,7 +362,11 @@ pub fn run(args: InitArgs) -> Result<()> {
 
     let mut written = Vec::new();
     let mut kept = Vec::new();
-    for (path, text) in SHARED.iter().chain(template.files()) {
+    let menu_copy: &[File] = match args.engine {
+        EngineMode::Subtree => &[],
+        _ => &[MENU_LIB],
+    };
+    for (path, text) in SHARED.iter().chain(template.files()).chain(menu_copy) {
         let to = dir.join(path);
         if to.exists() {
             kept.push(*path);
@@ -366,6 +399,9 @@ fn describes(path: &str, template: Template) -> String {
         "scenes/main.scene.toml" => template.scene_line().into(),
         "scripts/hud.rhai" => "the HUD, drawn by the scene's hud_controller".into(),
         "scripts/player.rhai" => "steers the player sprite".into(),
+        "scripts/lib/menu.rhai" => "the engine's menu helpers, copied".into(),
+        "ui/pause.ui.toml" => "the pause menu (Esc or Start), a UI document".into(),
+        "ui/pause.style.toml" => "the pause menu's look".into(),
         _ => String::new(),
     }
 }
@@ -498,6 +534,7 @@ mod tests {
             "template_blurb",
             "scripts_note",
             "controls",
+            "menu_lib",
             "template",
             "engine",
             "schemas",
@@ -518,6 +555,7 @@ mod tests {
             .chain(Template::Walk.files())
             .chain(Template::Blank.files())
             .chain(Template::TwoD.files())
+            .chain(std::iter::once(&MENU_LIB))
             .map(|(_, text)| *text)
             .chain(sections);
         for text in files {

@@ -11,9 +11,10 @@
 //! or cylinder scaled alike in x and z, and a `mesh` or `convex`, and
 //! approximated (with a warning, once) for the rest.
 
-use crate::layers::{CollisionLayers, LayerMask, DEFAULT_LAYER};
+use crate::layers::{CollisionLayers, LayerMask};
 use crate::world::PhysicsWorld;
 use crate::ColliderMesh;
+use flint_core::collision_layers::{self, LayerUse};
 use flint_core::components as comp;
 use flint_core::diagnostic::{codes, Diagnostic};
 use flint_core::toml_util::toml_f32;
@@ -43,7 +44,10 @@ pub const COLLIDER_SHAPES: &[&str] = &[
 
 /// What a scaled mesh shape is cached under: the triangles it was made
 /// from (by address), whether it is a hull, and the bits of the scale,
-/// offset and rotation baked into its points.
+/// offset and rotation baked into its points. The cache holds the
+/// triangles' `Arc` beside the shape, so the address can't be freed and
+/// reused by other triangles while the entry stands (#1222: a runtime
+/// mesh uploaded again would otherwise be able to find the old hull).
 type MeshShapeKey = (usize, bool, [u32; 9]);
 
 /// What a collider was last made from, so a script's later change to its
@@ -113,6 +117,20 @@ pub(crate) struct ColliderRereads {
     pub shapes: usize,
 }
 
+/// A cached mesh shape and the triangles it was made from.
+type MeshShapeEntry = (Arc<ColliderMesh>, Option<SharedShape>);
+
+/// Whether a `mesh` or `convex` collider takes its triangles from a mesh
+/// the game uploads at runtime (`model.runtime = true` and no
+/// `collider.model`), which no file or spec gives before the body is made.
+pub(crate) fn waits_for_runtime_mesh(
+    world: &FlintWorld,
+    entity_id: EntityId,
+    col: &ComponentView,
+) -> bool {
+    col.opt_str("model").is_none() && world.view(entity_id, comp::MODEL).bool("runtime", false)
+}
+
 /// What `joint.type` may be (`slider` is prismatic, `ball` spherical).
 pub const JOINT_TYPES: &[&str] = &["hinge", "prismatic", "slider", "spherical", "ball", "fixed"];
 
@@ -135,7 +153,14 @@ pub struct PhysicsSync {
     pub(crate) meshes: HashMap<EntityId, Arc<ColliderMesh>>,
     /// Shapes made from those triangles, so a hundred crates of one model
     /// and one scale share one hull
-    mesh_shapes: HashMap<MeshShapeKey, Option<SharedShape>>,
+    mesh_shapes: HashMap<MeshShapeKey, MeshShapeEntry>,
+    /// Entities whose triangles were handed over after their body was
+    /// made (a procgen model finished late, a runtime mesh uploaded or
+    /// replaced, #1222): their collider is made again at the next sync
+    reshape_pending: Vec<EntityId>,
+    /// Entities whose triangles a host said are coming: a box of `size`
+    /// until then, with no warning
+    mesh_coming: HashSet<EntityId>,
     /// Entities already warned about a shape a scale or a body type changed
     shape_warned: HashSet<EntityId>,
     /// Jointed entities already warned that their anchor ignores their scale
@@ -186,6 +211,8 @@ impl PhysicsSync {
         self.seen.clear();
         self.meshes.clear();
         self.mesh_shapes.clear();
+        self.reshape_pending.clear();
+        self.mesh_coming.clear();
         self.shape_warned.clear();
         self.joint_scale_warned.clear();
         self.trimesh_pending.clear();
@@ -271,45 +298,20 @@ impl PhysicsSync {
             // Build collider if present
             let col = world.view(entity_id, comp::COLLIDER);
             if col.exists() {
-                let scale = world_scale(world, entity_id);
-                let (collider_shape, local) =
-                    self.collider_shape(world, entity_id, &col, scale, mode_2d, body_type);
-
-                let is_sensor = col.bool("is_sensor", false);
-                let friction = col.f32("friction", 0.5);
-                let restitution = col.f32("restitution", 0.0);
-
-                let mut builder = ColliderBuilder::new(collider_shape)
-                    .sensor(is_sensor)
-                    .friction(friction)
-                    .restitution(restitution)
-                    .collision_groups(self.groups_of(&col))
-                    .active_events(ActiveEvents::COLLISION_EVENTS);
-
-                if let Some(local) = local {
-                    builder = builder.position(local);
-                }
-
-                let collider = builder.build();
-
+                let (collider, scale) =
+                    self.make_collider(world, entity_id, &col, mode_2d, body_type);
                 let col_handle = physics.insert_collider_with_parent(collider, body_handle);
                 self.insert_collider(entity_id, col_handle);
-                self.seen.insert(
-                    entity_id,
-                    ColliderSeen {
-                        handle: col_handle,
-                        stamp: world.write_stamp(entity_id),
-                        layer: col.raw("layer").cloned(),
-                        mask: col.raw("mask").cloned(),
-                        scale: Some(ScaleSeen {
-                            built: scale,
-                            chain: scale_chain(world, entity_id),
-                        }),
-                    },
-                );
+                self.watch(world, entity_id, &col, col_handle, scale);
             }
 
             self.synced_entities.insert(entity_id);
+        }
+
+        // Triangles that came after their body: the collider again, on the
+        // same body, from them
+        for entity_id in std::mem::take(&mut self.reshape_pending) {
+            self.reshape(world, physics, entity_id);
         }
 
         // A host's trimesh (terrain, a spline) takes its entity's
@@ -334,6 +336,89 @@ impl PhysicsSync {
         }
 
         self.report_lone_colliders(world);
+    }
+
+    /// An entity's collider from its `collider` table, at its world scale,
+    /// for a body of `body_type`, and that scale.
+    fn make_collider(
+        &mut self,
+        world: &FlintWorld,
+        entity_id: EntityId,
+        col: &ComponentView,
+        mode_2d: bool,
+        body_type: &str,
+    ) -> (Collider, [f32; 3]) {
+        let scale = world_scale(world, entity_id);
+        let (collider_shape, local) =
+            self.collider_shape(world, entity_id, col, scale, mode_2d, body_type);
+
+        let is_sensor = col.bool("is_sensor", false);
+        let friction = col.f32("friction", 0.5);
+        let restitution = col.f32("restitution", 0.0);
+
+        let mut builder = ColliderBuilder::new(collider_shape)
+            .sensor(is_sensor)
+            .friction(friction)
+            .restitution(restitution)
+            .collision_groups(self.groups_of(col))
+            .active_events(ActiveEvents::COLLISION_EVENTS);
+
+        if let Some(local) = local {
+            builder = builder.position(local);
+        }
+        (builder.build(), scale)
+    }
+
+    /// Remember what a collider made from its table was made from (#1221),
+    /// so `update_colliders` hears a later change to it.
+    fn watch(
+        &mut self,
+        world: &FlintWorld,
+        entity_id: EntityId,
+        col: &ComponentView,
+        handle: ColliderHandle,
+        scale: [f32; 3],
+    ) {
+        self.seen.insert(
+            entity_id,
+            ColliderSeen {
+                handle,
+                stamp: world.write_stamp(entity_id),
+                layer: col.raw("layer").cloned(),
+                mask: col.raw("mask").cloned(),
+                scale: Some(ScaleSeen {
+                    built: scale,
+                    chain: scale_chain(world, entity_id),
+                }),
+            },
+        );
+    }
+
+    /// Make an entity's collider again on its body, from the triangles
+    /// handed over since (#1222). An entity with no body, or no collider
+    /// table, is left as it is.
+    fn reshape(&mut self, world: &FlintWorld, physics: &mut PhysicsWorld, entity_id: EntityId) {
+        let Some(&body_handle) = self.body_map.get(&entity_id) else {
+            return;
+        };
+        let col = world.view(entity_id, comp::COLLIDER);
+        if !col.exists() {
+            return;
+        }
+        let rb = world.view(entity_id, comp::RIGIDBODY);
+        let body_type = rb.choice("body_type", BODY_TYPES, "static");
+        let mode_2d = rb.bool("mode_2d", false);
+        let (collider, scale) = self.make_collider(world, entity_id, &col, mode_2d, body_type);
+        if let Some(old) = self.remove_collider(entity_id) {
+            physics.remove_collider(old);
+        }
+        let handle = physics.insert_collider_with_parent(collider, body_handle);
+        self.insert_collider(entity_id, handle);
+        self.watch(world, entity_id, &col, handle, scale);
+        tracing::debug!(target: "load", kind = "collider",
+            "Collider of {} made again from its mesh's triangles",
+            world.get_name(entity_id).unwrap_or("?")
+        );
     }
 
     /// Remember an entity's collider both ways.
@@ -362,7 +447,8 @@ impl PhysicsSync {
     /// `collider.layer` (one name, `default` when unsaid) and
     /// `collider.mask` (a list of names, every layer when unsaid). A name
     /// that is no layer is reported once and left out (a mask) or read as
-    /// `default` (the layer).
+    /// `default` (the layer), in the words `flint check` says it in before
+    /// the game runs (`flint_core::collision_layers::unknown_layer`, #1220).
     pub(crate) fn groups_of(&self, col: &ComponentView) -> InteractionGroups {
         groups_in(&self.layers, col)
     }
@@ -382,7 +468,8 @@ impl PhysicsSync {
     ) -> (SharedShape, Option<Isometry<f32>>) {
         let shape_str = col.choice("shape", COLLIDER_SHAPES, "box");
         if matches!(shape_str, "mesh" | "convex") {
-            if let Some(shape) = self.mesh_shape(entity_id, col, shape_str, scale, body_type) {
+            if let Some(shape) = self.mesh_shape(world, entity_id, col, shape_str, scale, body_type)
+            {
                 return (shape, None);
             }
             // No triangles (reported): a box of `size`, as before #729
@@ -460,6 +547,7 @@ impl PhysicsSync {
     /// between two triangle meshes, so it would fall through a mesh floor.
     fn mesh_shape(
         &mut self,
+        world: &FlintWorld,
         entity_id: EntityId,
         col: &ComponentView,
         kind: &str,
@@ -467,6 +555,18 @@ impl PhysicsSync {
         body_type: &str,
     ) -> Option<SharedShape> {
         let Some(mesh) = self.meshes.get(&entity_id).cloned() else {
+            if self.mesh_coming.contains(&entity_id)
+                || waits_for_runtime_mesh(world, entity_id, col)
+            {
+                // Its triangles come when the game uploads the mesh or the
+                // procgen queue makes it, and the collider is made again
+                // then (#1222): a box of `size` until then, said quietly
+                tracing::debug!(
+                    "physics: {}'s `{kind}` collider waits for its triangles",
+                    world.get_name(entity_id).unwrap_or("?")
+                );
+                return None;
+            }
             col.report("shape", || {
                 Diagnostic::warning(
                     codes::NEEDS_COMPONENT,
@@ -474,7 +574,7 @@ impl PhysicsSync {
                 )
                 .hint(
                     "it takes them from `collider.model`, else the entity's `model.asset`: \
-                     name a model whose file is found (a model made at runtime has none)",
+                     name a model whose file is found or a procgen spec makes",
                 )
             });
             return None;
@@ -499,7 +599,7 @@ impl PhysicsSync {
             bits[i] = v.to_bits();
         }
         let key = (Arc::as_ptr(&mesh) as usize, convex, bits);
-        if let Some(shape) = self.mesh_shapes.get(&key) {
+        if let Some((_, shape)) = self.mesh_shapes.get(&key) {
             return shape.clone();
         }
 
@@ -548,7 +648,7 @@ impl PhysicsSync {
                 .hint("a hull needs four points that are not on one plane")
             });
         }
-        self.mesh_shapes.insert(key, shape.clone());
+        self.mesh_shapes.insert(key, (mesh, shape.clone()));
         shape
     }
 
@@ -578,10 +678,43 @@ impl PhysicsSync {
     }
 
     /// Hand over the triangles of an entity's `mesh` or `convex` collider,
-    /// in the entity's own space (as its model is drawn), before its body
-    /// is made.
+    /// in the entity's own space (as its model is drawn). Before its body
+    /// is made, the body takes them; after, its collider is made again
+    /// from them at the next sync (#1222). The same triangles again change
+    /// nothing.
     pub fn set_mesh(&mut self, entity_id: EntityId, mesh: Arc<ColliderMesh>) {
-        self.meshes.insert(entity_id, mesh);
+        self.mesh_coming.remove(&entity_id);
+        if let Some(old) = self.meshes.insert(entity_id, mesh.clone()) {
+            if Arc::ptr_eq(&old, &mesh) {
+                return;
+            }
+            // Drop the shapes no entity's triangles make any more
+            drop(old);
+            self.mesh_shapes
+                .retain(|_, (made_from, _)| Arc::strong_count(made_from) > 1);
+        }
+        if self.body_map.contains_key(&entity_id) && !self.reshape_pending.contains(&entity_id) {
+            self.reshape_pending.push(entity_id);
+        }
+    }
+
+    /// An entity's triangles are coming (see
+    /// [`PhysicsSystem::expect_collider_mesh`](crate::PhysicsSystem::expect_collider_mesh)).
+    pub fn expect_mesh(&mut self, entity_id: EntityId) {
+        if !self.meshes.contains_key(&entity_id) {
+            self.mesh_coming.insert(entity_id);
+        }
+    }
+
+    /// How many mesh shapes are kept.
+    #[cfg(test)]
+    pub(crate) fn mesh_shapes_len(&self) -> usize {
+        self.mesh_shapes.len()
+    }
+
+    /// The triangles handed over for an entity, if any.
+    pub fn mesh_of(&self, entity_id: EntityId) -> Option<&Arc<ColliderMesh>> {
+        self.meshes.get(&entity_id)
     }
 
     /// A `collider` is only ever given to Rapier as part of its entity's
@@ -1441,6 +1574,66 @@ impl PhysicsSync {
         self.synced_entities.insert(entity_id);
     }
 
+    /// A fixed body holding a heightfield (#1219): the terrain's collider.
+    /// Each cell is split from its (x0, z0) corner to its (x1, z1) one, as
+    /// the terrain's mesh is (Parry's zigzag), so the surface is the mesh's
+    /// triangle for triangle; internal edges are fixed, so nothing rolling
+    /// or walking over a cell edge is knocked up by it. A grid under 2 x 2
+    /// makes no collider.
+    pub fn register_static_heightfield(
+        &mut self,
+        entity_id: EntityId,
+        physics: &mut PhysicsWorld,
+        field: &crate::StaticHeightfield,
+        friction: f32,
+        restitution: f32,
+    ) {
+        let crate::StaticHeightfield {
+            columns,
+            rows,
+            ref heights,
+            width,
+            depth,
+            origin,
+        } = *field;
+        if columns < 2 || rows < 2 || heights.len() != columns * rows {
+            tracing::warn!(
+                "heightfield for entity {entity_id:?}: {columns} x {rows} samples \
+                 ({} heights) make no collider",
+                heights.len()
+            );
+            return;
+        }
+        let matrix = na::DMatrix::from_fn(rows, columns, |i, j| heights[i * columns + j]);
+        let mut shape = rapier3d::parry::shape::HeightField::with_flags(
+            matrix,
+            vector![width, 1.0, depth],
+            rapier3d::parry::shape::HeightFieldFlags::FIX_INTERNAL_EDGES,
+        );
+        shape
+            .cells_statuses_mut()
+            .fill(rapier3d::parry::shape::HeightFieldCellStatus::ZIGZAG_SUBDIVISION);
+
+        let body_handle = physics.insert_rigid_body(RigidBodyBuilder::fixed().build());
+        self.body_map.insert(entity_id, body_handle);
+        // Parry centres a heightfield on its origin; the terrain's grid
+        // starts at `origin`
+        let collider = ColliderBuilder::new(SharedShape::new(shape))
+            .translation(vector![
+                origin[0] + width * 0.5,
+                origin[1],
+                origin[2] + depth * 0.5
+            ])
+            .friction(friction)
+            .restitution(restitution)
+            .collision_groups(InteractionGroups::new(Group::GROUP_1, Group::ALL))
+            .build();
+        let col_handle = physics.insert_collider_with_parent(collider, body_handle);
+        self.insert_collider(entity_id, col_handle);
+        self.trimesh_pending.push(entity_id);
+        self.synced_entities.insert(entity_id);
+    }
+
     /// Create a static rigid body for a trimesh entity and return its handle.
     /// Convenience method for registering static track geometry.
     pub fn register_static_trimesh(
@@ -1682,10 +1875,20 @@ fn unit_snapped(s: [f32; 3]) -> [f32; 3] {
 
 /// [`PhysicsSync::groups_of`] against `layers`.
 fn groups_in(layers: &CollisionLayers, col: &ComponentView) -> InteractionGroups {
-    let names: Vec<&str> = layers.names().collect();
-    let layer = col.choice("layer", &names, DEFAULT_LAYER);
-    let membership = layers.bit(layer).unwrap_or(LayerMask::from_bits(1));
+    let on_default = LayerMask::from_bits(1);
+    let membership = match col.opt_str("layer") {
+        None => on_default,
+        Some(name) => layers.bit(name).unwrap_or_else(|| {
+            col.report("layer", || unknown_layer(layers, name, LayerUse::Layer));
+            on_default
+        }),
+    };
     InteractionGroups::new(membership.group(), mask_of(layers, col).group())
+}
+
+fn unknown_layer(layers: &CollisionLayers, name: &str, used: LayerUse) -> Diagnostic {
+    let names: Vec<&str> = layers.names().collect();
+    collision_layers::unknown_layer(name, &names, used)
 }
 
 fn mask_of(layers: &CollisionLayers, col: &ComponentView) -> LayerMask {
@@ -1708,13 +1911,7 @@ fn mask_of(layers: &CollisionLayers, col: &ComponentView) -> LayerMask {
         match item.as_str() {
             Some(name) => match layers.bit(name) {
                 Some(bit) => bits |= bit.bits(),
-                None => col.report(&field, || {
-                    Diagnostic::error(
-                        codes::BAD_ENUM_VALUE,
-                        format!("\"{name}\" is not a collision layer"),
-                    )
-                    .hint(format!("{}; it is left out", layers.unknown(name)))
-                }),
+                None => col.report(&field, || unknown_layer(layers, name, LayerUse::Mask)),
             },
             None => col.report(&field, || {
                 Diagnostic::error(

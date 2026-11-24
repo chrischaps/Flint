@@ -508,6 +508,16 @@ impl ScriptSystem {
         c.sounds_playing.extend(handles);
     }
 
+    /// The player's own bus volumes, by name, for `user_bus_volume`
+    /// (#1217): the host's at start and after each change. A bus missing
+    /// from it reads as 1.
+    pub fn set_user_bus_volumes<'a>(&mut self, volumes: impl IntoIterator<Item = (&'a str, f64)>) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.user_bus_volumes.clear();
+        c.user_bus_volumes
+            .extend(volumes.into_iter().map(|(name, v)| (name.to_string(), v)));
+    }
+
     /// Load the script a `script.source` names for a specific entity (for
     /// chunk loading), searched for from `from_dir`, the chunk's own
     /// directory, by the project's one rule (`AssetKind::Scripts`), and

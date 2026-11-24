@@ -24,6 +24,9 @@ Created Flint project `my-tavern` (walk template) in my-tavern
   schemas/archetypes/        the game's own schemas: empty, the engine's are not copied
   schemas/components/        the game's own schemas: empty, the engine's are not copied
   scripts/hud.rhai           the HUD, drawn by the scene's hud_controller
+  scripts/lib/menu.rhai      the engine's menu helpers, copied
+  ui/pause.style.toml        the pause menu's look
+  ui/pause.ui.toml           the pause menu (Esc or Start), a UI document
 
 Next steps:
   cd my-tavern
@@ -36,7 +39,7 @@ Run them. `flint render` draws the scene to a PNG with no window:
 
 ![The walk template's first scene, rendered by the printed command: seven standing stones round a lit plinth at dusk](../images/init-walk.png)
 
-and `flint play` opens it as a game: WASD to walk, the mouse to look, Space to jump, H to hide the controls panel that `scripts/hud.rhai` draws, Esc to quit.
+and `flint play` opens it as a game: WASD to walk, the mouse to look, Space to jump, H to hide the controls panel that `scripts/hud.rhai` draws, Esc (or a pad's Start) to pause. The pause menu is a UI document, `ui/pause.ui.toml`: the arrows, a pad, the mouse or a finger choose among Resume, Restart and Quit, and Quit is how the window closes. The project's `CLAUDE.md` says how to add a button.
 
 Three things about what you were given:
 
