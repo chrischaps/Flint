@@ -25,6 +25,7 @@
 //! mask = "head"
 //! weight = 1.0
 //! fade = 0.3
+//! easing = "ease_in_out"
 //!
 //! [[events]]
 //! time = 6.0
@@ -34,6 +35,7 @@
 
 use crate::animator::{self, Animator};
 use flint_core::components as comp;
+use flint_core::tween::Easing;
 use flint_core::{vfs, EntityId, FlintError, Result};
 use flint_ecs::FlintWorld;
 use serde::Deserialize;
@@ -69,14 +71,19 @@ pub struct SequenceEvent {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum SequenceStep {
-    /// Crossfade the base clip (`duration = 0` → hard cut)
+    /// Crossfade the base clip (`duration = 0` → hard cut). `easing`
+    /// writes the animator's `blend_easing`; omitted, the crossfade eases
+    /// as that already says (linear unless written).
     Blend {
         clip: String,
         #[serde(default)]
         duration: f64,
+        #[serde(default)]
+        easing: Option<String>,
     },
     /// Set a layer slot. Omitted fields keep their current value; `fade`
-    /// ramps the weight over that many seconds.
+    /// ramps the weight over that many seconds, moving as `easing` says
+    /// (linear when omitted).
     Layer {
         index: usize,
         #[serde(default)]
@@ -85,6 +92,8 @@ pub enum SequenceStep {
         weight: Option<f64>,
         #[serde(default)]
         fade: f64,
+        #[serde(default)]
+        easing: Option<String>,
         #[serde(default)]
         mode: Option<String>,
         #[serde(default)]
@@ -106,12 +115,29 @@ impl SequenceStep {
         }
     }
 
+    /// The easing the step names, if it names one (#1248). A file whose
+    /// step names no easing [`Easing`] knows does not load, so a step that
+    /// was loaded names a real one or none.
+    pub fn easing(&self) -> Option<Easing> {
+        match self {
+            SequenceStep::Blend { easing, .. } | SequenceStep::Layer { easing, .. } => {
+                easing.as_deref().and_then(Easing::from_name)
+            }
+            _ => None,
+        }
+    }
+
     /// Short label for timelines / logs
     pub fn label(&self) -> String {
+        // An easing the step names, after its length: ` ease_in_out`
+        let eased = match self.easing() {
+            Some(e) => format!(" {e}"),
+            None => String::new(),
+        };
         match self {
-            SequenceStep::Blend { clip, duration } => {
+            SequenceStep::Blend { clip, duration, .. } => {
                 if *duration > 0.0 {
-                    format!("blend → {clip} ({duration:.2}s)")
+                    format!("blend → {clip} ({duration:.2}s{eased})")
                 } else {
                     format!("cut → {clip}")
                 }
@@ -131,7 +157,7 @@ impl SequenceStep {
                     s.push_str(&format!(" w={w:.2}"));
                 }
                 if *fade > 0.0 {
-                    s.push_str(&format!(" fade {fade:.2}s"));
+                    s.push_str(&format!(" fade {fade:.2}s{eased}"));
                 }
                 s
             }
@@ -177,6 +203,23 @@ impl AnimSequence {
             if d <= 0.0 {
                 return Err(FlintError::AnimationError(format!(
                     "{origin}: non-positive duration {d}"
+                )));
+            }
+        }
+        for (i, e) in self.events.iter().enumerate() {
+            let named = match &e.step {
+                SequenceStep::Blend { easing, .. } | SequenceStep::Layer { easing, .. } => {
+                    easing.as_deref()
+                }
+                _ => None,
+            };
+            if let Some(name) = named.filter(|n| Easing::from_name(n).is_none()) {
+                return Err(FlintError::AnimationError(format!(
+                    "{origin}: event {} (the {} step at {} s): {}",
+                    i + 1,
+                    e.step.kind(),
+                    e.time,
+                    Easing::refusal(name)
                 )));
             }
         }
@@ -532,7 +575,7 @@ impl SequenceSync {
             return;
         };
         match &ev.step {
-            SequenceStep::Blend { clip, duration } => {
+            SequenceStep::Blend { clip, duration, .. } => {
                 // A crossfade is `blend_target`: writing `clip` on a tracked
                 // entity would cut to it instead (#732). Set `clip` only when
                 // empty, so an untracked entity also starts on the right clip.
@@ -540,7 +583,11 @@ impl SequenceSync {
                 if !has_clip {
                     write.clip(clip);
                 }
-                write.playing(true).blend(clip, duration.max(MIN_BLEND));
+                let seconds = duration.max(MIN_BLEND);
+                match ev.step.easing() {
+                    Some(easing) => write.playing(true).blend_eased(clip, seconds, easing),
+                    None => write.playing(true).blend(clip, seconds),
+                };
             }
             SequenceStep::Layer {
                 index,
@@ -549,7 +596,9 @@ impl SequenceSync {
                 fade,
                 mode,
                 mask,
+                ..
             } => {
+                let easing = ev.step.easing().unwrap_or(Easing::Linear);
                 animator::edit_layer(&mut comps, *index, |layer| {
                     // A slot that was inactive has no meaningful weight;
                     // a fade onto it should start from silence, not 1.0.
@@ -566,7 +615,7 @@ impl SequenceSync {
                         layer.mask(m);
                     }
                     if let Some(w) = weight {
-                        layer.fade(*w, *fade);
+                        layer.fade_eased(*w, *fade, easing);
                     }
                 });
             }
@@ -767,6 +816,102 @@ name = "done"
         assert!(!rt.playing);
         assert_eq!(rt.fired_count(), 6);
         assert_eq!(toml_f64(&animator(&world, id)["speed"]), Some(1.3));
+    }
+
+    const EASED: &str = r#"
+name = "eased"
+
+[[events]]
+time = 0.0
+kind = "layer"
+index = 0
+clip = "Wave"
+weight = 1.0
+fade = 0.5
+easing = "ease_in_out"
+
+[[events]]
+time = 0.0
+kind = "layer"
+index = 1
+clip = "Nod"
+weight = 1.0
+fade = 0.5
+
+[[events]]
+time = 0.1
+kind = "blend"
+clip = "Walk"
+duration = 0.4
+easing = "ease_out"
+
+[[events]]
+time = 0.2
+kind = "blend"
+clip = "Run"
+duration = 0.4
+"#;
+
+    /// A `layer` step's `easing` (#1248) is the layer's `fade_easing`, and
+    /// one that names none fades linearly as before; a `blend` step's is
+    /// the animator's `blend_easing`, which a later blend with none keeps.
+    #[test]
+    fn steps_write_the_easing_they_name() {
+        let seq = load_sequence_from_str(EASED, "test").unwrap();
+        assert_eq!(seq.events[0].step.easing(), Some(Easing::EaseInOut));
+        assert_eq!(seq.events[1].step.easing(), None);
+        assert_eq!(
+            seq.events[0].step.label(),
+            "L0 Wave w=1.00 fade 0.50s ease_in_out"
+        );
+        assert_eq!(seq.events[2].step.label(), "blend → Walk (0.40s ease_out)");
+        let (mut world, id) = world_with_animator();
+        let mut sync = SequenceSync::new();
+        sync.add_sequence(seq);
+        sync.play(id, "eased");
+
+        sync.advance(&mut world, 0.0);
+        let a = animator(&world, id);
+        let layers = a["layers"].as_array().unwrap();
+        assert_eq!(layers[0]["fade_easing"].as_str(), Some("ease_in_out"));
+        assert_eq!(layers[1]["fade_easing"].as_str(), Some("linear"));
+        assert!(a.get("blend_easing").is_none());
+        let read = Animator::of(&world, id).blend_easing;
+        assert_eq!(read, Easing::Linear, "absent reads linear");
+
+        sync.advance(&mut world, 0.1);
+        let a = animator(&world, id);
+        assert_eq!(a["blend_target"].as_str(), Some("Walk"));
+        assert_eq!(a["blend_easing"].as_str(), Some("ease_out"));
+        assert_eq!(Animator::of(&world, id).blend_easing, Easing::EaseOut);
+
+        sync.advance(&mut world, 0.1);
+        let a = animator(&world, id);
+        assert_eq!(a["blend_target"].as_str(), Some("Run"));
+        assert_eq!(a["blend_easing"].as_str(), Some("ease_out"), "kept");
+        assert!(world.read_reports().is_empty());
+    }
+
+    /// An easing no step can take is a load error naming the file, the
+    /// step and the easings there are.
+    #[test]
+    fn an_unknown_easing_is_a_load_error_naming_the_step() {
+        let text = EASED.replace("\"ease_in_out\"", "\"wobbly\"");
+        let err = load_sequence_from_str(&text, "animations/eased.sequence.toml")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(
+                "animations/eased.sequence.toml: event 1 (the layer step at 0 s): no easing \
+                 `wobbly`; one of linear, smooth, ease_in, ease_out, ease_in_out"
+            ),
+            "{err}"
+        );
+        let text = EASED.replace("\"ease_out\"", "\"easeout\"");
+        let err = load_sequence_from_str(&text, "s.sequence.toml")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("event 3 (the blend step at 0.1 s)"), "{err}");
     }
 
     #[test]

@@ -120,6 +120,24 @@ struct MainPipelines<'a> {
 }
 
 impl MainPipe {
+    /// Whether it draws through shallow wooze's vertex stage (#215). The
+    /// veils redraw an item and follow this (#1241), so they put each
+    /// vertex where this pass did.
+    pub(super) fn woozy(self) -> bool {
+        match self {
+            MainPipe::Mesh { woozy, .. }
+            | MainPipe::MeshBlended { woozy, .. }
+            | MainPipe::Skinned { woozy, .. }
+            | MainPipe::SkinnedBlended { woozy, .. } => woozy,
+            MainPipe::Terrain
+            | MainPipe::Line
+            | MainPipe::SkinnedSoftEdge
+            | MainPipe::Billboard
+            | MainPipe::Echo { .. }
+            | MainPipe::Particles(_) => false,
+        }
+    }
+
     /// What the frame's description calls it.
     pub(super) fn name(self) -> &'static str {
         use crate::pipeline::BlendMode as M;

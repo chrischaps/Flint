@@ -1,0 +1,144 @@
+# Style Veil, shallow wooze: drifting glass in front of glyph props (#1241).
+#
+# A pane of glass drifts on the wooze field (#215) in front of a glyph
+# crate, and a still pane stands in front of a glyph stone. The style veil
+# (#290) redraws every translucent draw's coverage so the mask hands that
+# share of each pixel back, and before #1241 it redrew a drifting one at
+# its rest pose: the crate was veiled where the pane had been, not where it
+# was drawn, so glyphs showed through the glass on one side and the glass's
+# ghost dimmed bare crate on the other. The veil now draws a woozy draw
+# through the main pass's own woozy vertex stage; the still pane is veiled
+# as before. The amplitude is far past any real prop's, so a rest-pose
+# veil misses by many cells.
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/style_veil_wooze.scene.toml --no-grid --time 2 -o wooze.png
+#   cargo run --bin flint -- render tests/fixtures/scenes/style_veil_wooze.scene.toml --no-grid --time 2 -o mask.png --debug-mode style
+#
+# Without `--time` the field doesn't run and the glass stands at rest.
+
+[scene]
+name = "Style Veil Wooze"
+version = "1.0"
+description = "Drifting glass in front of glyph props, veiled where it is drawn (#1241)"
+
+[wooze]
+step = 0.5
+glide = 0.4
+
+[camera]
+position = [0.3, 0.8, 1.75]
+target = [0.25, 0.48, -0.5]
+fov = 50.0
+
+[post_process]
+exposure = 1.15
+vignette_enabled = true
+vignette_intensity = 0.3
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+background = 0.25
+brightness = 0.2
+contrast = 1.3
+
+[entities.key]
+[entities.key.transform]
+position = [0, 20, 0]
+[entities.key.light]
+type = "directional"
+direction = [-0.5, 0.8, 0.45]
+color = [1.0, 0.9, 0.78]
+intensity = 2.2
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.02, 0.03, 0.07, 1.0]
+horizon_color = [0.10, 0.09, 0.12, 1.0]
+cloud_coverage = 0.1
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-20, -0.1, -20]
+max = [20, 0, 20]
+[entities.ground.material]
+color = [0.12, 0.10, 0.08, 1.0]
+roughness = 0.95
+
+# --- In glyphs, standing still ---
+
+# The crate, behind the glass
+[entities.crate]
+archetype = "furniture"
+[entities.crate.transform]
+position = [0.75, 0, -0.6]
+rotation = [0, -20, 0]
+[entities.crate.bounds]
+min = [-0.45, 0.0, -0.45]
+max = [0.45, 0.9, 0.45]
+[entities.crate.material]
+color = [0.60, 0.42, 0.24, 1.0]
+roughness = 0.8
+[entities.crate.ascii_style]
+ramp = "blocks"
+color = "tint"
+tint = [1.0, 0.72, 0.32]
+
+# The stone, behind the still pane
+[entities.stone]
+archetype = "furniture"
+[entities.stone.transform]
+position = [-0.7, 0, -0.9]
+rotation = [0, 10, 0]
+[entities.stone.bounds]
+min = [-0.6, 0.0, -0.2]
+max = [0.6, 1.7, 0.2]
+[entities.stone.material]
+color = [0.58, 0.56, 0.52, 1.0]
+roughness = 0.9
+[entities.stone.ascii_style]
+color = "tint"
+tint = [0.55, 0.85, 1.0]
+ramp = "classic"
+
+# --- Smooth, in front, drifting ---
+
+# A pane of glass at 45% across the middle of the crate
+[entities.glass]
+[entities.glass.transform]
+position = [0.6, 0.48, 0.35]
+rotation = [0, -12, 0]
+[entities.glass.bounds]
+min = [-0.13, -0.42, -0.02]
+max = [0.13, 0.42, 0.02]
+[entities.glass.material]
+base_color_r = 0.55
+base_color_g = 0.85
+base_color_b = 0.75
+base_color_a = 1.0
+opacity = 0.45
+roughness = 0.05
+metallic = 0.3
+[entities.glass.shallow_wooze]
+amplitude = 0.5
+wavelength = 4.0
+
+# A still twin of the glass across the stone: its veil must not move
+[entities.window]
+[entities.window.transform]
+position = [-0.75, 0.85, -0.3]
+rotation = [0, 8, 0]
+[entities.window.bounds]
+min = [-0.3, -0.5, -0.02]
+max = [0.3, 0.5, 0.02]
+[entities.window.material]
+base_color_r = 0.75
+base_color_g = 0.8
+base_color_b = 0.95
+base_color_a = 1.0
+opacity = 0.45
+roughness = 0.05
+metallic = 0.3

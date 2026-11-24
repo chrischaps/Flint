@@ -48,3 +48,4 @@ two frames on main too, and this copy draws one of them).
 | `pencil_rolling` | `pencil-local` (#544): flint-examples' `pencil_rolling` on 2026-11-17 without its script, the casks posed mid-roll and the crate turned; real `light` tables |
 | `tron_ground` | `reality-tron-ground` (#1181): written here, a 500 m tiled plane seen from 2 m at 5 degrees down and one crate; no light, so the built-in pair |
 | `style_veil_echo`, `style_veil_billboard`, `style_mask_wooze` | `style-veil-echo`, `style-veil-billboard`, `style-mask-wooze[-msaa4]` (#737): written here with real lights. The echo scene's oak is `specs/examples/oak_living.procgen.toml`, found by the asset search from the repo root, so a change to that spec moves `style-veil-echo` |
+| `style_veil_wooze` | `style-veil-wooze` (#1241): a drifting pane veils a glyph crate where it is drawn; a still pane beside it is the control. Real light |

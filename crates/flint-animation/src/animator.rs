@@ -36,6 +36,7 @@ const LOOP: &str = "loop";
 const SPEED: &str = "speed";
 const BLEND_TARGET: &str = "blend_target";
 const BLEND_DURATION: &str = "blend_duration";
+const BLEND_EASING: &str = "blend_easing";
 const SEQUENCE: &str = "sequence";
 const LAYERS: &str = "layers";
 const LEGACY_LAYER_CLIP: &str = "layer_clip";
@@ -58,6 +59,8 @@ pub struct Animator<'a> {
     pub speed: f64,
     pub blend_target: &'a str,
     pub blend_duration: f32,
+    /// How a crossfade's weight moves (#1248): linear unless written.
+    pub blend_easing: Easing,
     pub sequence: &'a str,
 }
 
@@ -76,6 +79,9 @@ impl<'a> Animator<'a> {
             speed: view.f64(SPEED, 1.0),
             blend_target: view.str(BLEND_TARGET, ""),
             blend_duration: view.f32(BLEND_DURATION, DEFAULT_BLEND_SECONDS),
+            // A crossfade written before easings (#1248) is linear, as it was
+            blend_easing: Easing::from_name(view.choice(BLEND_EASING, Easing::NAMES, "linear"))
+                .unwrap_or(Easing::Linear),
             sequence: view.str(SEQUENCE, ""),
         }
     }
@@ -104,6 +110,7 @@ impl<'a> Animator<'a> {
         state.time = start_time(duration, self.speed);
         state.blend_target = self.blend_target.to_string();
         state.blend_duration = self.blend_duration;
+        state.blend_easing = self.blend_easing;
         state.unpublished = playing != self.playing;
         Some(state)
     }
@@ -119,7 +126,8 @@ impl<'a> Animator<'a> {
     /// - Neither is read while the state is unpublished (the runtime moved
     ///   them and the animator doesn't say so yet; see [`publish`]).
     /// - A new `blend_target` (a known clip) starts a crossfade to it over
-    ///   `blend_duration`, even in the frame a `clip` changed.
+    ///   `blend_duration`, moving as `blend_easing` says, even in the frame
+    ///   a `clip` changed. Both are read when the crossfade starts.
     pub fn apply_to(
         &self,
         state: &mut ClipPlaybackState,
@@ -157,6 +165,7 @@ impl<'a> Animator<'a> {
         {
             state.blend_target = self.blend_target.to_string();
             state.blend_duration = self.blend_duration;
+            state.blend_easing = self.blend_easing;
             state.blend_elapsed = 0.0;
         }
     }
@@ -286,10 +295,18 @@ impl AnimatorWrite<'_, '_> {
         self.set(SPEED, toml::Value::Float(speed))
     }
 
-    /// Crossfade to `target` over `seconds`.
+    /// Crossfade to `target` over `seconds`, eased as `blend_easing`
+    /// already says (linear when nothing wrote it).
     pub fn blend(&mut self, target: &str, seconds: f64) -> &mut Self {
         self.set(BLEND_TARGET, toml::Value::String(target.into()))
             .set(BLEND_DURATION, toml::Value::Float(seconds))
+    }
+
+    /// [`Self::blend`], moving as `easing` says (#1248). The easing stays
+    /// written: a later [`Self::blend`] eases the same way.
+    pub fn blend_eased(&mut self, target: &str, seconds: f64, easing: Easing) -> &mut Self {
+        self.blend(target, seconds)
+            .set(BLEND_EASING, easing.name().into())
     }
 
     /// No crossfade asked for: what `play_clip` writes so one in flight

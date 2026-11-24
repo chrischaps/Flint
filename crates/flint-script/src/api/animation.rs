@@ -57,6 +57,23 @@ pub(crate) fn register(api: &mut ScriptApi) {
     });
 
     m.func(
+        "blend_to",
+        "Crossfade to another clip over seconds, eased: linear, smooth, ease_in, ease_out or ease_in_out (later crossfades keep it).",
+    )
+    .arg("id", Entity)
+    .arg("clip", Str)
+    .arg("duration", Num)
+    .arg("easing", Str)
+    .run(|call, (id, clip, duration, easing)| {
+        let easing =
+            Easing::from_name(&easing).ok_or_else(|| call.error(Easing::refusal(&easing)))?;
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
+            animator::write(&mut comps).blend_eased(&clip, duration, easing);
+        }
+        Ok(())
+    });
+
+    m.func(
         "set_anim_speed",
         "Set the animator's playback speed (1 normal).",
     )
@@ -221,4 +238,58 @@ fn edit_anim_layer(
         animator::edit_layer(&mut comps, index as usize, edit);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::ScriptEngine;
+    use flint_animation::animator::Animator;
+    use flint_core::tween::Easing;
+    use flint_ecs::FlintWorld;
+
+    fn run(source: &str) -> (ScriptEngine, FlintWorld, flint_core::EntityId) {
+        let mut engine = ScriptEngine::new();
+        engine.errors.set_quiet(true);
+        let mut world = FlintWorld::new();
+        let id = world.spawn("rig").unwrap();
+        let ast = engine.compile(source).unwrap();
+        engine.add_script(id, ast, "rig.rhai".into());
+        engine.call_inits(&mut world);
+        (engine, world, id)
+    }
+
+    /// `blend_to(id, clip, seconds, easing)` (#1248) writes the crossfade
+    /// and its `blend_easing`; the three-argument form leaves the easing
+    /// as written.
+    #[test]
+    fn an_eased_blend_to_writes_its_easing_and_a_plain_one_keeps_it() {
+        let (engine, world, id) = run(
+            "fn on_init() { let me = self_entity(); blend_to(me, \"walk\", 0.5, \"ease_in_out\"); blend_to(me, \"run\", 0.25); }",
+        );
+        assert!(
+            engine.errors().all().is_empty(),
+            "{:?}",
+            engine.errors().all()
+        );
+        let animator = Animator::of(&world, id);
+        assert_eq!(animator.blend_target, "run");
+        assert_eq!(animator.blend_duration, 0.25);
+        assert_eq!(animator.blend_easing, Easing::EaseInOut);
+    }
+
+    #[test]
+    fn an_easing_that_is_none_is_a_script_error() {
+        let (engine, world, id) =
+            run("fn on_init() { blend_to(self_entity(), \"walk\", 0.5, \"wobbly\"); }");
+        let errors = engine.errors().all();
+        assert_eq!(errors.len(), 1);
+        assert!(
+            errors[0]
+                .message
+                .contains("blend_to: no easing `wobbly`; one of linear"),
+            "{}",
+            errors[0].message
+        );
+        assert_eq!(Animator::of(&world, id).blend_target, "");
+    }
 }
