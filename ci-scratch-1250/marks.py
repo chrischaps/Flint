@@ -57,11 +57,7 @@ hitch_marks, zero = [], None
 for mk in marks:
     text = mk["text"]
     h = HITCH.search(text)
-    if mk["end"] is not None and h:  # Linux: the marker file's own span
-        ms, cls, frame, wall = float(h[1]), h[2], int(h[3]), float(h[4])
-        hitch_marks.append({"frame": frame, "class": cls, "wall_time": wall, "ms": ms,
-                            "start": mk["start"], "end": mk["end"], "raw": text[:300]})
-    elif mk["name"].startswith("Hitch"):  # Windows: an instant, written at now_us
+    if mk["name"].startswith("Hitch"):  # Windows: an instant, written at now_us
         now, wall, dur = field(text, "now_us"), field(text, "wall_time_us"), field(text, "duration_us")
         start = mk["start"] - (now - wall) / 1000.0
         hitch_marks.append({"frame": field(text, "frame"), "class": h[2] if h else None,
@@ -69,6 +65,10 @@ for mk in marks:
                             "start": start, "end": start + dur / 1000.0,
                             "event_after_end_ms": round(mk["start"] - start - dur / 1000.0, 3),
                             "raw": text[:400]})
+    elif mk["end"] and h:  # Linux: the marker file's own span
+        ms, cls, frame, wall = float(h[1]), h[2], int(h[3]), float(h[4])
+        hitch_marks.append({"frame": frame, "class": cls, "wall_time": wall, "ms": ms,
+                            "start": mk["start"], "end": mk["end"], "raw": text[:300]})
     elif "wall_time 0" in text:
         zero = mk["start"]
     elif mk["name"].startswith("WallTimeZero"):
@@ -131,11 +131,11 @@ interval = float(p["meta"].get("interval", 1.0))
 # The stall's samples come back to back; a frame's own Rhai sample is alone.
 runs = []
 for tm in stall_times:
-    if runs and tm - runs[-1][-1] <= 3 * interval:
+    if runs and tm - runs[-1][-1] <= 12.0:
         runs[-1].append(tm)
     else:
         runs.append([tm])
-long_runs = [r for r in runs if len(r) >= 20]
+long_runs = [r for r in runs if len(r) >= 15]
 FRAME_MS = 1000.0 / 60.0
 rows, claimed = [], set()
 for h in hitch_marks:
@@ -174,7 +174,7 @@ out = {
 # The profiler's timeline starts at the earliest thread's start: a range
 # around the first hitch for the screenshot, in ms from there
 zero_at = min(th.get("processStartupTime", th.get("registerTime", 0)) for th in p["threads"])
-first = rows[0] if rows else None
+first = next((r for r in rows if r.get("stall_run_samples")), rows[0] if rows else None)
 out["screenshot_range"] = ([round(first["start"] - zero_at - 60), round(first["ms"] + 120)]
                            if first else None)
 json.dump(out, open(out_path, "w", encoding="utf-8"), indent=2)

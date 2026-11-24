@@ -58,7 +58,7 @@ async function load(u, name) {
 
 await send('Page.enable');
 await send('Runtime.enable');
-const view = (v) => url.replace('/?symbolServer', `/${v}/?symbolServer`) + `&thread=${thread}`;
+const view = (v) => url.replace('/?symbolServer', `/${v}/?symbolServer`) + `&thread=${thread}&v=10`;
 await load(view('marker-chart') + '&markerSearch=hitch', 'marker-chart');
 await load(view('marker-table') + '&markerSearch=hitch', 'marker-table');
 await load(view('stack-chart') + `&range=${rStart}m${rLen}`, 'stack-chart');
