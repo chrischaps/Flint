@@ -1,0 +1,89 @@
+# #1249 scratch, never merged: run the profiling guide's sampling commands as
+# written on Linux and elevated Windows.
+name: samplers-1249
+
+on:
+  push:
+    branches: [scratch/samplers-1249]
+
+jobs:
+  linux:
+    name: linux (${{ matrix.unwind }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        unwind: [eh_frame, fp]
+    env:
+      UNWIND: ${{ matrix.unwind }}
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: flint-examples
+        run: git clone --depth 1 https://github.com/chrischaps/flint-examples flint-examples
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build headers, Vulkan (lavapipe), perf, Hotspot
+        timeout-minutes: 20
+        run: |
+          bash scripts/linux-build-deps.sh
+          sudo apt-get install -y mesa-vulkan-drivers vulkan-tools xvfb
+          sudo apt-get install -y linux-tools-common "linux-tools-$(uname -r)" || sudo apt-get install -y linux-tools-azure || true
+          sudo apt-get install -y hotspot || true
+          perf --version || true
+      - name: cargo build --profile profiling -p flint-player
+        run: |
+          if [ "$UNWIND" = fp ]; then export RUSTFLAGS="-C force-frame-pointers=yes"; fi
+          cargo build --profile profiling -p flint-player 2>&1 | tail -3
+          ls -la target/profiling/flint-player
+          readelf -S target/profiling/flint-player | grep -E "eh_frame|debug_line" || true
+      - name: cargo install --locked samply
+        run: cargo install --locked samply && samply --version
+      - name: Run the book's commands
+        run: bash ci-scratch-1249/linux.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-${{ matrix.unwind }}
+          path: out/
+
+  windows:
+    name: windows (elevated)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      WGPU_BACKEND: dx12
+      WGPU_ADAPTER_NAME: Microsoft Basic Render Driver
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: flint-examples
+        run: git clone --depth 1 https://github.com/chrischaps/flint-examples flint-examples
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Static DXC archive
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\flint\static-dxc
+          key: static-dxc-${{ hashFiles('vendor/static-dxc/pin.rs') }}
+      - name: cargo build --profile profiling -p flint-player
+        shell: bash
+        run: |
+          cargo build --profile profiling -p flint-player 2>&1 | tail -3
+          ls -la target/profiling/flint-player.exe target/profiling/flint_player.pdb
+      - name: cargo install --locked samply
+        shell: bash
+        run: cargo install --locked samply && samply --version
+      - name: Run the book's command
+        shell: pwsh
+        run: ./ci-scratch-1249/windows.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows
+          path: out/
