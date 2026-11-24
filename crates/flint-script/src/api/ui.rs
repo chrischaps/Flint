@@ -99,6 +99,21 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .arg("text", Str)
         .run(|call, (id, text)| call.ctx().ui_system.set_text(&id, &text));
 
+    m.func(
+        "ui_get_text",
+        "An element's text: what a text input holds, a script's text, else its layout's.",
+    )
+    .arg("element_id", Str)
+    .returns(Str, "\"\" for an element no document has")
+    .run(|call, (id,)| call.ctx_ref().ui_system.text(&id).unwrap_or_default());
+
+    m.func(
+        "ui_editing",
+        "Whether a text input has focus: the player is typing, so a game can leave its own keys alone.",
+    )
+    .returns(Bool, "")
+    .run(|call, ()| call.ctx_ref().ui_system.editing());
+
     m.func("ui_show", "Show an element.")
         .arg("element_id", Str)
         .run(|call, (id,)| call.ctx().ui_system.show(&id));

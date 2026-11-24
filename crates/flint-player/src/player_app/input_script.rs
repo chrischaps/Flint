@@ -24,7 +24,8 @@
 //! 6.8   up     MouseLeft          #   a glide to (900, 500) over 0.5 s drags
 //! 7.0   click  320 200            # pointer there, then tap MouseLeft
 //! 7.5   click  320 200 MouseRight
-//! 8.0   type   200 planks         # text into the focused egui field
+//! 8.0   type   200 planks         # text into the focused egui field, or a
+//!                                  #   UI document's text_input (#1229)
 //! 9.0   look   40 -10             # raw mouse motion, as mouse-look reads
 //! 9.5   look   300 0 1.5          #   it; spread over 1.5 s
 //! 10.0  touch  1 200 600          # finger 1 down at window pixels
