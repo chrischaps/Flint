@@ -173,7 +173,15 @@ out = {
 }
 # The profiler's timeline starts at the earliest thread's start: a range
 # around the first hitch for the screenshot, in ms from there
-zero_at = min(th.get("processStartupTime", th.get("registerTime", 0)) for th in p["threads"])
+def first_time(th):
+    sm = th["samples"]
+    if sm.get("time"):
+        return sm["time"][0]
+    if sm.get("timeDeltas"):
+        return sm["timeDeltas"][0]
+    return None
+# the profiler's zero: the earliest sample of a thread that has any
+zero_at = min(x for x in (first_time(th) for th in p["threads"]) if x is not None)
 first = next((r for r in rows if r.get("stall_run_samples")), rows[0] if rows else None)
 out["screenshot_range"] = ([round(first["start"] - zero_at - 60), round(first["ms"] + 120)]
                            if first else None)
