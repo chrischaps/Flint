@@ -5,6 +5,9 @@ mkdir -p out
 EXE=./target/profiling/flint-player
 SCENE=flint-examples/hitch_metronome.scene.toml
 export LIBGL_ALWAYS_SOFTWARE=1
+# small, shadowless frames, so the 100 ms stall stands out; a lower factor
+# in case the software renderer still runs slow (the rule is not under test)
+export FLINT_SHADOWS=0 FLINT_HITCH_FACTOR=1.3
 
 wait_for() { # file, pattern, seconds
   for _ in $(seq 1 "$3"); do grep -q "$2" "$1" 2>/dev/null && return 0; sleep 1; done; return 1
@@ -12,7 +15,7 @@ wait_for() { # file, pattern, seconds
 
 sudo sysctl kernel.perf_event_paranoid=1
 timeout 300 xvfb-run -a samply record --save-only -o profile.json.gz $EXE $SCENE \
-  --exit-after 12 --hitch-log "$PWD/out/hitches.jsonl" > out/samply-record.log 2>&1
+  --exit-after 12 --width 320 --height 180 --hitch-log "$PWD/out/hitches.jsonl" > out/samply-record.log 2>&1
 echo "exit $?" >> out/samply-record.log
 ls -la out profile.json.gz >> out/samply-record.log 2>&1
 cp profile.json.gz out/samply-profile.json.gz

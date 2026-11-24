@@ -6,6 +6,7 @@ if (-not $xperf) {
   $xperf = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\xperf.exe' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
 }
 "xperf: $xperf" | Tee-Object out/notes.txt
+$env:FLINT_SHADOWS = "0"; $env:FLINT_HITCH_FACTOR = "1.3"
 $guid = '89d78a2a-cb1c-507a-4e4b-896621b7b194'
 
 function Wait-For($file, $pattern, $secs) {
@@ -18,7 +19,7 @@ function Wait-For($file, $pattern, $secs) {
 
 & $xperf -on PROC_THREAD+LOADER+PROFILE -stackwalk Profile -BufferSize 1024 -f kernel.etl -start flint -on $guid -BufferSize 1024 -f user.etl *> out/xperf-start.log
 "xperf start exit $LASTEXITCODE" | Tee-Object -Append out/notes.txt
-& target\profiling\flint-player.exe flint-examples\hitch_metronome.scene.toml --exit-after 12 --hitch-log "$PWD\out\hitches.jsonl" *> out/player.log
+& target\profiling\flint-player.exe flint-examples\hitch_metronome.scene.toml --exit-after 12 --width 320 --height 180 --hitch-log "$PWD\out\hitches.jsonl" *> out/player.log
 "player exit $LASTEXITCODE" | Tee-Object -Append out/notes.txt
 & $xperf -stop flint -stop -d trace.etl *> out/xperf-stop.log
 "xperf stop exit $LASTEXITCODE" | Tee-Object -Append out/notes.txt
