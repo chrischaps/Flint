@@ -1,17 +1,8 @@
 // The skinned wireframe's stages: each vertex posed by its bones, drawn as
 // flat black edge lines. What was left of the old inverted-hull outline
 // shader when the selection outline moved over the finished image (#602).
-
-struct TransformUniforms {
-    view_proj: mat4x4<f32>,
-    model: mat4x4<f32>,
-    model_inv_transpose: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    _pad: f32,
-};
-
-@group(0) @binding(0)
-var<uniform> transform: TransformUniforms;
+// mesh_vertex.wgsl and skinning.wgsl go in front (`wgsl_sources::WIRE`,
+// #1244), so the lines lie on the triangles the scene drew.
 
 // Bind group 3: Bone matrices
 @group(3) @binding(0)
@@ -28,12 +19,8 @@ struct SkinnedVertexInput {
 
 @vertex
 fn vs_skinned_wire(in: SkinnedVertexInput) -> @builtin(position) vec4<f32> {
-    let skin_mat = bone_matrices[in.joint_indices.x] * in.joint_weights.x
-                 + bone_matrices[in.joint_indices.y] * in.joint_weights.y
-                 + bone_matrices[in.joint_indices.z] * in.joint_weights.z
-                 + bone_matrices[in.joint_indices.w] * in.joint_weights.w;
-    let world_pos = transform.model * (skin_mat * vec4<f32>(in.position, 1.0));
-    return transform.view_proj * world_pos;
+    let skin_mat = skin_transform(in.joint_indices, in.joint_weights);
+    return clip_of(world_of(skin_mat * vec4<f32>(in.position, 1.0)));
 }
 
 // Flat black

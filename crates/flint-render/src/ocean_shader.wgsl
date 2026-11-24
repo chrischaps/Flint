@@ -15,17 +15,8 @@
 // vertex brings its rest position, normal and flow; `body` scales the waves,
 // tints the water and sets the flow's phase period. The sea binds a body
 // block too (its own colours, full waves, no flow), so its look is unchanged.
-
-struct TransformUniforms {
-    view_proj: mat4x4<f32>,
-    model: mat4x4<f32>,
-    model_inv_transpose: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    _pad: f32,
-};
-
-@group(0) @binding(0)
-var<uniform> transform: TransformUniforms;
+//
+// The transform group and `clip_of` are mesh_vertex.wgsl's (#1244).
 
 // Two vec4s per wave: a = [dir.x, dir.y, k, amp], b = [phase_t, q, omega_eff, 0].
 // phase_t = (omega*t - phase0) mod 2pi, precomputed in f64 on the CPU.
@@ -373,7 +364,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let off = gerstner_offset(flat_xz, fade * body.params.x);
     let world_pos = vec3<f32>(flat_xz.x + off.x, off.y, flat_xz.y + off.z);
 
-    out.clip_position = transform.view_proj * vec4<f32>(world_pos, 1.0);
+    out.clip_position = clip_of(vec4<f32>(world_pos, 1.0));
     out.world_pos = world_pos;
     out.param_xz = flat_xz;
     out.fade = fade;
@@ -396,7 +387,7 @@ fn vs_body(in: BodyVertexInput) -> VertexOutput {
     let off = flowing_offset(flow_taps(rest_xz, in.flow), fade * body.params.x);
     let world_pos = in.position + off;
 
-    out.clip_position = transform.view_proj * vec4<f32>(world_pos, 1.0);
+    out.clip_position = clip_of(vec4<f32>(world_pos, 1.0));
     out.world_pos = world_pos;
     out.param_xz = rest_xz;
     out.fade = fade;

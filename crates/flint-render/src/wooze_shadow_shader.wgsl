@@ -1,6 +1,7 @@
 // Shallow wooze (#215): the shadow pass of a woozy draw. A caster moves by the same
 // wooze_offset as it does in the main pass, on the same numbers, so its shadow stays
-// attached. These are vs_shadow and vs_skinned_shadow with one line added.
+// attached. These are vs_shadow and vs_skinned_shadow with one line added; the
+// pose is skinning.wgsl's (#1244).
 
 struct WoozyShadowUniforms {
     light_view_proj: mat4x4<f32>,
@@ -40,10 +41,7 @@ fn vs_shadow_wooze(in: VertexInput) -> @builtin(position) vec4<f32> {
 
 @vertex
 fn vs_skinned_shadow_wooze(in: SkinnedVertexInput) -> @builtin(position) vec4<f32> {
-    let skin_mat = bone_matrices[in.joint_indices.x] * in.joint_weights.x
-                 + bone_matrices[in.joint_indices.y] * in.joint_weights.y
-                 + bone_matrices[in.joint_indices.z] * in.joint_weights.z
-                 + bone_matrices[in.joint_indices.w] * in.joint_weights.w;
+    let skin_mat = skin_transform(in.joint_indices, in.joint_weights);
     let rest = shadow.model * (skin_mat * vec4<f32>(in.position, 1.0));
     let world_pos = rest.xyz + wooze_offset(rest.xyz, shadow.wooze);
     return shadow.light_view_proj * vec4<f32>(world_pos, 1.0);

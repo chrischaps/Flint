@@ -1,6 +1,7 @@
 // Shadow map depth-only shader
 // Renders geometry from light perspective for shadow mapping.
-// Includes a skinned variant that applies bone matrices before world transform.
+// Includes a skinned variant that applies bone matrices before world transform
+// (skinning.wgsl's `skin_transform`, put in front by `wgsl_sources::SHADOW`).
 
 // One draw's (shadow::ShadowDrawUniforms); the cascades' are lights.wgsl's
 struct ShadowDrawUniforms {
@@ -41,13 +42,6 @@ fn vs_shadow(in: VertexInput) -> VertexOutput {
     let world_pos = shadow.model * vec4<f32>(in.position, 1.0);
     out.clip_position = shadow.light_view_proj * world_pos;
     return out;
-}
-
-fn skin_transform(joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
-    return bone_matrices[joints.x] * weights.x
-         + bone_matrices[joints.y] * weights.y
-         + bone_matrices[joints.z] * weights.z
-         + bone_matrices[joints.w] * weights.w;
 }
 
 @vertex

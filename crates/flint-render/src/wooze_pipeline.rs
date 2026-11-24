@@ -22,19 +22,14 @@ use crate::pipeline::{BlendMode, RenderPipeline, ADDITIVE_BLEND, MULTIPLY_BLEND}
 use crate::primitives::{SkinnedVertex, Vertex};
 use crate::skinned_pipeline::SkinnedPipeline;
 
-/// The shallow wooze vertex stages, with the noise they share.
-pub(crate) const VERTEX_SOURCE: &str = concat!(
-    include_str!("wooze_noise.wgsl"),
-    "\n",
-    include_str!("wooze_vertex.wgsl")
-);
+/// The shallow wooze vertex stages, with the noise they share and the
+/// meshes' vertex products, drift on (`wgsl_sources::wooze_vertex`, #1244).
+fn vertex_source() -> String {
+    crate::wgsl_sources::wooze_vertex()
+}
 
 /// The shadow pass's, with the same noise, so a shadow moves with what casts it.
-pub(crate) const SHADOW_SOURCE: &str = concat!(
-    include_str!("wooze_noise.wgsl"),
-    "\n",
-    include_str!("wooze_shadow_shader.wgsl")
-);
+pub(crate) const SHADOW_SOURCE: &str = crate::wgsl_sources::WOOZE_SHADOW;
 
 /// The shortest wavelength, in metres. Under this it stops reading as drift and
 /// starts tearing a mesh's triangles apart.
@@ -198,7 +193,7 @@ impl Stages<'_> {
 fn vertex_module(device: &wgpu::Device) -> wgpu::ShaderModule {
     device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Shallow Wooze Vertex Shader"),
-        source: wgpu::ShaderSource::Wgsl(VERTEX_SOURCE.into()),
+        source: wgpu::ShaderSource::Wgsl(vertex_source().into()),
     })
 }
 
@@ -298,14 +293,14 @@ mod tests {
 
     #[test]
     fn the_shaders_validate() {
-        validated(VERTEX_SOURCE, "wooze_vertex.wgsl");
+        validated(&vertex_source(), "wooze_vertex.wgsl");
         validated(SHADOW_SOURCE, "wooze_shadow_shader.wgsl");
     }
 
     /// The variants hand their outputs to fragment stages they don't own.
     #[test]
     fn a_woozy_vertex_stage_hands_over_what_its_plain_twin_does() {
-        let woozy = validated(VERTEX_SOURCE, "wooze_vertex.wgsl");
+        let woozy = validated(&vertex_source(), "wooze_vertex.wgsl");
         let plain = naga::front::wgsl::parse_str(crate::wgsl_sources::SCENE).unwrap();
         let skinned = naga::front::wgsl::parse_str(crate::wgsl_sources::SKINNED).unwrap();
         assert_eq!(

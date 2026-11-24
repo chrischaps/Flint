@@ -195,9 +195,17 @@ pub fn encode_blend(blend: f32) -> u32 {
     (blend.clamp(0.0, 1.0) * BLEND_ONE as f32).round() as u32
 }
 
-/// The mask's shader: the tear's mask (#397), then `style_mask.wgsl`.
+/// The mask's shader: the tear's mask (#397), a mesh's vertex side in a mesh
+/// block (`wgsl_sources::MASK_VERTEX`'s two files, #1244: the transform at
+/// group 0, `world_of` / `clip_of`, `skin_transform`), then
+/// `style_mask.wgsl`.
 pub(crate) const STYLE_MASK_WGSL: &str = concat!(
     include_str!("tear_mask.wgsl"),
+    "\n//FLINT_MESH {\n",
+    include_str!("mesh_vertex.wgsl"),
+    "\n",
+    include_str!("skinning.wgsl"),
+    "\n//FLINT_MESH }\n",
     include_str!("style_mask.wgsl")
 );
 
@@ -209,7 +217,7 @@ pub(crate) fn woozy_mask_source() -> String {
     format!(
         "{}\n{}\n{}",
         include_str!("wooze_noise.wgsl"),
-        STYLE_MASK_WGSL.replace("//FLINT_WOOZE ", ""),
+        crate::wgsl_sources::woozy(STYLE_MASK_WGSL),
         include_str!("style_mask_wooze.wgsl")
     )
 }

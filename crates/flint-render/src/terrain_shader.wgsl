@@ -2,15 +2,9 @@
 // Uses the same Vertex format as the main PBR shader (position, normal, color, uv)
 // Lighting is the scene's shared WGSL (lights.wgsl, light_bindings.wgsl,
 // brdf.wgsl, shadows.wgsl, direct_light.wgsl, tonemap.wgsl), put in front of
-// this file by `wgsl_sources::TERRAIN` (#738).
-
-struct TransformUniforms {
-    view_proj: mat4x4<f32>,
-    model: mat4x4<f32>,
-    model_inv_transpose: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    _pad: f32,
-};
+// this file by `wgsl_sources::TERRAIN` (#738), and the transform group and a
+// mesh's vertex products (mesh_vertex.wgsl, #1244), which the style mask
+// redraws a chunk with.
 
 struct TerrainUniforms {
     texture_tile: f32,
@@ -18,10 +12,6 @@ struct TerrainUniforms {
     roughness: f32,
     enable_tonemapping: u32,
 };
-
-// Bind group 0: Transform (shared with PBR)
-@group(0) @binding(0)
-var<uniform> transform: TransformUniforms;
 
 // Bind group 1: Terrain material
 @group(1) @binding(0)
@@ -72,9 +62,9 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let world_pos = transform.model * vec4<f32>(in.position, 1.0);
-    out.clip_position = transform.view_proj * world_pos;
-    out.normal = normalize((transform.model_inv_transpose * vec4<f32>(in.normal, 0.0)).xyz);
+    let world_pos = world_of(vec4<f32>(in.position, 1.0));
+    out.clip_position = clip_of(world_pos);
+    out.normal = world_normal_of(in.normal);
     out.world_pos = world_pos.xyz;
     out.uv = in.uv;
     return out;

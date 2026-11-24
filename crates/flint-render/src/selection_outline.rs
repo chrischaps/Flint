@@ -130,18 +130,23 @@ fn module(device: &wgpu::Device, label: &str, source: &str) -> wgpu::ShaderModul
     })
 }
 
-/// The mask shader's source; `woozy` prefixes the wooze noise and turns on
-/// the drift lines.
+/// The mask shader's source: a mesh's vertex side (`wgsl_sources::MASK_VERTEX`,
+/// the scene's products, #1244), then `selection_mask.wgsl`; `woozy`
+/// prefixes the wooze noise and turns on the drift lines.
 pub(crate) fn mask_source(woozy: bool) -> String {
-    let base = include_str!("selection_mask.wgsl");
+    let base = format!(
+        "{}\n{}",
+        crate::wgsl_sources::MASK_VERTEX,
+        include_str!("selection_mask.wgsl")
+    );
     if woozy {
         format!(
             "{}\n{}",
             include_str!("wooze_noise.wgsl"),
-            base.replace("//FLINT_WOOZE ", "")
+            crate::wgsl_sources::woozy(&base)
         )
     } else {
-        base.to_string()
+        base
     }
 }
 
