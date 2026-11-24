@@ -1996,7 +1996,7 @@ The showcase film is not part of the wasm or any bundle, so the 4 MB gzip
 line above doesn't count it. It is a click-to-play film on the Flint page,
 loaded on its own (`preload="none"` with its poster), and these are its
 sizes, recorded so the next cut can be held to them. The storyboard
-(`flint-examples/tools/showcase/storyboard.md`, "The 16:9 cut") has the whole table.
+(`flint-examples/film/storyboard.md`, "The 16:9 cut") has the whole table.
 
 | File | Size | |
 |---|---|---|

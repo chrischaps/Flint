@@ -680,7 +680,7 @@ snapshot is written, and leaves (the second snapshot, shortened):
           "components": ["character_controller", "collider", "rigidbody", "script", "transform"],
           "data": {
             "transform": {"position": [-0.0073, 0.86, 4.2899], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
-            "character_controller": {"camera_mode": "first_person", "move_speed": 5.0, "...": "..."}
+            "character_controller": {"height": 1.8, "move_speed": 5.0, "...": "..."}
           }
         }
       ]
@@ -841,6 +841,7 @@ flint playtest flint-examples/phase4_runtime.scene.toml     --input-script flint
 flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --json
 flint playtest scenes/level1.scene.toml --test-script playtests/coins.rhai --timeout 30
 flint playtest scenes/level1.scene.toml --render --screenshot shots/t2.png --screenshot-at 2
+flint playtest scenes/menu.scene.toml --save-from saves/v1_halfway.toml --json
 ```
 
 | Flag | Description |
@@ -852,6 +853,7 @@ flint playtest scenes/level1.scene.toml --render --screenshot shots/t2.png --scr
 | `--frame-step <s>` | Game seconds a frame (default 1/60) |
 | `--seed <n>` | `random()`'s seed (default: every stepped run's) |
 | `--strict` | A warning while the scene loads fails the run, and so does anything `flint check` finds in the scene |
+| `--save-from <file>` | Start from this save file, loaded as the player loads one (its version and `on_persist_migrate`, a file that doesn't parse); the run writes nothing and the file is left as it is |
 | `--dump <entity>` | Put the entity's components at the end in the report (repeatable) |
 | `--report <file>` | Write the JSON report to this file as well |
 | `--timings` | Wall-clock times in the report (two runs then differ) |
@@ -872,7 +874,7 @@ keys and what a take is: [Filming a Showcase](../guides/filming-a-showcase.md).
 ```bash
 flint capture showcase_game/trailer.shots.toml
 flint capture showcase_game/trailer.shots.toml --verify --encode mp4
-flint capture flint-examples/tools/showcase/film.toml --shot 02_type --scale 0.5 --dry-run --json
+flint capture flint-examples/film/film.toml --shot 02_type --scale 0.5 --dry-run --json
 ```
 
 ### Capture Flags

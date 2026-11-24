@@ -371,6 +371,7 @@ impl SchemaRegistry {
                 // A scene table is no entity's: it has no F3 panel (the lint
                 // says so of a `panel` key)
                 panel: None,
+                retired: def.retired,
             };
             self.tables.insert(name, schema);
         }
@@ -394,7 +395,7 @@ impl SchemaRegistry {
 
     /// A component's fields are declared under `[component.<name>.fields]`;
     /// any key under `[component.<name>]` but `description`, `fields`,
-    /// `panel` and `extend` is an error naming the file and the keys (#792).
+    /// `panel`, `extend` and `retired` is an error naming the file and the keys (#792).
     /// Eleven engine files once put their fields there and loaded with none,
     /// so nothing in them was validated and no default applied.
     ///
@@ -467,6 +468,7 @@ impl SchemaRegistry {
                 description: def.description,
                 fields,
                 panel,
+                retired: def.retired,
             };
             self.components.insert(name, schema);
         }
@@ -514,6 +516,7 @@ impl SchemaRegistry {
             if def.panel.is_some() {
                 inputs.table = def.panel;
             }
+            schema.retired.extend(def.retired);
             for (field, field_schema, panel) in fields_of(kind, &name, def.fields, &source) {
                 match &file {
                     Some(file) => origin.fields.insert(field.clone(), file.clone()),
@@ -1516,6 +1519,56 @@ size = { type = "vec3", default = [1, 1, 1] }
             lints[0]
                 .contains("`description` is ignored: `[component.material]` says `extend = true`"),
             "{lints:?}"
+        );
+    }
+
+    /// #1212: a field a component took out is still `unknown-field` in a
+    /// scene that writes it, but says why, from the schema's `retired`
+    /// table; a game's extension adds to the engine's. A field nobody
+    /// retired keeps the nearest-name hint.
+    #[test]
+    fn a_retired_field_says_why_it_went() {
+        let engine_retires = format!(
+            "{ENGINE_MATERIAL}\n[component.material.retired]\n\
+             gloss = \"nothing read it: `roughness` is the gloss; remove it\"\n"
+        );
+        let game_retires =
+            format!("{WETNESS}\n[component.material.retired]\nsheen = \"the sheen went in 0.4\"\n");
+        let mut files = MemorySource::new();
+        files.insert(
+            "engine/schemas/components/material.toml",
+            engine_retires.as_str(),
+        );
+        files.insert("schemas/components/material.toml", game_retires.as_str());
+        let registry = vfs::scoped(Arc::new(files), || {
+            SchemaRegistry::load_from_directories(&["engine/schemas", "schemas"])
+        })
+        .unwrap();
+        assert!(registry.lints().is_empty(), "{:?}", registry.lints());
+        let material = registry.get_component("material").unwrap();
+        let data: toml::Value = toml::from_str("gloss = 0.5\nsheen = 1.0\nwetnes = 0.2\n").unwrap();
+        let mut said: Vec<(String, String)> = crate::validate_component(material, &data)
+            .into_iter()
+            .map(|d| (d.message, d.hint.unwrap_or_default()))
+            .collect();
+        said.sort();
+        let pair = |m: &str, h: &str| (m.to_string(), h.to_string());
+        assert_eq!(
+            said,
+            [
+                pair(
+                    "`material` has no field `gloss` any more",
+                    "nothing read it: `roughness` is the gloss; remove it"
+                ),
+                pair(
+                    "`material` has no field `sheen` any more",
+                    "the sheen went in 0.4"
+                ),
+                pair(
+                    "`material` has no field `wetnes`",
+                    "did you mean `wetness`?"
+                ),
+            ]
         );
     }
 }

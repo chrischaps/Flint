@@ -96,7 +96,7 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear, project manifest, env switches |
 | `crates/flint-audio/CLAUDE.md` | audio clock, decoding, device features |
 | `crates/flint-{physics,animation,particles,terrain}/CLAUDE.md` | joints, IK, particles, terrain |
-| `flint-examples/tools/showcase/CLAUDE.md` | film rig (in flint-examples, #984) |
+| `flint-examples/film/CLAUDE.md` | the film: shots, score, editor (flint-examples, #1195) |
 | `showcase_game/CLAUDE.md` | the example game |
 | `docs/CLAUDE.md` | the book, its checks, design notes, ADRs |
 

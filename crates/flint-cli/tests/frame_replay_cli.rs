@@ -3,7 +3,8 @@
 //! the frame is drawn again byte for byte, the scene pass steps a draw at a
 //! time to the captured image, hiding the lantern is the scene with the
 //! lantern taken out, a shadow layer, the style mask and the albedo step
-//! their own draws to their captured images (#1204), a model that moved is
+//! their own draws to their captured images (#1204), a still drawn with the
+//! floor grid replays with it (#1211), a model that moved is
 //! named rather than crashed on, and a capture with no replay inputs is
 //! refused saying why. Each test that draws skips itself without a GPU.
 
@@ -217,6 +218,71 @@ fn a_capture_replays_byte_for_byte_and_steps_its_scene_pass_to_the_captured_imag
     ]);
     ok(&o);
     assert!(std::fs::metadata(&shot).unwrap().len() > 10_000);
+}
+
+/// A still `flint render` of `scene` at 160 x 90 into `out`, the grid drawn
+/// unless `no_grid`; false without a GPU.
+fn still_capture(scene: &Path, out: &Path, no_grid: bool) -> bool {
+    let png = out.with_extension("png");
+    let s = schemas();
+    let mut args: Vec<&dyn AsRef<std::ffi::OsStr>> = vec![
+        &"render",
+        &scene,
+        &"--schemas",
+        &s,
+        &"--width",
+        &"160",
+        &"--height",
+        &"90",
+        &"-o",
+        &png,
+        &"--frame-capture",
+        &out,
+    ];
+    if no_grid {
+        args.push(&"--no-grid");
+    }
+    let o = flint(&args);
+    if !o.status.success() && String::from_utf8_lossy(&o.stderr).contains("headless render context")
+    {
+        eprintln!("no GPU adapter: skipped");
+        return false;
+    }
+    ok(&o);
+    true
+}
+
+fn renderer_inputs(cap: &Path) -> Value {
+    let text = std::fs::read_to_string(cap.join("replay/inputs.json")).unwrap();
+    serde_json::from_str::<Value>(&text).unwrap()["renderer"].clone()
+}
+
+#[test]
+fn a_still_capture_with_the_grid_replays_byte_for_byte() {
+    // #1211: a still draws the floor grid unless --no-grid, and the replay
+    // always loaded with --no-grid, so stylize_props (whose YBot looked
+    // like the cause) replayed 1,893 of 14,400 pixels off: the grid's
+    let dir = tmp("still_grid");
+    let scene = repo().join("tests/fixtures/scenes/stylize_props.scene.toml");
+    let grid = dir.join("grid.flintframe");
+    let bare = dir.join("bare.flintframe");
+    if !still_capture(&scene, &grid, false) || !still_capture(&scene, &bare, true) {
+        return;
+    }
+    assert_eq!(renderer_inputs(&grid)["grid"], true);
+    assert_eq!(renderer_inputs(&bare)["grid"], false);
+    // The grid is in the picture, so a replay without it can't pass
+    assert_ne!(
+        std::fs::read(grid.with_extension("png")).unwrap(),
+        std::fs::read(bare.with_extension("png")).unwrap(),
+        "the grid drew nothing: this test would pass on main"
+    );
+    for (cap, name) in [(&grid, "grid"), (&bare, "bare")] {
+        let r = replay(cap, &dir.join(format!("{name}.replay.flintframe")), &[]);
+        assert_eq!(r["identical"], true, "{name}: {r:#}");
+        assert_eq!(r["final"]["differing"], 0, "{name}");
+        assert_eq!(r["scene"]["differing"], 0, "{name}");
+    }
 }
 
 #[test]

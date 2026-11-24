@@ -461,6 +461,7 @@ impl SceneRenderer {
             render_scale: self.render_scale,
             debug_mode: format!("{:?}", self.debug_state.mode),
             selected: self.selected_entity.map(name),
+            grid: self.show_grid(),
             motion_hold: self.motion_hold.state(&name),
             skinning: Vec::new(),
             // Only while a draw binds an asset's shared palette (an entity
@@ -530,8 +531,8 @@ impl SceneRenderer {
     /// bound and loaded: every bone, shadow and echo palette from
     /// `skinning` (`skinning.bin`'s bytes, indexed by `state.skinning`), the
     /// asset palettes, part tints and softness, which echoes lighten, the
-    /// motion hold's kept matrices and ticks, and the selected entity.
-    /// Entities are found in `world` by name; what names none is returned,
+    /// motion hold's kept matrices and ticks, the selected entity and the
+    /// floor grid. Entities are found in `world` by name; what names none is returned,
     /// a line each. Quality, MSAA, render scale and the config are the
     /// host's to set, as a load does.
     pub fn restore_replay_state(
@@ -619,6 +620,8 @@ impl SceneRenderer {
         self.motion_hold.restore(&state.motion_hold, &mut id_of);
         let selected = state.selected.as_deref().and_then(&mut id_of);
         self.set_selected_entity(selected);
+        // The floor grid, drawn in the scene pass (#1211)
+        self.set_show_grid(device, state.grid);
         let mut said: Vec<String> = unknown
             .into_iter()
             .map(|n| format!("the capture's renderer state names {n:?}, which the replay's world has no entity of"))

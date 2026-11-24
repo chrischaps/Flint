@@ -1737,6 +1737,52 @@ mod tests {
         frame_notes::listen(false);
     }
 
+    /// #1214, the line as a busy machine wrote it on 2026-11-17, before
+    /// #1124's share rule: a 150 ms script stall named for two reload polls
+    /// of 11.4 and 10.4 ms, 22 ms of a hitch 150 ms over (15%, under the
+    /// half a note must cover). The polls were the disk walk #1122 took out
+    /// of every frame (0.2 ms quiet, 1-26 ms on a busy disk).
+    /// `"cause":"reload poll 1 scripts watched, 11.4 ms; reload poll 1
+    /// scripts watched, 10.4 ms (frame before)"`
+    #[test]
+    fn a_script_stall_is_not_blamed_on_two_ten_ms_reload_polls() {
+        use flint_core::frame_notes::{self, NoteKind};
+        let poll = |ms: f32| {
+            frame_notes::note(
+                NoteKind::ReloadPoll,
+                || "1 scripts watched".into(),
+                Some(ms),
+            )
+        };
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        poll(10.4);
+        run.frame(steady(HZ60_MS + 10.4));
+        poll(11.4);
+        let stall = F {
+            scripts: 150.11 + 11.4,
+            ..steady(HZ60_MS + 150.11 + 11.4)
+        };
+        assert_eq!(
+            run.frame_scripts(stall, &[("scripts/stall.rhai:on_update", 150.11)]),
+            1
+        );
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "script stall.rhai:on_update 150.1 ms \
+             (also: reload poll 11.4 ms; reload poll 10.4 ms the frame before)"
+        );
+        assert_eq!(h.cause_key(), "script stall.rhai:on_update");
+        assert_eq!(
+            h.likely_cause(),
+            "reload poll 1 scripts watched, 11.4 ms; \
+             reload poll 1 scripts watched, 10.4 ms (frame before)"
+        );
+        frame_notes::listen(false);
+    }
+
     #[test]
     fn the_tables_defaults_are_the_thresholds() {
         // `flint env` says what an unset switch means; it must be true

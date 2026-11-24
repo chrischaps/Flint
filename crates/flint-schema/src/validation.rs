@@ -148,19 +148,28 @@ impl Problem {
                     ),
                     Some(_) => "a game's own field is declared in its schema layer".to_string(),
                 };
-                let hint = diagnostic::did_you_mean(&key, declared.iter().map(String::as_str))
-                    .unwrap_or_else(|| {
-                        format!(
-                            "the fields of `{owner}` are {}; {how}",
-                            listed(declared.iter())
-                        )
-                    });
-                Diagnostic::warning(
-                    codes::UNKNOWN_FIELD,
-                    format!("`{owner}` has no field `{key}`"),
-                )
-                .field(field)
-                .hint(hint)
+                // A field the schema took out says why, not what is near it
+                // (#1212)
+                let retired = table.is_none().then(|| schema.retired.get(&key)).flatten();
+                let (message, hint) = match retired {
+                    Some(why) => (
+                        format!("`{owner}` has no field `{key}` any more"),
+                        why.clone(),
+                    ),
+                    None => (
+                        format!("`{owner}` has no field `{key}`"),
+                        diagnostic::did_you_mean(&key, declared.iter().map(String::as_str))
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "the fields of `{owner}` are {}; {how}",
+                                    listed(declared.iter())
+                                )
+                            }),
+                    ),
+                };
+                Diagnostic::warning(codes::UNKNOWN_FIELD, message)
+                    .field(field)
+                    .hint(hint)
             }
             Problem::BadType {
                 field,
@@ -693,6 +702,7 @@ mod tests {
             description: None,
             fields,
             panel: None,
+            retired: Default::default(),
         }
     }
 
@@ -888,6 +898,7 @@ mod tests {
             description: None,
             fields: HashMap::new(),
             panel: None,
+            retired: Default::default(),
         };
         let data: toml::Value = toml::from_str("slots = 4\nitems = [\"key\"]\n").unwrap();
         assert_eq!(validate_component(&schema, &data), []);

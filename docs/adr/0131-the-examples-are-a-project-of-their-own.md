@@ -64,7 +64,8 @@ a `flint.toml` naming its schemas, `flint examples --dir demos --check`.
    never points at nothing.
 7. **The film rig went with its scenes.** `tools/showcase/` (the shot list,
    the cuts, the score) and its storyboard (`docs/design/showcase-film.md`,
-   now `flint-examples/tools/showcase/storyboard.md`) are flint-examples'.
+   now `flint-examples/film/storyboard.md`, beside the set since #1195) are
+   flint-examples'.
    `flint capture` stays the engine's, and the book's filming guide stays in
    the book, citing the rig where it now lives.
 
