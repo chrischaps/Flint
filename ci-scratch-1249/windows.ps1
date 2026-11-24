@@ -35,7 +35,8 @@ $load = Start-Process -FilePath samply -PassThru -NoNewWindow -ArgumentList 'loa
 Wait-For out/samply-url.txt 'profiler.firefox.com' 60 | Out-Null
 $url = (Select-String -Path out/samply-url.txt -Pattern 'https://profiler.firefox.com\S*').Matches[0].Value
 $chrome = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
-node ci-scratch-1249/profshot.mjs $url out/samply-windows $chrome *> out/profshot.log
+$th = (python ci-scratch-1249/symstats.py profile.json.gz out/samply-url.txt out/samply-windows-symstats.json 2> out/symstats.log | Select-Object -Last 1)
+node ci-scratch-1249/profshot.mjs $url out/samply-windows $chrome $th *> out/profshot.log
 Stop-Process -Id $load.Id -Force -ErrorAction SilentlyContinue
 Get-ChildItem out | Format-Table
 exit 0

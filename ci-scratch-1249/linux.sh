@@ -37,7 +37,8 @@ cp profile.json.gz out/samply-profile.json.gz
 ( samply load --no-open profile.json.gz > out/samply-url.txt 2> out/samply-load.log ) &
 wait_for out/samply-url.txt "profiler.firefox.com" 60
 URL=$(grep -o 'https://profiler.firefox.com[^ ]*' out/samply-url.txt | head -1)
-timeout 600 node $S/profshot.mjs "$URL" "out/samply-$UNWIND" "$(command -v google-chrome)" > out/profshot.log 2>&1
+TH=$(python3 $S/symstats.py profile.json.gz out/samply-url.txt out/samply-$UNWIND-symstats.json 2> out/symstats.log | tail -1)
+timeout 900 node $S/profshot.mjs "$URL" "out/samply-$UNWIND" "$(command -v google-chrome)" "$TH" > out/profshot.log 2>&1
 echo "profshot exit $?" >> out/profshot.log
 pkill samply
 
