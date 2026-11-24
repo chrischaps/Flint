@@ -50,7 +50,9 @@ returning `None` from the worklet by a wildcard arm.
   content that builds its own kira graph and clock (a music suite) on the
   mixer's manager for one call; `can_host()` asks first. `MixerBackend::host`
   answers: `Local` lends its manager, `Silent` and `Remote` return an
-  `Unhosted` saying why. ADR 0017's drop order is unchanged.
+  `Unhosted` saying why. ADR 0017's drop order is unchanged. (Since #1216,
+  [ADR 0135](0135-clocked-content-plays-on-a-mixer-seam.md): `host` lends a
+  `ClockedMixer`, which `Remote` implements too; only `Silent` refuses.)
 
 ## Alternatives considered
 

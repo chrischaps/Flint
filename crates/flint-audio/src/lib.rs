@@ -13,6 +13,7 @@
 
 pub mod bus;
 pub mod clock;
+pub mod clocked;
 pub mod decode;
 pub mod engine;
 pub mod handle;

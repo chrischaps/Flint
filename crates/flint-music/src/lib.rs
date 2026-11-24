@@ -16,6 +16,9 @@
 //! ([`manifest::SuiteManifest::tables`]) and adds its own rules to a
 //! manifest's validation.
 
+/// The mixer seam a suite plays on (#1216), from flint-audio: kira here,
+/// or the browser's worklet.
+pub use flint_audio::clocked;
 pub mod analysis;
 pub mod clock_bridge;
 pub mod conductor;

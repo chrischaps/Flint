@@ -31,6 +31,8 @@ A suite with no chart is music for a scene to keep time by. [`flint-examples/mus
 
 In play the beat is the audio clock's, compensated for the measured output latency, so a light that flashes on the beat flashes when the ear hears it. Under `--frame-step`, in `flint render --scripts`, and with no sound device, it is the game clock's: the session's two-beat count-in, then the suite, so a capture lands each beat on the same frame every run, and `flint render flint-examples/music_clock.scene.toml --scripts --time 8.4` shows bar 3 every time. With no music in the scene the functions return `-1.0`, `-1` and `""`.
 
+In the browser the suite plays in the `AudioWorklet`, on the audio thread, with the rest of the game's sound, and its stems and bus changes land on the same samples as on the desktop. The clock the beat is read from comes back from the worklet every 1024 frames (about 21 ms) and is carried forward between reports. If the worklet can't run, the page mixes on the main thread and the suite starts again there. The mixer underneath is `flint_music::clocked` ([ADR 0135](https://github.com/chrischaps/Flint/blob/main/docs/adr/0135-clocked-content-plays-on-a-mixer-seam.md)).
+
 ## Verb Space
 
 Charts never see buttons. The capture thread maps physical controls onto a small **verb space**, and the chart is written in those verbs:

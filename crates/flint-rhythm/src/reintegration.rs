@@ -19,12 +19,11 @@
 use crate::gradient::GradientOffsets;
 use crate::ladder::{Ladder, LadderDriver, LadderParams};
 use flint_core::{FlintError, Result};
+use flint_music::clocked::Ramp;
 use flint_music::conductor::{Conductor, Grid};
 use flint_music::manifest::{Section, SuiteManifest};
 use flint_music::session::SuiteSession;
 use flint_music::tempo::ms_to_samples;
-use kira::Tween;
-use std::time::Duration;
 
 /// Authored seam fade (ms) — the envelope that carries the world out of the
 /// old timeline. An envelope, not a cut; tuned in E7, adjudicated by the
@@ -447,21 +446,12 @@ impl Reintegrator {
         // re-plays locked at the seam.
         let gesture_start_suite = seam_suite - rewind_span;
         if rewind_span > 0 {
-            let start_time = kira::StartTime::ClockTime(
-                session.clock_time_at_raw(gesture_start_suite + session.timeline_offset()),
-            );
-            let dur = Duration::from_secs_f64(rewind_span as f64 / sample_rate);
+            let start_time = session.start_at_raw(gesture_start_suite + session.timeline_offset());
+            let secs = rewind_span as f64 / sample_rate;
             for name in crate::BUSES {
                 if let Some(bus) = session.mixer.bus_mut(name) {
                     if bus.state.playing {
-                        bus.set_detune(
-                            self.rewind_drop_st,
-                            Tween {
-                                start_time,
-                                duration: dur,
-                                ..Default::default()
-                            },
-                        );
+                        bus.set_detune(self.rewind_drop_st, Ramp::at(start_time, secs));
                     }
                 }
             }
@@ -493,11 +483,7 @@ impl Reintegrator {
         // over the span, starting exactly at the seam. Per-sound volume, so
         // it never fights the ladder's track-gain trims.
         let seam_raw = seam_suite + session.timeline_offset();
-        let ramp = Tween {
-            start_time: kira::StartTime::ClockTime(session.clock_time_at_raw(seam_raw)),
-            duration: Duration::from_secs_f64(span as f64 / sample_rate),
-            ..Default::default()
-        };
+        let ramp = Ramp::at(session.start_at_raw(seam_raw), span as f64 / sample_rate);
         for name in crate::BUSES {
             if name == self.decl.lead_bus {
                 continue;
@@ -525,28 +511,20 @@ impl Reintegrator {
             span = span.min(available);
             if span > beat_samples / 4 {
                 let seam_raw_pre = seam_suite + session.timeline_offset();
-                let cue_start =
-                    kira::StartTime::ClockTime(session.clock_time_at_raw(seam_raw_pre - span));
-                let ramp = Tween {
-                    start_time: cue_start,
-                    duration: Duration::from_secs_f64(span as f64 / sample_rate),
-                    ..Default::default()
-                };
+                let cue_start = session.start_at_raw(seam_raw_pre - span);
+                let ramp = Ramp::at(cue_start, span as f64 / sample_rate);
                 // Fade completes AT the seam so the cue never doubles the
                 // ensemble's sample-pure downbeat entry.
                 let fade_samples = ms_to_samples(self.fade_ms, sample_rate);
-                let stop_at_seam = Tween {
-                    start_time: kira::StartTime::ClockTime(
-                        session.clock_time_at_raw(seam_raw_pre - fade_samples),
-                    ),
-                    duration: Duration::from_secs_f64(self.fade_ms / 1000.0),
-                    ..Default::default()
-                };
+                let stop_at_seam = Ramp::at(
+                    session.start_at_raw(seam_raw_pre - fade_samples),
+                    self.fade_ms / 1000.0,
+                );
                 if let Some(bus) = session.mixer.bus_mut(&self.decl.lead_bus) {
                     match bus.play_cue(re_entry as u64, cue_start, -18.0, self.rewind_drop_st) {
                         Ok(Some(mut cue)) => {
-                            cue.set_playback_rate(kira::PlaybackRate(1.0), ramp);
-                            cue.set_volume(kira::Decibels(0.0), ramp);
+                            cue.set_rate(1.0, ramp);
+                            cue.set_volume(0.0, ramp);
                             cue.stop(stop_at_seam);
                         }
                         Ok(None) => {}

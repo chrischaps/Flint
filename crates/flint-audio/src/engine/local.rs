@@ -4,6 +4,7 @@
 use super::backend::{Held, MixerBackend, On, Unhosted, Voice};
 use super::{tween_ms, AudioBackend, MixCounts};
 use crate::bus::Bus;
+use crate::clocked::ClockedMixer;
 use crate::handle::{SoundHandle, SpatialTrack};
 use crate::pan::Falloff;
 use flint_core::{FlintError, Result};
@@ -244,7 +245,7 @@ impl MixerBackend for Local {
         None
     }
 
-    fn host(&mut self) -> std::result::Result<&mut AudioManager<AudioBackend>, Unhosted> {
+    fn host(&mut self) -> std::result::Result<&mut dyn ClockedMixer, Unhosted> {
         Ok(&mut self.manager)
     }
 }

@@ -20,6 +20,7 @@
     allow(dead_code, unused_imports)
 )]
 
+use crate::clocked::ClockedMixer;
 use crate::decode::{decode_all, DecodeQueue, Need};
 pub use crate::handle::{SoundHandle, SpatialTrack};
 use crate::pan::{volume_and_pan, Ears, Falloff};
@@ -28,7 +29,7 @@ use backend::{Held, MixerBackend, On, Silent, Voice};
 use flint_core::project::{AssetKind, AssetScope};
 use flint_core::{vfs, Result, Vec3};
 use kira::sound::static_sound::StaticSoundData;
-use kira::{AudioManager, Easing, Tween};
+use kira::{Easing, Tween};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -223,6 +224,9 @@ pub struct AudioEngine {
     /// The mix moved after it started (the worklet failed and the main
     /// thread took over), so everything that was playing is gone.
     restarted: bool,
+    /// Bumped each time a mixer is installed (#1216): clocked content
+    /// started on the last one notices it is gone.
+    mixer_epoch: u32,
     /// The browser stream's steadiness, shared with whatever mixes.
     #[cfg(target_arch = "wasm32")]
     meter: std::sync::Arc<std::sync::Mutex<crate::meter::BufferMeter>>,
@@ -303,6 +307,7 @@ impl AudioEngine {
             applied_buses: None,
             held: false,
             restarted: false,
+            mixer_epoch: 0,
             #[cfg(target_arch = "wasm32")]
             meter: Default::default(),
             #[cfg(target_arch = "wasm32")]
@@ -419,6 +424,7 @@ impl AudioEngine {
     /// and every volume asked for.
     fn install(&mut self, mixer: Box<dyn MixerBackend>) {
         self.mixer = mixer;
+        self.mixer_epoch = self.mixer_epoch.wrapping_add(1);
         let mut names: Vec<&String> = self.sound_cache.keys().collect();
         names.sort();
         for name in names {
@@ -665,16 +671,17 @@ impl AudioEngine {
         self.mixer.is_remote()
     }
 
-    /// Start content that builds its own kira graph and clock on the
-    /// engine's stream (a music suite, ADR 0017): `start` gets the mixer's
-    /// kira manager for the call, and what it returns is the caller's.
-    /// Handles made on the manager must drop before this engine. The mixer
-    /// decides whether it can (#730): not while silent, and not in the
-    /// browser's worklet, which has no command for a clock or a stem (a
-    /// scene with a `music_session` mixes on the main thread there).
+    /// Start content with its own clock and stem buses on the engine's
+    /// mixer (a music suite, ADR 0017): `start` gets the mixer's
+    /// [`ClockedMixer`] for the call, and the handles it makes are the
+    /// caller's (#1216): kira's here, the worklet's in the browser. Handles
+    /// made here must drop before this engine. Not while silent (#730).
+    /// When the mix moves (the worklet failing), the handles' mixer is gone:
+    /// [`mixer_epoch`](Self::mixer_epoch) changes, and the content starts
+    /// again on the new one.
     pub fn host<T>(
         &mut self,
-        start: impl FnOnce(&mut AudioManager<AudioBackend>) -> T,
+        start: impl FnOnce(&mut dyn ClockedMixer) -> T,
     ) -> std::result::Result<T, Unhosted> {
         self.mixer.host().map(start)
     }
@@ -682,6 +689,13 @@ impl AudioEngine {
     /// Whether [`host`](Self::host) would run now, and why not.
     pub fn can_host(&mut self) -> std::result::Result<(), Unhosted> {
         self.mixer.host().map(|_| ())
+    }
+
+    /// Which mixer this is, counted: it changes when the engine starts or
+    /// moves its mix, so content [`host`](Self::host)ed on the one before
+    /// knows its handles went with it.
+    pub fn mixer_epoch(&self) -> u32 {
+        self.mixer_epoch
     }
 
     /// Load a sound file into the cache
@@ -1767,9 +1781,9 @@ mod tests {
         engine.start_remote(link.clone());
         assert!(engine.is_available());
         assert_eq!(
-            engine.host(|_| ()),
-            Err(Unhosted::Worklet),
-            "the worklet hosts no music suite"
+            engine.host(|mixer| mixer.name()),
+            Ok("worklet"),
+            "the worklet hosts a music suite (#1216)"
         );
         assert_eq!(engine.mixer_name(), "worklet");
         assert!(engine.has_sound("sea"), "known by name once sent");
@@ -1935,15 +1949,37 @@ mod tests {
         assert!(sent(&link).is_empty());
     }
 
-    /// #730: content with its own clock (a music suite) is hosted where
-    /// kira mixes here, and the other mixers say why not.
+    /// #730, #1216: content with its own clock (a music suite) is hosted
+    /// wherever the engine mixes, the browser's worklet too, and not while
+    /// silent; a new mixer is a new epoch.
     #[test]
-    fn only_a_local_mixer_hosts_clocked_content() {
+    fn every_mixer_with_a_device_hosts_clocked_content() {
         let mut engine = AudioEngine::silent();
         assert_eq!(engine.can_host(), Err(Unhosted::Silent));
         assert_eq!(engine.host(|_| 1), Err(Unhosted::Silent));
-        engine.start_remote(Link::default());
-        assert_eq!(engine.host(|_| 1), Err(Unhosted::Worklet));
-        assert!(Unhosted::Worklet.to_string().contains("worklet"));
+        let before = engine.mixer_epoch();
+        let link = Link::default();
+        engine.start_remote(link.clone());
+        assert_ne!(engine.mixer_epoch(), before);
+        link.take(); // the cutoff a remote mixer opens with
+        fn sent(link: &Link) -> Vec<crate::remote::Command> {
+            let out = link.take();
+            crate::remote::protocol::Reader::new(&out.batch).collect()
+        }
+        use crate::remote::Command;
+        let clock = engine.host(|mixer| mixer.add_clock(48_000.0)).unwrap();
+        let mut clock = clock.unwrap();
+        clock.start();
+        assert_eq!(
+            sent(&link),
+            vec![
+                Command::ClockNew {
+                    clock: 1,
+                    ticks_per_second: 48_000.0
+                },
+                Command::ClockStart { clock: 1 },
+            ]
+        );
+        assert!(Unhosted::Silent.to_string().contains("device"));
     }
 }

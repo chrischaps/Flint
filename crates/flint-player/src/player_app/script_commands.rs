@@ -55,21 +55,9 @@ impl PlayerApp {
     /// until this is called from its Begin click; on the desktop the device
     /// opened at start and this does nothing new. Loops already in the
     /// scene start, and a subsystem that waited for a device (the scene's
-    /// music) starts at the next frame's first stage. Says whether there is
-    /// sound.
+    /// music) starts at the next frame's first stage, in the browser's
+    /// worklet like every other sound (#1216). Says whether there is sound.
     pub fn start_audio(&mut self) -> bool {
-        // A music session clocks its suite on kira's manager itself, which
-        // the browser's worklet mix (#136) keeps on the audio thread; such a
-        // scene mixes on the main thread, as before.
-        #[cfg(all(target_arch = "wasm32", feature = "music"))]
-        if !self.audio.engine.is_available() && crate::music::plays_music(&self.core.world) {
-            tracing::info!(
-                "[flint-audio] a music_session needs kira here: mixing on the main thread"
-            );
-            self.audio
-                .engine
-                .set_web_mixer(flint_audio::engine::WebMixer::MainThread);
-        }
         self.audio.start(&self.core.world)
     }
 }

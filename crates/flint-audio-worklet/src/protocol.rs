@@ -130,11 +130,99 @@ pub enum Command {
     VoiceWatch {
         voice: u32,
     },
+
+    // Clocked content (#1216): a music suite's clock, its stem buses and
+    // its stems, every change of them able to start on a tick of the clock.
+    /// A clock counting `ticks_per_second`, stopped until
+    /// [`Command::ClockStart`]. Every report names it from now on.
+    ClockNew {
+        clock: u32,
+        ticks_per_second: f64,
+    },
+    ClockStart {
+        clock: u32,
+    },
+    /// The clock's handle was dropped; what waits on it never starts.
+    ClockDrop {
+        clock: u32,
+    },
+    /// A stem bus: a track under the main one (where the master low-pass
+    /// is) with a low-pass of its own, open.
+    StemBusNew {
+        track: u32,
+    },
+    StemBusVolume {
+        track: u32,
+        db: f32,
+        at: At,
+        tween: f32,
+    },
+    StemBusCutoff {
+        track: u32,
+        hz: f32,
+        at: At,
+        tween: f32,
+    },
+    /// The bus's handle was dropped: it goes, with its sounds.
+    StemBusDrop {
+        track: u32,
+    },
+    /// A stem played on a stem bus from frame `from` of its sound, starting
+    /// at `at`. The voice is like any other ([`Command::VoiceWatch`],
+    /// [`Command::VoiceDrop`]).
+    StemPlay {
+        voice: u32,
+        sound: u32,
+        track: u32,
+        from: u64,
+        at: At,
+        db: f32,
+        rate: f32,
+    },
+    VoiceVolumeAt {
+        voice: u32,
+        db: f32,
+        at: At,
+        tween: f32,
+    },
+    VoiceRateAt {
+        voice: u32,
+        rate: f32,
+        at: At,
+        tween: f32,
+    },
+    VoiceStopAt {
+        voice: u32,
+        at: At,
+        tween: f32,
+    },
+    /// The sound's last holder let go of it; voices playing it play on.
+    SoundDrop {
+        sound: u32,
+    },
+}
+
+/// When a clocked change starts (#1216): on tick `tick` of clock `clock`,
+/// or at once when `clock` is 0 ([`At::NOW`]; ids start at 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct At {
+    pub clock: u32,
+    pub tick: u64,
+}
+
+impl At {
+    pub const NOW: At = At { clock: 0, tick: 0 };
+
+    pub fn tick(clock: u32, tick: u64) -> Self {
+        Self { clock, tick }
+    }
 }
 
 /// What the mixer reports back about each watched voice (#658), as
 /// `f64`s: the voice's id, seconds into its sound (wrapped, for a loop)
 /// and kira's `PlaybackState` as a number, [`REPORT_STRIDE`] to a voice.
+/// A clock (#1216) is reported the same way: its id, its ticks with the
+/// fraction, and [`state::CLOCK`] (or [`state::CLOCK_STOPPED`]).
 pub const REPORT_STRIDE: usize = 3;
 
 /// kira's `PlaybackState`, numbered as kira numbers it.
@@ -146,6 +234,10 @@ pub mod state {
     pub const RESUMING: u8 = 4;
     pub const STOPPING: u8 = 5;
     pub const STOPPED: u8 = 6;
+    /// Not a voice: a clock (#1216), running, whose "position" is ticks.
+    pub const CLOCK: u8 = 100;
+    /// A clock not started yet.
+    pub const CLOCK_STOPPED: u8 = 101;
 
     /// The sound's position is moving: it is being mixed.
     pub fn moving(state: u8) -> bool {
@@ -194,10 +286,22 @@ mod op {
     pub const VOICE_RESUME: u8 = 17;
     pub const VOICE_WATCH: u8 = 18;
     pub const BUS_NEW: u8 = 19;
+    pub const CLOCK_NEW: u8 = 20;
+    pub const CLOCK_START: u8 = 21;
+    pub const CLOCK_DROP: u8 = 22;
+    pub const STEM_BUS_NEW: u8 = 23;
+    pub const STEM_BUS_VOLUME: u8 = 24;
+    pub const STEM_BUS_CUTOFF: u8 = 25;
+    pub const STEM_BUS_DROP: u8 = 26;
+    pub const STEM_PLAY: u8 = 27;
+    pub const VOICE_VOLUME_AT: u8 = 28;
+    pub const VOICE_RATE_AT: u8 = 29;
+    pub const VOICE_STOP_AT: u8 = 30;
+    pub const SOUND_DROP: u8 = 31;
     /// The highest op: every one from 1 to this reads back
     /// (`every_op_reads_back`).
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const LAST: u8 = BUS_NEW;
+    pub const LAST: u8 = SOUND_DROP;
 }
 
 struct Writer<'a>(&'a mut Vec<u8>);
@@ -220,6 +324,17 @@ impl Writer<'_> {
             self.f32(x);
         }
         self
+    }
+    fn u64(&mut self, v: u64) -> &mut Self {
+        self.0.extend_from_slice(&v.to_le_bytes());
+        self
+    }
+    fn f64(&mut self, v: f64) -> &mut Self {
+        self.0.extend_from_slice(&v.to_le_bytes());
+        self
+    }
+    fn at(&mut self, at: At) -> &mut Self {
+        self.u32(at.clock).u64(at.tick)
     }
 }
 
@@ -329,6 +444,96 @@ impl Command {
             Command::VoiceWatch { voice } => {
                 w.u8(op::VOICE_WATCH).u32(voice);
             }
+            Command::ClockNew {
+                clock,
+                ticks_per_second,
+            } => {
+                w.u8(op::CLOCK_NEW).u32(clock).f64(ticks_per_second);
+            }
+            Command::ClockStart { clock } => {
+                w.u8(op::CLOCK_START).u32(clock);
+            }
+            Command::ClockDrop { clock } => {
+                w.u8(op::CLOCK_DROP).u32(clock);
+            }
+            Command::StemBusNew { track } => {
+                w.u8(op::STEM_BUS_NEW).u32(track);
+            }
+            Command::StemBusVolume {
+                track,
+                db,
+                at,
+                tween,
+            } => {
+                w.u8(op::STEM_BUS_VOLUME)
+                    .u32(track)
+                    .f32(db)
+                    .at(at)
+                    .f32(tween);
+            }
+            Command::StemBusCutoff {
+                track,
+                hz,
+                at,
+                tween,
+            } => {
+                w.u8(op::STEM_BUS_CUTOFF)
+                    .u32(track)
+                    .f32(hz)
+                    .at(at)
+                    .f32(tween);
+            }
+            Command::StemBusDrop { track } => {
+                w.u8(op::STEM_BUS_DROP).u32(track);
+            }
+            Command::StemPlay {
+                voice,
+                sound,
+                track,
+                from,
+                at,
+                db,
+                rate,
+            } => {
+                w.u8(op::STEM_PLAY)
+                    .u32(voice)
+                    .u32(sound)
+                    .u32(track)
+                    .u64(from)
+                    .at(at)
+                    .f32(db)
+                    .f32(rate);
+            }
+            Command::VoiceVolumeAt {
+                voice,
+                db,
+                at,
+                tween,
+            } => {
+                w.u8(op::VOICE_VOLUME_AT)
+                    .u32(voice)
+                    .f32(db)
+                    .at(at)
+                    .f32(tween);
+            }
+            Command::VoiceRateAt {
+                voice,
+                rate,
+                at,
+                tween,
+            } => {
+                w.u8(op::VOICE_RATE_AT)
+                    .u32(voice)
+                    .f32(rate)
+                    .at(at)
+                    .f32(tween);
+            }
+            Command::VoiceStopAt { voice, at, tween } => {
+                w.u8(op::VOICE_STOP_AT).u32(voice).at(at).f32(tween);
+            }
+            Command::SoundDrop { sound } => {
+                w.u8(op::SOUND_DROP).u32(sound);
+            }
         }
     }
 }
@@ -368,6 +573,18 @@ impl<'a> Reader<'a> {
     }
     fn vec3(&mut self) -> Option<[f32; 3]> {
         Some([self.f32()?, self.f32()?, self.f32()?])
+    }
+    fn u64(&mut self) -> Option<u64> {
+        self.take().map(u64::from_le_bytes)
+    }
+    fn f64(&mut self) -> Option<f64> {
+        self.take().map(f64::from_le_bytes)
+    }
+    fn at(&mut self) -> Option<At> {
+        Some(At {
+            clock: self.u32()?,
+            tick: self.u64()?,
+        })
     }
 
     fn command(&mut self) -> Option<Command> {
@@ -459,6 +676,53 @@ impl<'a> Reader<'a> {
             },
             op::CLEAR_ONE_SHOTS => Command::ClearOneShots,
             op::VOICE_WATCH => Command::VoiceWatch { voice: self.u32()? },
+            op::CLOCK_NEW => Command::ClockNew {
+                clock: self.u32()?,
+                ticks_per_second: self.f64()?,
+            },
+            op::CLOCK_START => Command::ClockStart { clock: self.u32()? },
+            op::CLOCK_DROP => Command::ClockDrop { clock: self.u32()? },
+            op::STEM_BUS_NEW => Command::StemBusNew { track: self.u32()? },
+            op::STEM_BUS_VOLUME => Command::StemBusVolume {
+                track: self.u32()?,
+                db: self.f32()?,
+                at: self.at()?,
+                tween: self.f32()?,
+            },
+            op::STEM_BUS_CUTOFF => Command::StemBusCutoff {
+                track: self.u32()?,
+                hz: self.f32()?,
+                at: self.at()?,
+                tween: self.f32()?,
+            },
+            op::STEM_BUS_DROP => Command::StemBusDrop { track: self.u32()? },
+            op::STEM_PLAY => Command::StemPlay {
+                voice: self.u32()?,
+                sound: self.u32()?,
+                track: self.u32()?,
+                from: self.u64()?,
+                at: self.at()?,
+                db: self.f32()?,
+                rate: self.f32()?,
+            },
+            op::VOICE_VOLUME_AT => Command::VoiceVolumeAt {
+                voice: self.u32()?,
+                db: self.f32()?,
+                at: self.at()?,
+                tween: self.f32()?,
+            },
+            op::VOICE_RATE_AT => Command::VoiceRateAt {
+                voice: self.u32()?,
+                rate: self.f32()?,
+                at: self.at()?,
+                tween: self.f32()?,
+            },
+            op::VOICE_STOP_AT => Command::VoiceStopAt {
+                voice: self.u32()?,
+                at: self.at()?,
+                tween: self.f32()?,
+            },
+            op::SOUND_DROP => Command::SoundDrop { sound: self.u32()? },
             _ => return None,
         })
     }
@@ -577,6 +841,53 @@ mod tests {
                 tween: 0.016,
             },
             Command::VoiceWatch { voice: 3 },
+            Command::ClockNew {
+                clock: 20,
+                ticks_per_second: 48_000.0,
+            },
+            Command::ClockStart { clock: 20 },
+            Command::StemBusNew { track: 21 },
+            Command::StemBusVolume {
+                track: 21,
+                db: -6.0,
+                at: At::tick(20, 96_000),
+                tween: 0.5,
+            },
+            Command::StemBusCutoff {
+                track: 21,
+                hz: 800.0,
+                at: At::NOW,
+                tween: 0.01,
+            },
+            Command::StemPlay {
+                voice: 22,
+                sound: 2,
+                track: 21,
+                from: u64::from(u32::MAX) + 7,
+                at: At::tick(20, 1 << 40),
+                db: -80.0,
+                rate: 1.0,
+            },
+            Command::VoiceVolumeAt {
+                voice: 22,
+                db: 0.0,
+                at: At::tick(20, 9),
+                tween: 2.0,
+            },
+            Command::VoiceRateAt {
+                voice: 22,
+                rate: 0.75,
+                at: At::NOW,
+                tween: 0.1,
+            },
+            Command::VoiceStopAt {
+                voice: 22,
+                at: At::tick(20, 10),
+                tween: 0.05,
+            },
+            Command::StemBusDrop { track: 21 },
+            Command::ClockDrop { clock: 20 },
+            Command::SoundDrop { sound: 2 },
             Command::VoiceDrop { voice: 4 },
             Command::TrackDrop { track: 7 },
             Command::ClearOneShots,
