@@ -12,6 +12,10 @@
 //! both while the page is hidden (#162).
 
 pub mod bus;
+/// Each bus's own low-pass (#1218), the worklet's file, so both mixers
+/// filter alike.
+#[path = "../../flint-audio-worklet/src/bus_filter.rs"]
+pub(crate) mod bus_filter;
 pub mod clock;
 pub mod decode;
 pub mod engine;
@@ -157,6 +161,11 @@ impl AudioSystem {
         self.engine.set_bus_volume(bus, volume);
     }
 
+    /// Set a mixer bus's own low-pass cutoff, Hz (20000 is open, #1218)
+    pub fn set_bus_lowpass(&mut self, bus: Bus, hz: f64) {
+        self.engine.set_bus_lowpass(bus, hz);
+    }
+
     /// Process game events and execute resulting audio commands
     pub fn process_events(&mut self, events: &[GameEvent], world: &FlintWorld) {
         if !self.engine.is_available() {
@@ -261,6 +270,9 @@ impl RuntimeSystem for AudioSystem {
 
         // Clean up finished one-shot spatial sounds
         self.engine.cleanup_finished_oneshots();
+
+        // Duck each bus whose `under` bus has something sounding (#1218)
+        self.engine.update_ducks(self.sync.sounding_buses());
 
         Ok(())
     }
