@@ -67,6 +67,36 @@ fn declared(kind: &str, header: &str) -> BTreeSet<String> {
     names
 }
 
+/// The fields under `[component.<name>.fields]` in every file of the two
+/// layers, sorted as `--list --json` sorts them. Read from the files, never
+/// written out here: a list copied into this test went stale when #729 gave
+/// `collider` three fields, and the test stayed red on main for four days
+/// (#1285).
+fn declared_fields(name: &str) -> Vec<String> {
+    let mut fields = BTreeSet::new();
+    for dir in ["schemas", "schemas/examples"] {
+        let Ok(entries) = std::fs::read_dir(repo().join(dir).join("components")) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "toml") {
+                let doc: toml::Table = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+                fields.extend(
+                    doc.get("component")
+                        .and_then(|t| t.get(name))
+                        .and_then(|t| t.get("fields"))
+                        .and_then(|t| t.as_table())
+                        .into_iter()
+                        .flat_map(|t| t.keys().cloned()),
+                );
+            }
+        }
+    }
+    assert!(!fields.is_empty(), "no file declares `{name}`'s fields");
+    fields.into_iter().collect()
+}
+
 fn names_in(list: &serde_json::Value, key: &str) -> BTreeSet<String> {
     list[key]
         .as_array()
@@ -105,27 +135,16 @@ fn list_json_names_every_component_and_archetype() {
             .clone()
     };
     assert_eq!(find("material_overrides")["open"], true);
-    // ...and `collider`, open until #792 moved its fields under `fields`
+    // ...and `collider`, open until #792 moved its fields under `fields`.
+    // Each names what its files declare, every one, sorted
     assert_eq!(find("collider")["open"], false);
-    assert_eq!(
-        find("collider")["fields"],
-        serde_json::json!([
-            "friction",
-            "is_sensor",
-            "layer",
-            "mask",
-            "model",
-            "offset",
-            "restitution",
-            "rotation",
-            "shape",
-            "size"
-        ])
-    );
-    assert_eq!(
-        find("ik_two_bone")["fields"],
-        serde_json::json!(["enabled", "pole", "target", "tip", "weight"])
-    );
+    for name in ["collider", "ik_two_bone"] {
+        assert_eq!(
+            find(name)["fields"],
+            serde_json::json!(declared_fields(name)),
+            "`{name}`'s fields"
+        );
+    }
 
     // The text list has the same names
     let text = stdout(&flint(&["schema", "--list"]));

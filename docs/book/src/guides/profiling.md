@@ -160,6 +160,38 @@ BASE='&scale=1' node tools/phone-perf/submits.mjs out \
 
 The page that skips a part, run against the same page without the skip, gives that part's milliseconds. With `repeat_pass=<label>:4` instead, the page adds three more of the part's milliseconds. #568 needed a hand-patched wasm and a copy of the site for each pass to measure this.
 
+### What a pass costs before it draws
+
+Every pass has a floor: what it costs with nothing to do. Measure the floor before you spend effort cutting a pass's work or merging passes. If the floor is most of the pass's time, cheaper work won't show. If the floor is the gap you're trying to close, only fewer passes will close it.
+
+**Take the work out and keep the pass.** Point `FLINT_STYLE_SHADER_DIR` at a copy of `crates/flint-render/src`'s `stylize` folder ([Writing a style](../concepts/stylize-passes.md#writing-a-style) shows how the folder is read). Then make the pass's fragment return at once with a line the compiler can't fold away, such as `if u.size.x > 0.0 { return vec4<f32>(0.0); }`. The pass still begins, clears, draws and ends, so its `--gpu-time` row now reads its fixed cost. Alternate that folder with an unstubbed copy, on one binary, as the control.
+
+**The floor of a bare pass** comes from `cargo run -p flint-render --example pass_floor`. It times four tiny passes the size of ASCII's tone statistics and variant cells, each shape built two ways: as render passes, and as dispatches of one compute pass. Add `WGPU_BACKEND=dx12` for the other backend. In microseconds on an RTX 4070 laptop (minimum of three processes, 16 sequences a bracket):
+
+| Four small steps | Vulkan | DX12 |
+|---|---|---|
+| One render pass alone | 2.3 | 1.2 |
+| One compute dispatch alone | 4.7 | 0.6 |
+| Four render passes, three chained | 7.4 | 3.8 |
+| Four dispatches in one compute pass, three chained | 7.3 | 5.8 |
+| Four compute passes, three chained | 19.0 | 6.8 |
+| Four render passes, none reading another | 7.3 | 2.4 |
+| Four dispatches in one pass, none reading another | 5.8 | 1.4 |
+
+A chained step costs about 2 µs whether it is a render pass or a dispatch. Most of that is the barrier its dependency needs, not the render pass's begin, clear and end. A compute pass saves only where the steps are independent, and on DX12 a chain of dispatches is slower than a chain of render passes. A full-screen pass at 1080p has a floor of its own, about 0.03 ms on the same GPU (#1257), and that one is the pixels.
+
+**Worked example (#1269).** Whole-frame ASCII with `edges = 0` over `ascii_entities`'s styled props cost over half again the plain case. The props add four small passes: three tone-statistics passes and the variant cells. The plan was to make them dispatches of one compute pass, so the floor was measured first: `flint render <case>.scene.toml --style ascii:scope=screen,edges=0 --gpu-time 240` on copies of the scene, 1080p, Vulkan, minimum p50 of three alternated runs, in ms:
+
+| Case | ASCII | Over plain |
+|---|---|---|
+| Plain (no prop styled) | 0.059 | |
+| Props styled, all off | 0.060 | +2% |
+| Props drawn, no `normalize` | 0.079 | +34% |
+| The demo (barrel `normalize = 1`) | 0.091 | +54% |
+| The demo, the four passes' work stubbed | 0.083 | +41% |
+
+The goal was 25% over plain, 0.074 ms. With every one of the four passes doing nothing, the demo is still at 0.083. Removing the four passes outright would save their floor, about 0.007, and leave roughly 0.076. The compute version doesn't even save that, since its chain costs the same. What remains is the styled props' own pixels in the glyph pass, so the render passes were kept.
+
 ### A frame's description
 
 `--gpu-time` says what each part cost. `--frame-dump <file.json>` says what each part did (#1084): which passes ran in the frame `flint render` drew, in the order they were recorded, and why the others didn't; what each read and wrote; and every draw, by the entity it draws.
@@ -727,6 +759,8 @@ A note made inside another, such as a model inside a transition or a pipeline in
 | `trace ring` | the scope recorder's ring grew to hold its look-back (`main ring grew to 655360 records`; [Recording a trace](#recording-a-trace)) |
 
 `screenshot`, `stats overlay` and `trace ring` are the player's own tools at work. A hitch they account for (their times cover at least half its excess) is the tools' cost, not the game's. It is classed **`tooling`**, named by the tool (`screenshot shots/look_0003.png, 92.5 ms`, `stats overlay opened, 12.0 ms`) and counted apart from the game's hitches: the graph's counters, the perf line, the exit report's counts and every `--max-hitches` gate leave it out, and `--capture-on-hitch` doesn't capture it. A screenshot's read-back and write land in `present`, so before #1129 every `--screenshot-every` frame read as a 60 to 200 ms hitch `elsewhere, present`, which an agent validating with screenshots and the hitch log would take for the compositor.
+
+A tool waits for its own work, so none of its time lands a frame late. A tool's note from the frame before therefore never counts toward the next frame's half (#1274). Before that, a 100 ms script stall on the frame after a screenshot read `screenshot shots/m_0004.png, 74.8 ms (frame before)`: the screenshot was named twice, once for its own hitch and once for a stall it had nothing to do with. A screenshot or a trace ring from the frame before is left out of the cause line, though it is still in the hitch log's `notes`. The F2 overlay is the exception, because its next frames really do draw more HUD than before it opened, and nothing notes that. It is named beside the stall as a hint but never as its cause: `script stall.rhai:on_update 60.0 ms (also: stats overlay 95.0 ms the frame before)`.
 
 A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Neither is `physics steps`: extra fixed steps are the clock paying back the game time a long frame before owed, and their own cost is the `physics` phase's, which the hitch names by phase.
 

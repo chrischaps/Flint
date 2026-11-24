@@ -72,29 +72,7 @@ const WOBBLE_CELLS: f32 = 55.0;
 const WIDTH_CELLS: f32 = 22.0;
 const PRESSURE_CELLS: f32 = 9.0;
 
-// A hash of a lattice point and a drawing. Integer, so it reads the same on every
-// GPU and doesn't break down far from the origin the way sin() hashes do.
-fn hash(x: i32, y: i32, seed: u32) -> f32 {
-    var h = (u32(x) * 1597334677u) ^ (u32(y) * 3812015801u) ^ (seed * 2798796415u);
-    h = (h ^ (h >> 16u)) * 2654435769u;
-    h = (h ^ (h >> 15u)) * 2246822519u;
-    h = h ^ (h >> 16u);
-    return f32(h) / 4294967295.0;
-}
-
-// Smooth value noise in 0..1.
-fn noise(p: vec2<f32>, seed: u32) -> f32 {
-    let cell = floor(p);
-    let f = p - cell;
-    let u = f * f * (3.0 - 2.0 * f);
-    let x = i32(cell.x);
-    let y = i32(cell.y);
-    let a = hash(x, y, seed);
-    let b = hash(x + 1, y, seed);
-    let c = hash(x, y + 1, seed);
-    let d = hash(x + 1, y + 1, seed);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
+// The boil's noise is stylize/noise.wgsl's flint_vnoise (#1256)
 
 // The depth step under uv, as a share of the distance (the shared edges'
 // measure), 0 off an edge. Read through the nearest sampler (the edges are
@@ -136,22 +114,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Push: the line wanders off its edge, far over a long run and a little
         // over a short one, by more when the line is wide.
         let far_push = vec2<f32>(
-            noise(q * PUSH_CELLS, seed),
-            noise(q * PUSH_CELLS + 37.0, seed),
+            flint_vnoise(q * PUSH_CELLS, seed),
+            flint_vnoise(q * PUSH_CELLS + 37.0, seed),
         ) - 0.5;
         let near_push = vec2<f32>(
-            noise(q * WOBBLE_CELLS + 11.0, seed),
-            noise(q * WOBBLE_CELLS + 53.0, seed),
+            flint_vnoise(q * WOBBLE_CELLS + 11.0, seed),
+            flint_vnoise(q * WOBBLE_CELLS + 53.0, seed),
         ) - 0.5;
         let push = (far_push * 2.0 + near_push * 0.8) * params.boil * (1.0 + width);
         uv = in.uv + push * tx;
 
         // Width: the pen swells and thins along the line.
-        let swell = noise(q * WIDTH_CELLS + 91.0, seed) * 2.0 - 1.0;
+        let swell = flint_vnoise(q * WIDTH_CELLS + 91.0, seed) * 2.0 - 1.0;
         width = max(width * (1.0 + swell * params.boil * 0.85), 0.75);
 
         // Pressure: here and there the pen lifts.
-        let lift = smoothstep(0.52, 0.78, noise(q * PRESSURE_CELLS + 7.0, seed));
+        let lift = smoothstep(0.52, 0.78, flint_vnoise(q * PRESSURE_CELLS + 7.0, seed));
         pressure = 1.0 - lift * min(params.boil, 1.0) * 0.8;
     }
 

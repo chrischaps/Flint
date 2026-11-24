@@ -152,6 +152,7 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 | The input config (the scene's, else `[project] input`, else `config/input.toml`) parses | `bad-input-config` |
 | Every other file a scene, prefab, particle effect, glyph set, chunk, user style or script names by path | `missing-file` |
 | User styles load and compile; `[post_process.styles]`; the look | `bad-user-style` `bad-style-setting` `bad-look` |
+| Every look file (`*.look.toml`) the project holds reads, named by a scene or not, and each of its tables for a style that isn't built in names a style some folder that can take the look has, with keys that style takes | `bad-look` `bad-style-setting` |
 | `[wooze]` and `[living.species]` | `bad-wooze` `bad-species` |
 | Each field a scene declares, `[field.<name>]`: its keys and its zones | `bad-field` |
 | Constraints, and that each one can be evaluated | `constraint` `bad-constraint` |

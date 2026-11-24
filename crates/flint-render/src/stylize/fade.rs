@@ -52,7 +52,11 @@ impl FadePass {
             entries: &[storage_entry(0)],
         });
         Self {
-            module: super::kit::shader(device, "Style Fade Shader", super::kit::wgsl!("fade.wgsl")),
+            module: super::kit::shader(
+                device,
+                "Style Fade Shader",
+                super::kit::wgsl!("mask_read.wgsl", "fade.wgsl"),
+            ),
             input_bgl: super::kit::texture_layout(device, "Style Fade Input BGL"),
             mask_bgl: super::kit::mask_layout(device, "Style Fade Mask BGL"),
             owners_bgl,

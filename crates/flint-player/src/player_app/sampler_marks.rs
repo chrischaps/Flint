@@ -382,6 +382,7 @@ mod tests {
             notes: Vec::new(),
         };
         marks.hitch(&h);
+        #[allow(clippy::disallowed_methods)] // a test reading back the marker file it wrote
         let text = std::fs::read_to_string(&file).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 2, "{text}");

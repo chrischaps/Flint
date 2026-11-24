@@ -62,8 +62,8 @@ fn normal_from(c: vec3<f32>, l: vec3<f32>, r: vec3<f32>, up: vec3<f32>, dn: vec3
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let px = vec2<i32>(in.pos.xy);
-    let mp = mask_px(in.uv);
-    let id = mask_id(mp);
+    let mp = flint_mask_texel(in.uv);
+    let id = flint_mask_load(mp).x;
     let slot = slot_of(id);
     if passes_through(slot) {
         return vec4<f32>(1.0, 0.0, 0.0, 0.0);
@@ -139,8 +139,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // side (the whole frame's settings draw every side)
     var id_edge = 0.0;
     if u.info.z == 1u && slot != 0u {
-        let others = mask_id(mp + vec2<i32>(1, 0)) != id || mask_id(mp + vec2<i32>(-1, 0)) != id
-            || mask_id(mp + vec2<i32>(0, 1)) != id || mask_id(mp + vec2<i32>(0, -1)) != id;
+        let others = flint_mask_load(mp + vec2<i32>(1, 0)).x != id
+            || flint_mask_load(mp + vec2<i32>(-1, 0)).x != id
+            || flint_mask_load(mp + vec2<i32>(0, 1)).x != id
+            || flint_mask_load(mp + vec2<i32>(0, -1)).x != id;
         id_edge = select(0.0, 1.0, others);
     }
 

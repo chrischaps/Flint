@@ -1,6 +1,7 @@
 # Flint's CI. No GPU here, and AudioManager::new() / Gilrs::new() can fail
 # headless, so most of the native test suite stays local for now (`cargo
-# test`). The GPU tests and render goldens run on a software adapter (#314).
+# test`). The GPU tests, render goldens and the CLI's --json contract
+# (json_cli, #1268) run on a software adapter (#314).
 name: CI
 
 on:
@@ -239,6 +240,26 @@ jobs:
           target/debug/flint.exe goldens crates/flint-cli/tests/golden/stylize.goldens.toml
           --case invert --case edges-view --case pencil-full --case watercolor
           --require-gpu --out-dir target/tmp/stylize-goldens-fxc
+
+      # The global --json (#710) with the real binary: every windowless
+      # command answers with one JSON document, a window command refuses it,
+      # `play --list-keys` answers wherever --json goes. Here because this job
+      # has built flint (a second test binary is all it adds) and has an
+      # adapter, so the render cases run too. Before #1268 no CI job ran it:
+      # `flint play --json` exited 2 from #717 (the player's own --json
+      # shadowed the global) until #1184, and nobody saw the red test
+      - name: cargo test -p flint-cli --test json_cli
+        if: success() || failure()
+        run: cargo test -p flint-cli --test json_cli
+
+      # `flint schema` as data and `flint validate`'s references (#684),
+      # with the real binary. No GPU, but here for the same reason as the
+      # step above: flint is built. Before #1285 no CI job ran it, and its
+      # copy of `collider`'s fields was red on main from #729 (17 Nov) to
+      # #1054 (21 Nov), unseen
+      - name: cargo test -p flint-cli --test schema_cli
+        if: success() || failure()
+        run: cargo test -p flint-cli --test schema_cli
 
       - name: Goldens summary
         if: always()

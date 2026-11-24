@@ -61,7 +61,7 @@ struct PencilUniforms {
 // The variant table (#740, the framework's): a row a variant, and the row
 // of each mask id, as long as the frame needs
 @group(0) @binding(1) var<storage, read> pencil_rows: array<PencilRow>;
-@group(0) @binding(2) var<storage, read> pencil_slots: array<u32>;
+@group(0) @binding(2) var<storage, read> flint_slots: array<u32>;
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -83,46 +83,12 @@ fn shown(c: vec3<f32>) -> vec3<f32> {
     return select(x, flint_to_display(x), u.srgb > 0.5);
 }
 
-// --- hashes ----------------------------------------------------------------
-
-fn pcg(v: u32) -> u32 {
-    let s = v * 747796405u + 2891336453u;
-    let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
-    return (w >> 22u) ^ w;
-}
-
-fn unit(h: u32) -> f32 {
-    return f32(h >> 8u) / 16777216.0;
-}
-
-fn hash3(a: i32, b: i32, c: u32) -> vec3<f32> {
-    let h = pcg(bitcast<u32>(a) ^ pcg(bitcast<u32>(b) ^ pcg(c)));
-    let h2 = pcg(h);
-    return vec3<f32>(unit(h), unit(h2), unit(pcg(h2)));
-}
-
-fn hash1(a: i32, b: i32, c: u32) -> f32 {
-    return unit(pcg(bitcast<u32>(a) ^ pcg(bitcast<u32>(b) ^ pcg(c))));
-}
-
-// Value noise in [0, 1], smooth between integer lattice points
-fn vnoise(p: vec2<f32>, seed: u32) -> f32 {
-    let i = floor(p);
-    let f = p - i;
-    let s = f * f * (3.0 - 2.0 * f);
-    let x = i32(i.x);
-    let y = i32(i.y);
-    let a = hash1(x, y, seed);
-    let b = hash1(x + 1, y, seed);
-    let c = hash1(x, y + 1, seed);
-    let d = hash1(x + 1, y + 1, seed);
-    return mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
-}
+// --- hashes: stylize/noise.wgsl (flint_hash1, flint_hash3, flint_vnoise, #1256) ---
 
 // --- settings by pixel -------------------------------------------------------
 
 @group(2) @binding(0) var scene_depth: texture_depth_2d;
-@group(2) @binding(1) var style_mask: texture_2d<u32>;
+@group(2) @binding(1) var flint_mask_texture: texture_2d<u32>;
 // The paper and stroke stacks (#390, #547), a blank texel while none is named
 @group(2) @binding(2) var paper_tex: texture_2d_array<f32>;
 @group(2) @binding(3) var stroke_tex: texture_2d_array<f32>;
@@ -133,26 +99,13 @@ fn vnoise(p: vec2<f32>, seed: u32) -> f32 {
 // blank texel if the edge pass couldn't be built
 @group(2) @binding(5) var edge_tex: texture_2d<f32>;
 
-fn mask_id(p: vec2<i32>) -> u32 {
-    let size = vec2<i32>(textureDimensions(style_mask));
-    return textureLoad(style_mask, clamp(p, vec2<i32>(0), size - 1), 0).r;
-}
-
-// The entity's blend at a mask pixel (#278: `.g`, 0..65535)
-fn mask_blend(p: vec2<i32>) -> f32 {
-    let size = vec2<i32>(textureDimensions(style_mask));
-    return f32(textureLoad(style_mask, clamp(p, vec2<i32>(0), size - 1), 0).g) / 65535.0;
-}
-
-fn mask_px(uv: vec2<f32>) -> vec2<i32> {
-    return vec2<i32>(uv * vec2<f32>(textureDimensions(style_mask)));
-}
-
+// The mask is read through mask_read.wgsl, the slots through mask_slot.wgsl
+// (#1256); a row's slot only while the frame has per-entity rows
 fn slot_of(id: u32) -> u32 {
-    if u.info.z == 0u || id >= arrayLength(&pencil_slots) {
+    if u.info.z == 0u {
         return 0u;
     }
-    return pencil_slots[id];
+    return flint_slot(id);
 }
 
 // Whether the pixel in this row is left as it is: an opt-out variant, or

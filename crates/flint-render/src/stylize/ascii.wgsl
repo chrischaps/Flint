@@ -28,7 +28,7 @@
 @group(1) @binding(0) var cells: texture_2d<u32>;
 @group(2) @binding(0) var atlas: texture_2d<f32>;
 @group(3) @binding(0) var entity_input: texture_2d<f32>;
-@group(3) @binding(1) var style_mask: texture_2d<u32>;
+@group(3) @binding(1) var flint_mask_texture: texture_2d<u32>;
 // The edge cell pass's texel per cell (#267, ascii_edge_cells.wgsl): x =
 // line glyph slot + 1 (0 = none), y = its length in cell widths, z = the
 // outline and cross-axis bits plus the near side's hue above them, 7 bits
@@ -360,9 +360,7 @@ fn shade_edge(v: Variant, col: vec3<f32>, t: f32, step: u32, cell: vec2<f32>, lo
 // The variant slot of the pixel at `p` (output pixels): the mask is at the
 // scene's resolution, so it is read by position scaled to it.
 fn mask_texel(p: vec2<f32>) -> vec2<u32> {
-    let msize = vec2<i32>(textureDimensions(style_mask));
-    let mp = vec2<i32>(floor(p * vec2<f32>(msize) / u.size));
-    return textureLoad(style_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).rg;
+    return flint_mask_load(flint_mask_texel_of(p, u.size));
 }
 
 fn slot_at(p: vec2<f32>) -> u32 {

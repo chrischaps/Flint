@@ -118,7 +118,7 @@ impl OwnershipPass {
             module: kit::shader(
                 device,
                 "Style Ownership Shader",
-                kit::wgsl!("ownership.wgsl"),
+                kit::wgsl!("mask_read.wgsl", "ownership.wgsl"),
             ),
             owners_bgl: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Style Ownership Owners BGL"),

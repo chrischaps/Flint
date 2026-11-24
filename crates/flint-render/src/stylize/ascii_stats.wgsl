@@ -22,7 +22,7 @@
 // write zeros and loop over nothing.
 
 @group(1) @binding(0) var stats_in: texture_2d<f32>;
-@group(1) @binding(1) var stats_mask: texture_2d<u32>;
+@group(1) @binding(1) var flint_mask_texture: texture_2d<u32>;
 
 fn stats_shown(p: vec2<i32>) -> vec3<f32> {
     let max_px = vec2<i32>(u.size) - vec2<i32>(1);
@@ -37,9 +37,7 @@ fn stats_id(p: vec2<f32>, rect: vec4<f32>) -> u32 {
     if u.variant_meta.x <= 1u || any(p < rect.xy) || any(p >= rect.zw) {
         return 0u;
     }
-    let msize = vec2<i32>(textureDimensions(stats_mask));
-    let mp = vec2<i32>(floor(p * vec2<f32>(msize) / u.size));
-    return textureLoad(stats_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).r;
+    return flint_mask_load(flint_mask_texel_of(p, u.size)).x;
 }
 
 // Samples in a run
