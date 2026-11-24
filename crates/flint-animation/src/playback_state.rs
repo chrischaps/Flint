@@ -111,6 +111,8 @@ pub struct ClipPlaybackState {
     pub blend_target: String,
     /// Duration of the crossfade in seconds
     pub blend_duration: f32,
+    /// How the crossfade's weight moves (#1248); linear unless written
+    pub blend_easing: Easing,
     /// Time elapsed in the current blend
     pub blend_elapsed: f32,
     /// Ordered animation layers, composed after base + crossfade. A legacy
@@ -150,6 +152,7 @@ impl ClipPlaybackState {
             playing,
             blend_target: String::new(),
             blend_duration: crate::animator::DEFAULT_BLEND_SECONDS,
+            blend_easing: Easing::Linear,
             blend_elapsed: 0.0,
             layers: Vec::new(),
             unpublished: false,
