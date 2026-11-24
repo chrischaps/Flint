@@ -431,6 +431,20 @@ name = "style-veil-echo"
 scene = "tests/fixtures/scenes/style_veil_echo.scene.toml"
 args = ["--no-grid", "--time", "2"]
 
+# A woozy pane veils where it is drawn (#1241): shallow wooze drifts a pane
+# of glass in front of a glyph crate, and the veil moves it as the main pass
+# did, so the crate's glyphs fade behind the glass and nowhere else; at its
+# rest pose glyphs showed through one side of the pane and its ghost dimmed
+# bare crate on the other. The still pane over the stone veils as before.
+# A rest-pose veil reads 2.64% past 48 and a mean of 1.68 here (main's
+# binary before #1241), close to the suite's glyph limits, so this case
+# takes tighter ones: a regression fails on both
+[[case]]
+name = "style-veil-wooze"
+scene = "tests/fixtures/scenes/style_veil_wooze.scene.toml"
+args = ["--no-grid", "--time", "2"]
+tolerance = { level = 48, share = 0.01, mean = 1.0 }
+
 # Billboards need no veil (#737): their alpha cuts them out and what's
 # kept writes depth, so the mask's own depth test leaves the two wisps out
 # of the stone behind them. #1011 masks a styled billboard; this one must

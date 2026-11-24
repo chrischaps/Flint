@@ -28,10 +28,15 @@
 //! the pixel. A pixel no translucent draw reaches is fogged as before.
 //!
 //! Approximations: several translucent layers fog as one, at their
-//! weighted depth (the nearest weighs most); woozy draws are drawn through
-//! the plain vertex stage (the fog changes slowly with depth); a body
-//! translucent only at its soft edge writes depth and is fogged as an
-//! opaque one already. The veil is single-sample, like the style veil.
+//! weighted depth (the nearest weighs most); a body translucent only at its
+//! soft edge writes depth and is fogged as an opaque one already, unless it
+//! drifts (the main pass then blends all of it, so it's veiled). The veil
+//! is single-sample, like the style veil.
+//!
+//! A woozy draw (#215) is veiled through the main pass's own woozy vertex
+//! stage (#1241), made the first frame one is veiled: at its rest pose it
+//! was fogged as what's behind where it was drawn, and left a fogless
+//! ghost where it had drifted from.
 
 use super::{Blend, Draw, SceneRenderer};
 use crate::gpu_counts::CountedDevice;
@@ -86,6 +91,14 @@ struct FogVeilPipelines {
     echoes: Pair,
     /// Made the first frame with particles (the particle pipeline is too).
     particles: Option<Pair>,
+    /// Made the first frame a veiled draw drifts (#1241).
+    woozy: Option<WoozyPairs>,
+}
+
+/// Blended meshes through shallow wooze's vertex stages (#1241).
+struct WoozyPairs {
+    meshes: Pair,
+    skinned: Pair,
 }
 
 /// The renderer's share of the veil (ADR 0118: a subsystem's state in its
@@ -99,13 +112,14 @@ pub(super) struct FogVeilState {
     pub drawn: bool,
 }
 
-/// A veil pipeline: `module`'s `vs`/`fs`, single-sample, depth-tested
-/// against the scene and never writing it.
+/// A veil pipeline: `vertex`'s `vs` and `fragment`'s `fs` (one module, or
+/// shallow wooze's vertex stage over the scene's, #1241), single-sample,
+/// depth-tested against the scene and never writing it.
 fn pipeline(
     device: &wgpu::Device,
     label: &str,
-    module: &wgpu::ShaderModule,
-    (vs, fs): (&str, &str),
+    (vertex, vs): (&wgpu::ShaderModule, &str),
+    (fragment, fs): (&wgpu::ShaderModule, &str),
     layouts: &[&wgpu::BindGroupLayout],
     buffers: &[wgpu::VertexBufferLayout<'static>],
     cull_mode: Option<wgpu::Face>,
@@ -119,13 +133,13 @@ fn pipeline(
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
-            module,
+            module: vertex,
             entry_point: Some(vs),
             buffers: &buffers.iter().cloned().map(Some).collect::<Vec<_>>(),
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
-            module,
+            module: fragment,
             entry_point: Some(fs),
             targets: &[Some(wgpu::ColorTargetState {
                 format: FOG_VEIL_FORMAT,
@@ -152,12 +166,13 @@ fn pipeline(
     })
 }
 
-/// Both of a kind's pipelines.
+/// Both of a kind's pipelines: `vertex`'s `vs` over `fragment`'s veil
+/// stages.
 fn pair(
     device: &wgpu::Device,
     label: &str,
-    module: &wgpu::ShaderModule,
-    vs: &str,
+    vertex: (&wgpu::ShaderModule, &str),
+    fragment: &wgpu::ShaderModule,
     layouts: &[&wgpu::BindGroupLayout],
     buffers: &[wgpu::VertexBufferLayout<'static>],
     cull_mode: Option<wgpu::Face>,
@@ -166,8 +181,8 @@ fn pair(
         pipeline(
             device,
             &format!("Fog Veil {label} ({which})"),
-            module,
-            (vs, fs),
+            vertex,
+            (fragment, fs),
             layouts,
             buffers,
             cull_mode,
@@ -180,12 +195,14 @@ fn pair(
 }
 
 impl FogVeilPipelines {
-    /// The pipeline a [`VeilDraw`] draws through; `None` for particles
-    /// before their pair is made.
+    /// The pipeline a [`VeilDraw`] draws through; `None` for particles or
+    /// a woozy draw before their pairs are made.
     fn get(&self, v: VeilDraw) -> Option<&wgpu::RenderPipeline> {
         let pair = match v.kind {
             VeilKind::Mesh => &self.meshes,
             VeilKind::Skinned => &self.skinned,
+            VeilKind::WoozyMesh => &self.woozy.as_ref()?.meshes,
+            VeilKind::WoozySkinned => &self.woozy.as_ref()?.skinned,
             VeilKind::Echo => &self.echoes,
             VeilKind::Particles => self.particles.as_ref()?,
         };
@@ -198,8 +215,20 @@ impl FogVeilPipelines {
 enum VeilKind {
     Mesh,
     Skinned,
+    /// A blended mesh the main pass drifted on the wooze field (#1241).
+    WoozyMesh,
+    WoozySkinned,
     Echo,
     Particles,
+}
+
+impl VeilKind {
+    fn woozy(self) -> bool {
+        match self {
+            VeilKind::WoozyMesh | VeilKind::WoozySkinned => true,
+            VeilKind::Mesh | VeilKind::Skinned | VeilKind::Echo | VeilKind::Particles => false,
+        }
+    }
 }
 
 /// What the veil draws an item as (#1151): its pair, and whether it only
@@ -218,6 +247,10 @@ impl VeilDraw {
             (VeilKind::Mesh, true) => "fog veil mesh (light)",
             (VeilKind::Skinned, false) => "fog veil skinned (covers)",
             (VeilKind::Skinned, true) => "fog veil skinned (light)",
+            (VeilKind::WoozyMesh, false) => "fog veil wooze mesh (covers)",
+            (VeilKind::WoozyMesh, true) => "fog veil wooze mesh (light)",
+            (VeilKind::WoozySkinned, false) => "fog veil wooze skinned (covers)",
+            (VeilKind::WoozySkinned, true) => "fog veil wooze skinned (light)",
             (VeilKind::Echo, false) => "fog veil echo (covers)",
             (VeilKind::Echo, true) => "fog veil echo (light)",
             (VeilKind::Particles, false) => "fog veil particle (covers)",
@@ -226,28 +259,36 @@ impl VeilDraw {
     }
 }
 
-/// Whether an item goes into the veil, and if so as what. Every match is
-/// spelled out, so a new kind of draw is asked.
-fn veils(item: &super::DrawItem) -> Option<VeilDraw> {
-    if !item.blend.blends() {
-        return None;
-    }
-    let light = matches!(item.blend, Blend::Additive | Blend::Lighten);
-    let kind = match &item.draw {
-        Draw::Static(d) if d.is_wireframe => return None,
-        // A soft edge writes depth: the composite fogs it as opaque
-        Draw::Skinned(d) if d.soft_edge_only => return None,
-        Draw::Static(_) => VeilKind::Mesh,
-        Draw::Skinned(_) => VeilKind::Skinned,
-        Draw::Echo(_) => VeilKind::Echo,
-        Draw::Particles(_) => VeilKind::Particles,
-        // Billboards and terrain don't blend
-        Draw::Billboard(_) | Draw::Terrain(_) => return None,
-    };
-    Some(VeilDraw { kind, light })
-}
-
 impl SceneRenderer {
+    /// Whether an item goes into the veil, and if so as what: through the
+    /// vertex stage the main pass drew it with (#1241). Every match is
+    /// spelled out, so a new kind of draw is asked.
+    fn veils(&self, item: &super::DrawItem) -> Option<VeilDraw> {
+        if !item.blend.blends() {
+            return None;
+        }
+        let light = matches!(item.blend, Blend::Additive | Blend::Lighten);
+        let pipe = self.main_pipe(item);
+        let woozy = pipe.is_some_and(super::render_passes::MainPipe::woozy);
+        let kind = match &item.draw {
+            Draw::Static(d) if d.is_wireframe => return None,
+            // A soft edge writes depth: the composite fogs it as opaque. A
+            // drifting one is blended whole (`main_pipe`), so it's veiled
+            Draw::Skinned(_) if pipe == Some(super::render_passes::MainPipe::SkinnedSoftEdge) => {
+                return None
+            }
+            Draw::Static(_) if woozy => VeilKind::WoozyMesh,
+            Draw::Static(_) => VeilKind::Mesh,
+            Draw::Skinned(_) if woozy => VeilKind::WoozySkinned,
+            Draw::Skinned(_) => VeilKind::Skinned,
+            Draw::Echo(_) => VeilKind::Echo,
+            Draw::Particles(_) => VeilKind::Particles,
+            // Billboards and terrain don't blend
+            Draw::Billboard(_) | Draw::Terrain(_) => return None,
+        };
+        Some(VeilDraw { kind, light })
+    }
+
     /// The veil's draws (#1151), in the order it draws them: each item
     /// [`veils`] keeps, with what it's drawn as and through, once its
     /// pipelines are made. The encode and the description's log both walk
@@ -257,7 +298,7 @@ impl SceneRenderer {
         pipelines: &'a FogVeilPipelines,
     ) -> impl Iterator<Item = (&'a super::DrawItem, VeilDraw, &'a wgpu::RenderPipeline)> + 'a {
         self.draws.drawn().filter_map(move |item| {
-            let v = veils(item)?;
+            let v = self.veils(item)?;
             if let Draw::Particles(n) = &item.draw {
                 // Drawn from the particles' shared buffers, when they're up
                 self.particle_buffers.as_ref()?;
@@ -286,7 +327,7 @@ impl SceneRenderer {
         let ground = self.ground_fog.is_some() && c.ground_fog_density > 0.0;
         c.enabled
             && (c.fog_enabled || ground)
-            && self.draws.drawn().any(|item| veils(item).is_some())
+            && self.draws.drawn().any(|item| self.veils(item).is_some())
     }
 
     /// Draw the veil (#513) into the chain's target, against the frame's
@@ -329,8 +370,8 @@ impl SceneRenderer {
                 meshes: pair(
                     device,
                     "Mesh",
+                    (&pbr, "vs_main"),
                     &pbr,
-                    "vs_main",
                     &mesh_layouts,
                     &[crate::primitives::Vertex::desc()],
                     None,
@@ -338,8 +379,8 @@ impl SceneRenderer {
                 skinned: pair(
                     device,
                     "Skinned",
+                    (&skinned_module, "vs_skinned"),
                     &skinned_module,
-                    "vs_skinned",
                     &skinned_layouts,
                     &skinned_vertex,
                     None,
@@ -347,13 +388,67 @@ impl SceneRenderer {
                 echoes: pair(
                     device,
                     "Echo",
+                    (&skinned_module, "vs_skinned"),
                     &skinned_module,
-                    "vs_skinned",
                     &skinned_layouts,
                     &skinned_vertex,
                     Some(wgpu::Face::Back),
                 ),
                 particles: None,
+                woozy: None,
+            });
+        }
+        // The woozy pairs (#1241), the first frame a veiled draw drifts: a
+        // scene without one never makes them
+        let wants_woozy = self
+            .fog_veil
+            .pipelines
+            .as_ref()
+            .is_some_and(|p| p.woozy.is_none())
+            && self
+                .draws
+                .drawn()
+                .any(|i| self.veils(i).is_some_and(|v| v.kind.woozy()));
+        if let (Some(pipelines), true) = (self.fog_veil.pipelines.as_mut(), wants_woozy) {
+            let vertex = crate::wooze_pipeline::vertex_module(device);
+            let pbr = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Fog Veil Woozy PBR Shader"),
+                source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SCENE.into()),
+            });
+            let skinned_module =
+                device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("Fog Veil Woozy Skinned Shader"),
+                    source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SKINNED.into()),
+                });
+            let l = &self.layouts;
+            pipelines.woozy = Some(WoozyPairs {
+                meshes: pair(
+                    device,
+                    "Woozy Mesh",
+                    (&vertex, "vs_wooze"),
+                    &pbr,
+                    &[
+                        &l.transform_bind_group_layout,
+                        &l.material_bind_group_layout,
+                        &l.light_bind_group_layout,
+                    ],
+                    &[crate::primitives::Vertex::desc()],
+                    None,
+                ),
+                skinned: pair(
+                    device,
+                    "Woozy Skinned",
+                    (&vertex, "vs_skinned_wooze"),
+                    &skinned_module,
+                    &[
+                        &l.transform_bind_group_layout,
+                        &l.material_bind_group_layout,
+                        &l.light_bind_group_layout,
+                        &skinned.bone_bind_group_layout,
+                    ],
+                    &[crate::primitives::SkinnedVertex::desc()],
+                    None,
+                ),
             });
         }
         let has_particles = self
@@ -375,8 +470,8 @@ impl SceneRenderer {
                 pipelines.particles = Some(pair(
                     device,
                     "Particle",
+                    (&module, "vs_particle"),
                     &module,
-                    "vs_particle",
                     &[
                         &pp.uniform_bind_group_layout,
                         &pp.instance_bind_group_layout,
