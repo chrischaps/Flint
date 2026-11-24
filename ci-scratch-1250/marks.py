@@ -49,25 +49,30 @@ for i in range(m["length"]):
                   "text": " | ".join(words)})
 
 HITCH = re.compile(r"hitch ([\d.]+) ms (\w+): .*?\(frame (\d+), wall_time ([\d.]+)\)")
-NOW = re.compile(r"\bnow\b\D{0,3}([\d.]+(?:e[-+]?\d+)?)")
+def field(text, key):
+    m = re.search(r"\b" + key + r"\b\W{0,3}(\d+)", text)
+    return int(m[1]) if m else None
+
 hitch_marks, zero = [], None
 for mk in marks:
-    h = HITCH.search(mk["text"])
-    if h:
+    text = mk["text"]
+    h = HITCH.search(text)
+    if mk["end"] is not None and h:  # Linux: the marker file's own span
         ms, cls, frame, wall = float(h[1]), h[2], int(h[3]), float(h[4])
-        if mk["end"] is not None:  # an interval: the marker file's own span
-            start, end = mk["start"], mk["end"]
-        else:  # an instant written at `now`: back to the hitch's start
-            now = float(NOW.search(mk["text"])[1])
-            start = mk["start"] - (now - wall) * 1000.0
-            end = start + ms
         hitch_marks.append({"frame": frame, "class": cls, "wall_time": wall, "ms": ms,
-                            "start": start, "end": end, "raw": mk["text"][:300]})
-    elif "wall_time 0" in mk["text"] or "WallTimeZero" in mk["text"]:
-        if mk["end"] is not None:
-            zero = mk["start"]
-        else:
-            zero = mk["start"] - float(NOW.search(mk["text"])[1]) * 1000.0
+                            "start": mk["start"], "end": mk["end"], "raw": text[:300]})
+    elif mk["name"].startswith("Hitch"):  # Windows: an instant, written at now_us
+        now, wall, dur = field(text, "now_us"), field(text, "wall_time_us"), field(text, "duration_us")
+        start = mk["start"] - (now - wall) / 1000.0
+        hitch_marks.append({"frame": field(text, "frame"), "class": h[2] if h else None,
+                            "wall_time": wall / 1e6, "ms": dur / 1000.0,
+                            "start": start, "end": start + dur / 1000.0,
+                            "event_after_end_ms": round(mk["start"] - start - dur / 1000.0, 3),
+                            "raw": text[:400]})
+    elif "wall_time 0" in text:
+        zero = mk["start"]
+    elif mk["name"].startswith("WallTimeZero"):
+        zero = mk["start"] - field(text, "now_us") / 1000.0
 
 # samples' times
 s = t["samples"]
@@ -122,30 +127,57 @@ def is_stall(stack):
     return stall_of[stack]
 
 stall_times = [tm for tm, stk in zip(times, s["stack"]) if is_stall(stk)]
+interval = float(p["meta"].get("interval", 1.0))
+# The stall's samples come back to back; a frame's own Rhai sample is alone.
+runs = []
+for tm in stall_times:
+    if runs and tm - runs[-1][-1] <= 3 * interval:
+        runs[-1].append(tm)
+    else:
+        runs.append([tm])
+long_runs = [r for r in runs if len(r) >= 20]
 FRAME_MS = 1000.0 / 60.0
-rows = []
+rows, claimed = [], set()
 for h in hitch_marks:
-    near = [tm for tm in stall_times if h["start"] - 300 <= tm <= h["end"] + 300]
-    inside = [tm for tm in near if h["start"] <= tm <= h["end"]]
+    best, overlap = None, 0.0
+    for k, r in enumerate(long_runs):
+        o = min(r[-1], h["end"]) - max(r[0], h["start"])
+        if o > overlap:
+            best, overlap = k, o
     row = dict(h)
-    row.update({
-        "stall_samples_near": len(near),
-        "stall_samples_inside": len(inside),
-        "first_stall_minus_start_ms": round(near[0] - h["start"], 2) if near else None,
-        "end_minus_last_stall_ms": round(h["end"] - near[-1], 2) if near else None,
-        "zero_plus_wall_time_minus_start_ms": round(zero + h["wall_time"] * 1000 - h["start"], 3)
-        if zero is not None else None,
-    })
-    row["within_a_frame"] = bool(near) and all(
-        abs(row[k]) <= FRAME_MS for k in ("first_stall_minus_start_ms", "end_minus_last_stall_ms"))
+    if best is not None:
+        r = long_runs[best]
+        claimed.add(best)
+        row.update({
+            "stall_run_samples": len(r),
+            "stall_run_ms": round(r[-1] - r[0] + interval, 2),
+            "run_start_minus_mark_start_ms": round(r[0] - h["start"], 2),
+            "mark_end_minus_run_end_ms": round(h["end"] - (r[-1] + interval), 2),
+        })
+        row["within_a_frame"] = (abs(row["run_start_minus_mark_start_ms"]) <= FRAME_MS
+                                 and -FRAME_MS <= row["mark_end_minus_run_end_ms"] <= h["ms"])
+    else:
+        row["within_a_frame"] = False
+    if zero is not None:
+        row["zero_plus_wall_time_minus_start_ms"] = round(zero + h["wall_time"] * 1000 - h["start"], 3)
     rows.append(row)
+unmarked = [{"start": r[0], "samples": len(r)} for k, r in enumerate(long_runs) if k not in claimed]
 
 out = {
     "thread": ti, "samples": len(times), "stall_samples": len(stall_times),
     "log_lines": [{k: l[k] for k in ("frame", "wall_time", "ms", "class", "cause")} for l in log],
-    "zero_mark_ms": zero, "hitch_marks": rows,
+    "zero_mark_ms": zero, "hitch_marks": rows, "stall_runs": len(long_runs),
+    "stall_runs_without_a_mark": unmarked,
     "all_mark_names": sorted({mk["name"] for mk in marks})[:80],
     "all_held_within_a_frame": bool(rows) and all(r["within_a_frame"] for r in rows),
 }
+# The profiler's timeline starts at the earliest thread's start: a range
+# around the first hitch for the screenshot, in ms from there
+zero_at = min(th.get("processStartupTime", th.get("registerTime", 0)) for th in p["threads"])
+first = rows[0] if rows else None
+out["screenshot_range"] = ([round(first["start"] - zero_at - 60), round(first["ms"] + 120)]
+                           if first else None)
 json.dump(out, open(out_path, "w", encoding="utf-8"), indent=2)
-print(json.dumps(out, indent=2))
+print(json.dumps(out, indent=2), file=sys.stderr)
+r = out["screenshot_range"] or [0, 1000]
+print(ti, r[0], r[1])

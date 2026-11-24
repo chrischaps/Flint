@@ -22,8 +22,11 @@ cp profile.json.gz out/samply-profile.json.gz
 
 ( samply load --no-open profile.json.gz > out/samply-url.txt 2> out/samply-load.log ) &
 wait_for out/samply-url.txt "profiler.firefox.com" 60
-python3 ci-scratch-1250/marks.py profile.json.gz out/samply-url.txt out/hitches.jsonl out/marks-linux.json \
-  > out/marks.log 2>&1
-echo "marks exit $?" >> out/marks.log
+ARGS=$(python3 ci-scratch-1250/marks.py profile.json.gz out/samply-url.txt out/hitches.jsonl out/marks-linux.json \
+  2> out/marks.log | tail -1)
+echo "marks: $ARGS" >> out/marks.log
+URL=$(grep -o 'https://profiler.firefox.com[^ ]*' out/samply-url.txt | head -1)
+timeout 900 node ci-scratch-1250/profshot.mjs "$URL" out/linux "$(command -v google-chrome)" $ARGS > out/profshot.log 2>&1
+echo "profshot exit $?" >> out/profshot.log
 pkill samply
 exit 0

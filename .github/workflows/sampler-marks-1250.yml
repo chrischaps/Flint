@@ -17,6 +17,9 @@ jobs:
       - name: flint-examples
         run: git clone --depth 1 https://github.com/chrischaps/flint-examples flint-examples
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: Swatinem/rust-cache@v2
         with:
           key: sampler-marks-1250
@@ -53,6 +56,9 @@ jobs:
       - name: flint-examples
         run: git clone --depth 1 https://github.com/chrischaps/flint-examples flint-examples
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: Swatinem/rust-cache@v2
         with:
           key: sampler-marks-1250

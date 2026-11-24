@@ -14,8 +14,9 @@
 //!   records them on the kernel's timeline beside the samples (WPA's
 //!   Generic Events; `samply import --unknown-event-markers`). An event
 //!   is timestamped as it is written, on the frame after the hitch, so
-//!   it carries the `wall_time` it was written at (`now`) beside the
-//!   hitch's own: the two place the hitch exactly. A `WallTimeZero`
+//!   it carries the `wall_time` it was written at (`now_us`) beside the
+//!   hitch's own (`wall_time_us`, `duration_us`): the hitch began
+//!   `now_us - wall_time_us` before the event. A `WallTimeZero { now_us }`
 //!   event at the log's opening does the same for the whole run.
 //!
 //! Nothing here runs without `--hitch-log`. With it, the cost is one file
@@ -216,43 +217,48 @@ mod platform {
                 return Err(format!("EventRegister: error {status}"));
             }
             let marks = Self { zero };
-            let now = marks.now();
+            let now_us = marks.now_us();
             tlg::write_event!(
                 FLINT_PLAYER,
                 "WallTimeZero",
                 level(Informational),
-                f64("now", &now)
+                u64("now_us", &now_us)
             );
             let said = format!("ETW provider {PROVIDER} ({})", super::PROVIDER_GUID);
             Ok((marks, said))
         }
 
-        /// `wall_time` now.
-        fn now(&self) -> f64 {
+        /// `wall_time` now, whole microseconds.
+        fn now_us(&self) -> u64 {
             Instant::now()
                 .saturating_duration_since(self.zero)
-                .as_secs_f64()
+                .as_micros() as u64
         }
 
+        /// Fields of the types every reader decodes: samply's ETW reader
+        /// shows integers and NUL-terminated strings, and calls a double
+        /// or a counted string "Unknown InType" (measured, 0.13.1), so
+        /// times go as whole microseconds and text as `cstr8`.
         pub(super) fn hitch(&mut self, h: &Hitch) {
             if !FLINT_PLAYER.enabled(tlg::Level::Informational, 0) {
                 return;
             }
-            let now = self.now();
+            let now_us = self.now_us();
             let cause = h.cause_line();
             let name = mark_name(h.class(), h.ms, h.index, h.at, &cause);
-            let ms = h.ms as f64;
+            let wall_time_us = (h.at * 1e6).round() as u64;
+            let duration_us = (h.ms as f64 * 1e3).round() as u64;
             tlg::write_event!(
                 FLINT_PLAYER,
                 "Hitch",
                 level(Informational),
-                str8("name", &name),
+                cstr8("name", &name),
                 u64("frame", &h.index),
-                f64("wall_time", &h.at),
-                f64("ms", &ms),
-                str8("class", h.class()),
-                str8("cause", &cause),
-                f64("now", &now),
+                u64("wall_time_us", &wall_time_us),
+                u64("duration_us", &duration_us),
+                u64("now_us", &now_us),
+                cstr8("class", h.class()),
+                cstr8("cause", &cause),
             );
         }
     }
