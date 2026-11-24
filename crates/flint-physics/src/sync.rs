@@ -1279,6 +1279,66 @@ impl PhysicsSync {
         self.synced_entities.insert(entity_id);
     }
 
+    /// A fixed body holding a heightfield (#1219): the terrain's collider.
+    /// Each cell is split from its (x0, z0) corner to its (x1, z1) one, as
+    /// the terrain's mesh is (Parry's zigzag), so the surface is the mesh's
+    /// triangle for triangle; internal edges are fixed, so nothing rolling
+    /// or walking over a cell edge is knocked up by it. A grid under 2 x 2
+    /// makes no collider.
+    pub fn register_static_heightfield(
+        &mut self,
+        entity_id: EntityId,
+        physics: &mut PhysicsWorld,
+        field: &crate::StaticHeightfield,
+        friction: f32,
+        restitution: f32,
+    ) {
+        let crate::StaticHeightfield {
+            columns,
+            rows,
+            ref heights,
+            width,
+            depth,
+            origin,
+        } = *field;
+        if columns < 2 || rows < 2 || heights.len() != columns * rows {
+            tracing::warn!(
+                "heightfield for entity {entity_id:?}: {columns} x {rows} samples \
+                 ({} heights) make no collider",
+                heights.len()
+            );
+            return;
+        }
+        let matrix = na::DMatrix::from_fn(rows, columns, |i, j| heights[i * columns + j]);
+        let mut shape = rapier3d::parry::shape::HeightField::with_flags(
+            matrix,
+            vector![width, 1.0, depth],
+            rapier3d::parry::shape::HeightFieldFlags::FIX_INTERNAL_EDGES,
+        );
+        shape
+            .cells_statuses_mut()
+            .fill(rapier3d::parry::shape::HeightFieldCellStatus::ZIGZAG_SUBDIVISION);
+
+        let body_handle = physics.insert_rigid_body(RigidBodyBuilder::fixed().build());
+        self.body_map.insert(entity_id, body_handle);
+        // Parry centres a heightfield on its origin; the terrain's grid
+        // starts at `origin`
+        let collider = ColliderBuilder::new(SharedShape::new(shape))
+            .translation(vector![
+                origin[0] + width * 0.5,
+                origin[1],
+                origin[2] + depth * 0.5
+            ])
+            .friction(friction)
+            .restitution(restitution)
+            .collision_groups(InteractionGroups::new(Group::GROUP_1, Group::ALL))
+            .build();
+        let col_handle = physics.insert_collider_with_parent(collider, body_handle);
+        self.insert_collider(entity_id, col_handle);
+        self.trimesh_pending.push(entity_id);
+        self.synced_entities.insert(entity_id);
+    }
+
     /// Create a static rigid body for a trimesh entity and return its handle.
     /// Convenience method for registering static track geometry.
     pub fn register_static_trimesh(

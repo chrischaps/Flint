@@ -327,7 +327,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .arg("id", Entity)
         .returns(
             MapKind,
-            "#{shape: \"box\", half_x, half_y, half_z}, #{shape: \"sphere\", radius}, #{shape: \"capsule\"|\"cylinder\", radius, half_height} or #{shape: \"mesh\"|\"convex\", half_x, half_y, half_z, centre_x, centre_y, centre_z} (its box); () with no collider or no physics",
+            "#{shape: \"box\", half_x, half_y, half_z}, #{shape: \"sphere\", radius}, #{shape: \"capsule\"|\"cylinder\", radius, half_height} or #{shape: \"mesh\"|\"convex\"|\"heightfield\", half_x, half_y, half_z, centre_x, centre_y, centre_z} (its box); () with no collider or no physics",
         )
         .run(|call, (id,)| {
             use flint_physics::ColliderExtents as E;
@@ -372,6 +372,10 @@ pub(crate) fn register(api: &mut ScriptApi) {
                 | E::Convex {
                     half_extents,
                     centre,
+                }
+                | E::Heightfield {
+                    half_extents,
+                    centre,
                 } => {
                     put("half_x", half_extents[0]);
                     put("half_y", half_extents[1]);
@@ -379,10 +383,10 @@ pub(crate) fn register(api: &mut ScriptApi) {
                     put("centre_x", centre[0]);
                     put("centre_y", centre[1]);
                     put("centre_z", centre[2]);
-                    if matches!(extents, E::Mesh { .. }) {
-                        "mesh"
-                    } else {
-                        "convex"
+                    match extents {
+                        E::Mesh { .. } => "mesh",
+                        E::Convex { .. } => "convex",
+                        _ => "heightfield",
                     }
                 }
             };
