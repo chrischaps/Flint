@@ -590,7 +590,20 @@ A callback's time names the file, not the cause: a 12 ms `on_update` could be on
 
 **What a trace says about a game.** A trace holds names, never contents: scope names, script paths, asset and scene names, the adapter. That is still a description of a game. Before attaching one to a public issue, check it doesn't name what isn't public yet. `traces/` is in `.gitignore`.
 
-**On the web**, with the recorder in the build, `?perf=1`'s panel has a **Save trace** button that downloads the look-back. The site's release build has no recorder, so the button isn't shown there. In a browser that isn't cross-origin isolated, `performance.now()` is coarsened, so short scopes read as 0 (docs/design/web.md).
+**On the web**, with the recorder in the build, `?perf=1`'s panel has a **Save trace** button that downloads the look-back, the same file the desktop writes, which Perfetto and `flint profile` open. The site's release build has no recorder, so the button isn't shown there. Build one that has it from `crates/flint-player`:
+
+```bash
+trunk build --release --cargo-profile web-release --features trace --dist <dir>
+```
+
+Put a bundle beside its `index.html` and open `?bundle=<pack>&perf=1`. `tools/web-perf/run.mjs --save-trace` presses the button and keeps the file ([its README](https://github.com/chrischaps/Flint/blob/main/tools/web-perf/README.md)).
+
+**Short scopes read as 0 there.** A scope's time is two reads of `performance.now()`, and a browser coarsens that clock on a page that isn't cross-origin isolated, as GitHub Pages pages aren't. Measured on `hitch_metronome` (#1266): in Chrome 158 the clock steps by 100 µs and 88% of a 5 s trace's scopes read 0; in Firefox 160 it steps by 1 ms and 98% read 0. The rest read whole steps. Served cross-origin isolated (`run.mjs --isolate`) the steps are 5 µs and 20 µs, and 53% and 67% still read 0. On such a trace:
+
+- **A scope's mean over many frames holds.** Each read lands on a step at random, so `flint profile top`'s ms a frame came out about the same coarse or isolated (`tick` 0.96 against 0.98 ms in Chrome, `render` 0.34 against 0.35). A frame-sized stall reads as it is.
+- **One frame doesn't.** A single frame's tree, a scope's worst and a scope's self time are made of whole steps: Firefox's coarse trace gave `render` 117 ms of self time where an isolated one gave 11.
+
+**What it costs there.** A recorded scope is 122 ns in Chrome and 116 to 136 ns in Firefox, against 30 ns natively in the same bench, nearly all of it the two `performance.now()` calls, each a crossing from wasm into JS. At the web player's ~100 scopes a frame that is about 12 µs a frame. With the recorder compiled in and not recording, a scope is 3 ns. `?scope_bench=1` measures it in any browser: the page times the scopes before it plays, prints the line to the console and leaves the numbers in `window.flintScopeCost` (`run.mjs` keeps them); it then plays without the recorder. ADR 0128 has the table.
 
 ### Reading a trace from the CLI
 

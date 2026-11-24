@@ -1300,10 +1300,70 @@ mod tests {
     }
 }
 
-/// What a scope costs, recording and not (#1096): `cargo test -p flint-core
-/// --release --features trace --lib scope_cost -- --ignored --nocapture`.
-#[cfg(all(test, any(debug_assertions, feature = "trace")))]
-mod cost {
+/// What a scope costs here, recording and not (#1096, #1266): the one
+/// bench, which the test below and the web player's `?scope_bench=1` both
+/// run, so a browser's figure is the desktop's measured the same way.
+pub mod cost {
+    use web_time::Instant;
+
+    /// Each figure is the least over [`ScopeCost::rounds`] rounds, in
+    /// nanoseconds a call, nothing subtracted (`bare_ns` is the loop alone).
+    #[derive(Debug, Clone, serde::Serialize)]
+    pub struct ScopeCost {
+        /// The loop with no scope in it
+        pub bare_ns: f64,
+        /// `scope!` with the recorder compiled in, not recording
+        pub off_ns: f64,
+        /// `scope!`, recording
+        pub on_ns: f64,
+        /// `scope!` with a count, recording
+        pub counted_ns: f64,
+        /// `scope!` with a file name, recording
+        pub named_ns: f64,
+        /// Two reads of `Instant::now()`: a scope's two clock reads where
+        /// the clock is `Instant` (`performance.now()` in a browser)
+        pub clock_pair_ns: f64,
+        /// The smallest step `Instant` was seen to take, in nanoseconds:
+        /// a scope shorter than it may read as 0
+        pub clock_step_ns: f64,
+        /// The median of those steps
+        pub clock_step_median_ns: f64,
+        /// How long each measure ran a round, at least
+        pub round_ms: f64,
+        pub rounds: u32,
+    }
+
+    impl ScopeCost {
+        /// One line, as the test and the web console print it.
+        pub fn line(&self) -> String {
+            format!(
+                "per scope: bare loop {:.1} ns, not recording {:.1} ns, recording {:.1} ns, \
+                 with a count {:.1} ns, with a file name {:.1} ns; two clock reads {:.1} ns; \
+                 the clock steps by {} (median {}); best of {} rounds of {:.0} ms",
+                self.bare_ns,
+                self.off_ns,
+                self.on_ns,
+                self.counted_ns,
+                self.named_ns,
+                self.clock_pair_ns,
+                step(self.clock_step_ns),
+                step(self.clock_step_median_ns),
+                self.rounds,
+                self.round_ms,
+            )
+        }
+    }
+
+    fn step(ns: f64) -> String {
+        if ns >= 1e6 {
+            format!("{:.2} ms", ns / 1e6)
+        } else if ns >= 1e3 {
+            format!("{:.1} us", ns / 1e3)
+        } else {
+            format!("{ns:.0} ns")
+        }
+    }
+
     #[inline(never)]
     fn scoped(n: u64) -> u64 {
         crate::scope!("bench");
@@ -1322,44 +1382,134 @@ mod cost {
         std::hint::black_box(file.len())
     }
 
-    fn per_call(f: impl Fn(u64)) -> f64 {
-        const N: u64 = 2_000_000;
-        let start = std::time::Instant::now();
-        for i in 0..N {
-            f(i);
-        }
-        start.elapsed().as_nanos() as f64 / N as f64
+    #[inline(never)]
+    fn clock_pair() -> u128 {
+        let a = Instant::now();
+        let b = Instant::now();
+        std::hint::black_box(b.duration_since(a).as_nanos())
     }
 
+    /// Calls `f` in batches until `round_ms` have passed, then ns a call.
+    /// Timed by the run, not by the call, so a clock as coarse as a
+    /// browser's (100 us, 1 ms) still divides a long enough round finely.
+    fn per_call(round_ms: f64, f: impl Fn(u64)) -> f64 {
+        const BATCH: u64 = 1000;
+        let start = Instant::now();
+        let mut calls = 0u64;
+        loop {
+            for i in 0..BATCH {
+                f(calls + i);
+            }
+            calls += BATCH;
+            let ms = start.elapsed().as_secs_f64() * 1e3;
+            if ms >= round_ms {
+                return ms * 1e6 / calls as f64;
+            }
+        }
+    }
+
+    /// The clock's steps: read it until it changes, `want` times (or for
+    /// 200 ms), and keep each change's size.
+    fn clock_steps(want: usize) -> (f64, f64) {
+        let begun = Instant::now();
+        let mut steps = Vec::with_capacity(want);
+        let mut last = Instant::now();
+        while steps.len() < want && begun.elapsed().as_millis() < 200 {
+            let now = Instant::now();
+            let d = now.duration_since(last).as_nanos();
+            if d > 0 {
+                steps.push(d as f64);
+                last = now;
+            }
+        }
+        if steps.is_empty() {
+            return (0.0, 0.0);
+        }
+        steps.sort_by(f64::total_cmp);
+        (steps[0], steps[steps.len() / 2])
+    }
+
+    /// Measure a scope on this thread: each measure for `round_ms` a round,
+    /// `rounds` rounds, the least kept. Recording is on while it runs and
+    /// as it was after, and its records go to this thread's ring, so run it
+    /// before anything reads the ring (a test thread of its own, the web
+    /// page before its recorder starts). `None` without the recorder.
+    pub fn measure(round_ms: f64, rounds: u32) -> Option<ScopeCost> {
+        if !super::COMPILED_IN {
+            return None;
+        }
+        let was = super::recording();
+        let rounds = rounds.max(1);
+        let mut best = [f64::INFINITY; 6];
+        for _ in 0..rounds {
+            let mut take = |i: usize, ns: f64| best[i] = best[i].min(ns);
+            take(
+                0,
+                per_call(round_ms, |i| {
+                    std::hint::black_box(i + 1);
+                }),
+            );
+            super::set_recording(false);
+            take(
+                1,
+                per_call(round_ms, |i| {
+                    scoped(i);
+                }),
+            );
+            super::set_recording(true);
+            take(
+                2,
+                per_call(round_ms, |i| {
+                    scoped(i);
+                }),
+            );
+            take(
+                3,
+                per_call(round_ms, |i| {
+                    counted(i as usize);
+                }),
+            );
+            take(
+                4,
+                per_call(round_ms, |_| {
+                    named("scripts/kart.rhai");
+                }),
+            );
+            take(
+                5,
+                per_call(round_ms, |_| {
+                    clock_pair();
+                }),
+            );
+        }
+        super::set_recording(was);
+        let (clock_step_ns, clock_step_median_ns) = clock_steps(2000);
+        Some(ScopeCost {
+            bare_ns: best[0],
+            off_ns: best[1],
+            on_ns: best[2],
+            counted_ns: best[3],
+            named_ns: best[4],
+            clock_pair_ns: best[5],
+            clock_step_ns,
+            clock_step_median_ns,
+            round_ms,
+            rounds,
+        })
+    }
+
+    /// `cargo test -p flint-core --release --features trace --lib scope_cost
+    /// -- --ignored --nocapture`. Ignored: it turns recording off and on,
+    /// which every thread's scopes share.
+    #[cfg(all(test, any(debug_assertions, feature = "trace")))]
     #[test]
     #[ignore]
     fn scope_cost() {
         std::thread::Builder::new()
             .name("profile-cost".into())
             .spawn(|| {
-                let bare = per_call(|i| {
-                    std::hint::black_box(i + 1);
-                });
-                super::set_recording(false);
-                let off = per_call(|i| {
-                    scoped(i);
-                });
-                super::set_recording(true);
-                let on = per_call(|i| {
-                    scoped(i);
-                });
-                let on_count = per_call(|i| {
-                    counted(i as usize);
-                });
-                let on_named = per_call(|_| {
-                    named("scripts/kart.rhai");
-                });
-                super::set_recording(false);
-                println!(
-                    "per scope: bare loop {bare:.1} ns, not recording {off:.1} ns, \
-                     recording {on:.1} ns, with a count {on_count:.1} ns, \
-                     with a file name {on_named:.1} ns"
-                );
+                let cost = measure(200.0, 5).expect("the recorder is in this build");
+                println!("{}", cost.line());
             })
             .unwrap()
             .join()

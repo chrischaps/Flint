@@ -65,6 +65,9 @@ pub const LAP_MARGIN: f64 = 1.25;
 /// Frames a hitch's trace waits for after the hitch, so the file shows
 /// what followed it too (the hitch log's eight).
 const FRAMES_AFTER_HITCH: u32 = 8;
+/// A GPU pass starting this little before the last one ended is a rounding
+/// sliver, not an overlap: it is laid at that end (#1266).
+const SLIVER_NS: u64 = 1_000;
 
 /// The records a thread's ring holds for `seconds` of look-back; 0 (every
 /// record) for a whole session.
@@ -473,12 +476,33 @@ impl TraceJob {
                 continue;
             };
             let total: f32 = g.passes.iter().map(|p| p.ms).sum();
+            // The ends of the passes still open around this one (a scope
+            // inside another), so a pass that starts a rounding sliver before
+            // the last one ended is laid at that end: an f32 ms truncated to
+            // ns put Bloom 1 ns inside SSAO, which Perfetto refuses to nest
+            // and counts as an import error (#1266)
+            let mut open: Vec<u64> = Vec::new();
             for p in &g.passes {
+                let mut start = base + (p.start_ms as f64 * 1e6) as u64;
+                let end = start + (p.ms as f64 * 1e6) as u64;
+                while open.last().is_some_and(|&e| e <= start) {
+                    open.pop();
+                }
+                if let Some(&last) = open.last() {
+                    if end > last && last - start < SLIVER_NS {
+                        start = last;
+                        while open.last().is_some_and(|&e| e <= start) {
+                            open.pop();
+                        }
+                    }
+                }
+                let end = end.max(start);
+                open.push(end);
                 trace.complete(
                     gpu,
                     p.label,
-                    base + (p.start_ms as f64 * 1e6) as u64,
-                    (p.ms as f64 * 1e6) as u64,
+                    start,
+                    end - start,
                     &[
                         ("frame", Arg::Int(g.tag as i64)),
                         ("gpu_frame_ms", Arg::Num(total as f64)),
@@ -865,7 +889,10 @@ impl PlayerApp {
                 .path
                 .file_name()
                 .map_or("trace.json".into(), |n| n.to_string_lossy().into_owned());
-            let text = job.to_json(&crate::provenance::Provenance::built(), None);
+            let text = job.to_json(
+                &crate::provenance::Provenance::built(),
+                Some(super::frame_capture::utc_now()),
+            );
             let line = match super::web_page::download_text(&name, &text) {
                 Ok(()) => match job.coverage_line() {
                     Some(cut) => format!(
@@ -1100,6 +1127,64 @@ mod tests {
             "1 s of look-back and a second of slack, not 3.9 s: {kept}"
         );
         assert!(tracks.phases.len() <= 22, "{}", tracks.phases.len());
+    }
+
+    /// Back-to-back GPU passes stay back to back (#1266): f32 ms truncated
+    /// to ns put Bloom's start 1 ns before SSAO's end in a Chrome trace, and
+    /// Perfetto counted each frame's as an import error. A sliver is laid at
+    /// the end before it; a pass inside another stays inside it.
+    #[test]
+    fn back_to_back_gpu_passes_never_overlap_by_a_rounding_sliver() {
+        let pass = |label, start_ms, ms| flint_render::TracedPass {
+            label,
+            start_ms,
+            ms,
+        };
+        let job = TraceJob {
+            path: PathBuf::new(),
+            threads: Vec::new(),
+            frames: vec![Span {
+                start_ns: 1_000_000,
+                end_ns: 17_000_000,
+                frame: 7,
+            }],
+            phases: Vec::new(),
+            gpu: vec![TracedGpuFrame {
+                tag: 7,
+                passes: vec![
+                    pass("SSAO", 1.0, 6.636_544),
+                    // starts a nanosecond short of where SSAO ends
+                    pass("Bloom", 7.636_543, 0.15),
+                    pass("Stylize", 7.786_543, 2.0),
+                    pass("ASCII", 7.9, 1.0),
+                ],
+            }],
+            gpu_unavailable: None,
+            hitches: Vec::new(),
+            notes: Vec::new(),
+            header: Header::default(),
+        };
+        let doc: serde_json::Value =
+            serde_json::from_str(&job.to_json(&Default::default(), None)).expect("JSON");
+        let events = doc["traceEvents"].as_array().expect("traceEvents");
+        let ns = |e: &serde_json::Value, k: &str| (e[k].as_f64().unwrap() * 1000.0).round() as u64;
+        let span = |name: &str| {
+            let e = events
+                .iter()
+                .find(|e| e["ph"] == "X" && e["name"] == name)
+                .unwrap_or_else(|| panic!("{name} on the gpu track"));
+            (ns(e, "ts"), ns(e, "ts") + ns(e, "dur"))
+        };
+        let (ssao, bloom) = (span("SSAO"), span("Bloom"));
+        assert_eq!(
+            bloom.0, ssao.1,
+            "Bloom starts where SSAO ends: {ssao:?} {bloom:?}"
+        );
+        let (stylize, ascii) = (span("Stylize"), span("ASCII"));
+        assert!(
+            ascii.0 > stylize.0 && ascii.1 <= stylize.1,
+            "a pass inside another stays inside: {stylize:?} {ascii:?}"
+        );
     }
 
     /// The Pixel 8 Pro's zeros (#1316): a GPU track of 0 ms spans reads as

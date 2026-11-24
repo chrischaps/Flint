@@ -64,6 +64,13 @@
 //!   loop=poll       run winit's loop flat out (`ControlFlow::Poll`), as
 //!                   before #121, to compare against; the default draws once
 //!                   per `requestAnimationFrame`
+//!   scope_bench=1   in a build with the scope recorder (`--features trace`),
+//!                   time a scope at start, before the game plays
+//!                   (`flint_core::profile::cost`, #1266): the line goes to
+//!                   the console and the numbers to `window.flintScopeCost`,
+//!                   which `tools/web-perf/run.mjs` keeps. The page then
+//!                   plays without the recorder, since the bench's records
+//!                   would fill its ring
 //!
 //! Build and serve from `crates/flint-player`:
 //!   trunk serve            # http://127.0.0.1:8080
@@ -124,6 +131,8 @@ mod web {
         /// `FLINT_STYLE_SCISSOR=0` does natively, to measure what the
         /// scissor saves in a browser (#538).
         scissor: Option<bool>,
+        /// `scope_bench=1`: time a scope before the game plays (#1266).
+        scope_bench: bool,
     }
 
     impl WebArgs {
@@ -155,6 +164,7 @@ mod web {
                 begin_auto: query.get("begin") == Some("auto"),
                 gpu_labels: flint_render::gpu_labels::GpuLabels::parse(query.get("gpu_labels")),
                 scissor: query.get("scissor").map(|v| v != "0"),
+                scope_bench: get("scope_bench").is_some_and(|v| v != "0"),
             }
         }
     }
@@ -267,9 +277,13 @@ mod web {
         // warning at init, once they register (#274)
         let perf = args.options.perf.is_some();
         args.options.apply(&mut app);
-        // The scope recorder's look-back, which the readout's Save trace
-        // downloads (#1097), in a build that has the recorder
-        if perf && flint_core::profile::COMPILED_IN {
+        // `?scope_bench=1`: what a scope costs in this browser (#1266),
+        // before anything plays. Otherwise the scope recorder's look-back,
+        // which the readout's Save trace downloads (#1097), in a build that
+        // has the recorder
+        if args.scope_bench {
+            scope_bench();
+        } else if perf && flint_core::profile::COMPILED_IN {
             app.trace_scopes(flint_player::TraceSetup::default());
         }
         app.apply_scene_settings(&loaded.scene_file);
@@ -283,6 +297,40 @@ mod web {
             fetch_late_bundles(source, parts, base, title.clone());
         }
         Ok(())
+    }
+
+    /// Time a scope here (`flint_core::profile::cost`, ADR 0128's table
+    /// measured in the browser, #1266): the line to the console, the
+    /// numbers and whether the page is cross-origin isolated (which decides
+    /// how coarse `performance.now()` is) to `window.flintScopeCost`.
+    fn scope_bench() {
+        let Some(cost) = flint_core::profile::cost::measure(100.0, 5) else {
+            web_sys::console::warn_1(
+                &"[flint-web] ?scope_bench: this build has no scope recorder (trunk build --features trace)".into(),
+            );
+            return;
+        };
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let isolated = js_sys::Reflect::get(&window, &"crossOriginIsolated".into())
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let line = format!(
+            "[flint-web] scope bench ({}cross-origin isolated): {}",
+            if isolated { "" } else { "not " },
+            cost.line()
+        );
+        web_sys::console::info_1(&line.into());
+        let mut json = serde_json::to_value(&cost).unwrap_or_default();
+        if let Some(map) = json.as_object_mut() {
+            map.insert("cross_origin_isolated".into(), isolated.into());
+            map.insert("line".into(), cost.line().into());
+        }
+        if let Ok(value) = js_sys::JSON::parse(&json.to_string()) {
+            let _ = js_sys::Reflect::set(&window, &"flintScopeCost".into(), &value);
+        }
     }
 
     /// Fetch the main bundle, make it the file system, and load its scene.

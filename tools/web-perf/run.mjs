@@ -8,6 +8,7 @@
 //          [--dpr 1,2] [--size 1920x1080] [--seconds 25] [--reads 2]
 //          [--query '&fps=native'] [--passes 'Style mask,ASCII'] [--begin auto|click] [--rounds 1]
 //          [--port 9381] [--browser chrome|firefox] [--chrome <path>] [--firefox <path>] [--prefs k=v,...] [--trace]
+//          [--save-trace] [--isolate]
 //
 // <site-dir> is served on 127.0.0.1 for the run; a URL is used as it is.
 // <bundle> is relative to the page (`games/<id>/<id>.flintpack` in a
@@ -19,13 +20,20 @@
 // --rounds N plays every scene once a round, N rounds, in one browser per DPR,
 // so heat or another job shows as a trend across rounds, not a step between
 // scenes (tools/phone-perf/submits.mjs's alternation, #568, #1318).
+// --save-trace presses the readout's Save trace after the last read (a build
+// with the scope recorder, `trunk build --features trace`) and keeps the file
+// as <out>/<label>.trace.json, summed up by scopes.mjs (#1266). --isolate
+// serves the folder cross-origin isolated (COOP + COEP), which a browser
+// needs before it gives `performance.now()` its finer step.
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { connect } from 'node:net';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { parsePerfLine, range } from './perfline.mjs';
 import { TRACE_JS, summarizeTrace, traceLine } from './trace.mjs';
+import { scopesLine, summarizeScopes } from './scopes.mjs';
 
 // ---- arguments -------------------------------------------------------------
 
@@ -33,13 +41,14 @@ const argv = process.argv.slice(2);
 const flags = {};
 const positional = [];
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--trace') flags.trace = true; // the one flag with no value
+  // the flags with no value
+  if (argv[i] === '--trace' || argv[i] === '--save-trace' || argv[i] === '--isolate') flags[argv[i].slice(2)] = true;
   else if (argv[i].startsWith('--')) flags[argv[i].slice(2)] = argv[++i];
   else positional.push(argv[i]);
 }
 const [site, bundle, sceneList] = positional;
 if (!site || !bundle || !sceneList || !flags.out) {
-  console.error('usage: node tools/web-perf/run.mjs <site-dir|url> <bundle> <scene,...> --out <dir> [--dpr 1,2] [--size 1920x1080] [--seconds 25] [--reads 2] [--query ...] [--passes ...] [--begin auto|click] [--rounds 1] [--port 9381] [--browser chrome|firefox] [--chrome <path>] [--firefox <path>] [--prefs k=v,...] [--trace]');
+  console.error('usage: node tools/web-perf/run.mjs <site-dir|url> <bundle> <scene,...> --out <dir> [--dpr 1,2] [--size 1920x1080] [--seconds 25] [--reads 2] [--query ...] [--passes ...] [--begin auto|click] [--rounds 1] [--port 9381] [--browser chrome|firefox] [--chrome <path>] [--firefox <path>] [--prefs k=v,...] [--trace] [--save-trace] [--isolate]');
   process.exit(2);
 }
 const outDir = resolve(flags.out);
@@ -51,6 +60,8 @@ const rounds = Math.max(1, Number(flags.rounds ?? 1));
 const extra = flags.query ?? '';
 const begin = flags.begin ?? 'auto';
 const trace = 'trace' in flags;
+const saveTrace = 'save-trace' in flags;
+const isolate = 'isolate' in flags;
 const extraPrefs = Object.fromEntries(
   (flags.prefs ?? '').split(',').filter(Boolean).map((kv) => {
     const [k, v = ''] = kv.split('=');
@@ -113,6 +124,9 @@ async function serve(dir) {
       'content-type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
       'content-length': statSync(file).size,
       'cache-control': 'no-store',
+      // --isolate: cross-origin isolated, so performance.now() steps finely
+      // (every file is this server's, so none needs a CORP header)
+      ...(isolate ? { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' } : {}),
     });
     createReadStream(file).pipe(res);
   });
@@ -128,7 +142,10 @@ if (!/^https?:\/\//.test(site)) {
     process.exit(2);
   }
   ({ server, base } = await serve(site));
-  log(`serving ${resolve(site)} at ${base}`);
+  log(`serving ${resolve(site)} at ${base}${isolate ? ', cross-origin isolated' : ''}`);
+} else if (isolate) {
+  console.error('--isolate needs a folder to serve: a URL sends its own headers');
+  process.exit(2);
 }
 
 // ---- Chrome, headed, on screen ------------------------------------------------
@@ -139,7 +156,22 @@ if (!/^https?:\/\//.test(site)) {
 // device-pixel box a ResizeObserver reports, which is what winit sizes the
 // canvas from, so under it the canvas kept the display's own scale (#381).
 
+// Whether anything accepts a connection on the devtools port. A browser left
+// from an earlier run would be driven in place of the one launched (#1266).
+const portAnswers = (port) =>
+  new Promise((done) => {
+    const sock = connect({ host: '127.0.0.1', port });
+    sock.once('connect', () => (sock.destroy(), done(true)));
+    sock.once('error', () => done(false));
+  });
+async function refuseHeldPort() {
+  if (await portAnswers(cdpPort)) {
+    throw new Error(`something already listens on port ${cdpPort} (a browser left from an earlier run?): close it, or --port picks another`);
+  }
+}
+
 async function openChrome(dpr, css) {
+  await refuseHeldPort();
   const profile = mkdtempSync(join(tmpdir(), 'flint-web-perf-'));
   const chrome = spawn(chromePath, [
     `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${profile}`,
@@ -196,11 +228,16 @@ async function openChrome(dpr, css) {
   await send('Runtime.enable');
   await send('Page.enable');
   await send('Page.bringToFront');
+  // --save-trace: the page's downloads land in a folder of the run's own
+  const downloads = mkdtempSync(join(tmpdir(), 'flint-web-perf-dl-'));
+  await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
+  await send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
   const close = async () => {
     try {
       ws.close();
     } catch {}
     chrome.kill();
+    rmSync(downloads, { recursive: true, force: true });
     // Chrome holds its profile for a moment after it's told to go
     for (let i = 0; i < 20; i++) {
       try {
@@ -216,7 +253,7 @@ async function openChrome(dpr, css) {
     const shot = await send('Page.captureScreenshot', { format: 'png' });
     return shot.result ? shot.result.data : { why: shot.timeout ? 'timed out' : JSON.stringify(shot.error) };
   };
-  return { navigate, evaluate, screenshot, close };
+  return { navigate, evaluate, screenshot, close, downloads };
 }
 
 // ---- Firefox, headed, over WebDriver BiDi (#430) ------------------------------
@@ -227,8 +264,17 @@ async function openChrome(dpr, css) {
 // occlusion and background throttles off.
 
 async function openFirefox(dpr, css) {
+  await refuseHeldPort();
   const profile = mkdtempSync(join(tmpdir(), 'flint-web-perf-ff-'));
+  // --save-trace: the page's downloads land in a folder of the run's own, unasked
+  const downloads = mkdtempSync(join(tmpdir(), 'flint-web-perf-dl-'));
   const prefs = {
+    'browser.download.dir': downloads,
+    'browser.download.folderList': 2,
+    'browser.download.useDownloadDir': true,
+    'browser.download.always_ask_before_handling_new_types': false,
+    'browser.download.alwaysOpenPanel': false,
+    'browser.helperApps.neverAsk.saveToDisk': 'application/json',
     'layout.css.devPixelsPerPx': String(dpr),
     'dom.webgpu.enabled': true,
     'browser.shell.checkDefaultBrowser': false,
@@ -312,14 +358,19 @@ async function openFirefox(dpr, css) {
     return shot.result ? shot.result.data : { why: shot.timeout ? 'timed out' : JSON.stringify(shot.error ?? shot.message) };
   };
   const close = async () => {
+    // browser.close, not only a kill: on Windows the process spawned is
+    // Firefox's launcher, and the browser it starts outlived the kill, still
+    // holding the port, so the next run drove the old one (#1266)
     try {
-      await send('session.end', {}, 3000);
+      await send('browser.close', {}, 5000);
       ws.close();
     } catch {}
     firefox.kill();
-    // Firefox holds its profile for a moment after it's told to go
+    for (let i = 0; i < 40 && (await portAnswers(cdpPort)); i++) await sleep(250);
+    // Firefox holds its profile (and its downloads) for a moment after it's told to go
     for (let i = 0; i < 20; i++) {
       try {
+        rmSync(downloads, { recursive: true, force: true });
         rmSync(profile, { recursive: true, force: true });
         return;
       } catch {
@@ -327,7 +378,7 @@ async function openFirefox(dpr, css) {
       }
     }
   };
-  return { navigate, evaluate, screenshot, close };
+  return { navigate, evaluate, screenshot, close, downloads };
 }
 
 // ---- each page -------------------------------------------------------------
@@ -344,7 +395,43 @@ const urlFor = (scene, css) => {
 const labelFor = (scene, dpr, round) =>
   `${scene.replace(/[^\w.=-]+/g, '_')}@dpr${dpr}${rounds > 1 ? `-r${round + 1}` : ''}`;
 
-async function playPage({ navigate, evaluate, screenshot }, scene, dpr, css, round = 0) {
+// --save-trace (#1266): press the readout's Save trace, as a person would,
+// and wait for the file the page offers. The button shows only where the build
+// has the scope recorder and ?perf=1 started it.
+async function saveTheTrace({ evaluate, downloads }, label) {
+  if (!(await evaluate(`!!document.getElementById('perf')?.hasAttribute('data-trace')`))) {
+    return { error: 'no Save trace on the page: the build has no scope recorder (trunk build --features trace), or ?scope_bench took its place' };
+  }
+  const before = new Set(readdirSync(downloads));
+  await evaluate(`(document.getElementById('perf-trace').click(), true)`, true);
+  const partial = (f) => /\.(crdownload|part|tmp)$/i.test(f);
+  let seen = null;
+  for (let i = 0; i < 120; i++) {
+    await sleep(500);
+    const fresh = readdirSync(downloads).filter((f) => !before.has(f) && !partial(f));
+    if (!fresh.length || readdirSync(downloads).some(partial)) continue;
+    const file = join(downloads, fresh[0]);
+    const size = statSync(file).size;
+    if (size > 0 && seen?.file === file && seen.size === size) {
+      const kept = join(outDir, `${label}.trace.json`);
+      copyFileSync(file, kept);
+      const saved = { file: kept, offeredAs: fresh[0], bytes: size, button: await evaluate(`document.getElementById('perf-trace')?.textContent`) };
+      try {
+        const doc = JSON.parse(readFileSync(kept, 'utf8'));
+        saved.summary = summarizeScopes(doc);
+        saved.header = doc.otherData ?? null;
+      } catch (e) {
+        saved.error = `the file isn't JSON: ${e.message}`;
+      }
+      return saved;
+    }
+    seen = { file, size };
+  }
+  return { error: 'no file arrived within 60 s of Save trace' };
+}
+
+async function playPage(browserHandle, scene, dpr, css, round = 0) {
+  const { navigate, evaluate, screenshot } = browserHandle;
   const label = labelFor(scene, dpr, round);
   const url = urlFor(scene, css);
   log(`${label}: ${url}`);
@@ -372,6 +459,7 @@ async function playPage({ navigate, evaluate, screenshot }, scene, dpr, css, rou
       dpr: devicePixelRatio, viewport: [innerWidth, innerHeight],
       canvas: [document.querySelector('canvas')?.width, document.querySelector('canvas')?.height],
       ua: navigator.userAgent,
+      crossOriginIsolated: !!window.crossOriginIsolated,
       timestampQuery: !!(await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' }))?.features.has('timestamp-query'),
     }))()`)) ?? '{}',
   );
@@ -380,6 +468,13 @@ async function playPage({ navigate, evaluate, screenshot }, scene, dpr, css, rou
   // whether they came one at a time (the frame's own work) or as a spell at
   // half rate (the browser or the machine missing vsync)
   if (trace) await evaluate(TRACE_JS);
+  // ?scope_bench=1 (#1266): what a scope cost in this browser, timed before
+  // the game began (flint_core::profile::cost)
+  const scopeCost = JSON.parse((await evaluate(`JSON.stringify(window.flintScopeCost ?? null)`)) ?? 'null');
+  if (scopeCost) {
+    result.scopeCost = scopeCost;
+    log(`${label} scope bench (${scopeCost.cross_origin_isolated ? '' : 'not '}cross-origin isolated): ${scopeCost.line}`);
+  }
   await sleep(warmSecs * 1000);
   for (let r = 0; r < reads; r++) {
     if (r > 0) await sleep(10000); // the readout's window is 10 s: each read is its own
@@ -414,6 +509,12 @@ async function playPage({ navigate, evaluate, screenshot }, scene, dpr, css, rou
   const shot = await screenshot();
   if (typeof shot === 'string') writeFileSync(join(outDir, `${label}.png`), Buffer.from(shot, 'base64'));
   else log(`${label}: no screenshot (${shot.why})`);
+  // a ?scope_bench page plays without the recorder, so it has no trace to save
+  if (saveTrace && !result.scopeCost) {
+    result.savedTrace = await saveTheTrace(browserHandle, label);
+    const s = result.savedTrace;
+    log(`${label} Save trace: ${s.error ?? `${s.offeredAs}, ${(s.bytes / 1e6).toFixed(2)} MB: ${scopesLine(s.summary)}`}`);
+  }
   return result;
 }
 
@@ -445,9 +546,11 @@ for (const dpr of dprs) {
 const passNames = flags.passes
   ? flags.passes.split(',').map((s) => s.trim()).filter(Boolean)
   : [...new Set(pages.flatMap((p) => p.reads.flatMap((r) => Object.keys(r.parsed.gpu?.passes ?? {}))))];
+const benched = pages.some((p) => p.scopeCost);
+const stepText = (ns) => (ns >= 1e6 ? `${(ns / 1e6).toFixed(2)} ms` : ns >= 1e3 ? `${(ns / 1e3).toFixed(1)} µs` : `${Math.round(ns)} ns`);
 const over = (p, f) => p.reads.map((r) => f(r.parsed)).filter((v) => v !== undefined);
 const sizeOf = (p, f) => [...new Set(over(p, f).map((s) => s.join('x')))].join(', ');
-const head = ['page', 'canvas', 'scene', ...passNames.map((n) => `${n} ms`), 'GPU frame ms', 'GPU timed', 'bind groups a frame', 'passes a frame', 'frame p50 ms', 'mean ms a frame', 'GPU-bound', ...(trace ? ['slow frames (spells, longest s)'] : [])];
+const head = ['page', 'canvas', 'scene', ...passNames.map((n) => `${n} ms`), 'GPU frame ms', 'GPU timed', 'bind groups a frame', 'passes a frame', 'frame p50 ms', 'mean ms a frame', 'GPU-bound', ...(trace ? ['slow frames (spells, longest s)'] : []), ...(benched ? ['a scope recording ns (off, clock step)'] : []), ...(saveTrace ? ['saved trace: scopes read 0'] : [])];
 // how the readout says its GPU times were taken (#380): under vsync an idle GPU
 // clocks down and its passes read high
 const timed = (p) => {
@@ -483,13 +586,15 @@ const rows = pages.map((p) =>
         range(over(p, (x) => x.throughput?.ms)),
         gpuBound(p),
         ...(trace ? [p.trace ? `${p.trace.slow} (${p.trace.spells.length}, ${Math.max(0, ...p.trace.spells.map((s) => s.lasts))})` : ''] : []),
+        ...(benched ? [p.scopeCost ? `${p.scopeCost.on_ns.toFixed(0)} (${p.scopeCost.off_ns.toFixed(1)}, ${stepText(p.scopeCost.clock_step_ns)})` : ''] : []),
+        ...(saveTrace ? [p.savedTrace?.summary ? `${p.savedTrace.summary.zero} of ${p.savedTrace.summary.scopes} (${Math.round(p.savedTrace.summary.zeroShare * 100)}%)` : p.savedTrace?.error ?? ''] : []),
       ],
 );
 const first = pages.find((p) => p.env)?.env;
 const adapter = pages.flatMap((p) => p.reads).find((r) => r.parsed.adapter)?.parsed.adapter;
 const table = [
   `${browser === 'firefox' ? 'Firefox over WebDriver BiDi' : 'Chrome over CDP'}, ?perf=1, a ${width}x${height} device-pixel canvas, read ${reads}x from ${warmSecs} s after Begin, 10 s apart${rounds > 1 ? `, ${rounds} rounds of every scene` : ''}.`,
-  first ? `${first.ua.match(/Chrome\/[\d.]+/)?.[0] ?? first.ua}, adapter ${adapter ?? 'unread'}, timestamp-query ${first.timestampQuery ? 'on' : 'off'}.` : '',
+  first ? `${first.ua.match(/Chrome\/[\d.]+|Firefox\/[\d.]+/)?.[0] ?? first.ua}, adapter ${adapter ?? 'unread'}, timestamp-query ${first.timestampQuery ? 'on' : 'off'}, ${first.crossOriginIsolated ? '' : 'not '}cross-origin isolated.` : '',
   '',
   `| ${head.join(' | ')} |`,
   `|${head.map(() => '---').join('|')}|`,
@@ -502,4 +607,4 @@ writeFileSync(join(outDir, 'summary.json'), JSON.stringify({ base, bundle, size:
 console.log('\n' + table);
 log(`wrote ${pages.length} pages to ${outDir}`);
 server?.close();
-process.exit(pages.some((p) => p.error || p.warning) ? 1 : 0);
+process.exit(pages.some((p) => p.error || p.warning || p.savedTrace?.error) ? 1 : 0);
