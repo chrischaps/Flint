@@ -35,7 +35,7 @@ pub(crate) struct Loaded {
 
 /// A style's bind cache keys, pass labels and target names. The same
 /// names for every install of a style, interned: an install is told from
-/// another by its generation, which [`StyleFrame`] mixes into each key
+/// another by its generation, which [`StyleFrame`] files each group under
 /// (#742).
 #[derive(Clone)]
 pub(super) struct BindNames {
@@ -45,16 +45,6 @@ pub(super) struct BindNames {
     /// Each target's texture names (#412): two for history (ping-ponged),
     /// else the same one twice.
     pub(super) targets: Vec<[&'static str; 2]>,
-}
-
-impl BindNames {
-    /// Every name the chain's bind cache keeps a group under. The pass
-    /// labels and target textures aren't cache keys.
-    pub(super) fn bind_groups(&self) -> impl Iterator<Item = &'static str> + '_ {
-        [self.input, self.extra]
-            .into_iter()
-            .chain(self.passes.iter().flat_map(|p| [p.frame, p.targets]))
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -273,15 +263,11 @@ impl StyleRegistry {
             .iter()
             .position(|s| replace && s.is_user() && s.name == loaded.descriptor.name);
         match at {
-            Some(i) => {
-                let old = std::mem::replace(&mut self.styles[i], Style::user(loaded));
-                // The old install's groups bind the old pass's buffers and no
-                // one asks for its keys again: every cache drops them at its
-                // next frame, not at the next resize (#427)
-                if let Some(old) = old.loaded() {
-                    crate::bind_cache::retire(old.names.bind_groups());
-                }
-            }
+            // The old install's groups bind the old pass's buffers and no
+            // one asks for them again: a renderer drawing with this registry
+            // drops them at its next frame, not at the next resize, since its
+            // registry no longer holds that install (#427, #1271)
+            Some(i) => self.styles[i] = Style::user(loaded),
             None => self.styles.push(Style::user(loaded)),
         }
     }
@@ -784,7 +770,7 @@ pub(super) fn build_loaded(source: StyleSource, messages: &mut Vec<String>) -> L
         built
     };
     // Each install is a generation of its own, which the chain's bind cache
-    // keys mix in (`StyleFrame::bind`): a replaced style (#275) builds new
+    // files groups under (`StyleFrame::bind`): a replaced style (#275) builds new
     // buffers and layouts, and a group kept for the old install would bind
     // the old pass's buffers (frozen at the old values, or the wrong size
     // for a new param count). A counter, from 1: 0 is a native style's
