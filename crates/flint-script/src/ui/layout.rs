@@ -22,6 +22,61 @@ impl ResolvedRect {
     pub fn center(&self) -> (f32, f32) {
         (self.x + self.w / 2.0, self.y + self.h / 2.0)
     }
+
+    /// As a clip rectangle, `[x, y, w, h]`.
+    pub fn to_clip(self) -> [f32; 4] {
+        [self.x, self.y, self.w, self.h]
+    }
+}
+
+/// Whether a point is inside a clip rectangle `[x, y, w, h]`.
+pub fn clip_contains(clip: [f32; 4], x: f32, y: f32) -> bool {
+    x >= clip[0] && y >= clip[1] && x < clip[0] + clip[2] && y < clip[1] + clip[3]
+}
+
+/// Where a scrolling list's children are (#1229): the content box they
+/// are clipped to and how long they run along its layout, before the
+/// offset.
+#[derive(Debug, Clone, Copy)]
+pub struct ScrollBox {
+    pub view: ResolvedRect,
+    pub content: f32,
+    pub horizontal: bool,
+}
+
+impl ScrollBox {
+    /// The view's length along the list's layout.
+    pub fn view_len(&self) -> f32 {
+        if self.horizontal {
+            self.view.w
+        } else {
+            self.view.h
+        }
+    }
+
+    /// The furthest the list can scroll.
+    pub fn max_offset(&self) -> f32 {
+        (self.content - self.view_len()).max(0.0)
+    }
+
+    /// A rectangle's start and end along the layout, from the view's start.
+    pub fn span(&self, r: &ResolvedRect) -> (f32, f32) {
+        if self.horizontal {
+            (r.x - self.view.x, r.x - self.view.x + r.w)
+        } else {
+            (r.y - self.view.y, r.y - self.view.y + r.h)
+        }
+    }
+}
+
+/// Everything a layout pass works out: each element's rectangle and style,
+/// the clip of each element inside a scrolling list, and each scrolling
+/// list's box.
+#[derive(Default)]
+pub struct Laid {
+    pub rects: HashMap<String, (ResolvedRect, ResolvedStyle)>,
+    pub clips: HashMap<String, [f32; 4]>,
+    pub scrolls: HashMap<String, ScrollBox>,
 }
 
 /// What a layout pass reads besides the elements and classes: the host's
@@ -89,8 +144,19 @@ fn class_style(elem: &UiElement, styles: &HashMap<String, StyleClass>) -> Resolv
 fn sizes_itself(elem: &UiElement) -> bool {
     matches!(
         elem.element_type,
-        ElementType::Button | ElementType::Slider | ElementType::List
+        ElementType::Button | ElementType::Slider | ElementType::List | ElementType::TextInput
     )
+}
+
+/// The padding inside a button or text input: its style's, or half the
+/// font size round it when it has none. `[left, top, right, bottom]`.
+pub fn control_padding(style: &ResolvedStyle) -> [f32; 4] {
+    if style.padding == [0.0; 4] {
+        let p = style.font_size * 0.5;
+        [p, p, p, p]
+    } else {
+        style.padding
+    }
 }
 
 /// The size an element is with no parent percentage: its style's, or for
@@ -104,16 +170,23 @@ fn own_size(
 ) -> (f32, f32) {
     let (mut w, mut h) = (style.width, style.height);
     match elem.element_type {
+        ElementType::TextInput => {
+            // A line of its font in its padding; 200 across unless told
+            let (_, th) = measure(measurer, " ", style);
+            let p = control_padding(style);
+            if w <= 0.0 {
+                w = 200.0;
+            }
+            if h <= 0.0 {
+                h = th + p[1] + p[3];
+            }
+        }
         ElementType::Text | ElementType::Button if w <= 0.0 || h <= 0.0 => {
             let text = elem.effective_text();
             let (tw, th) = measure(measurer, if text.is_empty() { " " } else { text }, style);
             let (pad_x, pad_y) = if elem.element_type == ElementType::Button {
-                let p = style.padding;
-                if p == [0.0; 4] {
-                    (style.font_size, style.font_size * 0.5 * 2.0)
-                } else {
-                    (p[0] + p[2], p[1] + p[3])
-                }
+                let p = control_padding(style);
+                (p[0] + p[2], p[1] + p[3])
             } else {
                 (0.0, 0.0)
             };
@@ -145,7 +218,18 @@ pub fn resolve_layout(
     screen_h: f32,
     inputs: &LayoutInputs<'_>,
 ) -> HashMap<String, (ResolvedRect, ResolvedStyle)> {
-    let mut results: HashMap<String, (ResolvedRect, ResolvedStyle)> = HashMap::new();
+    lay_out(elements, styles, screen_w, screen_h, inputs).rects
+}
+
+/// [`resolve_layout`], with the clips and scroll boxes scrolling lists make.
+pub fn lay_out(
+    elements: &[UiElement],
+    styles: &HashMap<String, StyleClass>,
+    screen_w: f32,
+    screen_h: f32,
+    inputs: &LayoutInputs<'_>,
+) -> Laid {
+    let mut results = Laid::default();
     let elem_map: HashMap<&str, &UiElement> = elements.iter().map(|e| (e.id.as_str(), e)).collect();
     let pass = Pass {
         elem_map: &elem_map,
@@ -155,7 +239,7 @@ pub fn resolve_layout(
         inputs,
     };
     for root in elements.iter().filter(|e| e.parent_id.is_none()) {
-        pass.resolve(root, None, &mut results);
+        pass.resolve(root, None, None, &mut results);
     }
     results
 }
@@ -192,7 +276,8 @@ impl Pass<'_> {
         &self,
         elem: &UiElement,
         parent_rect: Option<&ResolvedRect>,
-        results: &mut HashMap<String, (ResolvedRect, ResolvedStyle)>,
+        clip: Option<[f32; 4]>,
+        results: &mut Laid,
     ) -> ResolvedRect {
         let style = element_style(elem, self.styles, (self.inputs.states)(elem));
         let (mut w, mut h) = own_size(elem, &style, self.inputs.measurer);
@@ -276,7 +361,10 @@ impl Pass<'_> {
             }
         }
 
-        results.insert(elem.id.clone(), (rect, style.clone()));
+        results.rects.insert(elem.id.clone(), (rect, style.clone()));
+        if let Some(clip) = clip {
+            results.clips.insert(elem.id.clone(), clip);
+        }
 
         // Children with stacking flow
         let content_x = rect.x + style.padding[0];
@@ -284,7 +372,22 @@ impl Pass<'_> {
         let content_w = rect.w - style.padding[0] - style.padding[2];
         let content_h = rect.h - style.padding[1] - style.padding[3];
         let horizontal = style.layout == LayoutFlow::Horizontal;
-        let mut flow_offset = 0.0_f32;
+        // A scrolling list clips its children to its content box and moves
+        // them back by its offset (#1229)
+        let scroll = elem.scrolls().then_some(elem.scroll_offset.max(0.0));
+        let clip = match scroll {
+            Some(_) => {
+                let content = [content_x, content_y, content_w, content_h];
+                Some(match clip {
+                    Some(outer) => crate::draw2d::intersect_rect(outer, content),
+                    None => content,
+                })
+            }
+            None => clip,
+        };
+        let mut flow_offset = -scroll.unwrap_or(0.0);
+        // How far the flowing children reach, from the content box's start
+        let mut reach = 0.0_f32;
         for child in children {
             if child.anchored {
                 // Out of the flow: placed in the content box, takes no room
@@ -294,7 +397,7 @@ impl Pass<'_> {
                     w: content_w,
                     h: content_h,
                 };
-                self.resolve(child, Some(&content), results);
+                self.resolve(child, Some(&content), clip, results);
                 continue;
             }
             let flow_rect = if horizontal {
@@ -312,8 +415,29 @@ impl Pass<'_> {
                     h: content_h - flow_offset,
                 }
             };
-            let child_rect = self.resolve(child, Some(&flow_rect), results);
+            let child_rect = self.resolve(child, Some(&flow_rect), clip, results);
             flow_offset += self.advance(child, child_rect, horizontal);
+            reach = reach.max(if horizontal {
+                child_rect.x + child_rect.w - content_x
+            } else {
+                child_rect.y + child_rect.h - content_y
+            });
+        }
+        if let Some(offset) = scroll {
+            results.scrolls.insert(
+                elem.id.clone(),
+                ScrollBox {
+                    view: ResolvedRect {
+                        x: content_x,
+                        y: content_y,
+                        w: content_w,
+                        h: content_h,
+                    },
+                    // To the last child's far edge, not past its margin
+                    content: reach + offset,
+                    horizontal,
+                },
+            );
         }
         rect
     }

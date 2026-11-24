@@ -19,15 +19,19 @@ pub mod element;
 pub mod focus;
 pub mod layout;
 pub mod loader;
+pub mod scroll;
 pub mod style;
+pub mod text_input;
 pub mod tokens;
 
 #[cfg(test)]
 mod focus_tests;
 #[cfg(test)]
+mod scroll_tests;
+#[cfg(test)]
 mod tests;
 
-use crate::context::{DrawCommand, TextMeasurer};
+use crate::context::{DrawItem, TextMeasurer};
 use element::{ElementType, StyleValue, UiElement};
 use flint_core::EntityId;
 use layout::{LayoutInputs, ResolvedRect};
@@ -74,6 +78,10 @@ pub struct UiDocument {
     pub owner: Option<EntityId>,
     /// Cached layout results, dropped when anything they depend on changes
     cached_rects: HashMap<String, (ResolvedRect, ResolvedStyle)>,
+    /// The clip of each element inside a scrolling list, and each scrolling
+    /// list's box, from the same layout (#1229)
+    cached_clips: HashMap<String, [f32; 4]>,
+    cached_scrolls: HashMap<String, layout::ScrollBox>,
     cached_screen_w: f32,
     cached_screen_h: f32,
     /// Project root the layout/style/token paths resolve against
@@ -93,6 +101,8 @@ struct ElementOverrides {
     visible: bool,
     enabled: bool,
     value: f32,
+    caret: usize,
+    scroll_offset: f32,
     text_override: Option<String>,
     color_override: Option<[f32; 4]>,
     bg_color_override: Option<[f32; 4]>,
@@ -106,6 +116,8 @@ impl ElementOverrides {
             visible: e.visible,
             enabled: e.enabled,
             value: e.value,
+            caret: e.caret,
+            scroll_offset: e.scroll_offset,
             text_override: e.text_override.clone(),
             color_override: e.color_override,
             bg_color_override: e.bg_color_override,
@@ -118,6 +130,8 @@ impl ElementOverrides {
         e.visible = self.visible;
         e.enabled = self.enabled;
         e.value = self.value;
+        e.caret = self.caret;
+        e.scroll_offset = self.scroll_offset;
         e.text_override = self.text_override;
         e.color_override = self.color_override;
         e.bg_color_override = self.bg_color_override;
@@ -225,8 +239,10 @@ impl UiDocument {
                 measurer,
                 states: &states,
             };
-            self.cached_rects =
-                layout::resolve_layout(&self.elements, &self.styles, screen_w, screen_h, &inputs);
+            let laid = layout::lay_out(&self.elements, &self.styles, screen_w, screen_h, &inputs);
+            self.cached_rects = laid.rects;
+            self.cached_clips = laid.clips;
+            self.cached_scrolls = laid.scrolls;
             self.cached_screen_w = screen_w;
             self.cached_screen_h = screen_h;
         }
@@ -235,6 +251,8 @@ impl UiDocument {
     /// Invalidate cached layout (call after element structure changes)
     fn invalidate_cache(&mut self) {
         self.cached_rects.clear();
+        self.cached_clips.clear();
+        self.cached_scrolls.clear();
     }
 
     /// Files whose change should trigger a reload.
@@ -397,6 +415,9 @@ pub struct UiSystem {
     /// Focus or a press moved since layout last ran: the next draw or rect
     /// lays out again, in the new states' styles
     restyle: bool,
+    /// Focus moved since the scrolling lists last settled: the next layout
+    /// brings the focused element into view (#1229)
+    reveal: bool,
 }
 
 impl UiSystem {
@@ -411,6 +432,7 @@ impl UiSystem {
             measurer: None,
             pointer: focus::PointerState::default(),
             restyle: false,
+            reveal: false,
         }
     }
 
@@ -463,6 +485,8 @@ impl UiSystem {
             tokens: parsed.tokens,
             owner,
             cached_rects: HashMap::new(),
+            cached_clips: HashMap::new(),
+            cached_scrolls: HashMap::new(),
             cached_screen_w: 0.0,
             cached_screen_h: 0.0,
             root_dir: scene_dir.to_path_buf(),
@@ -558,9 +582,15 @@ impl UiSystem {
         false
     }
 
-    /// Set text content of an element (searches all documents)
+    /// Set text content of an element (searches all documents); a text
+    /// input's caret goes after it.
     pub fn set_text(&mut self, element_id: &str, text: &str) {
-        self.with_element(element_id, |e| e.text_override = Some(text.to_string()));
+        self.with_element(element_id, |e| {
+            e.text_override = Some(text.to_string());
+            if e.element_type == ElementType::TextInput {
+                e.caret = text.chars().count();
+            }
+        });
     }
 
     /// Show an element
@@ -669,24 +699,32 @@ impl UiSystem {
         screen_h: f32,
     ) -> Option<(f32, f32, f32, f32)> {
         self.restyle_if_needed();
-        let measurer = self.measurer.as_ref();
-        for doc in &mut self.documents {
-            doc.ensure_layout(screen_w, screen_h, &self.interaction, measurer);
-            if let Some((rect, _)) = doc.cached_rects.get(element_id) {
-                return Some((rect.x, rect.y, rect.w, rect.h));
-            }
-        }
-        None
+        self.lay_out_settled((screen_w, screen_h));
+        self.documents
+            .iter()
+            .find_map(|doc| doc.cached_rects.get(element_id))
+            .map(|(rect, _)| (rect.x, rect.y, rect.w, rect.h))
     }
 
-    /// Generate all UI draw commands for all loaded documents
-    pub fn generate_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawCommand> {
-        self.restyle_if_needed();
-        let mut all_commands = Vec::new();
+    /// Lay out every document, then settle its scrolling lists (#1229).
+    fn lay_out_settled(&mut self, screen: (f32, f32)) {
         let measurer = self.measurer.as_ref();
         for doc in &mut self.documents {
-            doc.ensure_layout(screen_w, screen_h, &self.interaction, measurer);
-            all_commands.extend(draw::commands(doc, measurer));
+            doc.ensure_layout(screen.0, screen.1, &self.interaction, measurer);
+        }
+        self.settle_scrolls(screen);
+    }
+
+    /// Generate all UI draw commands for all loaded documents, each with
+    /// the clip of the scrolling lists it is inside (#1229).
+    pub fn generate_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawItem> {
+        self.restyle_if_needed();
+        self.lay_out_settled((screen_w, screen_h));
+        let measurer = self.measurer.as_ref();
+        let focus = self.interaction.focus.as_deref();
+        let mut all_commands = Vec::new();
+        for doc in &self.documents {
+            all_commands.extend(draw::commands(doc, measurer, focus));
         }
         all_commands
     }
@@ -705,6 +743,7 @@ impl UiSystem {
         self.events.clear();
         self.pointer = focus::PointerState::default();
         self.restyle = false;
+        self.reveal = false;
     }
 }
 

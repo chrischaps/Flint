@@ -364,7 +364,7 @@ fn focus_draws_its_state() {
         let fills = |ui: &mut UiSystem| -> Vec<[f32; 4]> {
             ui.generate_draw_commands(SCREEN.0, SCREEN.1)
                 .into_iter()
-                .filter_map(|c| match c {
+                .filter_map(|c| match c.cmd {
                     DrawCommand::RectFilled { color, .. } => Some(color),
                     _ => None,
                 })
@@ -379,7 +379,7 @@ fn focus_draws_its_state() {
         let label = ui
             .generate_draw_commands(SCREEN.0, SCREEN.1)
             .into_iter()
-            .find_map(|c| match c {
+            .find_map(|c| match c.cmd {
                 DrawCommand::Text { text, align, .. } if text == "Restart" => Some(align),
                 _ => None,
             });

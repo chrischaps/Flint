@@ -568,6 +568,14 @@ impl ApplicationHandler for PlayerApp {
                 self.input.process_mouse_move(position.x, position.y);
             }
 
+            // An input method's finished text, for a UI document's
+            // text_input (#1229)
+            WindowEvent::Ime(winit::event::Ime::Commit(text)) => {
+                if let Some(edit) = flint_runtime::TextEdit::typed(&text) {
+                    self.input.process_text_edit(edit);
+                }
+            }
+
             WindowEvent::MouseWheel { delta, .. } => {
                 let (dx, dy) = wheel_lines(delta);
                 self.input.process_mouse_wheel(dx, dy);
@@ -765,6 +773,12 @@ impl PlayerApp {
                         return;
                     }
 
+                    // What it typed, repeats too, for a UI document's
+                    // text_input (#1229); the web's keys come this way too
+                    let typed = flint_runtime::TextEdit::of_key(key_code, event.text.as_deref());
+                    if let Some(edit) = typed {
+                        self.input.process_text_edit(edit);
+                    }
                     self.input.process_key_down(key_code);
 
                     // On Android, DPad maps to ArrowKeys — also fire gamepad
@@ -925,6 +939,13 @@ impl PlayerApp {
             // Written from the next frame drawn (#1191)
             ScriptEvent::Screenshot(path, at) => self.capture.scripted.push((path, at)),
             ScriptEvent::Text(text) => {
+                // A UI document's text_input types it too, unless an egui
+                // field has the keyboard (#1229)
+                if !self.text_has_focus() {
+                    if let Some(edit) = flint_runtime::TextEdit::typed(&text) {
+                        self.input.process_text_edit(edit);
+                    }
+                }
                 if self.egui_sees_input() {
                     if let Some(egui_winit) = &mut self.hud.egui_winit {
                         egui_winit
@@ -994,6 +1015,9 @@ impl PlayerApp {
             if self.handle_debug_key(key) {
                 self.focus.debug_keys_held.insert(key);
                 return;
+            }
+            if let Some(edit) = flint_runtime::TextEdit::of_key(key, character) {
+                self.input.process_text_edit(edit);
             }
             self.input.process_key_down(key);
         } else if !self.focus.debug_keys_held.remove(&key) {

@@ -87,6 +87,9 @@ pub struct InputSnapshot {
     pub touch_taps: Vec<(f64, f64)>,
     /// Swipe gestures detected this frame (direction_str, start_norm_x, start_norm_y)
     pub touch_swipes: Vec<(String, f64, f64)>,
+    /// What was typed this frame, in order: what a focused `text_input`
+    /// takes (#1229).
+    pub text_edits: Vec<flint_runtime::TextEdit>,
 }
 
 /// Where a scene's music is this frame (#745): what `music_beat()`,

@@ -21,6 +21,13 @@
 //! pad's east button) is a `back` on the focused element. Each reaches the
 //! document's owner as `on_ui(element_id, event)`, through
 //! [`UiSystem::take_events`].
+//!
+//! A focused `text_input` takes the frame's typed text first, and the keys
+//! it typed with are its own ([`super::text_input`]); a scrolling list keeps
+//! the focused item in view and takes the wheel and a dragged finger
+//! ([`super::scroll`]).
+
+use flint_runtime::TextEdit;
 
 use super::element::{Dir, ElementType, UiElement};
 use super::layout::ResolvedRect;
@@ -59,6 +66,10 @@ pub struct UiInput {
     pub touches: Vec<(f32, f32)>,
     /// Taps finished this frame.
     pub taps: Vec<(f32, f32)>,
+    /// Wheel notches this frame, up positive (#1229).
+    pub wheel: f32,
+    /// What was typed this frame, in order (#1229).
+    pub text_edits: Vec<TextEdit>,
 }
 
 /// What routing keeps between frames.
@@ -73,6 +84,8 @@ pub struct PointerState {
     dragging: Option<String>,
     /// Whether the press being held is a touch's (else the mouse's).
     touch_press: bool,
+    /// A finger on a scrolling list (#1229).
+    pub(super) touch_scroll: Option<super::scroll::TouchScroll>,
 }
 
 impl UiInput {
@@ -134,12 +147,14 @@ impl UiInput {
                 .map(|&(_, x, y)| to_points((x, y)))
                 .collect(),
             taps: snap.touch_taps.iter().map(|&p| to_points(p)).collect(),
+            wheel: snap.mouse_wheel.1 as f32,
+            text_edits: snap.text_edits.clone(),
         }
     }
 }
 
 /// Where an element is in the documents: (document, element) indices.
-type At = (usize, usize);
+pub(super) type At = (usize, usize);
 
 impl UiDocument {
     /// Whether focus may land on an element now.
@@ -149,14 +164,14 @@ impl UiDocument {
 }
 
 impl UiSystem {
-    fn locate(&self, id: &str) -> Option<At> {
+    pub(super) fn locate(&self, id: &str) -> Option<At> {
         self.documents
             .iter()
             .enumerate()
             .find_map(|(d, doc)| doc.elements.iter().position(|e| e.id == id).map(|i| (d, i)))
     }
 
-    fn element(&self, (d, i): At) -> &UiElement {
+    pub(super) fn element(&self, (d, i): At) -> &UiElement {
         &self.documents[d].elements[i]
     }
 
@@ -165,7 +180,7 @@ impl UiSystem {
         doc.cached_rects.get(&doc.elements[i].id).map(|(r, _)| *r)
     }
 
-    fn push(&mut self, (d, _): At, element: String, event: &'static str) {
+    pub(super) fn push(&mut self, (d, _): At, element: String, event: &'static str) {
         let owner = self.documents[d].owner;
         self.events.push(UiEvent {
             owner,
@@ -215,8 +230,23 @@ impl UiSystem {
             let ev = self.event_id(at);
             self.push(at, ev, "focus");
             self.select_in_list(at);
+            if self.element(at).element_type == ElementType::TextInput {
+                self.caret_to_end(at);
+            }
+            // A scrolling list it is in brings it into view (#1229)
+            self.reveal = true;
         }
         self.restyle = true;
+    }
+
+    /// Whether a text input has focus: the player is typing, so a game can
+    /// leave its own keys alone (#1229).
+    pub fn editing(&self) -> bool {
+        self.interaction
+            .focus
+            .as_deref()
+            .and_then(|f| self.locate(f))
+            .is_some_and(|at| self.element(at).element_type == ElementType::TextInput)
     }
 
     /// A list's value follows focus onto one of its items.
@@ -338,7 +368,8 @@ impl UiSystem {
         let mut best: Option<(i32, At)> = None;
         for (d, doc) in self.documents.iter().enumerate() {
             for (i, e) in doc.elements.iter().enumerate() {
-                if !doc.takes_focus(e) {
+                // Clipped away by a scrolling list, it can't be pointed at
+                if !doc.takes_focus(e) || !doc.reaches(&e.id, x, y) {
                     continue;
                 }
                 let Some((rect, style)) = doc.cached_rects.get(&e.id) else {
@@ -373,7 +404,7 @@ impl UiSystem {
         let (vx, vy) = dir.vector();
         let mut best: Option<(f32, At)> = None;
         for (i, x) in doc.elements.iter().enumerate() {
-            if (d, i) == from || !doc.takes_focus(x) {
+            if (d, i) == from || !doc.takes_focus(x) || !doc.in_view(&x.id) {
                 continue;
             }
             let Some(rect) = self.rect((d, i)) else {
@@ -475,6 +506,7 @@ impl UiSystem {
         self.invalidate_all();
         self.restyle = false;
         self.lay_out(screen);
+        self.settle_scrolls(screen);
 
         // Focus on what can't hold it any more lets go
         if let Some(f) = self.interaction.focus.clone() {
@@ -514,9 +546,13 @@ impl UiSystem {
                 let id = self.element(at).id.clone();
                 self.focus(Some(&id));
                 self.press(Some(id.clone()), false);
-                if self.element(at).element_type == ElementType::Slider {
-                    self.pointer.dragging = Some(id);
-                    self.drag_to(at, input.pointer.0);
+                match self.element(at).element_type {
+                    ElementType::Slider => {
+                        self.pointer.dragging = Some(id);
+                        self.drag_to(at, input.pointer.0);
+                    }
+                    ElementType::TextInput => self.caret_to(at, input.pointer.0),
+                    _ => {}
                 }
             }
         } else if !self.pointer.touch_press && self.interaction.pressed.is_some() {
@@ -537,18 +573,27 @@ impl UiSystem {
                 self.press(None, false);
             }
         }
+        // The wheel scrolls the list under the pointer (#1229)
+        self.wheel(input.pointer, input.wheel);
 
-        // Touch: a touch down presses (and drags a slider), a tap activates
+        // Touch: a touch down presses (and drags a slider), a tap activates,
+        // a finger dragged along a scrolling list scrolls it
         if let Some(&p) = input.touches_started.first() {
             if let Some(at) = self.under(p) {
                 let id = self.element(at).id.clone();
                 self.focus(Some(&id));
                 self.press(Some(id.clone()), true);
-                if self.element(at).element_type == ElementType::Slider {
-                    self.pointer.dragging = Some(id);
+                match self.element(at).element_type {
+                    ElementType::Slider => self.pointer.dragging = Some(id),
+                    ElementType::TextInput => self.caret_to(at, p.0),
+                    _ => {}
                 }
             }
         }
+        let scrolled = self.touch_scroll(
+            input.touches_started.first().copied(),
+            input.touches.first().copied(),
+        );
         if self.pointer.touch_press {
             if let (Some(at), Some(&p)) = (
                 self.pointer
@@ -560,7 +605,7 @@ impl UiSystem {
                 self.drag_to(at, p.0);
             }
         }
-        for &p in &input.taps {
+        for &p in input.taps.iter().filter(|_| !scrolled) {
             if let Some(at) = self.under(p) {
                 let id = self.element(at).id.clone();
                 self.focus(Some(&id));
@@ -571,6 +616,20 @@ impl UiSystem {
             self.press(None, true);
         }
 
+        // A focused text input takes what was typed; the keys it typed with
+        // are its own this frame (#1229)
+        let typed = match self
+            .interaction
+            .focus
+            .as_deref()
+            .and_then(|f| self.locate(f))
+        {
+            Some(at) if self.element(at).element_type == ElementType::TextInput => {
+                self.type_into(at, &input.text_edits)
+            }
+            _ => false,
+        };
+
         // Keys and pads
         if let Some(dir) = input.nav {
             if let Some(at) = self
@@ -580,7 +639,9 @@ impl UiSystem {
                 .and_then(|f| self.locate(f))
             {
                 let e = self.element(at);
-                if e.element_type == ElementType::Slider && dir.is_horizontal() {
+                if e.element_type == ElementType::TextInput && dir.is_horizontal() {
+                    // The caret's keys, not focus's
+                } else if e.element_type == ElementType::Slider && dir.is_horizontal() {
                     let step = e.effective_step();
                     let value = e.value + if dir == Dir::Right { step } else { -step };
                     self.slide(at, value);
@@ -596,10 +657,15 @@ impl UiSystem {
             .as_deref()
             .and_then(|f| self.locate(f))
         {
-            if input.accept {
-                self.activate(at, &mut done);
+            if input.accept && !typed {
+                if self.element(at).element_type == ElementType::TextInput {
+                    let id = self.event_id(at);
+                    self.push(at, id, "activate");
+                } else {
+                    self.activate(at, &mut done);
+                }
             }
-            if input.back {
+            if input.back && !typed {
                 let id = self.event_id(at);
                 self.push(at, id, "back");
             }
@@ -607,7 +673,7 @@ impl UiSystem {
     }
 
     /// Hold an element down (or let go), redrawing in its `pressed` state.
-    fn press(&mut self, id: Option<String>, touch: bool) {
+    pub(super) fn press(&mut self, id: Option<String>, touch: bool) {
         if id.is_none() {
             self.pointer.dragging = None;
         }

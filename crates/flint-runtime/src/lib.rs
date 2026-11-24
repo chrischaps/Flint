@@ -24,6 +24,7 @@ pub mod persist;
 pub mod rumble;
 pub mod state;
 mod system;
+mod text_entry;
 pub mod touch_controls;
 
 pub use clock::GameClock;
@@ -44,4 +45,5 @@ pub use persist::{
 pub use rumble::{PadRumble, PadTarget, RumbleError, RumbleRequest, MAX_RUMBLE_SECONDS};
 pub use state::{GameState, GameStateMachine, StateConfig, StateError, SystemPolicy};
 pub use system::RuntimeSystem;
+pub use text_entry::TextEdit;
 pub use touch_controls::{TouchControls, TouchControlsConfig, TouchControlsMode, TouchWidget};

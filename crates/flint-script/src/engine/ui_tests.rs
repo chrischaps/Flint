@@ -112,6 +112,67 @@ fn the_showcase_pause_menu_works_from_keys_and_touch() {
     });
 }
 
+/// A name field from a script (#1229): typed into through the frame's text
+/// edits, heard as `change` and `activate`, read back with `ui_get_text`,
+/// and `ui_editing()` true while it has focus.
+#[test]
+fn a_script_hears_a_name_typed_and_reads_it_back() {
+    use flint_runtime::TextEdit::{Backspace, Insert, Submit};
+    let mut files = MemorySource::new();
+    files.insert(
+        "ui/name.ui.toml",
+        "[elements.name]\ntype = \"text_input\"\nplaceholder = \"Your name\"\nautofocus = true\n",
+    );
+    vfs::scoped(Arc::new(files), || {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = scripted(&mut world, "menu", "menu.rhai");
+        let source = r#"
+            load_ui("ui/name.ui.toml");
+            fn on_init() {
+                set_field(self_entity(), "probe", "coh", 0.0);
+            }
+            fn on_ui(element, event) {
+                if element == "name" && event == "change" {
+                    let n = get_field(self_entity(), "probe", "coh");
+                    set_field(self_entity(), "probe", "coh", n + 1.0);
+                }
+                if element == "name" && event == "activate" {
+                    set_field(self_entity(), "probe", "err", ui_get_text("name"));
+                }
+            }
+            fn on_draw_ui() {
+                set_field(self_entity(), "probe", "kind_ok", ui_editing());
+            }
+        "#;
+        let ast = engine.compile(source).unwrap();
+        engine.add_script(id, ast, "menu.rhai".into());
+        frame(&mut engine, &mut world, InputSnapshot::default());
+
+        let typing = |edits: Vec<flint_runtime::TextEdit>| InputSnapshot {
+            text_edits: edits,
+            ..Default::default()
+        };
+        frame(
+            &mut engine,
+            &mut world,
+            typing(vec![Insert("Rowan".into())]),
+        );
+        frame(&mut engine, &mut world, typing(vec![Backspace]));
+        // Enter, which presses ui_accept too, is one activate
+        let mut enter = typing(vec![Submit]);
+        enter.actions_just_pressed.insert("ui_accept".into());
+        frame(&mut engine, &mut world, enter);
+
+        assert!(engine.errors.is_empty(), "{:?}", engine.errors);
+        let comps = world.get_components(id).unwrap();
+        let field = |f: &str| comps.get_field("probe", f).cloned().unwrap();
+        assert_eq!(field("err").as_str(), Some("Rowa"));
+        assert_eq!(field("coh").as_float(), Some(2.0));
+        assert_eq!(field("kind_ok").as_bool(), Some(true));
+    });
+}
+
 #[test]
 fn a_bad_layout_is_a_script_error_naming_the_file_and_element() {
     let mut files = MemorySource::new();

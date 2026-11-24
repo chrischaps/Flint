@@ -434,6 +434,8 @@ pub struct InputState {
     mouse_delta: (f64, f64),
     raw_mouse_delta: (f64, f64),
     mouse_wheel_delta: (f32, f32),
+    /// What was typed this frame, in order (#1229).
+    text_edits: Vec<crate::TextEdit>,
 
     touches: HashMap<u64, TouchPoint>,
     touches_just_started: HashSet<u64>,
@@ -485,6 +487,7 @@ impl InputState {
             mouse_delta: (0.0, 0.0),
             raw_mouse_delta: (0.0, 0.0),
             mouse_wheel_delta: (0.0, 0.0),
+            text_edits: Vec::new(),
             touches: HashMap::new(),
             touches_just_started: HashSet::new(),
             touches_just_ended: HashSet::new(),
@@ -670,6 +673,17 @@ impl InputState {
             self.keys_just_pressed.insert(key);
         }
         self.keys_down.insert(key);
+    }
+
+    /// Something typed this frame: a character, an IME's string or an
+    /// editing key, which a UI document's `text_input` reads (#1229).
+    pub fn process_text_edit(&mut self, edit: crate::TextEdit) {
+        self.text_edits.push(edit);
+    }
+
+    /// What was typed this frame, oldest first.
+    pub fn text_edits(&self) -> &[crate::TextEdit] {
+        &self.text_edits
     }
 
     pub fn process_key_up(&mut self, key: KeyCode) {
@@ -1000,6 +1014,7 @@ impl InputState {
         self.mouse_delta = (0.0, 0.0);
         self.raw_mouse_delta = (0.0, 0.0);
         self.mouse_wheel_delta = (0.0, 0.0);
+        self.text_edits.clear();
         self.touches_just_started.clear();
         self.touches_just_ended.clear();
         self.touch_tap_just_fired.clear();

@@ -289,6 +289,7 @@ impl ScriptSystem {
             touch_just_ended,
             touch_taps,
             touch_swipes,
+            text_edits: input.text_edits().to_vec(),
         };
 
         self.engine
@@ -663,15 +664,12 @@ impl ScriptSystem {
         f(&mut c.ui_system)
     }
 
-    /// Generate draw commands from the data-driven UI system (unclipped)
+    /// Generate draw commands from the data-driven UI system, each clipped
+    /// to the scrolling lists it is inside (#1229)
     pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawItem> {
         flint_core::scope!("script::ui_layout");
         let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.ui_system
-            .generate_draw_commands(screen_w, screen_h)
-            .into_iter()
-            .map(DrawItem::unclipped)
-            .collect()
+        c.ui_system.generate_draw_commands(screen_w, screen_h)
     }
 
     /// Call on_animation_end(clip_name) for entities whose sprite animation finished
