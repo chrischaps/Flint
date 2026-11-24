@@ -123,7 +123,7 @@ impl ScriptInstance {
             self.profiled = Some(crate::fn_times::profiled(
                 engine,
                 &self.calls,
-                &self.source_path,
+                crate::fn_times::Naming::Script(&self.source_path),
             ));
         }
     }

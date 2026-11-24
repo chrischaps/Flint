@@ -48,14 +48,24 @@ impl ModuleBase {
 /// Loads `<name>.rhai` modules from a [`ModuleBase`] and caches each by its
 /// resolved path. The cache lives as long as the resolver: install a fresh
 /// one to clear it.
+///
+/// Each module has two forms, each evaluated the first time it is asked
+/// for (#1281): the plain one, and a profiled one whose functions and
+/// closures are timed as a script's are (`fn_times::profiled`). An
+/// `import` gets the profiled form while a profiled call is under way on
+/// its thread (`fn_times::counting`). A module is shared by every script,
+/// so a script's own profiled copy can't hold its functions. The profiled
+/// form runs the module's top level again, once, when profiling first
+/// imports it. One resolver holds both forms, so the one reset clears both.
 pub struct VfsModuleResolver {
     base: ModuleBase,
-    cache: RwLock<HashMap<PathBuf, Shared<Module>>>,
+    /// Each form's modules by resolved path, the plain form's first
+    cache: [RwLock<HashMap<PathBuf, Shared<Module>>>; 2],
     /// The same modules by the name an `import` gave, so the import a
     /// callback runs again before each call (#692: `instance::callable`)
     /// is a lookup, not a search of the disk. A search's answer changes
     /// only when a `lib/` does, which installs a fresh resolver.
-    by_name: RwLock<HashMap<String, Shared<Module>>>,
+    by_name: [RwLock<HashMap<String, Shared<Module>>>; 2],
     /// Modules already read and compiled elsewhere (hot reload's worker,
     /// #633), by resolved path: used in place of reading the file, so an
     /// import after a lib change doesn't wait on the disk in a frame. An
@@ -71,8 +81,8 @@ impl VfsModuleResolver {
     pub fn over(base: ModuleBase) -> Self {
         Self {
             base,
-            cache: RwLock::new(HashMap::new()),
-            by_name: RwLock::new(HashMap::new()),
+            cache: Default::default(),
+            by_name: Default::default(),
             compiled: HashMap::new(),
         }
     }
@@ -97,16 +107,16 @@ impl ModuleResolver for VfsModuleResolver {
         path: &str,
         pos: Position,
     ) -> Result<Shared<Module>, Box<EvalAltResult>> {
-        if let Some(module) = self
-            .by_name
+        let form = Form::now();
+        if let Some(module) = self.by_name[form as usize]
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .get(path)
         {
             return Ok(module.clone());
         }
-        let module = self.resolve_file(engine, path, pos)?;
-        self.by_name
+        let module = self.resolve_file(engine, path, pos, form)?;
+        self.by_name[form as usize]
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .insert(path.to_string(), Shared::clone(&module));
@@ -116,12 +126,13 @@ impl ModuleResolver for VfsModuleResolver {
 
 impl VfsModuleResolver {
     /// The module `path` names, searched for and read (or this resolver's
-    /// copy of that file's).
+    /// copy of that file's), in `form`.
     fn resolve_file(
         &self,
         engine: &Engine,
         path: &str,
         pos: Position,
+        form: Form,
     ) -> Result<Shared<Module>, Box<EvalAltResult>> {
         let file_path = self.file_path(path).map_err(|not_found| {
             // Every place the module was looked for
@@ -129,7 +140,9 @@ impl VfsModuleResolver {
             Box::new(EvalAltResult::ErrorModuleNotFound(path.to_string(), pos))
         })?;
 
-        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
+        let cache = self.cache[form as usize]
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(module) = cache.get(&file_path) {
             return Ok(module.clone());
         }
@@ -147,16 +160,40 @@ impl VfsModuleResolver {
             None => compile_module(engine, &file_path, path, pos)?,
         };
         ast.set_source(path);
+        if form == Form::Profiled {
+            let naming = crate::fn_times::Naming::Module(path);
+            if let Some(timed) = crate::fn_times::profiled(engine, &ast, naming) {
+                ast = timed;
+            }
+        }
 
         let module: Shared<Module> = Module::eval_ast_as_new(Scope::new(), &ast, engine)
             .map_err(|err| Box::new(EvalAltResult::ErrorInModule(path.to_string(), err, pos)))?
             .into();
 
-        self.cache
+        self.cache[form as usize]
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .insert(file_path, Shared::clone(&module));
         Ok(module)
+    }
+}
+
+/// Which of a module's two forms an import gets (see [`VfsModuleResolver`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Plain = 0,
+    Profiled = 1,
+}
+
+impl Form {
+    /// Profiled while this thread counts a call's functions.
+    fn now() -> Self {
+        if crate::fn_times::counting() {
+            Form::Profiled
+        } else {
+            Form::Plain
+        }
     }
 }
 
