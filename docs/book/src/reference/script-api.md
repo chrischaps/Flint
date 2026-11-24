@@ -169,7 +169,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `collision_layers()` | `array`: their names, \`default\` first; empty with no physics | The collision layers colliders and masks may name: \`default\`, then the project's. |
 | `move_character(id: entity, dx: num, dy: num, dz: num)` | `map`: `#{x, y, z, grounded}`: where it ended up; () with no physics, transform or character collider | Move a character's collider by a step, sliding along what its collider's mask meets, from where the entity stands now. |
 | `move_character(id: entity, dx: num, dy: num, dz: num, mask: any)` | `map`: `#{x, y, z, grounded}`: where it ended up; () with no physics, transform or character collider | Move a character's collider by a step, sliding along what is on a layer of \`mask\` (a layer's name or an array of names) in place of its collider's mask. |
-| `get_collider_extents(id: entity)` | `map`: `#{shape: "box", half_x, half_y, half_z}`, `#{shape: "sphere", radius}`, `#{shape: "capsule"\|"cylinder", radius, half_height}` or `#{shape: "mesh"\|"convex", half_x, half_y, half_z, centre_x, centre_y, centre_z}` (its box); () with no collider or no physics | The shape and size of an entity's collider. |
+| `get_collider_extents(id: entity)` | `map`: `#{shape: "box", half_x, half_y, half_z}`, `#{shape: "sphere", radius}`, `#{shape: "capsule"\|"cylinder", radius, half_height}` or `#{shape: "mesh"\|"convex"\|"heightfield", half_x, half_y, half_z, centre_x, centre_y, centre_z}` (its box); () with no collider or no physics | The shape and size of an entity's collider. |
 
 ## physics_2d
 

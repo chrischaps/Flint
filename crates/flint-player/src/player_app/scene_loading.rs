@@ -88,19 +88,27 @@ pub(super) struct LoadedGrassInfo {
     pub component: &'static str,
 }
 
-/// The static collider of a terrain `SceneRenderer::bind_scene` loaded: its
-/// chunks' triangles where its transform puts them.
+/// The static collider of a terrain `SceneRenderer::bind_scene` loaded: a
+/// heightfield of its chunks' vertex grid where its transform puts it
+/// (#1219), the same surface as the chunks' triangles with no seams.
 pub(super) fn register_terrain_collider(
     physics: &mut PhysicsSystem,
     loaded: &flint_render::LoadedTerrain,
 ) {
-    let (verts, tris) = loaded.terrain.trimesh_data();
-    let [x, y, z] = loaded.offset;
-    let offset_verts: Vec<[f32; 3]> = verts
-        .iter()
-        .map(|v| [v[0] + x, v[1] + y, v[2] + z])
-        .collect();
-    physics.register_static_trimesh(loaded.entity, offset_verts, tris, 0.8, 0.1);
+    physics.register_static_heightfield(loaded.entity, &terrain_heightfield(loaded), 0.8, 0.1);
+}
+
+/// A loaded terrain's heights as physics takes them.
+fn terrain_heightfield(loaded: &flint_render::LoadedTerrain) -> flint_physics::StaticHeightfield {
+    let grid = loaded.terrain.height_grid();
+    flint_physics::StaticHeightfield {
+        columns: grid.columns,
+        rows: grid.rows,
+        heights: grid.heights,
+        width: grid.width,
+        depth: grid.depth,
+        origin: loaded.offset,
+    }
 }
 
 /// Load a scene's `grass_ground` into `scene_renderer`, as the player does
