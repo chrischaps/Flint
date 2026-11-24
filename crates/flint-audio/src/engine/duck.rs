@@ -167,6 +167,40 @@ mod tests {
         parent = "voice"
     "#;
 
+    /// #1217 under #1218: the player's own volume is one more factor. A
+    /// duck under a player's 0.4 is heard at game x player x duck, a slider
+    /// moved while ducked keeps the duck, and the duck lets go to game x
+    /// player, never to the game's alone.
+    #[test]
+    fn a_duck_rides_on_the_players_own_volume() {
+        let (mut e, link) = engine(DUCKING);
+        let voice = e.bus("voice").unwrap();
+        e.set_user_bus_volume("music", 0.4).unwrap();
+        let (_, db, _) = volumes(&link)[0];
+        assert!((db - 20.0 * 0.2f32.log10()).abs() < 1e-3, "0.5 x 0.4");
+
+        let play = KeyedPlay {
+            bus: voice,
+            looping: true,
+            ..Default::default()
+        };
+        e.play_keyed(1, "line", play).unwrap();
+        e.update_ducks([]);
+        let (_, db, _) = volumes(&link)[0];
+        assert!((db - (20.0 * 0.2f32.log10() - 12.0)).abs() < 1e-3, "{db}");
+
+        // The slider moves while the line plays: still ducked.
+        e.set_user_bus_volume("music", 0.8).unwrap();
+        let (_, db, _) = volumes(&link)[0];
+        assert!((db - (20.0 * 0.4f32.log10() - 12.0)).abs() < 1e-3, "{db}");
+
+        e.stop_keyed(1, Duration::ZERO);
+        e.update_ducks([]);
+        let (_, db, _) = volumes(&link)[0];
+        assert!((db - 20.0 * 0.4f32.log10()).abs() < 1e-3, "{db}");
+        assert_eq!(e.user_bus_volume("music"), 0.8);
+    }
+
     #[test]
     fn music_ducks_while_a_keyed_line_plays_and_comes_back_after() {
         let (mut e, link) = engine(DUCKING);

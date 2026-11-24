@@ -10,4 +10,4 @@ git remote add flint-engine https://github.com/chrischaps/Flint.git
 git subtree add --prefix=engine flint-engine main --squash
 ```
 
-Then set `schemas = ["engine/schemas", "schemas"]` in `flint.toml`. The engine's changelog, schemas and book are then under engine/ in this project.
+Then set `schemas = ["engine/schemas", "schemas"]` in `flint.toml`, and delete `scripts/lib/menu.rhai`, the copy of the engine's menu helpers this project carries until then: the same `import "menu"` finds the engine's own under engine/. The engine's changelog, schemas and book are then under engine/ in this project.

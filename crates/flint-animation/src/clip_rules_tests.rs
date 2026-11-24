@@ -246,6 +246,14 @@ fn autoplay_keeps_playing_and_the_animator_says_so() {
         );
         assert!(near(rig.state().time, 30.0 * DT), "{kind:?}");
         assert!(rig.animator().playing, "{kind:?}: published");
+
+        // Published, so `stop_clip` is a change the next sync sees (#1225).
+        rig.stop_clip();
+        rig.frames(1);
+        let held = rig.state().time;
+        rig.frames(30);
+        assert!(!rig.state().playing, "{kind:?}: stop_clip stops autoplay");
+        assert_eq!(rig.state().time, held, "{kind:?}: and it holds");
     }
 }
 

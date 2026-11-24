@@ -865,6 +865,7 @@ pub(crate) fn for_the_host(command: &ScriptCommand) -> bool {
         | C::StopSound { .. }
         | C::SetSoundVolume { .. }
         | C::SetBusVolume { .. }
+        | C::SetUserBusVolume { .. }
         | C::SetBusLowpass { .. }
         | C::Rumble { .. }
         | C::SetCameraCutDetection { .. }

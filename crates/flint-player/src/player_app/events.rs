@@ -428,6 +428,15 @@ impl Escape {
     }
 }
 
+/// Whether a left click catches the cursor for mouse look: in a scene with
+/// a first-person player, while the cursor is free and the game state runs
+/// physics. A pause menu's state stops physics (`menu::toggle_pause` pushes
+/// `paused`), and then a click is the menu's: catching the cursor there
+/// would hide the pointer over the buttons it was meant for (#1228).
+pub(crate) fn click_captures(cursor_captured: bool, has_player: bool, physics_runs: bool) -> bool {
+    !cursor_captured && has_player && physics_runs
+}
+
 /// The axes read again when the window regains focus.
 const STICKS: [Axis; 8] = [
     Axis::LeftStickX,
@@ -1018,7 +1027,7 @@ impl PlayerApp {
         }
     }
 
-    fn handle_mouse_input(&mut self, state: ElementState, button: MouseButton) {
+    pub(super) fn handle_mouse_input(&mut self, state: ElementState, button: MouseButton) {
         // Mouse button state always reaches InputState so scripts can
         // read it (`is_mouse_pressed`, menus, screen-space UI) and the
         // mouse-as-touch emulation keeps working. FPS scenes (a player
@@ -1036,9 +1045,16 @@ impl PlayerApp {
             }
         }
 
-        if !self.focus.cursor_captured
-            && self.core.physics.has_player_entity()
-            && state == ElementState::Pressed
+        let physics_runs = self
+            .core
+            .state_machine
+            .active_config()
+            .runs(flint_runtime::state::PHYSICS);
+        if click_captures(
+            self.focus.cursor_captured,
+            self.core.physics.has_player_entity(),
+            physics_runs,
+        ) && state == ElementState::Pressed
             && button == MouseButton::Left
         {
             #[cfg(feature = "debug-hud")]
