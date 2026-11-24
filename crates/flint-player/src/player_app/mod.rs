@@ -14,6 +14,8 @@ mod catalog_root_tests;
 #[cfg(test)]
 mod collider_mesh_tests;
 mod collider_meshes;
+#[cfg(all(test, feature = "procgen"))]
+mod made_collider_mesh_tests;
 // The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
@@ -138,6 +140,9 @@ mod trace_tests;
 mod transition;
 #[cfg(test)]
 mod transition_tests;
+mod user_audio;
+#[cfg(test)]
+mod user_audio_tests;
 #[cfg(test)]
 mod vfs_tests;
 #[cfg(target_arch = "wasm32")]

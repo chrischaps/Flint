@@ -1906,6 +1906,8 @@ dependencies = [
 name = "flint-music"
 version = "0.1.0"
 dependencies = [
+ "flint-audio",
+ "flint-audio-worklet",
  "flint-core",
  "hound",
  "kira",

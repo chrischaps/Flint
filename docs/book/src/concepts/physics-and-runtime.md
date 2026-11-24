@@ -244,8 +244,21 @@ Several entities of one model and one scale share one shape.
 - **`collider.model`** names a different model for the triangles, such as a
   low-poly collision model beside a detailed drawn one, or one for an entity
   that draws nothing.
-- **No triangles** (no model, a file that isn't found, a model made at
-  runtime by procgen) is a box of `size`, with a warning naming the entity.
+- **A procgen model** (a `specs/<name>.procgen.toml` names it) gives the
+  triangles its spec generated, the ones it draws, ahead of a file of the
+  same name. One the frame-budgeted queue makes later
+  (`ProcGenMode::Deferred`) is a box of `size` until it is made, without a
+  warning, and its collider is made again from it on the next frame.
+- **A runtime mesh** (`model.runtime = true`, from a game binary's
+  `upload_mesh_with(.., MeshOptions { ray_target: true })`) gives the
+  triangles the renderer keeps for ray targets, so `raycast()`, a body and
+  `raycast_meshes` all meet what draws. The game uploads after the scene's
+  bodies are made, so the collider is a box of `size` until the upload and
+  is made again on the frame after each one. A mesh uploaded without
+  `ray_target` keeps no triangles: the collider stays as it was, with a
+  warning.
+- **No triangles** (no model, a file that isn't found) is a box of `size`,
+  with a warning naming the entity.
 - `collider.offset` and `rotation` move and turn the triangles, and the
   entity's scale stretches them, exactly.
 - `get_collider_extents(id)` gives a mesh's or hull's box:
@@ -286,9 +299,20 @@ mask = ["world", "enemy"]
 ```
 
 A collider that names no layer is on `default` and meets everything, as
-every collider did before layers. A name that is no layer is reported once
-(with the nearest) and read as `default` in `layer`, or left out of a
-`mask`. Terrain and spline colliders are on `default`, or on the layer their
+every collider did before layers. A name that is no layer is read as
+`default` in `layer`, or left out of a `mask`, and is `bad-enum-value` with
+the nearest layer named. `flint check` and `flint validate` find it before
+the game runs, and the player says the same once when the body is made:
+
+```text
+error[bad-enum-value] entity 'hero' collider.layer: "playr" is not a collision layer
+    hint: did you mean `player`?; it is read as `default`
+error[bad-enum-value] entity 'hero' collider.mask[1]: "pikcup" is not a collision layer
+    hint: did you mean `pickup`?; it is left out
+```
+
+A project with no `[project.physics]` has only `default`, so a collider
+naming any other layer is told the line to add to `flint.toml`. Terrain and spline colliders are on `default`, or on the layer their
 entity's `collider` table names. Layers are read when the body is made.
 
 [`flint-examples/collision_layers.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/collision_layers.scene.toml) is the bench: a glass tray on `glass`

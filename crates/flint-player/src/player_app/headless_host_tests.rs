@@ -93,6 +93,10 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             bus: s("voice"),
             volume: 0.5,
         },
+        C::SetUserBusVolume {
+            bus: s("music"),
+            volume: 0.4,
+        },
         C::SetBusLowpass {
             bus: s("sfx"),
             hz: 800.0,

@@ -17,6 +17,7 @@ pub mod bus;
 #[path = "../../flint-audio-worklet/src/bus_filter.rs"]
 pub(crate) mod bus_filter;
 pub mod clock;
+pub mod clocked;
 pub mod decode;
 pub mod engine;
 pub mod handle;

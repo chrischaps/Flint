@@ -691,6 +691,13 @@ fn with_style_schemas(
     registry: &flint_schema::SchemaRegistry,
     styles: &flint_render::stylize::StyleRegistry,
 ) -> Option<flint_schema::SchemaRegistry> {
+    // With no schema at all the scene pass says so once (`no-schemas`).
+    // The built-in styles' components would make the registry look loaded
+    // and turn every engine table into an `unknown-component` error: an
+    // `--engine none` project failed `flint check` that way (#1228)
+    if registry.component_names().is_empty() && registry.archetype_names().is_empty() {
+        return None;
+    }
     let wanted = styles.iter().filter_map(|d| d.component).any(|component| {
         registry
             .get_component(component)

@@ -75,7 +75,10 @@ my_game/                         (your git repo)
 ├── scenes/
 │   └── main.scene.toml          # The first scene: lit, with a [camera]
 ├── scripts/
-│   └── hud.rhai                 # The HUD, on the scene's hud_controller
+│   └── hud.rhai                 # The HUD, on the scene's hud_controller, and the pause menu's controller
+├── ui/
+│   ├── pause.ui.toml            # The pause menu: Escape or a pad's Start
+│   └── pause.style.toml         # Its look
 ├── schemas/
 │   ├── components/              # Game-specific component definitions (empty)
 │   └── archetypes/              # Game-specific archetype bundles (empty)

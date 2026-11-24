@@ -572,6 +572,127 @@ fn crates_of_one_model_and_scale_share_one_shape() {
 }
 
 // ----------------------------------------------------------------------
+// Triangles that arrive after the body (#1222): a procgen model finished
+// late, a mesh a game uploads at runtime
+// ----------------------------------------------------------------------
+
+const RUNTIME_BLOCK: &str = "[transform]\nscale = [2, 2, 2]\n[model]\nasset = \"built\"\n\
+                             runtime = true\n[rigidbody]\nbody_type = \"static\"\n\
+                             [collider]\nshape = \"mesh\"\n";
+
+fn reports(world: &FlintWorld) -> Vec<String> {
+    world
+        .read_reports()
+        .snapshot()
+        .iter()
+        .map(|d| d.one_line())
+        .collect()
+}
+
+#[test]
+fn a_runtime_models_collider_waits_quietly_then_takes_its_triangles() {
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+    let block = spawn(&mut world, "block", RUNTIME_BLOCK);
+    // No request: the mesh has no file to be read from
+    assert!(PhysicsSystem::collider_mesh_requests(&world).is_empty());
+    sys.initialize(&mut world).unwrap();
+    assert!(matches!(
+        sys.get_entity_collider_extents(block),
+        Some(ColliderExtents::Box { .. })
+    ));
+    assert!(
+        !reports(&world).iter().any(|r| r.contains("no triangles")),
+        "a runtime mesh isn't missing, only not uploaded yet: {:#?}",
+        reports(&world)
+    );
+
+    // The game uploads it: the next step makes the collider again
+    sys.set_collider_mesh(block, Arc::new(wedge()));
+    let before = sys.sync.collider_map[&block];
+    run(&mut sys, &mut world, 1.0 / 60.0);
+    match sys.get_entity_collider_extents(block) {
+        Some(ColliderExtents::Mesh {
+            half_extents,
+            centre,
+        }) => {
+            assert_eq!(half_extents, [2.0, 1.0, 2.0]);
+            assert_eq!(centre, [0.0, 1.0, 0.0]);
+        }
+        other => panic!("{other:?}"),
+    }
+    let after = sys.sync.collider_map[&block];
+    assert_ne!(before, after);
+    assert_eq!(sys.entity_of_collider(after), Some(block));
+    assert_eq!(sys.entity_of_collider(before), None);
+
+    // A ray meets it where it's drawn: the 2x block's top is y = 2
+    let hit = sys
+        .raycast([1.5, 10.0, 1.5], [0.0, -1.0, 0.0], 50.0, None)
+        .expect("the ray meets the mesh");
+    assert_eq!(hit.entity_id, block);
+    assert!((hit.point[1] - 2.0).abs() < 1e-3, "{:?}", hit.point);
+    // ...and not where the 1 m placeholder box was not
+    assert!(sys
+        .raycast([3.5, 10.0, 0.0], [0.0, -1.0, 0.0], 50.0, None)
+        .is_none());
+}
+
+#[test]
+fn a_mesh_handed_over_again_replaces_the_shape_and_the_same_one_changes_nothing() {
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+    let block = spawn(&mut world, "block", RUNTIME_BLOCK);
+    let first = Arc::new(wedge());
+    sys.set_collider_mesh(block, first.clone());
+    sys.initialize(&mut world).unwrap();
+    let made = sys.sync.collider_map[&block];
+
+    // The same triangles: nothing is made again
+    sys.set_collider_mesh(block, first.clone());
+    run(&mut sys, &mut world, 1.0 / 60.0);
+    assert_eq!(sys.sync.collider_map[&block], made);
+
+    // A taller mesh (a game rebuilt it): the collider follows
+    let mut taller = wedge();
+    for p in &mut taller.positions {
+        p[1] *= 3.0;
+    }
+    drop(first);
+    sys.set_collider_mesh(block, Arc::new(taller));
+    run(&mut sys, &mut world, 1.0 / 60.0);
+    let hit = sys
+        .raycast([0.0, 20.0, 0.0], [0.0, -1.0, 0.0], 50.0, None)
+        .unwrap();
+    assert!((hit.point[1] - 6.0).abs() < 1e-3, "{:?}", hit.point);
+    // The old triangles' shape is no longer kept
+    assert_eq!(sys.sync.mesh_shapes_len(), 1);
+}
+
+#[test]
+fn a_ball_rests_on_a_convex_hull_handed_over_after_its_body() {
+    // A procgen rock finished after the scene's bodies were made
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+    let rock = spawn(
+        &mut world,
+        "rock",
+        "[model]\nasset = \"rock\"\n[rigidbody]\nbody_type = \"static\"\n\
+         [collider]\nshape = \"convex\"\nsize = [0.2, 0.2, 0.2]\n",
+    );
+    let b = spawn(&mut world, "ball", &ball(0.0, ""));
+    sys.initialize(&mut world).unwrap();
+    sys.set_collider_mesh(rock, Arc::new(wedge()));
+    run(&mut sys, &mut world, 2.0);
+    // On the hull's top (y = 1) with radius 0.5, not the 0.2 m box
+    assert!(
+        (y_of(&world, b) - 1.5).abs() < 0.05,
+        "y = {}",
+        y_of(&world, b)
+    );
+}
+
+// ----------------------------------------------------------------------
 // The reverse map
 // ----------------------------------------------------------------------
 
