@@ -1559,7 +1559,13 @@ impl ViewerApp {
 
         {
             let ctx = &ui.ctx().clone();
-            flint_debug_ui::paint_style_errors(ctx, &style_errors, &styles, 0.0);
+            let errors = flint_debug_ui::paint_style_errors(ctx, &style_errors, &styles, 0.0);
+            // What a style's cap left out since the scene loaded (#1246)
+            flint_debug_ui::paint_style_drops(
+                ctx,
+                &flint_render::stylize::variant_table::dropped(),
+                errors,
+            );
             if show_panels {
                 // Left side panel: scene tree
                 egui::Panel::left("scene_tree_panel")

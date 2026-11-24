@@ -1212,6 +1212,9 @@ impl PlayerApp {
         // The registry they came from, for the card's "doesn't load" (#742)
         #[cfg(feature = "debug-hud")]
         let style_registry = self.core.styles.clone();
+        // What a style's cap left out since the scene loaded (#740, #1246)
+        #[cfg(feature = "debug-hud")]
+        let style_drops = flint_render::stylize::variant_table::dropped();
         // Scripts that fail (#693), each once with its count, until the
         // file is saved again or the scene changes
         #[cfg(feature = "debug-hud")]
@@ -1319,19 +1322,21 @@ impl PlayerApp {
                     } else {
                         0.0
                     };
-                    // The script card in the corner, the style card above it
+                    // The script card in the corner, the style card above
+                    // it, and what a style's cap left out above that
                     let scripts = flint_debug_ui::paint_script_errors(
                         ctx,
                         &script_errors,
                         script_errors_unkept,
                         inset,
                     );
-                    flint_debug_ui::paint_style_errors(
+                    let styles = flint_debug_ui::paint_style_errors(
                         ctx,
                         &style_errors,
                         &style_registry,
                         inset + scripts,
                     );
+                    flint_debug_ui::paint_style_drops(ctx, &style_drops, inset + scripts + styles);
                 }
             });
             full_output
