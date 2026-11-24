@@ -344,6 +344,15 @@ impl StyleRegistry {
         self.style(name).is_some_and(Style::is_user)
     }
 
+    /// Whether a user style it holds is install `generation`
+    /// ([`StyleDescriptor::generation`]): a renderer keeps the bind groups
+    /// of the installs its registry holds and drops the rest (#1271).
+    pub fn holds_install(&self, generation: u64) -> bool {
+        self.styles
+            .iter()
+            .any(|s| s.is_user() && s.generation == generation)
+    }
+
     /// Every registered style, in chain order.
     pub fn styles(&self) -> &[Style] {
         &self.styles

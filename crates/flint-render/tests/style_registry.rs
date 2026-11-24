@@ -207,3 +207,86 @@ fn two_renderers_draw_same_named_user_styles_from_two_folders() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// #1271: a user style reloaded in one renderer leaves another renderer's
+/// kept bind groups as they were, though the two installs share their
+/// bind-cache names (interned, one name for every install). Until #1271 a
+/// replaced install's names went into one process-wide log that every
+/// cache drained, so the other renderer dropped its groups under those
+/// names at its next frame and made them again: as many groups a reload as
+/// the style binds.
+#[test]
+fn a_reload_in_one_renderer_leaves_the_others_bind_groups() {
+    let Some(lease) = shared_gpu::lease() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let (device, queue) = (&lease.gpu.device, &lease.gpu.queue);
+    let root = std::env::temp_dir().join(format!("flint-twins-1271-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("flint.toml"), "").unwrap();
+    let dark_dir = twin_in(&root, "dark", 0.25);
+    let light_dir = twin_in(&root, "light", 0.75);
+    // The dark style's other copy: loading one file and then the other
+    // replaces the style each time, as a save does
+    let other_dark = twin_in(&root, "dark_again", 0.25);
+    let tomls = [&dark_dir, &other_dark].map(|d| d.join("styles").join("utest_twin.shader.toml"));
+
+    let world = FlintWorld::new();
+    let target = Target::new(device);
+    let (mut dark, mut dark_styles) = renderer_for(device, queue, &dark_dir);
+    let (mut light, _light_styles) = renderer_for(device, queue, &light_dir);
+    let near = |got: u8, want: f32| (got as f32 - want * 255.0).abs() < 4.0;
+    // Two frames each: whatever a first frame makes once is made
+    for _ in 0..2 {
+        target.draw(device, queue, &mut dark, &world);
+        target.draw(device, queue, &mut light, &world);
+    }
+    let (dark_kept, light_kept) = (dark.kept_post_binds(), light.kept_post_binds());
+    let light_made = light.post_binds_made();
+    assert!(
+        light_kept > 0,
+        "the light renderer keeps its style's groups"
+    );
+
+    let mut generation = dark_styles.style("utest_twin").unwrap().generation;
+    let mut seen = Vec::new();
+    for reload in 1..=10usize {
+        // A save of the dark folder's style, loaded into the dark
+        // renderer's registry alone: a new install in its old place
+        let mut messages = Vec::new();
+        let toml = &tomls[reload % 2];
+        dark_styles.load_file(toml, &mut messages).unwrap();
+        assert!(messages.is_empty(), "{messages:?}");
+        let now = dark_styles.style("utest_twin").unwrap().generation;
+        assert_ne!(now, generation, "reload {reload} is a new install");
+        generation = now;
+        dark.set_styles(dark_styles.clone());
+        let d = target.draw(device, queue, &mut dark, &world);
+        let l = target.draw(device, queue, &mut light, &world);
+        assert!(near(d, 0.25), "reload {reload}: the dark renderer drew {d}");
+        assert!(
+            near(l, 0.75),
+            "reload {reload}: the light renderer drew {l}"
+        );
+        seen.push((
+            dark.kept_post_binds(),
+            light.kept_post_binds(),
+            light.post_binds_made() - light_made,
+        ));
+    }
+    eprintln!("after each reload (dark kept, light kept, light made since): {seen:?}");
+    // The reloading renderer drops its old install's groups (#427) ...
+    assert!(
+        seen.iter().all(|&(d, _, _)| d == dark_kept),
+        "the dark renderer's cache grew with its reloads: {seen:?}"
+    );
+    // ... and the other one keeps every group it had, making none
+    assert!(
+        seen.iter()
+            .all(|&(_, l, made)| l == light_kept && made == 0),
+        "the light renderer made bind groups again for the dark one's reloads: {seen:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -345,13 +345,18 @@ impl StyleFrame<'_> {
         variant: u64,
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
-        self.binds.get(name, self.keyed(variant), make)
+        self.bind_over(name, variant, &[], make)
     }
 
     /// [`bind`](Self::bind) over `over`, what the group binds that may be
     /// made again while the chain lives (the shared edges, the albedo, an
     /// image): kept while those are the same objects, made again in the old
     /// group's place when one isn't (#960).
+    ///
+    /// Filed under the style's install (its generation, #742): a user
+    /// style reloaded under its old names never binds the old install's
+    /// groups, and those go once the renderer's registry no longer holds
+    /// that install (#1271).
     pub fn bind_over(
         &self,
         name: &'static str,
@@ -359,23 +364,8 @@ impl StyleFrame<'_> {
         over: &[crate::bind_cache::Bound<'_>],
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
-        self.binds.get_bound(name, self.keyed(variant), over, make)
-    }
-
-    /// `variant` told apart by the style's install (#742): a user style
-    /// reloaded under its old names never binds the old install's groups.
-    /// A built-in's (generation 0) is `variant` itself.
-    pub(super) fn keyed(&self, variant: u64) -> u64 {
-        match self.descriptor.generation {
-            0 => variant,
-            g => {
-                // splitmix64 of the pair: no install's keys meet another's
-                let mut z = variant ^ g.wrapping_mul(0x9e37_79b9_7f4a_7c15);
-                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-                z ^ (z >> 31)
-            }
-        }
+        self.binds
+            .get_for(self.descriptor.generation, name, variant, over, make)
     }
 
     /// A bind group over [`depth`](Self::depth): kept while the chain owns
@@ -399,8 +389,14 @@ impl StyleFrame<'_> {
         over: &[crate::bind_cache::Bound<'_>],
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
-        self.binds
-            .get_over(self.depth_key, name, self.keyed(variant), over, make)
+        self.binds.get_over_for(
+            self.descriptor.generation,
+            self.depth_key,
+            name,
+            variant,
+            over,
+            make,
+        )
     }
 
     /// The shared edges' view, or `none` while there are none, as a

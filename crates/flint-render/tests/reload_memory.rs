@@ -1,6 +1,6 @@
 //! A hot reload frees what the install before it held (#742): live heap
 //! bytes while one user style's `.shader.toml` is saved and reloaded 500
-//! times stop growing once `bind_cache::retire`'s capped log is full. Before #742 each reload
+//! times stop growing after the first 100. Before #742 each reload
 //! leaked the descriptor, its lists and every string in them, and the
 //! bind-cache names: 437 KB after 500 reloads of this style, about 850 B
 //! each (ADR 0129, Measured). Its own binary,
@@ -87,9 +87,10 @@ fn reload_loop(dir: &std::path::Path, write: impl Fn(u32)) {
             at_100 = live() - base;
         }
     }
-    // What does grow, and stops: `bind_cache::retire`'s log of names for
-    // the caches to drop, four a reload, capped at 256 names (#427), so
-    // full by the 64th. After that a reload costs nothing that stays
+    // A reload costs nothing that stays: until #1271 a replaced install's
+    // bind names went into a process-wide log (#427), four a reload, which
+    // grew to its cap of 256 names by the 64th; a renderer now asks its own
+    // registry which installs are gone, and there is no log
     assert!(
         at_100 < 32 * 1024,
         "the first 100 reloads left {at_100} bytes live"

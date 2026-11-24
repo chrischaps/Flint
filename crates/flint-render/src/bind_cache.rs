@@ -22,18 +22,25 @@
 //! draw. Slots never move, so a bind group made for one stays good until
 //! the slot is freed.
 //!
-//! A name can outlive what it binds while the cache lives: a user style
+//! A group can outlive what it binds while the cache lives: a user style
 //! replaced by a `.shader.toml` edit (#275) caches its new pass's groups
-//! under new names, and the old ones would wait for the next resize. The
-//! old names are [`retire`]d into a process-wide log, and each cache drops
-//! them at its next [`evict_retired`](BindCache::evict_retired) (#427), so
-//! a long editing session holds one set of groups per style, not one per
-//! save, in the window's chain and in every comic panel's alike.
+//! under its new install, and the old install's would wait for the next
+//! resize. A style's groups are filed under the install they were made
+//! for ([`BindCache::get_for`], the user style's
+//! [`generation`](crate::stylize::StyleDescriptor::generation), unique in
+//! the process), and each frame the renderer asks its cache to drop the
+//! installs its own registry no longer holds
+//! ([`evict_gone_installs`](BindCache::evict_gone_installs), #427, #1271),
+//! so a long editing session holds one set of groups per style, not one
+//! per save, in the window's chain and in every comic panel's alike. It
+//! was a process-wide log of names until #1271, which another renderer
+//! drawing a same-named style from another folder drained too, making its
+//! groups again.
 //!
 //! [`PostProcessResources`]: crate::postprocess::PostProcessResources
 
 use crate::gpu_counts::{CountedDevice, CountedQueue};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -134,47 +141,11 @@ impl Kept {
     }
 }
 
-type Groups = HashMap<(&'static str, u64), Kept>;
+/// Where a kept group is filed: its name, the user-style install it was
+/// made for (0: none, a built-in's or the chain's own) and its variant.
+type Key = (&'static str, u64, u64);
 
-/// Bind group names retired for good (#427), each with its place in the
-/// log, so a cache asks only for what it hasn't dropped yet.
-struct Retired {
-    /// The place the next retired name takes.
-    next: u64,
-    /// The last [`RETIRED_KEPT`] names, oldest first.
-    names: VecDeque<(u64, &'static str)>,
-}
-
-static RETIRED: Mutex<Retired> = Mutex::new(Retired {
-    next: 0,
-    names: VecDeque::new(),
-});
-
-/// [`Retired::next`], read without the lock: a frame with nothing newly
-/// retired costs one atomic load.
-static RETIRED_NEXT: AtomicU64 = AtomicU64::new(0);
-
-/// Names the log keeps. A cache that falls further behind (a comic panel
-/// not drawn through dozens of saves) can't know which names it missed,
-/// so it forgets everything, as a resize would.
-const RETIRED_KEPT: usize = 256;
-
-/// Retire `names` in every cache in the process: what they bound is gone
-/// and nothing will ask for them again (a replaced user style's
-/// per-install names, #427). Each cache drops them at its next
-/// [`BindCache::evict_retired`].
-pub(crate) fn retire(names: impl IntoIterator<Item = &'static str>) {
-    let mut log = RETIRED.lock().unwrap_or_else(|e| e.into_inner());
-    for name in names {
-        let at = log.next;
-        log.names.push_back((at, name));
-        log.next += 1;
-    }
-    while log.names.len() > RETIRED_KEPT {
-        log.names.pop_front();
-    }
-    RETIRED_NEXT.store(log.next, Ordering::Release);
-}
+type Groups = HashMap<Key, Kept>;
 
 /// Bind groups by a name and a variant (which views were chosen), and by
 /// the identity of what they bind that the cache doesn't own
@@ -190,8 +161,10 @@ pub struct BindCache {
     /// Who this cache is to [`first_write`](Self::first_write): a
     /// [`gpu_id`], a new one on [`clear`](Self::clear).
     writer: AtomicU64,
-    /// How far into the [`retire`] log this cache has dropped names.
-    retired_seen: AtomicU64,
+    /// The user-style installs it holds a group for, kept or over the
+    /// caller's depth (a few at most): what
+    /// [`evict_gone_installs`](Self::evict_gone_installs) asks about.
+    installs: Mutex<Vec<u64>>,
 }
 
 impl Default for BindCache {
@@ -201,8 +174,7 @@ impl Default for BindCache {
             caller: Default::default(),
             made: AtomicU64::new(0),
             writer: AtomicU64::new(writer_id()),
-            // Names retired before it was made were never in it
-            retired_seen: AtomicU64::new(RETIRED_NEXT.load(Ordering::Acquire)),
+            installs: Default::default(),
         }
     }
 }
@@ -240,8 +212,25 @@ impl BindCache {
         over: &[Bound<'_>],
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
+        self.get_for(0, name, variant, over, make)
+    }
+
+    /// [`get_bound`](Self::get_bound) for user-style install `install`
+    /// (its [`generation`](crate::stylize::StyleDescriptor::generation); 0
+    /// for none): another install's group of the same name and variant is
+    /// another group (#742), and the install's groups go when the
+    /// renderer's registry no longer holds it
+    /// ([`evict_gone_installs`](Self::evict_gone_installs), #1271).
+    pub(crate) fn get_for(
+        &self,
+        install: u64,
+        name: &'static str,
+        variant: u64,
+        over: &[Bound<'_>],
+        make: impl FnOnce() -> wgpu::BindGroup,
+    ) -> Arc<wgpu::BindGroup> {
         let mut groups = self.groups.lock().unwrap_or_else(|e| e.into_inner());
-        self.kept_in(&mut groups, name, variant, over, make)
+        self.kept_in(&mut groups, (name, install, variant), over, make)
     }
 
     /// The bind group `name` in `variant` over the frame's depth view (and
@@ -258,15 +247,29 @@ impl BindCache {
         over: &[Bound<'_>],
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
+        self.get_over_for(0, depth, name, variant, over, make)
+    }
+
+    /// [`get_over`](Self::get_over) for user-style install `install`, as
+    /// [`get_for`](Self::get_for).
+    pub(crate) fn get_over_for(
+        &self,
+        install: u64,
+        depth: DepthKey<'_>,
+        name: &'static str,
+        variant: u64,
+        over: &[Bound<'_>],
+        make: impl FnOnce() -> wgpu::BindGroup,
+    ) -> Arc<wgpu::BindGroup> {
         match depth {
-            DepthKey::Owned => self.get_bound(name, variant, over, make),
+            DepthKey::Owned => self.get_for(install, name, variant, over, make),
             DepthKey::Caller(view) => {
                 let mut caller = self.caller.lock().unwrap_or_else(|e| e.into_inner());
                 if caller.0.as_ref() != Some(view) {
                     caller.0 = Some(view.clone());
                     caller.1.clear();
                 }
-                self.kept_in(&mut caller.1, name, variant, over, make)
+                self.kept_in(&mut caller.1, (name, install, variant), over, make)
             }
         }
     }
@@ -274,12 +277,11 @@ impl BindCache {
     fn kept_in(
         &self,
         groups: &mut Groups,
-        name: &'static str,
-        variant: u64,
+        key: Key,
         over: &[Bound<'_>],
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
-        match groups.entry((name, variant)) {
+        match groups.entry(key) {
             std::collections::hash_map::Entry::Occupied(mut kept) => {
                 if !kept.get().made_over(over) {
                     kept.insert(Kept {
@@ -289,13 +291,21 @@ impl BindCache {
                 }
                 kept.get().group.clone()
             }
-            std::collections::hash_map::Entry::Vacant(slot) => slot
-                .insert(Kept {
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                let install = key.1;
+                if install != 0 {
+                    let mut installs = self.installs.lock().unwrap_or_else(|e| e.into_inner());
+                    if !installs.contains(&install) {
+                        installs.push(install);
+                    }
+                }
+                slot.insert(Kept {
                     over: over.iter().map(Held::of).collect(),
                     group: self.make(make),
                 })
                 .group
-                .clone(),
+                .clone()
+            }
         }
     }
 
@@ -334,47 +344,55 @@ impl BindCache {
         drop(caller);
         // A new writer: every first write is due again
         self.writer.store(writer_id(), Ordering::Relaxed);
-        // Holding nothing, it holds no retired name
-        self.retired_seen
-            .store(RETIRED_NEXT.load(Ordering::Acquire), Ordering::Relaxed);
+        // Holding nothing, it holds no install's groups
+        self.installs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
-    /// Drop the groups whose names were [`retire`]d since this cache last
-    /// asked (#427), returning how many went. Callers ask once a frame,
-    /// before anything binds: with nothing new retired it is one atomic
-    /// load. A cache too far behind for the log forgets everything.
-    pub fn evict_retired(&self) -> usize {
-        let seen = self.retired_seen.load(Ordering::Relaxed);
-        if RETIRED_NEXT.load(Ordering::Acquire) == seen {
+    /// Drop the groups of every user-style install `live` says is gone
+    /// (#427, #1271), returning how many went. The renderer asks once a
+    /// frame, before anything binds, with "does my registry hold it": an
+    /// install another renderer replaced is still this one's if this one's
+    /// registry holds it, and a generation is never another install's, so
+    /// only groups nothing here will ask for again go. With no user style's
+    /// groups held it is one uncontended lock; else a question an install.
+    pub fn evict_gone_installs(&self, live: impl Fn(u64) -> bool) -> usize {
+        // Taken out of the list before the groups are locked: `kept_in`
+        // locks the groups and then the list
+        let mut gone = Vec::new();
+        self.installs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|&install| {
+                let keep = live(install);
+                if !keep {
+                    gone.push(install);
+                }
+                keep
+            });
+        if gone.is_empty() {
             return 0;
         }
-        let log = RETIRED.lock().unwrap_or_else(|e| e.into_inner());
-        let next = log.next;
-        let oldest = log.names.front().map_or(next, |&(at, _)| at);
-        if seen < oldest {
-            drop(log);
-            let held = self.len();
-            self.clear();
-            self.retired_seen.store(next, Ordering::Relaxed);
-            return held;
-        }
-        let gone: HashSet<&str> = log
-            .names
-            .iter()
-            .filter(|&&(at, _)| at >= seen)
-            .map(|&(_, name)| name)
-            .collect();
-        drop(log);
         let mut evicted = 0;
         let mut drop_gone = |groups: &mut Groups| {
             let before = groups.len();
-            groups.retain(|&(name, _), _| !gone.contains(name));
+            groups.retain(|&(_, install, _), _| !gone.contains(&install));
             evicted += before - groups.len();
         };
         drop_gone(&mut self.groups.lock().unwrap_or_else(|e| e.into_inner()));
         drop_gone(&mut self.caller.lock().unwrap_or_else(|e| e.into_inner()).1);
-        self.retired_seen.store(next, Ordering::Relaxed);
         evicted
+    }
+
+    /// The user-style installs it holds groups for, for tests.
+    #[cfg(test)]
+    fn installs(&self) -> Vec<u64> {
+        self.installs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// How many bind groups it holds.
@@ -587,19 +605,23 @@ mod tests {
             .all(|&b| b == 0));
     }
 
-    /// A user style's names for one install, as `custom::install` makes
-    /// them: unique per generation, leaked.
-    fn install_names(style: &str, generation: u32) -> [&'static str; 4] {
-        ["input", "depth/mask", "frame", "pass targets"].map(|what| {
-            &*Box::leak(format!("{style} style {what} BG #{generation}").into_boxed_str())
-        })
-    }
+    /// A user style's names, as `custom::install` makes them: the same for
+    /// every install of the style (interned), which its generation tells
+    /// apart.
+    const STYLE_NAMES: [&str; 4] = [
+        "utest style input BG",
+        "utest style depth/mask BG",
+        "utest style frame BG",
+        "utest style pass targets BG",
+    ];
 
-    /// #427: 100 `.shader.toml` saves leave a cache holding what it held
-    /// after the first, in the window's chain and in a comic panel's that
-    /// only catches up when it's drawn; another style's groups stay.
+    /// #427, #1271: 100 `.shader.toml` saves leave a cache holding what it
+    /// held after the first, in the window's chain and in a comic panel's
+    /// that only catches up when it's drawn; a built-in's groups stay, and
+    /// so does every group of another renderer drawing a style of the same
+    /// name (another folder's install), which makes none again.
     #[test]
-    fn retired_names_leave_every_cache() {
+    fn a_gone_installs_groups_leave_its_renderers_caches_alone() {
         let Some((device, _queue)) = device() else {
             crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
@@ -616,51 +638,62 @@ mod tests {
             })
         };
         let depth = depth_view(&device);
-        // A frame's binds: a built-in's, then the style's (the depth group
-        // over the caller's depth, as `depth_bind` keeps it)
-        let draw = |cache: &BindCache, names: &[&'static str; 4]| {
-            cache.evict_retired();
+        // A frame's binds: the renderer's registry holds `install` alone,
+        // then a built-in's group, then the style's (the depth group over
+        // the caller's depth, as `depth_bind` keeps it)
+        let draw = |cache: &BindCache, install: u64| {
+            cache.evict_gone_installs(|g| g == install);
             cache.get("bloom 427", 0, group);
-            for (i, &name) in names.iter().enumerate() {
+            for (i, &name) in STYLE_NAMES.iter().enumerate() {
                 if i == 1 {
-                    cache.get_over(DepthKey::Caller(&depth), name, 0, &[], group);
+                    cache.get_over_for(install, DepthKey::Caller(&depth), name, 0, &[], group);
                 } else {
-                    cache.get(name, i as u64, group);
+                    cache.get_for(install, name, i as u64, &[], group);
                 }
             }
         };
-        let (window, panel) = (BindCache::default(), BindCache::default());
-        let mut names = install_names("utest_427", 0);
-        draw(&window, &names);
-        draw(&panel, &names);
+        // One renderer's window and panel, drawing install 1000 and then
+        // each save's; another renderer drawing install 5000 throughout
+        let (window, panel, other) = (
+            BindCache::default(),
+            BindCache::default(),
+            BindCache::default(),
+        );
+        let mut install = 1000;
+        draw(&window, install);
+        draw(&panel, install);
+        draw(&other, 5000);
         let held = window.len();
         assert_eq!(held, 5);
-        let bloom_made = window.made();
+        let (window_made, other_made) = (window.made(), other.made());
         for save in 1..=100 {
-            retire(names);
-            names = install_names("utest_427", save);
-            draw(&window, &names);
+            install += 1;
+            draw(&window, install);
             assert_eq!(window.len(), held, "after save {save}");
+            assert_eq!(window.installs(), [install], "after save {save}");
             if save % 10 == 0 {
-                // The panel is drawn now and then: it drops every save's
-                // names it missed, not only the last
-                draw(&panel, &names);
+                // The panel is drawn now and then: it drops every install
+                // it drew that its renderer's registry no longer holds
+                draw(&panel, install);
                 assert_eq!(panel.len(), held, "panel after save {save}");
             }
+            draw(&other, 5000);
         }
         // Only the style's groups were made again: bloom's was kept
-        assert_eq!(window.made() - bloom_made, 4 * 100);
+        assert_eq!(window.made() - window_made, 4 * 100);
+        // The other renderer kept all of its own and made nothing
+        assert_eq!((other.len(), other.made() - other_made), (held, 0));
 
-        // A cache behind more than the log keeps forgets everything
-        let behind = BindCache::default();
-        draw(&behind, &names);
-        for _ in 0..=RETIRED_KEPT / 4 {
-            retire(names);
-            names = install_names("utest_427", 1000);
-        }
-        assert_eq!(behind.evict_retired(), 5, "cleared, bloom's too");
-        assert!(behind.is_empty());
-        assert_eq!(behind.evict_retired(), 0, "and caught up");
+        // A style its registry no longer holds at all (its file gone, a
+        // scene without it): its groups go, the built-in's stay
+        assert_eq!(window.evict_gone_installs(|_| false), 4);
+        assert_eq!(window.len(), 1);
+        assert_eq!(
+            window.evict_gone_installs(|_| false),
+            0,
+            "nothing left to ask"
+        );
+        assert!(window.installs().is_empty());
     }
 
     #[test]
