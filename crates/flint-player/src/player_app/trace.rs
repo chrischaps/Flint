@@ -50,9 +50,15 @@ pub const RECORDS_PER_SECOND: usize = 32_768;
 /// Bytes a record takes in a ring (ADR 0128).
 pub const RECORD_BYTES: usize = 40;
 
+/// Bytes a ring takes at most for each record it holds: the record and the
+/// text it keeps beside it ([`profile::TEXT_BYTES_PER_RECORD`], #1259; a
+/// thread that records no text detail takes none of that).
+pub const RING_BYTES_PER_RECORD: usize = RECORD_BYTES + profile::TEXT_BYTES_PER_RECORD;
+
 /// How many times its first size a ring may grow to (#1288), doubling
 /// whenever a lap of it spans less than the look-back (by [`LAP_MARGIN`]):
-/// 1 310 720 records, 52 MB, for the default 5 s. Float uncapped at 405
+/// 1 310 720 records, 52 MB of them and 42 MB of text, for the default
+/// 5 s. Float uncapped at 405
 /// fps records about 150 000 scopes a second, which is 4.6 times
 /// [`RECORDS_PER_SECOND`]; a game past even this says so in the run's
 /// line, with the `--trace-seconds` that would hold its window.
@@ -568,7 +574,7 @@ impl TraceJob {
             features.push("profile");
         }
         let features = features.join(",");
-        let ring_bytes = (h.ring_capacity * RECORD_BYTES) as i64;
+        let ring_bytes = (h.ring_capacity * RING_BYTES_PER_RECORD) as i64;
         let written_at = written_at.unwrap_or_default();
         let ms = |ns: u64| ns as f64 / 1e6;
         // Only when the GPU track is empty for it (#1316)
@@ -1105,7 +1111,12 @@ mod tests {
         assert_eq!(
             ring_records(5.0) * RECORD_BYTES,
             6_553_600,
-            "6.6 MB a thread"
+            "6.6 MB of records a thread"
+        );
+        assert_eq!(
+            ring_records(5.0) * RING_BYTES_PER_RECORD,
+            11_796_480,
+            "and 5.2 MB of text beside them (#1259)"
         );
         assert_eq!(ring_records(0.0), 0, "0 keeps the whole session");
     }

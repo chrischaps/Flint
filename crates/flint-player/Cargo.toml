@@ -103,6 +103,7 @@ flint-rhythm = { workspace = true, optional = true }
 flint-input-capture = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+skrifa = { workspace = true }
 flint-animation = { workspace = true }
 flint-particles = { workspace = true }
 flint-terrain = { workspace = true }
@@ -132,6 +133,11 @@ tracing-subscriber = { workspace = true }
 flint-debug-ui = { workspace = true }
 # The browser's mixer, fed what a scene's scripts sent (#730's bus test).
 flint-audio-worklet = { workspace = true }
+
+# The hitch log's marks on a sampler's ETW timeline (#1250,
+# player_app/sampler_marks.rs)
+[target.'cfg(windows)'.dependencies]
+tracelogging = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 log = { workspace = true }

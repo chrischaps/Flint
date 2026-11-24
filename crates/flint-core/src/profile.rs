@@ -244,6 +244,10 @@ mod off {
     /// Records a ring holds by default, as the recorder's build says.
     pub const DEFAULT_RING_CAPACITY: usize = 1 << 16;
 
+    /// Bytes of detail text a ring keeps a record, as the recorder's build
+    /// says.
+    pub const TEXT_BYTES_PER_RECORD: usize = 32;
+
     /// Nothing to size: the recorder is not in this build.
     pub fn set_ring_capacity(_records: usize) {}
 
@@ -374,10 +378,19 @@ mod recorder {
     }
 
     /// Records a thread's ring holds unless [`set_ring_capacity`] says
-    /// otherwise: 65 536, 2.6 MB a thread.
+    /// otherwise: 65 536, 2.6 MB of records a thread, and 2.1 MB of text
+    /// beside them once the thread records a text detail.
     pub const DEFAULT_RING_CAPACITY: usize = 1 << 16;
-    /// Bytes of detail text a thread's ring holds.
-    const TEXT_CAPACITY: usize = 64 * 1024;
+    /// Bytes of detail text a ring keeps for each record it holds (#1259),
+    /// so the text lasts as long as the records that name it: a ring of
+    /// text-detail scopes keeps every one's text while each is 32 bytes or
+    /// less. A Ruins frame's 105 scopes write about 700 bytes of text (34
+    /// details at ~20 bytes), 6.7 a record, so there the text outlasts its
+    /// records nearly five times over. It was a fixed 64 KB, which held
+    /// the last ~100 frames' details against the records' ~600. Taken at
+    /// the thread's first text detail, so a thread that writes none pays
+    /// nothing for it, and grown with the ring.
+    pub const TEXT_BYTES_PER_RECORD: usize = 32;
 
     /// Turns recording on or off for every thread.
     pub fn set_recording(on: bool) {
@@ -585,8 +598,29 @@ mod recorder {
         records: Vec<Record>,
         next: usize,
         written: u64,
+        /// The details' text: a ring of [`Ring::text_capacity`] bytes (or,
+        /// unbounded, every byte), taken at the first text detail.
         text: Vec<u8>,
         text_written: u64,
+        /// The oldest text position a growth kept: what lay before it had
+        /// been overwritten already, though the grown ring would reach it.
+        text_kept_from: u64,
+    }
+
+    /// Writes `bytes` into the ring `buf` at absolute position `at`.
+    fn write_wrapped(buf: &mut [u8], at: u64, bytes: &[u8]) {
+        let start = (at % buf.len() as u64) as usize;
+        let first = bytes.len().min(buf.len() - start);
+        buf[start..start + first].copy_from_slice(&bytes[..first]);
+        buf[..bytes.len() - first].copy_from_slice(&bytes[first..]);
+    }
+
+    /// The `len` bytes of the ring `buf` from absolute position `at`, as the
+    /// two slices they lie in.
+    fn read_wrapped(buf: &[u8], at: u64, len: usize) -> (&[u8], &[u8]) {
+        let start = (at % buf.len() as u64) as usize;
+        let first = len.min(buf.len() - start);
+        (&buf[start..start + first], &buf[..len - first])
     }
 
     impl Ring {
@@ -599,7 +633,14 @@ mod recorder {
                 written: 0,
                 text: Vec::new(),
                 text_written: 0,
+                text_kept_from: 0,
             }
+        }
+
+        /// Bytes of detail text it holds at most: [`TEXT_BYTES_PER_RECORD`]
+        /// for each record; `None` for every byte.
+        pub fn text_capacity(&self) -> Option<usize> {
+            self.capacity().map(|cap| cap * TEXT_BYTES_PER_RECORD)
         }
 
         /// The thread's name (or its id, unnamed).
@@ -657,8 +698,25 @@ mod recorder {
             let cap = (self.cap * 2).min(max);
             self.records.reserve_exact(cap - self.records.len());
             self.next = self.records.len();
+            self.grow_text(cap * TEXT_BYTES_PER_RECORD);
             self.cap = cap;
             Some((cap, clock::now().saturating_sub(before)))
+        }
+
+        /// The text ring at `bytes`, every byte still held kept at its
+        /// absolute position, so each record's text reads as before.
+        fn grow_text(&mut self, bytes: usize) {
+            if self.text.is_empty() {
+                return;
+            }
+            let held = self.text_written.min(self.text.len() as u64);
+            let from = self.text_written - held;
+            let mut text = vec![0; bytes];
+            let (a, b) = read_wrapped(&self.text, from, held as usize);
+            write_wrapped(&mut text, from, a);
+            write_wrapped(&mut text, from + a.len() as u64, b);
+            self.text = text;
+            self.text_kept_from = from;
         }
 
         fn push_text(&mut self, s: &str) -> Detail {
@@ -673,13 +731,11 @@ mod recorder {
                 };
             }
             if self.text.is_empty() {
-                self.text.resize(TEXT_CAPACITY, 0);
+                self.text.resize(self.cap * TEXT_BYTES_PER_RECORD, 0);
             }
-            let len = s.len().min(u16::MAX as usize).min(TEXT_CAPACITY);
+            let len = s.len().min(u16::MAX as usize).min(self.text.len());
             let at = self.text_written;
-            for (i, b) in s.as_bytes()[..len].iter().enumerate() {
-                self.text[((at + i as u64) % TEXT_CAPACITY as u64) as usize] = *b;
-            }
+            write_wrapped(&mut self.text, at, &s.as_bytes()[..len]);
             self.text_written += len as u64;
             Detail::Text {
                 at,
@@ -710,12 +766,13 @@ mod recorder {
                     Some(String::from_utf8_lossy(bytes).into_owned())
                 }
                 Detail::Text { at, len } => {
-                    if self.text_written - at > TEXT_CAPACITY as u64 {
+                    if self.text_written - at > self.text.len() as u64 || at < self.text_kept_from {
                         return None;
                     }
-                    let bytes: Vec<u8> = (0..len as u64)
-                        .map(|i| self.text[((at + i) % TEXT_CAPACITY as u64) as usize])
-                        .collect();
+                    let (a, b) = read_wrapped(&self.text, at, len as usize);
+                    let mut bytes = Vec::with_capacity(len as usize);
+                    bytes.extend_from_slice(a);
+                    bytes.extend_from_slice(b);
                     Some(String::from_utf8_lossy(&bytes).into_owned())
                 }
             }
@@ -1050,7 +1107,7 @@ mod recorder {
             let mut r = record_at(0);
             r.detail = ring.push_text("models/oak.glb");
             ring.push(r);
-            let filler = "x".repeat(TEXT_CAPACITY);
+            let filler = "x".repeat(DEFAULT_RING_CAPACITY * TEXT_BYTES_PER_RECORD);
             ring.push_text(&filler);
             for start in 1..100_000 {
                 ring.push(record_at(start));
@@ -1066,11 +1123,159 @@ mod recorder {
         fn text_overwritten_since_reads_as_none() {
             let mut ring = Ring::new("t".into(), 4);
             let first = ring.push_text("models/oak.glb");
-            let filler = "x".repeat(TEXT_CAPACITY);
+            let filler = "x".repeat(ring.text_capacity().unwrap());
             ring.push_text(&filler);
             let mut r = record_at(0);
             r.detail = first;
             assert_eq!(ring.detail(&r), None);
+        }
+
+        /// A scope with a text detail, as `enter_with` and its drop push it:
+        /// the text at the scope's start, the record at its close.
+        fn push_scope_with_text(ring: &mut Ring, start: u64, text: &str) {
+            let mut r = record_at(start);
+            r.detail = ring.push_text(text);
+            ring.push(r);
+        }
+
+        /// The `i`th detail of a fill: 32 bytes, the most each record is
+        /// sure to keep, and each one different.
+        fn script_named(i: u64) -> String {
+            format!("{:x<32}", format!("scripts/door_{i:08}.rhai"))
+        }
+
+        #[test]
+        fn a_full_ring_of_text_details_keeps_its_oldest_records_text() {
+            // #1259: the default ring filled, and half lapped, with scopes
+            // that each carry 32 bytes of text
+            let mut ring = Ring::new("t".into(), DEFAULT_RING_CAPACITY);
+            let pushed = DEFAULT_RING_CAPACITY as u64 * 3 / 2;
+            for i in 0..pushed {
+                push_scope_with_text(&mut ring, i, &script_named(i));
+            }
+            assert_eq!(ring.held(), DEFAULT_RING_CAPACITY);
+            assert_eq!(ring.text_capacity(), Some(2 << 20), "2 MiB of text");
+            let oldest = ring.records().next().unwrap();
+            assert_eq!(oldest.start, pushed - DEFAULT_RING_CAPACITY as u64);
+            assert_eq!(
+                ring.detail(oldest),
+                Some(script_named(oldest.start)),
+                "the oldest record held still names its script"
+            );
+            assert!(
+                ring.records()
+                    .all(|r| ring.detail(r) == Some(script_named(r.start))),
+                "and so does every record after it"
+            );
+        }
+
+        #[test]
+        fn a_ruins_frame_of_details_lasts_as_long_as_its_records() {
+            // #1096's scopes in a frame of the Overgrown Ruins: 105 scopes,
+            // 34 of them with text (a script's file, a post pass's label, a
+            // stage), about 700 bytes. 64 KB of text held ~100 frames of it
+            // against the records' ~600.
+            let texts: Vec<String> = (0..34)
+                .map(|i| match i % 3 {
+                    0 => format!("scripts/overgrown_ruins_{i:02}.rhai"),
+                    1 => format!("encode_part bloom {i:02}"),
+                    _ => format!("subsystems {i:02}"),
+                })
+                .collect();
+            let bytes: usize = texts.iter().map(String::len).sum();
+            assert!((600..800).contains(&bytes), "{bytes} bytes a frame");
+            let mut ring = Ring::new("main".into(), DEFAULT_RING_CAPACITY);
+            let frames = 2 * DEFAULT_RING_CAPACITY as u64 / 105;
+            let mut start = 0;
+            for _ in 0..frames {
+                for scope in 0..105 {
+                    match texts.get(scope) {
+                        Some(text) => push_scope_with_text(&mut ring, start, text),
+                        None => {
+                            ring.push(record_at(start));
+                        }
+                    }
+                    start += 1;
+                }
+            }
+            let texts_held = ring
+                .records()
+                .filter(|r| matches!(r.detail, Detail::Text { .. }));
+            let (held, lost) = texts_held.fold((0, 0), |(held, lost), r| {
+                (held + 1, lost + ring.detail(r).is_none() as usize)
+            });
+            assert!(held > 20_000, "{held} details held");
+            assert_eq!(lost, 0, "no record held has lost its text");
+        }
+
+        /// What a growth costs, with and without the text beside the
+        /// records (#1259): `cargo test -p flint-core --release --features
+        /// trace --lib ring_growth_cost -- --ignored --nocapture`.
+        #[test]
+        #[ignore]
+        fn ring_growth_cost() {
+            const FROM: usize = 327_680;
+            let full = |text: bool| {
+                let mut ring = Ring::new("t".into(), FROM);
+                for i in 0..FROM as u64 {
+                    if text {
+                        push_scope_with_text(&mut ring, i, &script_named(i));
+                    } else {
+                        ring.push(record_at(i));
+                    }
+                }
+                ring
+            };
+            for text in [false, true] {
+                let mut least = f64::MAX;
+                for _ in 0..5 {
+                    let mut ring = full(text);
+                    let start = std::time::Instant::now();
+                    ring.grow_if_short(u64::MAX, FROM * 2).unwrap();
+                    least = least.min(start.elapsed().as_secs_f64() * 1e3);
+                }
+                let what = if text {
+                    "records and text"
+                } else {
+                    "records alone"
+                };
+                println!("{FROM} to {} records, {what}: {least:.2} ms", FROM * 2);
+            }
+        }
+
+        #[test]
+        fn a_grown_ring_keeps_its_text_and_holds_twice_as_much() {
+            let mut ring = Ring::new("t".into(), 4);
+            // Five laps' worth of text in a ring of four: its text has
+            // wrapped, so the oldest text is not at the buffer's start
+            for i in 0..8 {
+                push_scope_with_text(&mut ring, i, &script_named(i));
+            }
+            let overwritten = Record {
+                detail: Detail::Text { at: 0, len: 32 },
+                ..record_at(0)
+            };
+            assert!(ring.grow_if_short(100, 8).is_some(), "doubled");
+            assert_eq!(ring.text_capacity(), Some(8 * TEXT_BYTES_PER_RECORD));
+            assert_eq!(ring.text.len(), 8 * TEXT_BYTES_PER_RECORD);
+            assert_eq!(
+                ring.detail(&overwritten),
+                None,
+                "text lost before the growth stays lost, though the grown ring reaches it"
+            );
+            for i in 8..12 {
+                push_scope_with_text(&mut ring, i, &script_named(i));
+            }
+            let starts: Vec<u64> = ring.records().map(|r| r.start).collect();
+            assert_eq!(starts, (4..12).collect::<Vec<_>>());
+            for r in ring.records() {
+                assert_eq!(
+                    ring.detail(r),
+                    Some(script_named(r.start)),
+                    "record {}",
+                    r.start
+                );
+            }
         }
     }
 }

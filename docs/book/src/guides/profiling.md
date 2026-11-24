@@ -586,7 +586,7 @@ A callback's time names the file, not the cause: a 12 ms `on_update` could be on
 
 **What it costs.** With timing off, a script runs as it did before, and every engine function pays one thread-local flag read. In a release build, a script function call measured 387 to 392 ns with this change and 391 to 398 ns before it, and an engine call 246 to 250 ns against 251 to 256. With timing on, an engine call costs about 45 ns more (two clock reads) and a call of the script's own function about 0.48 µs more. While the recorder records, an engine call costs about 67 ns more, summed into its scope's record. When each call was a scope of its own it was 86 to 92 ns. A script called while timing runs on a copy of its functions in which each `fn f(a, b)` is a small wrapper that opens the timer and then calls the original body, so each call costs a second Rhai call. A helper called 400 times a frame therefore adds about 0.2 ms to that frame while it is timed, and the wrapper's share shows inside the callback's time, not the helper's. The wrapper also takes a call level, so a timed call runs with twice Rhai's call-level limit, and a deep recursion fails at the same depth either way (`cargo test -p flint-script --release --lib fn_call_cost -- --ignored --nocapture` measures it).
 
-**What it costs.** Each thread's ring is sized for its seconds at 32 768 scopes a second: 163 840 records, 6.6 MB a thread for the default 5 s, taken at the thread's first scope. A game that records faster grows its ring: each time a lap of the ring spans less than 1.25 times the look-back, it doubles, up to 8 times its first size (1 310 720 records, 52 MB a thread for 5 s). The growth copies the ring on the thread that recorded (6.2 ms for 327 680 to 655 360 records), which the frame notes name as `trace ring` and the hitch detector counts as the tools' cost, not the game's. The header's `ring_grown_to` says how large a ring got. Float, with 16 scripts making about 375 records a frame, holds its 5 s: at 60 fps with vsync the ring never grew (112 266 scopes, 15 MB), and uncapped at 295 fps it grew to the most and held 525 366 scopes. Before engine calls were summed it made about 800 records a frame, and a 5 s trace at 240 fps held 0.85 s of scopes. Recording, a scope costs about 40 ns in a release build ([ADR 0128](https://github.com/chrischaps/Flint/blob/main/docs/adr/0128-one-scope-macro-two-sinks.md)), and the player's own tracks about 0.65 µs a frame. The tavern's 38 scopes a frame come to about 2 µs. A run with and without `--trace` on that scene couldn't tell the two apart: identical runs on a busy machine differed by more (3.6 to 4.5 ms a frame). Saving copies the window on the frame thread, about 1.8 ms for 24 000 scopes in release, then writes the JSON on a thread of its own. The GPU timer `--trace` turns on may cost more than the recorder: `--perf`, which turns on the same timing, read 0.3 to 0.6 ms a frame over plain runs on the tavern at 300 fps, inside that same noise. A default release build has none of it.
+**What it costs.** Each thread's ring is sized for its seconds at 32 768 scopes a second: 163 840 records, 6.6 MB a thread for the default 5 s, taken at the thread's first scope. Beside the records the ring keeps 32 bytes of detail text a record (a script's file, a pass's label), 5.2 MB more, taken at the thread's first scope with text, so a record's text lasts as long as the record does: the oldest frame in a trace still names its scripts. A game that records faster grows its ring: each time a lap of the ring spans less than 1.25 times the look-back, it doubles, up to 8 times its first size (1 310 720 records, 52 MB a thread for 5 s, and 42 MB of text). The growth copies the ring on the thread that recorded (6.2 ms for 327 680 to 655 360 records; the text adds about 1.8 ms, measured in a release test), which the frame notes name as `trace ring` and the hitch detector counts as the tools' cost, not the game's. The header's `ring_grown_to` says how large a ring got. Float, with 16 scripts making about 375 records a frame, holds its 5 s: at 60 fps with vsync the ring never grew (112 266 scopes, 15 MB), and uncapped at 295 fps it grew to the most and held 525 366 scopes. Before engine calls were summed it made about 800 records a frame, and a 5 s trace at 240 fps held 0.85 s of scopes. Recording, a scope costs about 40 ns in a release build ([ADR 0128](https://github.com/chrischaps/Flint/blob/main/docs/adr/0128-one-scope-macro-two-sinks.md)), and the player's own tracks about 0.65 µs a frame. The tavern's 38 scopes a frame come to about 2 µs. A run with and without `--trace` on that scene couldn't tell the two apart: identical runs on a busy machine differed by more (3.6 to 4.5 ms a frame). Saving copies the window on the frame thread, about 1.8 ms for 24 000 scopes in release, then writes the JSON on a thread of its own. The GPU timer `--trace` turns on may cost more than the recorder: `--perf`, which turns on the same timing, read 0.3 to 0.6 ms a frame over plain runs on the tavern at 300 fps, inside that same noise. A default release build has none of it.
 
 **What a trace says about a game.** A trace holds names, never contents: scope names, script paths, asset and scene names, the adapter. That is still a description of a game. Before attaching one to a public issue, check it doesn't name what isn't public yet. `traces/` is in `.gitignore`.
 
@@ -836,7 +836,7 @@ That is a script that stalls 150 ms at t = 1, 3, 4 and 5 s, on a 240 Hz display 
 ```text
 [perf] hitches: 3 (35.9/min over 5.0 s after t=2 s; 3 player, 0 elsewhere), worst 166.4 ms at t=3.01 s (script stall.rhai:on_update 150.3 ms); causes: 3 script stall.rhai:on_update
 [perf] startup hitches (before t=2 s, not gated): 1, worst 154.4 ms at t=1.01 s (script stall.rhai:on_update 150.2 ms); causes: 1 script stall.rhai:on_update
-[perf] hitch log: hitches.jsonl (4 lines)
+[perf] hitch log: hitches.jsonl (4 lines); sampler marks: ETW provider Flint.Player (89d78a2a-cb1c-507a-4e4b-896621b7b194)
 ```
 
 Hitches in the first two seconds of game time (loading's last uploads, the first pipeline compiles) are counted apart as **startup**. They're the same two seconds the `[perf]` averages leave out. The tools' own hitches get a line of their own when there were any, start or not:
@@ -989,18 +989,52 @@ samply import perf.data
 
 ### Lining a sample up with a hitch
 
-The hitch log's `wall_time` counts from when the player began recording frames, as it starts up, before its window opens and the scene loads. A sampler's timeline counts from when the sampler began recording. The offset between the two changes from run to run. In the run below it was 5.06 s, which took in the collector's own start, the launch and the load. Once you place one hitch, the offset holds for the whole run:
+The hitch log's `wall_time` counts from when the player began recording frames. A sampler's timeline counts from when the sampler began. So `--hitch-log` marks each hitch on the sampler's timeline too, where the sampler records it and on its clock ([#1250](https://github.com/chrischaps/Flint/issues/1250)). You find a hitch there by its name, the way the log describes it:
 
-1. Run with `--hitch-log` under the sampler, as above.
-2. Find a hitch whose shape the sampler shows. A `player` hitch is a stretch of solid CPU on the main thread, as long as its `ms`. In [`flint-examples/hitch_metronome.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/hitch_metronome.scene.toml), `stall.rhai` holds the frame for 100 ms of solid Rhai every 3 s of game time.
-3. Match the gaps. The log's three script hitches came at `wall_time` 6.122, 9.715 and 13.188 s, 3.59 and 3.47 s apart. The sampler's 100 ms stretches inside `flint_script` came at 11.18, 14.78 and 18.25 s, the same gaps apart. The offset is 11.18 − 6.122 = 5.06 s.
-4. Select from `wall_time` plus the offset, for `ms`: that is the frame. Here that's 11.18 to 11.28 s, the range in the screenshot.
+```text
+hitch 112.7 ms player: script stall.rhai:on_update 100.0 ms (frame 230, wall_time 5.934)
+```
+
+`frame` and `wall_time` are the log line's own fields, so a mark and its line find each other. The exit report's last hitch line says where the marks went:
+
+```text
+[perf] hitch log: /home/runner/work/Flint/Flint/out/hitches.jsonl (3 lines); sampler marks: samply marker file /home/runner/work/Flint/Flint/out/marker-15935.txt
+```
+
+Nothing is marked without `--hitch-log`. With it and no sampler, the player pays once at the start (opening a file, or registering an ETW provider: 92 µs in a debug build) and 5 ns for each hitch ETW drops unheard.
+
+**On Linux**, samply reads the marks from a marker file. The player writes `marker-<pid>.txt` beside the hitch log, one line a hitch, `<start> <end> <name>` in `CLOCK_MONOTONIC` nanoseconds (the clock samply's timeline counts on), and maps the file into memory once so samply sees it. Run the player under samply as above. The marks are on the main thread as spans, each as long as its frame: the **Marker Chart** shows them in place, and the **Marker Table** lists them with their times. Filter either on `hitch`. Selecting a mark selects its frame's samples.
+
+![The Firefox Profiler's marker table for a samply recording of flint-player on Linux, filtered on "hitch": three markers at 5.951, 8.958 and 11.949 s, each about 113 ms long, named "hitch 112.7 ms player: script stall.rhai:on_update 100.0 ms (frame 230, wall_time 5.934)" and the like. Above them, the main thread's CPU track peaks at the same three moments](../images/samply-hitch-marks.png)
+
+*`hitch_metronome.scene.toml` under `samply record` on a Linux CI runner, the three hitch marks in the marker table. The main thread's CPU track above peaks at each.*
+
+![The Firefox Profiler zoomed to 238 ms around one hitch: in the main thread's CPU track, a 100 ms block of solid CPU; in the marker chart below it, a mark named "hitch 117.5 ms player: script stall.rhai:on_update 100.1 ms (frame 165, wall_time 7.126)" starting at the block's left edge](../images/samply-hitch-mark-zoomed.png)
+
+*The same scene on a later run, zoomed to one hitch: the mark starts where the stall's CPU does. Its frame runs on past the stall by the rest of its 117 ms.*
+
+On the first run each mark held its stall: the 100 ms of `stall.rhai`'s samples began 0.27, 0.87 and 1.24 ms after their marks began, and ended 12 to 14 ms before them, the rest of each 113 ms frame. The file's first line marks `wall_time` 0 (`flint wall_time 0`), so any moment of the log, not only a hitch, is that mark plus its `wall_time`. samply reads the file when it writes the profile, from the path the player mapped: keep it until then. `samply record --unlink-aux-files` deletes it afterwards; otherwise it stays beside the log.
+
+**On Windows**, the marks are ETW events from the provider **`Flint.Player`**, GUID `89d78a2a-cb1c-507a-4e4b-896621b7b194` (the name's standard hash, so tools that take a provider's name find it too). A trace session that enables the provider records them on the kernel's clock, beside its samples. `samply record` enables only its own providers, so record with xperf, from the same Windows Performance Toolkit samply records with, as Administrator:
+
+```powershell
+xperf -on PROC_THREAD+LOADER+PROFILE -stackwalk Profile -f kernel.etl -start flint -on 89d78a2a-cb1c-507a-4e4b-896621b7b194 -f user.etl
+target\profiling\flint-player.exe flint-examples\hitch_metronome.scene.toml --exit-after 12 --hitch-log hitches.jsonl
+xperf -stop flint -stop -d trace.etl
+samply import --unknown-event-markers trace.etl
+```
+
+`xperf -stop ... -d` merges the two sessions into `trace.etl`. `samply import --unknown-event-markers` shows each event on the main thread as an instant marker named `Hitch/Info`, its fields as text: `name`, `frame`, `wall_time_us`, `duration_us`, `now_us`, `class` and `cause`. WPA opens the same `trace.etl`, with the events under **Generic Events** (provider `Flint.Player`) beside **CPU Usage (Sampled)**.
+
+An ETW event is stamped when it's written, and the player writes it when it finds the hitch, on the next frame. So the event's own time is the hitch's end plus a moment, and its fields place the hitch exactly: `now_us` is the `wall_time` it was written at, so the hitch began `now_us − wall_time_us` microseconds before the event and lasted `duration_us`. A `WallTimeZero` event at the start carries `now_us` too, for the whole run. On a Windows CI runner, recorded as above and imported with samply, a script hitch's stall samples began 1.05 ms after the start its event gives (0.54 ms on a second run), each event was written 0.02 to 0.09 ms after its hitch ended, and every hitch agreed with `WallTimeZero` to within 0.23 ms.
+
+Visual Studio's collector ([above](#on-windows)) records the kernel's samples only. No configuration we tried had it record a provider beside them, so a trace from it carries no marks. Line one of its traces up with a hitch by its shape: a `player` hitch is a stretch of solid CPU on the main thread, as long as its `ms`, and the log's gaps between hitches are the gaps between those stretches. Once one is placed, the offset holds for the whole run. macOS and the web mark nothing yet.
 
 ![The Firefox Profiler's flame graph of a 100 ms script hitch: under PlayerApp::tick and GameCore::run_scripts, ScriptEngine::call_updates runs Rhai's evaluator down to time_functions::elapsed](../images/samply-script-stall-flame-graph.png)
 
 *The 100 ms script hitch in the profiling build, sampled by Visual Studio's collector and opened with `samply import`. Under `PlayerApp::tick` and `GameCore::run_scripts`, `ScriptEngine::call_updates` runs the script through Rhai's evaluator down to `time_functions::elapsed`: `stall.rhai`'s busy wait, reading the clock. A flame graph's width is time spent, not order.*
 
-**An `elsewhere` hitch shows almost nothing.** A sampler records running threads, and a frame lost to `acquire` is a thread waiting. In the same run, a 515 ms acquire hitch held 5 samples. The question there is what the thread waited on, and that takes a context-switch trace: Superluminal records one by default, and WPA's **CPU Usage (Precise)** reads one from a WPR trace. The hitch log's `gpu_ms` already says whether the wait was for the GPU.
+**An `elsewhere` hitch shows almost nothing.** A sampler records running threads, and a frame lost to `acquire` is a thread waiting. In the run that raised #1250, a 515 ms acquire hitch held 5 samples, so finding it by its samples' shape was impossible. Its mark finds it now, and the question it leaves is what the thread waited on. That takes a context-switch trace: Superluminal records one by default, and WPA's **CPU Usage (Precise)** reads one from a WPR trace. The hitch log's `gpu_ms` already says whether the wait was for the GPU.
 
 ## Further Reading
 

@@ -36,8 +36,13 @@ pub(crate) const DEBUG_KEYS: flint_runtime::DebugKeyGroup = flint_runtime::Debug
 
 /// The subsystem for a scene with a `[field]` table: what it declares goes
 /// into the script system for the `field` module, and what's wrong with it
-/// is said once, here, with the rest still used.
+/// is said once, here, with the rest still used. A capture (`flint render
+/// --scripts`) builds it the same way, so a script samples the same values
+/// there (#1014, #1252), and only when its scripts run.
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+    if ctx.capture.as_ref().is_some_and(|c| !c.scripts) {
+        return None;
+    }
     let fields = read(ctx.tables, ctx.scene_path)?;
     ctx.script.set_module_state(ScriptFields { fields });
     Some(Box::new(FieldSubsystem))
@@ -51,21 +56,6 @@ pub(crate) fn read(tables: &toml::Table, scene: &str) -> Option<SceneFields> {
         tracing::warn!(target: "load", "{scene}: {issue}");
     }
     Some(fields)
-}
-
-/// A capture's fields (#1014): `flint render --scripts` reads the scene's
-/// `[field]` table from its file as the player does, so a script samples the
-/// same values there. The subsystem is the player's, for the capture's list,
-/// which is what enables the module.
-pub(crate) fn for_capture(
-    script: &mut flint_script::ScriptSystem,
-    scene_path: &str,
-) -> Option<Box<dyn Subsystem>> {
-    let text = flint_core::vfs::read_to_string(scene_path).ok()?;
-    let tables = toml::from_str::<toml::Table>(&text).ok()?;
-    let fields = read(&tables, scene_path)?;
-    script.set_module_state(ScriptFields { fields });
-    Some(Box::new(FieldSubsystem))
 }
 
 /// The scene's fields, as the `field` module's functions see them.

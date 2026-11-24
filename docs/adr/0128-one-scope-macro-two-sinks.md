@@ -86,7 +86,7 @@ One `Record` per finished scope, 40 bytes:
 | `dur` | `u64` | ticks |
 | `frame` | `u32` | `finish_frame` count when the scope closed |
 | `depth` | `u16` | open scopes around it on its thread (0 = outermost) |
-| detail | none, `u64` count, or text | text is copied into a 64 KB per-thread text ring and read back only if not yet overwritten |
+| detail | none, `u64` count, or text | text is copied into a per-thread text ring and read back only if not yet overwritten (64 KB at first; 32 bytes a record since #1259, so the text lasts as long as its records) |
 
 The thread is the ring's, named from `std::thread::current()`. Records are
 written when a scope closes, so a parent follows its children and a scope

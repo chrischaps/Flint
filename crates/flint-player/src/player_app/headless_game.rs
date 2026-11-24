@@ -4,8 +4,9 @@
 //! A [`HeadlessGame`] is a [`GameCore`] and a capture's part in its frame.
 //! A step is [`game_core::step`], the player's own frame order, run with a
 //! capture as its host ([`CaptureFrame`]): the same stages and subsystems
-//! (living props and the wooze field, an expression timeline), the same
-//! scripts, and their commands through the same dispatcher. What differs is
+//! (every scene subsystem the player's files build, from the same generated
+//! list, and an expression timeline), the same scripts, and their commands
+//! through the same dispatcher. What differs is
 //! the host's: the clock is the caller's fixed step, there is no window, no
 //! sound and no physics, and animation (`--anim-time`) and particles step on
 //! fixed steps of their own.
@@ -21,7 +22,8 @@
 //! or on that list. Of those, sound and the window's pointer and touch have
 //! nothing to show and are dropped quietly; the rest is named once in
 //! [`HeadlessGame::notes`], so a review of the capture knows what it isn't
-//! showing.
+//! showing. So is a scene subsystem that is the window's alone
+//! ([`Subsystem::presentation_only`](super::subsystem::Subsystem::presentation_only)).
 
 use std::collections::BTreeSet;
 
@@ -41,10 +43,9 @@ use flint_wooze::WoozeField;
 use super::expression_feed::{ExpressionFeed, ExpressionSubsystem, ExpressionTimeline};
 use super::game_core::{self, FrameHost, GameCore, Lent};
 use super::headless_animation::HeadlessAnimation;
-#[cfg(feature = "living")]
-use super::living_subsystem::LivingSubsystem;
 use super::style_commands::SceneStyles;
-use super::subsystem::FrameCtx;
+use super::subsystem::{FrameCtx, SceneCtx};
+use super::{LaunchOptions, SceneSettings};
 
 /// The seed of `random()` in a headless run. One fixed value, so that every
 /// render of a scene draws the same numbers.
@@ -123,6 +124,22 @@ const PARTICLE_COMMANDS: &[&str] = &[
     "set_effect_param",
 ];
 
+/// What a capture asks of its scene's subsystems (#1252), handed to each
+/// file's `for_scene` as [`SceneCtx::capture`]: a builder that builds
+/// otherwise in a capture reads it, and one that doesn't never looks.
+#[derive(Debug, Default)]
+pub struct CaptureStart {
+    /// The scene's wooze field, with any sweep's knobs over it: the living
+    /// subsystem takes it.
+    #[cfg(feature = "living")]
+    pub wooze: Option<WoozeField>,
+    /// A capture of a moment, which draws shallow wooze.
+    pub moment: bool,
+    /// Whether the scene's scripts run: the music and the declared fields
+    /// are only the scripts' to read, and are built only for them.
+    pub scripts: bool,
+}
+
 /// What the scripts have asked of the picture so far.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ScriptLook {
@@ -136,7 +153,15 @@ pub struct ScriptLook {
 
 /// One scene's game, stepped on a clock someone else keeps.
 pub struct HeadlessGame {
-    core: GameCore,
+    /// The subsystems' own files reach it for what a capture reads of them
+    /// (the grove's blends, the wooze field's clock).
+    pub(super) core: GameCore,
+    /// What the scene's file says, as the subsystems' builders read it: its
+    /// tables (the rest is the player's window and stays the default).
+    scene: SceneSettings,
+    /// The launch a subsystem may take its share of: a capture's is the
+    /// default.
+    launch: LaunchOptions,
     /// Nobody presses anything in a capture.
     input: InputState,
     screen: (f32, f32),
@@ -185,6 +210,8 @@ impl HeadlessGame {
         core.script.make_deterministic(SCRIPT_SEED);
         Self {
             core,
+            scene: SceneSettings::default(),
+            launch: LaunchOptions::default(),
             input: InputState::new(),
             screen: (1.0, 1.0),
             authored: PostProcessConfig::default(),
@@ -287,34 +314,60 @@ impl HeadlessGame {
         &mut self.core.living_props
     }
 
-    /// Start the living subsystem, the player's, if the scene has living
-    /// props or a wooze `field` (its `[wooze]` with any sweep's knobs over
-    /// it): it runs the props' clock and the field's, the boil's beats,
-    /// woozy grass, shallow wooze in a capture of a `moment`, and the
-    /// scripts' tunes. As the player's first frame, the props read the field
-    /// without moving.
-    #[cfg(feature = "living")]
-    pub fn start_living(&mut self, field: Option<WoozeField>, moment: bool) {
+    /// Build the scene's subsystems as the player does at its entry (#1252):
+    /// every file in `player_app/subsystems/`, from the same generated list,
+    /// each only if the scene uses it, with the modules they own enabled.
+    /// `tables` are the scene file's top-level tables as written
+    /// (`SceneFile::scene_tables`); `start` what the capture asks of them.
+    /// A subsystem that is the window's alone is left out and named once in
+    /// [`notes`](Self::notes). Call it once, before the models load (a grove
+    /// is posed by its first frame) and before
+    /// [`start_scripts`](Self::start_scripts), whose `on_init` may call the
+    /// modules.
+    pub fn start_subsystems(&mut self, tables: toml::Table, mut start: CaptureStart) {
+        self.scene.tables = tables;
         let core = &mut self.core;
-        if core.living_props.is_empty() && field.is_none() {
-            return;
+        let built = super::subsystem::build_for_scene(&mut SceneCtx {
+            world: &mut core.world,
+            scene_path: &core.scene_path,
+            tables: &self.scene.tables,
+            scene: &self.scene,
+            launch: &mut self.launch,
+            project: &core.project,
+            styles: &core.styles,
+            script: &mut core.script,
+            #[cfg(feature = "procgen")]
+            resolver: &mut core.procgen_resolver,
+            #[cfg(feature = "living")]
+            living: &mut core.living_props,
+            renderer: None,
+            audio: None,
+            pads: None,
+            capture: Some(&mut start),
+        });
+        let mut left_out = Vec::new();
+        for subsystem in built {
+            match subsystem.presentation_only() {
+                Some(why) => left_out.push(format!(
+                    "{}: a headless capture doesn't run this subsystem ({why})",
+                    subsystem.name()
+                )),
+                None => core.subsystems.push(subsystem),
+            }
         }
-        (core.living_props).step_now(
-            &core.procgen_resolver,
-            0.0,
-            field.as_ref().map(|field| (field, 0.0)),
-        );
-        let mut living = LivingSubsystem::for_capture(field, moment);
-        // For on_init's reads of the field (#505), as the player's scene start
-        living.publish_reading(&mut core.script, 0.0);
-        core.subsystems.push(Box::new(living));
+        // The modules the capture's subsystems own (#698), as the player
+        // enables them before its scripts load
         core.enable_script_modules();
+        for line in left_out {
+            self.note(&line);
+        }
     }
 
     /// Load the scene's scripts, found in its project as the player finds
     /// them, and run their `on_init`, as the player does once its models
-    /// are loaded, with the scene's music on the game clock for their
-    /// `music_beat()`; and feed `timeline` to their `expression()`. With neither
+    /// are loaded, with the subsystems [`start_subsystems`](Self::start_subsystems)
+    /// built (the scene's music on the game clock for their `music_beat()`);
+    /// and feed `timeline` to their `expression()`. With neither
     /// (no `--scripts`), the scene's scripts stay unloaded. `screen` is the
     /// capture's size, for `screen_width()` and the like; `post` the
     /// post-processing it draws with, for `on_init`'s style reads (each
@@ -346,21 +399,8 @@ impl HeadlessGame {
         if !scripts {
             return;
         }
-        // The scene's music, for the scripts' beat: on the game clock, with
-        // no sound (#745)
-        #[cfg(feature = "music")]
-        if let Some(music) = crate::music::for_capture(&core.world, &core.project, &core.scene_path)
-        {
-            core.subsystems.push(music);
-        }
-        // The scene's declared fields (#1014), for the scripts' field_sample
-        if let Some(fields) =
-            super::subsystem::field::for_capture(&mut core.script, &core.scene_path)
-        {
-            core.subsystems.push(fields);
-        }
-        // The modules the capture's subsystems own (#698), as the player
-        // enables them before its scripts load
+        // The modules the capture's subsystems own (#698), the timeline's
+        // among them, as the player enables them before its scripts load
         core.enable_script_modules();
         // The looks the scene can see, for list_looks() (#497), as the
         // player lists them at the scene's entry
@@ -444,18 +484,6 @@ impl HeadlessGame {
         game_core::dispatch_commands(&mut frame, commands);
     }
 
-    #[cfg(feature = "living")]
-    fn living(&self) -> Option<&LivingSubsystem> {
-        self.core.subsystems.find::<LivingSubsystem>()
-    }
-
-    /// The wooze field and the time its clock has reached, with one.
-    #[cfg(feature = "living")]
-    pub fn wooze(&self) -> Option<(&WoozeField, f64)> {
-        let living = self.living()?;
-        Some((living.wooze.as_ref()?, living.wooze_time))
-    }
-
     /// The game's share of a capture's renderer inputs (#739), as the
     /// player's subsystems give theirs: the shading boil's drawing where
     /// the field's clock stands for a viewer at `camera` (#214), shallow
@@ -473,27 +501,6 @@ impl HeadlessGame {
     /// draws at (`--pixels-per-point`; 1 by default).
     pub fn set_pixels_per_point(&mut self, pixels_per_point: f32) {
         self.pixels_per_point = pixels_per_point;
-    }
-
-    /// Blend every prop where its clock stands and write what moved, as a
-    /// frame of the player does.
-    #[cfg(feature = "living")]
-    pub fn upload_living(
-        &mut self,
-        renderer: &mut SceneRenderer,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) {
-        let core = &mut self.core;
-        if let Some(living) = core.subsystems.find_mut::<LivingSubsystem>() {
-            super::living_props::upload_blends(
-                &mut core.living_props,
-                &mut living.blend,
-                renderer,
-                device,
-                queue,
-            );
-        }
     }
 
     /// The looks the scripts asked for since the last call (a `name` of
