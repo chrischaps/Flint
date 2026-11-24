@@ -306,9 +306,34 @@ fn a_hitch_is_captured_on_the_next_frame_with_its_window_and_cause() {
     let mut app = started(&root, gpu);
     app.capture_frames(Vec::new(), 1, Some(root.join("out")));
     assert!(app.core.script.timing(), "hitches name their script");
-    // A busy machine's own hiccups (several agents build on this one) don't
-    // count: the stall is 150 ms
+    // Most of a busy machine's own hiccups (several agents build on this
+    // one) don't count: the stall is 150 ms
     app.stats.hitches.thresholds.floor_ms = 60.0;
+    // But a loaded machine still makes hitches of 60 ms and more, and
+    // `--capture-on-hitch 1` takes the first past the start, which was one
+    // of those as often as the script's (#1232). One is staged at 2.21 s,
+    // so every run meets it: a 200 ms block at sync, outside the script.
+    // The capture is handed its one hitch on the tick that judges the
+    // stall's frame and no other. The detector judges a frame on the tick
+    // after it (the clock's tick measures the frame just closed), so that
+    // is the frame after the one whose tick crosses 2.51 s. Passing over
+    // the start is
+    // `hitch_log_tests::a_hitch_capture_passes_over_the_start_unless_asked_to_take_it`.
+    app.core
+        .subsystems
+        .push(Box::new(super::hitch_log_tests::Hiccup(2.21)));
+    app.frame_captures.on_hitch = 0;
+    while app.core.clock.total_time < 2.51 {
+        frame(&mut app, gpu);
+    }
+    app.frame_captures.on_hitch = 1;
+    frame(&mut app, gpu);
+    assert_eq!(
+        app.frame_captures.on_hitch,
+        0,
+        "the stall's frame was judged a hitch and asked for the capture: {:?}",
+        app.stats.hitches.last()
+    );
     while app.core.clock.total_time < 3.1 {
         frame(&mut app, gpu);
     }
@@ -340,8 +365,35 @@ fn a_hitch_is_captured_on_the_next_frame_with_its_window_and_cause() {
     assert!(record.hitch);
     assert!(record.phases_ms["scripts"] >= 140.0, "{record:?}");
     assert!(cpu.window.first().unwrap().index < hitch.frame);
-    // Just the one hitch: the capture's own frames weren't counted
-    assert_eq!(app.stats.hitches.session().hitches, 1);
+    // The capture's own frames weren't counted: the frame it drew is marked,
+    // and no hitch the detector found is on a marked frame. Not "just the
+    // one hitch": the staged one is counted, and a loaded machine makes
+    // others of its own (#1232)
+    let history = &app.stats.perf;
+    assert!(
+        history.frame(captured).is_some_and(|f| f.capturing),
+        "the captured frame is marked"
+    );
+    let found = app.stats.hitches.hitches();
+    assert!(
+        found.iter().any(|h| h.index == hitch.frame),
+        "the stall is counted"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|h| (2.21..2.21 + STEP).contains(&h.game_time)),
+        "the staged hitch is counted and wasn't captured: {found:?}"
+    );
+    for h in found {
+        let record = history
+            .frame(h.index)
+            .expect("a run this short is all kept");
+        assert!(
+            !record.capturing,
+            "a hitch on a frame the capture was in: {h:?}"
+        );
+    }
     assert_eq!(
         app.frame_captures.on_hitch, 0,
         "--capture-on-hitch 1 is spent"
