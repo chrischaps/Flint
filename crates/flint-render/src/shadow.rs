@@ -187,7 +187,7 @@ impl ShadowPass {
     pub fn new(device: &wgpu::Device, resolution: u32) -> Self {
         let shadow_shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shadow Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shadow_shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SHADOW.into()),
         });
 
         // Bind group layout for shadow draw uniforms

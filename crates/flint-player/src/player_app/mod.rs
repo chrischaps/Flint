@@ -108,6 +108,7 @@ pub mod playtest_warnings;
 pub mod procgen_assets;
 mod quality;
 pub mod render_scale;
+mod sampler_marks;
 mod scene_entry;
 #[cfg(test)]
 mod scene_entry_tests;

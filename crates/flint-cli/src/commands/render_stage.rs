@@ -255,10 +255,20 @@ impl Stage {
             column_knobs.as_ref(),
         )
         .map_err(|reason| anyhow!("--sweep: {reason}"))?;
-        // The player's living subsystem runs both (as its first frame, the
-        // props read the field without moving)
+        // The scene's subsystems, every one the player's files build (#1252):
+        // the living subsystem runs the props and the field (as its first
+        // frame, the props read it without moving), the music and the
+        // declared fields come for the scripts
         let field_for_boil = field.clone();
-        game.start_living(field, moment);
+        let scripted = args.clock.scripts || timeline.is_some();
+        game.start_subsystems(
+            scene_file.scene_tables(),
+            flint_player::CaptureStart {
+                wooze: field,
+                moment,
+                scripts: scripted,
+            },
+        );
 
         let models = model_loader::load_models_from_world(
             game.world_mut(),
@@ -340,7 +350,6 @@ impl Stage {
         game.set_pixels_per_point(pixels_per_point);
 
         // Scripts (#8), as the player starts them once its models are loaded.
-        let scripted = args.clock.scripts || timeline.is_some();
         game.set_scene_look(cell_look.as_deref());
         // Their HUD's painter first (#731), so measure_text and the UI
         // documents lay text out as it draws

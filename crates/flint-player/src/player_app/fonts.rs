@@ -277,9 +277,10 @@ impl ProjectFonts {
                 continue;
             }
             match vfs::read(&face.path) {
-                Ok(bytes) => {
+                Ok(bytes) if parses(&bytes, &face.path) => {
                     data.insert(stem, bytes);
                 }
+                Ok(_) => {}
                 Err(e) => tracing::warn!("fonts: failed to read {}: {e}", face.path.display()),
             }
         }
@@ -305,10 +306,11 @@ impl ProjectFonts {
             }
             let path = PathBuf::from(vfs::normalize(&folder.join(&key)));
             match vfs::read(&path) {
-                Ok(bytes) => {
+                Ok(bytes) if parses(&bytes, &path) => {
                     data.insert(key, bytes);
                     linked.push(path);
                 }
+                Ok(_) => {}
                 Err(e) => tracing::warn!(
                     "fonts.toml: alias `{}`: failed to read {}: {e}",
                     alias.name,
@@ -318,6 +320,43 @@ impl ProjectFonts {
         }
         (data, aliases, parse_egui_defaults(&text), linked)
     }
+}
+
+/// Whether egui can open `bytes` as a font face; a warning naming `path`
+/// when it can't. egui opens face 0 of every file it is given with skrifa when
+/// the fonts are installed, and panics on the first it can't (#1262: an empty
+/// `fonts/Mono.ttf` took `flint render --scripts` down). So a face is opened
+/// here the same way first, and one that fails is left out: its family is
+/// unknown, and text in it draws in egui's default face (`resolve_font_id`).
+/// A farther face of the same stem (`Body.otf` behind a broken `Body.ttf`)
+/// is read in its place, as for a file that can't be read at all.
+fn parses(bytes: &[u8], path: &Path) -> bool {
+    match face_error(bytes) {
+        None => true,
+        Some(e) => {
+            tracing::warn!(
+                "fonts: skipped {}: not a font face egui can read ({e}); its text draws in egui's default face",
+                flint_core::project::shown(path)
+            );
+            false
+        }
+    }
+}
+
+/// Why `bytes` is no font face, or `None`. skrifa opens a file by its table
+/// directory alone and reads each table when asked, so a file cut short
+/// opens and draws nothing; the three tables every face has (`head`, `maxp`,
+/// `cmap`) are read too, so a truncated file is named here as well.
+fn face_error(bytes: &[u8]) -> Option<skrifa::raw::ReadError> {
+    use skrifa::raw::TableProvider;
+    let font = match skrifa::FontRef::from_index(bytes, 0) {
+        Ok(font) => font,
+        Err(e) => return Some(e),
+    };
+    font.head()
+        .err()
+        .or_else(|| font.maxp().err())
+        .or_else(|| font.cmap().err())
 }
 
 /// egui's definitions with a project's fonts added: each file under its
@@ -534,6 +573,108 @@ pub fn text_layout_job(
 mod tests {
     use super::*;
 
+    /// A face egui reads (its own first font) with `tag` after its last
+    /// table, so a test can tell which file was read: skrifa reads only what
+    /// the table directory points at.
+    fn face(tag: &str) -> Vec<u8> {
+        let defaults = egui::FontDefinitions::default();
+        let first = defaults.font_data.values().next().expect("egui's fonts");
+        let mut bytes = first.font.to_vec();
+        bytes.extend_from_slice(tag.as_bytes());
+        bytes
+    }
+
+    /// The check refuses no real face: every font egui ships passes it, and
+    /// an empty file, text and a face cut after its first 64 or 4096 bytes
+    /// each fail with the reader's reason.
+    #[test]
+    fn egui_s_own_faces_pass_and_broken_ones_say_why() {
+        for (name, data) in egui::FontDefinitions::default().font_data {
+            assert!(face_error(&data.font).is_none(), "{name}");
+        }
+        for len in [0, 64, 4096] {
+            let mut cut = face("");
+            cut.truncate(len);
+            let why = face_error(&cut).expect("a face cut short");
+            assert!(!why.to_string().is_empty(), "{len}");
+        }
+        assert!(face_error(b"not a font").is_some());
+    }
+
+    /// #1262: a face egui can't parse (an empty file, a truncated one, text
+    /// with a font's name) is left out with a warning, where egui panicked
+    /// on it when the fonts were installed. Its family is unknown, so its
+    /// text falls back to egui's default face; a farther face of its stem is
+    /// read in its place; an alias's path to one is dropped too; and the
+    /// definitions install and lay text out.
+    #[test]
+    fn a_face_egui_cannot_parse_is_skipped_and_the_rest_install() {
+        use flint_core::vfs::MemorySource;
+        let mut files = MemorySource::new();
+        files.insert("game/flint.toml", "");
+        files.insert("game/fonts/Body.ttf", face("body"));
+        files.insert("game/fonts/Mono.ttf", "");
+        files.insert("game/fonts/Display.otf", face("project display"));
+        let mut truncated = face("cut");
+        truncated.truncate(64);
+        files.insert("game/levels/fonts/Display.ttf", truncated);
+        files.insert("game/fonts/ofl/Broken.ttf", "not a font");
+        files.insert(
+            "game/fonts/fonts.toml",
+            "[[font]]\nname = \"terminal\"\nfile = \"ofl/Broken.ttf\"\n\n[egui]\nmonospace = \"Mono\"\n",
+        );
+        files.insert("game/levels/a.scene.toml", "");
+        vfs::scoped(Arc::new(files), || {
+            let fonts = ProjectFonts::for_scene("game/levels/a.scene.toml");
+            assert_eq!(
+                fonts.faces.len(),
+                4,
+                "the empty and truncated files are found"
+            );
+            let (data, _, _, linked) = fonts.read();
+            let keys: Vec<&str> = data.keys().map(|k| k.as_str()).collect();
+            assert_eq!(
+                keys,
+                ["Body", "Display"],
+                "Mono and the alias's path left out"
+            );
+            assert_eq!(
+                data["Display"],
+                face("project display"),
+                "the farther Display"
+            );
+            assert!(linked.is_empty());
+
+            let defs = font_definitions(&fonts);
+            let families = script_families(&defs);
+            assert!(families.contains("Body") && families.contains("Display"));
+            assert!(!families.contains("Mono") && !families.contains("terminal"));
+            assert_eq!(
+                defs.families[&egui::FontFamily::Monospace],
+                egui::FontDefinitions::default().families[&egui::FontFamily::Monospace],
+                "[egui] monospace names a face that isn't there: egui's stays"
+            );
+
+            // What panicked: egui building the fonts at the first frame.
+            let ctx = egui::Context::default();
+            ctx.set_fonts(defs);
+            let _ = flint_debug_ui::run_headless_frame(&ctx, egui::RawInput::default(), |_| {});
+            let mut warned = HashSet::new();
+            let id = resolve_font_id(20.0, Some("Mono"), &families, &mut warned);
+            assert_eq!(
+                id.family,
+                egui::FontFamily::Proportional,
+                "egui's default face"
+            );
+            let width = ctx.fonts_mut(|f| {
+                f.layout_job(text_layout_job("SCORE 42", id, egui::Color32::WHITE, 0.0))
+                    .size()
+                    .x
+            });
+            assert!(width > 0.0);
+        });
+    }
+
     /// ADR 0114: a scene two folders down sees the project's fonts and its
     /// manifest; a `fonts/` nearer the scene adds to them, and hides only
     /// the files it has a namesake for, where the one-folder scan read the
@@ -543,14 +684,14 @@ mod tests {
         use flint_core::vfs::MemorySource;
         let mut files = MemorySource::new();
         files.insert("game/flint.toml", "");
-        files.insert("game/fonts/Body.ttf", "project body");
-        files.insert("game/fonts/Display.otf", "project display");
-        files.insert("game/fonts/SHOUT.TTF", "capitals");
+        files.insert("game/fonts/Body.ttf", face("project body"));
+        files.insert("game/fonts/Display.otf", face("project display"));
+        files.insert("game/fonts/SHOUT.TTF", face("capitals"));
         files.insert(
             "game/fonts/fonts.toml",
             "[[font]]\nname = \"title\"\nfile = \"Display.otf\"\n",
         );
-        files.insert("game/levels/act1/fonts/Display.otf", "act display");
+        files.insert("game/levels/act1/fonts/Display.otf", face("act display"));
         files.insert("game/levels/act1/cave/a.scene.toml", "");
         files.insert("game/levels/b.scene.toml", "");
         vfs::scoped(Arc::new(files), || {
@@ -573,16 +714,16 @@ mod tests {
                 Some(Path::new("game/fonts/fonts.toml"))
             );
             let (data, aliases, _, _) = deep.read();
-            assert_eq!(data["Display"], b"act display");
-            assert_eq!(data["Body"], b"project body");
-            assert_eq!(data["SHOUT"], b"capitals");
+            assert_eq!(data["Display"], face("act display"));
+            assert_eq!(data["Body"], face("project body"));
+            assert_eq!(data["SHOUT"], face("capitals"));
             let stems: Vec<String> = data.keys().cloned().collect();
             let families = resolve_families(&stems, &aliases);
             assert_eq!(families["title"], "Display", "the alias names the file");
 
             // From levels/ the project's own Display
             let shallow = ProjectFonts::for_scene("game/levels/b.scene.toml");
-            assert_eq!(shallow.read().0["Display"], b"project display");
+            assert_eq!(shallow.read().0["Display"], face("project display"));
             assert_ne!(deep, shallow, "another set: the player reads it again");
         });
     }
@@ -845,9 +986,9 @@ monospace = 3
         use flint_core::vfs::MemorySource;
         let mut files = MemorySource::new();
         files.insert("game/flint.toml", "");
-        files.insert("game/fonts/Body.ttf", "body");
-        files.insert("game/fonts/ofl/VT323/VT323-Regular.ttf", "vt323");
-        files.insert("game/vendor/Cutive.ttf", "cutive");
+        files.insert("game/fonts/Body.ttf", face("body"));
+        files.insert("game/fonts/ofl/VT323/VT323-Regular.ttf", face("vt323"));
+        files.insert("game/vendor/Cutive.ttf", face("cutive"));
         files.insert(
             "game/fonts/fonts.toml",
             r#"
@@ -875,8 +1016,8 @@ monospace = "terminal"
         vfs::scoped(Arc::new(files), || {
             let fonts = ProjectFonts::for_scene("game/levels/a.scene.toml");
             let (data, aliases, defaults, linked) = fonts.read();
-            assert_eq!(data["ofl/VT323/VT323-Regular.ttf"], b"vt323");
-            assert_eq!(data["../vendor/Cutive.ttf"], b"cutive");
+            assert_eq!(data["ofl/VT323/VT323-Regular.ttf"], face("vt323"));
+            assert_eq!(data["../vendor/Cutive.ttf"], face("cutive"));
             assert_eq!(data.len(), 3, "{:?}", data.keys().collect::<Vec<_>>());
             let shown: Vec<String> = linked
                 .iter()
@@ -914,7 +1055,7 @@ monospace = "terminal"
         use flint_core::vfs::MemorySource;
         let mut files = MemorySource::new();
         files.insert("game/flint.toml", "");
-        files.insert("game/fonts/ofl/VT323/VT323-Regular.ttf", "vt323");
+        files.insert("game/fonts/ofl/VT323/VT323-Regular.ttf", face("vt323"));
         files.insert(
             "game/fonts/fonts.toml",
             "[[font]]\nname = \"terminal\"\nfile = \"ofl/VT323/VT323-Regular.ttf\"\n",

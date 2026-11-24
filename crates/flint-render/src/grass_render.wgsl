@@ -3,15 +3,8 @@
 //
 // wooze_noise.wgsl is prepended (grass_pipeline.rs), for the comb of woozy
 // grass (#252), and the lights' files (wgsl_sources.rs), local_lights.wgsl
-// among them for the lanterns (#1048).
-
-struct TransformUniforms {
-    view_proj: mat4x4<f32>,
-    model: mat4x4<f32>,
-    model_inv_transpose: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    _pad: f32,
-};
+// among them for the lanterns (#1048). Group 0's transform and `clip_of` are
+// mesh_vertex.wgsl's (#1244).
 
 struct GrassRenderUniforms {
     wind_direction: vec3<f32>,
@@ -54,10 +47,6 @@ struct EntityPosition {
     position: vec3<f32>,
     _pad: f32,
 };
-
-// Bind group 0: Transform (shared)
-@group(0) @binding(0)
-var<uniform> transform: TransformUniforms;
 
 // Bind group 1: Grass render uniforms
 @group(1) @binding(0)
@@ -166,7 +155,7 @@ fn vs_main(
     let normal = normalize(vec3<f32>(-wind_offset * wind_dir.x * 0.3, 1.0, -wind_offset * wind_dir.y * 0.3));
 
     var out: VertexOutput;
-    out.clip_pos = transform.view_proj * vec4<f32>(world_pos, 1.0);
+    out.clip_pos = clip_of(vec4<f32>(world_pos, 1.0));
     out.world_pos = world_pos;
     out.uv = vertex.uv;
     out.color = final_color;
@@ -269,5 +258,5 @@ fn vs_shadow(
     let world_pos = inst.position + local_pos;
 
     // Shadow uses transform.view_proj which will be set to the shadow cascade VP
-    return transform.view_proj * vec4<f32>(world_pos, 1.0);
+    return clip_of(vec4<f32>(world_pos, 1.0));
 }

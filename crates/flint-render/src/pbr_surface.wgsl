@@ -1,18 +1,11 @@
-// The PBR surface both mesh shaders draw (#738): the transform and material
-// groups, the material sampler, the fragment's inputs, and every fragment
-// stage but the entry that takes `front_facing` (`fs_main` in shader.wgsl,
-// `fs_skinned` / `fs_skinned_lighten` in skinned_shader.wgsl, each over its
-// own vertex stage). Before #738 skinned_shader.wgsl held a copy of all of
-// this, which had lost the clay levers and area sources. Needs
-// `light_bindings.wgsl`, `direct_light.wgsl` and `tonemap.wgsl`.
-
-struct TransformUniforms {
-    view_proj: mat4x4<f32>,
-    model: mat4x4<f32>,
-    model_inv_transpose: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    _pad: f32,
-};
+// The PBR surface both mesh shaders draw (#738): the material group, the
+// material sampler, the fragment's inputs, and every fragment stage but the
+// entry that takes `front_facing` (`fs_main` in shader.wgsl, `fs_skinned` /
+// `fs_skinned_lighten` in skinned_shader.wgsl, each over its own vertex
+// stage). Before #738 skinned_shader.wgsl held a copy of all of this, which
+// had lost the clay levers and area sources. Needs `mesh_vertex.wgsl` (the
+// transform group, #1244), `light_bindings.wgsl`, `direct_light.wgsl`,
+// `tonemap.wgsl` and `fog_veil.wgsl`.
 
 struct MaterialUniforms {
     base_color: vec4<f32>,
@@ -49,9 +42,6 @@ struct MaterialUniforms {
     // base colour times y (its `emissive_scale`) plus emission; 0 is lit.
     unlit: vec4<f32>,
 };
-
-@group(0) @binding(0)
-var<uniform> transform: TransformUniforms;
 
 @group(1) @binding(0)
 var<uniform> material: MaterialUniforms;
@@ -288,23 +278,17 @@ fn veil_alpha(in: VertexOutput) -> f32 {
     return clamp(alpha * material.opacity * edge_feather(in), 0.0, 1.0);
 }
 
-// The fog veil (#513): this surface's weight and depth, so the composite
-// fogs it at its own depth and not at the depth of what's behind it.
-// r = weight x (1 - depth), g = weight, a = its coverage, "over" blended
-// into an Rgba16Float target cleared to (0, 0, 0, 1) whose alpha keeps
-// 1 - alpha of what's behind (`fog_veil.rs`).
+// The fog veil (#513): this surface's weight (its coverage) and depth, as
+// `fog_veil.wgsl` lays them out.
 @fragment
 fn fs_fog_veil(in: VertexOutput) -> @location(0) vec4<f32> {
-    let w = veil_alpha(in);
-    return vec4<f32>(w * (1.0 - in.clip_position.z), w, 0.0, w);
+    return fog_veil_texel(veil_alpha(in), in.clip_position.z);
 }
 
-// The fog veil of a surface that only adds light (additive): it weighs in
-// where it is, and hides nothing behind it.
+// The fog veil of a surface that only adds light (additive)
 @fragment
 fn fs_fog_veil_light(in: VertexOutput) -> @location(0) vec4<f32> {
-    let w = veil_alpha(in);
-    return vec4<f32>(w * (1.0 - in.clip_position.z), w, 0.0, 0.0);
+    return fog_veil_light_texel(veil_alpha(in), in.clip_position.z);
 }
 
 // The style albedo (#869): the surface's own colour, as fs_main builds it

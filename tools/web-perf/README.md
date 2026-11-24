@@ -60,6 +60,27 @@ the URL of a site already up. A scene may carry its own query after `+`:
 | `--prefs k=v,k=v` | | more Firefox prefs for the run's profile, or its own overridden (`true`, `false` and integers are typed). `layout.frame_rate=60` is the one to compare builds with (below) |
 | `--trace` | off | from the moment the gate lifts, keeps the time of every frame the browser gives the page (a `requestAnimationFrame` loop beside the player's, `trace.mjs`), and writes it to each page's JSON as `trace`: the frames each second (`fps`), how many seconds ran at 45 fps or less (`slowSeconds`), and the spells of slow frames, each with when it began and how long it lasted. The table gains a column. It's how to tell a frame's own work running long from the browser missing vsync (#962) |
 
+| `--save-trace` | off | after the last read, presses the readout's **Save trace** (a build with the scope recorder: `trunk build --release --cargo-profile web-release --features trace`) and keeps the file the page offers as `<label>.trace.json`. The browser downloads into a folder of the run's own. Each page's JSON gets `savedTrace`: the file, its header and `scopes.mjs`'s summary (scopes, how many read 0, by name, and the shortest durations above 0, which on a coarse clock are whole steps), and the table a column. A page whose file never comes is an error, and the run exits 1 (#1266) |
+| `--isolate` | off | serves the folder cross-origin isolated (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`), which a browser needs before it gives `performance.now()` its finer step: Chrome 100 µs to 5 µs, Firefox 1 ms to 20 µs. GitHub Pages can't send them. The table's header says whether the pages were isolated |
+
+A scene item with `+scope_bench=1` times a scope in that browser before the
+game plays (`flint_core::profile::cost`, the same bench as ADR 0128's desktop
+table): the log prints the line, the page's JSON keeps `scopeCost` and the
+table gains a column. That page plays without the recorder, so `--save-trace`
+passes it over. #1266's runs:
+
+```bash
+node tools/web-perf/run.mjs <trunk dist with a pack> hitch_metronome.flintpack \
+  hitch_metronome,hitch_metronome+scope_bench=1 --seconds 12 --reads 1 --save-trace [--isolate] --out <dir>
+node tools/web-perf/run.mjs ... --browser firefox --prefs layout.frame_rate=60 --seconds 22 ...
+```
+
+The browser left from a run used to stay: on Windows `firefox.exe` is a
+launcher, and killing it left the browser running and holding the port, so the
+next run drove the old one (its downloads went to the old folder). The run now
+closes Firefox over BiDi (`browser.close`), and refuses to start when anything
+already answers on `--port`.
+
 Each page's JSON keeps the readout's text and its copyable line at every read
 (`reads[].text`, `reads[].line`), the line parsed into numbers
 (`reads[].parsed`, `perfline.mjs`), what the page saw (DPR, viewport, canvas,
@@ -76,7 +97,7 @@ no frames to a window that is off screen or covered, so the window opens at
 0,0 with the throttling flags off (and `CalculateNativeWinOcclusion` disabled):
 leave it be while it runs. Other jobs on the GPU move the numbers; run twice
 and look at a pass the change doesn't touch (SSAO, Bloom) to spot a contended
-run. Tests for the line parser and the trace: `node --test tools/web-perf/perfline.test.mjs tools/web-perf/trace.test.mjs`.
+run. Tests for the line parser, the trace and the saved trace's summary: `node --test tools/web-perf/perfline.test.mjs tools/web-perf/trace.test.mjs tools/web-perf/scopes.test.mjs`.
 
 ## GPU-bound pages: the mean frame (#1318)
 

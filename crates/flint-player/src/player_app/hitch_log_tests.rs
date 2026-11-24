@@ -41,11 +41,12 @@ fn on_update() {
 const CALM: &str = "fn on_update() { let t = total_time(); }";
 
 /// The machine's own hitch, as a busy one makes (#1194): the frame blocked
-/// 200 ms at sync on the frame game time crosses 2.51 s, outside any script.
-/// Its line names the frame's longest timed callback all the same: the
-/// scene's one script with the fraction of a ms it took, or the reload poll
-/// (`[hot reload]`, 69-169 ms on a loaded machine: 40 of these tests at once).
-struct Hiccup;
+/// 200 ms at sync on the frame game time crosses the given time, outside any
+/// script. Its line names the frame's longest timed callback all the same:
+/// the scene's one script with the fraction of a ms it took, or the reload
+/// poll (`[hot reload]`, 69-169 ms on a loaded machine: 40 of these tests at
+/// once). `frame_capture_tests` stages one too (#1232).
+pub(super) struct Hiccup(pub f64);
 
 impl super::subsystem::Subsystem for Hiccup {
     fn name(&self) -> &'static str {
@@ -54,7 +55,7 @@ impl super::subsystem::Subsystem for Hiccup {
 
     fn update(&mut self, stage: super::subsystem::Stage, ctx: &mut super::subsystem::StageCtx) {
         let (t, dt) = (ctx.clock.total_time, ctx.clock.delta_time);
-        if stage == super::subsystem::Stage::Sync && t - dt < HICCUP_AT && t >= HICCUP_AT {
+        if stage == super::subsystem::Stage::Sync && t - dt < self.0 && t >= self.0 {
             let start = std::time::Instant::now();
             while start.elapsed().as_secs_f64() < 0.2 {}
         }
@@ -114,7 +115,7 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
     let log = log_path("stall");
     vfs::scoped(Arc::new(game(STALL)), || {
         let mut app = started();
-        app.core.subsystems.push(Box::new(Hiccup));
+        app.core.subsystems.push(Box::new(Hiccup(HICCUP_AT)));
         app.log_hitches_to(&log).expect("the log opens");
         app.gate_hitches(HitchGate {
             max: Some(0),

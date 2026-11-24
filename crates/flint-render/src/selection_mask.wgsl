@@ -8,23 +8,14 @@
 // No depth attachment: each fragment tests itself against the frame's
 // single-sample depth with a tolerance of its own depth slope, as the style
 // mask does, and the target blends with max, so overlapping draws keep the
-// most of each channel. The vertex stages repeat the scene shaders' products
-// in the same order so the depths agree.
+// most of each channel. The vertex stages call the scene shaders' products
+// (mesh_vertex.wgsl and skinning.wgsl, put in front by Rust, #1244), so the
+// depths agree.
 //
 // selection_outline.wgsl turns the mask into the outline over the finished
-// image. This file is prefixed with wooze_noise.wgsl for the woozy module
-// only; FLINT_WOOZE marks the lines that differ.
+// image. The woozy module is prefixed with wooze_noise.wgsl and has every
+// FLINT_WOOZE line on, mesh_vertex.wgsl's and the one here.
 
-struct TransformUniforms {
-    view_proj: mat4x4<f32>,
-    model: mat4x4<f32>,
-    model_inv_transpose: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    _pad: f32,
-    //FLINT_WOOZE wooze: ShallowWooze,
-};
-
-@group(0) @binding(0) var<uniform> transform: TransformUniforms;
 @group(1) @binding(0) var scene_depth: texture_depth_2d;
 // Skinned draws only; the static layout leaves group 2 out
 @group(2) @binding(0) var<storage, read> bone_matrices: array<mat4x4<f32>>;
@@ -54,26 +45,23 @@ struct SkinnedVertex {
     @location(5) joint_weights: vec4<f32>,
 };
 
+// Where the scene drew a vertex whose rest is `rest`: there, or for a woozy
+// draw moved by the drift, as vs_main and vs_wooze put it
 fn to_clip(rest: vec4<f32>) -> vec4<f32> {
-    var world = rest.xyz;
-    //FLINT_WOOZE world = world + wooze_offset(world, transform.wooze);
-    return transform.view_proj * vec4<f32>(world, 1.0);
+    var world = rest;
+    //FLINT_WOOZE world = drifted(rest);
+    return clip_of(world);
 }
 
 @vertex
 fn vs_static(in: StaticVertex) -> @builtin(position) vec4<f32> {
-    return to_clip(transform.model * vec4<f32>(in.position, 1.0));
+    return to_clip(world_of(vec4<f32>(in.position, 1.0)));
 }
 
 @vertex
 fn vs_skinned(in: SkinnedVertex) -> @builtin(position) vec4<f32> {
-    let j = in.joint_indices;
-    let w = in.joint_weights;
-    let skin = bone_matrices[j.x] * w.x
-             + bone_matrices[j.y] * w.y
-             + bone_matrices[j.z] * w.z
-             + bone_matrices[j.w] * w.w;
-    return to_clip(transform.model * (skin * vec4<f32>(in.position, 1.0)));
+    let skin = skin_transform(in.joint_indices, in.joint_weights);
+    return to_clip(world_of(skin * vec4<f32>(in.position, 1.0)));
 }
 
 fn mask_value(frag: vec4<f32>) -> vec4<f32> {

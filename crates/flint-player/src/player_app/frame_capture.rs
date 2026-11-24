@@ -1028,18 +1028,17 @@ fn write(job: Job) -> Result<Written, String> {
     })
 }
 
-/// Now, UTC, as RFC 3339 to the second.
-#[cfg(not(target_arch = "wasm32"))]
+/// Now, UTC, as RFC 3339 to the second. `web_time`'s clock, so the web's
+/// trace header says when it was saved too (#1266; std's panics in wasm).
 pub(crate) fn utc_now() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let secs = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     rfc3339(secs)
 }
 
 /// `secs` since the epoch as `YYYY-MM-DDTHH:MM:SSZ` (Howard Hinnant's
 /// days-to-civil).
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn rfc3339(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;

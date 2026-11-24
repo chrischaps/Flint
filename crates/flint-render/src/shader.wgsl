@@ -1,7 +1,8 @@
 // Flint PBR mesh shader: the vertex stage of a static mesh, over the shared
 // surface (pbr_surface.wgsl, with lights.wgsl, light_bindings.wgsl,
-// brdf.wgsl, shadows.wgsl, direct_light.wgsl and tonemap.wgsl in front of it;
-// `wgsl_sources::SCENE`). Cook-Torrance BRDF, metallic-roughness workflow.
+// brdf.wgsl, shadows.wgsl, direct_light.wgsl, tonemap.wgsl and
+// mesh_vertex.wgsl's products in front of it; `wgsl_sources::SCENE`).
+// Cook-Torrance BRDF, metallic-roughness workflow.
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -14,10 +15,10 @@ struct VertexInput {
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    let world_pos = transform.model * vec4<f32>(in.position, 1.0);
-    out.clip_position = transform.view_proj * world_pos;
+    let world_pos = world_of(vec4<f32>(in.position, 1.0));
+    out.clip_position = clip_of(world_pos);
     out.color = in.color;
-    out.normal = normalize((transform.model_inv_transpose * vec4<f32>(in.normal, 0.0)).xyz);
+    out.normal = world_normal_of(in.normal);
     out.world_pos = world_pos.xyz;
     out.uv = in.uv;
 

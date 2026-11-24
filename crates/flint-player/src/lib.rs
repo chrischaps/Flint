@@ -57,7 +57,8 @@ pub use player_app::fonts::project_font_definitions;
 pub use player_app::frame_rate::FrameRateSetting;
 pub use player_app::headless_animation::HeadlessAnimation;
 pub use player_app::headless_game::{
-    apply_look, HeadlessGame, LookRequest, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
+    apply_look, CaptureStart, HeadlessGame, LookRequest, ScriptLook, Skipped, PRESENTATION_ONLY,
+    SCRIPT_SEED,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::headless_hud::HeadlessHud;

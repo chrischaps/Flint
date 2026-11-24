@@ -86,7 +86,7 @@ One `Record` per finished scope, 40 bytes:
 | `dur` | `u64` | ticks |
 | `frame` | `u32` | `finish_frame` count when the scope closed |
 | `depth` | `u16` | open scopes around it on its thread (0 = outermost) |
-| detail | none, `u64` count, or text | text is copied into a 64 KB per-thread text ring and read back only if not yet overwritten |
+| detail | none, `u64` count, or text | text is copied into a per-thread text ring and read back only if not yet overwritten (64 KB at first; 32 bytes a record since #1259, so the text lasts as long as its records) |
 
 The thread is the ring's, named from `std::thread::current()`. Records are
 written when a scope closes, so a parent follows its children and a scope
@@ -180,12 +180,41 @@ feature `profiler`; it is `trace` here.
 **The web.** `bash scripts/wasm-check.sh` passes with the recorder compiled
 in (its dev build has `debug_assertions`), and `cargo check -p flint-core
 --release --features trace --target wasm32-unknown-unknown` passes.
-Tracy's client does not build for wasm32. The cost of `performance.now()` per
-scope in a browser was not measured. Browsers coarsen it on a page that
-isn't cross-origin isolated, and GitHub Pages can't send the headers that
-isolate one (docs/design/web.md, which already finds one frame's phases
-noise there), so on the web short scopes read as 0 and only frame-sized ones
-mean anything. #1097 takes the number with `tools/web-perf/run.mjs`.
+Tracy's client does not build for wasm32.
+
+Measured in the browser by #1266, with the same bench as the table above
+(`flint_core::profile::cost::measure`, the web page's `?scope_bench=1`,
+best of 5 rounds of 100 ms) in a `trunk build --release --cargo-profile
+web-release --features trace` of the player, read by
+`tools/web-perf/run.mjs`, on the same laptop, 2026-11-24:
+
+| per scope | Chrome 158 | Chrome, isolated | Firefox 160 | Firefox, isolated | native release (same bench) |
+|---|---|---|---|---|---|
+| `scope!`, compiled in, recording off | 3.1 ns | 3.3 ns | 2.7 ns | 2.7 ns | 0.8 ns |
+| `scope!`, recording on | 122 ns | 122 ns | 130-136 ns | 116 ns | 30 ns |
+| ... with a count | 122 ns | 121 ns | 130-141 ns | 117 ns | 30 ns |
+| ... with a file name | 136 ns | 135 ns | 148-161 ns | 135 ns | 53 ns |
+| two `Instant::now()` (`performance.now()`) | 111 ns | 110 ns | 120-127 ns | 107 ns | 44 ns |
+| the clock's step | 100 µs | 5 µs | 1 ms | 20 µs | 100 ns |
+
+"Isolated" is the page served with COOP and COEP (`run.mjs --isolate`);
+GitHub Pages can't send them. A recorded scope costs about four times the
+desktop's, and nearly all of it is the two `performance.now()` calls, each a
+crossing from wasm into JS: at the web player's ~100 scopes a frame, about
+12 µs a frame. Recording off it is 3 ns, so leaving the recorder compiled into
+a web build costs nothing worth measuring.
+
+**Short scopes read 0 on a page that isn't isolated.** A 5 s trace of
+`hitch_metronome` saved with the page's Save trace (about 280 frames, 28 000
+to 29 000 scopes): in Chrome 88% of the scopes read 0 ms and the rest are
+whole multiples of 100 µs; in Firefox 98% read 0 and the rest are whole
+milliseconds. Isolated, 53% (Chrome, 5 µs steps) and 67% (Firefox, 20 µs).
+A scope's mean over many frames still reads about right, since each read
+lands on a step at random: `flint profile top` gave `tick` 0.96 against
+0.98 ms a frame and `render` 0.34 against 0.35 in Chrome, coarse against
+isolated. One frame's scopes, a scope's worst and a scope's self time don't:
+Firefox's coarse trace gave `render` 117 ms of self time where the isolated
+one gave 11. A 100 ms stall is read the same either way.
 
 **Size.** `flint-player` release builds (`cargo build --release -p
 flint-player --bin flint-player`, default features):
