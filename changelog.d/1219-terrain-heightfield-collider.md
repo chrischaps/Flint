@@ -1,3 +1,0 @@
-### The terrain's collider is a heightfield (#1219)
-**What changed.** A `terrain` now collides as one Rapier heightfield of its chunks' vertex grid instead of their triangles as a trimesh. The surface is the same, triangle for triangle (rays answer within 0.01 mm), but the edges between cells and the seams between chunks are smooth: a ball rolling across them no longer hops, and the collider holds one height a vertex. `get_collider_extents` on a terrain now answers `shape: "heightfield"` (it was `"mesh"`), with the same box.
-**What to do.** Nothing, unless a script compares a terrain's `get_collider_extents(..).shape` with `"mesh"`: compare with `"heightfield"`.
