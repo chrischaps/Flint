@@ -374,8 +374,11 @@ impl SkeletalSync {
                 let target_clip_name = state.blend_target.clone();
                 if let Some(target_clip) = self.clips.get(&target_clip_name) {
                     state.blend_elapsed += dt as f32;
-                    let blend_weight =
-                        Easing::Linear.over(state.blend_elapsed, state.blend_duration);
+                    // The time is linear; the weight eases (#1248). The
+                    // fade lands when the time is up, not when an easing
+                    // that rounds to 1 early says so.
+                    let through = Easing::Linear.over(state.blend_elapsed, state.blend_duration);
+                    let blend_weight = state.blend_easing.apply_f32(through);
 
                     // Sample the target clip over the REST pose (same sparse-
                     // clip rule as above) so joints the target doesn't key
@@ -401,7 +404,7 @@ impl SkeletalSync {
                     );
 
                     // Check if blend is complete
-                    if blend_weight >= 1.0 {
+                    if through >= 1.0 {
                         // Transition to target clip
                         state.clip_name = target_clip_name;
                         state.time = target_time;
@@ -1040,6 +1043,87 @@ mod tests {
         }
         assert_eq!(sync.layers(&eid).unwrap()[0].weight, 1.0);
         assert!(sync.layer_fade(&eid, 0).is_none());
+    }
+
+    /// A clip that holds the single joint at `x`.
+    fn held_clip(name: &str, x: f32) -> SkeletalClip {
+        let mut clip = slide_clip(name, 4.0);
+        for key in &mut clip.joint_tracks[0].keyframes {
+            key.value = vec![x, 0.0, 0.0];
+        }
+        clip
+    }
+
+    /// Where the joint is half way through a one-second crossfade from a
+    /// clip holding it at 0 to one holding it at 1: the crossfade's weight.
+    fn half_way_weight(blend_easing: Option<&str>) -> (f32, SkeletalSync, FlintWorld, EntityId) {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(held_clip("here", 0.0));
+        sync.add_clip(held_clip("there", 1.0));
+        let (mut world, eid) = world_with_animator("here", "there", 1.0);
+        if let Some(name) = blend_easing {
+            world
+                .set_field(eid, comp::ANIMATOR, "blend_easing", name.into())
+                .unwrap();
+        }
+        sync.add_skeleton(eid, one_joint_skeleton());
+        for _ in 0..2 {
+            sync.sync_from_world(&world);
+            sync.advance_and_compute(0.25);
+            sync.write_back(&mut world);
+        }
+        let x = sync.skeleton(&eid).unwrap().local_poses[0].translation[0];
+        (x, sync, world, eid)
+    }
+
+    /// `animator.blend_easing` (#1248) eases a crossfade's weight; absent,
+    /// the crossfade is linear as it was. Either way it lands on time.
+    #[test]
+    fn a_crossfade_moves_as_its_blend_easing_says() {
+        let (linear, ..) = half_way_weight(None);
+        assert!((linear - 0.5).abs() < 1e-5, "absent is linear: {linear}");
+        let (named_linear, ..) = half_way_weight(Some("linear"));
+        assert_eq!(named_linear, linear);
+
+        let (eased, mut sync, mut world, eid) = half_way_weight(Some("ease_in"));
+        assert!((eased - 0.125).abs() < 1e-5, "half way, ease_in: {eased}");
+        let (smooth, ..) = half_way_weight(Some("ease_in_out"));
+        assert!(
+            (smooth - 0.5).abs() < 1e-5,
+            "ease_in_out is even at half way"
+        );
+        let (out, ..) = half_way_weight(Some("ease_out"));
+        assert!((out - 0.875).abs() < 1e-5, "half way, ease_out: {out}");
+
+        // Lands at one second, on the target clip
+        for _ in 0..2 {
+            sync.sync_from_world(&world);
+            sync.advance_and_compute(0.25);
+            sync.write_back(&mut world);
+        }
+        assert_eq!(sync.states[&eid].clip_name, "there");
+        assert!(sync.states[&eid].blend_target.is_empty());
+        assert_eq!(ecs_blend_target(&world, eid), "");
+    }
+
+    /// An ease that reaches 1 in `f32` before its time is up (ease_out, a
+    /// hair short of the end) still blends until the time is: the fade
+    /// lands at its length, not early.
+    #[test]
+    fn an_eased_crossfade_lands_at_its_length() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(held_clip("here", 0.0));
+        sync.add_clip(held_clip("there", 1.0));
+        let (mut world, eid) = world_with_animator("here", "there", 1.0);
+        world
+            .set_field(eid, comp::ANIMATOR, "blend_easing", "ease_out".into())
+            .unwrap();
+        sync.add_skeleton(eid, one_joint_skeleton());
+        sync.sync_from_world(&world);
+        sync.advance_and_compute(0.9995);
+        sync.write_back(&mut world);
+        assert_eq!(Easing::EaseOut.apply_f32(0.9995), 1.0, "the premise");
+        assert_eq!(sync.states[&eid].blend_target, "there", "still blending");
     }
 
     #[test]

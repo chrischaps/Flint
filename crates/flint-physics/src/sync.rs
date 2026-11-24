@@ -50,6 +50,73 @@ pub const COLLIDER_SHAPES: &[&str] = &[
 /// mesh uploaded again would otherwise be able to find the old hull).
 type MeshShapeKey = (usize, bool, [u32; 9]);
 
+/// What a collider was last made from, so a script's later change to its
+/// `layer`, `mask` or scale is heard (#1221). A step where nothing changed
+/// compares the entity's write stamp, and its ancestors', with these and
+/// reads nothing else; one where something was written compares the raw
+/// TOML values, and resolves layer names or remakes the shape only for
+/// what moved. One per collider: the pass walks these, not
+/// `collider_map`, so it looks nothing up to find them.
+pub(crate) struct ColliderSeen {
+    handle: ColliderHandle,
+    /// The entity's `write_stamp` at the last look (`None`: never looked)
+    stamp: Option<u64>,
+    /// `collider.layer` and `collider.mask` as written when the groups
+    /// were last set (`None`: unsaid)
+    layer: Option<toml::Value>,
+    mask: Option<toml::Value>,
+    /// `None` for a host's trimesh (terrain, a spline), whose shape is
+    /// the host's, not the collider table's
+    scale: Option<ScaleSeen>,
+}
+
+impl ColliderSeen {
+    /// A collider on no layer and every mask, (GROUP_1, ALL), as a host's
+    /// trimesh goes in, its shape not the collider table's.
+    fn new(handle: ColliderHandle) -> Self {
+        Self {
+            handle,
+            stamp: None,
+            layer: None,
+            mask: None,
+            scale: None,
+        }
+    }
+}
+
+/// The scale a collider's shape was made at, and the `transform.scale`
+/// of its entity and each ancestor (nearest first) when that was last
+/// checked. Only a change to one of those (or to the chain) asks for the
+/// world scale again; the shape is remade only when that moved past a
+/// part in a thousand from the scale it was made at.
+pub(crate) struct ScaleSeen {
+    built: [f32; 3],
+    chain: Vec<ChainLink>,
+}
+
+/// One entity up a collider's chain: its stamp and its `transform.scale`
+/// as written when last looked at.
+pub(crate) struct ChainLink {
+    id: EntityId,
+    stamp: u64,
+    scale: Option<toml::Value>,
+}
+
+/// Counts of the work `update_colliders` does past comparing (#1221).
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ColliderRereads {
+    /// Colliders whose entity, or an ancestor, was written: their fields
+    /// compared (a dynamic body's own pose write-back is not counted)
+    pub looks: usize,
+    /// `layer` or `mask` written, so the groups were resolved again
+    pub groups: usize,
+    /// A `transform.scale` up the chain written, so the world scale was
+    /// asked for
+    pub scales: usize,
+    /// Shapes remade: the world scale moved past the tolerance
+    pub shapes: usize,
+}
+
 /// A cached mesh shape and the triangles it was made from.
 type MeshShapeEntry = (Arc<ColliderMesh>, Option<SharedShape>);
 
@@ -98,6 +165,11 @@ pub struct PhysicsSync {
     shape_warned: HashSet<EntityId>,
     /// Jointed entities already warned that their anchor ignores their scale
     joint_scale_warned: HashSet<EntityId>,
+    /// What each collider was made from (#1221), for `update_colliders`
+    pub(crate) seen: HashMap<EntityId, ColliderSeen>,
+    /// How often `update_colliders` went past its compares, for tests and
+    /// the bench: a quiet step adds nothing
+    pub(crate) rereads: ColliderRereads,
     /// Trimeshes registered by a host (terrain, splines) whose entity's
     /// `collider` layer is read at the next sync, when the world is at hand
     trimesh_pending: Vec<EntityId>,
@@ -136,6 +208,7 @@ impl PhysicsSync {
         self.body_map.clear();
         self.collider_map.clear();
         self.collider_entity.clear();
+        self.seen.clear();
         self.meshes.clear();
         self.mesh_shapes.clear();
         self.reshape_pending.clear();
@@ -225,9 +298,11 @@ impl PhysicsSync {
             // Build collider if present
             let col = world.view(entity_id, comp::COLLIDER);
             if col.exists() {
-                let collider = self.make_collider(world, entity_id, &col, mode_2d, body_type);
+                let (collider, scale) =
+                    self.make_collider(world, entity_id, &col, mode_2d, body_type);
                 let col_handle = physics.insert_collider_with_parent(collider, body_handle);
                 self.insert_collider(entity_id, col_handle);
+                self.watch(world, entity_id, &col, col_handle, scale);
             }
 
             self.synced_entities.insert(entity_id);
@@ -254,13 +329,17 @@ impl PhysicsSync {
             {
                 c.set_collision_groups(groups);
             }
+            if let Some(seen) = self.seen.get_mut(&entity_id) {
+                seen.layer = col.raw("layer").cloned();
+                seen.mask = col.raw("mask").cloned();
+            }
         }
 
         self.report_lone_colliders(world);
     }
 
     /// An entity's collider from its `collider` table, at its world scale,
-    /// for a body of `body_type`.
+    /// for a body of `body_type`, and that scale.
     fn make_collider(
         &mut self,
         world: &FlintWorld,
@@ -268,7 +347,7 @@ impl PhysicsSync {
         col: &ComponentView,
         mode_2d: bool,
         body_type: &str,
-    ) -> Collider {
+    ) -> (Collider, [f32; 3]) {
         let scale = world_scale(world, entity_id);
         let (collider_shape, local) =
             self.collider_shape(world, entity_id, col, scale, mode_2d, body_type);
@@ -287,7 +366,32 @@ impl PhysicsSync {
         if let Some(local) = local {
             builder = builder.position(local);
         }
-        builder.build()
+        (builder.build(), scale)
+    }
+
+    /// Remember what a collider made from its table was made from (#1221),
+    /// so `update_colliders` hears a later change to it.
+    fn watch(
+        &mut self,
+        world: &FlintWorld,
+        entity_id: EntityId,
+        col: &ComponentView,
+        handle: ColliderHandle,
+        scale: [f32; 3],
+    ) {
+        self.seen.insert(
+            entity_id,
+            ColliderSeen {
+                handle,
+                stamp: world.write_stamp(entity_id),
+                layer: col.raw("layer").cloned(),
+                mask: col.raw("mask").cloned(),
+                scale: Some(ScaleSeen {
+                    built: scale,
+                    chain: scale_chain(world, entity_id),
+                }),
+            },
+        );
     }
 
     /// Make an entity's collider again on its body, from the triangles
@@ -304,12 +408,13 @@ impl PhysicsSync {
         let rb = world.view(entity_id, comp::RIGIDBODY);
         let body_type = rb.choice("body_type", BODY_TYPES, "static");
         let mode_2d = rb.bool("mode_2d", false);
-        let collider = self.make_collider(world, entity_id, &col, mode_2d, body_type);
+        let (collider, scale) = self.make_collider(world, entity_id, &col, mode_2d, body_type);
         if let Some(old) = self.remove_collider(entity_id) {
             physics.remove_collider(old);
         }
         let handle = physics.insert_collider_with_parent(collider, body_handle);
         self.insert_collider(entity_id, handle);
+        self.watch(world, entity_id, &col, handle, scale);
         tracing::debug!(target: "load", kind = "collider",
             "Collider of {} made again from its mesh's triangles",
             world.get_name(entity_id).unwrap_or("?")
@@ -322,12 +427,14 @@ impl PhysicsSync {
             self.collider_entity.remove(&old);
         }
         self.collider_entity.insert(handle, entity_id);
+        self.seen.insert(entity_id, ColliderSeen::new(handle));
     }
 
     /// Forget an entity's collider both ways, returning its handle.
     pub(crate) fn remove_collider(&mut self, entity_id: EntityId) -> Option<ColliderHandle> {
         let handle = self.collider_map.remove(&entity_id)?;
         self.collider_entity.remove(&handle);
+        self.seen.remove(&entity_id);
         Some(handle)
     }
 
@@ -343,53 +450,7 @@ impl PhysicsSync {
     /// `default` (the layer), in the words `flint check` says it in before
     /// the game runs (`flint_core::collision_layers::unknown_layer`, #1220).
     pub(crate) fn groups_of(&self, col: &ComponentView) -> InteractionGroups {
-        let on_default = LayerMask::from_bits(1);
-        let membership = match col.opt_str("layer") {
-            None => on_default,
-            Some(name) => self.layers.bit(name).unwrap_or_else(|| {
-                col.report("layer", || self.unknown_layer(name, LayerUse::Layer));
-                on_default
-            }),
-        };
-        InteractionGroups::new(membership.group(), self.mask_of(col).group())
-    }
-
-    fn unknown_layer(&self, name: &str, used: LayerUse) -> Diagnostic {
-        let names: Vec<&str> = self.layers.names().collect();
-        collision_layers::unknown_layer(name, &names, used)
-    }
-
-    fn mask_of(&self, col: &ComponentView) -> LayerMask {
-        let Some(value) = col.raw("mask") else {
-            return LayerMask::ALL;
-        };
-        let Some(items) = value.as_array() else {
-            col.report("mask", || {
-                Diagnostic::error(
-                    codes::BAD_TYPE,
-                    format!("expected a list of layer names, got {}", value.type_str()),
-                )
-                .hint("mask = [\"default\", \"player\"]; it meets every layer")
-            });
-            return LayerMask::ALL;
-        };
-        let mut bits = 0;
-        for (i, item) in items.iter().enumerate() {
-            let field = format!("mask[{i}]");
-            match item.as_str() {
-                Some(name) => match self.layers.bit(name) {
-                    Some(bit) => bits |= bit.bits(),
-                    None => col.report(&field, || self.unknown_layer(name, LayerUse::Mask)),
-                },
-                None => col.report(&field, || {
-                    Diagnostic::error(
-                        codes::BAD_TYPE,
-                        format!("expected a layer name, got {}", item.type_str()),
-                    )
-                }),
-            }
-        }
-        LayerMask::from_bits(bits)
+        groups_in(&self.layers, col)
     }
 
     /// A collider's shape at the entity's world `scale`, and its pose on
@@ -770,7 +831,7 @@ impl PhysicsSync {
 
     /// Write Rapier poses back to entity transforms (dynamic bodies only).
     /// A parented body is written as a local pose against the parent's world matrix.
-    pub fn sync_from_rapier(&self, world: &mut FlintWorld, physics: &PhysicsWorld) {
+    pub fn sync_from_rapier(&mut self, world: &mut FlintWorld, physics: &PhysicsWorld) {
         // Read everything from the immutable world first, then write.
         let mut writes: Vec<(EntityId, Vec3, [f32; 4])> = Vec::new();
 
@@ -825,6 +886,7 @@ impl PhysicsSync {
         }
 
         for (entity_id, pos, quat) in writes {
+            let before = world.write_stamp(entity_id);
             let Some(mut components) = world.get_components_mut(entity_id) else {
                 continue;
             };
@@ -842,6 +904,14 @@ impl PhysicsSync {
                 "rotation_quat",
                 toml::Value::Array(quat.iter().map(|c| toml::Value::Float(*c as f64)).collect()),
             );
+            // A pose is no layer, mask or scale: when the collider's last
+            // look was at the stamp just before this write, it stays seen
+            // (#1221), so a falling body is not looked at every step
+            if let Some(seen) = self.seen.get_mut(&entity_id) {
+                if seen.stamp.is_some() && seen.stamp == before {
+                    seen.stamp = world.write_stamp(entity_id);
+                }
+            }
         }
     }
 
@@ -930,18 +1000,42 @@ impl PhysicsSync {
         }
     }
 
-    /// Update sensor flags on already-synced colliders to match ECS state.
-    /// This allows scripts to make colliders non-solid at runtime (e.g., dead enemies).
-    pub fn update_sensor_flags(&self, world: &FlintWorld, physics: &mut PhysicsWorld) {
-        for (entity_id, col_handle) in &self.collider_map {
-            let col = world.view(*entity_id, comp::COLLIDER);
+    /// Bring already-made colliders up to the ECS each step: `is_sensor`
+    /// (scripts make dead enemies non-solid), and since #1221 `layer`,
+    /// `mask` and the entity's world scale. A step where nothing changed
+    /// compares raw values only (see [`ColliderSeen`]): the groups are
+    /// resolved again only when `layer` or `mask` was written, and the
+    /// shape is remade only when the scale moved.
+    pub fn update_colliders(&mut self, world: &FlintWorld, physics: &mut PhysicsWorld) {
+        let mut moved: Vec<(EntityId, ColliderHandle, [f32; 3])> = Vec::new();
+        let layers = &self.layers;
+        let rereads = &mut self.rereads;
+        for (&entity_id, seen) in self.seen.iter_mut() {
+            // Nothing of the entity, nor of an ancestor, written since the
+            // last look: nothing to read (a parent link that changed moved
+            // the child's stamp, so the ancestors are still these)
+            let stamp = world.write_stamp(entity_id);
+            if stamp.is_some()
+                && stamp == seen.stamp
+                && seen.scale.as_ref().is_none_or(|s| {
+                    s.chain[1..]
+                        .iter()
+                        .all(|link| world.write_stamp(link.id) == Some(link.stamp))
+                })
+            {
+                continue;
+            }
+            seen.stamp = stamp;
+            rereads.looks += 1;
+
+            let col_handle = seen.handle;
+            let col = world.view(entity_id, comp::COLLIDER);
             if !col.exists() {
                 continue;
             }
             let wants_sensor = col.bool("is_sensor", false);
-
-            let fixed = physics.is_fixed_collider(*col_handle);
-            if let Some(collider) = physics.collider_set.get_mut(*col_handle) {
+            let fixed = physics.is_fixed_collider(col_handle);
+            if let Some(collider) = physics.collider_set.get_mut(col_handle) {
                 if collider.is_sensor() != wants_sensor {
                     collider.set_sensor(wants_sensor);
                     if fixed {
@@ -949,6 +1043,85 @@ impl PhysicsSync {
                     }
                 }
             }
+
+            // Layer and mask, compared as written
+            let layer = col.raw("layer");
+            let mask = col.raw("mask");
+            if layer != seen.layer.as_ref() || mask != seen.mask.as_ref() {
+                rereads.groups += 1;
+                seen.layer = layer.cloned();
+                seen.mask = mask.cloned();
+                let groups = groups_in(layers, &col);
+                if let Some(collider) = physics.collider_set.get_mut(col_handle) {
+                    if collider.collision_groups() != groups {
+                        collider.set_collision_groups(groups);
+                        // A body at rest would not notice what it now
+                        // meets, or no longer meets, until nudged
+                        if let Some(b) = collider
+                            .parent()
+                            .and_then(|h| physics.rigid_body_set.get_mut(h))
+                        {
+                            b.wake_up(true);
+                        }
+                    }
+                }
+            }
+
+            // Scale: the world scale is asked for only when a
+            // `transform.scale` up the chain (or the chain) changed
+            if let Some(scale) = &mut seen.scale {
+                if !refresh_chain(world, entity_id, &mut scale.chain) {
+                    rereads.scales += 1;
+                    let now = world_scale(world, entity_id);
+                    if !(0..3).all(|i| close(now[i], scale.built[i])) {
+                        scale.built = now;
+                        moved.push((entity_id, col_handle, now));
+                    }
+                }
+            }
+        }
+
+        // Shapes are remade after the loop, which borrows the records the
+        // shape builder's caches sit beside
+        for (entity_id, col_handle, scale) in moved {
+            self.rescale_collider(world, physics, entity_id, col_handle, scale);
+        }
+    }
+
+    /// Remake one collider's shape and its pose on the body at `scale`,
+    /// as `sync_to_rapier` made them, through `collider_shape` (and so the
+    /// mesh-shape cache). The body is woken: it may now overlap what it
+    /// rests on, or have room to fall.
+    fn rescale_collider(
+        &mut self,
+        world: &FlintWorld,
+        physics: &mut PhysicsWorld,
+        entity_id: EntityId,
+        col_handle: ColliderHandle,
+        scale: [f32; 3],
+    ) {
+        self.rereads.shapes += 1;
+        let col = world.view(entity_id, comp::COLLIDER);
+        let rb = world.view(entity_id, comp::RIGIDBODY);
+        // An unknown `body_type` was reported when the body was made, and
+        // a field is reported once
+        let body_type = rb.choice("body_type", BODY_TYPES, "static");
+        let mode_2d = rb.bool("mode_2d", false);
+        let (shape, local) = self.collider_shape(world, entity_id, &col, scale, mode_2d, body_type);
+        let fixed = physics.is_fixed_collider(col_handle);
+        let Some(collider) = physics.collider_set.get_mut(col_handle) else {
+            return;
+        };
+        collider.set_shape(shape);
+        collider.set_position_wrt_parent(local.unwrap_or_else(Isometry::identity));
+        if let Some(b) = collider
+            .parent()
+            .and_then(|h| physics.rigid_body_set.get_mut(h))
+        {
+            b.wake_up(true);
+        }
+        if fixed {
+            physics.touch_static();
         }
     }
 
@@ -1698,6 +1871,104 @@ fn world_scale(world: &FlintWorld, id: EntityId) -> [f32; 3] {
 /// shapes and anchors are the bits they were before scale was applied.
 fn unit_snapped(s: [f32; 3]) -> [f32; 3] {
     s.map(|k| if (k - 1.0).abs() <= 1e-6 { 1.0 } else { k })
+}
+
+/// [`PhysicsSync::groups_of`] against `layers`.
+fn groups_in(layers: &CollisionLayers, col: &ComponentView) -> InteractionGroups {
+    let on_default = LayerMask::from_bits(1);
+    let membership = match col.opt_str("layer") {
+        None => on_default,
+        Some(name) => layers.bit(name).unwrap_or_else(|| {
+            col.report("layer", || unknown_layer(layers, name, LayerUse::Layer));
+            on_default
+        }),
+    };
+    InteractionGroups::new(membership.group(), mask_of(layers, col).group())
+}
+
+fn unknown_layer(layers: &CollisionLayers, name: &str, used: LayerUse) -> Diagnostic {
+    let names: Vec<&str> = layers.names().collect();
+    collision_layers::unknown_layer(name, &names, used)
+}
+
+fn mask_of(layers: &CollisionLayers, col: &ComponentView) -> LayerMask {
+    let Some(value) = col.raw("mask") else {
+        return LayerMask::ALL;
+    };
+    let Some(items) = value.as_array() else {
+        col.report("mask", || {
+            Diagnostic::error(
+                codes::BAD_TYPE,
+                format!("expected a list of layer names, got {}", value.type_str()),
+            )
+            .hint("mask = [\"default\", \"player\"]; it meets every layer")
+        });
+        return LayerMask::ALL;
+    };
+    let mut bits = 0;
+    for (i, item) in items.iter().enumerate() {
+        let field = format!("mask[{i}]");
+        match item.as_str() {
+            Some(name) => match layers.bit(name) {
+                Some(bit) => bits |= bit.bits(),
+                None => col.report(&field, || unknown_layer(layers, name, LayerUse::Mask)),
+            },
+            None => col.report(&field, || {
+                Diagnostic::error(
+                    codes::BAD_TYPE,
+                    format!("expected a layer name, got {}", item.type_str()),
+                )
+            }),
+        }
+    }
+    LayerMask::from_bits(bits)
+}
+
+/// An entity's `transform.scale` as written, and each ancestor's, nearest
+/// first, with their stamps: what a collider's scale is checked against
+/// (#1221).
+fn scale_chain(world: &FlintWorld, id: EntityId) -> Vec<ChainLink> {
+    let mut chain = Vec::new();
+    let mut cur = Some(id);
+    while let Some(e) = cur {
+        chain.push(ChainLink {
+            id: e,
+            stamp: world.write_stamp(e).unwrap_or(0),
+            scale: raw_scale(world, e).cloned(),
+        });
+        cur = world.get_parent(e);
+    }
+    chain
+}
+
+/// Bring `chain` up to the entity's [`scale_chain`]: `true` when the
+/// entities and their scales are as they were (only stamps moved, taken
+/// in place), `false` when it was made again.
+fn refresh_chain(world: &FlintWorld, id: EntityId, chain: &mut Vec<ChainLink>) -> bool {
+    let mut cur = Some(id);
+    let mut i = 0;
+    while let Some(e) = cur {
+        match chain.get_mut(i) {
+            Some(link) if link.id == e && raw_scale(world, e) == link.scale.as_ref() => {
+                link.stamp = world.write_stamp(e).unwrap_or(0);
+            }
+            _ => {
+                *chain = scale_chain(world, id);
+                return false;
+            }
+        }
+        i += 1;
+        cur = world.get_parent(e);
+    }
+    if i != chain.len() {
+        *chain = scale_chain(world, id);
+        return false;
+    }
+    true
+}
+
+fn raw_scale(world: &FlintWorld, id: EntityId) -> Option<&toml::Value> {
+    world.get_components(id)?.get(comp::TRANSFORM)?.get("scale")
 }
 
 /// Two scale factors the same, to a part in a thousand.

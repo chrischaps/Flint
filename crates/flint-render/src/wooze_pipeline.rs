@@ -190,7 +190,9 @@ impl Stages<'_> {
     }
 }
 
-fn vertex_module(device: &wgpu::Device) -> wgpu::ShaderModule {
+/// The module of [`vertex_source`]: `vs_wooze` and `vs_skinned_wooze`. The
+/// veils pair them with their own fragment stages too (#1241).
+pub(crate) fn vertex_module(device: &wgpu::Device) -> wgpu::ShaderModule {
     device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Shallow Wooze Vertex Shader"),
         source: wgpu::ShaderSource::Wgsl(vertex_source().into()),
@@ -460,12 +462,22 @@ mod tests {
     impl Rig {
         /// Draw a frame and read it back, tightly packed.
         fn image(&self, renderer: &mut SceneRenderer, world: &FlintWorld) -> Vec<u8> {
+            self.image_from(renderer, world, &Camera::default())
+        }
+
+        /// [`image`](Self::image) through `camera`.
+        fn image_from(
+            &self,
+            renderer: &mut SceneRenderer,
+            world: &FlintWorld,
+            camera: &Camera,
+        ) -> Vec<u8> {
             renderer.update_from_world(world, &self.device);
             renderer.render_to(
                 &self.device,
                 &self.queue,
                 &self.depth_view,
-                &Camera::default(),
+                camera,
                 &self.color_view,
             );
             let row = (SIZE * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
@@ -691,6 +703,84 @@ mod tests {
                 "opacity {opacity}: {off} of {told_apart} pixels off"
             );
         }
+    }
+
+    /// A woozy pane of glass in fog (#1241). The composite fogs a translucent
+    /// draw at the depth the fog veil gives it, and the veil redraws it, so the
+    /// veil has to move it as the main pass did: at its rest pose the pane was
+    /// fogged as the far ground behind where it was drawn, and a fogless ghost
+    /// of it hung where it had drifted from. Now it reads exactly as a plain
+    /// pane moved there by hand, as `tests/runtime_mesh.rs`'s
+    /// `a_translucent_draw_is_fogged_at_its_own_depth` fogs one.
+    #[test]
+    fn a_woozy_translucent_is_fogged_where_it_is_drawn() {
+        let rig = rig_or_skip!();
+        const FOG: [f32; 3] = [0.30, 0.34, 0.42];
+        let mut renderer = SceneRenderer::new_headless(
+            &rig.device,
+            &rig.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        renderer.set_clear_color([FOG[0], FOG[1], FOG[2], 1.0]);
+        renderer.set_ambient([0.0; 3], [0.0; 3]);
+        // 4 m over dark ground, looking at its far edge, 3 m from a pane
+        // standing across the view
+        let camera = Camera {
+            position: flint_core::Vec3::new(0.0, 4.0, 6.0),
+            target: flint_core::Vec3::new(0.0, 4.0, 0.0),
+            aspect: 1.0,
+            ..Camera::default()
+        };
+        let (ground, indices) = square(40.0);
+        renderer.load_procedural_mesh(&rig.device, "ground", &ground, &indices, material("ground"));
+        let v = |x: f32, y: f32| MeshVertex {
+            position: [x, y, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            color: [1.0, 0.45, 0.1, 1.0],
+            uv: [0.0, 0.0],
+        };
+        let pane = [v(-1.0, 0.5), v(1.0, 0.5), v(1.0, 8.0), v(-1.0, 8.0)];
+        let both_faces = [0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2];
+        renderer.load_procedural_mesh(&rig.device, "pane", &pane, &both_faces, material("pane"));
+        let mut world = FlintWorld::new();
+        let spawn = |world: &mut FlintWorld, name: &str, at: [f32; 3]| {
+            let id = world.spawn(name).unwrap();
+            place(world, id, at);
+            let mut model = toml::Table::new();
+            model.insert("asset".into(), name.into());
+            model.insert("runtime".into(), true.into());
+            world.set_component(id, "model", model.into()).unwrap();
+            id
+        };
+        spawn(&mut world, "ground", [0.0; 3]);
+        let rest = [0.0_f32, 0.0, 3.0];
+        let glass = spawn(&mut world, "pane", rest);
+        let mut look = toml::Table::new();
+        look.insert("opacity".into(), 0.4.into());
+        world.set_component(glass, "material", look.into()).unwrap();
+        let mut config = renderer.post_process_config().clone();
+        config.fog_enabled = true;
+        config.fog_color = FOG;
+        config.fog_density = 0.09;
+        config.fog_start = 4.0;
+        renderer.set_post_process_config(config);
+
+        let (draw, moved) = whole_sheet_draw();
+        let still = rig.image_from(&mut renderer, &world, &camera);
+        let by_hand: [f32; 3] = std::array::from_fn(|i| rest[i] + moved[i]);
+        place(&mut world, glass, by_hand);
+        let moved_by_hand = rig.image_from(&mut renderer, &world, &camera);
+        place(&mut world, glass, rest);
+        renderer.set_shallow_wooze([(glass, draw)]);
+        let woozy = rig.image_from(&mut renderer, &world, &camera);
+
+        let told_apart = differing(&still, &moved_by_hand);
+        assert!(told_apart > 200, "only {told_apart} pixels moved");
+        let off = differing(&woozy, &moved_by_hand);
+        assert!(off <= 6, "{off} of {told_apart} pixels fogged off");
     }
 
     #[test]

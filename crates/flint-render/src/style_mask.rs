@@ -117,6 +117,12 @@
 //! its id covers where it was drawn; at its rest pose it had holes where
 //! the mesh had moved off and spill where it had moved from.
 //!
+//! The veil does the same for a drifting translucent in front (#1241): it
+//! pairs `wooze_vertex.wgsl`'s stages, the main pass's own, with `fs_veil`,
+//! built the first frame one is veiled
+//! ([`ensure_veil_wooze`](StyleMaskPass::ensure_veil_wooze)), so a woozy
+//! pane hands back the glyphs behind where it is drawn, not where it was.
+//!
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
 
@@ -1280,6 +1286,10 @@ pub(crate) struct VeilMesh<'a> {
     /// A living prop's echo (#737): skinned, front faces only, as the main
     /// pass draws it, so a two-sided leaf card covers once.
     pub echo: bool,
+    /// Drawn through shallow wooze's vertex stage (#1241), as the main
+    /// pass drew it, so it covers where it drifted to and not its rest
+    /// pose. An echo is never woozy.
+    pub woozy: bool,
 }
 
 /// The frame's particles, for the veil: the particle pipeline's shared
@@ -1305,6 +1315,13 @@ impl Veil<'_> {
     }
 }
 
+/// The veil's woozy pipelines (#1241): `wooze_vertex.wgsl`'s stages, the
+/// ones the main pass drifts a mesh with, over the same `fs_veil`s.
+struct WoozyVeil {
+    static_pipeline: wgpu::RenderPipeline,
+    skinned_pipeline: wgpu::RenderPipeline,
+}
+
 /// The veil's particle pipelines: alpha-like modes and additive.
 struct ParticleVeil {
     alpha: wgpu::RenderPipeline,
@@ -1323,6 +1340,28 @@ fn veil_pipeline(
     buffers: &[wgpu::VertexBufferLayout<'static>],
     cull_mode: Option<wgpu::Face>,
 ) -> wgpu::RenderPipeline {
+    veil_pipeline_split(
+        device,
+        label,
+        (module, vs),
+        (module, fs),
+        layouts,
+        buffers,
+        cull_mode,
+    )
+}
+
+/// [`veil_pipeline`] with its vertex stage from another module: shallow
+/// wooze's (#1241), whose stages hand over what the plain ones do.
+fn veil_pipeline_split(
+    device: &wgpu::Device,
+    label: &str,
+    (vertex, vs): (&wgpu::ShaderModule, &str),
+    (fragment, fs): (&wgpu::ShaderModule, &str),
+    layouts: &[&wgpu::BindGroupLayout],
+    buffers: &[wgpu::VertexBufferLayout<'static>],
+    cull_mode: Option<wgpu::Face>,
+) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
         bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
@@ -1332,13 +1371,13 @@ fn veil_pipeline(
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
-            module,
+            module: vertex,
             entry_point: Some(vs),
             buffers: &buffers.iter().cloned().map(Some).collect::<Vec<_>>(),
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
-            module,
+            module: fragment,
             entry_point: Some(fs),
             targets: &[Some(wgpu::ColorTargetState {
                 format: VEIL_FORMAT,
@@ -1390,6 +1429,8 @@ pub struct StyleMaskPass {
     veil_skinned: wgpu::RenderPipeline,
     /// `veil_skinned` on front faces only, for echoes (#737).
     veil_echo: wgpu::RenderPipeline,
+    /// Made the first frame a blended draw in front drifts (#1241).
+    veil_woozy: Option<WoozyVeil>,
     /// Made the first frame with particles (the particle pipeline is too).
     veil_particles: Option<ParticleVeil>,
     draw_bgl: wgpu::BindGroupLayout,
@@ -1857,6 +1898,7 @@ impl StyleMaskPass {
             veil_static,
             veil_skinned,
             veil_echo,
+            veil_woozy: None,
             veil_particles: None,
             draw_bgl,
             msaa: None,
@@ -1928,6 +1970,63 @@ impl StyleMaskPass {
                     bone_bgl,
                 ));
             }
+        }
+    }
+
+    /// Build the veil's woozy pipelines (#1241) if they aren't yet: the
+    /// first frame a blended draw in front of a styled one drifts on the
+    /// wooze field. A scene without one never makes them, so its frames
+    /// are what they were.
+    pub(crate) fn ensure_veil_wooze(&mut self, device: &wgpu::Device, layouts: &MaskLayouts<'_>) {
+        if self.veil_woozy.is_some() {
+            return;
+        }
+        let vertex = crate::wooze_pipeline::vertex_module(device);
+        let pbr = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Style Veil Woozy PBR Shader"),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SCENE.into()),
+        });
+        let skinned = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Style Veil Woozy Skinned Shader"),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SKINNED.into()),
+        });
+        let (transform, material, light) = (layouts.transform, layouts.material, layouts.light);
+        self.veil_woozy = Some(WoozyVeil {
+            static_pipeline: veil_pipeline_split(
+                device,
+                "Style Veil Woozy Pipeline",
+                (&vertex, "vs_wooze"),
+                (&pbr, "fs_veil"),
+                &[transform, material, light],
+                &[crate::primitives::Vertex::desc()],
+                None,
+            ),
+            skinned_pipeline: veil_pipeline_split(
+                device,
+                "Style Veil Woozy Skinned Pipeline",
+                (&vertex, "vs_skinned_wooze"),
+                (&skinned, "fs_veil"),
+                &[transform, material, light, layouts.bones],
+                &[crate::primitives::SkinnedVertex::desc()],
+                None,
+            ),
+        });
+    }
+
+    /// The veil pipeline a mesh draws through: the main pass's vertex
+    /// stage (#1241), and front faces only for an echo (#737).
+    fn veil_mesh_pipeline(&self, skinned: bool, echo: bool, woozy: bool) -> &wgpu::RenderPipeline {
+        let woozy = if woozy {
+            self.veil_woozy.as_ref()
+        } else {
+            None
+        };
+        match (echo, skinned, woozy) {
+            (true, _, _) => &self.veil_echo,
+            (false, true, Some(w)) => &w.skinned_pipeline,
+            (false, false, Some(w)) => &w.static_pipeline,
+            (false, true, None) => &self.veil_skinned,
+            (false, false, None) => &self.veil_static,
         }
     }
 
@@ -2095,13 +2194,9 @@ impl StyleMaskPass {
         }
         let mut bound = None;
         for m in &veil.meshes {
-            let key = (m.bones.is_some(), m.echo);
+            let key = (m.bones.is_some(), m.echo, m.woozy);
             if bound != Some(key) {
-                pass.set_pipeline(match key {
-                    (_, true) => &self.veil_echo,
-                    (true, false) => &self.veil_skinned,
-                    (false, false) => &self.veil_static,
-                });
+                pass.set_pipeline(self.veil_mesh_pipeline(key.0, key.1, key.2));
                 pass.set_bind_group(2, veil.light_bind_group, &[]);
                 bound = Some(key);
             }
