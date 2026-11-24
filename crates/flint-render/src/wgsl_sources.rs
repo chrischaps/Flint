@@ -304,6 +304,74 @@ mod tests {
         }
     }
 
+    /// A piece that no longer compiles alone is only ever taken through this
+    /// module: an `include_str!` of one elsewhere builds a module that fails
+    /// on the GPU at its first draw (#1244's A/B found the style veil's and
+    /// the fog veil's particle modules still taking `particle_shader.wgsl`
+    /// bare), which no naga test here would see.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // a test reading the crate's own source tree
+    fn the_pieces_are_only_taken_assembled() {
+        const PIECES: [&str; 20] = [
+            "lights.wgsl",
+            "light_bindings.wgsl",
+            "brdf.wgsl",
+            "shadows.wgsl",
+            "direct_light.wgsl",
+            "local_lights.wgsl",
+            "pbr_surface.wgsl",
+            "mesh_vertex.wgsl",
+            "skinning.wgsl",
+            "fog_veil.wgsl",
+            "shader.wgsl",
+            "skinned_shader.wgsl",
+            "terrain_shader.wgsl",
+            "ocean_shader.wgsl",
+            "grass_render.wgsl",
+            "volumetric_shader.wgsl",
+            "skinned_wire_shader.wgsl",
+            "shadow_shader.wgsl",
+            "particle_shader.wgsl",
+            "wooze_vertex.wgsl",
+        ];
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut dirs = vec![src];
+        let mut checked = 0;
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") || path.ends_with("wgsl_sources.rs")
+                {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (n, line) in text.lines().enumerate() {
+                    let Some(at) = line.find("include_str!(\"") else {
+                        continue;
+                    };
+                    let rest = &line[at + "include_str!(\"".len()..];
+                    let file = rest.split('"').next().unwrap_or("");
+                    let name = file.rsplit('/').next().unwrap_or(file);
+                    checked += 1;
+                    // The style mask wraps the vertex side in its mesh block
+                    let wrapped = path.ends_with("style_mask.rs")
+                        && (name == "mesh_vertex.wgsl" || name == "skinning.wgsl");
+                    assert!(
+                        wrapped || !PIECES.contains(&name),
+                        "{}:{}: `{name}` taken bare; use wgsl_sources",
+                        path.display(),
+                        n + 1
+                    );
+                }
+            }
+        }
+        assert!(checked > 20, "the walk found the crate's include_str!s");
+    }
+
     /// The transform the WGSL reads is the Rust slot's, in every module,
     /// plain or woozy, and a woozy one reads the whole 256-byte arena slot
     /// the drift rides in.

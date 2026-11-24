@@ -368,9 +368,7 @@ impl SceneRenderer {
             if pipelines.particles.is_none() {
                 let module = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("Fog Veil Particle Shader"),
-                    source: wgpu::ShaderSource::Wgsl(
-                        include_str!("../particle_shader.wgsl").into(),
-                    ),
+                    source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::PARTICLE.into()),
                 });
                 pipelines.particles = Some(pair(
                     device,
