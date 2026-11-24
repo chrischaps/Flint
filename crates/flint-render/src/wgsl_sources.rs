@@ -344,8 +344,7 @@ mod tests {
                     dirs.push(path);
                     continue;
                 }
-                if path.extension().is_none_or(|e| e != "rs") || path.ends_with("wgsl_sources.rs")
-                {
+                if path.extension().is_none_or(|e| e != "rs") || path.ends_with("wgsl_sources.rs") {
                     continue;
                 }
                 let text = std::fs::read_to_string(&path).unwrap();
