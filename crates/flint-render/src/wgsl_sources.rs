@@ -213,7 +213,10 @@ mod tests {
         out.extend([
             ("skinned_wire_shader.wgsl", WIRE.to_string()),
             ("wooze_vertex.wgsl", wooze_vertex()),
-            ("style_mask.wgsl", crate::style_mask::STYLE_MASK_WGSL.to_string()),
+            (
+                "style_mask.wgsl",
+                crate::style_mask::STYLE_MASK_WGSL.to_string(),
+            ),
             (
                 "style_mask.wgsl (woozy)",
                 crate::style_mask::woozy_mask_source(),
@@ -272,7 +275,10 @@ mod tests {
             } else {
                 found.len() == 1 && found[0].ends_with(home)
             };
-            assert!(ok, "`{decl}` should be declared once, in {home}; found in {found:?}");
+            assert!(
+                ok,
+                "`{decl}` should be declared once, in {home}; found in {found:?}"
+            );
         }
         // The products themselves: what reads the mesh transform's matrices,
         // and what weighs the bones
