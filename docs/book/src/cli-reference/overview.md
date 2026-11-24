@@ -18,7 +18,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
 | `flint script check [dir\|scene\|file.rhai]` | Compile every script and the modules it imports, and check each call's name and argument count against the script API, each callback's name and parameters, and each import, reported as `file:line:col`. Exits 1 on an error; `--json`; `--allow` / `--api` for a game's own functions ([Checking your scripts](../concepts/scripting.md#checking-your-scripts)) |
 | `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints, scripts. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
-| `flint frame show <capture>` | A frame capture's summary (scene, adapter, size, GPU time by pass, draws and triangles, memory), and `--passes`, `--draws [--pass P] [--entity E] [--sort tris] [--culled]`, `--targets`, `--hitch`; `flint frame diff <a> <b> [--out dir]` says what changed between two; `flint frame image <capture> <pass> -o x.png` copies a pass's image out to look at; `flint frame open <capture>` is the frame debugger's window ([The Frame Debugger](../guides/frame-debugger.md)); `flint frame replay <capture>` draws it again, a draw at a time or with an entity or pass left out. All but `replay` read only the capture folder; `--json` ([The `frame` Command](#the-frame-command)) |
+| `flint frame show <capture>` | A frame capture's summary (scene, adapter, size, GPU time by pass, draws and triangles, memory), and `--passes`, `--draws [--pass P] [--entity E] [--sort tris|gpu] [--culled]`, `--targets`, `--hitch`; `flint frame diff <a> <b> [--out dir]` says what changed between two; `flint frame image <capture> <pass> -o x.png` copies a pass's image out to look at; `flint frame open <capture>` is the frame debugger's window ([The Frame Debugger](../guides/frame-debugger.md)); `flint frame replay <capture>` draws it again, a draw at a time or with an entity or pass left out. All but `replay` read only the capture folder; `--json` ([The `frame` Command](#the-frame-command)) |
 | `flint profile explain <trace> [frame]` | Why a frame was slow, as a sentence first: each scope of a `--trace` file against its median over the trace's normal frames, the deepest scope that carries the excess named in the first line, then what ran only in that frame. `flint profile top <trace>` lists the scopes by total, self time, worst call or calls (`--thread`, `--frames a..b`); `flint profile frame <trace> <n\|worst\|hitch>` prints that frame's scope tree; `flint profile diff <a> <b>` compares two traces scope by scope and marks the deltas the frames' own spread explains. Reads only the file; `--json` ([The `profile` Command](#the-profile-command)) |
 | `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from [`flint-examples/index.toml`](https://github.com/chrischaps/flint-examples/blob/main/index.toml) or fails validation |
@@ -193,6 +193,7 @@ flint frame open dock.flintframe                    # the frame debugger's windo
 flint frame open dock.flintframe --pass Scene --screenshot scene.png   # one frame of it, no window
 flint frame replay dock.flintframe                  # draw it again: byte-identical, or how far off
 flint frame replay dock.flintframe --draws 40 --hide barrel_02 --out step.flintframe
+flint frame replay dock.flintframe --draw-times --overdraw --out cost.flintframe   # each draw's GPU time, the overdraw heat map
 ```
 
 `flint frame` reads a frame capture: the folder `flint render --frame-capture` writes, with a `manifest.json` describing the frame and an image for each target each pass wrote ([A frame's images](../guides/profiling.md#a-frames-images)). Every view but `replay` reads only that folder: no GPU, no scene, no schemas. So a capture from another machine, or attached to an issue, reads the same as one made here. A `--frame-dump` JSON file reads too, with no images. `replay` draws the frame again from the capture's `replay/`, so it needs the scene and its assets and a GPU.
@@ -227,7 +228,7 @@ Most expensive passes (GPU ms):
 | View | What it lists |
 |------|---------------|
 | `--passes` | Every pass in the order the frame recorded it, a shadow map's layers indented under it: its GPU ms (`untimed` for a part the timer has no scope for), draws, triangles, and what it wrote, or `skipped:` and why |
-| `--draws` | Every draw, named by its entity: the pass, kind, layer, pipeline, mesh, triangles and instances. `--pass <name>` keeps one pass's, `--entity <name>` one entity's (`*` matches any run: `tree_*`), `--sort tris` puts the heaviest first, `--culled` adds the draws a cull set aside with the reason (`frustum`, `lod`, `draw distance`) |
+| `--draws` | Every draw, named by its entity: the pass, kind, layer, pipeline, mesh, triangles and instances. `--pass <name>` keeps one pass's, `--entity <name>` one entity's (`*` matches any run: `tree_*`), `--sort tris` puts the heaviest first, `--sort gpu` the costliest on the GPU (a replay's `--draw-times`, which also adds a `GPU ms` column), `--culled` adds the draws a cull set aside with the reason (`frustum`, `lod`, `draw distance`) |
 | `--targets` | Every texture the frame drew into or read: format, size, layers, samples, memory, its images and the passes that wrote it |
 | `--hitch` | The player's frame history around the capture and the hitch that asked for it ([Hitches](../guides/profiling.md#hitches)), when the capture holds one. A `flint render` capture has none, and says so |
 
@@ -300,7 +301,7 @@ The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, 
 
 ### `flint frame replay`
 
-`flint frame replay <capture>` draws a captured frame again ([Replaying a frame](../guides/frame-debugger.md#replaying-a-frame)): the authored scene loaded as `flint render` loads it, the captured world laid over it by entity name, the renderer's state put back, no game step run. It writes the replayed frame as a capture, which every other `frame` view reads, and says whether its final image and its scene pass's image are byte-identical with the captured ones, or in how many pixels they differ and what the capture draws fresh. A style's history the capture holds (#1136) is handed back before the draw, and a `history:` line says, for each part, whether the style took it or drew fresh and why. Each asset is checked against its recorded hash; a missing or changed one is named and the frame still drawn. A capture with no `replay/` is refused, saying so. `--json` carries `identical`, `final` and `scene` (`pixels`, `differing`), `pass` (the stepped pass's own images, summed, when it isn't the scene's) and `pass_draws` (how many draws the capture's stepped pass has), `assets` (each `same`, `moved`, `changed` or `missing`), `notes`, `fresh_only`, `history` (those lines), `refused` and `skippable`.
+`flint frame replay <capture>` draws a captured frame again ([Replaying a frame](../guides/frame-debugger.md#replaying-a-frame)): the authored scene loaded as `flint render` loads it, the captured world laid over it by entity name, the renderer's state put back, no game step run. It writes the replayed frame as a capture, which every other `frame` view reads, and says whether its final image and its scene pass's image are byte-identical with the captured ones, or in how many pixels they differ and what the capture draws fresh. A style's history the capture holds (#1136) is handed back before the draw, and a `history:` line says, for each part, whether the style took it or drew fresh and why. Each asset is checked against its recorded hash; a missing or changed one is named and the frame still drawn. A capture with no `replay/` is refused, saying so. `--json` carries `identical`, `final` and `scene` (`pixels`, `differing`), `pass` (the stepped pass's own images, summed, when it isn't the scene's) and `pass_draws` (how many draws the capture's stepped pass has), `assets` (each `same`, `moved`, `changed` or `missing`), `notes`, `fresh_only`, `history` (those lines), `refused` and `skippable`; with `--draw-times`, `draw_times` (`timed`, `drawn`, `frames`, `costliest`, `by_kind`), and with `--overdraw`, `overdraw` (`pixels`, `empty`, `max`, `max_at`, `mean`, `over_4`, the two images' files).
 
 | Flag | What it does |
 |------|--------------|
@@ -310,6 +311,8 @@ The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, 
 | `--hide <name>` | Draw the frame without this entity in any pass (repeatable) |
 | `--skip <pass>` | Draw the frame without this pass: `Shadows`, `SSAO`, `Volumetric`, `Bloom`, `FXAA`, `Fog veil`, or a style's (repeatable). The text answer lists what this capture takes |
 | `--outline <name>` | Mark this entity's pixels with the selection outline |
+| `--draw-times` | Time each scene pass draw on the GPU (#1203): a timestamp before and after it inside the pass, in frames drawn before the captured one (2,048 draws a frame). Each draw's `gpu_ms` is in the replay's manifest, and the answer lists the costliest and the cost by kind. Needs an adapter with timestamps inside passes; without them it says so in `refused` |
+| `--overdraw` | Add the `Overdraw` pass after the scene's (#1203): how many draws shade each pixel (`overdraw_count`) and its heat map (`overdraw`; each colour twice the draws of the last, 1 to 31+). The answer gives the mean, the most and where, and the share over 4. Neither flag changes the frame's pixels |
 | `--scene <file>` | The scene, when it isn't where the capture says (found as recorded, else under the capture folder's parents) |
 | `--schemas <dir>` | Schema directories, as `flint render` takes them |
 
@@ -677,7 +680,7 @@ snapshot is written, and leaves (the second snapshot, shortened):
           "components": ["character_controller", "collider", "rigidbody", "script", "transform"],
           "data": {
             "transform": {"position": [-0.0073, 0.86, 4.2899], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
-            "character_controller": {"camera_mode": "first_person", "move_speed": 5.0, "...": "..."}
+            "character_controller": {"height": 1.8, "move_speed": 5.0, "...": "..."}
           }
         }
       ]
@@ -871,7 +874,7 @@ keys and what a take is: [Filming a Showcase](../guides/filming-a-showcase.md).
 ```bash
 flint capture showcase_game/trailer.shots.toml
 flint capture showcase_game/trailer.shots.toml --verify --encode mp4
-flint capture flint-examples/tools/showcase/film.toml --shot 02_type --scale 0.5 --dry-run --json
+flint capture flint-examples/film/film.toml --shot 02_type --scale 0.5 --dry-run --json
 ```
 
 ### Capture Flags

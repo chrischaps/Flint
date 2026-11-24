@@ -14,7 +14,7 @@ Heightmap PNG          flint-terrain              flint-render
                                                    cascaded shadows
 
 Splat Map PNG                                    flint-physics
-  RGBA channels  ──►  4-layer texture blend      Rapier trimesh
+  RGBA channels  ──►  4-layer texture blend      Rapier heightfield
   R=grass G=dirt       tiled from world pos       collision collider
   B=rock  A=sand
 ```
@@ -207,13 +207,15 @@ The **Grass Debug** panel (`F3` in the player, see [Debug Panels](../guides/debu
 
 ## Physics Collision
 
-Terrain automatically gets a **trimesh physics collider** via Rapier. The mesh geometry is exported as vertices and triangle indices, then registered as a fixed (immovable) rigid body. This means:
+Terrain automatically gets a **heightfield physics collider** via Rapier: the chunks' vertex grid as one grid of heights, on a fixed (immovable) rigid body. This means:
 
 - Characters walk on the terrain surface naturally
 - Objects collide with the terrain
 - Raycasts hit the terrain for line-of-sight checks
 
-The collider shape exactly matches the rendered mesh, so what you see is what you collide with.
+The collider is the rendered mesh triangle for triangle: each cell is split along the same diagonal the chunks use, so what you see is what you collide with. A heightfield is Rapier's own shape for a grid of heights. It holds one number a vertex rather than a mesh's points and triangles, and it knows its cells' neighbours, so the edges between cells and the seams between chunks are smooth to anything rolling or walking over them: a ball rolling across them no longer hops (until #1219 the collider was the chunks' triangles as one trimesh, and a ball rolling down a slope could be thrown 0.19 m into the air at a cell edge).
+
+The terrain's collider takes its entity's `collider.layer` and `mask` like any other, and `get_collider_extents` on it answers `shape: "heightfield"` with its box.
 
 ## Height Sampling from Scripts
 
@@ -267,7 +269,7 @@ The terrain system is split across crates to maintain clean dependency boundarie
 
 - **`flint-terrain`** --- pure data crate (no GPU dependency). Generates chunked mesh geometry from heightmap data. Outputs raw positions, normals, UVs, and indices.
 - **`flint-render`** --- `TerrainPipeline` and `terrain_shader.wgsl`. Assembles GPU vertex buffers from terrain data and handles splat-map texture blending; its lighting is the meshes' own (`direct_light.wgsl`, #738). `GrassPipeline` with `grass_compute.wgsl` and `grass_render.wgsl` owns the grass layer; `flint-terrain` only holds its `GrassConfig`.
-- **`flint-physics`** --- reuses existing `register_static_trimesh()` for collision. No terrain-specific physics code needed.
+- **`flint-physics`** --- `register_static_heightfield()` takes the terrain's `height_grid()` (its chunks' vertices as one grid) for collision; physics reads no terrain files.
 - **`flint-script`** --- `terrain_height(x, z)` Rhai function via callback pattern.
 
 This separation means `flint-terrain` can be used independently for tools, CLI commands, or headless processing without pulling in the GPU stack.

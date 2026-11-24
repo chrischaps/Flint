@@ -42,6 +42,7 @@ pub(crate) mod particle_pipeline;
 pub mod pass_knobs;
 mod pipeline;
 pub mod pipeline_cache;
+pub mod pipeline_twins;
 pub mod post_style;
 pub mod postprocess;
 mod primitives;
@@ -106,9 +107,9 @@ pub use render_scale::{clamp_render_scale, scaled_size, MIN_RENDER_SCALE};
 pub use render_stats::{format_count, RenderStats};
 pub use scene_renderer::{
     load_grass_ground_in, load_scene_grass_ground, load_scene_particle_textures,
-    load_scene_splines, BoundGrass, BoundScene, DrawControls, DrawLimit, FrameHost, FrameInputs,
-    HeldFrameCapture, LightingLevers, LoadedGrassGround, LoadedSplines, LoadedTerrain, LodSettings,
-    RendererConfig, SceneBinding, SceneRenderer, SplineCollider, SteppedPass, View2d,
+    load_scene_splines, BoundGrass, BoundScene, DrawControls, DrawLimit, DrawTimesRead, FrameHost,
+    FrameInputs, HeldFrameCapture, LightingLevers, LoadedGrassGround, LoadedSplines, LoadedTerrain,
+    LodSettings, RendererConfig, SceneBinding, SceneRenderer, SplineCollider, SteppedPass, View2d,
     DEFAULT_CLEAR_COLOR,
 };
 /// The most bones one skinned mesh's buffer holds.

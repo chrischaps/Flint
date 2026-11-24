@@ -19,6 +19,8 @@ tracing = { workspace = true }
 # A scene loaded from text, as a game's is (order_tests.rs, #688)
 flint-scene = { workspace = true }
 flint-schema = { workspace = true }
+# Real terrain chunks, for the heightfield against their trimesh (#1219)
+flint-terrain = { workspace = true }
 
 [lints]
 workspace = true

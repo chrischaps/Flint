@@ -12,6 +12,25 @@ use std::collections::HashMap;
 /// How long a jump press is remembered, in seconds
 const JUMP_BUFFER_WINDOW: f32 = 0.15;
 
+/// The input actions the controller reads. Fixed names, the controller's
+/// interface (ADR 0134): a game binds its own keys, pads and touch controls
+/// to them in its input config. The player's controls line lists these.
+pub const MOVE_FORWARD: &str = "move_forward";
+pub const MOVE_BACKWARD: &str = "move_backward";
+pub const MOVE_LEFT: &str = "move_left";
+pub const MOVE_RIGHT: &str = "move_right";
+pub const JUMP: &str = "jump";
+pub const SPRINT: &str = "sprint";
+/// All six, in the controls line's order.
+pub const ACTIONS: [&str; 6] = [
+    MOVE_FORWARD,
+    MOVE_BACKWARD,
+    MOVE_LEFT,
+    MOVE_RIGHT,
+    JUMP,
+    SPRINT,
+];
+
 /// The `character_controller` fields the controller reads, with the
 /// fallbacks the schema's defaults repeat
 /// (`schemas/components/character_controller.toml`). Read again every
@@ -146,7 +165,7 @@ impl CharacterController {
         let limit = settings.pitch_limit.abs();
         self.pitch = self.pitch.clamp(-limit, limit);
 
-        if input.is_action_just_pressed("jump") {
+        if input.is_action_just_pressed(JUMP) {
             self.jump_buffer = JUMP_BUFFER_WINDOW;
         }
     }
@@ -194,16 +213,16 @@ impl CharacterController {
 
         // Compute movement direction from input (relative to yaw)
         let mut move_dir = Vec3::ZERO;
-        if input.is_action_pressed("move_forward") {
+        if input.is_action_pressed(MOVE_FORWARD) {
             move_dir.z -= 1.0;
         }
-        if input.is_action_pressed("move_backward") {
+        if input.is_action_pressed(MOVE_BACKWARD) {
             move_dir.z += 1.0;
         }
-        if input.is_action_pressed("move_left") {
+        if input.is_action_pressed(MOVE_LEFT) {
             move_dir.x -= 1.0;
         }
-        if input.is_action_pressed("move_right") {
+        if input.is_action_pressed(MOVE_RIGHT) {
             move_dir.x += 1.0;
         }
 
@@ -222,7 +241,7 @@ impl CharacterController {
         // Normalize horizontal movement
         let horizontal_len = (world_move.x * world_move.x + world_move.z * world_move.z).sqrt();
         let horizontal = if horizontal_len > 0.001 {
-            let speed_mult = if input.is_action_pressed("sprint") {
+            let speed_mult = if input.is_action_pressed(SPRINT) {
                 settings.sprint_multiplier
             } else {
                 1.0

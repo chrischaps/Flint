@@ -780,6 +780,19 @@ impl WaterRenderer {
         pipeline: Option<&'a OceanPipeline>,
         light_bind_group: &'a wgpu::BindGroup,
     ) {
+        self.draw_through(render_pass, pipeline, light_bind_group, Some);
+    }
+
+    /// [`draw`](Self::draw), each pipeline bound as `pick` hands it back
+    /// (#1203: the overdraw view's depth-only twins); one it hands none
+    /// for draws nothing.
+    pub(crate) fn draw_through<'p>(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        pipeline: Option<&'p OceanPipeline>,
+        light_bind_group: &wgpu::BindGroup,
+        pick: impl Fn(&'p wgpu::RenderPipeline) -> Option<&'p wgpu::RenderPipeline>,
+    ) {
         let grab_bg = if self.grab_this_frame {
             self.grab.bind_group.as_ref()
         } else {
@@ -794,8 +807,8 @@ impl WaterRenderer {
             render_pass.set_bind_group(0, transform_bg, &[]);
             render_pass.set_bind_group(2, light_bind_group, &[]);
             render_pass.set_bind_group(3, grab_bg, &[]);
-            if self.ocean_active {
-                render_pass.set_pipeline(&op.pipeline);
+            if let (true, Some(sea)) = (self.ocean_active, pick(&op.pipeline)) {
+                render_pass.set_pipeline(sea);
                 render_pass.set_bind_group(1, ocean_bg, &[]);
                 render_pass.set_vertex_buffer(0, op.grid_vertex_buffer.slice(..));
                 render_pass
@@ -805,8 +818,9 @@ impl WaterRenderer {
             // Lakes and rivers (ADR 0094): after the sea, depth-tested,
             // so one above sea level hides the sea beneath it.
             let mut bodies = self.bodies_to_draw().peekable();
-            if bodies.peek().is_some() {
-                render_pass.set_pipeline(&op.body_pipeline);
+            let body_pipeline = pick(&op.body_pipeline);
+            if let (true, Some(body_pipeline)) = (bodies.peek().is_some(), body_pipeline) {
+                render_pass.set_pipeline(body_pipeline);
                 for b in bodies {
                     render_pass.set_bind_group(1, &b.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, b.vertex_buffer.slice(..));

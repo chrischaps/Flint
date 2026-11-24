@@ -150,6 +150,10 @@ impl ScriptHost for PlayerApp {
         PlayerApp::set_user_bus_volume(self, &bus, volume);
     }
 
+    fn set_bus_lowpass(&mut self, bus: String, hz: f64) {
+        let _ = self.audio.engine.set_bus_lowpass_named(&bus, hz);
+    }
+
     fn fire_event(&mut self, name: String, data: toml::Value) {
         // The core hands on only a transition's script saying it's done
         // (`game_core::for_the_host`); any other event called here goes on

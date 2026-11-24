@@ -206,6 +206,12 @@ pub enum ScriptCommand {
         bus: String,
         volume: f64,
     },
+    /// `set_bus_lowpass`: a mixer bus's own low-pass cutoff, Hz (20000 is
+    /// open), by name (#1218).
+    SetBusLowpass {
+        bus: String,
+        hz: f64,
+    },
     FireEvent {
         name: String,
         data: toml::Value,

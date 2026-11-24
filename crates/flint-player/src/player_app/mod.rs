@@ -116,6 +116,8 @@ mod scope_coverage_tests;
 #[cfg(test)]
 mod script_bus_tests;
 pub mod script_commands;
+#[cfg(test)]
+mod script_duck_tests;
 #[cfg(feature = "debug-hud")]
 mod script_error_card;
 #[cfg(test)]

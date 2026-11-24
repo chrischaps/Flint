@@ -22,6 +22,18 @@ pub struct HeadlessContext {
 impl HeadlessContext {
     /// Create a new headless rendering context with the given dimensions
     pub async fn new(width: u32, height: u32) -> Result<Self, RenderError> {
+        Self::with_features(width, height, wgpu::Features::empty()).await
+    }
+
+    /// [`new`](Self::new), also asking for `extra` features where the
+    /// adapter has them (#1203: a replay's draw times want timestamps
+    /// inside passes). The device gets what the adapter offers of them;
+    /// ask `device.features()` what it got.
+    pub async fn with_features(
+        width: u32,
+        height: u32,
+        extra: wgpu::Features,
+    ) -> Result<Self, RenderError> {
         let instance = crate::gpu_select::instance();
 
         let adapter = crate::gpu_select::request_adapter(&instance, None)
@@ -33,7 +45,7 @@ impl HeadlessContext {
                 label: Some("Flint Headless Device"),
                 // Timestamps where the adapter has them, so the
                 // renderer's GPU timing can be turned on (ADR 0108).
-                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                required_features: adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | extra),
                 required_limits: wgpu::Limits::default(),
                 memory_hints: Default::default(),
                 ..Default::default()

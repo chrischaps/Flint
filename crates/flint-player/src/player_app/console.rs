@@ -58,16 +58,10 @@ impl PlayerApp {
     }
 }
 
-/// The actions the character controller reads (`flint_physics::character`),
-/// which a first-person scene binds whatever its own layer names
-const CHARACTER_ACTIONS: [&str; 6] = [
-    "move_forward",
-    "move_backward",
-    "move_left",
-    "move_right",
-    "jump",
-    "sprint",
-];
+/// The actions the character controller reads, which a first-person scene
+/// binds whatever its own layer names: physics' own list (ADR 0134), so the
+/// two can't drift
+const CHARACTER_ACTIONS: [&str; 6] = flint_physics::character::ACTIONS;
 
 /// `Controls: jump Space/Pad:South, steer A/D | Esc cursor/exit, F1 debug
 /// keys`: each bound action the scene uses with its bindings' labels, then

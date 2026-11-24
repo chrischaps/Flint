@@ -226,6 +226,10 @@ pub fn run(args: OpenArgs) -> Result<()> {
             draws: args.draws,
             skip: args.skip.clone(),
             outline: args.outline.clone(),
+            // The window shows a capture's draw times (#1203) but doesn't
+            // take them: `flint frame replay --draw-times`, then open that
+            draw_times: false,
+            overdraw: false,
         }),
         scene: args.scene.clone(),
         schemas: args.schemas.clone(),

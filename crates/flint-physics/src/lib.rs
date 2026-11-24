@@ -14,6 +14,8 @@ pub mod sync;
 pub mod world;
 
 #[cfg(test)]
+mod heightfield_tests;
+#[cfg(test)]
 mod joint_tests;
 #[cfg(test)]
 mod layer_tests;
@@ -43,6 +45,24 @@ use world::PhysicsWorld;
 pub struct ColliderMesh {
     pub positions: Vec<[f32; 3]>,
     pub triangles: Vec<[u32; 3]>,
+}
+
+/// A grid of heights for a fixed heightfield collider
+/// ([`PhysicsSystem::register_static_heightfield`], #1219): the terrain's.
+/// Column 0 is at `origin` x, the last at `origin` x + `width`; row 0 at
+/// `origin` z, the last at + `depth`; each height is world Y less `origin` y.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StaticHeightfield {
+    /// Samples along X.
+    pub columns: usize,
+    /// Samples along Z.
+    pub rows: usize,
+    /// Row by row: `heights[row * columns + column]`.
+    pub heights: Vec<f32>,
+    pub width: f32,
+    pub depth: f32,
+    /// Where column 0, row 0 at height 0 is in the world.
+    pub origin: [f32; 3],
 }
 
 /// Entity-level raycast result
@@ -88,6 +108,11 @@ pub enum ColliderExtents {
     },
     /// A `convex` collider's hull, as `Mesh`
     Convex {
+        half_extents: [f32; 3],
+        centre: [f32; 3],
+    },
+    /// A terrain's heightfield (#1219), as `Mesh`
+    Heightfield {
         half_extents: [f32; 3],
         centre: [f32; 3],
     },
@@ -367,6 +392,15 @@ impl PhysicsSystem {
                     half_extents,
                     centre,
                 })
+            } else if shape.as_heightfield().is_some() {
+                // A heightfield is centred on its collider, which sits away
+                // from its body (`register_static_heightfield`)
+                let placed = collider.position_wrt_parent().copied().unwrap_or_default();
+                let c = placed * aabb.center();
+                Some(ColliderExtents::Heightfield {
+                    half_extents,
+                    centre: [c.x, c.y, c.z],
+                })
             } else if shape.as_convex_polyhedron().is_some() {
                 Some(ColliderExtents::Convex {
                     half_extents,
@@ -528,6 +562,24 @@ impl PhysicsSystem {
             &mut self.physics_world,
             vertices,
             indices,
+            friction,
+            restitution,
+        );
+    }
+
+    /// Register a fixed heightfield collider (#1219): a terrain's. It takes
+    /// its entity's `collider` layer at the next sync, as a trimesh does.
+    pub fn register_static_heightfield(
+        &mut self,
+        entity_id: EntityId,
+        field: &StaticHeightfield,
+        friction: f32,
+        restitution: f32,
+    ) {
+        self.sync.register_static_heightfield(
+            entity_id,
+            &mut self.physics_world,
+            field,
             friction,
             restitution,
         );

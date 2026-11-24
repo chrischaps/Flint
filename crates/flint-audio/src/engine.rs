@@ -36,6 +36,7 @@ use std::time::Duration;
 use web_time::Instant;
 
 mod backend;
+mod duck;
 mod keyed;
 mod local;
 mod remote_mix;
@@ -140,6 +141,8 @@ pub enum WebMixer {
 /// A placed one-shot that is playing, and the sound it plays.
 struct OneShot {
     sound: String,
+    /// The bus it plays on, which it counts as sounding on (#1218).
+    bus: Bus,
     handle: SoundHandle,
     /// Its own kira spatial track (`?mix=old`, mixed here); without one
     /// it's a panned voice on its bus that [`AudioEngine::pan_oneshots`]
@@ -218,6 +221,15 @@ pub struct AudioEngine {
     /// player's "music at 40%". By name, so a saved setting read before
     /// the game declares its buses finds its bus when it is declared.
     user_volumes: BTreeMap<String, f64>,
+    /// Each bus's low-pass cutoff as asked for, Hz, by number (#1218).
+    bus_lowpass: Vec<f64>,
+    /// Which buses are ducked now, by number (#1218): their volume goes to
+    /// the mixer times their duck's gain.
+    ducked: Vec<bool>,
+    /// When each sound played on a bus with no key and no loop ends, and
+    /// its bus (#1218): an extension's or a trigger's one-shot, kept only
+    /// to say what is sounding where.
+    tails: Vec<(Bus, Instant)>,
     /// Bus names asked for that aren't buses, said once each.
     unknown_buses: HashSet<String>,
     /// The table [`set_buses`](Self::set_buses) applied last.
@@ -304,6 +316,9 @@ impl AudioEngine {
             filter_cutoff: 20000.0,
             bus_volumes: buses.iter().map(|(_, d)| d.volume).collect(),
             user_volumes: BTreeMap::new(),
+            bus_lowpass: buses.iter().map(|(_, d)| d.lowpass).collect(),
+            ducked: vec![false; buses.len()],
+            tails: Vec::new(),
             buses,
             unknown_buses: HashSet::new(),
             applied_buses: None,
@@ -437,8 +452,14 @@ impl AudioEngine {
         self.make_buses(Bus::BUILT_IN.len());
         let buses: Vec<Bus> = self.buses.iter().map(|(bus, _)| bus).collect();
         for bus in buses {
-            if self.held || self.mixed_volume(bus) != 1.0 {
+            let i = bus.index();
+            if self.held || self.ducked[i] || self.mixed_volume(bus) != 1.0 {
                 self.send_bus_volume(bus, 0.016);
+            }
+            // The rest were made at theirs.
+            if i < Bus::BUILT_IN.len() && self.bus_lowpass[i] < crate::bus::LOWPASS_OPEN {
+                self.mixer
+                    .set_bus_lowpass(bus, self.bus_lowpass[i] as f32, 0.0);
             }
         }
         self.let_go_of_sent_sounds();
@@ -448,7 +469,8 @@ impl AudioEngine {
     fn make_buses(&mut self, from: usize) {
         for (bus, decl) in self.buses.iter().skip(from) {
             let db = amplitude_to_db(self.mixed_volume(bus));
-            if let Err(e) = self.mixer.add_bus(bus, decl.parent, db) {
+            let lowpass = self.bus_lowpass[bus.index()] as f32;
+            if let Err(e) = self.mixer.add_bus(bus, decl.parent, db, lowpass) {
                 tracing::warn!("[flint-audio] bus '{}': {e}", decl.name);
             }
         }
@@ -456,19 +478,20 @@ impl AudioEngine {
 
     /// Mix through these buses (#730): `sfx`, `music` and the game's, as a
     /// manifest's `[audio.buses]` declares them ([`Buses::from_manifest`]).
-    /// The first table sets every bus's starting volume, the built-in two's
-    /// included. A later, different one (another project's) only adds the
-    /// buses it names that aren't here, each at its volume: a bus already
-    /// here keeps its number and the volume the game has given it. A new
-    /// bus is made in the mixer now, or when it starts. None is removed.
-    /// Applying the table applied last changes nothing, so a host can hand
-    /// it over at every scene.
+    /// The first table sets every bus's starting volume, low-pass and duck
+    /// (#1218), the built-in two's included. A later, different one
+    /// (another project's) only adds the buses it names that aren't here,
+    /// each as it says: a bus already here keeps its number and what the
+    /// game has given it. A new bus is made in the mixer now, or when it
+    /// starts. None is removed. Applying the table applied last changes
+    /// nothing, so a host can hand it over at every scene.
     pub fn set_buses(&mut self, table: &Buses) {
         if self.applied_buses.as_ref() == Some(table) {
             return;
         }
         let first = self.applied_buses.replace(table.clone()).is_none();
         let before = self.buses.len();
+        let mut taken = Vec::new();
         for (_, decl) in table.iter() {
             // A parent always comes before its children in a table.
             let parent = decl
@@ -480,14 +503,33 @@ impl AudioEngine {
             }
             match self.buses.declare(&decl.name, parent, decl.volume) {
                 Ok(bus) if bus.index() >= self.bus_volumes.len() => {
-                    self.bus_volumes.push(decl.volume)
+                    self.bus_volumes.push(decl.volume);
+                    self.bus_lowpass.push(decl.lowpass);
+                    self.ducked.push(false);
+                    self.buses.set_lowpass(bus, decl.lowpass);
+                    taken.push((bus, decl));
                 }
-                Ok(bus) if self.bus_volumes[bus.index()] != decl.volume => {
-                    self.bus_volumes[bus.index()] = decl.volume;
-                    self.send_bus_volume(bus, 0.016);
+                Ok(bus) => {
+                    if self.bus_volumes[bus.index()] != decl.volume {
+                        self.bus_volumes[bus.index()] = decl.volume;
+                        self.send_bus_volume(bus, 0.016);
+                    }
+                    self.buses.set_lowpass(bus, decl.lowpass);
+                    self.set_bus_lowpass(bus, decl.lowpass);
+                    taken.push((bus, decl));
                 }
-                Ok(_) => {}
                 Err(e) => tracing::warn!("[flint-audio] {e}"),
+            }
+        }
+        // Every bus is here now: each duck's `under`, numbered as this
+        // engine numbers it.
+        for (bus, decl) in taken {
+            let duck = decl.duck.and_then(|d| {
+                let under = self.buses.get(&table.decl(d.under)?.name)?;
+                Some(crate::bus::Duck { under, ..d })
+            });
+            if let Err(e) = self.buses.set_duck(bus, duck) {
+                tracing::warn!("[flint-audio] bus '{}': {e}", decl.name);
             }
         }
         self.make_buses(before);
@@ -712,14 +754,20 @@ impl AudioEngine {
         self.held
     }
 
-    /// Give the mixer a bus's volume: the one asked for, or none while held
-    /// (a child bus is held through its parent).
+    /// Give the mixer a bus's volume: the one asked for, times its duck's
+    /// gain while ducked (#1218), or none while held (a child bus is held
+    /// through its parent).
     fn send_bus_volume(&mut self, bus: Bus, tween: f64) {
-        let top = self.buses.decl(bus).is_some_and(|d| d.parent.is_none());
+        let decl = self.buses.decl(bus);
+        let top = decl.is_some_and(|d| d.parent.is_none());
+        let duck = match decl.and_then(|d| d.duck) {
+            Some(d) if self.ducked[bus.index()] => d.gain(),
+            _ => 1.0,
+        };
         let volume = if self.held && top {
             0.0
         } else {
-            self.mixed_volume(bus)
+            self.mixed_volume(bus) * duck
         };
         self.mixer
             .set_bus_volume(bus, amplitude_to_db(volume), tween);
@@ -1106,7 +1154,10 @@ impl AudioEngine {
         self.mixer.play(voice, On::Track(track))
     }
 
-    /// Play a cached sound on a mixer bus (non-spatial, e.g. ambient/music)
+    /// Play a cached sound on a mixer bus (non-spatial, e.g. ambient/music).
+    /// One that ends by itself counts as sounding on its bus until it has
+    /// (a bus ducking under that one dips, #1218); a loop played this way
+    /// is the caller's to know of.
     pub fn play_non_spatial(
         &mut self,
         sound_name: &str,
@@ -1120,8 +1171,33 @@ impl AudioEngine {
 
     /// Play a cached sound on a mixer bus, panned (kira's `Panning`: -1
     /// left, 1 right, at constant power). A placed sound plays this way
-    /// with its gains from [`crate::pan`], steered every frame (#138).
+    /// with its gains from [`crate::pan`], steered every frame (#138). As
+    /// [`play_non_spatial`](Self::play_non_spatial), a one-shot counts as
+    /// sounding on its bus until it ends.
     pub fn play_panned(
+        &mut self,
+        sound_name: &str,
+        volume: f64,
+        pan: f32,
+        pitch: f64,
+        looping: bool,
+        bus: Bus,
+    ) -> Result<SoundHandle> {
+        let handle = self.start_panned(sound_name, volume, pan, pitch, looping, bus)?;
+        if !looping {
+            if let Some(secs) = self.sound_length(sound_name) {
+                let secs = secs / pitch.abs().max(1e-3);
+                self.tails
+                    .push((bus, Instant::now() + Duration::from_secs_f64(secs)));
+            }
+        }
+        Ok(handle)
+    }
+
+    /// [`play_panned`](Self::play_panned) for a caller that says itself
+    /// when the sound is sounding: a keyed sound, a placed one-shot, an
+    /// `audio_source` ([`AudioSync::sounding_buses`](crate::sync::AudioSync::sounding_buses)).
+    pub(crate) fn start_panned(
         &mut self,
         sound_name: &str,
         volume: f64,
@@ -1222,7 +1298,7 @@ impl AudioEngine {
         }
         let (gain, pan) = volume_and_pan(self.ears().gains(to_glam_vec3(position), &falloff));
         let handle =
-            self.play_panned(sound_name, volume * gain as f64, pan, pitch, looping, bus)?;
+            self.start_panned(sound_name, volume * gain as f64, pan, pitch, looping, bus)?;
         let now = Instant::now();
         if !looping {
             self.steal_beyond_cap(sound_name, now);
@@ -1230,6 +1306,7 @@ impl AudioEngine {
         let ends_at = self.remote_end(sound_name, pitch, looping, now);
         self.oneshots.push(OneShot {
             sound: sound_name.to_string(),
+            bus,
             handle,
             track: None,
             position,
@@ -1276,6 +1353,7 @@ impl AudioEngine {
         };
         self.oneshots.push(OneShot {
             sound: sound_name.to_string(),
+            bus,
             handle,
             track: Some(track),
             position,
@@ -1350,6 +1428,7 @@ impl AudioEngine {
         let now = Instant::now();
         self.oneshots.retain(|o| !o.is_finished(now));
         self.keyed.retain(|k| !k.is_finished(now));
+        self.tails.retain(|&(_, end)| now < end);
     }
 
     /// What the mixer holds, for the perf readout: every voice and spatial
@@ -1380,6 +1459,7 @@ impl AudioEngine {
             o.handle.stop(FRAME_TWEEN);
         }
         self.oneshots.clear();
+        self.tails.clear();
         self.mixer.clear_oneshots();
     }
 
@@ -1966,6 +2046,7 @@ mod tests {
             bus: 2,
             parent: BUS_MAIN,
             db: amplitude_to_db(0.5).0,
+            lowpass: 20_000.0,
         }));
         assert!(
             opened
@@ -1992,6 +2073,7 @@ mod tests {
                 bus: 3,
                 parent: BUS_SFX,
                 db: 0.0,
+                lowpass: 20_000.0,
             }]
         );
 

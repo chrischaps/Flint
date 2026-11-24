@@ -82,6 +82,7 @@ pub const PRESENTATION_ONLY: &[Skipped] = &[
     quiet("set_sound_volume"),
     quiet("set_bus_volume"),
     quiet("set_user_bus_volume"),
+    quiet("set_bus_lowpass"),
     quiet("set_audio_lowpass"),
     quiet("set_touch_controls"),
     quiet("set_cursor_captured"),

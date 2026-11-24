@@ -1941,6 +1941,7 @@ dependencies = [
  "flint-runtime",
  "flint-scene",
  "flint-schema",
+ "flint-terrain",
  "rapier3d",
  "thiserror 2.0.18",
  "toml",

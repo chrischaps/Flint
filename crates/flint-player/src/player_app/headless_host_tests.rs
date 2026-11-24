@@ -97,6 +97,10 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             bus: s("music"),
             volume: 0.4,
         },
+        C::SetBusLowpass {
+            bus: s("sfx"),
+            hz: 800.0,
+        },
         C::FireEvent {
             name: s("bell"),
             data: toml::Value::Boolean(true),

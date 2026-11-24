@@ -81,6 +81,9 @@ pub mod codes {
     /// `collider` with no `rigidbody`. Found by the system that reads it,
     /// while the game runs (#685).
     pub const NEEDS_COMPONENT: &str = "needs-component";
+    /// A `character_controller` on a second entity: one is the player, the
+    /// first by name, and the others' are never read (#1212).
+    pub const SECOND_PLAYER: &str = "second-player";
     /// An `entity` field (or an entity's `parent`) that names no entity of
     /// the scene. An empty string is "not set" and passes.
     pub const UNKNOWN_ENTITY: &str = "unknown-entity";
@@ -284,6 +287,11 @@ pub mod codes {
             NEEDS_COMPONENT,
             Severity::Warning,
             "a component that does nothing without another the entity lacks",
+        ),
+        (
+            SECOND_PLAYER,
+            Severity::Warning,
+            "a character_controller on an entity that is not the player",
         ),
         (
             UNKNOWN_ENTITY,
@@ -1024,7 +1032,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 54);
+        assert_eq!(seen.len(), 56);
     }
 
     /// A problem in a scene-level table names the table as its header is
