@@ -79,6 +79,9 @@ pub struct GameCore {
     /// frame budget its queue lends the living props.
     #[cfg(feature = "procgen")]
     pub(crate) procgen_resolver: ProcGenResolver,
+    /// The triangles of procgen and runtime meshes, for the `mesh` and
+    /// `convex` colliders that name them (#1222; `collider_meshes.rs`)
+    pub(crate) collider_sources: super::collider_meshes::ColliderSources,
     /// The scene's living props (flint-living, #1024), beside the resolver
     /// that makes their poses: added at load, before the living subsystem
     /// exists, and kept across scenes for their pose cache.
@@ -125,6 +128,7 @@ impl GameCore {
             style_reader_generation: None,
             #[cfg(feature = "procgen")]
             procgen_resolver: ProcGenResolver::new(),
+            collider_sources: Default::default(),
             #[cfg(feature = "living")]
             living_props: Default::default(),
             script_requests: Default::default(),
@@ -331,6 +335,13 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     let steps_physics = !host.capture();
     let moved = {
         let (core, lent) = host.lend();
+        // Triangles that came since the last frame (a procgen model the
+        // queue finished, a mesh an extension uploaded), for the bodies
+        // whose `mesh` or `convex` collider names them (#1222)
+        if steps_physics {
+            core.collider_sources
+                .refresh(&core.world, &mut core.physics, lent.renderer.as_deref());
+        }
         core.tick_fixed_physics(
             config,
             has_fps_player && steps_physics,
@@ -754,11 +765,16 @@ impl GameCore {
                 self.project.clone(),
                 &self.scene_path,
             );
-            let mut sink = super::procgen_assets::GpuSink {
+            let mut gpu = super::procgen_assets::GpuSink {
                 renderer,
                 device,
                 queue,
                 config: &config,
+            };
+            // Each mesh's triangles kept for the colliders naming it (#1222)
+            let mut sink = super::collider_meshes::Recording {
+                sink: &mut gpu,
+                sources: &mut self.collider_sources,
             };
             super::procgen_assets::apply_completed(&completed, &mut sink);
             super::procgen_assets::apply_failures(&failures, &mut sink);

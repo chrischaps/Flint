@@ -216,9 +216,24 @@ impl PhysicsSystem {
         PhysicsSync::mesh_requests(world)
     }
 
-    /// Hand over an entity's collider triangles, before its body is made.
+    /// Hand over an entity's collider triangles. Before its body is made
+    /// the body takes them; after (a procgen model that finished late, a
+    /// mesh a game uploaded at runtime, #1222) its collider is made again
+    /// from them at the next step.
     pub fn set_collider_mesh(&mut self, entity_id: EntityId, mesh: Arc<ColliderMesh>) {
         self.sync.set_mesh(entity_id, mesh);
+    }
+
+    /// Say an entity's collider triangles are coming (a procgen model still
+    /// on the queue): until they do, its collider is a box of `size` with
+    /// no warning, as a runtime mesh's is.
+    pub fn expect_collider_mesh(&mut self, entity_id: EntityId) {
+        self.sync.expect_mesh(entity_id);
+    }
+
+    /// The triangles last handed over for an entity's collider.
+    pub fn collider_mesh_of(&self, entity_id: EntityId) -> Option<&Arc<ColliderMesh>> {
+        self.sync.mesh_of(entity_id)
     }
 
     /// The entity a collider belongs to.
