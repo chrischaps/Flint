@@ -27,9 +27,9 @@ pub(crate) mod conducted;
 pub(crate) mod rhythm;
 
 use crate::player_app::subsystem::{SceneCtx, Stage, StageCtx, Subsystem};
-use flint_core::components::MUSIC_SESSION;
 use flint_core::project::Project;
 use flint_ecs::FlintWorld;
+use flint_music::components::MUSIC_SESSION;
 use flint_music::{Conductor, EventScript, SuiteManifest, SuiteSession};
 use flint_script::MusicClock;
 use std::path::{Path, PathBuf};

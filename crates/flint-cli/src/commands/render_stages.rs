@@ -838,7 +838,7 @@ fn still_props(stage: &Stage) -> Vec<String> {
             !living.contains(&entity.id)
                 && world
                     .get_components(entity.id)
-                    .is_some_and(|comps| comps.get(comp::LIVING_PROP).is_some())
+                    .is_some_and(|comps| comps.get(flint_living::components::LIVING_PROP).is_some())
         })
         .map(|entity| entity.name)
         .collect()

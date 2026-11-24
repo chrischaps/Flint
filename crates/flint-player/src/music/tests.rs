@@ -87,7 +87,7 @@ fn a_script_reads_the_beat_and_bar_of_a_suite_with_no_chart() {
     world
         .set_component(
             id,
-            flint_core::components::MUSIC_SESSION,
+            flint_music::components::MUSIC_SESSION,
             table(&[("manifest", "music/probe.suite.toml".into())]),
         )
         .unwrap();

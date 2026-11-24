@@ -59,7 +59,7 @@ pub fn wanted_by(world: &FlintWorld) -> bool {
     world.all_entities().iter().any(|entity| {
         world
             .get_components(entity.id)
-            .is_some_and(|comps| comps.get(comp::LIVING_PROP).is_some())
+            .is_some_and(|comps| comps.get(flint_living::components::LIVING_PROP).is_some())
     })
 }
 
@@ -259,7 +259,7 @@ pub fn resolve(
         let Some(comps) = world.get_components(entity.id) else {
             continue;
         };
-        let Some(component) = comps.get(comp::LIVING_PROP) else {
+        let Some(component) = comps.get(flint_living::components::LIVING_PROP) else {
             continue;
         };
         let name = &entity.name;

@@ -2,6 +2,7 @@
 //! Supports an optional spline editor mode for interactive track editing.
 
 use crate::edits::FieldEdits;
+use crate::field_clocks::{field_of, FieldClocks, SceneField};
 use crate::host::{self, Editor, Flow, Gpu, HostOptions, InitCx, Target, Tick};
 use crate::panels::transform_gizmo::apply_gizmo_delta;
 use crate::panels::{
@@ -17,7 +18,6 @@ use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader::{self, ModelLoadConfig};
-use flint_render::shallow_wooze::{GrassWooze, ShallowWooze};
 use flint_render::{
     post_process_config_from_def, Camera, FrameInputs, OrbitCameraController, PostProcessConfig,
     RendererConfig, SceneBinding, SceneRenderer,
@@ -46,9 +46,10 @@ struct ViewerState {
     /// F4's "Authored post" button toggles between it and the viewer's
     /// default config.
     scene_post: Option<PostProcessDef>,
-    /// The scene's wooze field, if it has a `[wooze]` table. The viewer reads it
-    /// for the shading boil only (#214); it doesn't run living props.
-    wooze: Option<flint_wooze::WoozeField>,
+    /// The scene's wooze field, if it has a `[wooze]` table (and the viewer has
+    /// `living`, #1330). The viewer reads it for the shading boil, shallow wooze
+    /// and woozy grass (#214); it doesn't run living props.
+    wooze: Option<SceneField>,
     /// The scene's authored `[camera]` block, if any — seeds the orbit camera
     /// on load (and on Space reset) so the viewer opens on the authored
     /// framing instead of the generic default.
@@ -471,16 +472,11 @@ pub struct ViewerApp {
     particle_speed: f32,
     particle_alive: usize,
     last_particle_tick: Instant,
-    /// The shading boil's clock (#214): beats, and seconds for the field's ramps.
-    boil_clock: flint_wooze::BoilClock,
-    boil_time: f64,
     last_boil_tick: Instant,
-    /// This frame's boil drawing, for the frame's inputs.
-    frame_boil: flint_wooze::BoilFrame,
-    /// Shallow wooze's and woozy grass's clocks (#215, #252), on the same
-    /// field clock as the boil, as the player's living subsystem keeps them.
-    shallow_wooze: ShallowWooze,
-    grass_wooze: GrassWooze,
+    /// The shading boil's, shallow wooze's and woozy grass's clocks (#214,
+    /// #215, #252), on the scene's field, as the player's living subsystem
+    /// keeps them.
+    field_clocks: FieldClocks,
     /// Seconds the last frame took, for styles whose history is a rate (#342).
     frame_dt: f32,
     /// The scene as the renderer binds it (#739): made when its user styles
@@ -752,12 +748,8 @@ impl ViewerApp {
             particle_speed: 1.0,
             particle_alive: 0,
             last_particle_tick: Instant::now(),
-            boil_clock: Default::default(),
-            boil_time: 0.0,
             last_boil_tick: Instant::now(),
-            frame_boil: Default::default(),
-            shallow_wooze: Default::default(),
-            grass_wooze: Default::default(),
+            field_clocks: Default::default(),
             frame_dt: 1.0 / 60.0,
             scene_binding: None,
             watch: None,
@@ -1113,14 +1105,14 @@ impl ViewerApp {
             // History styles decay by the frame's time (#342)
             dt: self.frame_dt,
             look_time: Some(self.style_time.map_or(0.0, f64::from)),
-            grass_time: self.grass_wooze.sway_time(),
-            grass_wooze: self.grass_wooze.comb(),
+            grass_time: self.field_clocks.grass_time(),
+            grass_wooze: self.field_clocks.grass_comb(),
             shallow_wooze: if woozy {
-                self.shallow_wooze.draws()
+                self.field_clocks.shallow_draws()
             } else {
                 &[]
             },
-            boil: self.frame_boil,
+            boil: self.field_clocks.boil(),
             // Styles sized in points (ASCII cells, #265) follow the window
             pixels_per_point: self
                 .window
@@ -1227,20 +1219,14 @@ impl ViewerApp {
 
         let eye = self.camera.position_array();
         let state = self.state.lock().unwrap();
-        self.frame_boil = match &state.wooze {
-            Some(field) => {
-                self.boil_time += dt;
-                let sample = field.sample(eye, self.boil_time);
-                self.boil_clock.tick(dt, &sample);
-                self.shallow_wooze
-                    .advance(&state.world, field, self.boil_time, dt);
-                self.grass_wooze
-                    .advance(renderer.grass_config(), field, eye, self.boil_time, dt);
-                self.boil_clock
-                    .frame(&sample, renderer.post_process_config().boil_on)
-            }
-            None => Default::default(),
-        };
+        self.field_clocks.tick(
+            state.wooze.as_ref(),
+            &state.world,
+            eye,
+            renderer.grass_config().and_then(|c| c.wooze_comb()),
+            renderer.post_process_config().boil_on,
+            dt,
+        );
     }
 
     /// Restore DoF params to the active base config (authored scene post if
@@ -2267,8 +2253,7 @@ impl ViewerApp {
             match reload_result {
                 Ok((new_world, scene_file)) => {
                     // Its entities are new: the field's clocks start over
-                    self.shallow_wooze = Default::default();
-                    self.grass_wooze = Default::default();
+                    self.field_clocks.restart_meshes();
 
                     {
                         let mut state = self.state.lock().unwrap();
@@ -2882,16 +2867,6 @@ impl Editor for ViewerApp {
 }
 
 // --- Helpers ---
-
-/// The wooze field a scene describes, naming what's wrong with it and going on
-/// without that part, as the player does.
-fn field_of(scene: &flint_scene::SceneFile) -> Option<flint_wooze::WoozeField> {
-    let (field, issues) = flint_procgen::LivingTables::or_warn(scene).wooze?.field();
-    for issue in issues {
-        tracing::warn!("{issue}; going without it");
-    }
-    Some(field)
-}
 
 fn vec3_to_toml(v: [f32; 3]) -> toml::Value {
     toml::Value::Array(vec![

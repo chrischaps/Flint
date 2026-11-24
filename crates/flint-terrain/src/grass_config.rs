@@ -101,6 +101,13 @@ impl Default for GrassConfig {
 }
 
 impl GrassConfig {
+    /// What woozy grass's clock combs the tips with, `(amplitude, wavelength)`
+    /// as authored, when the grass is on and asks for the field (#252). `None`
+    /// keeps the wall clock. `flint_wooze::shallow::GrassWooze` takes this.
+    pub fn wooze_comb(&self) -> Option<(f32, f32)> {
+        (self.enabled && self.wooze).then_some((self.wooze_amplitude, self.wooze_wavelength))
+    }
+
     pub fn max_instances(&self, terrain_width: f32, terrain_depth: f32) -> u32 {
         let area = terrain_width * terrain_depth;
         (self.density * area * 0.5).ceil() as u32
@@ -221,6 +228,28 @@ mod tests {
         let data: toml::Value = toml::from_str(text).unwrap();
         world.set_component(id, component, data).unwrap();
         (world, id)
+    }
+
+    #[test]
+    fn only_grass_that_is_on_and_asks_has_a_wooze_comb() {
+        let asks = GrassConfig {
+            enabled: true,
+            wooze: true,
+            wooze_amplitude: 0.2,
+            wooze_wavelength: 3.0,
+            ..Default::default()
+        };
+        assert_eq!(asks.wooze_comb(), Some((0.2, 3.0)));
+        let off = GrassConfig {
+            enabled: false,
+            ..asks.clone()
+        };
+        assert_eq!(off.wooze_comb(), None);
+        let plain = GrassConfig {
+            wooze: false,
+            ..asks
+        };
+        assert_eq!(plain.wooze_comb(), None);
     }
 
     #[test]

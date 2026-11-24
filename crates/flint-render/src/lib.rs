@@ -63,7 +63,6 @@ pub mod render_stats;
 mod scene_renderer;
 pub(crate) mod selection_outline;
 pub(crate) mod shadow;
-pub mod shallow_wooze;
 pub(crate) mod skinned_pipeline;
 pub(crate) mod sky_pipeline;
 pub(crate) mod skybox_pipeline;

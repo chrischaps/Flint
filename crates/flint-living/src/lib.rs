@@ -44,6 +44,7 @@
 
 mod ab;
 mod blend;
+pub mod components;
 mod defs;
 mod layers;
 mod prop;

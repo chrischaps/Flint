@@ -35,9 +35,11 @@ use flint_core::field::{FieldKeys, ParamField, Zone};
 use flint_core::step_clock::StepClock;
 
 pub use flint_core::field::SHAPE_KEYS;
+pub use flint_core::field_frame::{BoilFrame, ShallowWoozeDraw, WAVELENGTH_MIN};
 pub use flint_core::step_clock::{warp, Cycle, CycleNow, STEP_MIN};
 
 pub mod components;
+pub mod shallow;
 
 /// The largest `jitter`: enough to make a zone boil harder than its specs.
 pub const JITTER_MAX: f32 = 4.0;
@@ -191,19 +193,6 @@ pub fn check_knob_named(name: &str, value: f32) -> Result<f32, String> {
 /// divide, so a drawing lands on every beat whichever a scene picks, and the
 /// `linklater` preset's half-second step is exactly 12 frames a second.
 pub const FILM_FRAMES_PER_BEAT: u32 = 6;
-
-/// Which drawing the shading boil (#214) is on, and how hard it boils.
-///
-/// The default is no boil at all, which is what a scene with no field gets.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct BoilFrame {
-    /// The drawing: the same for as long as it's held, and new when it changes.
-    pub seed: u32,
-    /// How much of the authored boil shows, the field's `jitter` here and now.
-    pub amount: f32,
-    /// The field's step here and now in seconds, or 0 with no field.
-    pub step: f32,
-}
 
 /// The shading boil's clock: a [`StepClock`] on the field's step, like any
 /// other consumer's, so a change of step bends it from where it stands. It runs

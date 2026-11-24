@@ -103,6 +103,8 @@ const COMPONENT_FILES: &[&str] = &[
     "crates/flint-core/src/components.rs",
     "crates/flint-geometry/src/components.rs",
     "crates/flint-wooze/src/components.rs",
+    "crates/flint-living/src/components.rs",
+    "crates/flint-music/src/components.rs",
 ];
 
 /// `(IDENT, "value")` for every `pub const IDENT: &str = "value";` in

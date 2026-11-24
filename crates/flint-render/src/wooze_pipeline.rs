@@ -31,9 +31,9 @@ fn vertex_source() -> String {
 /// The shadow pass's, with the same noise, so a shadow moves with what casts it.
 pub(crate) const SHADOW_SOURCE: &str = crate::wgsl_sources::WOOZE_SHADOW;
 
-/// The shortest wavelength, in metres. Under this it stops reading as drift and
-/// starts tearing a mesh's triangles apart.
-pub const WAVELENGTH_MIN: f32 = 0.05;
+/// What a host hands over for each woozy entity (`FrameInputs::shallow_wooze`)
+/// is plain data in the core (#1330), so the renderer links nothing of the field.
+pub use flint_core::field_frame::{ShallowWoozeDraw, WAVELENGTH_MIN};
 
 /// How far the noise's domain is wrapped, in lattice cells: far more than the
 /// jump between targets, and small enough to keep its precision in an `f32`.
@@ -49,23 +49,13 @@ fn domain_offset(index: u64) -> [f32; 3] {
     [at(G), at(G * G), at(G * G * G)]
 }
 
-/// What one entity's draws do this frame.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ShallowWoozeDraw {
-    /// Metres at full swing on each axis: what's authored, times the field's
-    /// amplitude where the entity stands.
-    pub amplitude: f32,
-    /// Metres from one swell of the noise to the next. Far above the mesh's size it
-    /// moves as a whole; near it, it changes shape.
-    pub wavelength: f32,
-    /// The target being held or left.
-    pub index: u64,
-    /// How far toward the next target, 0 to 1.
-    pub weight: f32,
+/// A draw's drift as the wooze shaders take it.
+pub(crate) trait DriftUniforms {
+    fn uniforms(&self) -> ShallowWoozeUniforms;
 }
 
-impl ShallowWoozeDraw {
-    pub(crate) fn uniforms(&self) -> ShallowWoozeUniforms {
+impl DriftUniforms for ShallowWoozeDraw {
+    fn uniforms(&self) -> ShallowWoozeUniforms {
         let [ax, ay, az] = domain_offset(self.index);
         let [bx, by, bz] = domain_offset(self.index.wrapping_add(1));
         ShallowWoozeUniforms {

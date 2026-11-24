@@ -21,6 +21,7 @@
 pub use flint_audio::clocked;
 pub mod analysis;
 pub mod clock_bridge;
+pub mod components;
 pub mod conductor;
 /// TOML plumbing shared with the rhythm layer's formats. Not a stable API.
 #[doc(hidden)]

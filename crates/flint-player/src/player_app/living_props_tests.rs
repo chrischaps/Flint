@@ -107,7 +107,11 @@ fn world_of(entities: &[(&str, &str, Option<toml::Table>)]) -> FlintWorld {
         world.set_component(id, comp::MODEL, table(model)).unwrap();
         if let Some(fields) = living {
             world
-                .set_component(id, comp::LIVING_PROP, table(fields.clone()))
+                .set_component(
+                    id,
+                    flint_living::components::LIVING_PROP,
+                    table(fields.clone()),
+                )
                 .unwrap();
         }
     }

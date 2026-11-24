@@ -8,6 +8,7 @@
 
 pub mod app;
 pub mod edits;
+mod field_clocks;
 pub mod host;
 pub mod panels;
 pub mod picking;

@@ -342,7 +342,7 @@ fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
         .world
         .set_component(
             id,
-            flint_core::components::LIVING_PROP,
+            flint_living::components::LIVING_PROP,
             toml::Value::Table(Default::default()),
         )
         .unwrap();
@@ -985,7 +985,7 @@ fn the_panel_compares_flips_and_splits() {
         .world
         .set_component(
             id,
-            flint_core::components::LIVING_PROP,
+            flint_living::components::LIVING_PROP,
             toml::Value::Table(Default::default()),
         )
         .unwrap();
