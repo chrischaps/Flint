@@ -149,10 +149,16 @@ impl PlayerApp {
                 &sink,
             );
             if !requests.is_empty() {
+                // Each mesh's triangles kept for the colliders naming it
+                // (#1222)
+                let mut recording = super::collider_meshes::Recording {
+                    sink: &mut sink,
+                    sources: &mut self.core.collider_sources,
+                };
                 resolve(
                     &requests,
                     &mut self.core.procgen_resolver,
-                    &mut sink,
+                    &mut recording,
                     self.launch.procgen_mode,
                 );
             }

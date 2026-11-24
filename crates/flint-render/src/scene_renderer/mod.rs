@@ -535,6 +535,9 @@ pub struct SceneRenderer {
     extract_frame: u64,
     /// Runtime meshes uploaded as ray targets, by name (ADR 0105).
     ray_meshes: HashMap<String, Arc<flint_geometry::ray_mesh::RayMesh>>,
+    /// Bumped whenever a runtime mesh is uploaded, removed, or made or
+    /// unmade a ray target, so a host can tell when to look again (#1222)
+    runtime_mesh_generation: u64,
     /// Where the ray targets stood at the last `update_from_world`.
     ray_scene: Arc<flint_geometry::ray_mesh::RayScene>,
     grid_draw: Option<DrawCall>,
@@ -811,6 +814,7 @@ impl SceneRenderer {
             box_mesh_cache: HashMap::new(),
             extract_frame: 0,
             ray_meshes: HashMap::new(),
+            runtime_mesh_generation: 0,
             ray_scene: Arc::default(),
             skinning: Default::default(),
             grid_draw,

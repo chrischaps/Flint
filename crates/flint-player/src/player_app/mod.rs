@@ -14,6 +14,8 @@ mod catalog_root_tests;
 #[cfg(test)]
 mod collider_mesh_tests;
 mod collider_meshes;
+#[cfg(all(test, feature = "procgen"))]
+mod made_collider_mesh_tests;
 // The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
