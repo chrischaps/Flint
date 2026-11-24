@@ -1,0 +1,78 @@
+# #1250 scratch, never merged: put the hitch log's sampler marks on samply's
+# timeline on Linux and elevated Windows, and measure where they land.
+name: sampler-marks-1250
+
+on:
+  push:
+    branches: [scratch/sampler-marks-1250]
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: flint-examples
+        run: git clone --depth 1 https://github.com/chrischaps/flint-examples flint-examples
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: sampler-marks-1250
+          cache-on-failure: true
+      - name: Build headers, Vulkan (lavapipe)
+        timeout-minutes: 30
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends pkg-config libasound2-dev libudev-dev libxkbcommon-dev libgtk-3-dev mesa-vulkan-drivers vulkan-tools xvfb xauth
+      - name: cargo build --profile profiling -p flint-player
+        run: cargo build --profile profiling -p flint-player 2>&1 | tail -3
+      - name: marker file test
+        run: cargo test --profile profiling -p flint-player --lib sampler_marks 2>&1 | tail -8
+      - name: cargo install --locked samply
+        run: cargo install --locked samply && samply --version
+      - name: samply record
+        run: bash ci-scratch-1250/linux.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux
+          path: out/
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      WGPU_BACKEND: dx12
+      WGPU_ADAPTER_NAME: Microsoft Basic Render Driver
+      FLINT_VSYNC: "off"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: flint-examples
+        run: git clone --depth 1 https://github.com/chrischaps/flint-examples flint-examples
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: sampler-marks-1250
+          cache-on-failure: true
+      - name: Static DXC archive
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\flint\static-dxc
+          key: static-dxc-${{ hashFiles('vendor/static-dxc/pin.rs') }}
+      - name: cargo build --profile profiling -p flint-player
+        shell: bash
+        run: cargo build --profile profiling -p flint-player 2>&1 | tail -3
+      - name: cargo install --locked samply
+        shell: bash
+        run: cargo install --locked samply && samply --version
+      - name: xperf + samply import
+        shell: pwsh
+        run: ./ci-scratch-1250/windows.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows
+          path: out/
