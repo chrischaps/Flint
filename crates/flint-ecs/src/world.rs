@@ -7,6 +7,16 @@ use flint_core::toml_util::{toml_to_vec3, toml_vec4};
 use flint_core::{mat4_mul, EntityId, FlintError, Result, Transform, Vec3};
 use flint_schema::SchemaRegistry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Where every [`FlintWorld::write_stamp`] comes from: one counter for the
+/// process, so no two writes anywhere share a stamp, and an entity of a
+/// world made again (a reload) never reads as one a system already saw.
+static NEXT_WRITE_STAMP: AtomicU64 = AtomicU64::new(1);
+
+fn next_write_stamp() -> u64 {
+    NEXT_WRITE_STAMP.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Static empty set returned by `entities_with_component` for missing components.
 static EMPTY_ENTITY_SET: BTreeSet<EntityId> = BTreeSet::new();
@@ -16,6 +26,9 @@ static EMPTY_ENTITY_SET: BTreeSet<EntityId> = BTreeSet::new();
 struct EntityRecord {
     name: String,
     components: DynamicComponents,
+    /// Bumped each time `components` is lent out to write, or the parent
+    /// link changes: [`FlintWorld::write_stamp`] (#1221)
+    writes: u64,
 }
 
 /// The main ECS world for Flint
@@ -140,6 +153,7 @@ impl FlintWorld {
             EntityRecord {
                 name,
                 components: DynamicComponents::new(),
+                writes: next_write_stamp(),
             },
         );
         Ok(())
@@ -259,6 +273,7 @@ impl FlintWorld {
     /// (#691). `None` for an id that names no live entity.
     pub fn get_components_mut(&mut self, id: EntityId) -> Option<ComponentsMut<'_>> {
         let record = self.entities.get_mut(&id)?;
+        record.writes = next_write_stamp();
         Some(ComponentsMut::new(
             id,
             &mut record.components,
@@ -270,7 +285,29 @@ impl FlintWorld {
     /// doesn't have it. Like [`ComponentsMut::get_mut`], it can't add or
     /// take away a component.
     pub fn get_component_mut(&mut self, id: EntityId, component: &str) -> Option<&mut toml::Value> {
-        self.entities.get_mut(&id)?.components.get_mut(component)
+        let record = self.entities.get_mut(&id)?;
+        record.writes = next_write_stamp();
+        record.components.get_mut(component)
+    }
+
+    /// A stamp, new to the process, taken each time the entity's
+    /// components are lent out to write ([`Self::get_components_mut`],
+    /// [`Self::get_component_mut`] and every setter, which go through
+    /// them) or its parent changes. Two equal readings mean nothing of the
+    /// entity changed in between, so a system that keeps what it read from
+    /// an entity can skip reading it again (physics' colliders, #1221). A
+    /// write lent out and not used still moves it. `None` for an id that
+    /// names no live entity.
+    pub fn write_stamp(&self, id: EntityId) -> Option<u64> {
+        self.entities.get(&id).map(|e| e.writes)
+    }
+
+    /// Move a child's stamp: its parent link changed, and with it its
+    /// world matrix.
+    fn touch(&mut self, id: EntityId) {
+        if let Some(record) = self.entities.get_mut(&id) {
+            record.writes = next_write_stamp();
+        }
     }
 
     /// [`Self::get_components_mut`], or the error a setter returns for an
@@ -368,6 +405,7 @@ impl FlintWorld {
         }
         self.unlink_from_parent(child);
         self.parents.insert(child, parent);
+        self.touch(child);
         let at = {
             let siblings = self.children.get(&parent).map_or(&[][..], Vec::as_slice);
             siblings.partition_point(|s| self.name_order(*s, child).is_lt())
@@ -380,6 +418,7 @@ impl FlintWorld {
         let Some(parent) = self.parents.remove(&child) else {
             return;
         };
+        self.touch(child);
         if let Some(siblings) = self.children.get_mut(&parent) {
             siblings.retain(|s| *s != child);
             if siblings.is_empty() {
@@ -1747,5 +1786,49 @@ intensity = 1.0
         assert!(err.to_string().contains("'a'"), "{err}");
         assert_eq!(world.get_name(a), Some("a"));
         assert!(!world.contains_name("b"));
+    }
+
+    #[test]
+    fn a_write_stamp_moves_with_every_write_and_reparent_and_only_then() {
+        let mut world = FlintWorld::new();
+        let a = world.spawn("a").unwrap();
+        let p = world.spawn("p").unwrap();
+        let q = world.spawn("q").unwrap();
+        let stamp = |w: &FlintWorld| w.write_stamp(a).unwrap();
+
+        let s0 = stamp(&world);
+        // Reading moves nothing
+        let _ = world.get_components(a);
+        let _ = world.get_transform(a);
+        assert_eq!(stamp(&world), s0);
+
+        world
+            .set_field(a, "transform", "scale", toml::Value::Float(2.0))
+            .unwrap();
+        let s1 = stamp(&world);
+        assert_ne!(s1, s0);
+        let _ = world.get_component_mut(a, "transform");
+        let s2 = stamp(&world);
+        assert_ne!(s2, s1);
+
+        // A parent made, changed and taken away moves the child's stamp,
+        // not the parent's
+        let ps = world.write_stamp(p).unwrap();
+        world.set_parent(a, p).unwrap();
+        let s3 = stamp(&world);
+        assert_ne!(s3, s2);
+        assert_eq!(world.write_stamp(p), Some(ps));
+        world.set_parent(a, p).unwrap();
+        assert_eq!(stamp(&world), s3, "the same parent again is no change");
+        world.set_parent(a, q).unwrap();
+        assert_ne!(stamp(&world), s3);
+
+        // A world made again never hands out a stamp already seen
+        let mut again = FlintWorld::new();
+        let a2 = again.spawn("a").unwrap();
+        assert_eq!(a2, a);
+        assert!(again.write_stamp(a2).unwrap() > stamp(&world));
+        world.despawn(a).unwrap();
+        assert_eq!(world.write_stamp(a), None);
     }
 }

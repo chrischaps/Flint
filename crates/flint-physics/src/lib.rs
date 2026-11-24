@@ -14,6 +14,8 @@ pub mod sync;
 pub mod world;
 
 #[cfg(test)]
+mod change_tests;
+#[cfg(test)]
 mod joint_tests;
 #[cfg(test)]
 mod layer_tests;
@@ -606,9 +608,9 @@ impl PhysicsSystem {
             );
             self.step_in_frame += 1;
 
-            // Update sensor flags (e.g., dead enemies become non-solid)
-            self.sync
-                .update_sensor_flags(world, &mut self.physics_world);
+            // Sensor flags (dead enemies become non-solid), layers, masks
+            // and scales a script changed (#1221)
+            self.sync.update_colliders(world, &mut self.physics_world);
 
             // Push script-written joint targets / limits into Rapier
             self.sync

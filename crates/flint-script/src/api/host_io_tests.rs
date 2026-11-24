@@ -509,3 +509,95 @@ fn a_script_raycast_takes_a_layer_mask() {
     assert!(err.contains("`wal` is not a collision layer"), "{err}");
     assert!(err.contains("did you mean `wall`?"), "{err}");
 }
+
+/// A ball over a floor that leaves  out (#1221): a script that puts
+/// the ball on `ghost` mid-fall sees it fall through, and one that names a
+/// layer that isn't, or an entity with no collider, is told at the call.
+#[test]
+fn a_script_moves_a_collider_to_another_layer() {
+    let engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let mut physics = flint_physics::PhysicsSystem::new();
+    physics.set_layers(flint_physics::CollisionLayers::new(&["world", "ghost"]).unwrap());
+    for (name, text) in [
+        (
+            "floor",
+            r#"
+[transform]
+position = [0, 0, 0]
+[rigidbody]
+body_type = "static"
+[collider]
+shape = "box"
+size = [20, 1, 20]
+layer = "world"
+mask = ["default", "world"]
+"#,
+        ),
+        (
+            "ball",
+            r#"
+[transform]
+position = [0, 4, 0]
+[rigidbody]
+body_type = "dynamic"
+[collider]
+shape = "sphere"
+size = [1, 1, 1]
+"#,
+        ),
+        ("marker", "[transform]\nposition = [0, 0, 0]\n"),
+    ] {
+        let id = world.spawn(name).unwrap();
+        for (component, data) in text.parse::<toml::Table>().unwrap() {
+            world.set_component(id, &component, data).unwrap();
+        }
+    }
+    let ball = world.get_id("ball").unwrap();
+    physics.initialize(&mut world).unwrap();
+    let mut bus = flint_runtime::EventBus::new();
+    for _ in 0..20 {
+        physics
+            .fixed_update(&mut world, 1.0 / 60.0, &mut bus)
+            .unwrap();
+    }
+    let mut sm = flint_runtime::GameStateMachine::new();
+    let mut store = flint_runtime::PersistentStore::new();
+    {
+        let _world = crate::context::WorldScope::new(&engine.ctx, &mut world);
+        let _state = crate::context::StateScope::new(&engine.ctx, &mut sm, &mut store, &physics);
+        let rhai = engine.rhai_engine();
+        rhai.run(r#"set_collision_layer(get_entity("ball"), "ghost")"#)
+            .unwrap();
+        let err = rhai
+            .eval::<rhai::Dynamic>(r#"set_collision_layer(get_entity("ball"), "gohst")"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("did you mean `ghost`?"), "{err}");
+        let err = rhai
+            .eval::<rhai::Dynamic>(r#"set_collision_mask(get_entity("ball"), ["world", 3])"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("a mask is layer names"), "{err}");
+        let err = rhai
+            .eval::<rhai::Dynamic>(r#"set_collision_layer(get_entity("marker"), "ghost")"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("`marker` has no collider"), "{err}");
+        rhai.run(r#"set_collision_mask(get_entity("ball"), "ghost")"#)
+            .unwrap();
+    }
+    let col = world.get_component(ball, "collider").unwrap();
+    assert_eq!(col["layer"].as_str(), Some("ghost"));
+    assert_eq!(col["mask"].as_array().unwrap().len(), 1);
+    assert!(world
+        .get_component(world.get_id("marker").unwrap(), "collider")
+        .is_none());
+    for _ in 0..100 {
+        physics
+            .fixed_update(&mut world, 1.0 / 60.0, &mut bus)
+            .unwrap();
+    }
+    let y = world.get_transform(ball).unwrap().position.y;
+    assert!(y < -3.0, "the ghost fell through the floor: y = {y}");
+}
