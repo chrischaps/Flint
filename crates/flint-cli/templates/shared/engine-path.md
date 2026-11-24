@@ -26,4 +26,4 @@ git remote add flint-engine https://github.com/chrischaps/Flint.git
 git subtree add --prefix=engine flint-engine main --squash
 ```
 
-Then set `schemas = ["engine/schemas", "schemas"]` in `flint.toml`, and delete the `schemas` line and the `[mount]` table from `bundle.toml`. From then on the engine's files are under engine/ in this project, and an update is `git subtree pull --prefix=engine flint-engine main --squash`.
+Then set `schemas = ["engine/schemas", "schemas"]` in `flint.toml`, and delete the `schemas` line and the `[mount]` table from `bundle.toml`. Delete `scripts/lib/menu.rhai` too: it is a copy of the engine's, made because a script's `import` looks in the project and in engine/ but not in a checkout named by path, and once the subtree is there the same `import "menu"` finds the engine's own. From then on the engine's files are under engine/ in this project, and an update is `git subtree pull --prefix=engine flint-engine main --squash`.

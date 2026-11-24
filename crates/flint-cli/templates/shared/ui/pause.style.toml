@@ -1,0 +1,106 @@
+# The pause menu's look: an ember on smoked slate, the HUD's warm cream
+# for the words. A class's `focus` and `pressed` tables go over it while
+# its button has focus or a pointer holds it. Sizes are in points.
+#
+# Change a colour here and render the menu to see it:
+#
+#   flint render scenes/main.scene.toml --scripts --time 0.2 --ui-show pause_menu --output renders/paused.png
+
+[tokens]
+cream = [1.0, 0.93, 0.82, 1.0]
+ember = [1.0, 0.58, 0.24, 1.0]
+ember_faint = [1.0, 0.58, 0.24, 0.35]
+slate = [0.05, 0.06, 0.09, 0.88]
+night = [0.07, 0.05, 0.04, 1.0]
+
+[styles.veil]
+width_pct = 100
+height_pct = 100
+bg_color = [0.01, 0.01, 0.03, 0.6]
+layer = 5
+
+[styles.card]
+width = 340
+height_auto = true
+padding = [36, 30, 36, 26]
+bg_color = "$slate"
+border_color = "$ember_faint"
+border_width = 1
+rounding = 12
+layer = 5
+
+[styles.eyebrow]
+width = 268
+height = 20
+font_size = 13
+letter_spacing = 3
+text_align = "center"
+color = "$ember"
+layer = 6
+
+[styles.title]
+width = 268
+height = 52
+font_size = 40
+letter_spacing = 2
+text_align = "center"
+color = "$cream"
+shadow = [0, 2, 0.0, 0.0, 0.0, 0.5]
+layer = 6
+
+[styles.rule]
+x = 104
+width = 60
+height = 2
+margin_bottom = 22
+thickness = 0
+color = "$ember"
+layer = 6
+
+[styles.button]
+width = 268
+height = 44
+margin_bottom = 8
+font_size = 19
+letter_spacing = 1
+rounding = 8
+color = "$cream"
+bg_color = [1.0, 0.93, 0.82, 0.05]
+border_color = [1.0, 0.93, 0.82, 0.12]
+border_width = 1
+layer = 6
+
+[styles.button.focus]
+color = "$night"
+bg_color = "$ember"
+border_color = [1.0, 0.8, 0.55, 1.0]
+
+[styles.button.pressed]
+bg_color = [0.82, 0.42, 0.16, 1.0]
+
+[styles.hint]
+y = 10
+width = 268
+height = 16
+font_size = 12
+text_align = "center"
+color = [1.0, 0.93, 0.82, 0.5]
+layer = 6
+
+# The touch screen's pause button, 20 points in from the top right corner
+[styles.pause_button]
+x = -20
+y = 20
+width = 44
+height = 44
+font_size = 16
+rounding = 22
+color = "$cream"
+bg_color = [0.05, 0.06, 0.09, 0.55]
+border_color = "$ember_faint"
+border_width = 1
+layer = 4
+
+[styles.pause_button.focus]
+color = "$night"
+bg_color = "$ember"

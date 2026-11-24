@@ -22,7 +22,7 @@ concepts/procgen.md: import_gltf revision warp    # flint_core::step_clock (ADR 
 concepts/quality-settings.md: effective_post_process_config post_process_config
 concepts/rendering.md: segment
 concepts/scripting.md: update layer_painter    # the RuntimeSystem phase; the architecture diagram
-concepts/terrain.md: register_static_trimesh
+concepts/terrain.md: register_static_heightfield height_grid
 concepts/touch-input.md: TouchStart TouchMove TouchEnd binding_value   # the touch pipeline diagram
 guides/android.md: AAssetDir_getNextFileName android_main resumed suspended
 guides/debug-panels.md: weight    # the DebugPanel trait's layout weight

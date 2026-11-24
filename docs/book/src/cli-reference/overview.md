@@ -87,7 +87,7 @@ flint init my_game --engine-path ../Flint
 flint init . --force                     # into a directory with files; existing files are kept
 ```
 
-It writes a game project from templates compiled into the binary: `flint.toml` (`[project] id`, `schemas`, `scene`, `input`), `scenes/main.scene.toml` (lit, with a `[camera]`), `scripts/hud.rhai` on a `hud_controller` entity, `config/input.toml`, `bundle.toml`, `.gitignore`, an empty `schemas/` for the game's own components, `renders/`, and `CLAUDE.md` + `AGENTS.md` for coding agents. Then it prints the commands to run next, none of which needs `--schemas`.
+It writes a game project from templates compiled into the binary: `flint.toml` (`[project] id`, `schemas`, `scene`, `input`), `scenes/main.scene.toml` (lit, with a `[camera]`), `scripts/hud.rhai` on a `hud_controller` entity, a pause menu (`ui/pause.ui.toml` and `ui/pause.style.toml`, opened by Escape or a pad's Start), `config/input.toml`, `bundle.toml`, `.gitignore`, an empty `schemas/` for the game's own components, `renders/`, and `CLAUDE.md` + `AGENTS.md` for coding agents. Then it prints the commands to run next, none of which needs `--schemas`.
 
 | Flag | Description |
 |------|-------------|
@@ -96,7 +96,7 @@ It writes a game project from templates compiled into the binary: `flint.toml` (
 | `--engine-path <dir>` | With `--engine path`: the checkout to name (default: the one this `flint` was built from) |
 | `--force` | Write into a directory that already holds files. A file already there is kept; nothing is overwritten or deleted |
 
-No engine schema is copied into the game. See [Your First Project](../getting-started/first-project.md) and [Building a Game Project](../guides/building-a-game-project.md).
+No engine schema is copied into the game. One engine file is: with `--engine path` or `none` the project carries `scripts/lib/menu.rhai`, the engine's menu helpers, which the HUD imports, because a script's `import` searches the project and `engine/` but not a checkout named by path. With `--engine subtree` the engine's own is found and nothing is copied. See [Your First Project](../getting-started/first-project.md) and [Building a Game Project](../guides/building-a-game-project.md).
 
 ## The `check` Command
 

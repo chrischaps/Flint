@@ -244,8 +244,21 @@ Several entities of one model and one scale share one shape.
 - **`collider.model`** names a different model for the triangles, such as a
   low-poly collision model beside a detailed drawn one, or one for an entity
   that draws nothing.
-- **No triangles** (no model, a file that isn't found, a model made at
-  runtime by procgen) is a box of `size`, with a warning naming the entity.
+- **A procgen model** (a `specs/<name>.procgen.toml` names it) gives the
+  triangles its spec generated, the ones it draws, ahead of a file of the
+  same name. One the frame-budgeted queue makes later
+  (`ProcGenMode::Deferred`) is a box of `size` until it is made, without a
+  warning, and its collider is made again from it on the next frame.
+- **A runtime mesh** (`model.runtime = true`, from a game binary's
+  `upload_mesh_with(.., MeshOptions { ray_target: true })`) gives the
+  triangles the renderer keeps for ray targets, so `raycast()`, a body and
+  `raycast_meshes` all meet what draws. The game uploads after the scene's
+  bodies are made, so the collider is a box of `size` until the upload and
+  is made again on the frame after each one. A mesh uploaded without
+  `ray_target` keeps no triangles: the collider stays as it was, with a
+  warning.
+- **No triangles** (no model, a file that isn't found) is a box of `size`,
+  with a warning naming the entity.
 - `collider.offset` and `rotation` move and turn the triangles, and the
   entity's scale stretches them, exactly.
 - `get_collider_extents(id)` gives a mesh's or hull's box:

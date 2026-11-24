@@ -351,6 +351,7 @@ impl SceneRenderer {
         material: flint_import::ImportedMaterial,
     ) {
         self.ray_meshes.remove(name);
+        self.runtime_mesh_generation += 1;
         self.mesh_cache
             .upload_procedural(device, name, vertices, indices, material);
     }
@@ -368,6 +369,7 @@ impl SceneRenderer {
         )>,
     ) {
         self.ray_meshes.remove(name);
+        self.runtime_mesh_generation += 1;
         self.mesh_cache.upload_procedural_parts(device, name, parts);
     }
 
@@ -424,6 +426,22 @@ impl SceneRenderer {
                 self.ray_meshes.remove(name);
             }
         }
+        self.runtime_mesh_generation += 1;
+    }
+
+    /// The triangles the mesh `name` was made a ray target with, if it is
+    /// one. A `mesh` or `convex` collider on an entity drawing a runtime
+    /// mesh takes these (#1222).
+    pub fn ray_mesh(&self, name: &str) -> Option<&Arc<flint_geometry::ray_mesh::RayMesh>> {
+        self.ray_meshes.get(name)
+    }
+
+    /// A number that changes whenever a runtime mesh is uploaded or
+    /// removed, or made or unmade a ray target: a host that keeps
+    /// something of them (the player's mesh colliders, #1222) looks again
+    /// only when it moves.
+    pub fn runtime_mesh_generation(&self) -> u64 {
+        self.runtime_mesh_generation
     }
 
     /// The ray targets as the last `update_from_world` found them: each
@@ -440,6 +458,7 @@ impl SceneRenderer {
     /// they have one) until a mesh with that name is uploaded again (ADR 0074).
     pub fn remove_mesh(&mut self, name: &str) -> bool {
         self.ray_meshes.remove(name);
+        self.runtime_mesh_generation += 1;
         self.mesh_cache.remove(name)
     }
 

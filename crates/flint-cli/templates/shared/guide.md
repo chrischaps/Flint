@@ -16,8 +16,8 @@ flint play
 
 - `flint check` is the pre-flight: everything wrong with the project in one run, with the file, the entity and the field of each problem and a hint. It loads every scene against the schemas, follows each entity reference, looks for every model, texture, sound, script and file a scene names where the engine will look (and lists the paths it tried), loads the styles and checks the constraints. It exits non-zero on an error. `flint check scenes/main.scene.toml` checks one scene and `--json` prints one JSON document.
 - `flint validate scenes/main.scene.toml` checks one scene against the schemas and the constraints, and `--fix` applies the fixes a constraint offers.
-- `flint render` draws the scene to a PNG with no window, through the scene's `[camera]`. Look at the picture after every visual change. `--no-grid` leaves the editor grid out and `--width` / `--height` set the size; `flint render --help` lists the rest. `--scripts --time 0.5` runs the scripts for half a second first. A script's HUD is not drawn in a render, only in play.
-- `flint play` opens the scene `flint.toml` names under `[project]`, or the scene you pass. Esc quits.
+- `flint render` draws the scene to a PNG with no window, through the scene's `[camera]`. Look at the picture after every visual change. `--no-grid` leaves the editor grid out and `--width` / `--height` set the size; `flint render --help` lists the rest. `--scripts --time 0.5` runs the scripts for half a second first and draws the HUD they draw over the picture; `--ui-show pause_menu` opens the pause menu in it too.
+- `flint play` opens the scene `flint.toml` names under `[project]`, or the scene you pass. Esc pauses, and the pause menu's Quit leaves (so do Alt+F4 and the window's close button).
 - `flint edit scenes/main.scene.toml` opens the scene in a viewer that reloads when the file changes. When a person moves or tweaks something there and saves (Ctrl+S), each field written is a JSON line (entity, component, field, old, new) in `viewer-edits.jsonl`, in the project's `.flint` folder, which the save makes: read its tail to see what they changed.
 
 ## What is where
@@ -26,7 +26,9 @@ flint play
 |---|---|
 | `flint.toml` | The project manifest: `id`, `schemas`, `scene`, `input`. It marks the project root. |
 | `scenes/main.scene.toml` | The scene: `[scene]`, `[camera]`, `[environment]` and one `[entities.<name>]` table per entity. |
-| `scripts/hud.rhai` | The HUD, drawn by a script on the scene's `hud_controller` entity. {{scripts_note}} |
+| `scripts/hud.rhai` | The HUD, drawn by a script on the scene's `hud_controller` entity, and the pause menu's controller. {{scripts_note}} |
+| `ui/pause.ui.toml` and `ui/pause.style.toml` | The pause menu: its elements, then their look. |
+| `{{menu_lib}}` | The engine's menu helpers, which `scripts/hud.rhai` imports as `menu`. |
 | `config/input.toml` | The game's input actions, layered over the engine's built-in ones. |
 | `schemas/components` and `schemas/archetypes` | The game's own components and archetypes. Empty: the engine's are not copied here. |
 | `bundle.toml` | Packing rules for the web build (`flint bundle .`). |
@@ -122,6 +124,38 @@ What trips people up:
 - **Top-level variables.** A `let` at the top of a script is visible in the callbacks the engine calls, but not inside a helper function those callbacks call. Pass values in.
 - **All UI is drawn by scripts**, each frame, from `on_draw_ui` (`draw_text`, `draw_rect`, `draw_circle`, `draw_line`, `draw_sprite`). The engine has no HUD of its own.
 - **Input.** Read actions, not keys: `is_action_pressed("jump")`. The built-in actions are listed at the top of `config/input.toml`; add your own there.
+
+## The pause menu
+
+Escape or a pad's Start opens it: the `pause` action in `config/input.toml`. It is a UI document, the one structured UI the engine has. `ui/pause.ui.toml` lists its elements (a veil, a card, the buttons) and `ui/pause.style.toml` gives each class its look, with a `focus` table for the button that has focus. `scripts/hud.rhai` loads it with `load_ui`, opens and closes it with `menu::toggle_pause`, and hears each choice in `on_ui(id, event)`.
+
+While it is open the game is in the `paused` state: physics, animation and every `on_update` stop, and `on_draw_ui` and `on_ui` still run. The engine moves focus between the buttons with the arrows, a pad's d-pad or left stick, the mouse and touch; Enter, Space or a pad's A presses the focused one (`on_ui("resume", "activate")`), and Backspace or a pad's B is `"back"`. On a touch screen the HUD shows a pause button in the top right corner instead of an Escape key.
+
+To add a button, add an element to `ui/pause.ui.toml`. Elements stack in the order they are written, so put it where it should stand, between Restart and Quit, say:
+
+```toml
+[elements.options]
+type = "button"
+parent = "card"
+class = "button"
+text = "Options"
+```
+
+Then answer it in `on_ui` in `scripts/hud.rhai`:
+
+```rhai
+if id == "options" && event == "activate" {
+    log("options");
+}
+```
+
+`flint check` reads every UI document as `load_ui` will and names what it would refuse (`bad-ui`: an unknown key, a class the style file lacks, a parent that isn't there). To see the menu without playing:
+
+```bash
+flint render scenes/main.scene.toml --scripts --time 0.2 --ui-show pause_menu --output renders/paused.png
+```
+
+`--ui-focus quit` draws it with another button focused. The menu helpers (`open`, `close`, `is_open`, `toggle`, `toggle_pause`) are `{{menu_lib}}`.
 
 ## The engine
 
