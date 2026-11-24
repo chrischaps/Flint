@@ -20,12 +20,13 @@ $rec = Start-Process -FilePath samply -PassThru -NoNewWindow `
   -ArgumentList 'record', 'target\profiling\flint-player.exe', 'flint-examples\hitch_metronome.scene.toml', '--exit-after', '12', '--hitch-log', 'hitches.jsonl' `
   -RedirectStandardOutput out/samply-record.out -RedirectStandardError out/samply-record.log
 $ok = Wait-For out/samply-record.log 'Local server listening' 240
-"server up: $ok after the run; process exited: $($rec.HasExited)" | Tee-Object -Append out/samply-record.log
-Get-Process flint-player -ErrorAction SilentlyContinue | Format-Table | Out-String | Add-Content out/samply-record.log
+"server up: $ok after the run; process exited: $($rec.HasExited)" | Tee-Object -Append out/notes.txt
+Get-Process flint-player -ErrorAction SilentlyContinue | Format-Table | Out-String | Add-Content out/notes.txt
 Stop-Process -Id $rec.Id -Force -ErrorAction SilentlyContinue
 Get-Process samply -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process flint-player -ErrorAction SilentlyContinue | Stop-Process -Force
-Get-ChildItem profile.json.gz, hitches.jsonl -ErrorAction SilentlyContinue | Format-Table | Out-String | Add-Content out/samply-record.log
+Start-Sleep 2
+Get-ChildItem profile.json.gz, hitches.jsonl -ErrorAction SilentlyContinue | Format-Table | Out-String | Add-Content out/notes.txt
 Copy-Item hitches.jsonl out/ -ErrorAction SilentlyContinue
 Copy-Item profile.json.gz out/samply-profile.json.gz -ErrorAction SilentlyContinue
 
