@@ -405,45 +405,42 @@ mod tests {
         color: wgpu::Texture,
         color_view: wgpu::TextureView,
         depth_view: wgpu::TextureView,
+        /// The binary's shared device, held while the rig lives (#1275).
+        _gpu: crate::shared_gpu::Lease,
     }
 
     fn rig() -> Option<Rig> {
-        pollster::block_on(async {
-            let instance = crate::gpu_select::instance();
-            let adapter = crate::gpu_select::request_adapter(&instance, None).await?;
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor::default())
-                .await
-                .ok()?;
-            let target = |format, usage| {
-                device.create_texture_counted(&wgpu::TextureDescriptor {
-                    label: None,
-                    size: wgpu::Extent3d {
-                        width: SIZE,
-                        height: SIZE,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                    view_formats: &[],
-                })
-            };
-            let attach = wgpu::TextureUsages::RENDER_ATTACHMENT;
-            let color = target(FORMAT, attach | wgpu::TextureUsages::COPY_SRC);
-            let depth = target(
-                wgpu::TextureFormat::Depth32Float,
-                attach | wgpu::TextureUsages::TEXTURE_BINDING,
-            );
-            Some(Rig {
-                color_view: color.create_view(&Default::default()),
-                depth_view: depth.create_view(&Default::default()),
-                color,
-                device,
-                queue,
+        let gpu = crate::shared_gpu::lease()?;
+        let (device, queue) = (gpu.gpu.device.clone(), gpu.gpu.queue.clone());
+        let target = |format, usage| {
+            device.create_texture_counted(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                view_formats: &[],
             })
+        };
+        let attach = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        let color = target(FORMAT, attach | wgpu::TextureUsages::COPY_SRC);
+        let depth = target(
+            wgpu::TextureFormat::Depth32Float,
+            attach | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        Some(Rig {
+            color_view: color.create_view(&Default::default()),
+            depth_view: depth.create_view(&Default::default()),
+            color,
+            device,
+            queue,
+            _gpu: gpu,
         })
     }
 

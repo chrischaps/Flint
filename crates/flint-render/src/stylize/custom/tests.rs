@@ -635,15 +635,11 @@ fn user_lines_map_back() {
     assert_eq!(c.text.lines().nth(c.prelude_lines), Some("a"));
 }
 
-fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    pollster::block_on(async {
-        let instance = crate::gpu_select::instance();
-        let adapter = crate::gpu_select::request_adapter(&instance, None).await?;
-        adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
-            .await
-            .ok()
-    })
+/// The binary's shared device (#1275), and the lease that holds it.
+fn device() -> Option<(crate::shared_gpu::Lease, wgpu::Device, wgpu::Queue)> {
+    let gpu = crate::shared_gpu::lease()?;
+    let (device, queue) = (gpu.gpu.device.clone(), gpu.gpu.queue.clone());
+    Some((gpu, device, queue))
 }
 
 /// Hot reload on a real device: a good build, a broken edit that keeps
@@ -651,7 +647,7 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
 #[test]
 fn hot_reload_keeps_the_last_good_build() {
     let mut reg = super::super::StyleRegistry::new();
-    let Some((device, _queue)) = device() else {
+    let Some((_gpu, device, _queue)) = device() else {
         crate::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -817,7 +813,7 @@ impl<T: Unpin> std::future::Future for Late<T> {
 #[test]
 fn a_late_compiler_answer_settles_on_a_later_frame() {
     let mut reg = super::super::StyleRegistry::new();
-    let Some((device, _queue)) = device() else {
+    let Some((_gpu, device, _queue)) = device() else {
         crate::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -1467,7 +1463,7 @@ fn a_reload_frees_the_old_install() {
 #[test]
 fn a_replaced_descriptor_is_built_again() {
     let mut reg = super::super::StyleRegistry::new();
-    let Some((device, _queue)) = device() else {
+    let Some((_gpu, device, _queue)) = device() else {
         crate::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -1731,7 +1727,7 @@ fn style(p: StylePixel) -> vec4<f32> {
 /// level.
 #[test]
 fn a_mipped_image_uploads_its_chain() {
-    let Some((device, queue)) = device() else {
+    let Some((_gpu, device, queue)) = device() else {
         crate::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -2058,7 +2054,7 @@ fn image_options_find_their_folder_and_warn_on_strangers() {
 /// last good picture when a file breaks.
 #[test]
 fn images_load_follow_choices_and_reload() {
-    let Some((device, queue)) = device() else {
+    let Some((_gpu, device, queue)) = device() else {
         crate::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };

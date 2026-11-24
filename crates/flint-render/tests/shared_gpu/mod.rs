@@ -11,6 +11,10 @@
 //! workspace `cargo test`); sharing one device, it finished 18 of 18.
 //!
 //! So a binary makes its device exactly once and its tests share it:
+//! every integration binary here, and the lib's own unit tests too
+//! (#1275), which include this file from `src/lib.rs` (`#[path]`, with
+//! `extern crate self as flint_render` so its paths resolve): with a
+//! device per test, that binary hung in 3 of 10 runs on a busy machine.
 //! [`lease`] lends it to a test, alongside the other tests holding a
 //! `lease` ([`parallel`], the default) or one test at a time, and
 //! [`lease_alone`] lends it to one test while every other waits. A test
