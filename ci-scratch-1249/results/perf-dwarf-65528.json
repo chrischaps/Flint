@@ -1,0 +1,61 @@
+{
+  "samples": 333,
+  "avgDepth": 6.1,
+  "unknownFrac": 0.951,
+  "flintSampleFrac": 0.012,
+  "stallSamples": 0,
+  "stallAvgDepth": 0,
+  "deepestStall": [
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]",
+    "[unknown]"
+  ],
+  "byThread": [
+    [
+      "flint-player 12530",
+      303,
+      6.3,
+      37
+    ],
+    [
+      "flint-player 12540",
+      30,
+      3.6,
+      16
+    ]
+  ]
+}

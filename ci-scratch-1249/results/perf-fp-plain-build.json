@@ -1,0 +1,15 @@
+{
+  "samples": 1893,
+  "avgDepth": 9.9,
+  "unknownFrac": 0.86,
+  "flintSampleFrac": 0.033,
+  "stallSamples": 411,
+  "stallAvgDepth": 2.3,
+  "deepestStall": [
+    "[unknown]",
+    "clock_gettime+0x1d",
+    "<std::sys::pal::unix::time::Timespec>::now+0x13",
+    "<std::time::Instant>::elapsed+0x16",
+    "<rhai::packages::time_basic::time_functions::elapsed_token as rhai::func::plugin::PluginFunc>::call+0xe4"
+  ]
+}
