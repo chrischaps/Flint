@@ -103,6 +103,7 @@ flint-rhythm = { workspace = true, optional = true }
 flint-input-capture = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+skrifa = { workspace = true }
 flint-animation = { workspace = true }
 flint-particles = { workspace = true }
 flint-terrain = { workspace = true }
