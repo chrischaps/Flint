@@ -252,6 +252,15 @@ jobs:
         if: success() || failure()
         run: cargo test -p flint-cli --test json_cli
 
+      # `flint schema` as data and `flint validate`'s references (#684),
+      # with the real binary. No GPU, but here for the same reason as the
+      # step above: flint is built. Before #1285 no CI job ran it, and its
+      # copy of `collider`'s fields was red on main from #729 (17 Nov) to
+      # #1054 (21 Nov), unseen
+      - name: cargo test -p flint-cli --test schema_cli
+        if: success() || failure()
+        run: cargo test -p flint-cli --test schema_cli
+
       - name: Goldens summary
         if: always()
         shell: bash
