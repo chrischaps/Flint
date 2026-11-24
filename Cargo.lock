@@ -2001,6 +2001,7 @@ dependencies = [
  "rhai",
  "serde",
  "serde_json",
+ "skrifa",
  "toml",
  "tracing",
  "tracing-subscriber",

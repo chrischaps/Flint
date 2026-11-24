@@ -205,6 +205,10 @@ egui = "0.36.2"
 egui-wgpu = "0.36.2"
 egui-winit = "0.36.2"
 egui-snarl = "0.12.0"
+# egui's own font reader (epaint 0.36's version and features): the player
+# opens a project face with it first, so a file egui can't parse is a
+# warning and not egui's panic (#1262). Bump it with egui.
+skrifa = { version = "0.44", default-features = false, features = ["std", "autohint_shaping"] }
 
 # Internal crates
 flint-core = { path = "crates/flint-core" }

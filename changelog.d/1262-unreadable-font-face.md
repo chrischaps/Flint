@@ -1,0 +1,3 @@
+### A font face egui can't read is skipped with a warning, not a crash (#1262)
+**What changed.** A file in `fonts/` (or one a `fonts.toml` alias names by path) that isn't a font egui can open, such as an empty, truncated or mislabelled `.ttf`, used to panic the player and `flint render --scripts` when the HUD's fonts were installed. Now it is left out with `fonts: skipped fonts/Mono.ttf: not a font face egui can read (...)`. Text a script draws in its family falls back to egui's default face. If another file of that stem exists (`Mono.otf` behind a broken `Mono.ttf`), that file is used instead. Faces that load are unchanged.
+**What to do.** Nothing. If the warning names one of your fonts, replace the file.
