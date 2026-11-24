@@ -97,9 +97,13 @@ fn noise(p: vec2<f32>, seed: u32) -> f32 {
 }
 
 // The depth step under uv, as a share of the distance (the shared edges'
-// measure), 0 off an edge
+// measure), 0 off an edge. Read through the nearest sampler (the edges are
+// the depth's size, as is the depth it samples): the same texel as
+// `flint_edge_texel`'s textureLoad, but the hardware does the addressing,
+// and the nine taps' integer conversions and clamps were 0.008 ms of the
+// pass at 1080p (#1257)
 fn step_at(uv: vec2<f32>) -> f32 {
-    return flint_edge_step(flint_edge_texel(edge_texture, uv), params.edge_depth);
+    return flint_edge_step(textureSampleLevel(edge_texture, depth_sampler, uv, 0.0), params.edge_depth);
 }
 
 // 1 / view distance, for how far off a line is.
@@ -179,8 +183,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Far away the same line covers a whole leaf, and a tree goes solid. A pen
     // draws less of what's further off, so lines thin out with the distance to the
-    // nearest surface at this edge, which is the one the line belongs to.
-    if (params.fade > 0.0) {
+    // nearest surface at this edge, which is the one the line belongs to. Most
+    // pixels are no line, and their five depth reads were a sixth of the pass
+    // (#1257): a fade of no ink is no ink, so they skip it.
+    if (params.fade > 0.0 && ink > 0.0) {
         let c = inverse_depth(uv);
         let l = inverse_depth(uv - vec2<f32>(d.x, 0.0));
         let r = inverse_depth(uv + vec2<f32>(d.x, 0.0));
