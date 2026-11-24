@@ -5,6 +5,16 @@
 //! physically-based Cook-Torrance shading. Supports GPU vertex skinning
 //! for skeletal animation.
 
+// The lib's GPU unit tests share one device through the harness the
+// integration binaries use (#1275): a device per test hung this binary in
+// device creation (#598's loader-lock deadlock). The harness names the
+// crate as they do, hence the alias.
+#[cfg(test)]
+extern crate self as flint_render;
+#[cfg(test)]
+#[path = "../tests/shared_gpu/mod.rs"]
+mod shared_gpu;
+
 pub mod atlas;
 pub(crate) mod billboard_pipeline;
 pub mod bind_cache;
@@ -130,6 +140,55 @@ pub use world_line_pipeline::DEPTH_SLACK as WORLD_LINE_DEPTH_SLACK;
 
 #[cfg(test)]
 mod tests {
+    /// The lib's tests take the binary's one device (#1275): only the two
+    /// hosts' contexts ask for a device, and nothing here makes a
+    /// `HeadlessContext` (each is a device of its own). A device per test
+    /// hung this binary in `vkCreateDevice` against a thread's exit (#598).
+    #[test]
+    #[allow(clippy::disallowed_methods)] // a test reading the crate's own source tree
+    fn only_the_hosts_contexts_make_a_device() {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(&path, out);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        walk(&src, &mut files);
+        // Spelled in pieces so this file doesn't find itself
+        let asks = [
+            format!(".{}(", "request_device"),
+            format!("HeadlessContext::{}(", "new"),
+            format!("HeadlessContext::{}(", "with_features"),
+        ];
+        let mut found = Vec::new();
+        for file in &files {
+            let name = file
+                .strip_prefix(&src)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            let text = std::fs::read_to_string(file).unwrap();
+            for (n, line) in text.lines().enumerate() {
+                let host = matches!(name.as_str(), "context.rs" | "headless.rs");
+                if asks.iter().any(|a| line.contains(a.as_str())) && !host {
+                    found.push(format!("src/{name}:{}: {}", n + 1, line.trim()));
+                }
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "a lib test takes `crate::shared_gpu::lease()` (#1275), not a device \
+             of its own:\n{}",
+            found.join("\n")
+        );
+    }
+
     #[test]
     fn shader_wgsl_parses_and_validates() {
         let source = crate::wgsl_sources::SCENE;

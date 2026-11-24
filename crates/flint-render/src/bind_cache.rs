@@ -539,15 +539,11 @@ mod tests {
         assert!(cache.first_write("fxaa"));
     }
 
-    fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        pollster::block_on(async {
-            let instance = crate::gpu_select::instance();
-            let adapter = crate::gpu_select::request_adapter(&instance, None).await?;
-            adapter
-                .request_device(&wgpu::DeviceDescriptor::default())
-                .await
-                .ok()
-        })
+    /// The binary's shared device (#1275), and the lease that holds it.
+    fn device() -> Option<(crate::shared_gpu::Lease, wgpu::Device, wgpu::Queue)> {
+        let gpu = crate::shared_gpu::lease()?;
+        let (device, queue) = (gpu.gpu.device.clone(), gpu.gpu.queue.clone());
+        Some((gpu, device, queue))
     }
 
     fn read(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u8> {
@@ -572,7 +568,7 @@ mod tests {
 
     #[test]
     fn the_arena_pages_its_slots_and_uploads_them_together() {
-        let Some((device, queue)) = device() else {
+        let Some((_gpu, device, queue)) = device() else {
             crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
         };
@@ -622,7 +618,7 @@ mod tests {
     /// name (another folder's install), which makes none again.
     #[test]
     fn a_gone_installs_groups_leave_its_renderers_caches_alone() {
-        let Some((device, _queue)) = device() else {
+        let Some((_gpu, device, _queue)) = device() else {
             crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
         };
@@ -738,7 +734,7 @@ mod tests {
     /// 23), and the new group takes the old one's place.
     #[test]
     fn a_bound_group_follows_the_objects_it_binds() {
-        let Some((device, _queue)) = device() else {
+        let Some((_gpu, device, _queue)) = device() else {
             crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
         };

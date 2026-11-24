@@ -95,13 +95,16 @@ fn a_sheared_entity_is_bounded_and_lit_by_its_own_matrix() {
 /// history in them (#270); a real resize still drops them.
 #[test]
 fn a_render_scale_step_keeps_the_style_targets() {
-    let Ok(ctx) = pollster::block_on(crate::HeadlessContext::new(64, 64)) else {
-        return; // no adapter here
+    // The binary's shared device (#1275)
+    let Some(gpu) = crate::shared_gpu::lease() else {
+        crate::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
     };
+    let ctx = gpu.gpu;
     let mut renderer = super::SceneRenderer::new_headless(
         &ctx.device,
         &ctx.queue,
-        ctx.format,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
         64,
         64,
         super::RendererConfig {
