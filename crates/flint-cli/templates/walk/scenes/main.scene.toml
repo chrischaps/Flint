@@ -69,7 +69,6 @@ position = [0.0, 1.0, -8.0]
 [entities.player.character_controller]
 move_speed = 5.0
 jump_force = 6.0
-camera_mode = "first_person"
 
 
 # ------------------------------------------------------------

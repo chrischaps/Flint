@@ -8,6 +8,11 @@
 //! of its own, so `flint frame show`, `diff` and `open` read it as they read
 //! the original; this compares its final image and its scene pass's image
 //! with the captured ones.
+//!
+//! Two flags measure without changing the picture (#1203): `--draw-times`
+//! puts each scene draw's GPU time on its draw (`gpu_ms`) and names the
+//! costliest, and `--overdraw` adds the `Overdraw` pass, whose heat map
+//! shows how many draws shade each pixel.
 
 use super::read::{texels, Capture};
 use crate::commands::render::replay_host::{Controls, ReplayHost};
@@ -45,6 +50,15 @@ pub struct ReplayArgs {
     /// Mark this entity's pixels with the selection outline
     #[arg(long, value_name = "NAME")]
     pub outline: Option<String>,
+    /// Time each scene pass draw on the GPU: its `gpu_ms` in the replay's
+    /// manifest (`flint frame show --draws --sort gpu`); needs an adapter
+    /// with timestamps inside passes
+    #[arg(long)]
+    pub draw_times: bool,
+    /// Draw the scene pass's overdraw: the `Overdraw` pass, a count of
+    /// draws a pixel (`overdraw_count`) and its heat map (`overdraw`)
+    #[arg(long)]
+    pub overdraw: bool,
     /// The scene, when it isn't where the capture says
     #[arg(long, value_name = "FILE")]
     pub scene: Option<PathBuf>,
@@ -274,6 +288,8 @@ pub fn run(args: ReplayArgs) -> Result<()> {
         draws: args.draws,
         skip: args.skip.clone(),
         outline: args.outline.clone(),
+        draw_times: args.draw_times,
+        overdraw: args.overdraw,
     };
     // A pass that can't be stepped is refused before the scene loads
     let stepped = controls.stepped().map_err(anyhow::Error::msg)?.name();
@@ -289,7 +305,7 @@ pub fn run(args: ReplayArgs) -> Result<()> {
     let pass_match = controls
         .draws
         .and_then(|_| stepped_match(&captured, &replayed, stepped));
-    let asked = controls != Controls::default();
+    let asked = controls.changes_the_frame();
     let out_shown = Capture::shown(&out);
 
     let draws_of = |name: &str| captured.description.pass(name).map_or(0, |p| p.draws.len());
@@ -344,6 +360,46 @@ pub fn run(args: ReplayArgs) -> Result<()> {
             host.assets.len()
         ));
     }
+    // The costliest draws, as timed (#1203)
+    let costliest = costliest_draws(&replayed.description, 5);
+    if let Some(t) = &drawn.draw_times {
+        if t.timed > 0 {
+            let sum: f32 = replayed
+                .description
+                .pass("Scene")
+                .map_or(0.0, |p| p.draws.iter().filter_map(|d| d.gpu_ms).sum());
+            let pass_ms = replayed
+                .description
+                .pass("Scene")
+                .and_then(|p| p.gpu_ms)
+                .map_or(String::new(), |ms| format!(" of the pass's {ms:.3}"));
+            text.push_str(&format!(
+                "  draw times: {} of {} scene draws timed, {sum:.3} ms inside them{pass_ms}{}\n",
+                t.timed,
+                t.drawn,
+                if t.frames > 1 {
+                    format!(" ({} frames, a batch each)", t.frames)
+                } else {
+                    String::new()
+                }
+            ));
+            for c in &costliest {
+                text.push_str(&format!(
+                    "    {:>8.3} ms  #{:<4} {}\n",
+                    c.gpu_ms, c.index, c.what
+                ));
+            }
+            let kinds: Vec<String> = by_kind(&replayed.description)
+                .iter()
+                .map(|k| format!("{} {} x{} {:.3} ms", k.kind, k.pipeline, k.draws, k.gpu_ms))
+                .collect();
+            text.push_str(&format!("    by kind: {}\n", kinds.join(", ")));
+        }
+    }
+    let overdraw = args.overdraw.then(|| overdraw_stats(&replayed)).flatten();
+    if let Some(o) = &overdraw {
+        text.push_str(&format!("  overdraw: {}\n", o.words()));
+    }
     for note in host.notes.iter().chain(&drawn.refused) {
         text.push_str(&format!("  note: {note}\n"));
     }
@@ -377,6 +433,166 @@ pub fn run(args: ReplayArgs) -> Result<()> {
         "notes": host.notes,
         "refused": drawn.refused,
         "skippable": host.skippable,
+        "draw_times": drawn.draw_times.map(|t| serde_json::json!({
+            "timed": t.timed,
+            "drawn": t.drawn,
+            "frames": t.frames,
+            "costliest": costliest,
+            "by_kind": by_kind(&replayed.description),
+        })),
+        "overdraw": overdraw,
     });
     output::emit(&output::Answer::new(text.trim_end().to_string(), json))
+}
+
+/// One of the costliest scene draws (#1203).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Costly {
+    /// Its place in the scene pass's list, from 1, as `flint frame show
+    /// --draws` numbers it.
+    pub index: usize,
+    pub gpu_ms: f32,
+    /// `entity · kind (pipeline)`.
+    pub what: String,
+}
+
+/// The `n` scene draws with the most `gpu_ms`, costliest first.
+pub fn costliest_draws(d: &FrameDescription, n: usize) -> Vec<Costly> {
+    let Some(scene) = d.pass("Scene") else {
+        return Vec::new();
+    };
+    let mut timed: Vec<Costly> = scene
+        .draws
+        .iter()
+        .enumerate()
+        .filter_map(|(i, draw)| {
+            Some(Costly {
+                index: i + 1,
+                gpu_ms: draw.gpu_ms?,
+                what: format!(
+                    "{} \u{b7} {} ({})",
+                    draw.entity.as_deref().unwrap_or("-"),
+                    draw.kind,
+                    draw.pipeline
+                ),
+            })
+        })
+        .collect();
+    timed.sort_by(|a, b| b.gpu_ms.total_cmp(&a.gpu_ms).then(a.index.cmp(&b.index)));
+    timed.truncate(n);
+    timed
+}
+
+/// The timed scene draws of one kind and pipeline, summed (#1203).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct KindTime {
+    pub kind: String,
+    pub pipeline: String,
+    pub draws: usize,
+    pub gpu_ms: f32,
+}
+
+/// The scene pass's timed draws by kind and pipeline, costliest first.
+pub fn by_kind(d: &FrameDescription) -> Vec<KindTime> {
+    let mut out: Vec<KindTime> = Vec::new();
+    for draw in d.pass("Scene").map_or(&[][..], |p| &p.draws[..]) {
+        let Some(ms) = draw.gpu_ms else { continue };
+        match out
+            .iter_mut()
+            .find(|k| k.kind == draw.kind && k.pipeline == draw.pipeline)
+        {
+            Some(k) => {
+                k.draws += 1;
+                k.gpu_ms += ms;
+            }
+            None => out.push(KindTime {
+                kind: draw.kind.clone(),
+                pipeline: draw.pipeline.clone(),
+                draws: 1,
+                gpu_ms: ms,
+            }),
+        }
+    }
+    out.sort_by(|a, b| b.gpu_ms.total_cmp(&a.gpu_ms));
+    out
+}
+
+/// The overdraw count's figures (#1203), read from the replay's
+/// `overdraw_count` image.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Overdraw {
+    /// The image's file in the replay.
+    pub image: String,
+    pub heat_map: Option<String>,
+    pub pixels: usize,
+    /// Pixels no draw shades.
+    pub empty: usize,
+    /// The most draws on one pixel, and the first pixel (x, y) with it.
+    pub max: u32,
+    pub max_at: [u32; 2],
+    /// Draws a pixel, over the pixels some draw shades.
+    pub mean: f64,
+    /// Pixels shaded by more than 4 draws.
+    pub over_4: usize,
+}
+
+impl Overdraw {
+    /// `1.84 draws a shaded pixel, at most 23 (at 412, 180); 3.1% of pixels over 4`.
+    pub fn words(&self) -> String {
+        let shaded = self.pixels - self.empty;
+        let share = |n: usize| 100.0 * n as f64 / self.pixels.max(1) as f64;
+        format!(
+            "{:.2} draws a shaded pixel ({:.1}% of the frame shaded), at most {} (at {}, {}); \
+             {:.1}% of pixels over 4; heat map {}",
+            self.mean,
+            share(shaded),
+            self.max,
+            self.max_at[0],
+            self.max_at[1],
+            share(self.over_4),
+            self.heat_map.as_deref().unwrap_or("not written"),
+        )
+    }
+}
+
+/// Read the replay's overdraw count, or `None` when it has none.
+pub fn overdraw_stats(replayed: &Capture) -> Option<Overdraw> {
+    let pass = replayed.description.pass("Overdraw")?;
+    let image = pass.images.iter().find(|i| i.target == "overdraw_count")?;
+    let heat = pass.images.iter().find(|i| i.target == "overdraw");
+    let t = texels(&replayed.file(image), image).ok()?;
+    let (w, h) = (t.width as usize, t.height as usize);
+    let (mut empty, mut max, mut max_at, mut sum, mut over_4) = (0, 0u32, [0, 0], 0u64, 0);
+    for y in 0..h {
+        for x in 0..w {
+            let n = t.texel(y * w + x)[0].max(0.0).round() as u32;
+            if n == 0 {
+                empty += 1;
+            }
+            if n > max {
+                max = n;
+                max_at = [x as u32, y as u32];
+            }
+            if n > 4 {
+                over_4 += 1;
+            }
+            sum += u64::from(n);
+        }
+    }
+    let pixels = w * h;
+    let shaded = pixels - empty;
+    Some(Overdraw {
+        image: format!("{}/{}", Capture::shown(&replayed.dir), image.file),
+        heat_map: heat.map(|i| format!("{}/{}", Capture::shown(&replayed.dir), i.file)),
+        pixels,
+        empty,
+        max,
+        max_at,
+        mean: if shaded > 0 {
+            sum as f64 / shaded as f64
+        } else {
+            0.0
+        },
+        over_4,
+    })
 }

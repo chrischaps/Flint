@@ -114,13 +114,22 @@ impl MixerBackend for Remote {
         self.lengths.get(self.sounds.get(name)?).copied()
     }
 
-    fn add_bus(&mut self, bus: Bus, parent: Option<Bus>, db: Decibels) -> Result<()> {
+    fn add_bus(&mut self, bus: Bus, parent: Option<Bus>, db: Decibels, lowpass: f32) -> Result<()> {
         self.link.send(Command::BusNew {
             bus: bus.code(),
             parent: parent.map_or(protocol::BUS_MAIN, Bus::code),
             db: db.0,
+            lowpass,
         });
         Ok(())
+    }
+
+    fn set_bus_lowpass(&mut self, bus: Bus, hz: f32, tween_secs: f64) {
+        self.link.send(Command::BusLowpass {
+            bus: bus.code(),
+            hz,
+            tween: tween_secs as f32,
+        });
     }
 
     fn set_bus_volume(&mut self, bus: Bus, db: Decibels, tween_secs: f64) {

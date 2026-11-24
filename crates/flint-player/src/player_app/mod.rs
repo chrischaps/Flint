@@ -116,6 +116,8 @@ mod scope_coverage_tests;
 #[cfg(test)]
 mod script_bus_tests;
 pub mod script_commands;
+#[cfg(test)]
+mod script_duck_tests;
 #[cfg(feature = "debug-hud")]
 mod script_error_card;
 #[cfg(test)]
@@ -136,6 +138,9 @@ mod trace_tests;
 mod transition;
 #[cfg(test)]
 mod transition_tests;
+mod user_audio;
+#[cfg(test)]
+mod user_audio_tests;
 #[cfg(test)]
 mod vfs_tests;
 #[cfg(target_arch = "wasm32")]

@@ -307,6 +307,19 @@ impl SceneRenderer {
                     .map(|(t, _)| t.clone())
                     .ok_or("no grab");
             }
+            // A replay's overdraw view (#1203)
+            "overdraw_count" => {
+                return self
+                    .overdraw_textures()
+                    .map(|(count, _)| count.clone())
+                    .ok_or("no overdraw drawn");
+            }
+            "overdraw" => {
+                return self
+                    .overdraw_textures()
+                    .map(|(_, heat)| heat.clone())
+                    .ok_or("no overdraw drawn");
+            }
             _ => {}
         }
         let r = self.postprocess_resources.as_ref().ok_or("no HDR chain")?;

@@ -1619,7 +1619,12 @@ impl App {
         let all = self.query.all_passes;
         let details_h = if self.draw.is_some() { 270.0 } else { 0.0 };
         let table_h = (ui.available_height() - details_h).max(80.0);
-        let cols = columns(ui.available_width(), all, self.query.show_culled);
+        let cols = columns(
+            ui.available_width(),
+            all,
+            self.query.show_culled,
+            self.model.draws_timed(),
+        );
 
         // The header, clickable to sort
         let (head, _) =
@@ -1740,6 +1745,7 @@ impl App {
                             }
                             Sort::Blend => d.draw.blend.clone(),
                             Sort::Culled => d.draw.culled.clone().unwrap_or_default(),
+                            Sort::Gpu => d.draw.gpu_ms.map_or("-".into(), |ms| format!("{ms:.3}")),
                         };
                         let pad = if col.right { 8.0 } else { 6.0 };
                         let cell = Rect::from_min_size(
@@ -2343,13 +2349,17 @@ struct Col {
     right: bool,
 }
 
-fn columns(width: f32, with_pass: bool, with_culled: bool) -> Vec<Col> {
+fn columns(width: f32, with_pass: bool, with_culled: bool, with_gpu: bool) -> Vec<Col> {
     // Fixed columns, the entity and pipeline sharing what is left
     let mut fixed: Vec<(&'static str, Sort, f32, bool)> = vec![
         ("Kind", Sort::Kind, 58.0, false),
         ("Tris", Sort::Triangles, 60.0, true),
         ("Blend", Sort::Blend, 64.0, false),
     ];
+    // A replay's draw times (#1203)
+    if with_gpu {
+        fixed.push(("GPU ms", Sort::Gpu, 62.0, true));
+    }
     if with_culled {
         fixed.push(("Culled", Sort::Culled, 78.0, false));
     }
@@ -2387,14 +2397,18 @@ mod tests {
 
     #[test]
     fn the_columns_fill_the_width_and_put_the_pass_first_when_asked() {
-        let cols = columns(460.0, false, true);
+        let cols = columns(460.0, false, true, false);
         let end = cols.last().map(|c| c.x + c.w).unwrap();
         assert!((end - 460.0).abs() < 0.5, "{end}");
         assert_eq!(cols[0].name, "Entity");
-        assert_eq!(columns(560.0, true, false)[0].name, "Pass");
-        assert!(columns(560.0, true, false)
+        assert_eq!(columns(560.0, true, false, false)[0].name, "Pass");
+        assert!(columns(560.0, true, false, false)
             .iter()
-            .all(|c| c.name != "Culled"));
+            .all(|c| c.name != "Culled" && c.name != "GPU ms"));
+        let timed = columns(560.0, false, false, true);
+        assert!(timed.iter().any(|c| c.name == "GPU ms"));
+        let end = timed.last().map(|c| c.x + c.w).unwrap();
+        assert!((end - 560.0).abs() < 0.5, "{end}");
     }
 }
 

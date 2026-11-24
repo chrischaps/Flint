@@ -44,6 +44,8 @@ impl Default for KeyedPlay {
 pub(crate) struct Keyed {
     key: u64,
     sound: String,
+    /// Its bus, which it counts as sounding on (#1218).
+    pub(crate) bus: Bus,
     handle: SoundHandle,
     /// When a remote one has played out, or will have faded once stopped:
     /// the worklet reports no voice it isn't asked to watch.
@@ -58,6 +60,11 @@ impl Keyed {
             Some(state) => state == kira::sound::PlaybackState::Stopped,
             None => self.ends_at.is_some_and(|t| now >= t),
         }
+    }
+
+    /// Heard, or about to be: not stopped and not played out (#1218).
+    pub(crate) fn is_sounding(&self, now: Instant) -> bool {
+        !self.stopped && !self.is_finished(now)
     }
 
     fn stop(&mut self, fade: Duration, now: Instant) {
@@ -103,14 +110,21 @@ impl AudioEngine {
     /// key is one sound.
     pub fn play_keyed(&mut self, key: u64, sound_name: &str, play: KeyedPlay) -> Result<()> {
         self.stop_keyed(key, Duration::ZERO);
-        let handle =
-            self.play_non_spatial(sound_name, play.volume, play.pitch, play.looping, play.bus)?;
+        let handle = self.start_panned(
+            sound_name,
+            play.volume,
+            0.0,
+            play.pitch,
+            play.looping,
+            play.bus,
+        )?;
         let sound = self.resolve_sound(sound_name).into_owned();
         let now = Instant::now();
         let ends_at = self.remote_end(&sound, play.pitch, play.looping, now);
         self.keyed.push(Keyed {
             key,
             sound,
+            bus: play.bus,
             handle,
             ends_at,
             looping: play.looping,

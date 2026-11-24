@@ -183,7 +183,7 @@ fn lint_component(kind: SchemaKind, name: &str, def: &toml::Table, found: &mut V
                     codes::IGNORED_SCHEMA_KEY,
                     format!(
                         "`{key}` is ignored: a {key_word} holds `description`, `fields`, \
-                         `panel` and `extend`"
+                         `panel`, `extend` and `retired`"
                     ),
                 )
                 .hint_opt(diagnostic::did_you_mean(
@@ -450,7 +450,7 @@ desciption = "Typo"
             lines,
             [
                 "warning[ignored-schema-key] collider.desciption: `desciption` is ignored: a \
-                 component holds `description`, `fields`, `panel` and `extend`",
+                 component holds `description`, `fields`, `panel`, `extend` and `retired`",
                 "warning[ignored-schema-key] collider.friction: `friction` is ignored: it is \
                  written under `[component.collider]`, and fields are read from \
                  `[component.collider.fields]`",

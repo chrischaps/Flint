@@ -92,7 +92,7 @@ file = "stems/harmony.wav"
 silent = true
 ```
 
-The buses are the manifest's own: as many as the suite has, named as it likes, built and mixed in the order the manifest declares them. Each has a `file` or `silent = true`, and at least one must have a file. Optional `[[degraded_alternates]]` entries name a pre-composed degraded take for a bus over a sample range ([ADR 0032](https://github.com/chrischaps/Flint/blob/main/docs/adr/0032-degraded-alternate-playback.md), degraded alternate playback). A suite that only plays music needs nothing else: no `[reintegration]` and no `pulse_window_ms`, as in this one, which the showcase film's `flint-examples/tools/showcase/music/*.suite.toml` are like:
+The buses are the manifest's own: as many as the suite has, named as it likes, built and mixed in the order the manifest declares them. Each has a `file` or `silent = true`, and at least one must have a file. Optional `[[degraded_alternates]]` entries name a pre-composed degraded take for a bus over a sample range ([ADR 0032](https://github.com/chrischaps/Flint/blob/main/docs/adr/0032-degraded-alternate-playback.md), degraded alternate playback). A suite that only plays music needs nothing else: no `[reintegration]` and no `pulse_window_ms`, as in this one, which the showcase film's `flint-examples/film/music/*.suite.toml` are like:
 
 ```toml
 [[sections]]

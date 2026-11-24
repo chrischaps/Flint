@@ -289,7 +289,10 @@ impl CountedDevice for wgpu::Device {
         desc: &wgpu::RenderPipelineDescriptor<'_>,
     ) -> wgpu::RenderPipeline {
         add(PIPELINES, 1);
-        self.create_render_pipeline(desc)
+        let pipeline = self.create_render_pipeline(desc);
+        // A replay's overdraw view builds twins from it (#1203); off, one load
+        crate::pipeline_twins::note(desc, &pipeline);
+        pipeline
     }
 
     #[inline]

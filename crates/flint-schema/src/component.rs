@@ -24,7 +24,7 @@
 
 use flint_core::project::AssetKind;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// The one spelling of each field type, and what a value of it is. The book's
 /// table (concepts/schemas.md) and `flint schema --format json`'s `types` follow it.
@@ -235,6 +235,10 @@ pub struct ComponentSchema {
     pub fields: HashMap<String, FieldSchema>,
     /// Its F3 panel, when a field says what it is on one (#744; `panel.rs`).
     pub panel: Option<crate::panel::PanelSpec>,
+    /// Fields it no longer has, each with why and what to do instead
+    /// (`[component.<name>.retired]`, #1212): a scene still writing one is
+    /// told that, in place of the nearest field's name.
+    pub retired: BTreeMap<String, String>,
 }
 
 impl ComponentSchema {
@@ -295,6 +299,11 @@ pub struct ComponentSchemaDefinition {
     /// layer's component of the same name replaces the earlier one.
     #[serde(default)]
     pub extend: bool,
+    /// `[component.<name>.retired]` (#1212): fields taken out, each as
+    /// `name = "why, and what to write instead"`. An extension's are added
+    /// to the declaring layer's.
+    #[serde(default)]
+    pub retired: BTreeMap<String, String>,
     /// Keys beside `description` and `fields`, which the loader refuses
     /// (#792): eleven engine files once declared their fields here, under
     /// `[component.x]` instead of `[component.x.fields]`, and loaded empty.
@@ -304,7 +313,7 @@ pub struct ComponentSchemaDefinition {
 
 /// The keys a `[component.<name>]` table may hold; any other is ignored by
 /// the loader and reported by [`lint`](crate::lint).
-pub const COMPONENT_KEYS: &[&str] = &["description", "fields", "panel", "extend"];
+pub const COMPONENT_KEYS: &[&str] = &["description", "fields", "panel", "extend", "retired"];
 
 /// The keys a field definition may hold ([`DetailedFieldSchema`]).
 pub const FIELD_KEYS: &[&str] = &[

@@ -162,3 +162,36 @@ fn every_jump_tapped_at_144_frames_a_second_jumps() {
     eprintln!("jumps at 144 Hz: {jumps} of {} taps", taps.len());
     assert_eq!(jumps, taps.len(), "each tap jumped");
 }
+
+/// #1228: a click catches the cursor for mouse look, but not while the
+/// game is paused. A pause menu's state stops physics, and its clicks are
+/// the menu's: caught, the pointer would vanish from over its buttons.
+#[test]
+fn a_click_catches_the_cursor_only_while_the_game_runs() {
+    use winit::event::{ElementState, MouseButton};
+    vfs::scoped(Arc::new(game()), || {
+        let mut app = started(1.0 / 60.0, "");
+        frame(&mut app);
+        let press = |app: &mut PlayerApp| {
+            app.handle_mouse_input(ElementState::Pressed, MouseButton::Left);
+        };
+
+        // Paused, as menu::toggle_pause leaves it: the click is the menu's
+        app.release_cursor();
+        assert!(app.core.state_machine.push_state("paused"));
+        press(&mut app);
+        assert!(
+            !app.is_cursor_captured(),
+            "a paused click caught the cursor"
+        );
+        // ...and the game, the menu's focus with it, still hears it
+        assert!(app.input.is_mouse_button_just_pressed(0));
+        app.handle_mouse_input(ElementState::Released, MouseButton::Left);
+        app.input.end_frame();
+
+        // Playing again: the first click catches it for looking round
+        app.core.state_machine.pop_state();
+        press(&mut app);
+        assert!(app.is_cursor_captured());
+    });
+}

@@ -1,4 +1,4 @@
 # Declared by name only: an open schema (ADR 0115). The component is known
 # and its table is not checked.
 [component.film]
-description = "The film rig's director table (flint-examples/tools/showcase): which beat file a shot plays. Read by flint-examples/film/scripts/*.rhai; no fields declared, so nothing in it is checked"
+description = "The film rig's director table (flint-examples/film): which beat file a shot plays. Read by flint-examples/film/scripts/*.rhai; no fields declared, so nothing in it is checked"

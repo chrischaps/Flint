@@ -83,8 +83,8 @@ pub struct ShowArgs {
     /// letters: `tree_*`)
     #[arg(long, value_name = "NAME")]
     pub entity: Option<String>,
-    /// The draws' order: as the frame drew them (by pass), or most
-    /// triangles first
+    /// The draws' order: as the frame drew them (by pass), most triangles
+    /// first, or most GPU time first (a replay's `--draw-times`)
     #[arg(long, value_enum)]
     pub sort: Option<DrawSort>,
     /// With the draws, the ones a cull set aside, and why
@@ -109,6 +109,9 @@ pub enum DrawSort {
     Pass,
     /// Most triangles first
     Tris,
+    /// Most GPU time first, untimed draws last (#1203: `flint frame replay
+    /// --draw-times` times them)
+    Gpu,
 }
 
 #[derive(Args)]

@@ -14,6 +14,7 @@ use flint_ecs::FlintWorld;
 use kira::Tween;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+use web_time::Instant;
 
 /// Per-entity audio state for a placed sound: its sound handles, cached
 /// parameters and where it is
@@ -34,6 +35,8 @@ struct SpatialEntry {
     culled: bool,
     /// Where its sound is (#658)
     clock: PlayClock,
+    /// Its bus, and when a one-shot will have played out (#1218)
+    sounding: Sounding,
 }
 
 /// Non-spatial entry: sound handles + cached parameters
@@ -46,6 +49,35 @@ struct NonSpatialEntry {
     culled: bool,
     /// Where its sound is (#658)
     clock: PlayClock,
+    /// Its bus, and when a one-shot will have played out (#1218)
+    sounding: Sounding,
+}
+
+/// What a source needs to say whether it is sounding on its bus (#1218):
+/// the bus, and when a one-shot ends by its length, for a remote mixer
+/// that hasn't reported it yet. A loop has no end.
+#[derive(Clone, Copy)]
+struct Sounding {
+    bus: Bus,
+    ends_at: Option<Instant>,
+}
+
+impl Sounding {
+    /// Whether a source playing `handles` is heard now: started, not
+    /// paused (culled) and not stopped, by the mixer's word when it has
+    /// given one, else by the sound's length.
+    fn now(&self, handles: &[SoundHandle], culled: bool, now: Instant) -> bool {
+        let Some(handle) = handles.first() else {
+            return false;
+        };
+        if culled {
+            return false;
+        }
+        match handle.observe() {
+            Some((_, playback, _)) => !matches!(playback, state::STOPPED | state::PAUSED),
+            None => self.ends_at.is_none_or(|t| now < t),
+        }
+    }
 }
 
 /// At or below this `audio_source.volume` a loop is paused: `amplitude_to_db`
@@ -194,6 +226,15 @@ impl AudioSync {
             if self.waiting.remove(&entity_id) {
                 tracing::info!("audio_source {file} starts: its sound has loaded");
             }
+            let sounding = Sounding {
+                bus,
+                ends_at: (!looping)
+                    .then(|| engine.sound_length(file))
+                    .flatten()
+                    .map(|secs| {
+                        Instant::now() + Duration::from_secs_f64(secs / pitch.abs().max(1e-3))
+                    }),
+            };
             let clock = PlayClock::new(
                 if looping {
                     engine.sound_length(file).unwrap_or(0.0)
@@ -231,6 +272,7 @@ impl AudioSync {
                     sent: (0.0, 0.0),
                     culled: false,
                     clock,
+                    sounding,
                 };
                 if self.old_mix {
                     match engine.create_spatial_track(position, min_distance, max_distance, bus) {
@@ -257,7 +299,7 @@ impl AudioSync {
                     let (gain, pan) =
                         volume_and_pan(engine.ears().gains(to_glam_vec3(position), &falloff));
                     let amplitude = volume as f32 * gain;
-                    match engine.play_panned(file, amplitude as f64, pan, pitch, looping, bus) {
+                    match engine.start_panned(file, amplitude as f64, pan, pitch, looping, bus) {
                         Ok(mut handle) => {
                             handle.watch();
                             entry.handles.push(handle);
@@ -271,7 +313,7 @@ impl AudioSync {
                 // Non-spatial: play directly on the main track
                 let mut handles = Vec::new();
                 if autoplay && engine.has_sound(file) {
-                    match engine.play_non_spatial(file, volume, pitch, looping, bus) {
+                    match engine.start_panned(file, volume, 0.0, pitch, looping, bus) {
                         Ok(mut handle) => {
                             handle.watch();
                             handles.push(handle);
@@ -290,6 +332,7 @@ impl AudioSync {
                         looping,
                         culled: false,
                         clock,
+                        sounding,
                     },
                 );
             }
@@ -524,6 +567,25 @@ impl AudioSync {
     /// bundle's sound has arrived and been mixed), and once it has ended.
     pub fn position(&self, entity: EntityId) -> Option<f64> {
         self.positions.get(&entity).copied()
+    }
+
+    /// The bus of every source sounding now (#1218): started, not paused
+    /// for being out of earshot or at volume 0, not played out. A bus
+    /// appears once a source. [`AudioEngine::update_ducks`] takes them
+    /// beside the sounds it holds itself.
+    pub fn sounding_buses(&self) -> Vec<Bus> {
+        let now = Instant::now();
+        self.spatial_map
+            .values()
+            .filter(|e| e.sounding.now(&e.handles, e.culled, now))
+            .map(|e| e.sounding.bus)
+            .chain(
+                self.non_spatial_map
+                    .values()
+                    .filter(|e| e.sounding.now(&e.handles, e.culled, now))
+                    .map(|e| e.sounding.bus),
+            )
+            .collect()
     }
 
     /// Every source [`position`](Self::position) knows.
