@@ -13,7 +13,7 @@
 use rapier3d::prelude::{Group, InteractionGroups};
 
 /// The layer a collider with no `layer` is on.
-pub const DEFAULT_LAYER: &str = "default";
+pub use flint_core::collision_layers::DEFAULT_LAYER;
 
 /// Rapier has 32 groups; `default` takes the first.
 pub const MAX_LAYERS: usize = 32;
@@ -130,18 +130,15 @@ impl CollisionLayers {
     }
 
     /// The error for a name that is no layer: the nearest one, else the
-    /// list, and where layers are declared.
+    /// list, and where layers are declared: the words a collider's
+    /// unknown layer is told in, here and by `flint check`
+    /// (`flint_core::collision_layers`, #1220).
     pub fn unknown(&self, name: &str) -> LayerError {
-        let hint = match flint_core::diagnostic::did_you_mean(name, self.names()) {
-            Some(near) => format!(" ({near})"),
-            None => format!(
-                " (the layers are {}; a project declares its own in flint.toml, `[project.physics] layers = [..]`)",
-                self.names.join(", ")
-            ),
-        };
+        let names: Vec<&str> = self.names().collect();
+        let hint = flint_core::collision_layers::unknown_layer_hint(name, &names);
         LayerError::Unknown {
             name: name.to_string(),
-            hint,
+            hint: format!(" ({hint})"),
         }
     }
 }

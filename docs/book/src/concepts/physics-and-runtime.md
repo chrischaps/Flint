@@ -299,9 +299,20 @@ mask = ["world", "enemy"]
 ```
 
 A collider that names no layer is on `default` and meets everything, as
-every collider did before layers. A name that is no layer is reported once
-(with the nearest) and read as `default` in `layer`, or left out of a
-`mask`. Terrain and spline colliders are on `default`, or on the layer their
+every collider did before layers. A name that is no layer is read as
+`default` in `layer`, or left out of a `mask`, and is `bad-enum-value` with
+the nearest layer named. `flint check` and `flint validate` find it before
+the game runs, and the player says the same once when the body is made:
+
+```text
+error[bad-enum-value] entity 'hero' collider.layer: "playr" is not a collision layer
+    hint: did you mean `player`?; it is read as `default`
+error[bad-enum-value] entity 'hero' collider.mask[1]: "pikcup" is not a collision layer
+    hint: did you mean `pickup`?; it is left out
+```
+
+A project with no `[project.physics]` has only `default`, so a collider
+naming any other layer is told the line to add to `flint.toml`. Terrain and spline colliders are on `default`, or on the layer their
 entity's `collider` table names. Layers are read when the body is made.
 
 [`flint-examples/collision_layers.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/collision_layers.scene.toml) is the bench: a glass tray on `glass`
