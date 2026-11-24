@@ -14,3 +14,17 @@ kind = "button"
 [[actions.toggle_help.bindings]]
 type = "key"
 code = "KeyH"
+
+# Escape and a pad's Start open and close the pause menu (scripts/hud.rhai,
+# ui/pause.ui.toml). With Escape bound here the window stays open on it: the
+# menu's Quit, Alt+F4 or the close button leave. Inside the menu the
+# engine's own ui_* actions move focus (arrows, d-pad, left stick), press
+# (Enter, Space, A) and go back (Backspace, B).
+[actions.pause]
+kind = "button"
+[[actions.pause.bindings]]
+type = "key"
+code = "Escape"
+[[actions.pause.bindings]]
+type = "gamepad_button"
+button = "Start"
