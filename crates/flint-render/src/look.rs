@@ -147,6 +147,41 @@ impl Look {
     pub fn is_builtin(&self) -> bool {
         self.source == "built-in"
     }
+
+    /// What `seen` says of this look's tables for styles that aren't built
+    /// in (#1272): a style none of them holds, or a key or value the style
+    /// doesn't take. A look carries no registry (#742), so [`Look::parse`]
+    /// judges only the built-ins' tables; the rest are judged here against
+    /// the registries of the scenes that can take the look: a scene's own,
+    /// or each folder of a project (`flint check`). The first registry
+    /// holding a style judges its table.
+    pub fn style_warnings(&self, seen: &[&crate::stylize::StyleRegistry]) -> Vec<String> {
+        // Parsing laid it once already, so this can't fail on a parsed look
+        let Ok(def) = self.apply(None) else {
+            return Vec::new();
+        };
+        let mut warnings = Vec::new();
+        for (name, table) in def.style_tables() {
+            if crate::stylize::is_builtin(&name) {
+                continue;
+            }
+            let Some(judge) = seen.iter().find(|styles| styles.find(&name).is_some()) else {
+                let known: std::collections::BTreeSet<&str> =
+                    seen.iter().flat_map(|styles| styles.names()).collect();
+                let near = flint_core::diagnostic::did_you_mean(&name, known.iter().copied())
+                    .map(|hint| format!("; {hint}"))
+                    .unwrap_or_default();
+                warnings.push(format!(
+                    "unknown style '{name}' in [post_process.styles]: not built in, and no \
+                     styles/ folder a scene taking the look can see has it{near}"
+                ));
+                continue;
+            };
+            let one = std::collections::BTreeMap::from([(name, table)]);
+            warnings.extend(crate::stylize::StyleSettings::from_tables(&one, judge).1);
+        }
+        warnings
+    }
 }
 
 /// `base` with `over` merged into it, checked by deserializing the result.
@@ -226,7 +261,9 @@ fn lay(
     }
     // A built-in style's table is checked as a scene's is. A look carries
     // no registry: a table naming a game's or a user style is read, and
-    // warned about, against the registry of the scene it is laid on (#742)
+    // warned about, against the registry of the scene it is laid on (#742);
+    // `flint check` judges it against its project's (`Look::style_warnings`,
+    // #1272)
     let builtin: std::collections::BTreeMap<String, toml::Table> = def
         .styles
         .iter()
@@ -617,6 +654,34 @@ mod tests {
         );
         let err = Look::parse("t", "[post_process.styles.ascii]\ncell = 400", "test").unwrap_err();
         assert!(err.contains("cell=400"), "{err}");
+    }
+
+    /// #1272: what a registry says of a look's tables for styles that
+    /// aren't built in. One that holds no such style names it, with the
+    /// nearest it does hold; the built-ins' tables were judged at parse.
+    #[test]
+    fn a_looks_user_style_tables_are_judged_against_the_registries_given() {
+        let look = Look::parse(
+            "t",
+            "[post_process.styles.watercolour]\nenabled = true\n\
+             [post_process.styles.invert]\nenabled = true",
+            "test",
+        )
+        .unwrap();
+        let styles = crate::stylize::StyleRegistry::new();
+        let warnings = look.style_warnings(&[&styles]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("unknown style 'watercolour'")
+                && warnings[0].contains("did you mean `watercolor`?"),
+            "{warnings:?}"
+        );
+        // No registry at all: still named
+        assert_eq!(look.style_warnings(&[]).len(), 1);
+        // A look naming built-ins alone has nothing to say
+        let plain =
+            Look::parse("p", "[post_process.styles.invert]\nenabled = true", "test").unwrap();
+        assert!(plain.style_warnings(&[&styles]).is_empty());
     }
 
     #[test]

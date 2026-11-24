@@ -121,6 +121,26 @@ impl Memo {
             })
             .0
     }
+
+    /// The styles of every folder that can take a look kept at `home`
+    /// (#1272): `home`'s own first, then each scene folder under it the run
+    /// has loaded. A scene finds a look by walking up, so these are the
+    /// registries of the scenes that can name it.
+    pub(super) fn styles_able_to_take(
+        &mut self,
+        home: &Path,
+    ) -> Vec<&flint_render::stylize::StyleRegistry> {
+        self.styles_for(home);
+        let own = &self.style_dirs[home].0;
+        std::iter::once(own)
+            .chain(
+                self.style_dirs
+                    .iter()
+                    .filter(|(dir, _)| dir.as_path() != home && dir.starts_with(home))
+                    .map(|(_, (styles, _))| styles),
+            )
+            .collect()
+    }
 }
 
 /// What a scene's check found, and the files it reached: the scripts,
@@ -646,7 +666,15 @@ fn styles(
     // The scene's look (#356) must be found and fit under its keys
     if let Some(name) = post.look.clone().filter(|name| !name.trim().is_empty()) {
         post.authored = flint_scene::PostProcessDef::authored_table(text);
-        if let Err(e) = flint_render::look::resolve(&post, Some(&name), scene) {
+        let resolved = flint_render::look::resolve(&post, Some(&name), scene);
+        // Its tables for styles that aren't built in, against the styles
+        // this scene is drawn with (#1272): the load would warn of each
+        if resolved.is_ok() {
+            if let Ok(look) = flint_render::look::find(&name, scene) {
+                found.extend(super::looks::style_diagnostics(&look, &[&styles]));
+            }
+        }
+        if let Err(e) = resolved {
             // A look that isn't found lists where it was looked for
             let (what, tried) = match e.split_once(" Tried:\n") {
                 Some((what, tried)) => (what, tried.lines().map(|l| l.trim().into()).collect()),
