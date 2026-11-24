@@ -306,9 +306,16 @@ fn a_hitch_is_captured_on_the_next_frame_with_its_window_and_cause() {
     let mut app = started(&root, gpu);
     app.capture_frames(Vec::new(), 1, Some(root.join("out")));
     assert!(app.core.script.timing(), "hitches name their script");
-    // A busy machine's own hiccups (several agents build on this one) don't
-    // count: the stall is 150 ms
-    app.stats.hitches.thresholds.floor_ms = 60.0;
+    // A busy machine's own hiccups (several agents build on this one) mustn't
+    // be the hitch that asks (#1236): `--capture-on-hitch 1` takes the first
+    // past the start, so until just before the stall no frame is judged one,
+    // and from then a hitch is 120 ms over the median, which the 150 ms
+    // stall makes on top of whatever the frame cost
+    app.stats.hitches.thresholds.floor_ms = f32::INFINITY;
+    while app.core.clock.total_time < 2.45 {
+        frame(&mut app, gpu);
+    }
+    app.stats.hitches.thresholds.floor_ms = 120.0;
     while app.core.clock.total_time < 3.1 {
         frame(&mut app, gpu);
     }
@@ -340,8 +347,38 @@ fn a_hitch_is_captured_on_the_next_frame_with_its_window_and_cause() {
     assert!(record.hitch);
     assert!(record.phases_ms["scripts"] >= 140.0, "{record:?}");
     assert!(cpu.window.first().unwrap().index < hitch.frame);
-    // Just the one hitch: the capture's own frames weren't counted
-    assert_eq!(app.stats.hitches.session().hitches, 1);
+    // Just the one hitch the stall made, and the capture's own frames
+    // weren't counted. A busy machine may still add hitches of its own after
+    // the stall (#1236: a second frame of this GPU-backed run passed a 60 ms
+    // floor in a parallel run with builds beside it), so the count is of the
+    // stall's and of the frames the capture marked, not the session's total.
+    let found: Vec<_> = app.stats.hitches.hitches().iter().collect();
+    let all: Vec<String> = found
+        .iter()
+        .map(|h| format!("#{} {:.1} ms", h.index, h.ms))
+        .collect();
+    let stalls: Vec<u64> = found
+        .iter()
+        .filter(|h| h.ms >= 140.0)
+        .map(|h| h.index)
+        .collect();
+    assert_eq!(stalls, [hitch.frame], "the stall's alone: {all:?}");
+    let history = &*app.stats.perf;
+    let marked: Vec<u64> = history
+        .frames()
+        .iter()
+        .filter(|f| f.capturing)
+        .map(|f| f.index)
+        .collect();
+    assert!(
+        history.frame(captured).is_some_and(|f| f.capturing),
+        "the captured frame is marked: {marked:?}"
+    );
+    assert!(marked.len() >= 2, "drawn, then handed off: {marked:?}");
+    assert!(
+        found.iter().all(|h| !marked.contains(&h.index)),
+        "no hitch on the capture's frames {marked:?}: {all:?}"
+    );
     assert_eq!(
         app.frame_captures.on_hitch, 0,
         "--capture-on-hitch 1 is spent"

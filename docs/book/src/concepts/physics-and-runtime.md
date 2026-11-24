@@ -212,8 +212,13 @@ sphere, a rotated box) the shape takes the nearest it can, the largest axis
 for a sphere, and the engine warns once for the entity. A sheared matrix is
 still placed by its rotation alone, with a warning.
 
-A collider is made when its body is: a script's `set_scale` afterwards does
-not resize it.
+A scale that changes later is heard at the next physics step (#1221): a
+script's `set_scale` on a growing crate, or on a parent of the collider's
+entity, remakes the collider at the new size, its `offset` too, and wakes
+the body, so a ball resting on a crate that doubles is lifted onto its new
+top. A change under a part in a thousand from the size the shape was made
+at keeps the shape, and a `mesh` or `convex` remade at a scale another
+entity of its model already has takes that entity's shape.
 
 ## Mesh and convex colliders
 
@@ -313,7 +318,28 @@ error[bad-enum-value] entity 'hero' collider.mask[1]: "pikcup" is not a collisio
 
 A project with no `[project.physics]` has only `default`, so a collider
 naming any other layer is told the line to add to `flint.toml`. Terrain and spline colliders are on `default`, or on the layer their
-entity's `collider` table names. Layers are read when the body is made.
+entity's `collider` table names.
+
+A layer or mask can change while the game runs, from the next physics
+step (#1221): a power-up that lets the player walk through walls, a corpse
+that stops blocking bullets. `set_collision_layer(id, "ghost")` and
+`set_collision_mask(id, ["world"])` write the collider's `layer` and
+`mask`, and a name that is no layer is a script error at the call; a
+`set_field(id, "collider", "layer", ..)` is heard too, and a bad name in it
+is reported once, as in the scene. A body at rest is woken, so it falls
+through what it no longer meets.
+
+```rhai
+fn on_trigger_enter(other) {
+    // The ghost potion: walls stop holding the player
+    set_collision_mask(get_entity("player"), ["default", "pickup"]);
+}
+```
+
+A step where nothing was written costs less than before: each collider's
+entity, and its ancestors, carry a write stamp (`FlintWorld::write_stamp`),
+and a collider whose stamps haven't moved isn't read at all. A dynamic
+body's own pose, written back each step, doesn't count.
 
 [`flint-examples/collision_layers.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/collision_layers.scene.toml) is the bench: a glass tray on `glass`
 whose mask meets only `default` holds the amber balls while the blue ones, on

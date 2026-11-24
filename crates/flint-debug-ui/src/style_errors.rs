@@ -15,15 +15,16 @@ const MAX_LINES: usize = 8;
 /// Paint the card for `errors` (`(style, message)`, as
 /// `flint_render::stylize::custom::errors` gives them). Nothing when the
 /// list is empty. `bottom_inset` lifts it above anything the host keeps at
-/// the bottom edge.
+/// the bottom edge. Returns the height it took (0 when nothing), so the
+/// drop card (#1246) can stand above it.
 pub fn paint_style_errors(
     ctx: &egui::Context,
     errors: &[(String, String)],
     styles: &flint_render::stylize::StyleRegistry,
     bottom_inset: f32,
-) {
+) -> f32 {
     if errors.is_empty() {
-        return;
+        return 0.0;
     }
     // The HUD blends in display space: translucent colours are built
     // premultiplied by hand (see CLAUDE.md on egui 0.30's helpers)
@@ -31,7 +32,7 @@ pub fn paint_style_errors(
     let ember = Color32::from_rgb(255, 122, 89);
     let ink = Color32::from_rgb(236, 226, 214);
     let quiet = Color32::from_rgb(160, 150, 142);
-    egui::Area::new(egui::Id::new("flint_style_errors"))
+    let response = egui::Area::new(egui::Id::new("flint_style_errors"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::LEFT_BOTTOM, [12.0, -12.0 - bottom_inset])
         .interactable(false)
@@ -85,6 +86,7 @@ pub fn paint_style_errors(
                     );
                 });
         });
+    response.response.rect.height() + 8.0
 }
 
 /// Whether `message` is about a style's description, not its shader: its

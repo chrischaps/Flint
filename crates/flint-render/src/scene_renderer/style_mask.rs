@@ -247,6 +247,11 @@ impl SceneRenderer {
             let veils =
                 |item: &&super::DrawItem| item.blend.blends() && id_of(&item.entity).is_none();
             for item in self.draws.drawn().filter(veils) {
+                // Through the vertex stage the main pass drew it with
+                // (#1241), so it covers where it drifted to
+                let woozy = self
+                    .main_pipe(item)
+                    .is_some_and(super::render_passes::MainPipe::woozy);
                 match &item.draw {
                     Draw::Static(d) if !d.is_wireframe => {
                         veil.meshes.push(crate::style_mask::VeilMesh {
@@ -257,6 +262,7 @@ impl SceneRenderer {
                             material_bind_group: &d.material_bind_group,
                             bones: None,
                             echo: false,
+                            woozy,
                         })
                     }
                     Draw::Skinned(d) => veil.meshes.push(crate::style_mask::VeilMesh {
@@ -267,6 +273,7 @@ impl SceneRenderer {
                         material_bind_group: &d.material_bind_group,
                         bones: Some(&d.bone_bind_group),
                         echo: false,
+                        woozy,
                     }),
                     // A living prop's echoes (#228, #737), translucent and
                     // depth-tested with no depth write, each by its alpha: a
@@ -280,6 +287,7 @@ impl SceneRenderer {
                         material_bind_group: &d.material_bind_group,
                         bones: Some(&d.bone_bind_group),
                         echo: true,
+                        woozy: false,
                     }),
                     // Every particle draw goes in, as the upload sorted them
                     Draw::Particles(_) => particles = true,
@@ -299,6 +307,19 @@ impl SceneRenderer {
                 }
                 _ => None,
             };
+        }
+        if veil.meshes.iter().any(|m| m.woozy) {
+            if let Some(pass) = &mut self.style_mask.passes.mask {
+                pass.ensure_veil_wooze(
+                    device,
+                    &crate::style_mask::MaskLayouts {
+                        transform: &self.layouts.transform_bind_group_layout,
+                        material: &self.layouts.material_bind_group_layout,
+                        light: &self.layouts.light_bind_group_layout,
+                        bones: &skinned.bone_bind_group_layout,
+                    },
+                );
+            }
         }
         let veiled = !veil.is_empty();
         // The frame's tear (#397, #746), for the draws whose blend follows
