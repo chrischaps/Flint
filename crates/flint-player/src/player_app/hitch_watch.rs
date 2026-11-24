@@ -20,6 +20,7 @@
 
 use super::frame_history::FrameHistory;
 use super::hitch::{Cause, Hitch, HitchDetector};
+use super::os_pacing::OsPacing;
 use crate::hitch_args::{HitchClass, HitchGate, STARTUP_SECS};
 use serde::Serialize;
 use std::io::Write;
@@ -315,6 +316,8 @@ pub(crate) struct HitchWatch {
     /// The wall time of the frames after the start, seconds: what the
     /// report's hitches a minute are over.
     after_start_secs: f64,
+    /// The frames the OS held back, a hidden window's (#1200).
+    pub os_pacing: OsPacing,
 }
 
 impl HitchWatch {
@@ -376,6 +379,10 @@ impl HitchWatch {
         for f in frames.iter().skip(frames.len() - new) {
             if f.game_time >= STARTUP_SECS {
                 self.after_start_secs += f.ms as f64 / 1000.0;
+            }
+            // Said as the run becomes held, so a run with no report hears it
+            if let Some(line) = self.os_pacing.add(f) {
+                tracing::info!(target: "perf", "{line}");
             }
             for line in &mut self.pending {
                 if f.index > line.frame && line.after_ms.len() < AROUND {
@@ -475,6 +482,8 @@ impl HitchWatch {
                 r.worst_and_causes()
             ));
         }
+        // Why there were none to find, when the OS held the frames (#1200)
+        lines.extend(self.os_pacing.report());
         let s = &self.startup.all;
         let gated = match self.gate.and_then(|g| g.max_startup) {
             Some(max) => format!("--max-hitches-startup {max}"),
@@ -689,6 +698,9 @@ mod tests {
         watch: HitchWatch,
         t: Instant,
         game: f64,
+        /// The refresh the clock paces to; `None`, no vsync. Under it the
+        /// rest of each frame is the swapchain's acquire.
+        vsync_ms: Option<f32>,
     }
 
     impl Run {
@@ -702,6 +714,7 @@ mod tests {
                 watch: HitchWatch::default(),
                 t,
                 game: 0.0,
+                vsync_ms: None,
             }
         }
 
@@ -715,12 +728,16 @@ mod tests {
             );
             h.record_scripts(&[("scripts/stall.rhai:on_update".into(), script_ms as f32)]);
             self.t += Duration::from_secs_f64(wall / 1000.0);
+            if self.vsync_ms.is_some() {
+                h.mark_at(Phase::Acquire, self.t);
+            }
             h.begin_frame_at(self.t);
+            let refresh = self.vsync_ms;
             h.clock_ticked(ClockSample {
                 raw_ms: wall as f32,
                 dt_ms: HZ60 as f32,
-                paced_ms: None,
-                vsync_ms: None,
+                paced_ms: refresh.map(|r| (wall as f32 / r).round().max(1.0) * r),
+                vsync_ms: refresh,
             });
             self.game += HZ60 / 1000.0;
             h.game_time(self.game);
@@ -733,6 +750,47 @@ mod tests {
                 self.frame(HZ60, 0.5);
             }
         }
+    }
+
+    #[test]
+    fn a_window_the_os_holds_finds_no_hitch_and_the_report_says_why() {
+        // #1200: under vsync, a hidden window's frames stood ~400 ms each,
+        // nearly all of it the swapchain's acquire, and a 100 ms script
+        // stall every few frames couldn't stand out against that median
+        let mut run = Run::new();
+        run.vsync_ms = Some(HZ60 as f32);
+        for i in 0..300 {
+            let stall = i > 150 && i % 7 == 0;
+            run.frame(
+                if stall { 500.0 } else { 400.0 },
+                if stall { 100.0 } else { 0.5 },
+            );
+        }
+        let report = run.watch.report();
+        assert!(report[0].starts_with("[perf] hitches: 0 in "), "{report:?}");
+        assert!(
+            report[1]
+                .starts_with("[perf] frames held by the OS: 179 of 179 after t=2 s, at ~400 ms"),
+            "{report:?}"
+        );
+        assert!(report[1].contains("FLINT_VSYNC=off"), "{report:?}");
+
+        // The same scene shown: the stalls are hitches and nothing is said
+        let mut run = Run::new();
+        run.vsync_ms = Some(HZ60 as f32);
+        for i in 0..300 {
+            let stall = i > 150 && i % 60 == 0;
+            run.frame(
+                if stall { 116.7 } else { HZ60 },
+                if stall { 100.0 } else { 0.5 },
+            );
+        }
+        let report = run.watch.report();
+        assert!(report[0].starts_with("[perf] hitches: 2 ("), "{report:?}");
+        assert!(
+            report.iter().all(|l| !l.contains("held by the OS")),
+            "{report:?}"
+        );
     }
 
     #[test]
