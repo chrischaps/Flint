@@ -686,6 +686,11 @@ pub struct DrawDescription {
     /// Set aside: `frustum`, `lod` (another level of detail draws from
     /// here) or `draw distance` (#56). `None` for a draw drawn.
     pub culled: Option<String>,
+    /// Its GPU time in ms, when a replay timed it (#1203, `flint frame
+    /// replay --draw-times`): from the timestamp before it to the one after
+    /// it, inside the pass. `None` for a draw nobody timed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_ms: Option<f32>,
 }
 
 /// A comic panel's frame (#880).

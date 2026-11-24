@@ -432,7 +432,7 @@ fn summary_text(shown: &str, s: &Value) -> String {
         out.push_str(&t.render("  "));
     }
     out.push_str(
-        "\nViews: --passes, --draws [--pass P] [--entity E] [--sort tris] [--culled], --targets, --hitch\n",
+        "\nViews: --passes, --draws [--pass P] [--entity E] [--sort tris|gpu] [--culled], --targets, --hitch\n",
     );
     out
 }
@@ -539,6 +539,7 @@ fn draw_row(p: &PassAt, d: &DrawDescription) -> Value {
         "casts_shadow": d.casts_shadow,
         "double_sided": d.double_sided,
         "culled": d.culled,
+        "gpu_ms": d.gpu_ms,
     })
 }
 
@@ -606,13 +607,22 @@ fn draw_rows(d: &FrameDescription, args: &ShowArgs) -> Result<Vec<Value>> {
             bail!("no draw is of an entity named {pattern:?}{hint}");
         }
     }
-    if args.sort == Some(DrawSort::Tris) {
-        rows.sort_by_key(|r| std::cmp::Reverse(r["triangles"].as_u64().unwrap_or(0)));
+    match args.sort {
+        Some(DrawSort::Tris) => {
+            rows.sort_by_key(|r| std::cmp::Reverse(r["triangles"].as_u64().unwrap_or(0)));
+        }
+        Some(DrawSort::Gpu) => {
+            let ms = |r: &Value| r["gpu_ms"].as_f64().unwrap_or(-1.0);
+            rows.sort_by(|a, b| ms(b).total_cmp(&ms(a)));
+        }
+        Some(DrawSort::Pass) | None => {}
     }
     Ok(rows)
 }
 
 fn draws_text(rows: &[Value], culled: bool) -> String {
+    // A replay's draw times (#1203), when any draw has one
+    let timed = rows.iter().any(|r| r["gpu_ms"].is_number());
     let mut header = vec![
         "pass",
         "entity",
@@ -623,6 +633,9 @@ fn draws_text(rows: &[Value], culled: bool) -> String {
         ">triangles",
         ">inst",
     ];
+    if timed {
+        header.push(">GPU ms");
+    }
     if culled {
         header.push("culled");
     }
@@ -639,6 +652,13 @@ fn draws_text(rows: &[Value], culled: bool) -> String {
             count(&r["triangles"]),
             r["instances"].to_string(),
         ];
+        if timed {
+            row.push(
+                r["gpu_ms"]
+                    .as_f64()
+                    .map_or("-".into(), |ms| format!("{ms:.3}")),
+            );
+        }
         if culled {
             row.push(r["culled"].as_str().unwrap_or("").to_string());
         }
@@ -654,6 +674,10 @@ fn draws_text(rows: &[Value], culled: bool) -> String {
         "Draws: {drawn}, {} triangles",
         flint_render::format_count(tris.min(u32::MAX as u64) as u32)
     );
+    if timed {
+        let ms: f64 = rows.iter().filter_map(|r| r["gpu_ms"].as_f64()).sum();
+        let _ = write!(head, ", {ms:.3} GPU ms inside them");
+    }
     if culled {
         let _ = write!(head, "; {} culled", rows.len() - drawn);
     }
@@ -918,6 +942,26 @@ mod tests {
         let rows = draw_rows(&d, &a).unwrap();
         assert_eq!(rows[0]["entity"], "tree_oak");
         assert_eq!(rows[2]["entity"], "ground");
+    }
+
+    #[test]
+    fn draws_sort_by_gpu_time_untimed_last_and_show_the_column() {
+        let mut d = frame();
+        let scene = &mut d.passes[0];
+        scene.draws[0].gpu_ms = Some(0.02);
+        scene.draws[2].gpu_ms = Some(0.31);
+        let mut a = args();
+        a.sort = Some(DrawSort::Gpu);
+        let rows = draw_rows(&d, &a).unwrap();
+        let order: Vec<&str> = rows.iter().map(|r| r["entity"].as_str().unwrap()).collect();
+        assert_eq!(order, ["tree_oak", "crate", "ground"]);
+        let text = draws_text(&rows, false);
+        assert!(text.contains("GPU ms"), "{text}");
+        assert!(text.contains("0.310"), "{text}");
+        assert!(text.contains("0.330 GPU ms inside them"), "{text}");
+        // An untimed frame has no column
+        let rows = draw_rows(&frame(), &args()).unwrap();
+        assert!(!draws_text(&rows, false).contains("GPU ms"));
     }
 
     #[test]

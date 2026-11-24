@@ -6,6 +6,7 @@ mod binding;
 mod capture;
 mod describe;
 mod draw_list;
+mod draw_times;
 mod draws;
 mod extract;
 mod fog_veil;
@@ -15,6 +16,7 @@ mod grass_ground;
 mod helpers;
 mod lights;
 mod msaa;
+mod overdraw;
 mod panels;
 mod particles;
 mod pipelines;
@@ -33,6 +35,7 @@ pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
 pub use capture::HeldFrameCapture;
 pub use describe::FrameHost;
 use draw_list::{Blend, Draw, DrawItem, DrawList, Layer, VertexStage};
+pub use draw_times::DrawTimesRead;
 pub(crate) use fog_veil::FOG_VEIL_FORMAT;
 pub use frame::{DrawControls, DrawLimit, FrameInputs, SteppedPass, View2d};
 pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGrassGround};
@@ -584,6 +587,11 @@ pub struct SceneRenderer {
     /// `set_pass_knobs`). `None` unless a host asked: a part then asks one
     /// `Option`.
     pass_knobs: Option<Box<crate::pass_knobs::KnobRun>>,
+    /// A replay's per-draw GPU times (#1203): nothing unless its draw
+    /// controls name draws to time.
+    draw_times: draw_times::DrawTimes,
+    /// A replay's overdraw view of the scene pass (#1203).
+    overdraw: overdraw::Overdraw,
     /// Comic panels (#880, ADR 0120): the layout and each panel's view
     panel_state: panels::PanelState,
     /// Per-entity styles (#263): who is styled, how far, the mask and
@@ -829,6 +837,8 @@ impl SceneRenderer {
             frame_log: None,
             frame_taps: None,
             pass_knobs: None,
+            draw_times: Default::default(),
+            overdraw: Default::default(),
             panel_state: Default::default(),
             style_mask: style_mask::StyleMaskState::new(),
             fog_veil: fog_veil::FogVeilState::default(),

@@ -314,6 +314,11 @@ impl Model {
             }),
             Sort::Blend => rows.sort_by(|a, b| key(a).draw.blend.cmp(&key(b).draw.blend)),
             Sort::Culled => rows.sort_by(|a, b| key(b).draw.culled.cmp(&key(a).draw.culled)),
+            // Costliest first, untimed last (#1203)
+            Sort::Gpu => rows.sort_by(|a, b| {
+                let ms = |i: &usize| key(i).draw.gpu_ms.unwrap_or(-1.0);
+                ms(b).total_cmp(&ms(a))
+            }),
         }
         if q.descending {
             rows.reverse();
@@ -352,6 +357,15 @@ pub enum Sort {
     Triangles,
     Blend,
     Culled,
+    /// Most GPU time first: a replay's `--draw-times` (#1203).
+    Gpu,
+}
+
+impl Model {
+    /// Whether any draw carries a GPU time (a replay's `--draw-times`).
+    pub fn draws_timed(&self) -> bool {
+        self.draws.iter().any(|d| d.draw.gpu_ms.is_some())
+    }
 }
 
 #[cfg(test)]
@@ -547,6 +561,30 @@ mod tests {
         );
         q.layer = Some("Blended static".into());
         assert_eq!(m.table(&q).len(), 1);
+    }
+
+    #[test]
+    fn the_table_sorts_by_gpu_time_costliest_first_untimed_last() {
+        let mut d = frame();
+        assert!(!Model::new(&d).draws_timed());
+        let scene = d.passes.iter_mut().find(|p| p.name == "Scene").unwrap();
+        scene.draws[0].gpu_ms = Some(0.01);
+        scene.draws[1].gpu_ms = Some(0.2);
+        let m = Model::new(&d);
+        assert!(m.draws_timed());
+        let at = m.passes.iter().position(|p| p.key == "Scene").unwrap();
+        let q = TableQuery {
+            pass: Some(at),
+            sort: Sort::Gpu,
+            ..Default::default()
+        };
+        let ms: Vec<Option<f32>> = m
+            .table(&q)
+            .iter()
+            .map(|&i| m.draws[i].draw.gpu_ms)
+            .collect();
+        assert_eq!(&ms[..2], &[Some(0.2), Some(0.01)]);
+        assert!(ms[2..].iter().all(Option::is_none), "{ms:?}");
     }
 
     #[test]

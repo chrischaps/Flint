@@ -16,7 +16,13 @@
 //! [`ReplayHost::draw`] then draws the frame under [`Controls`] (entities
 //! hidden, the scene pass stopped after N draws, passes switched off) and
 //! writes it as a capture of its own, so every `flint frame` view reads the
-//! replay as it reads the original.
+//! replay as it reads the original. Two controls only measure (#1203):
+//! `draw_times` times each scene draw on the GPU, in frames drawn before
+//! the captured one (a batch of [`SceneRenderer::DRAW_TIME_BATCH`] a frame,
+//! so the captured frame's pass times carry no timestamps of theirs), and
+//! `overdraw` adds the `Overdraw` pass after the scene's.
+//!
+//! [`SceneRenderer::DRAW_TIME_BATCH`]: flint_render::SceneRenderer::DRAW_TIME_BATCH
 //!
 //! A child of `render` so it takes the `Stage` as the stage path does.
 
@@ -41,6 +47,12 @@ pub struct Controls {
     /// The entity whose pixels the selection outline marks, in place of
     /// the captured selection.
     pub outline: Option<String>,
+    /// Time each of the scene pass's draws on the GPU (#1203): its
+    /// `gpu_ms` in the replay's description.
+    pub draw_times: bool,
+    /// Draw the scene pass's overdraw after it (#1203): the `Overdraw`
+    /// pass's `overdraw_count` and heat map `overdraw`.
+    pub overdraw: bool,
 }
 
 impl Controls {
@@ -57,6 +69,21 @@ impl Controls {
                 names.join(", ")
             )
         })
+    }
+
+    /// Whether these change what is drawn: everything but the two that
+    /// only measure (`draw_times`, `overdraw`).
+    pub fn changes_the_frame(&self) -> bool {
+        let Self {
+            hidden,
+            pass: _,
+            draws,
+            skip,
+            outline,
+            draw_times: _,
+            overdraw: _,
+        } = self;
+        !hidden.is_empty() || draws.is_some() || !skip.is_empty() || outline.is_some()
     }
 
     /// The stepped pass's name as the description has it (`Scene`).
@@ -100,6 +127,17 @@ pub struct Drawn {
     /// Controls that named nothing (an entity not in the world, a pass that
     /// can't be switched off), a line each.
     pub refused: Vec<String>,
+    /// With `draw_times`: the scene draws timed of those listed, and the
+    /// frames drawn to time them (#1203).
+    pub draw_times: Option<DrawTimed>,
+}
+
+/// What `draw_times` timed (#1203).
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct DrawTimed {
+    pub timed: usize,
+    pub drawn: usize,
+    pub frames: usize,
 }
 
 /// A captured frame, loaded and ready to draw again. See the module docs.
@@ -131,6 +169,8 @@ pub struct ReplayHost {
     history: Vec<flint_render::stylize::history::ImportedHistory>,
     /// What the styles did with it at the last draw, a line each.
     pub history_notes: Vec<String>,
+    /// The captured frame's arming, from [`frame`](Self::frame) to the write.
+    armed: Option<crate::commands::render_frame_dump::Armed>,
 }
 
 /// A capture's file under `dir`.
@@ -284,8 +324,17 @@ impl ReplayHost {
             .map_err(|e| anyhow!("the replay's render: {e}"))?
             .args;
 
-        let ctx = pollster::block_on(HeadlessContext::new(width, height))
-            .context("Failed to create headless render context")?;
+        // Timestamps inside passes where the adapter has them, for
+        // `draw_times` (#1203); asking draws nothing differently
+        let ctx = pollster::block_on(HeadlessContext::with_features(
+            width,
+            height,
+            flint_render::SceneRenderer::DRAW_TIME_FEATURES,
+        ))
+        .context("Failed to create headless render context")?;
+        // Every pipeline's description kept from here, so the overdraw
+        // view can make its twins (#1203); a replay builds a bounded set
+        flint_render::pipeline_twins::keep(true);
         let binding = flint_render::SceneBinding::for_scene(&scene_path);
         for message in binding.style_messages() {
             notes.push(format!("style: {message}"));
@@ -401,6 +450,7 @@ impl ReplayHost {
             skippable,
             history,
             history_notes: Vec::new(),
+            armed: None,
         })
     }
 
@@ -426,13 +476,6 @@ impl ReplayHost {
         renderer.set_post_process_config(config);
         renderer.ensure_style_resources(&ctx.device);
         renderer.ensure_fxaa_resources(&ctx.device);
-        // Every replay starts from the captured frame's past, so two of
-        // one frame agree: no history of the last draw, and the capture's
-        // own (#1136) where it holds one
-        renderer.reset_style_history();
-        let _ = renderer.take_style_history_notes();
-        renderer.import_style_history(self.history.clone());
-        renderer.set_motion_time(self.inputs.state.time);
 
         let world = self.stage.game.world();
         let mut hidden = Vec::new();
@@ -457,32 +500,69 @@ impl ReplayHost {
             }
             (None, _) => None,
         };
-        let draw_controls = flint_render::DrawControls { hidden, limit };
-        let any = !draw_controls.hidden.is_empty() || draw_controls.limit.is_some();
+        let mut draw_controls = flint_render::DrawControls {
+            hidden,
+            limit,
+            time_draws: None,
+            overdraw: false,
+        };
+
+        // Each draw's GPU time (#1203), in frames of their own before the
+        // captured one, a batch a frame, gathered for its description
+        let mut draw_times = None;
+        renderer.reset_draw_times();
+        if controls.draw_times {
+            let batch = flint_render::SceneRenderer::DRAW_TIME_BATCH;
+            let (mut start, mut frames, mut timed) = (0, 0, 0);
+            let mut drawn = batch;
+            while start < drawn {
+                draw_controls.time_draws = Some(start..start + batch);
+                self.frame(&draw_controls, None)?;
+                frames += 1;
+                let renderer = &mut self.stage.renderer;
+                match renderer.read_draw_times(&self.ctx.device) {
+                    Some(read) => {
+                        drawn = read.drawn;
+                        timed += read.timed;
+                    }
+                    None => {
+                        refused.push(format!(
+                            "--draw-times: {}",
+                            renderer
+                                .draw_times_refused()
+                                .unwrap_or("the frame timed no draw")
+                        ));
+                        break;
+                    }
+                }
+                start += batch;
+            }
+            draw_times = Some(DrawTimed {
+                timed,
+                drawn: if frames > 0 && timed > 0 { drawn } else { 0 },
+                frames,
+            });
+            draw_controls.time_draws = None;
+        }
+        draw_controls.overdraw = controls.overdraw;
 
         let out_text = out.to_string_lossy().replace('\\', "/");
         let wanted = crate::commands::render_frame_dump::Wanted {
             dump: None,
             capture: Some(&out_text),
         };
-        let armed = crate::commands::render_frame_dump::arm(ctx, renderer, wanted);
-        let inputs = flint_render::FrameInputs {
-            draw_controls: any.then_some(&draw_controls),
-            ..self.inputs.inputs()
-        };
-        renderer.prepare(&ctx.device, &ctx.queue, world, &inputs);
-        if self.inputs.state.particles {
-            renderer.update_particles(&ctx.device, &ctx.queue, &self.particles.draws());
+        self.frame(&draw_controls, Some(wanted))?;
+        let ctx = &self.ctx;
+        let renderer = &mut self.stage.renderer;
+        let world = self.stage.game.world();
+        if controls.overdraw {
+            for name in renderer.overdraw_untwinned() {
+                refused.push(format!(
+                    "--overdraw: no twin of {name} (built before descriptions were kept): \
+                     its draws aren't counted"
+                ));
+            }
         }
-        renderer.render_frame_to(
-            &ctx.device,
-            &ctx.queue,
-            ctx.depth_target(),
-            &self.camera,
-            &ctx.color_view,
-            Some(world),
-        );
-        pollster::block_on(ctx.read_pixels()).context("reading the replayed frame")?;
         self.history_notes = renderer.take_style_history_notes();
 
         let mut notes = vec!["replayed by flint frame replay".to_string()];
@@ -499,6 +579,24 @@ impl ReplayHost {
         if let Some(name) = &controls.outline {
             notes.push(format!("outlined: {name}"));
         }
+        if let Some(t) = &draw_times {
+            notes.push(format!(
+                "draw times: {} of {} scene draws timed in {} frames before this one",
+                t.timed, t.drawn, t.frames
+            ));
+        }
+        if controls.overdraw {
+            notes.push(format!(
+                "overdraw: the Overdraw pass counts the scene pass's draws a pixel \
+                 (overdraw_count); its heat map (overdraw) doubles the draws each colour, \
+                 1 to {}",
+                flint_render::SceneRenderer::OVERDRAW_HEAT_TOP
+            ));
+        }
+        let armed = self
+            .armed
+            .take()
+            .context("the replay's frame wasn't armed")?;
         crate::commands::render_frame_dump::write(
             armed,
             ctx,
@@ -513,7 +611,55 @@ impl ReplayHost {
             },
             None,
         )?;
-        Ok(Drawn { refused })
+        renderer.reset_draw_times();
+        Ok(Drawn {
+            refused,
+            draw_times,
+        })
+    }
+
+    /// Draw the frame once under `draw_controls`, from the captured frame's
+    /// past every time, so two of one frame agree; with `wanted`, armed to
+    /// be captured (the arming kept for [`draw`](Self::draw)'s write).
+    fn frame(
+        &mut self,
+        draw_controls: &flint_render::DrawControls,
+        wanted: Option<crate::commands::render_frame_dump::Wanted>,
+    ) -> Result<()> {
+        let ctx = &self.ctx;
+        let renderer = &mut self.stage.renderer;
+        // No history of the last draw, and the capture's own (#1136) where
+        // it holds one
+        renderer.reset_style_history();
+        let _ = renderer.take_style_history_notes();
+        renderer.import_style_history(self.history.clone());
+        renderer.set_motion_time(self.inputs.state.time);
+        let world = self.stage.game.world();
+        let any = !draw_controls.hidden.is_empty()
+            || draw_controls.limit.is_some()
+            || draw_controls.time_draws.is_some()
+            || draw_controls.overdraw;
+
+        self.armed =
+            wanted.map(|wanted| crate::commands::render_frame_dump::arm(ctx, renderer, wanted));
+        let inputs = flint_render::FrameInputs {
+            draw_controls: any.then_some(draw_controls),
+            ..self.inputs.inputs()
+        };
+        renderer.prepare(&ctx.device, &ctx.queue, world, &inputs);
+        if self.inputs.state.particles {
+            renderer.update_particles(&ctx.device, &ctx.queue, &self.particles.draws());
+        }
+        renderer.render_frame_to(
+            &ctx.device,
+            &ctx.queue,
+            ctx.depth_target(),
+            &self.camera,
+            &ctx.color_view,
+            Some(world),
+        );
+        pollster::block_on(ctx.read_pixels()).context("reading the replayed frame")?;
+        Ok(())
     }
 }
 
