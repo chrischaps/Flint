@@ -191,6 +191,20 @@ fn each_template_passes_flint_check() {
                 "scene and script: {out}"
             );
         }
+        // The pause menu is checked as load_ui reads it (#1228): a class
+        // its style file lacks is a `bad-ui`, and mending it passes again
+        let menu = game.join("ui/pause.ui.toml");
+        let text = std::fs::read_to_string(&menu).unwrap();
+        let broken = text.replacen("class = \"button\"", "class = \"buton\"", 1);
+        assert_ne!(broken, text, "{template}: the menu has a button class");
+        std::fs::write(&menu, broken).unwrap();
+        let o = flint(&game, &["check"]);
+        assert_eq!(o.status.code(), Some(1), "{template}: {}", stdout(&o));
+        assert!(stdout(&o).contains("error[bad-ui]"), "{}", stdout(&o));
+        assert!(stdout(&o).contains("buton"), "{}", stdout(&o));
+        std::fs::write(&menu, text).unwrap();
+        ok(&flint(&game, &["check"]));
+
         // ...and it is not passing by looking at nothing: break the scene
         let scene = game.join(SCENE);
         let text = std::fs::read_to_string(&scene).unwrap();
@@ -295,7 +309,76 @@ fn each_template_runs_the_commands_it_prints() {
         let said = format!("{}{}", ok(&o), stderr(&o));
         assert!(said.contains("hud_controller"), "{template}: {said}");
         assert!(!said.contains(" error "), "{template}: {said}");
+
+        // The pause menu, drawn as play draws it (#1228): the frame dims
+        // under the veil and the focused Resume button is an ember bar
+        let menu = |out: &str, more: &[&str]| {
+            let mut args = vec![
+                "render",
+                SCENE,
+                "--output",
+                out,
+                "--width",
+                "960",
+                "--height",
+                "540",
+                "--no-grid",
+                "--scripts",
+                "--time",
+                "0.2",
+                "--strict-scripts",
+            ];
+            args.extend_from_slice(more);
+            ok(&flint(&game, &args));
+            ember_pixels(&game.join(out))
+        };
+        let playing = menu("renders/playing.png", &[]);
+        let paused = menu("renders/paused.png", &["--ui-show", "pause_menu"]);
+        assert!(
+            paused.0 > 6_000 && paused.0 > playing.0 * 4 + 1_000,
+            "{template}: ember pixels {} paused, {} playing",
+            paused.0,
+            playing.0
+        );
+        assert!(
+            paused.1 < playing.1 * 0.8,
+            "{template}: the veil dims the frame, luma {:.3} paused against {:.3}",
+            paused.1,
+            playing.1
+        );
+        // Another button focused: the ember bar moves down to Quit
+        let quit = menu(
+            "renders/quit.png",
+            &["--ui-show", "pause_menu", "--ui-focus", "quit"],
+        );
+        assert!(
+            quit.2 > paused.2 + 60.0,
+            "{template}: {} then {}",
+            paused.2,
+            quit.2
+        );
     }
+}
+
+/// A PNG's pixels near the pause menu's ember (1.0, 0.58, 0.24): how many,
+/// the frame's mean luma (0..1), and the ember pixels' mean row.
+fn ember_pixels(png: &Path) -> (u32, f64, f64) {
+    let img = image::open(png).expect("a PNG").to_rgb8();
+    let (mut count, mut rows, mut luma) = (0u32, 0f64, 0f64);
+    for (_, y, px) in img.enumerate_pixels() {
+        let [r, g, b] = px.0.map(f64::from);
+        luma += (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
+        if (r - 255.0).abs() < 14.0 && (g - 148.0).abs() < 22.0 && (b - 61.0).abs() < 26.0 {
+            count += 1;
+            rows += y as f64;
+        }
+    }
+    let n = (img.width() * img.height()) as f64;
+    (
+        count,
+        luma / n,
+        if count > 0 { rows / count as f64 } else { 0.0 },
+    )
 }
 
 /// What the scene has to hold to be "a lit, playable scene": read from the
@@ -597,9 +680,25 @@ fn subtree_prints_the_git_commands_and_works_once_the_engine_is_there() {
     assert!(why.contains("schema directory not found"), "{why}");
     assert!(why.contains("engine/schemas"), "{why}");
 
-    // What the subtree brings, as far as the schemas: then the printed
-    // flint commands work, unedited
+    // No copy of the menu helpers: the subtree brings the engine's
+    assert!(!game.join("scripts/lib/menu.rhai").exists());
+    let o = flint(&dir, &["init", "other"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let copy = std::fs::read_to_string(dir.join("other/scripts/lib/menu.rhai")).unwrap();
+    let engines = std::fs::read_to_string(repo().join("scripts/lib/menu.rhai")).unwrap();
+    assert!(
+        copy.replace("\r\n", "\n")
+            .ends_with(&engines.replace("\r\n", "\n")),
+        "a path project's menu.rhai is the engine's, under a header"
+    );
+
+    // What the subtree brings, as far as the schemas and the script
+    // modules: then the printed flint commands work, unedited
     copy_dir(&repo().join("schemas"), &game.join("engine/schemas"));
+    copy_dir(
+        &repo().join("scripts/lib"),
+        &game.join("engine/scripts/lib"),
+    );
     for step in steps.iter().filter(|s| s.starts_with("flint ")) {
         let _ = run_line(&game, step);
     }
@@ -622,6 +721,22 @@ fn none_names_no_engine_and_says_what_that_costs() {
     for step in steps.iter().filter(|s| s.starts_with("flint ")) {
         let _ = run_line(&game, step);
     }
+    // `flint check` says the one thing wrong, as a warning: no schema is
+    // loaded. The built-in styles' components once made it look as if some
+    // were, and every engine table an error (#1228). The pause menu's
+    // module is the copy the project carries.
+    let o = flint(&game, &["check", "--json"]);
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&o)).expect("one JSON document");
+    assert!(o.status.success(), "{}", stdout(&o));
+    let codes: Vec<&str> = doc["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["code"].as_str())
+        .collect();
+    assert_eq!(codes, ["no-schemas"], "{}", stdout(&o));
+    assert!(game.join("scripts/lib/menu.rhai").is_file());
+
     // What it says is so: no engine component is known
     let o = flint(&game, &["schema", "transform"]);
     assert!(stdout(&o).contains("not found") || !o.status.success());

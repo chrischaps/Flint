@@ -1,0 +1,78 @@
+# {{name}}'s pause menu: a UI document. scripts/hud.rhai loads it, opens it
+# on the `pause` action (Escape, a pad's Start; config/input.toml) and hears
+# what the player chose in on_ui(element_id, event).
+#
+# The engine moves focus between the buttons with the arrows, a pad's d-pad
+# or left stick, the mouse and touch; Enter, Space or a pad's A presses the
+# focused one, and Backspace or a pad's B goes back. Elements draw and stack
+# in the order written here, so a new button goes where it should stand.
+# Its look is ui/pause.style.toml. Paths are from the project root.
+#
+#   flint render scenes/main.scene.toml --scripts --time 0.2 --ui-show pause_menu --output renders/paused.png
+
+[ui]
+style = "ui/pause.style.toml"
+
+# The whole screen, dimmed; hidden until the game pauses
+[elements.pause_menu]
+type = "panel"
+class = "veil"
+visible = false
+
+# The card in the middle: the game's name, the word, a rule, the buttons
+[elements.card]
+type = "panel"
+parent = "pause_menu"
+anchor = "center"
+class = "card"
+
+[elements.eyebrow]
+type = "text"
+parent = "card"
+class = "eyebrow"
+text = "{{name}}"
+
+[elements.title]
+type = "text"
+parent = "card"
+class = "title"
+text = "Paused"
+
+[elements.rule]
+type = "rect"
+parent = "card"
+class = "rule"
+
+[elements.resume]
+type = "button"
+parent = "card"
+class = "button"
+text = "Resume"
+autofocus = true
+
+[elements.restart]
+type = "button"
+parent = "card"
+class = "button"
+text = "Restart"
+
+[elements.quit]
+type = "button"
+parent = "card"
+class = "button"
+text = "Quit"
+
+[elements.hint]
+type = "text"
+parent = "card"
+class = "hint"
+text = "Esc or Start resumes"
+
+# A finger has no Escape: on a touch screen the script shows this button
+# in the top right corner, and a tap on it pauses
+[elements.pause_button]
+type = "button"
+anchor = "top-right"
+class = "pause_button"
+text = "II"
+visible = false
