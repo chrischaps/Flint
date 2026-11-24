@@ -871,7 +871,7 @@ keys and what a take is: [Filming a Showcase](../guides/filming-a-showcase.md).
 ```bash
 flint capture showcase_game/trailer.shots.toml
 flint capture showcase_game/trailer.shots.toml --verify --encode mp4
-flint capture flint-examples/tools/showcase/film.toml --shot 02_type --scale 0.5 --dry-run --json
+flint capture flint-examples/film/film.toml --shot 02_type --scale 0.5 --dry-run --json
 ```
 
 ### Capture Flags
