@@ -190,6 +190,40 @@ pub(crate) fn register(api: &mut ScriptApi) {
     });
 
     m.func(
+        "user_bus_volume",
+        "The player's own volume for a bus (a settings menu's), by name, apart from the game's set_bus_volume; saved between runs.",
+    )
+    .arg("bus", Str)
+    .returns(Num, "0..1; 1 for a bus the player never set")
+    .run(|call, (bus,)| {
+        call.ctx_ref()
+            .user_bus_volumes
+            .get(bus.as_str())
+            .copied()
+            .unwrap_or(1.0)
+    });
+
+    m.func(
+        "set_user_bus_volume",
+        "The player's own volume for a bus (0..1), for a settings menu: heard times the game's set_bus_volume, so a fade never overwrites it, and saved for the next run.",
+    )
+    .arg("bus", Str)
+    .arg("volume", Num)
+    .run(|call, (bus, volume)| {
+        let volume = if volume.is_finite() {
+            volume.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let ctx = call.ctx();
+        ctx.user_bus_volumes.insert(bus.to_string(), volume);
+        ctx.commands.push(ScriptCommand::SetUserBusVolume {
+            bus: bus.to_string(),
+            volume,
+        });
+    });
+
+    m.func(
         "set_audio_lowpass",
         "The master bus low-pass cutoff in Hz (20000 for none), held until changed.",
     )

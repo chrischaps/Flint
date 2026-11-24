@@ -164,7 +164,7 @@ fn web_suffix(game_id: &str) -> String {
 /// can't be one. An id is whatever the manifest says, so it is checked
 /// here rather than trusted: letters, digits, `_`, `-`, `.` and spaces, no
 /// leading dot, no trailing dot or space, none of Windows' device names.
-fn user_folder_name(id: &str) -> Result<&str, String> {
+pub(super) fn user_folder_name(id: &str) -> Result<&str, String> {
     let name = id.trim();
     let ok_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ' ');
     if name.is_empty() || name.len() > 64 {
@@ -191,7 +191,7 @@ fn user_folder_name(id: &str) -> Result<&str, String> {
 
 /// The id saves are keyed on: the manifest's, else the input config's
 /// `game_id` when a game set one (`flint` is the engine's default).
-fn save_id<'a>(project: &'a Project, input_game_id: &'a str) -> Option<&'a str> {
+pub(super) fn save_id<'a>(project: &'a Project, input_game_id: &'a str) -> Option<&'a str> {
     let input = Some(input_game_id.trim()).filter(|id| !id.is_empty() && *id != "flint");
     project.id.as_deref().or(input)
 }
@@ -546,6 +546,8 @@ impl PlayerApp {
         if self.saves.debounce.should_flush(now, force || asked) {
             self.save_persistent_store(reason);
         }
+        // The player's bus volumes ride the same three moments (#1217)
+        self.flush_user_audio(force);
     }
 }
 

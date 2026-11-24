@@ -80,6 +80,11 @@ pub trait ScriptHost {
     fn set_bus_volume(&mut self, bus: String, volume: f64) {
         self.unsupported("set_bus_volume");
     }
+    /// The player's own volume for a bus, by name, saved between runs
+    /// (#1217).
+    fn set_user_bus_volume(&mut self, bus: String, volume: f64) {
+        self.unsupported("set_user_bus_volume");
+    }
 
     // ── Events and the log ──
     /// A custom event for scripts' `on_event` (and the engine's own, such as
@@ -276,6 +281,7 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
         } => host.play_sound_at(handle, name, position, play, distances, rolloff),
         C::StopSound { sound, fade } => host.stop_sound(sound, fade),
         C::SetBusVolume { bus, volume } => host.set_bus_volume(bus, volume),
+        C::SetUserBusVolume { bus, volume } => host.set_user_bus_volume(bus, volume),
         C::SetSoundVolume {
             handle,
             volume,
@@ -389,6 +395,7 @@ pub fn command_name(cmd: &ScriptCommand) -> Option<&'static str> {
         C::StopSound { .. } => "stop_sound",
         C::SetSoundVolume { .. } => "set_sound_volume",
         C::SetBusVolume { .. } => "set_bus_volume",
+        C::SetUserBusVolume { .. } => "set_user_bus_volume",
         C::SetAudioLowpass { .. } => "set_audio_lowpass",
         C::FireEvent { .. } => "fire_event",
         C::Log { .. } => return None,

@@ -136,6 +136,9 @@ mod trace_tests;
 mod transition;
 #[cfg(test)]
 mod transition_tests;
+mod user_audio;
+#[cfg(test)]
+mod user_audio_tests;
 #[cfg(test)]
 mod vfs_tests;
 #[cfg(target_arch = "wasm32")]

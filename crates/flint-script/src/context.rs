@@ -200,6 +200,12 @@ pub enum ScriptCommand {
         bus: String,
         volume: f64,
     },
+    /// `set_user_bus_volume`: the player's own volume for a bus (0..1),
+    /// multiplied with the game's and saved for the next run (#1217).
+    SetUserBusVolume {
+        bus: String,
+        volume: f64,
+    },
     FireEvent {
         name: String,
         data: toml::Value,
@@ -894,6 +900,11 @@ pub struct ScriptCallContext {
     /// scripts run, as it does `audio_positions`; a headless host never
     /// does, so there every handle is silent.
     pub sounds_playing: HashSet<u64>,
+    /// The player's own volume for each bus they set, by name, for
+    /// `user_bus_volume` (#1217). The host sets it at start and whenever
+    /// it changes; `set_user_bus_volume` writes it too, so a script reads
+    /// back what it set on the same frame.
+    pub user_bus_volumes: std::collections::HashMap<String, f64>,
     /// How long after it is mixed a sound is heard, seconds, where the
     /// platform says (the browser), for `audio_output_latency`.
     pub audio_output_latency: Option<f64>,
@@ -999,6 +1010,7 @@ impl ScriptCallContext {
             opts_warned: HashSet::new(),
             audio_positions: std::collections::HashMap::new(),
             sounds_playing: HashSet::new(),
+            user_bus_volumes: std::collections::HashMap::new(),
             audio_output_latency: None,
             test: Default::default(),
         }
