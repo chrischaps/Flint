@@ -1,25 +1,29 @@
 //! The stem mixer: runtime gain, low-pass, and detune per bus.
 //!
-//! Every bus the manifest declares gets a kira sub-track and filter, in the
-//! order it declares them, including silent ones, which simply have no sound
-//! playing. Silent buses stay addressable so a layer over this one (buses
-//! entering after a timeline jump, degraded alternates) can bring material
-//! in without rebuilding the mixer.
+//! Every bus the manifest declares gets a stem bus (a track with a low-pass,
+//! `flint_audio::clocked`), in the order it declares them, including silent
+//! ones, which simply have no sound playing. Silent buses stay addressable
+//! so a layer over this one (buses entering after a timeline jump, degraded
+//! alternates) can bring material in without rebuilding the mixer.
 //!
-//! kira handles are write-only, so each bus keeps shadow state of the last
-//! *commanded* values for introspection. During a tween the audible value lags
-//! the shadow value by design; the readout reports intent, not the DSP state.
+//! The buses are made by a [`ClockedMixer`] (#1216): kira here, or the
+//! browser's worklet, whose handles are commands. Handles are write-only,
+//! so each bus keeps shadow state of the last *commanded* values for
+//! introspection. During a ramp the audible value lags the shadow value by
+//! design; the readout reports intent, not the DSP state.
 
+use flint_audio::clocked::{
+    ClockedMixer, MixClock, Ramp, Start, Stem, StemBus as Track, StemPlay, StemVoice,
+};
 use flint_core::{FlintError, Result};
-use kira::backend::Backend;
-use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
-use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
-use kira::sound::PlaybackPosition;
-use kira::track::{TrackBuilder, TrackHandle};
-use kira::{AudioManager, Decibels, PlaybackRate, StartTime, Tween};
+
+/// An error from the mixer, said of what it was making.
+fn named(what: String, e: FlintError) -> FlintError {
+    FlintError::AudioError(format!("{what}: {e}"))
+}
 
 /// Cutoff meaning "filter open" — matches the spike and Milestone 0.
-pub const LPF_OPEN_HZ: f64 = 20_000.0;
+pub const LPF_OPEN_HZ: f64 = flint_audio::clocked::CUTOFF_OPEN_HZ;
 
 /// Last commanded values for one bus (shadow state; see module docs).
 #[derive(Debug, Clone, Copy)]
@@ -64,41 +68,42 @@ fn mix_db(weight: f64) -> f32 {
 /// suite start muted — sample-locked by construction (the shared-tick
 /// start), crossfaded in per-sound volume when a ladder rung engages.
 struct AlternateVoice {
-    sound: StaticSoundHandle,
-    data: StaticSoundData,
+    sound: StemVoice,
+    data: Stem,
     from_sample: i64,
     to_sample: i64,
 }
 
 pub struct StemBus {
     pub name: String,
-    track: TrackHandle,
-    filter: FilterHandle,
-    sound: Option<StaticSoundHandle>,
-    /// The stem's sound data, retained so a timeline jump can re-play it at
-    /// a new position (Arc-backed; the clone is cheap). `None` for silent buses.
-    data: Option<StaticSoundData>,
+    // Declared before the stems: a bus goes before the sounds it plays.
+    track: Track,
+    sound: Option<StemVoice>,
+    /// The stem, retained so a timeline jump can re-play it at a new
+    /// position (kira's data is Arc-backed; the worklet's is sent once).
+    /// `None` for silent buses.
+    data: Option<Stem>,
     alternate: Option<AlternateVoice>,
     pub state: BusState,
 }
 
 impl StemBus {
-    /// Set bus gain in dB. `tween.start_time` may be a future clock time —
-    /// that is the scheduling hook every grid-aligned event uses.
-    pub fn set_gain(&mut self, db: f32, tween: Tween) {
-        self.track.set_volume(Decibels(db), tween);
+    /// Set bus gain in dB. `ramp.start` may be a future clock tick — that
+    /// is the scheduling hook every grid-aligned event uses.
+    pub fn set_gain(&mut self, db: f32, ramp: Ramp) {
+        self.track.set_volume(db, ramp);
         self.state.gain_db = db;
     }
 
-    /// Immediate gain set with the default tween — for callers (CLI
-    /// harnesses) that shouldn't need kira types for a plain fade.
+    /// Immediate gain set with the default ramp (10 ms), for callers (CLI
+    /// harnesses) with a plain fade.
     pub fn set_gain_now(&mut self, db: f32) {
-        self.set_gain(db, Tween::default());
+        self.set_gain(db, Ramp::default());
     }
 
     /// Set the low-pass cutoff in Hz ([`LPF_OPEN_HZ`] = effectively open).
-    pub fn set_lpf(&mut self, hz: f64, tween: Tween) {
-        self.filter.set_cutoff(hz, tween);
+    pub fn set_lpf(&mut self, hz: f64, ramp: Ramp) {
+        self.track.set_cutoff(hz, ramp);
         self.state.lpf_hz = hz;
     }
 
@@ -108,13 +113,13 @@ impl StemBus {
     /// asserts only hold at detune 0. No-op with a warning on silent buses.
     /// An alternate voice warbles identically — whichever half of the
     /// crossfade is audible, the rung's wobble is on it.
-    pub fn set_detune(&mut self, semitones: f64, tween: Tween) {
+    pub fn set_detune(&mut self, semitones: f64, ramp: Ramp) {
         match &mut self.sound {
             Some(sound) => {
-                let rate = PlaybackRate(2f64.powf(semitones / 12.0));
-                sound.set_playback_rate(rate, tween);
+                let rate = 2f64.powf(semitones / 12.0);
+                sound.set_rate(rate, ramp);
                 if let Some(alt) = &mut self.alternate {
-                    alt.sound.set_playback_rate(rate, tween);
+                    alt.sound.set_rate(rate, ramp);
                 }
                 self.state.detune_semitones = semitones;
             }
@@ -132,16 +137,16 @@ impl StemBus {
     /// Per-sound volume is also the entry-envelope channel after a timeline
     /// jump: a caller ramping the buses back in owns it until the ramp ends,
     /// and nothing else may write it meanwhile.
-    pub fn set_alternate_mix(&mut self, mix: f64, now_sample: i64, tween: Tween) {
+    pub fn set_alternate_mix(&mut self, mix: f64, now_sample: i64, ramp: Ramp) {
         let Some(alt) = &mut self.alternate else {
             return;
         };
         let in_span = (alt.from_sample..alt.to_sample).contains(&now_sample);
         let m = if in_span { mix.clamp(0.0, 1.0) } else { 0.0 };
         if let Some(sound) = &mut self.sound {
-            sound.set_volume(Decibels(mix_db(1.0 - m)), tween);
+            sound.set_volume(mix_db(1.0 - m), ramp);
         }
-        alt.sound.set_volume(Decibels(mix_db(m)), tween);
+        alt.sound.set_volume(mix_db(m), ramp);
         self.state.alternate_mix = m;
     }
 
@@ -157,14 +162,14 @@ impl StemBus {
             .map(|a| (a.from_sample, a.to_sample))
     }
 
-    pub fn sound(&self) -> Option<&StaticSoundHandle> {
+    pub fn sound(&self) -> Option<&StemVoice> {
         self.sound.as_ref()
     }
 
-    /// Fade this bus's playing sound to silence and stop it. The tween's
-    /// `start_time`/`duration` are the jump's authored fade envelope: this
-    /// is how a timeline jump leaves the old timeline without a hard cut.
-    pub fn stop(&mut self, fade: Tween) {
+    /// Fade this bus's playing sound to silence and stop it. The ramp's
+    /// start and length are the jump's authored fade envelope: this is how
+    /// a timeline jump leaves the old timeline without a hard cut.
+    pub fn stop(&mut self, fade: Ramp) {
         if let Some(sound) = &mut self.sound {
             sound.stop(fade);
             self.state.playing = false;
@@ -184,7 +189,7 @@ impl StemBus {
     pub fn replay_at(
         &mut self,
         start_position_samples: u64,
-        start_at: StartTime,
+        start_at: Start,
         entry_db: f32,
     ) -> Result<()> {
         let Some(data) = &self.data else {
@@ -193,11 +198,15 @@ impl StemBus {
         let handle = self
             .track
             .play(
-                data.start_position(PlaybackPosition::Samples(start_position_samples as usize))
-                    .start_time(start_at)
-                    .volume(Decibels(entry_db)),
+                data,
+                StemPlay {
+                    from_frame: start_position_samples,
+                    start: start_at,
+                    db: entry_db,
+                    ..Default::default()
+                },
             )
-            .map_err(|e| FlintError::AudioError(format!("bus '{}' replay: {e}", self.name)))?;
+            .map_err(|e| named(format!("bus '{}' replay", self.name), e))?;
         self.sound = Some(handle);
         self.state.playing = true;
         self.state.detune_semitones = 0.0;
@@ -207,14 +216,15 @@ impl StemBus {
             let handle = self
                 .track
                 .play(
-                    alt.data
-                        .start_position(PlaybackPosition::Samples(start_position_samples as usize))
-                        .start_time(start_at)
-                        .volume(Decibels(ALT_MUTED_DB)),
+                    &alt.data,
+                    StemPlay {
+                        from_frame: start_position_samples,
+                        start: start_at,
+                        db: ALT_MUTED_DB,
+                        ..Default::default()
+                    },
                 )
-                .map_err(|e| {
-                    FlintError::AudioError(format!("bus '{}' alternate replay: {e}", self.name))
-                })?;
+                .map_err(|e| named(format!("bus '{}' alternate replay", self.name), e))?;
             alt.sound = handle;
             self.state.alternate_mix = 0.0;
         }
@@ -225,9 +235,9 @@ impl StemBus {
     /// drives). A ramp back in after a timeline jump lives here: one
     /// clock-timed tween per bus from its entry level to full, so entry
     /// envelopes never fight the track's trims. No-op on silent buses.
-    pub fn set_sound_volume(&mut self, db: f32, tween: Tween) {
+    pub fn set_sound_volume(&mut self, db: f32, ramp: Ramp) {
         if let Some(sound) = &mut self.sound {
-            sound.set_volume(Decibels(db), tween);
+            sound.set_volume(db, ramp);
         }
     }
 
@@ -239,22 +249,25 @@ impl StemBus {
     pub fn play_cue(
         &mut self,
         start_position_samples: u64,
-        start_at: StartTime,
+        start_at: Start,
         volume_db: f32,
         rate_semitones: f64,
-    ) -> Result<Option<StaticSoundHandle>> {
+    ) -> Result<Option<StemVoice>> {
         let Some(data) = &self.data else {
             return Ok(None);
         };
         let handle = self
             .track
             .play(
-                data.start_position(PlaybackPosition::Samples(start_position_samples as usize))
-                    .start_time(start_at)
-                    .volume(Decibels(volume_db))
-                    .playback_rate(PlaybackRate(2f64.powf(rate_semitones / 12.0))),
+                data,
+                StemPlay {
+                    from_frame: start_position_samples,
+                    start: start_at,
+                    db: volume_db,
+                    rate: 2f64.powf(rate_semitones / 12.0),
+                },
             )
-            .map_err(|e| FlintError::AudioError(format!("bus '{}' cue: {e}", self.name)))?;
+            .map_err(|e| named(format!("bus '{}' cue", self.name), e))?;
         Ok(Some(handle))
     }
 }
@@ -265,30 +278,32 @@ pub struct BusMixer {
 }
 
 impl BusMixer {
-    /// Build one sub-track + filter per bus and schedule each provided stem
-    /// to start at `start_at` (one shared clock time = sample-locked start).
-    /// `stems` pairs each bus name with its sound data, `None` for silent.
-    pub fn build<B: Backend>(
-        manager: &mut AudioManager<B>,
-        stems: Vec<(String, Option<StaticSoundData>)>,
-        start_at: StartTime,
+    /// Build one stem bus per bus on `clock` and schedule each provided
+    /// stem to start at `start_at` (one shared clock tick = sample-locked
+    /// start). `stems` pairs each bus name with its stem (made by the same
+    /// `mixer`'s [`ClockedMixer::add_stem`]), `None` for silent.
+    pub fn build(
+        mixer: &mut dyn ClockedMixer,
+        clock: &MixClock,
+        stems: Vec<(String, Option<Stem>)>,
+        start_at: Start,
     ) -> Result<Self> {
         let mut buses = Vec::new();
         for (name, data) in stems {
-            let mut builder = TrackBuilder::new();
-            let filter = builder.add_effect(
-                FilterBuilder::new()
-                    .mode(FilterMode::LowPass)
-                    .cutoff(LPF_OPEN_HZ),
-            );
-            let mut track = manager
-                .add_sub_track(builder)
-                .map_err(|e| FlintError::AudioError(format!("bus '{name}': {e}")))?;
+            let mut track = mixer
+                .add_bus(clock)
+                .map_err(|e| named(format!("bus '{name}'"), e))?;
             let sound = match &data {
                 Some(data) => Some(
                     track
-                        .play(data.start_time(start_at))
-                        .map_err(|e| FlintError::AudioError(format!("bus '{name}': {e}")))?,
+                        .play(
+                            data,
+                            StemPlay {
+                                start: start_at,
+                                ..Default::default()
+                            },
+                        )
+                        .map_err(|e| named(format!("bus '{name}'"), e))?,
                 ),
                 None => None,
             };
@@ -299,7 +314,6 @@ impl BusMixer {
             buses.push(StemBus {
                 name,
                 track,
-                filter,
                 sound,
                 data,
                 alternate: None,
@@ -317,10 +331,10 @@ impl BusMixer {
     pub fn attach_alternate(
         &mut self,
         bus_name: &str,
-        data: StaticSoundData,
+        data: Stem,
         from_sample: i64,
         to_sample: i64,
-        start_at: StartTime,
+        start_at: Start,
     ) -> Result<()> {
         let bus = self.bus_mut(bus_name).ok_or_else(|| {
             FlintError::AudioError(format!("alternate for unknown bus '{bus_name}'"))
@@ -332,8 +346,15 @@ impl BusMixer {
         }
         let sound = bus
             .track
-            .play(data.start_time(start_at).volume(Decibels(ALT_MUTED_DB)))
-            .map_err(|e| FlintError::AudioError(format!("bus '{bus_name}' alternate: {e}")))?;
+            .play(
+                &data,
+                StemPlay {
+                    start: start_at,
+                    db: ALT_MUTED_DB,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| named(format!("bus '{bus_name}' alternate"), e))?;
         bus.alternate = Some(AlternateVoice {
             sound,
             data,
@@ -360,11 +381,11 @@ impl BusMixer {
         self.buses
             .iter()
             .filter_map(|b| b.sound.as_ref())
-            .all(|s| s.state() == kira::sound::PlaybackState::Stopped)
+            .all(StemVoice::is_stopped)
     }
 
     /// Fade every playing stem to silence and stop it (see [`StemBus::stop`]).
-    pub fn stop_all(&mut self, fade: Tween) {
+    pub fn stop_all(&mut self, fade: Ramp) {
         for bus in &mut self.buses {
             bus.stop(fade);
         }
@@ -377,7 +398,7 @@ impl BusMixer {
     pub fn replay_all_at(
         &mut self,
         start_position_samples: u64,
-        start_at: StartTime,
+        start_at: Start,
         entry_db: &dyn Fn(&str) -> f32,
     ) -> Result<()> {
         for bus in &mut self.buses {

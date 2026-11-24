@@ -26,12 +26,11 @@ use crate::gradient::GradientOffsets;
 use crate::MOTIF_BUSES;
 use flint_core::toml_util::toml_f64;
 use flint_core::{vfs, FlintError, Result};
+use flint_music::clocked::Ramp;
 use flint_music::config_toml::{self, VersionPolicy};
 use flint_music::mixer::{BusMixer, LPF_OPEN_HZ};
-use kira::Tween;
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::time::Duration;
 
 /// Gain trim used for a dropped bus (effectively silence).
 pub const DROP_DB: f32 = -80.0;
@@ -821,10 +820,7 @@ impl LadderDriver {
         alternates: Option<(i64, f64)>,
         mixer: &mut BusMixer,
     ) {
-        let tween = |ms: f64| Tween {
-            duration: Duration::from_secs_f64(ms.max(0.0) / 1000.0),
-            ..Default::default()
-        };
+        let tween = |ms: f64| Ramp::now(ms.max(0.0) / 1000.0);
         let warble = if params.warble_depth_semitones > 0.0 && params.warble_rate_hz > 0.0 {
             params.warble_depth_semitones
                 * (std::f64::consts::TAU * params.warble_rate_hz * now_seconds).sin()

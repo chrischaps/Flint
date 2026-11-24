@@ -289,8 +289,7 @@ mod tests {
     impl Hosts for Capture {
         fn lend(
             _: &mut kira::AudioManager<Self>,
-        ) -> std::result::Result<&mut kira::AudioManager<crate::engine::AudioBackend>, Unhosted>
-        {
+        ) -> std::result::Result<&mut dyn crate::clocked::ClockedMixer, Unhosted> {
             Err(Unhosted::Silent)
         }
     }

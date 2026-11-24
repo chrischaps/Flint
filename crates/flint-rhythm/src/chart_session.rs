@@ -33,11 +33,11 @@ use crate::status::status_line_with_coherence;
 use crate::{validate_chart, validate_manifest, Chart};
 use flint_core::{vfs, FlintError, Result};
 use flint_music::clock_bridge::ClockBridge;
+use flint_music::clocked::ClockedMixer;
 use flint_music::conductor::{Conductor, MusicalPosition};
 use flint_music::session::{FileStems, SuiteSession};
 use flint_music::tempo::ms_to_samples;
 use flint_music::{validate_manifest_assets, SuiteManifest};
-use kira::backend::Backend;
 use kira::{AudioManager, DefaultBackend};
 use std::path::{Path, PathBuf};
 use web_time::Instant;
@@ -1069,12 +1069,13 @@ impl ChartSession {
     }
 
     /// Same as [`ChartSession::open`] but the suite starts on a caller-owned
-    /// manager (the player app's device stream, ADR 0017). The borrow ends
-    /// at start — the session keeps only kira handles, and the caller must
-    /// keep the manager alive longer than the returned session.
-    pub fn open_shared<B: Backend>(
+    /// mixer (the player app's engine, ADR 0017: kira's device stream, or
+    /// the browser's worklet, #1216). The borrow ends at start — the
+    /// session keeps only the mixer's handles, and the caller must keep the
+    /// mixer alive longer than the returned session.
+    pub fn open_shared(
         cfg: &ChartSessionConfig,
-        manager: &mut AudioManager<B>,
+        manager: &mut dyn ClockedMixer,
     ) -> Result<(Self, Vec<String>)> {
         let (manifest, chart) = Self::validate(cfg)?;
         let session = SuiteSession::start(
@@ -1615,10 +1616,9 @@ impl ChartSession {
     /// shared-manager session: dropping kira handles does NOT stop sounds —
     /// the CLI path is only saved by its own manager dying with it.
     pub fn stop_audio(&mut self, fade_ms: f64) {
-        self.session.mixer.stop_all(kira::Tween {
-            duration: std::time::Duration::from_secs_f64(fade_ms.max(0.0) / 1000.0),
-            ..Default::default()
-        });
+        self.session
+            .mixer
+            .stop_all(flint_music::clocked::Ramp::now(fade_ms.max(0.0) / 1000.0));
     }
 
     /// Max pairwise stem skew in seconds, straight from the mixer. Frame-

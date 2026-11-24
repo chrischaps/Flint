@@ -25,19 +25,21 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kira::backend::{Backend, Renderer};
+use kira::clock::{ClockHandle, ClockSpeed, ClockTime};
 use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
 use kira::listener::ListenerHandle;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
-use kira::sound::PlaybackState;
+use kira::sound::{PlaybackPosition, PlaybackState};
 use kira::track::{
     SpatialTrackBuilder, SpatialTrackDistances, SpatialTrackHandle, TrackBuilder, TrackHandle,
 };
 use kira::{
-    AudioManager, AudioManagerSettings, Decibels, Easing, Frame, Panning, PlaybackRate, Tween,
+    AudioManager, AudioManagerSettings, Decibels, Easing, Frame, Panning, PlaybackRate, StartTime,
+    Tween,
 };
 
 use bus_filter::{BusFilterBuilder, BusFilterHandle};
-use protocol::{Command, Reader, Target};
+use protocol::{At, Command, Reader, Target};
 
 /// A kira backend with no device: it hands the renderer back so the
 /// worklet's `process` can drive it.
@@ -104,6 +106,10 @@ pub struct Mixer {
     tracks: HashMap<u32, SpatialTrackHandle>,
     voices: HashMap<u32, StaticSoundHandle>,
     one_shots: Vec<(SpatialTrackHandle, StaticSoundHandle)>,
+    /// Clocked content's clocks and stem buses (#1216), in the order made
+    /// (a report lists the clocks so).
+    clocks: Vec<(u32, ClockHandle)>,
+    stem_buses: HashMap<u32, (TrackHandle, FilterHandle)>,
     /// Voices whose places are reported (#658), in the order asked for.
     watched: Vec<u32>,
     report: Vec<f64>,
@@ -145,6 +151,8 @@ impl Mixer {
             tracks: HashMap::new(),
             voices: HashMap::new(),
             one_shots: Vec::new(),
+            clocks: Vec::new(),
+            stem_buses: HashMap::new(),
             watched: Vec::new(),
             report: Vec::new(),
             renders: 0,
@@ -209,6 +217,30 @@ impl Mixer {
 
     fn bus(&mut self, bus: u8) -> Option<&mut TrackHandle> {
         self.buses.get_mut(bus as usize).map(|(track, _)| track)
+    }
+
+    /// A clocked change's start (#1216): at once, or on a tick of a clock
+    /// made here (`None`: no such clock).
+    fn start(&self, at: At) -> Option<StartTime> {
+        if at.clock == 0 {
+            return Some(StartTime::Immediate);
+        }
+        let (_, clock) = self.clocks.iter().find(|(id, _)| *id == at.clock)?;
+        Some(StartTime::ClockTime(ClockTime::from_ticks_u64(
+            clock.id(),
+            at.tick,
+        )))
+    }
+
+    fn timed(&self, at: At, secs: f32) -> Option<Tween> {
+        Some(Tween {
+            start_time: self.start(at)?,
+            ..tween(secs)
+        })
+    }
+
+    fn stem_bus(&mut self, track: u32) -> Option<&mut (TrackHandle, FilterHandle)> {
+        self.stem_buses.get_mut(&track)
     }
 
     fn spatial_track(
@@ -369,6 +401,109 @@ impl Mixer {
                 self.voices.get_mut(&voice)?.resume(tween(t));
             }
             Command::ClearOneShots => self.one_shots.clear(),
+            Command::ClockNew {
+                clock,
+                ticks_per_second,
+            } => {
+                if clock == 0 || self.clocks.iter().any(|(id, _)| *id == clock) {
+                    return None;
+                }
+                let handle = self
+                    .manager
+                    .add_clock(ClockSpeed::TicksPerSecond(ticks_per_second))
+                    .ok()?;
+                self.clocks.push((clock, handle));
+            }
+            Command::ClockStart { clock } => {
+                let (_, handle) = self.clocks.iter_mut().find(|(id, _)| *id == clock)?;
+                handle.start();
+            }
+            Command::ClockDrop { clock } => {
+                let at = self.clocks.iter().position(|(id, _)| *id == clock)?;
+                self.clocks.remove(at);
+            }
+            Command::StemBusNew { track } => {
+                let mut builder = TrackBuilder::new();
+                let filter = builder.add_effect(
+                    FilterBuilder::new()
+                        .mode(FilterMode::LowPass)
+                        .cutoff(20_000.0),
+                );
+                let handle = self.manager.add_sub_track(builder).ok()?;
+                self.stem_buses.insert(track, (handle, filter));
+            }
+            Command::StemBusVolume {
+                track,
+                db,
+                at,
+                tween: t,
+            } => {
+                let tween = self.timed(at, t)?;
+                self.stem_bus(track)?.0.set_volume(Decibels(db), tween);
+            }
+            Command::StemBusCutoff {
+                track,
+                hz,
+                at,
+                tween: t,
+            } => {
+                let tween = self.timed(at, t)?;
+                self.stem_bus(track)?.1.set_cutoff(hz as f64, tween);
+            }
+            Command::StemBusDrop { track } => {
+                self.stem_buses.remove(&track)?;
+            }
+            Command::StemPlay {
+                voice,
+                sound,
+                track,
+                from,
+                at,
+                db,
+                rate,
+            } => {
+                let start = self.start(at)?;
+                let data = self
+                    .sounds
+                    .get(&sound)?
+                    .start_position(PlaybackPosition::Samples(from as usize))
+                    .start_time(start)
+                    .volume(Decibels(db))
+                    .playback_rate(PlaybackRate(rate as f64));
+                let handle = self.stem_bus(track)?.0.play(data).ok()?;
+                self.voices.insert(voice, handle);
+            }
+            Command::VoiceVolumeAt {
+                voice,
+                db,
+                at,
+                tween: t,
+            } => {
+                let tween = self.timed(at, t)?;
+                self.voices.get_mut(&voice)?.set_volume(Decibels(db), tween);
+            }
+            Command::VoiceRateAt {
+                voice,
+                rate,
+                at,
+                tween: t,
+            } => {
+                let tween = self.timed(at, t)?;
+                self.voices
+                    .get_mut(&voice)?
+                    .set_playback_rate(PlaybackRate(rate as f64), tween);
+            }
+            Command::VoiceStopAt {
+                voice,
+                at,
+                tween: t,
+            } => {
+                let tween = self.timed(at, t)?;
+                self.voices.get_mut(&voice)?.stop(tween);
+            }
+            Command::SoundDrop { sound } => {
+                self.sounds.remove(&sound)?;
+            }
         }
         Some(())
     }
@@ -395,9 +530,24 @@ impl Mixer {
     /// Where each watched voice is now, [`protocol::REPORT_STRIDE`] `f64`s
     /// a voice (#658): its id, seconds into its sound and its playback
     /// state. Read after a [`render`](Self::render), it is where the next
-    /// render starts. Empty when nothing is watched.
+    /// render starts. Then each clock (#1216): its id, its ticks with the
+    /// fraction and [`protocol::state::CLOCK`] (`CLOCK_STOPPED` before it
+    /// starts). Empty when nothing is watched and there is no clock.
     pub fn report(&mut self) -> &[f64] {
         self.report.clear();
+        for (id, clock) in &self.clocks {
+            let time = clock.time();
+            let state = if clock.ticking() {
+                protocol::state::CLOCK
+            } else {
+                protocol::state::CLOCK_STOPPED
+            };
+            self.report.extend_from_slice(&[
+                *id as f64,
+                time.ticks as f64 + time.fraction,
+                state as f64,
+            ]);
+        }
         for &voice in &self.watched {
             let Some(handle) = self.voices.get(&voice) else {
                 continue;
@@ -772,6 +922,76 @@ mod tests {
         ]));
         assert!(m.report().is_empty());
         assert_eq!(m.errors, 1);
+    }
+
+    /// Clocked content (#1216): a stem started on a tick of a clock that
+    /// counts samples lands on that sample, a bus change timed on a later
+    /// tick lands there, and the report carries the clock's ticks.
+    #[test]
+    fn a_stem_on_a_clock_tick_starts_on_that_sample() {
+        let mut m = Mixer::new(RATE).unwrap();
+        // A constant: every frame it plays is 0.5 on both sides
+        m.load_sound(5, RATE, 1, &vec![0.5; RATE as usize]);
+        m.apply(&batch(&[
+            Command::ClockNew {
+                clock: 1,
+                ticks_per_second: RATE as f64,
+            },
+            Command::StemBusNew { track: 2 },
+            Command::StemPlay {
+                voice: 3,
+                sound: 5,
+                track: 2,
+                from: 0,
+                at: At::tick(1, 1000),
+                db: 0.0,
+                rate: 1.0,
+            },
+            // -inf at tick 2000, at once
+            Command::StemBusVolume {
+                track: 2,
+                db: -100.0,
+                at: At::tick(1, 2000),
+                tween: 0.0,
+            },
+        ]));
+        assert_eq!(
+            read_report(m.report()).next().map(|r| (r.voice, r.state)),
+            Some((1, state::CLOCK_STOPPED))
+        );
+        m.apply(&batch(&[Command::ClockStart { clock: 1 }]));
+        let mut left = Vec::new();
+        for _ in 0..24 {
+            left.extend_from_slice(&m.render(QUANTUM)[..QUANTUM]);
+        }
+        let first = left.iter().position(|s| s.abs() > 1e-6).unwrap();
+        let last = left.iter().rposition(|s| s.abs() > 1e-3).unwrap();
+        // kira starts a sound and lands a tween at the start of the chunk
+        // its clock reaches the tick in: within a quantum before it, and
+        // the same on the desktop (flint-music's offline render is kira
+        // at 128 frames too, and lands there exactly: flint-music's
+        // tests/worklet_parity.rs)
+        assert_eq!(first, 1000 / QUANTUM * QUANTUM, "{first}");
+        // (a track's volume glides across the chunk it changes in)
+        assert!((2000 - QUANTUM..2000).contains(&last), "{last}");
+        let clock = read_report(m.report()).next().unwrap();
+        assert_eq!(clock.state, state::CLOCK);
+        assert!(
+            (clock.position - (24 * QUANTUM) as f64).abs() <= QUANTUM as f64,
+            "{}",
+            clock.position
+        );
+        m.apply(&batch(&[
+            Command::VoiceDrop { voice: 3 },
+            Command::StemBusDrop { track: 2 },
+            Command::ClockDrop { clock: 1 },
+            Command::SoundDrop { sound: 5 },
+            // gone: a second drop of each is an error
+            Command::ClockStart { clock: 1 },
+            Command::SoundDrop { sound: 5 },
+        ]));
+        assert!(m.report().is_empty());
+        assert_eq!(m.errors, 2);
     }
 
     #[test]
