@@ -96,8 +96,48 @@ flint play scene.toml --music-volume 0     # mute the score, keep the world
 ```
 
 **Bus gain multiplies underneath per-sound volume.** A script crossfading
-between two music beds keeps working at any bus gain, and a player who has
-turned the music down does not have their fades overridden.
+between two music beds keeps working at any bus gain.
+
+### The player's own volume
+
+A bus has a second volume, the player's: what a settings menu's "Music 40%"
+slider sets. The mixer hears the game's volume times the player's, so a script
+fading music to 0.5 under a player's 0.4 is heard at 0.2, and neither
+overwrites the other: the fade can't undo the setting, and the slider never
+moves the game's mix. A [duck](#ducking) comes on top of both: ducked, the bus is heard at
+the game's volume times the player's times the duck's gain.
+
+```rhai
+// A settings menu's slider, 0..1
+fn on_ui(id, event) {
+    if id == "music_slider" && event == "change" {
+        set_user_bus_volume("music", ui_get_value("music_slider"));
+    }
+}
+fn on_init() {
+    ui_set_slider("music_slider", user_bus_volume("music"));
+}
+```
+
+`set_user_bus_volume(bus, volume)` takes 0 to 1 (a value outside is
+clamped; a boost is the game's own volume) and is read back by
+`user_bus_volume(bus)` on the same frame; a bus the player never set reads 1.
+The player keeps the setting between runs without the game saving it: it is
+written half a second after the last change, at a scene transition and on
+exit, and read at the next start before the first sound and before `on_init`.
+It lives in the player's own config folder, beside the game's saves, as
+`<config>/<game id>/audio.toml` (`%APPDATA%`, `~/.config` or
+`~/Library/Application Support`; the id is `[project] id` in `flint.toml`),
+or `<config>/flint/audio.toml` for a game with no id; in the browser it is the
+`localStorage` entry `flint:/config/<game id>/audio.toml`. With `--save-dir`
+it is that folder's `audio.user.toml`, and `flint playtest` keeps it in memory.
+A saved bus the game no longer declares is kept, for the build that does.
+
+```toml
+# <config>/radio_play/audio.toml
+[buses]
+music = 0.4
+```
 
 The master low-pass applies to every bus, so `set_audio_lowpass` muffles the
 entire mix — score included — which is what you want when the effect is
@@ -231,6 +271,8 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 | `is_sound_playing(handle)` | Whether that sound is still playing, as the frame began: `true` from the frame after `play_sound` until it ends or is stopped |
 | `set_bus_volume(bus, volume)` | Set a [mixer bus](#mixer-buses)'s volume by name (`"music"`, `"voice"`...): it scales every sound on the bus and on the buses under it |
 | `set_bus_lowpass(bus, cutoff_hz)` | Set a [mixer bus](#mixer-buses)'s own low-pass by name: `set_bus_lowpass("sfx", 800)` muffles the bus and the buses under it, nothing else; `20000` opens it |
+| `set_user_bus_volume(bus, volume)` | Set [the player's own volume](#the-players-own-volume) for a bus (0..1), heard times the game's and saved for the next run |
+| `user_bus_volume(bus)` | The player's own volume for a bus; 1 for one they never set |
 | `audio_position(entity)` | Seconds into the sound the entity's `audio_source` is playing, wrapped for a loop, on the mixer's clock; `-1.0` before it has started and after it ends. See [Keeping time with the music](#keeping-time-with-the-music) |
 | `audio_output_latency()` | How long after it is mixed a sound is heard, seconds, where the platform says (the browser); `-1.0` where it doesn't (the desktop) |
 
