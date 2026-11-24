@@ -37,6 +37,9 @@ const ELEMENT_KEYS: &[(&str, Option<&[ElementType]>)] = &[
     ("items", Some(&[ElementType::List])),
     ("item_class", Some(&[ElementType::List])),
     ("wrap", Some(&[ElementType::List])),
+    ("scroll", Some(&[ElementType::List])),
+    ("placeholder", Some(&[ElementType::TextInput])),
+    ("max_length", Some(&[ElementType::TextInput])),
 ];
 
 /// The id a list gives the button it makes for its `index`th item.
@@ -294,8 +297,8 @@ fn parse_element(id: &str, t: &toml::Table) -> Result<UiElement, Vec<String>> {
                 },
                 None => problems.push(wrong("a string")),
             },
-            "parent" | "class" | "text" | "src" | "item_class" | "nav_up" | "nav_down"
-            | "nav_left" | "nav_right" => match value.as_str() {
+            "parent" | "class" | "text" | "src" | "item_class" | "placeholder" | "nav_up"
+            | "nav_down" | "nav_left" | "nav_right" => match value.as_str() {
                 Some(s) => {
                     let s = s.to_string();
                     match key.as_str() {
@@ -304,6 +307,7 @@ fn parse_element(id: &str, t: &toml::Table) -> Result<UiElement, Vec<String>> {
                         "text" => elem.text = s,
                         "src" => elem.src = s,
                         "item_class" => elem.item_class = s,
+                        "placeholder" => elem.placeholder = s,
                         nav => {
                             let dir = Dir::ALL.into_iter().find(|d| d.key() == nav).unwrap();
                             elem.nav.insert(dir, s);
@@ -312,16 +316,19 @@ fn parse_element(id: &str, t: &toml::Table) -> Result<UiElement, Vec<String>> {
                 }
                 None => problems.push(wrong("a string")),
             },
-            "visible" | "focusable" | "enabled" | "autofocus" | "wrap" => match value.as_bool() {
-                Some(b) => match key.as_str() {
-                    "visible" => elem.visible = b,
-                    "focusable" => elem.focusable = b,
-                    "enabled" => elem.enabled = b,
-                    "autofocus" => elem.autofocus = b,
-                    _ => elem.wrap = b,
-                },
-                None => problems.push(wrong("true or false")),
-            },
+            "visible" | "focusable" | "enabled" | "autofocus" | "wrap" | "scroll" => {
+                match value.as_bool() {
+                    Some(b) => match key.as_str() {
+                        "visible" => elem.visible = b,
+                        "focusable" => elem.focusable = b,
+                        "enabled" => elem.enabled = b,
+                        "autofocus" => elem.autofocus = b,
+                        "scroll" => elem.scroll = b,
+                        _ => elem.wrap = b,
+                    },
+                    None => problems.push(wrong("true or false")),
+                }
+            }
             "value" | "min" | "max" | "step" => match flint_core::toml_util::toml_f32(value) {
                 Some(v) => match key.as_str() {
                     "value" => elem.value = v,
@@ -330,6 +337,10 @@ fn parse_element(id: &str, t: &toml::Table) -> Result<UiElement, Vec<String>> {
                     _ => elem.step = v,
                 },
                 None => problems.push(wrong("a number")),
+            },
+            "max_length" => match value.as_integer() {
+                Some(n) if n >= 0 => elem.max_length = n as usize,
+                _ => problems.push(wrong("a whole number, 0 or more")),
             },
             "items" => match value.as_array() {
                 Some(items) => {
@@ -350,6 +361,16 @@ fn parse_element(id: &str, t: &toml::Table) -> Result<UiElement, Vec<String>> {
             "`max` ({}) is not above `min` ({})",
             elem.max, elem.min
         ));
+    }
+    if element_type == ElementType::TextInput {
+        // The caret starts after the text it was written with
+        elem.caret = elem.text.chars().count();
+        if elem.max_length > 0 && elem.caret > elem.max_length {
+            problems.push(format!(
+                "`text` is {} characters, over `max_length` ({})",
+                elem.caret, elem.max_length
+            ));
+        }
     }
     if problems.is_empty() {
         Ok(elem)

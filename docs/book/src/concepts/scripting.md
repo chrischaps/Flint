@@ -1821,6 +1821,8 @@ Load and manipulate TOML-defined UI documents at runtime:
 | `ui_set_enabled(element_id: str, enabled: bool)` | — | Let focus reach an element or not; a disabled one draws its class's disabled state. |
 | `unload_ui(handle: int)` | — | Unload a UI document `load_ui` returned. |
 | `ui_set_text(element_id: str, text: str)` | — | Set an element's text. |
+| `ui_get_text(element_id: str)` | `str`: "" for an element no document has | An element's text: what a text input holds, a script's text, else its layout's. |
+| `ui_editing()` | `bool` | Whether a text input has focus: the player is typing, so a game can leave its own keys alone. |
 | `ui_show(element_id: str)` | — | Show an element. |
 | `ui_hide(element_id: str)` | — | Hide an element. |
 | `ui_is_shown(element_id: str)` | `bool`: false for an element no document has | Whether an element is drawn: it and every element it is inside visible. |
@@ -2205,14 +2207,14 @@ text = "Lap 1/3"
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `type` | string | `"panel"` | Element type: `panel`, `text`, `rect`, `circle`, `image`, and the controls `button`, `list`, `slider` ([Focus and input](#focus-and-input)) |
+| `type` | string | `"panel"` | Element type: `panel`, `text`, `rect`, `circle`, `image`, and the controls `button`, `list`, `slider`, `text_input` ([Focus and input](#focus-and-input)) |
 | `anchor` | string | `"top-left"` | A root's point on the screen; a child's in its parent's content box, which takes it out of the parent's stack (see below) |
 | `parent` | string | --- | Parent element ID (child inherits position from parent) |
 | `class` | string | `""` | Style class name from the companion `.style.toml` |
-| `text` | string | `""` | Default text content (a `text`'s, a `button`'s label) |
+| `text` | string | `""` | Default text content (a `text`'s, a `button`'s label, what a `text_input` starts with) |
 | `src` | string | `""` | Image source path (`image` only) |
 | `visible` | bool | `true` | Initial visibility. A hidden element hides everything inside it |
-| `focusable` | bool | `true` for `button`, `slider` | Whether focus can land on it |
+| `focusable` | bool | `true` for `button`, `slider`, `text_input` | Whether focus can land on it |
 | `enabled` | bool | `true` | A disabled control is skipped by focus and drawn in its class's `disabled` state |
 | `autofocus` | bool | `false` | Takes focus when it is shown and nothing has focus: give a menu's first button this |
 | `nav_up`, `nav_down`, `nav_left`, `nav_right` | string | --- | The element that direction goes to from here, overriding the layout |
@@ -2220,6 +2222,8 @@ text = "Lap 1/3"
 | `min`, `max`, `step` | float | `0`, `1`, a tenth of the range | A `slider`'s range, and how far left and right move it |
 | `items` | array of strings | --- | A `list`'s items: a button of `item_class` is made for each, ids `<list>.0`, `<list>.1`, ... |
 | `item_class`, `wrap` | string, bool | `""`, `true` | The class each made item takes; whether the arrows wrap from the last item to the first (`list` only) |
+| `scroll` | bool | `false` | A `list` whose items scroll inside its box ([Lists that scroll](#lists-that-scroll)) |
+| `placeholder`, `max_length` | string, int | `""`, `0` | What a `text_input` shows while empty; the most characters it takes, 0 for no limit ([Text input](#text-input)) |
 
 `[ui]` holds `style` (the style file, a path from the project root) and an optional `name`.
 
@@ -2231,7 +2235,7 @@ text = "Lap 1/3"
 
 ```text
 ui/pause.ui.toml: 1 error
-  error[bad-ui]: element `resume`: unknown type `buton` (types: panel, text, rect, circle, image, button, list, slider)
+  error[bad-ui]: element `resume`: unknown type `buton` (types: panel, text, rect, circle, image, button, list, slider, text_input)
 ```
 
 #### File Format: `.style.toml`
@@ -2288,6 +2292,8 @@ y = 10
 | `margin_bottom` | float | `0` | Space below element in flow layout |
 | `border_color`, `border_width` | [r,g,b,a], float | `[1,1,1,1]`, `0` | An outline round a panel, button, list or slider; on while `border_width` is above 0 |
 | `knob_color` | [r,g,b,a] | `[1,1,1,1]` | A slider's knob, drawn when `radius` is above 0 (its track is `bg_color`, its fill `color`) |
+| `scrollbar_color`, `scrollbar_width` | [r,g,b,a], float | `[1,1,1,0.35]`, `3` | A scrolling list's thumb, drawn along its far edge while its items overflow; width 0 draws none |
+| `placeholder_color`, `caret_color` | [r,g,b,a] | `[1,1,1,0.4]`, `[1,1,1,1]` | A `text_input`'s placeholder text, and its caret (its text is `color`) |
 
 Colour arrays may be `[r, g, b]` (alpha 1) or `[r, g, b, a]`.
 
@@ -2408,11 +2414,63 @@ What happens reaches the script that loaded the document as **`on_ui(element_id,
 | Event | When |
 |---|---|
 | `focus`, `blur` | Focus arrived at or left the element |
-| `activate` | A button was pressed by `ui_accept`, a click or a tap |
-| `change` | A slider's value moved, or a list's selection did (its `ui_get_value` is the new index) |
+| `activate` | A button was pressed by `ui_accept`, a click or a tap; Enter (or a pad's `ui_accept`) in a text input |
+| `change` | A slider's value moved, a list's selection did (its `ui_get_value` is the new index), or a text input's text did (once a frame) |
 | `back` | `ui_back` while the element had focus |
 
 A list's made items report the list's id, and `ui_get_value(list)` is the item's index; a button written as a list's child reports its own id. `ui_focus`, `ui_set_slider`, `ui_select`, `ui_set_items` and `ui_set_enabled` set the same state from a script (table above).
+
+#### Lists that scroll
+
+A `list` with `scroll = true` keeps its items inside its box: give its class a `height` (not `height_auto`, which grows it to fit them all) and the items past it are clipped away, drawn only as far as they show. It scrolls (#1229):
+
+- **With focus.** Whenever focus moves to an item, by the arrows, a pad, `ui_focus` or `ui_select`, the list moves just enough to show all of it, so stepping down a 20-item list in a 5-row box keeps the focused row in view, and wrapping from the last row back to the first goes back to the top.
+- **With the wheel.** A notch over the list moves it a row (from one item to the next). When the focused item would leave the view, focus moves to the nearest row still wholly in it, so the focused item is always drawn.
+- **With a finger.** A finger dragged along the list more than 8 points scrolls it with the finger and lets go of the item it pressed; its lift is no tap.
+
+What is clipped away can't be hovered, clicked or tapped, and the arrows' nearest-element search from outside the list skips rows out of view. While its items overflow, the list draws a thumb along its far edge, as long as the share of them in view and as far along as it has scrolled (`scrollbar_color`, `scrollbar_width`). A horizontal list (`layout = "horizontal"`) scrolls across. The clip goes on each draw item as `push_clip` does, so the HUD painter honours it; a hot reload keeps where a list had scrolled.
+
+```toml
+[elements.levels]
+type = "list"
+class = "levels"      # width = 260, height = 200: five rows of 40
+item_class = "row"    # height = 36, margin_bottom = 4
+scroll = true
+items = ["Level 1", "Level 2", "Level 3"]  # ... or ui_set_items from a script
+```
+
+#### Text input
+
+A `text_input` is a box that takes what the player types while it has focus: a name, a seed, a search. It is focusable like a button; give it `autofocus`, `ui_focus` it, or click it. While it has focus:
+
+| Key | What it does |
+|---|---|
+| A character (or an input method's finished text) | Goes in at the caret, up to `max_length` characters |
+| Backspace, Delete | Removes the character before or after the caret |
+| Left, Right, Home, End | Move the caret |
+| Enter | `activate`: the player is done. A pad's `ui_accept` (south button) does the same |
+| Up, Down | Leave the field, as from any control |
+
+The keys the field typed with are its own that frame: Space types a space rather than pressing `ui_accept`, Backspace deletes rather than sending `back`, and left and right move the caret rather than focus. Each frame its text changes sends one `change`; `ui_get_text(id)` reads it and `ui_set_text(id, text)` sets it (the caret goes after it). A click puts the caret at the nearest character. A focused field draws its caret (`caret_color`) after the character it is at; an empty one shows its `placeholder` in `placeholder_color`; a long text slides left so the caret stays in the box, clipped to the box's padding. With no `width` a field is 200 points across, and a line of its font plus its padding high.
+
+`ui_editing()` is true while a text input has focus, so a game can leave its own keys alone while the player types (`if !ui_editing() { ... }` around movement read from the same keys). The text comes from the window's keyboard events on the desktop and on the web, the same winit path; an input script's `type <text>` and `tap <key>` lines type too. A phone's on-screen keyboard isn't opened yet.
+
+```toml
+[elements.name]
+type = "text_input"
+class = "field"
+placeholder = "Your name"
+max_length = 16
+autofocus = true
+```
+
+```rhai
+fn on_ui(element, event) {
+    if element == "name" && event == "activate" {
+        persist_set("player_name", ui_get_text("name"));
+    }
+}
+```
 
 #### Example: a pause menu
 

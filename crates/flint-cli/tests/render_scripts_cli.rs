@@ -1349,3 +1349,50 @@ fn a_ui_document_is_drawn_over_the_capture() {
     assert!(!wrong.status.success());
     assert!(stderr(&wrong).contains("goo"), "{}", stderr(&wrong));
 }
+
+/// A text input's caret is drawn headless (#1229): `--ui-focus` gives the
+/// name field focus as a click would, and its caret (pure red here) is drawn
+/// at the start of its empty box; without focus there is none.
+#[test]
+fn ui_focus_shows_a_text_inputs_caret() {
+    let dir = project("ui_text_input");
+    std::fs::create_dir_all(dir.join("ui")).unwrap();
+    std::fs::write(dir.join("flint.toml"), "[project]\n").unwrap();
+    std::fs::write(
+        dir.join("scripts/tint.rhai"),
+        "load_ui(\"ui/name.ui.toml\");\nfn on_update() {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("ui/name.ui.toml"),
+        "[ui]\nstyle = \"ui/name.style.toml\"\n\n[elements.name]\ntype = \"text_input\"\nclass = \"field\"\n",
+    )
+    .unwrap();
+    // A black box 4..60 x 4..44, its inside from 10; a 24-point font makes
+    // a 2-point caret, 10..12 across
+    std::fs::write(
+        dir.join("ui/name.style.toml"),
+        "[styles.field]\nx = 4\ny = 4\nwidth = 56\nheight = 40\npadding = [6, 6, 6, 6]\nfont_size = 24\nbg_color = [0.0, 0.0, 0.0, 1.0]\ncaret_color = [1.0, 0.0, 0.0, 1.0]\n",
+    )
+    .unwrap();
+    let at = |name: &str, x: u32| {
+        let image = image::open(dir.join(name)).unwrap().to_rgba8();
+        let p = image.get_pixel(x, 24);
+        [p[0], p[1], p[2]]
+    };
+
+    let unfocused = render(&dir, "unfocused.png", &["--scripts"]);
+    if no_gpu(&unfocused) {
+        return;
+    }
+    ok(&unfocused);
+    assert_eq!(at("unfocused.png", 10), [0, 0, 0], "no focus, no caret");
+
+    ok(&render(&dir, "focused.png", &["--ui-focus", "name"]));
+    let caret = at("focused.png", 10);
+    assert!(
+        caret[0] > 200 && caret[1] < 40 && caret[2] < 40,
+        "the caret at the box's start: {caret:?}"
+    );
+    assert_eq!(at("focused.png", 30), [0, 0, 0], "and only there");
+}

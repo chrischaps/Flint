@@ -70,6 +70,15 @@ pub struct ResolvedStyle {
     pub border_width: f32,
     /// A slider's knob; its size is `radius` (0 = no knob).
     pub knob_color: [f32; 4],
+
+    // Scrolling lists and text inputs (#1229)
+    /// A scrolling list's thumb, drawn when its items overflow: colour and
+    /// width in points (0 = none).
+    pub scrollbar_color: [f32; 4],
+    pub scrollbar_width: f32,
+    /// A text input's placeholder text, and its caret.
+    pub placeholder_color: [f32; 4],
+    pub caret_color: [f32; 4],
 }
 
 impl Default for ResolvedStyle {
@@ -105,6 +114,10 @@ impl Default for ResolvedStyle {
             border_color: [1.0, 1.0, 1.0, 1.0],
             border_width: 0.0,
             knob_color: [1.0, 1.0, 1.0, 1.0],
+            scrollbar_color: [1.0, 1.0, 1.0, 0.35],
+            scrollbar_width: 3.0,
+            placeholder_color: [1.0, 1.0, 1.0, 0.4],
+            caret_color: [1.0, 1.0, 1.0, 1.0],
         }
     }
 }
@@ -196,6 +209,10 @@ pub const KNOWN_PROPERTIES: &[&str] = &[
     "border_color",
     "border_width",
     "knob_color",
+    "scrollbar_color",
+    "scrollbar_width",
+    "placeholder_color",
+    "caret_color",
 ];
 
 /// True when `prop` is a property name the style system understands.
@@ -255,6 +272,10 @@ pub fn apply_property(style: &mut ResolvedStyle, key: &str, val: &StyleValue) ->
         ("border_color", Color(c)) => style.border_color = *c,
         ("border_width", Float(v)) => style.border_width = *v,
         ("knob_color", Color(c)) => style.knob_color = *c,
+        ("scrollbar_color", Color(c)) => style.scrollbar_color = *c,
+        ("scrollbar_width", Float(v)) => style.scrollbar_width = *v,
+        ("placeholder_color", Color(c)) => style.placeholder_color = *c,
+        ("caret_color", Color(c)) => style.caret_color = *c,
         (k, _) => return is_known_property(k),
     }
     true
@@ -311,9 +332,8 @@ impl Shape {
 fn shape_of(key: &str) -> Shape {
     match key {
         "height_auto" => Shape::Bool,
-        "color" | "bg_color" | "stroke_color" | "glow_color" | "border_color" | "knob_color" => {
-            Shape::Color
-        }
+        "color" | "bg_color" | "stroke_color" | "glow_color" | "border_color" | "knob_color"
+        | "scrollbar_color" | "placeholder_color" | "caret_color" => Shape::Color,
         "padding" | "uv" => Shape::Four,
         "shadow" => Shape::Shadow,
         "font" => Shape::Text,

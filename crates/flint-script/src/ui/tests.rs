@@ -473,7 +473,7 @@ fn glow_properties_reach_the_text_draw() {
     let text_glow = |sys: &mut UiSystem| {
         sys.generate_draw_commands(1280.0, 720.0)
             .into_iter()
-            .find_map(|c| match c {
+            .find_map(|c| match c.cmd {
                 crate::context::DrawCommand::Text { glow, .. } => Some(glow),
                 _ => None,
             })

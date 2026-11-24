@@ -20,12 +20,24 @@ pub enum ElementType {
     /// A value between `min` and `max` (#731): left and right step it, a
     /// pointer drags it.
     Slider,
+    /// A box that takes what the player types while it has focus (#1229):
+    /// a caret, the editing keys, `change` on each edit and `activate` on
+    /// Enter (or a pad's `ui_accept`). Its text is `ui_get_text`'s.
+    TextInput,
 }
 
 impl ElementType {
     /// Every `type` a `.ui.toml` may name, in the order the errors list them.
     pub const NAMES: &'static [&'static str] = &[
-        "panel", "text", "rect", "circle", "image", "button", "list", "slider",
+        "panel",
+        "text",
+        "rect",
+        "circle",
+        "image",
+        "button",
+        "list",
+        "slider",
+        "text_input",
     ];
 
     pub fn from_str(s: &str) -> Option<Self> {
@@ -38,6 +50,7 @@ impl ElementType {
             "button" => Some(Self::Button),
             "list" => Some(Self::List),
             "slider" => Some(Self::Slider),
+            "text_input" => Some(Self::TextInput),
             _ => None,
         }
     }
@@ -45,7 +58,7 @@ impl ElementType {
     /// Whether an element of this type takes focus unless it says
     /// `focusable = false`.
     pub fn focusable_by_default(self) -> bool {
-        matches!(self, Self::Button | Self::Slider)
+        matches!(self, Self::Button | Self::Slider | Self::TextInput)
     }
 }
 
@@ -188,6 +201,17 @@ pub struct UiElement {
     pub wrap: bool,
     /// Made by a list for one of its `items`, not written in the file.
     pub made_by_list: bool,
+    /// A list that scrolls (#1229): its children are clipped to its box,
+    /// and it moves so the focused one stays in view.
+    pub scroll: bool,
+    /// How far a scrolling list has moved along its layout, in points.
+    pub scroll_offset: f32,
+    /// A text input's caret, in characters from the start.
+    pub caret: usize,
+    /// What a text input shows while it is empty.
+    pub placeholder: String,
+    /// The most characters a text input takes; 0 for no limit.
+    pub max_length: usize,
 
     // Runtime overrides set by scripts
     pub text_override: Option<String>,
@@ -248,6 +272,11 @@ impl UiElement {
             item_class: String::new(),
             wrap: true,
             made_by_list: false,
+            scroll: false,
+            scroll_offset: 0.0,
+            caret: 0,
+            placeholder: String::new(),
+            max_length: 0,
             text_override: None,
             color_override: None,
             bg_color_override: None,
@@ -264,6 +293,11 @@ impl UiElement {
     /// Get the effective class name (override or default)
     pub fn effective_class(&self) -> &str {
         self.class_override.as_deref().unwrap_or(&self.class)
+    }
+
+    /// Whether this is a list whose children scroll inside it.
+    pub fn scrolls(&self) -> bool {
+        self.element_type == ElementType::List && self.scroll
     }
 
     /// A slider's value as a fraction of its range, 0..1.
