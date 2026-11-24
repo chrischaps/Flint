@@ -69,7 +69,8 @@ const KEYS: &[flint_runtime::DebugKey] = &A_B;
 #[cfg(not(feature = "living"))]
 const KEYS: &[flint_runtime::DebugKey] = &[];
 
-/// The subsystem for the scene being entered, if it has living props or wooze.
+/// The subsystem for the scene being entered, if it has living props or
+/// wooze; in a capture, the grove posed at once (`ctx.capture`, #1252).
 #[cfg(feature = "living")]
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     debug_assert_eq!(
