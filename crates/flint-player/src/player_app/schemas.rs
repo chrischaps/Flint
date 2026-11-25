@@ -15,6 +15,7 @@
 //! their files add.
 
 use flint_core::diagnostic::{self, Diagnostic};
+use flint_core::package::InUse;
 use flint_schema::SchemaRegistry;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -76,9 +77,17 @@ impl HeldSchemas {
     ///
     /// A read that fails is logged with what is kept, and the registry held
     /// is returned as it was.
-    pub(super) fn for_dirs(&mut self, dirs: &[PathBuf]) -> Arc<SchemaRegistry> {
+    ///
+    /// A registry read here knows `packages`, the list its directories were
+    /// named under (`SchemaDirs::packages`), so the scene's load words a
+    /// left-out package's component as `flint check` does (#1528).
+    pub(super) fn for_dirs(
+        &mut self,
+        dirs: &[PathBuf],
+        packages: Option<&InUse>,
+    ) -> Arc<SchemaRegistry> {
         let Some(held) = self.registry.clone() else {
-            return self.read_first(dirs);
+            return self.read_first(dirs, packages);
         };
         if dirs == self.dirs {
             return held;
@@ -95,7 +104,8 @@ impl HeldSchemas {
             SchemaRegistry::load_from_directories(dirs).map_err(|e| e.to_string())
         };
         match next {
-            Ok(next) => {
+            Ok(mut next) => {
+                next.set_packages(packages.cloned());
                 self.set(next, dirs);
                 self.current()
             }
@@ -113,11 +123,15 @@ impl HeldSchemas {
 
     /// The registry held, for what belongs to the current scene (a chunk):
     /// never a read once there is one. `dirs` is what to read if the host
-    /// handed over none.
-    pub(super) fn held_or_read(&mut self, dirs: &[PathBuf]) -> Arc<SchemaRegistry> {
+    /// handed over none, under `packages` (as [`for_dirs`](Self::for_dirs)).
+    pub(super) fn held_or_read(
+        &mut self,
+        dirs: &[PathBuf],
+        packages: Option<&InUse>,
+    ) -> Arc<SchemaRegistry> {
         match &self.registry {
             Some(held) => held.clone(),
-            None => self.read_first(dirs),
+            None => self.read_first(dirs, packages),
         }
     }
 
@@ -129,10 +143,11 @@ impl HeldSchemas {
     /// failure is an error in the log and an empty registry for this load
     /// only (the scene's diagnostics then say `no-schemas`); the next load
     /// tries again.
-    fn read_first(&mut self, dirs: &[PathBuf]) -> Arc<SchemaRegistry> {
+    fn read_first(&mut self, dirs: &[PathBuf], packages: Option<&InUse>) -> Arc<SchemaRegistry> {
         self.reads += 1;
         match SchemaRegistry::load_from_directories(dirs) {
-            Ok(registry) => {
+            Ok(mut registry) => {
+                registry.set_packages(packages.cloned());
                 self.set(registry, dirs);
                 self.current()
             }
@@ -216,9 +231,9 @@ mod tests {
             let list = dirs(&["engine/schemas", "schemas"]);
             let mut held = HeldSchemas::default();
             held.set(SchemaRegistry::load_from_directories(&list).unwrap(), &list);
-            let first = held.for_dirs(&list);
-            let second = held.for_dirs(&list);
-            let chunk = held.held_or_read(&list);
+            let first = held.for_dirs(&list, None);
+            let second = held.for_dirs(&list, None);
+            let chunk = held.held_or_read(&list, None);
             assert!(Arc::ptr_eq(&first, &second) && Arc::ptr_eq(&first, &chunk));
             assert_eq!(held.reads(), 0, "the same directories are never re-read");
             assert!(first.get_archetype("door").is_some());
@@ -232,8 +247,11 @@ mod tests {
         vfs::scoped(files(&[]), || {
             let list = dirs(&["engine/schemas"]);
             let mut held = HeldSchemas::default();
-            assert!(held.held_or_read(&list).get_component("lamp").is_some());
-            assert!(held.for_dirs(&list).get_component("lamp").is_some());
+            assert!(held
+                .held_or_read(&list, None)
+                .get_component("lamp")
+                .is_some());
+            assert!(held.for_dirs(&list, None).get_component("lamp").is_some());
             assert_eq!(held.reads(), 1);
         });
     }
@@ -248,7 +266,7 @@ mod tests {
             compiled_in.load_component_string(LAMP).unwrap();
             let mut held = HeldSchemas::default();
             held.set(compiled_in, &[]);
-            let next = held.for_dirs(&dirs(&["schemas"]));
+            let next = held.for_dirs(&dirs(&["schemas"]), None);
             assert!(next.get_component("lamp").is_some(), "kept");
             assert!(next.get_component("loot").is_some(), "added");
         });
@@ -266,15 +284,15 @@ mod tests {
             held.set(SchemaRegistry::load_from_directories(&list).unwrap(), &list);
 
             // Another project's list, unreadable
-            let other = held.for_dirs(&dirs(&["other/schemas"]));
+            let other = held.for_dirs(&dirs(&["other/schemas"]), None);
             assert!(other.get_component("lamp").is_some());
             assert!(other.get_archetype("door").is_some());
             // The same list grown by an unreadable directory
-            let grown = held.for_dirs(&dirs(&["engine/schemas", "other/schemas"]));
+            let grown = held.for_dirs(&dirs(&["engine/schemas", "other/schemas"]), None);
             assert!(grown.get_archetype("door").is_some());
             // ...and the list held is still the good one: no read for it
             let reads = held.reads();
-            assert!(held.for_dirs(&list).get_component("lamp").is_some());
+            assert!(held.for_dirs(&list, None).get_component("lamp").is_some());
             assert_eq!(held.reads(), reads);
         });
     }
@@ -333,8 +351,8 @@ mod tests {
                 "{start}"
             );
             let transition = warned(|| {
-                held.for_dirs(&list);
-                held.held_or_read(&list);
+                held.for_dirs(&list, None);
+                held.held_or_read(&list, None);
             });
             assert_eq!(transition, "", "no new directory, nothing said");
         });
@@ -353,11 +371,11 @@ mod tests {
             let list = dirs(&["engine/schemas", "schemas"]);
             let mut held = HeldSchemas::default();
             let first = warned(|| {
-                held.held_or_read(&list);
+                held.held_or_read(&list, None);
             });
             assert!(first.contains("schemas/components/torch.toml"), "{first}");
             let grown = warned(|| {
-                held.for_dirs(&dirs(&["engine/schemas", "schemas", "boat/schemas"]));
+                held.for_dirs(&dirs(&["engine/schemas", "schemas", "boat/schemas"]), None);
             });
             assert!(
                 grown.contains("boat/schemas/components/sail.toml: 1 warning")
@@ -391,7 +409,7 @@ mod tests {
             let list = dirs(&["engine/schemas"]);
             let mut held = HeldSchemas::default();
             held.set(SchemaRegistry::load_from_directories(&list).unwrap(), &list);
-            let next = held.for_dirs(&dirs(&["schemas"]));
+            let next = held.for_dirs(&dirs(&["schemas"]), None);
             assert!(next.get_component("loot").is_some());
             assert!(next.get_component("lamp").is_none(), "not this project's");
         });

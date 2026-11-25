@@ -40,7 +40,7 @@ debug-hud = false   # a standard package: in unless set to false
 - **Without the table**, the game has every package, as before packages existed. A project that never writes it changes nothing.
 - A value is a version requirement (`"*"` or `"^0.1"`). It is checked for its syntax and kept, but nothing holds a game to it until packages have versions of their own.
 
-The list decides what the game's schemas and script API hold. A scene, prefab or script that uses a package the list leaves out is an `unlisted-package` error in `flint check`, `flint validate` and `flint script check`, and its hint is the line to add. A name no package has, such as `livng = "*"`, is a `bad-manifest` error that says `did you mean `living`?`. [Packages a game uses](../guides/building-a-game-project.md#packages-a-game-uses) has the rules in full and the commands' output.
+The list decides what the game's schemas and script API hold. A scene, prefab or script that uses a package the list leaves out is an `unlisted-package` error in `flint check`, `flint validate` and `flint script check`, and its hint is the line to add. A name no package has, such as `livng = "*"`, is a `bad-manifest` error that says `did you mean `living`?`. The player agrees with `flint check` even when it was built with the package: `flint play` words the scene's load summary the same way, and runs none of a left-out package. Its props stand still, its script modules are "not enabled", and one line at the scene's entry names `[packages]` and the line to add. [Packages a game uses](../guides/building-a-game-project.md#packages-a-game-uses) has the rules in full and the commands' output.
 
 ## Asking what is used
 

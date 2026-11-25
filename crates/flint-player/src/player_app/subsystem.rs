@@ -169,6 +169,22 @@ pub(crate) struct SceneCtx<'a> {
     /// `Some` when the host is a capture (`flint render`'s `HeadlessGame`,
     /// #1252): what it asked for. The player's is `None`.
     pub capture: Option<&'a mut super::headless_game::CaptureStart>,
+    /// The packages the project's `[packages]` lets in (#1334); `None`:
+    /// every package is in. A builder of a package it leaves out makes
+    /// nothing and says so ([`SceneCtx::leaves_out`], #1528).
+    pub packages: Option<&'a flint_core::package::InUse>,
+}
+
+impl SceneCtx<'_> {
+    /// The project's `[packages]` leaves `package` out: its builder makes
+    /// nothing, and says so once with `missing_features::left_out_line`.
+    #[cfg_attr(
+        not(any(feature = "living", feature = "music")),
+        allow(dead_code) // the builders of living and the music ask it
+    )]
+    pub(crate) fn leaves_out(&self, package: &str) -> Option<&flint_core::package::InUse> {
+        self.packages.filter(|in_use| !in_use.is_on(package))
+    }
 }
 
 /// The host's pads, lent to a subsystem that reads them its own way (the
@@ -668,6 +684,7 @@ macro_rules! scene_ctx {
                 lent: &mut $app.pads_lent,
             }),
             capture: None,
+            packages: $app.core.packages.as_ref(),
         }
     };
 }

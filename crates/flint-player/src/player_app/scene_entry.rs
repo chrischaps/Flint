@@ -49,6 +49,10 @@ impl PlayerApp {
         flint_core::scope!("enter_scene");
         // Which project the scene is in, before anything is searched for
         self.refresh_project();
+        // ...and which packages its `[packages]` lets in, as its schema
+        // directories were named: a left-out one's props, panels,
+        // subsystems and modules stay out of this scene (#1528)
+        self.core.packages = self.schema_dirs.packages.clone();
 
         // The scene's `[scene] input_config`, else the project's, under the
         // player's own rebinds and the CLI's
@@ -172,7 +176,9 @@ impl PlayerApp {
         // 0114); no style history, bones or levers of the last scene; and
         // its terrain and grass; its archetypes' placeholder boxes, from the
         // registry its world was made with (#751)
-        let schemas = self.schemas.held_or_read(&self.schema_dirs.dirs);
+        let schemas = self
+            .schemas
+            .held_or_read(&self.schema_dirs.dirs, self.schema_dirs.packages.as_ref());
         let binding = self
             .scene_binding
             .take()
