@@ -17,6 +17,8 @@
 //! The boil's knobs aren't here: a species can't set them, being one pass over
 //! the whole frame.
 
+// What the wooze field samples: only with the field (#1516)
+#[cfg(feature = "living")]
 use flint_wooze::WoozeSample;
 
 use crate::scene_tables::{
@@ -547,6 +549,7 @@ macro_rules! procgen_knobs {
             }
 
             /// Its value in a wooze sample: the clock's four only.
+            #[cfg(feature = "living")]
             pub fn in_sample(self, sample: &WoozeSample) -> Option<f32> {
                 match self {
                     $(LivingKnob::$knob => knob_slots!(sample sample, $group . $path),)*
@@ -596,6 +599,7 @@ pub fn species_keys() -> Vec<&'static str> {
 }
 
 /// A wooze sample's four knobs as a preset's `[wooze]` sets them, every one.
+#[cfg(feature = "living")]
 pub fn wooze_knobs_of(sample: &WoozeSample) -> WoozeKnobs {
     let mut preset = WoozePreset::default();
     for knob in LivingKnob::ALL {
@@ -677,6 +681,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "living")]
     fn a_sample_is_its_four_clock_knobs() {
         let knobs = wooze_knobs_of(&WoozeSample::NEUTRAL);
         assert_eq!(knobs.step, Some(WoozeSample::NEUTRAL.step));

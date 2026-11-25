@@ -14,7 +14,7 @@ web-time = { workspace = true }
 tracing = { workspace = true }
 flint-core = { workspace = true }
 flint-wooze = { workspace = true }
-flint-procgen = { workspace = true }
+flint-procgen = { workspace = true, features = ["living"] }
 
 [lints]
 workspace = true

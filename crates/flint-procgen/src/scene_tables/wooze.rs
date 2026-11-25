@@ -5,6 +5,10 @@
 //! scene with a line number. Loading a scene never fails over a zone. The player
 //! warns and goes without it, and `flint validate` fails on it, through
 //! [`WoozeDef::check`].
+//!
+//! What only the field itself can say (its built-in presets, each clock knob's
+//! range, the field a table makes) is flint-wooze's, behind this crate's
+//! `living` feature (#1516); `field_rules` is that seam.
 
 use super::{
     LivingDef, LivingEchoesDef, LivingSpeciesDef, LivingTables, LivingVarianceDef, WoozeDef,
@@ -14,9 +18,51 @@ use flint_core::project::{AssetKind, Project};
 use flint_core::vfs;
 use flint_scene::SceneFile;
 use flint_schema::{validate_component_data, SchemaRegistry};
-use flint_wooze::{check_knob_named, preset, WoozeField, WoozeSample};
+#[cfg(feature = "living")]
+use flint_wooze::{preset, WoozeField, WoozeSample};
 use std::fmt;
 use std::path::{Path, PathBuf};
+
+/// What the wooze field says of names and values, for the readers here: the
+/// field's own answers with the `living` feature, which links flint-wooze.
+#[cfg(feature = "living")]
+mod field_rules {
+    /// Whether `name` is one of the field's built-in presets.
+    pub(super) fn is_built_in(name: &str) -> bool {
+        flint_wooze::preset(name).is_some()
+    }
+
+    /// A clock knob's value held to the field's range, `Err` saying why not.
+    pub(super) fn check_knob(key: &str, value: f32) -> Result<(), String> {
+        flint_wooze::check_knob_named(key, value).map(|_| ())
+    }
+
+    /// The built-in presets' names, `linklater, boil, ...`.
+    pub(super) fn built_in_names() -> String {
+        let names: Vec<&str> = flint_wooze::PRESETS.iter().map(|p| p.0).collect();
+        names.join(", ")
+    }
+}
+
+/// Built without the `living` feature (#1516): no flint-wooze, so no field to
+/// ask. A preset name no file has may be a built-in and is left as written, and
+/// a clock knob's range goes unchecked; a build with no living props draws
+/// neither, and `[table.wooze]`'s schema still holds the table's values
+/// ([`WoozeDef::check`]).
+#[cfg(not(feature = "living"))]
+mod field_rules {
+    pub(super) fn is_built_in(_: &str) -> bool {
+        true
+    }
+
+    pub(super) fn check_knob(_: &str, _: f32) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub(super) fn built_in_names() -> String {
+        "the wooze field's built-in presets".to_string()
+    }
+}
 
 /// What a preset file's name ends in: `<name>.wooze.toml`.
 pub const PRESET_SUFFIX: &str = ".wooze.toml";
@@ -148,7 +194,7 @@ pub fn apply_preset_file(scene: &mut SceneFile, scene_path: &Path) -> Vec<WoozeI
         return Vec::new();
     };
     let found = match read_preset(scene_path, &name) {
-        None if preset(&name).is_some() => return Vec::new(),
+        None if field_rules::is_built_in(&name) => return Vec::new(),
         None => {
             def.preset = None;
             tables.put(scene);
@@ -199,18 +245,12 @@ pub fn apply_preset_file(scene: &mut SceneFile, scene_path: &Path) -> Vec<WoozeI
     issues
 }
 
-/// The built-in presets' names, `linklater, boil, ...`.
-fn built_in_names() -> String {
-    let names: Vec<&str> = flint_wooze::PRESETS.iter().map(|p| p.0).collect();
-    names.join(", ")
-}
-
 /// What is said of a `[wooze] preset` that is neither a file the scene can
 /// see nor a built-in.
 fn no_such_preset(name: &str) -> String {
     format!(
         "preset '{name}' isn't a file in wooze/ or one of {}",
-        built_in_names()
+        field_rules::built_in_names()
     )
 }
 
@@ -296,7 +336,7 @@ impl LivingSpeciesDef {
             ("jitter", self.jitter),
         ] {
             if let Some(value) = value {
-                if let Err(problem) = check_knob_named(key, value) {
+                if let Err(problem) = field_rules::check_knob(key, value) {
                     problems.push(problem);
                 }
             }
@@ -521,7 +561,9 @@ impl WoozeDef {
     }
 
     /// The field this table describes, made of whatever is good in it, and an
-    /// issue for each thing that isn't.
+    /// issue for each thing that isn't. The wooze field's, so only with the
+    /// `living` feature (#1516).
+    #[cfg(feature = "living")]
     pub fn field(&self) -> (WoozeField, Vec<WoozeIssue>) {
         let mut issues = Vec::new();
         let global = |message: String| WoozeIssue {
@@ -540,7 +582,7 @@ impl WoozeDef {
                      names a file (wooze/{name}{PRESET_SUFFIX}), which a host lays in \
                      with flint_procgen::settle_scene after load_scene, and this \
                      host didn't call it",
-                    built_in_names()
+                    field_rules::built_in_names()
                 )));
                 WoozeSample::NEUTRAL
             }),
@@ -581,9 +623,13 @@ impl WoozeDef {
     /// which says the most, and then anything that passes that but not the
     /// `[table.wooze]` schema (and its `zone` field's, for a zone), which a game's
     /// own schemas can tighten. One issue a zone at most, so that one mistake isn't
-    /// reported twice.
+    /// reported twice. Without the `living` feature there is no field to ask
+    /// (#1516), and this is the schema's half alone.
     pub fn check(&self, schemas: &SchemaRegistry) -> Vec<WoozeIssue> {
+        #[cfg(feature = "living")]
         let (_, mut issues) = self.field();
+        #[cfg(not(feature = "living"))]
+        let mut issues: Vec<WoozeIssue> = Vec::new();
         let table_schema = schemas.get_table("wooze");
 
         let global_is_fine = issues.iter().all(|issue| issue.zone.is_some());
@@ -659,7 +705,8 @@ fn zone_label(zone: &toml::Value, index: usize) -> String {
     }
 }
 
-#[cfg(test)]
+// Most of these read the field the preset makes
+#[cfg(all(test, feature = "living"))]
 mod preset_tests {
     use super::*;
     use crate::scene_tables::{living_of, wooze_of, BoilDef, WoozeKnobs};
@@ -983,7 +1030,7 @@ mod preset_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "living"))]
 mod tests {
     use crate::scene_tables::LivingTables;
     use flint_scene::SceneFile;
@@ -1242,6 +1289,7 @@ mod species_tests {
     }
 
     #[test]
+    #[cfg(feature = "living")] // `glide = 2.0` is the field's to judge
     fn a_bad_species_value_is_named_with_its_species() {
         let preset = crate::scene_tables::WoozePreset::parse(
             "[living.species.thorn]\nglide = 2.0\nstagger = \"sideways\"\n",
@@ -1250,5 +1298,48 @@ mod species_tests {
         let problems = preset.problems();
         assert_eq!(problems.len(), 2, "{problems:?}");
         assert!(problems.iter().all(|p| p.starts_with("species 'thorn': ")));
+    }
+}
+
+/// A build with no wooze field (#1516): the tables still read and settle, and
+/// what only the field could judge is left alone.
+#[cfg(all(test, not(feature = "living")))]
+mod no_field_tests {
+    use super::*;
+    use crate::scene_tables::{living_of, wooze_of};
+
+    fn scene(table: &str) -> SceneFile {
+        toml::from_str(&format!("[scene]\nname = \"g\"\n{table}")).unwrap()
+    }
+
+    #[test]
+    fn a_preset_no_file_has_is_left_as_written() {
+        let path = std::env::temp_dir().join(format!(
+            "flint_no_field_{}/grove.scene.toml",
+            std::process::id()
+        ));
+        let mut file = scene("[wooze]\npreset = \"linklatter\"\n");
+        assert!(apply_preset_file(&mut file, &path).is_empty());
+        assert_eq!(
+            wooze_of(&file).unwrap().preset.as_deref(),
+            Some("linklatter")
+        );
+    }
+
+    #[test]
+    fn a_knob_out_of_the_fields_range_goes_unsaid_but_the_rest_is_held() {
+        let file =
+            scene("[living.species.oak]\nglide = 4.0\nsoftness = 2.0\nstagger = \"sideways\"\n");
+        let living = living_of(&file).unwrap();
+        let problems = living.species["oak"].problems();
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems.iter().any(|p| p.starts_with("softness")));
+        assert!(problems.iter().any(|p| p.starts_with("stagger")));
+    }
+
+    #[test]
+    fn check_is_the_schemas_half() {
+        let def = wooze_of(&scene("[wooze]\namplitude = 3.5\n")).unwrap();
+        assert!(def.check(&SchemaRegistry::new()).is_empty());
     }
 }

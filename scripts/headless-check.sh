@@ -18,8 +18,8 @@
 # debug panels), and with --build it compiles, tests and examples included.
 # And flint-render links no flint-wooze (#1330). And the headless CLI is the
 # one with no package either (#1333): none of the music, rhythm, living and
-# AI crates, and no flint-wooze of its own (flint-procgen still brings one
-# until #1516; then flint-wooze joins the list).
+# AI crates, and no flint-wooze, whose readers in flint-procgen are behind its
+# `living` feature (#1516). Nor does the viewer with no features.
 #
 #   scripts/headless-check.sh           the tree only (seconds, any host)
 #   scripts/headless-check.sh --build   the tree, then cargo check
@@ -47,7 +47,7 @@ echo "headless flint-cli tree for Linux: no device crates" \
 
 # The packages' crates (packages/<name>/package.toml) a flint-cli with no
 # package feature leaves out
-CLI_OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-living|flint-asset-gen|flint-procgen-ai|flint-ai-core) v'
+CLI_OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-living|flint-wooze|flint-asset-gen|flint-procgen-ai|flint-ai-core) v'
 found=$(printf '%s\n' "$tree" | grep -E "$CLI_OPTIONAL" | sort -u || true)
 if [ -n "$found" ]; then
     echo "flint-cli with no default features links a package's crate:" >&2
@@ -56,12 +56,17 @@ if [ -n "$found" ]; then
     cargo tree -p flint-cli --no-default-features -e normal,features -i "$first" >&2 || true
     exit 1
 fi
-if cargo tree -p flint-cli --no-default-features -e normal --depth 1 --prefix none \
+echo "smallest flint-cli: none of music, rhythm, living, ai, wooze"
+
+# The viewer reads a scene's [living] and [wooze] tables through flint-procgen,
+# whose wooze field is its `living` feature's (#1516)
+if cargo tree -p flint-viewer --no-default-features -e normal --prefix none \
     | grep -qE '^flint-wooze v'; then
-    echo "flint-cli with no default features depends on flint-wooze itself" >&2
+    echo "flint-viewer with no default features links flint-wooze:" >&2
+    cargo tree -p flint-viewer --no-default-features -e normal,features -i flint-wooze >&2 || true
     exit 1
 fi
-echo "smallest flint-cli: none of music, rhythm, living, ai; flint-wooze only through flint-procgen (#1516)"
+echo "smallest flint-viewer: no flint-wooze"
 
 OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-procgen|flint-living|flint-wooze|flint-debug-ui) v'
 player=$(cargo tree -p flint-player --no-default-features -e normal --prefix none)

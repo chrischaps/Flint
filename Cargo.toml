@@ -245,7 +245,9 @@ flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "crates/flint-asset-gen" }
 flint-particles = { path = "crates/flint-particles" }
 flint-terrain = { path = "crates/flint-terrain" }
-flint-procgen = { path = "crates/flint-procgen" }
+# Its `living` feature (the [wooze] table's field and knob checks) is the
+# living package's to turn on (#1516)
+flint-procgen = { path = "crates/flint-procgen", default-features = false }
 flint-living = { path = "crates/flint-living" }
 flint-procgen-ai = { path = "crates/flint-procgen-ai" }
 flint-ai-core = { path = "crates/flint-ai-core" }
