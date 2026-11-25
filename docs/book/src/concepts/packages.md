@@ -51,6 +51,8 @@ flint package used
 flint package used --write
 ```
 
+A standard package is in unless set to `false`, so a list of what was found still gives the game procgen. When nothing the scan reads names a procgen spec, `flint package used` also prints `procgen = false   # nothing scanned uses it` as a line to add. `--write` leaves that line for you to write, because it changes what `flint build` gives the game. `debug-hud` is never suggested, since no file can show the F3/F4 panels in use.
+
 ## Building the game
 
 The list also decides what the binaries link. A `flint` or `flint-player` links what it was compiled with, whatever the list says, so after changing the list you build the game's own pair:
