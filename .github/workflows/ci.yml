@@ -119,6 +119,12 @@ jobs:
       - name: cargo check -p flint-cli --no-default-features
         run: bash scripts/headless-check.sh --build
 
+      # Every crate, schema file, script module and command belongs to one
+      # package's manifest (packages/<name>/package.toml, #1331), checked in
+      # the headless build. A lib test: the command tree is flint-cli's own
+      - name: cargo test -p flint-cli --no-default-features --lib package::
+        run: cargo test -p flint-cli --no-default-features --lib package::
+
       # The book against the script API (#695): the generated reference
       # (docs/book/src/reference/script-api.md) and the scripting chapter's
       # script-api tables match the engine's declarations, and no chapter

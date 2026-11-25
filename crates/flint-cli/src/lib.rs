@@ -33,8 +33,9 @@ use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     asset, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples, export,
-    frame, gen, gen_preview, init, music, play, playtest, prefab, preview, profile, query, render,
-    render_goldens, scene, schema, script, spline_edit, style, terrain_edit, tex_edit, validate,
+    frame, gen, gen_preview, init, music, package, play, playtest, prefab, preview, profile, query,
+    render, render_goldens, scene, schema, script, spline_edit, style, terrain_edit, tex_edit,
+    validate,
 };
 use std::ffi::OsString;
 
@@ -163,6 +164,11 @@ enum Commands {
     /// Asset management operations
     #[command(subcommand)]
     Asset(Box<asset::AssetCommands>),
+
+    /// The engine's packages, from their manifests: `flint package list
+    /// [--json]` gives each one's tier, version and what it owns
+    #[command(subcommand)]
+    Package(Box<package::PackageCommands>),
 
     /// Play a scene with first-person controls and physics
     Play(Box<play::PlayArgs>),
@@ -371,6 +377,7 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Capture(args) => capture::run(*args),
         Commands::Prefab(cmd) => prefab::run(*cmd),
         Commands::Asset(cmd) => asset::run(*cmd),
+        Commands::Package(cmd) => package::run(*cmd),
         Commands::Edit(args) => edit_router::run(*args),
         Commands::SplineEdit(args) => spline_edit::run(*args),
         Commands::Preview(args) => preview::run(*args),

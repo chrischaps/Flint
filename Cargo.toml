@@ -104,6 +104,8 @@ toml = "0.8"
 indexmap = { version = "2", features = ["serde"] }
 toml_edit = "0.22"
 thiserror = "2.0"
+# A package manifest's versions and requirements (ADR 0136, #1331)
+semver = "1"
 anyhow = "1.0"
 
 # ECS

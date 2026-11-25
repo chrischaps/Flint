@@ -13,6 +13,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene list` | List scene files |
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
+| `flint package list [--json]` | The engine's packages, from their manifests (`packages/<name>/package.toml`): each one's tier, version, requirements, build features, and the crates, components, archetypes, scene tables, script modules and commands it owns ([The `package` Command](#the-package-command)) |
 | `flint env [--json]` | Every `FLINT_*` environment switch, what it accepts and its value now; exit 1 on a value it can't take ([Environment Switches](environment.md)) |
 | `flint schema <name>` | Inspect a component or archetype schema; an unknown name exits 1. `--list` names every one loaded (`--json`); `--format json` is the schemas as data; `--format json-schema [--output file]` is a JSON Schema for a `.scene.toml`, for editor completion ([Introspecting Schemas](../concepts/schemas.md#introspecting-schemas)) |
 | `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
@@ -97,6 +98,63 @@ It writes a game project from templates compiled into the binary: `flint.toml` (
 | `--force` | Write into a directory that already holds files. A file already there is kept; nothing is overwritten or deleted |
 
 No engine schema is copied into the game. One engine file is: with `--engine path` or `none` the project carries `scripts/lib/menu.rhai`, the engine's menu helpers, which the HUD imports, because a script's `import` searches the project and `engine/` but not a checkout named by path. With `--engine subtree` the engine's own is found and nothing is copied. See [Your First Project](../getting-started/first-project.md) and [Building a Game Project](../guides/building-a-game-project.md).
+
+## The `package` Command
+
+```bash
+flint package list            # every package: tier, version, what it owns
+flint package list --json     # the same as one JSON document
+flint package list --dir d    # the manifests under another folder
+```
+
+A package is a name a game will list in its `flint.toml`, and everything that name brings ([ADR 0136](https://github.com/chrischaps/Flint/blob/main/docs/adr/0136-the-package-model.md)). Each has a manifest, `packages/<name>/package.toml`, that says what it owns, so a tool or an agent can ask what exists without compiling anything. There are seven: `engine` (the kernel, holding for now the standard parts that have no switch yet: physics, audio, animation, particles, terrain, and the ocean, grass, stylize and panels features), the standard `procgen` and `debug-hud`, and the features `living`, `music`, `rhythm` and `ai`. A game can't list them yet; `[packages]` in `flint.toml` comes next.
+
+```text
+living     feature   0.1.0  Props that hold and glide, and the wooze field
+           engine     ^0.1
+           requires   procgen
+           features   living
+           crates     flint-living, flint-wooze (2)
+           components living_prop, shallow_wooze (2)
+           tables     [living], [wooze] (2)
+           modules    living, wooze, debug (3)
+```
+
+`engine` is the engine API range a package builds against, `requires` the packages that come with it, and `features` the Cargo features of `flint-player` and `flint-cli` that build it. The folder read is the project's engine: `engine/packages` in a game that carries the engine as a subtree, `packages/` in an engine checkout, else the tree this `flint` was built from.
+
+Under `--json` it is one document: `dir`, `valid`, `packages` (each with `name`, `tier`, `version`, `summary`, `engine`, `api`, `requires`, `features`, `file`, and the lists `crates`, `components`, `archetypes`, `scene_tables`, `script_modules`, `commands` under the manifest's own keys) and `problems`. A manifest with a mistake is left out of the list and named among the problems as a `bad-package` diagnostic with its file and key, and the command exits 1:
+
+```text
+living/package.toml: error[bad-package] field 'package.tier': `feture` is no tier (the tiers are kernel, standard, feature, game) (did you mean `feature`?)
+```
+
+So is an item two manifests provide, a requirement naming no package, and a package in a folder of another name.
+
+A manifest:
+
+```toml
+[package]
+name = "living"            # the key a game lists: [a-z][a-z0-9-]*
+version = "0.1.0"          # semver
+tier = "feature"           # kernel | standard | feature | game
+summary = "Props that hold and glide, and the wooze field"
+engine = "^0.1"            # the engine API range; the kernel states `api` instead
+
+[requires]
+procgen = "*"
+
+[build]
+features = ["living"]
+
+[provides]
+crates = ["flint-living", "flint-wooze"]
+components = ["living_prop", "shallow_wooze"]
+scene_tables = ["living", "wooze"]
+script_modules = ["living", "wooze", "debug"]
+commands = []              # paths below `flint`: "music chart", "asset generate"
+```
+
+Every crate, schema file, script module and command of the engine belongs to exactly one package. A test holds that: a new component, crate, script module or command fails it, naming the file or item, until one manifest lists it.
 
 ## The `check` Command
 

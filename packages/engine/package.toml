@@ -1,0 +1,106 @@
+# The kernel, and with it what can't be left out yet (ADR 0136 decision 8).
+#
+# Every game links this package. It holds the kernel and the standard
+# packages that have no Cargo feature until Phase 3 (physics, audio,
+# animation, particles, terrain), and the render features that live inside
+# flint-render until Phase 4 (ocean, grass, stylize, panels). Each list is
+# grouped by the package it will become, so the split is a move of lines.
+# `flint package list` reads this file; a test in flint-cli holds every
+# crate, schema, script module and command of the tree to one manifest.
+
+[package]
+name = "engine"
+version = "0.1.0"
+tier = "kernel"
+summary = "The kernel, with the standard packages and render features that have no switch yet"
+api = "0.1.0"
+
+[provides]
+crates = [
+    # kernel
+    "flint-core", "flint-ecs", "flint-schema", "flint-scene", "flint-query",
+    "flint-asset", "flint-import", "flint-pixels", "flint-geometry",
+    "flint-runtime", "flint-render", "flint-script", "flint-constraint",
+    "flint-player", "flint-android", "flint-viewer", "flint-cli",
+    # physics
+    "flint-physics",
+    # audio
+    "flint-audio", "flint-audio-worklet",
+    # animation
+    "flint-animation",
+    # particles
+    "flint-particles",
+    # terrain
+    "flint-terrain",
+]
+components = [
+    # kernel
+    "transform", "visibility", "bounds", "model", "material",
+    "material_overrides", "light", "sky", "lod", "asset_def", "script",
+    "interactable", "camera_tuning", "screen_anchor", "ui_fill", "ui_text",
+    "sprite", "sprite_animator", "parallax", "spline", "spline_mesh",
+    "motion_hold",
+    # physics
+    "collider", "rigidbody", "character_controller", "joint",
+    # audio
+    "audio_source", "audio_trigger",
+    # animation
+    "animator", "skeleton", "ik_two_bone", "bone_probe",
+    # particles
+    "particle_emitter", "particle_effect",
+    # terrain
+    "terrain",
+    # ocean
+    "ocean", "ocean_contact", "water_body",
+    # grass
+    "grass_ground",
+    # stylize
+    "ascii_style", "pencil_style", "watercolor_style", "style_mask",
+]
+archetypes = [
+    # kernel
+    "sprite", "animated_sprite", "character",
+    # physics
+    "player",
+    # terrain
+    "terrain",
+]
+scene_tables = [
+    # kernel
+    "camera", "environment", "post_process", "field",
+    # panels
+    "panels",
+]
+script_modules = [
+    # kernel
+    "entity", "event", "input", "log", "math", "time", "scene", "state",
+    "data", "persistence", "camera", "camera_2d", "camera_rig", "draw",
+    "draw_world", "ui", "screen_ui", "touch", "sprite", "view",
+    "post_process", "quality", "test", "expression", "chunk", "spline",
+    "field",
+    # physics
+    "physics", "physics_2d", "nav",
+    # audio
+    "audio",
+    # animation
+    "animation", "tween",
+    # particles
+    "particle",
+    # terrain
+    "terrain",
+    # ocean
+    "ocean",
+    # stylize
+    "style", "style_field",
+    # panels
+    "panels",
+]
+commands = [
+    "init", "entity", "scene", "query", "schema", "script", "edit",
+    "validate", "check", "frame", "profile", "examples", "env", "bundle",
+    "export", "goldens", "prefab", "play", "playtest", "capture", "render",
+    "dxc", "style", "package",
+    "asset import", "asset list", "asset info", "asset resolve", "asset where",
+    # hidden aliases of `flint edit`
+    "serve", "spline-edit", "preview", "terrain-edit",
+]

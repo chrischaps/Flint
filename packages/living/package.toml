@@ -1,0 +1,23 @@
+# Living props and the wooze field (#211-#252). A feature: off unless a game
+# lists `living = "*"`. Procgen makes the props' poses, so it comes with it.
+# Its `debug` script module (the A/B and commit calls) runs only where the
+# debug-hud package is in the build too.
+
+[package]
+name = "living"
+version = "0.1.0"
+tier = "feature"
+summary = "Props that hold and glide, and the wooze field"
+engine = "^0.1"
+
+[requires]
+procgen = "*"
+
+[build]
+features = ["living"]
+
+[provides]
+crates = ["flint-living", "flint-wooze"]
+components = ["living_prop", "shallow_wooze"]
+scene_tables = ["living", "wooze"]
+script_modules = ["living", "wooze", "debug"]

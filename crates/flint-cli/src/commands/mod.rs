@@ -36,6 +36,7 @@ pub mod look_measure;
 pub mod look_refine;
 pub mod mesh_seq;
 pub mod music;
+pub mod package;
 pub mod particle_edit;
 pub mod play;
 pub mod play_chart;

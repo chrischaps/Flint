@@ -1,0 +1,21 @@
+# The rhythm game (ADR 0117 decision 2, #745): a `music_session` with a
+# `chart` is judged, and the pad is read at 1 kHz against the audio clock.
+# It judges a session's chart, so it owns no component and brings music.
+
+[package]
+name = "rhythm"
+version = "0.1.0"
+tier = "feature"
+summary = "Charts judged against the music, with 1 kHz pad capture"
+engine = "^0.1"
+
+[requires]
+music = "*"
+
+[build]
+features = ["rhythm"]
+
+[provides]
+crates = ["flint-rhythm", "flint-input-capture"]
+script_modules = ["conducted"]
+commands = ["music calibrate", "music chart"]
