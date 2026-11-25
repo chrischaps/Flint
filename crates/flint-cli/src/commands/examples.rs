@@ -23,6 +23,12 @@
 //! missing, a scene on disk has no entry, an entry has no purpose or topic,
 //! or a scene fails what `flint validate` checks (it doesn't load, a
 //! constraint error, a bad `[wooze]` or species table, a style warning).
+//!
+//! An entry's `packages` names the packages its scene needs beyond the
+//! kernel (#1336, ADR 0136): `packages = ["living"]`. A flint built without
+//! one of them (`cargo build -p flint-cli --no-default-features`) passes
+//! over that example in `--check`, by name, rather than failing it, and
+//! still holds it to the index. A name no package manifest has fails.
 
 use anyhow::{bail, Context, Result};
 use flint_constraint::Severity;
@@ -70,6 +76,29 @@ pub struct Example {
     pub scene: String,
     pub topic: String,
     pub purpose: String,
+    /// The packages its scene needs beyond the kernel (#1336)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<String>,
+}
+
+/// An example `--check` passed over: its scene and the packages it names
+/// that this flint was built without.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Skipped {
+    scene: String,
+    missing: Vec<String>,
+}
+
+impl std::fmt::Display for Skipped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = if self.missing.len() == 1 { "" } else { "s" };
+        write!(
+            f,
+            "{}: needs the {} package{s}, which this flint was built without",
+            self.scene,
+            self.missing.join(", ")
+        )
+    }
 }
 
 pub fn run(args: ExamplesArgs) -> Result<()> {
@@ -80,31 +109,44 @@ pub fn run(args: ExamplesArgs) -> Result<()> {
     let examples = read_index(&dir)?;
 
     if args.check {
-        let failures = check(&dir, &examples, &args.schemas);
+        let built = super::package::packages_built();
+        let (failures, skipped) = check(&dir, &examples, &args.schemas, &built);
         let mut text = String::new();
+        for s in &skipped {
+            text += &format!("SKIP {s}\n");
+        }
         for failure in &failures {
             text += &format!("FAIL {failure}\n");
         }
+        let passed_over = match skipped.len() {
+            0 => String::new(),
+            n => format!(" ({n} passed over for a package this flint lacks)"),
+        };
         if failures.is_empty() {
             text += &format!(
-                "{} examples in {}: every one indexed and valid\n",
+                "{} examples in {}: every one indexed and valid{passed_over}\n",
                 examples.len(),
                 shown_dir(&dir)
             );
         } else {
             text += &format!(
-                "\n{} examples in {}: {} failure(s)\n",
+                "\n{} examples in {}: {} failure(s){passed_over}\n",
                 examples.len(),
                 shown_dir(&dir),
                 failures.len()
             );
         }
         let failures: Vec<String> = failures.iter().map(|f| f.to_string()).collect();
+        let skipped: Vec<serde_json::Value> = skipped
+            .iter()
+            .map(|s| serde_json::json!({ "scene": s.scene, "missing": s.missing }))
+            .collect();
         let document = serde_json::json!({
             "dir": shown_dir(&dir),
             "examples": examples.len(),
             "valid": failures.is_empty(),
             "failures": failures,
+            "skipped": skipped,
         });
         let failed = !failures.is_empty();
         return crate::output::emit(&crate::output::Answer::new(text, document).failed_if(failed));
@@ -130,6 +172,7 @@ pub fn run(args: ExamplesArgs) -> Result<()> {
                     "scene": dir.join(&e.scene).to_string_lossy().replace('\\', "/"),
                     "topic": e.topic,
                     "purpose": e.purpose,
+                    "packages": e.packages,
                 })
             })
             .collect();
@@ -246,10 +289,32 @@ fn scenes_on_disk(dir: &Path) -> Vec<String> {
     out
 }
 
-/// What is wrong with the index and its scenes, one line each; empty when
-/// nothing is.
-fn check(dir: &Path, examples: &[Example], schemas: &[String]) -> Vec<String> {
+/// The packages an example names that `built` (each package of this
+/// flint's tree, and whether the binary has it) lacks, and those it names
+/// that no package is.
+fn missing_packages(e: &Example, built: &[(String, bool)]) -> (Vec<String>, Vec<String>) {
+    let mut missing = Vec::new();
+    let mut unknown = Vec::new();
+    for p in &e.packages {
+        match built.iter().find(|(name, _)| name == p) {
+            Some((_, true)) => {}
+            Some((_, false)) => missing.push(p.clone()),
+            None => unknown.push(p.clone()),
+        }
+    }
+    (missing, unknown)
+}
+
+/// What is wrong with the index and its scenes, one line each, and the
+/// examples passed over because this flint lacks a package they name.
+fn check(
+    dir: &Path,
+    examples: &[Example],
+    schemas: &[String],
+    built: &[(String, bool)],
+) -> (Vec<String>, Vec<Skipped>) {
     let mut failures = Vec::new();
+    let mut skipped = Vec::new();
     let mut indexed = BTreeSet::new();
     for e in examples {
         if !indexed.insert(e.scene.as_str()) {
@@ -257,6 +322,17 @@ fn check(dir: &Path, examples: &[Example], schemas: &[String]) -> Vec<String> {
         }
         if e.purpose.trim().is_empty() || e.topic.trim().is_empty() {
             failures.push(format!("{}: needs a topic and a purpose", e.scene));
+        }
+        let (_, unknown) = missing_packages(e, built);
+        for p in unknown {
+            let names = built.iter().map(|(n, _)| n.as_str());
+            let hint = flint_core::diagnostic::did_you_mean(&p, names)
+                .map(|h| format!(" ({h})"))
+                .unwrap_or_default();
+            failures.push(format!(
+                "{}: names the package `{p}`, which no package manifest is{hint}",
+                e.scene
+            ));
         }
     }
     for scene in scenes_on_disk(dir) {
@@ -270,6 +346,14 @@ fn check(dir: &Path, examples: &[Example], schemas: &[String]) -> Vec<String> {
         let path = dir.join(&e.scene);
         if !path.is_file() {
             failures.push(format!("{}: in {INDEX_FILE} but not on disk", e.scene));
+            continue;
+        }
+        let (missing, _) = missing_packages(e, built);
+        if !missing.is_empty() {
+            skipped.push(Skipped {
+                scene: e.scene.clone(),
+                missing,
+            });
             continue;
         }
         let scene = path.to_string_lossy().replace('\\', "/");
@@ -294,7 +378,7 @@ fn check(dir: &Path, examples: &[Example], schemas: &[String]) -> Vec<String> {
             }
         }
     }
-    failures
+    (failures, skipped)
 }
 
 #[cfg(test)]
@@ -306,6 +390,7 @@ mod tests {
             scene: scene.into(),
             topic: topic.into(),
             purpose: format!("{scene}'s purpose"),
+            packages: Vec::new(),
         }
     }
 
@@ -354,6 +439,66 @@ mod tests {
         }
         assert_eq!(scenes_on_disk(&dir), ["a.scene.toml", "film/b.scene.toml"]);
         assert_eq!(shown_dir(Path::new("")), ".");
+    }
+
+    /// A flint built without a package an example names passes over it by
+    /// name (#1336), and a name no manifest has is a failure with a hint.
+    #[test]
+    fn an_example_whose_package_is_out_is_passed_over_by_name() {
+        let dir = std::env::temp_dir().join(format!("flint-examples-pkgs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for scene in ["grove.scene.toml", "rhythm.scene.toml", "typo.scene.toml"] {
+            // Not a scene at all: a skipped example is never loaded
+            std::fs::write(dir.join(scene), "not toml [").unwrap();
+        }
+        let mut grove = example("grove.scene.toml", "living");
+        grove.packages = vec!["living".into()];
+        let mut rhythm = example("rhythm.scene.toml", "music");
+        rhythm.packages = vec!["music".into(), "rhythm".into()];
+        let mut typo = example("typo.scene.toml", "living");
+        typo.packages = vec!["livng".into()];
+        let built = [
+            ("engine".to_string(), true),
+            ("living".to_string(), false),
+            ("music".to_string(), true),
+            ("rhythm".to_string(), false),
+        ];
+        let (failures, skipped) = check(&dir, &[grove, rhythm, typo], &[], &built);
+        assert_eq!(
+            skipped,
+            [
+                Skipped {
+                    scene: "grove.scene.toml".into(),
+                    missing: vec!["living".into()]
+                },
+                Skipped {
+                    scene: "rhythm.scene.toml".into(),
+                    missing: vec!["rhythm".into()]
+                },
+            ]
+        );
+        assert_eq!(
+            skipped[0].to_string(),
+            "grove.scene.toml: needs the living package, which this flint was built without"
+        );
+        assert!(
+            failures.iter().any(|f| f
+                == "typo.scene.toml: names the package `livng`, which no package manifest is \
+                    (did you mean `living`?)"),
+            "{failures:#?}"
+        );
+        // The skipped ones are never loaded; the typo's scene is
+        assert!(
+            failures.iter().all(|f| !f.starts_with(&format!(
+                "{}",
+                dir.join("grove.scene.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ))),
+            "{failures:#?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

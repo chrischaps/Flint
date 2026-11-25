@@ -155,6 +155,32 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/docs-check.py --flint target/debug/flint
 
+  # The package matrix (#1336, epic #1328): flint-player and flint-cli built
+  # with no package, the standard set alone (what a game listing none of the
+  # feature packages gets), each package alone and all of them, read from
+  # packages/*/package.toml. A package that compiles only when everything is
+  # on fails here, naming the configuration; so does a tree that links a
+  # crate of a package left out. Devices are off throughout, so no headers
+  # are installed. Every configuration shares the one target dir, and the
+  # run goes on past a failure, listing each.
+  # Run it locally with `bash scripts/package-check.sh --build`.
+  packages:
+    name: package matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: package-matrix
+          cache-on-failure: true
+
+      - name: scripts/package-check.sh --build
+        run: bash scripts/package-check.sh --build
+
   # The GPU tests and render goldens (#314) on WARP, the software DX12
   # adapter every Windows ships. A runner has no GPU, and these tests skip
   # without an adapter, so before this job they passed on every PR without
