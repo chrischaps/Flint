@@ -117,6 +117,11 @@ echo "ci: scripts/claude-md-check.py"
 echo "ci: flint-arch-analyzer --check-book"
 cargo run --locked -q -p flint-arch-analyzer -- --check-book
 
+# docs-check's package owner rule (#1535) on made-up pages: no binary needed,
+# so it runs here; the book itself is checked under --full and in CI
+echo "ci: scripts/docs-check.py --self-test"
+"$py" scripts/docs-check.py --self-test
+
 if [ "${1:-}" = "--full" ]; then
     echo "ci: cargo clippy --all-targets"
     cargo clippy --all-targets --keep-going
