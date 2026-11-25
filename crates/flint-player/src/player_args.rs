@@ -555,6 +555,15 @@ impl PlayerArgs {
         for warning in schema_dirs.dropped_warnings() {
             tracing::warn!(target: "load", "{warning}");
         }
+        // A package the project lists that this build left out (#1335):
+        // its scenes would play without it, so stop and name `flint build`
+        if let Some(unbuilt) = crate::packages::unbuilt(
+            &schema_dirs,
+            &crate::packages::this_binary(),
+            crate::packages::lacks,
+        ) {
+            return Err(unbuilt.into());
+        }
         if schema_dirs.dirs.is_empty() {
             // The log is stderr: stdout is what a command answers with (#710)
             tracing::warn!(target: "load", "No schemas directories found");

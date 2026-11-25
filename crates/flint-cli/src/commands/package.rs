@@ -127,6 +127,24 @@ fn built_text(read: &Packages, of: usize) -> String {
     out
 }
 
+/// Whether this flint lacks `feature`: one of the package features it
+/// can be built with, compiled out (#1333's `BUILT_FEATURES`).
+pub fn lacks(feature: &str) -> bool {
+    crate::commands::absent::BUILT_FEATURES
+        .iter()
+        .any(|(f, on)| *f == feature && !on)
+}
+
+/// The packages the project at `at` (a scene, or a project's flint.toml)
+/// lists that this flint was built without (#1335): what `flint render`
+/// refuses and `flint check` reports, naming `flint build`. `None` with no
+/// `[packages]` table, or schemas that don't resolve (that command says
+/// so itself).
+pub fn unbuilt_at(at: &Path, flags: &[String]) -> Option<flint_player::packages::Unbuilt> {
+    let dirs = flint_core::project::schema_dirs(Some(at), flags).ok()?;
+    flint_player::packages::unbuilt(&dirs, &flint_player::packages::this_binary(), lacks)
+}
+
 /// The engine's package folder for the working directory's project.
 /// The packages `[packages]` lets into the project the working directory
 /// is in (#1334), held to the engine the project's schemas come from: the
@@ -397,6 +415,53 @@ mod tests {
             text.trim_end().ends_with("7 packages in ") || text.contains("7 packages in "),
             "{text}"
         );
+    }
+
+    /// #1335's done-when, in whichever build runs it: a project listing
+    /// `living`, held to this flint. CI's headless job runs `package::` on
+    /// the build with no package, where it must name `flint build`.
+    #[test]
+    fn a_flint_without_a_listed_package_names_flint_build() {
+        let dir = std::env::temp_dir()
+            .join(format!("flint-unbuilt-{}", std::process::id()))
+            .join("game");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let schemas = flint_core::project::shown(&built_from().join("schemas"));
+        std::fs::write(
+            dir.join("flint.toml"),
+            format!(
+                "[project]
+schemas = [\"{schemas}\"]
+
+[packages]
+living = \"*\"
+"
+            ),
+        )
+        .unwrap();
+        let found = unbuilt_at(&dir.join("flint.toml"), &[]);
+        if cfg!(feature = "living") {
+            assert_eq!(found, None);
+        } else {
+            let found = found.expect("a flint without living lacks it");
+            assert!(found.packages.contains(&"living".to_string()), "{found:?}");
+            let said = found.to_string();
+            assert!(said.contains("without the `living`"), "{said}");
+            assert!(said.contains("run `flint build`"), "{said}");
+        }
+        // With no list there is nothing to hold the build to
+        std::fs::write(
+            dir.join("flint.toml"),
+            format!(
+                "[project]
+schemas = [\"{schemas}\"]
+"
+            ),
+        )
+        .unwrap();
+        assert_eq!(unbuilt_at(&dir.join("flint.toml"), &[]), None);
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 
     #[test]

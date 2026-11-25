@@ -99,7 +99,7 @@ commands = [
     "init", "entity", "scene", "query", "schema", "script", "edit",
     "validate", "check", "frame", "profile", "examples", "env", "bundle",
     "export", "goldens", "prefab", "play", "playtest", "capture", "render",
-    "dxc", "style", "package",
+    "dxc", "style", "package", "build",
     "asset import", "asset list", "asset info", "asset resolve", "asset where",
     # hidden aliases of `flint edit`
     "serve", "spline-edit", "preview", "terrain-edit",

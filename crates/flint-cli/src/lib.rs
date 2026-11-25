@@ -32,10 +32,10 @@ pub use extension::CliExtension;
 use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
-    asset, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples, export,
-    frame, gen, gen_preview, init, music, package, play, playtest, prefab, preview, profile, query,
-    render, render_goldens, scene, schema, script, spline_edit, style, terrain_edit, tex_edit,
-    validate,
+    asset, build, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples,
+    export, frame, gen, gen_preview, init, music, package, play, playtest, prefab, preview,
+    profile, query, render, render_goldens, scene, schema, script, spline_edit, style,
+    terrain_edit, tex_edit, validate,
 };
 use std::ffi::OsString;
 
@@ -170,6 +170,10 @@ enum Commands {
     #[command(subcommand)]
     Package(Box<package::PackageCommands>),
 
+    /// Build the project's flint-player and flint with the packages its
+    /// flint.toml lists (`--dry-run` prints the cargo command)
+    Build(Box<build::BuildArgs>),
+
     /// Play a scene with first-person controls and physics
     Play(Box<play::PlayArgs>),
 
@@ -225,6 +229,8 @@ enum Commands {
 /// (book: guides/player-extensions.md); flint-cli's `build.rs` reaches only
 /// flint-cli's own targets.
 pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCode {
+    // What `flint build` set aside last time (#1335), if it has stopped
+    flint_player::packages::sweep_set_aside();
     let argv: Vec<OsString> = std::env::args_os().collect();
     let mut added = match extension::Added::new(extensions, &Cli::command()) {
         Ok(added) => added,
@@ -378,6 +384,7 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Prefab(cmd) => prefab::run(*cmd),
         Commands::Asset(cmd) => asset::run(*cmd),
         Commands::Package(cmd) => package::run(*cmd),
+        Commands::Build(args) => build::run(*args),
         Commands::Edit(args) => edit_router::run(*args),
         Commands::SplineEdit(args) => spline_edit::run(*args),
         Commands::Preview(args) => preview::run(*args),

@@ -32,8 +32,8 @@ fn top_level_help_lists_the_general_tools_plus_music_and_goldens() {
         [
             "init", "entity", "scene", "query", "schema", "script", "edit", "validate", "check",
             "frame", "profile", "examples", "env", "bundle", "export", "music", "goldens",
-            "prefab", "asset", "package", "play", "playtest", "capture", "gen", "render", "dxc",
-            "style",
+            "prefab", "asset", "package", "build", "play", "playtest", "capture", "gen", "render",
+            "dxc", "style",
         ],
         "a new top-level command belongs here only if it is a general tool"
     );

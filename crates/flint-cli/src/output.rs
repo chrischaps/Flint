@@ -238,6 +238,23 @@ pub fn finish(result: anyhow::Result<()>) -> ExitCode {
             eprintln!("Error: {e}");
             ExitCode::from(crate::commands::absent::EXIT)
         }
+        // A package the project lists that this binary lacks (#1335):
+        // exit 2 too, naming `flint build`
+        Err(e)
+            if e.downcast_ref::<flint_player::packages::Unbuilt>()
+                .is_some() =>
+        {
+            if json() && !emitted() {
+                let mut doc = error_document(&e);
+                if let Some(u) = e.downcast_ref::<flint_player::packages::Unbuilt>() {
+                    doc["error"]["packages"] = json!(u.packages);
+                    doc["error"]["hint"] = json!(u.hint());
+                }
+                document(&doc);
+            }
+            eprintln!("Error: {e}");
+            ExitCode::from(crate::commands::absent::EXIT)
+        }
         Err(e) => {
             if json() && !emitted() {
                 document(&error_document(&e));

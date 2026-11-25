@@ -10,6 +10,7 @@ pub mod ai_costs;
 pub mod asset;
 pub mod asset_where;
 pub mod attach;
+pub mod build;
 pub mod bundle;
 #[cfg(feature = "rhythm")]
 pub mod calibrate;
