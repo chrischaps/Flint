@@ -580,6 +580,8 @@ pub fn resolve_scene(
     mode: ProcGenMode,
     mut sink: GpuSink<'_>,
 ) {
+    #[cfg(feature = "living")]
+    let living_left_out = core.leaves_out("living");
     let super::game_core::GameCore {
         scene_path,
         world,
@@ -595,8 +597,12 @@ pub fn resolve_scene(
     // hand once the time is known, which a load report doesn't hear
     let _span = flint_core::load_report::span(flint_core::load_report::Stage::Procgen, String::new);
     discover_specs(resolver, &sink.config.project, scene_path);
+    // A project whose `[packages]` leaves `living` out grows no props: each
+    // takes the plain path, a still model, as in a build without it (#1528)
     #[cfg(feature = "living")]
-    super::living_props::resolve(world, sink.config, resolver, living_props, &mut sink, mode);
+    if !living_left_out {
+        super::living_props::resolve(world, sink.config, resolver, living_props, &mut sink, mode);
+    }
     let requests = collect_requests(world, sink.config, resolver, &sink);
     if requests.is_empty() {
         return;

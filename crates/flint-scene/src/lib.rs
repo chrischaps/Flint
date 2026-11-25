@@ -24,7 +24,7 @@ pub use format::{
 };
 pub use loader::{
     load_failed, load_scene, load_scene_after, load_scene_diagnosed, load_scene_string,
-    load_scene_text, load_scene_text_diagnosed, reload_scene, reload_scene_string,
+    load_scene_text, load_scene_text_diagnosed, name_unlisted, reload_scene, reload_scene_string,
 };
 pub use patcher::{FieldHome, SceneDocument};
 pub use place::place_table_diagnostics;

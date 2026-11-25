@@ -623,9 +623,14 @@ impl PlayerApp {
     /// that fails keeps this one, so a scene never loads with none.
     pub fn set_schemas(
         &mut self,
-        registry: flint_schema::SchemaRegistry,
+        mut registry: flint_schema::SchemaRegistry,
         dirs: flint_core::project::SchemaDirs,
     ) {
+        // A registry the host read itself knows no `[packages]`: the
+        // directories' list says which packages are in (#1528)
+        if registry.packages().is_none() {
+            registry.set_packages(dirs.packages.clone());
+        }
         self.schemas.set(registry, &dirs.dirs);
         self.schema_dirs = dirs;
     }

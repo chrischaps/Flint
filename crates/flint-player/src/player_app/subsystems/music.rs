@@ -33,8 +33,18 @@ const KEYS: &[flint_runtime::DebugKey] = crate::music::rhythm::DEBUG_KEYS;
 const KEYS: &[flint_runtime::DebugKey] = &[];
 
 /// The subsystem for the scene being entered, if it has a `music_session`.
+/// In a project whose `[packages]` leaves `music` out, none: a scene with a
+/// session hears so once, naming the line to add (#1528).
 #[cfg(feature = "music")]
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+    if let Some(in_use) = ctx.leaves_out("music") {
+        if let Some(line) =
+            crate::player_app::missing_features::music_left_out_line(in_use, ctx.world)
+        {
+            tracing::warn!(target: "load", "{line}");
+        }
+        return None;
+    }
     crate::music::for_scene(ctx)
 }
 

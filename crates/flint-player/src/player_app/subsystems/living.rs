@@ -70,9 +70,20 @@ const KEYS: &[flint_runtime::DebugKey] = &A_B;
 const KEYS: &[flint_runtime::DebugKey] = &[];
 
 /// The subsystem for the scene being entered, if it has living props or
-/// wooze; in a capture, the grove posed at once (`ctx.capture`, #1252).
+/// wooze; in a capture, the grove posed at once (`ctx.capture`, #1252). In
+/// a project whose `[packages]` leaves `living` out, none: a scene that
+/// uses it hears so once, naming the line to add (#1528).
 #[cfg(feature = "living")]
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+    if let Some(in_use) = ctx.leaves_out("living") {
+        let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
+        if let Some(line) = crate::player_app::missing_features::living_left_out_line(
+            in_use, ctx.world, ctx.tables, grass,
+        ) {
+            tracing::warn!(target: "load", "{line}");
+        }
+        return None;
+    }
     debug_assert_eq!(
         POLICY,
         Some(crate::player_app::living_subsystem::LivingSubsystem::NAME)

@@ -156,11 +156,13 @@ impl PlayerApp {
     /// (#218). The drain in `living_tuning.rs` mirrors the grove into it.
     #[cfg(all(feature = "debug-hud", feature = "living"))]
     pub(super) fn create_living_debug_panel(&mut self) {
-        if self
-            .core
-            .world
-            .entities_with_component(flint_living::components::LIVING_PROP)
-            .is_empty()
+        // Nor in a project whose `[packages]` leaves `living` out (#1528)
+        if self.core.leaves_out("living")
+            || self
+                .core
+                .world
+                .entities_with_component(flint_living::components::LIVING_PROP)
+                .is_empty()
         {
             return;
         }
@@ -207,7 +209,9 @@ impl PlayerApp {
     /// its entity.
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_component_panels(&mut self) {
-        let registry = self.schemas.held_or_read(&self.schema_dirs.dirs);
+        let registry = self
+            .schemas
+            .held_or_read(&self.schema_dirs.dirs, self.schema_dirs.packages.as_ref());
         let mut marked: Vec<_> = registry
             .components()
             .into_iter()

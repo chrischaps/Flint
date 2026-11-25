@@ -13,6 +13,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use flint_core::package::InUse;
 use flint_core::project::{AssetKind, Project};
 use flint_ecs::FlintWorld;
 use flint_terrain::GrassConfig;
@@ -89,6 +90,63 @@ pub(crate) fn living_line(
     })
 }
 
+/// The line for a scene whose `uses` are the parts of `package`, in a
+/// project whose `[packages]` leaves it out (#1528): the build has the
+/// package, the game doesn't, so the player runs none of it, as `flint
+/// check` calls each part `unlisted-package`. `None` when the scene uses
+/// none of it.
+pub(crate) fn left_out_line(
+    in_use: &InUse,
+    package: &str,
+    uses: &[&str],
+    and_so: &str,
+) -> Option<String> {
+    (!uses.is_empty()).then(|| {
+        format!(
+            "[{package}] [packages] in flint.toml leaves out `{package}`: the scene's {} {and_so} \
+             ({})",
+            uses.join(", "),
+            in_use.hint_for(package)
+        )
+    })
+}
+
+/// [`left_out_line`] of living props: what [`living_uses`] finds stands
+/// still.
+#[cfg_attr(not(feature = "living"), allow(dead_code))]
+pub(crate) fn living_left_out_line(
+    in_use: &InUse,
+    world: &FlintWorld,
+    tables: &toml::Table,
+    grass: Option<&GrassConfig>,
+) -> Option<String> {
+    left_out_line(
+        in_use,
+        "living",
+        &living_uses(world, tables, grass),
+        "stand still",
+    )
+}
+
+/// [`left_out_line`] of the music: a `music_session` that doesn't play.
+#[cfg_attr(not(feature = "music"), allow(dead_code))]
+pub(crate) fn music_left_out_line(in_use: &InUse, world: &FlintWorld) -> Option<String> {
+    let uses: &[&str] = if world
+        .entities_with_component(comp::MUSIC_SESSION)
+        .is_empty()
+    {
+        &[]
+    } else {
+        &["music_session"]
+    };
+    left_out_line(
+        in_use,
+        "music",
+        uses,
+        "doesn't play, and music_beat() reads -1",
+    )
+}
+
 /// The names in `world` (`model.asset`, a material's or sprite's
 /// `texture`) that a spec the scene can see would have made, in name order.
 /// A spec is named by its `[meta] name`, as flint-procgen indexes it, and
@@ -151,6 +209,10 @@ pub(crate) fn procgen_line(
         )
     })
 }
+
+#[cfg(test)]
+#[path = "left_out_tests.rs"]
+mod left_out_tests;
 
 #[cfg(test)]
 mod tests {

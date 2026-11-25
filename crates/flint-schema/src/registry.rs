@@ -9,6 +9,7 @@ use crate::component::{
 };
 use crate::lint::SchemaKind;
 use flint_core::diagnostic::Diagnostic;
+use flint_core::package::InUse;
 use flint_core::project::SchemaDirs;
 use flint_core::vfs;
 use flint_core::{FlintError, Result};
@@ -237,6 +238,10 @@ pub struct SchemaRegistry {
     /// What [`crate::lint`] found in each component and scene-table file
     /// loaded, in load order.
     lints: Vec<Diagnostic>,
+    /// The packages the project's `[packages]` let in when these schemas
+    /// were read (#1334), so a load names a left-out package's component
+    /// as `flint check` does (#1528). `None`: every package is in.
+    packages: Option<InUse>,
 }
 
 impl SchemaRegistry {
@@ -256,7 +261,24 @@ impl SchemaRegistry {
     /// and an empty list, for the caller to remark on.
     pub fn resolve(scene: Option<&Path>, flags: &[impl AsRef<Path>]) -> Result<(Self, SchemaDirs)> {
         let dirs = flint_core::project::schema_dirs(scene, flags)?;
-        Ok((Self::load_from_directories(&dirs.dirs)?, dirs))
+        let mut registry = Self::load_from_directories(&dirs.dirs)?;
+        registry.set_packages(dirs.packages.clone());
+        Ok((registry, dirs))
+    }
+
+    /// The packages `[packages]` let in when these schemas were read
+    /// (`SchemaDirs::packages`), which [`resolve`](Self::resolve) sets: a
+    /// scene load turns a left-out package's `unknown-component` into
+    /// `unlisted-package` by it (#1528). `None` (the default): every
+    /// package is in.
+    pub fn packages(&self) -> Option<&InUse> {
+        self.packages.as_ref()
+    }
+
+    /// Set what [`packages`](Self::packages) answers: a host that read the
+    /// directories itself hands over its `SchemaDirs::packages`.
+    pub fn set_packages(&mut self, packages: Option<InUse>) {
+        self.packages = packages;
     }
 
     /// Load schemas from multiple directories, merging them in order.

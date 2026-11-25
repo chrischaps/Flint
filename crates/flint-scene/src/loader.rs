@@ -151,10 +151,24 @@ fn load_diagnostics(
 ) -> Vec<Diagnostic> {
     let project = Project::for_scene(path);
     let mut found = diagnose_scene_in(scene, path, registry, &project);
+    name_unlisted(registry, &mut found);
     diagnostic::drop_allowed(&mut found, &project.allow);
     leave_user_style_components(&mut found, &project, path);
     crate::place_table_diagnostics(content, &mut found);
     found
+}
+
+/// Word each `unknown-component`, `unknown-table` and `unknown-archetype`
+/// of a package the project's `[packages]` leaves out as `flint check`
+/// does (#1528): `unlisted-package`, with the line to add, once a file and
+/// item. The registry knows the list it was read under
+/// ([`SchemaRegistry::packages`]); with none, every package is in and
+/// nothing changes. What a host that diagnoses a scene file itself (a
+/// chunk) calls on its list too.
+pub fn name_unlisted(registry: &SchemaRegistry, found: &mut Vec<Diagnostic>) {
+    if let Some(in_use) = registry.packages() {
+        in_use.name_unlisted(found);
+    }
 }
 
 /// Drop the `unknown-component` of each `<name>_style` that a user style
@@ -215,7 +229,8 @@ fn parse_scene(content: &str, path: Option<&Path>) -> Result<SceneFile> {
 
 /// What a load from a string logs: there is no file to name.
 fn log_string_diagnostics(scene_file: &SceneFile, registry: &SchemaRegistry) {
-    let found = diagnose_scene(scene_file, None, registry);
+    let mut found = diagnose_scene(scene_file, None, registry);
+    name_unlisted(registry, &mut found);
     diagnostic::log_summary(&format!("scene '{}'", scene_file.scene.name), &found);
 }
 
