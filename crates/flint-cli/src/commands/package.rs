@@ -91,7 +91,10 @@ fn shown(path: &Path) -> String {
         .as_deref()
         .and_then(|cwd| path.strip_prefix(cwd).ok())
         .unwrap_or(path);
-    flint_core::project::shown(rel)
+    match flint_core::project::shown(rel) {
+        here if here.is_empty() => ".".to_string(),
+        shown => shown,
+    }
 }
 
 fn answer(read: &Packages) -> Answer {

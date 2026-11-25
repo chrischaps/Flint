@@ -339,7 +339,7 @@ impl Packages {
         }
         out.packages
             .sort_by(|a, b| (a.tier, &a.name).cmp(&(b.tier, &b.name)));
-        out.problems.extend(across(&out.packages));
+        out.problems.extend(across(dir, &out.packages));
         out
     }
 
@@ -361,7 +361,7 @@ impl Packages {
 }
 
 /// The checks between manifests (see [`Packages::read`]).
-fn across(packages: &[Package]) -> Vec<Diagnostic> {
+fn across(dir: &Path, packages: &[Package]) -> Vec<Diagnostic> {
     let mut problems = Vec::new();
     let names: Vec<&str> = packages.iter().map(|p| p.name.as_str()).collect();
     let mut seen: BTreeMap<&str, &Path> = BTreeMap::new();
@@ -373,7 +373,7 @@ fn across(packages: &[Package]) -> Vec<Diagnostic> {
                     format!(
                         "the package `{}` is also named in {}: a name is one package",
                         p.name,
-                        crate::project::shown(first)
+                        near(dir, first)
                     ),
                 )
                 .file(&p.file)
@@ -436,7 +436,7 @@ fn across(packages: &[Package]) -> Vec<Diagnostic> {
                                     "the {} `{item}` is also provided by `{}` ({}): an item has one owner",
                                     kind.noun(),
                                     first.name,
-                                    crate::project::shown(&first.file)
+                                    near(dir, &first.file)
                                 ),
                             )
                             .file(&p.file)
@@ -458,6 +458,17 @@ fn a(type_str: &str) -> String {
         "a"
     };
     format!("{article} {type_str}")
+}
+
+/// Another manifest, as a message names it: from the package folder's
+/// own name down (`packages/procgen/package.toml`), wherever it is.
+fn near(dir: &Path, file: &Path) -> String {
+    let below = file.strip_prefix(dir).unwrap_or(file);
+    let named = match dir.file_name() {
+        Some(name) if below != file => Path::new(name).join(below),
+        _ => below.to_path_buf(),
+    };
+    crate::project::shown(&named)
 }
 
 /// `[package]`'s values, before the package is whole.
