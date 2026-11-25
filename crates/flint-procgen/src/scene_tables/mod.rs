@@ -11,7 +11,7 @@
 //!
 //! They lived in flint-scene until #686, as fields of `SceneFile`; the move
 //! changed where they are, not what they do. Their schemas are
-//! `schemas/scene/living.toml` and `schemas/scene/wooze.toml`.
+//! `packages/living/schemas/scene/living.toml` and `wooze.toml`.
 
 mod commit;
 mod wooze;

@@ -163,6 +163,14 @@ tasks.register<Copy>("copyGameAssets") {
         into("engine/schemas")
     }
 
+    // And the packages' (#1332): each package.toml, the kernel's among them,
+    // which marks engine/schemas as the engine's, and each package's schemas/
+    from(engineDir.resolve("packages")) {
+        include("*/package.toml")
+        include("*/schemas/**")
+        into("engine/packages")
+    }
+
     into(assetsDir)
 
     // Generate a manifest of all asset files for the Rust extractor.

@@ -22,10 +22,39 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// The engine's schema directories from the repository root: `schemas`,
+/// then each package's (#1332), as the resolver brings them.
+fn engine_dirs() -> Vec<String> {
+    let mut dirs = vec!["schemas".to_string()];
+    for (package, _) in flint_core::project::package_schema_dirs(&repo().join("schemas")) {
+        dirs.push(format!("packages/{package}/schemas"));
+    }
+    dirs
+}
+
+/// The engine's set: `schemas` and its packages'.
+fn engine_registry() -> SchemaRegistry {
+    let dirs: Vec<PathBuf> = engine_dirs().iter().map(|d| repo().join(d)).collect();
+    SchemaRegistry::load_from_directories(&dirs).unwrap()
+}
+
+/// Every `.toml` file of `kind` (`components`, `scene`) in the engine's
+/// directories.
+fn engine_files(kind: &str) -> Vec<(String, toml::Table)> {
+    engine_dirs()
+        .iter()
+        .flat_map(|dir| toml_files(&format!("{dir}/{kind}")))
+        .collect()
+}
+
 /// Every `.toml` directly under `dir` of the repository: `(name, parsed)`.
+/// A directory that isn't there has none.
 fn toml_files(dir: &str) -> Vec<(String, toml::Table)> {
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(repo().join(dir)).unwrap().flatten() {
+    let Ok(entries) = std::fs::read_dir(repo().join(dir)) else {
+        return out;
+    };
+    for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().is_some_and(|e| e == "toml") {
             let text = std::fs::read_to_string(&path).unwrap();
@@ -49,8 +78,9 @@ fn toml_files(dir: &str) -> Vec<(String, toml::Table)> {
 fn schemas_components_holds_only_components() {
     let mut wrong = Vec::new();
     let mut components = BTreeSet::new();
-    let component_dirs = ["schemas/components", "schemas/examples/components"];
-    for (file, doc) in component_dirs.iter().flat_map(|dir| toml_files(dir)) {
+    let mut files = engine_files("components");
+    files.extend(toml_files("schemas/examples/components"));
+    for (file, doc) in files {
         for (key, value) in &doc {
             if key != "component" {
                 wrong.push(format!("{file}: top-level `{key}` in a component file"));
@@ -69,7 +99,7 @@ fn schemas_components_holds_only_components() {
         }
     }
     let mut tables = BTreeSet::new();
-    for (file, doc) in toml_files("schemas/scene") {
+    for (file, doc) in engine_files("scene") {
         for (key, value) in &doc {
             if key != "table" {
                 wrong.push(format!("{file}: top-level `{key}` in a scene-table file"));
@@ -122,7 +152,7 @@ fn book_tables() -> BTreeSet<String> {
 /// fields (none is open: an open table checks nothing).
 #[test]
 fn the_registry_loads_the_engine_tables_clean() {
-    let registry = SchemaRegistry::load_from_directory(repo().join("schemas")).unwrap();
+    let registry = engine_registry();
     for table in registry.tables() {
         assert!(!table.is_open(), "`{}` declares no fields", table.name);
         assert!(table.description.is_some(), "`{}`", table.name);
@@ -137,7 +167,7 @@ fn the_registry_loads_the_engine_tables_clean() {
     // Every table a file under `scene/` declares, and nothing else (#928:
     // was a count, six, which the next table would have broken)
     let loaded: BTreeSet<String> = registry.tables().iter().map(|t| t.name.clone()).collect();
-    let declared: BTreeSet<String> = toml_files("schemas/scene")
+    let declared: BTreeSet<String> = engine_files("scene")
         .iter()
         .flat_map(|(_, doc)| doc.get("table").and_then(|t| t.as_table()))
         .flat_map(|t| t.keys().cloned())
@@ -223,7 +253,7 @@ const NOTHING_READS: &[&str] = &[];
 /// checks changed nothing for them; and nothing anywhere is an error.
 #[test]
 fn the_repository_scenes_fit_the_table_schemas() {
-    let registry = SchemaRegistry::load_from_directory(repo().join("schemas")).unwrap();
+    let registry = engine_registry();
     let mut problems = Vec::new();
     let mut checked = 0;
     for (file, doc) in scenes() {

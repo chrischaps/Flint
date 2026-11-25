@@ -363,7 +363,7 @@ Not checked by this pass: what only the reader of a table can know. `[post_proce
 
 ## Built-in Components
 
-Every component the engine reads has a schema in `schemas/components/`, and `flint schema <name>` prints it with each field's type, default and meaning. A test (`cargo test -p flint-schema --test engine_schemas`) keeps the two in step: every component constant in `flint_core::components` has a schema, and every schema is read by engine code. A few of them:
+Every component the engine reads has a schema in `schemas/components/`, or in its package's `packages/<name>/schemas/components/` ([above](#the-packages-schemas-come-with-the-engines)), and `flint schema <name>` prints it with each field's type, default and meaning. A test (`cargo test -p flint-schema --test engine_schemas`) keeps the two in step: every component constant in `flint_core::components` has a schema, and every schema is read by engine code. A few of them:
 
 ### Model and Light
 
@@ -813,6 +813,12 @@ cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
 
 A directory named by a flag or by the manifest that doesn't exist is an error naming the directory and where the name came from (`schema directory not found: nope (named by --schemas)`). See [Building a Game Project](../guides/building-a-game-project.md#multi-schema-layering).
 
+### The packages' schemas come with the engine's
+
+The engine's `schemas/` holds the kernel's components and those of the parts every game has. An optional package keeps its own beside its manifest, in `packages/<name>/schemas/`, laid out the same way (`components/`, `archetypes/`, `scene/`): `living_prop`, `shallow_wooze`, `[living]` and `[wooze]` are in `packages/living/schemas/`, and `music_session` is in `packages/music/schemas/`.
+
+You never list them. Whichever way the list was given (flags, the manifest or discovery), a schema directory with the engine's package manifests beside it (`packages/engine/package.toml`, as in a Flint checkout or a game's `engine/` subtree) brings each package's `schemas/` in after it, in package-name order. So `schemas = ["engine/schemas", "schemas"]` loads `engine/schemas`, `engine/packages/living/schemas`, `engine/packages/music/schemas` and then the game's `schemas`, and the game's layer still wins. `flint schema living_prop` names the file it came from. A bundle packs these folders and lists them, an Android build copies them, and the web player has them compiled in.
+
 ### Game Project Directory Structure
 
 Game projects live in their own repositories with the engine included as a git subtree:
@@ -822,6 +828,7 @@ my_game/                    (standalone git repo)
 ├── engine/                 (git subtree ← Flint repo)
 │   ├── crates/
 │   ├── schemas/            (engine schemas)
+│   ├── packages/           (package manifests; each optional package's schemas/)
 │   └── Cargo.toml
 ├── schemas/
 │   ├── components/

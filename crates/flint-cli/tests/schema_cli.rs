@@ -44,10 +44,21 @@ fn json(out: &Output) -> serde_json::Value {
     serde_json::from_str(&stdout(out)).unwrap_or_else(|e| panic!("{e}\n{}", stdout(out)))
 }
 
-/// The names under `[<header>.<name>]` in every file of the two layers.
+/// The directories the root `flint.toml` resolves to: the engine's
+/// `schemas`, each package's (#1332, brought by it), the examples' layer.
+fn layers() -> Vec<String> {
+    let mut dirs = vec!["schemas".to_string()];
+    for (package, _) in flint_core::project::package_schema_dirs(&repo().join("schemas")) {
+        dirs.push(format!("packages/{package}/schemas"));
+    }
+    dirs.push("schemas/examples".to_string());
+    dirs
+}
+
+/// The names under `[<header>.<name>]` in every file of the layers.
 fn declared(kind: &str, header: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
-    for dir in ["schemas", "schemas/examples"] {
+    for dir in layers() {
         let Ok(entries) = std::fs::read_dir(repo().join(dir).join(kind)) else {
             continue;
         };
@@ -74,7 +85,7 @@ fn declared(kind: &str, header: &str) -> BTreeSet<String> {
 /// (#1285).
 fn declared_fields(name: &str) -> Vec<String> {
     let mut fields = BTreeSet::new();
-    for dir in ["schemas", "schemas/examples"] {
+    for dir in layers() {
         let Ok(entries) = std::fs::read_dir(repo().join(dir).join("components")) else {
             continue;
         };
@@ -114,10 +125,7 @@ fn list_json_names_every_component_and_archetype() {
     assert!(components.len() > 40 && archetypes.len() > 5);
     assert_eq!(names_in(&list, "components"), components);
     assert_eq!(names_in(&list, "archetypes"), archetypes);
-    assert_eq!(
-        list["schema_dirs"],
-        serde_json::json!(["schemas", "schemas/examples"])
-    );
+    assert_eq!(list["schema_dirs"], serde_json::json!(layers()));
     // `--format json` is the same flag
     assert_eq!(
         list,

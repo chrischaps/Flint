@@ -79,6 +79,23 @@ impl Layers {
         games.sort();
         assert!(!games.is_empty(), "no game kept in the checkout");
         stacks.extend(games.iter().filter_map(|g| manifest_stack(g)));
+        // An engine schema directory brings its packages' after it, as the
+        // resolver loads them (#1332)
+        for stack in &mut stacks {
+            *stack = stack
+                .iter()
+                .flat_map(|layer| {
+                    let engine = Path::new(layer).parent().unwrap_or(Path::new(""));
+                    let packages = flint_core::project::package_schema_dirs(&root.join(layer))
+                        .into_iter()
+                        .map(move |(name, _)| {
+                            let dir = engine.join("packages").join(name).join("schemas");
+                            normalize(&dir.to_string_lossy().replace('\\', "/"))
+                        });
+                    std::iter::once(layer.clone()).chain(packages)
+                })
+                .collect();
+        }
 
         let mut layers: Vec<String> = stacks.iter().flatten().cloned().collect();
         layers.sort();
@@ -501,8 +518,11 @@ fn a_constraint_asking_an_archetype_for_a_component_it_lacks_is_found() {
         "one mistake, one problem a stack: {found:#?}"
     );
     assert!(found.iter().all(|l| l.ends_with(said)), "{found:#?}");
+    // The engine's set is `schemas` and the packages' it brings (#1332)
     assert!(
-        found[0].starts_with("schemas + schemas/examples"),
+        found[0].starts_with(
+            "schemas + packages/living/schemas + packages/music/schemas + schemas/examples"
+        ),
         "{found:#?}"
     );
 }
