@@ -10,7 +10,7 @@ Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The pri
 
 ```bash
 cargo build                    # Debug build (--release for release)
-cargo build -p flint-cli --no-default-features  # Headless CLI: no sound card, gamepads or file dialogs (#221)
+cargo build -p flint-cli --no-default-features  # Headless CLI: no devices or packages (#221, #1333)
 cargo run --bin flint -- <cmd> # Run CLI
 cargo run --bin flint-player -- flint-examples/phase4_runtime.scene.toml  # Standalone player
 cargo test                     # Run all tests (-p flint-core for one crate)

@@ -39,6 +39,12 @@ pub struct ListArgs {
     /// `packages`, else the tree this binary was built from
     #[arg(long, value_name = "DIR")]
     pub dir: Option<PathBuf>,
+
+    /// Only the packages this flint was compiled with: each whose `[build]
+    /// features` the binary has (the kernel's always). A command of one
+    /// left out exits 2 naming it
+    #[arg(long)]
+    pub built: bool,
 }
 
 pub fn run(cmd: PackageCommands) -> Result<()> {
@@ -54,8 +60,65 @@ fn list(args: ListArgs) -> Result<()> {
     };
     // Absolute, so each file prints from the working directory
     let dir = std::path::absolute(&dir).unwrap_or(dir);
-    let read = Packages::read(&dir);
-    output::emit(&answer(&read))
+    let mut read = Packages::read(&dir);
+    if !args.built {
+        return output::emit(&answer(&read));
+    }
+    let of = read.packages.len();
+    read.packages.retain(is_built);
+    let mut answer = answer(&read);
+    answer.text = built_text(&read, of);
+    answer.json["built"] = json!(true);
+    answer.json["features"] = json!(built_features());
+    output::emit(&answer)
+}
+
+/// Whether this binary was built with `p`: every feature its manifest
+/// builds it with is on (#1333).
+fn is_built(p: &Package) -> bool {
+    p.features
+        .iter()
+        .all(|f| crate::commands::absent::built_with(f))
+}
+
+/// The Cargo features this binary was compiled with, of those a package
+/// can name.
+fn built_features() -> Vec<&'static str> {
+    crate::commands::absent::BUILT_FEATURES
+        .iter()
+        .filter(|(_, on)| *on)
+        .map(|(f, _)| *f)
+        .collect()
+}
+
+/// `--built`'s text: one line a package, then what it was built with.
+fn built_text(read: &Packages, of: usize) -> String {
+    let width = read
+        .packages
+        .iter()
+        .map(|p| p.name.len())
+        .max()
+        .unwrap_or(0);
+    let mut out = String::new();
+    for p in &read.packages {
+        out.push_str(&format!(
+            "{:width$}  {:<8}  {}  {}\n",
+            p.name,
+            p.tier.as_str(),
+            p.version,
+            p.summary
+        ));
+    }
+    out.push_str(&format!(
+        "{} of {} packages built into this flint (features: {})\n",
+        read.packages.len(),
+        of,
+        built_features().join(", ")
+    ));
+    for d in &read.problems {
+        out.push_str(&format!("  {}\n", d.one_line()));
+    }
+    out
 }
 
 /// The engine's package folder for the working directory's project.

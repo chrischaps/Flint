@@ -26,7 +26,9 @@ use anyhow::{anyhow, Context, Result};
 use flint_core::components as comp;
 use flint_core::load_report;
 use flint_core::Vec3;
-use flint_player::{ExpressionTimeline, GpuSink, HeadlessAnimation, HeadlessGame, ScriptLook};
+#[cfg(feature = "procgen")]
+use flint_player::GpuSink;
+use flint_player::{ExpressionTimeline, HeadlessAnimation, HeadlessGame, ScriptLook};
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{
     Camera, DebugMode, FrameInputs, HeadlessContext, RendererConfig, SceneRenderer,
@@ -288,6 +290,11 @@ pub(super) fn render(
     if let Some(grid) = grid.as_ref().filter(|g| g.wooze_knob().is_some()) {
         check_wooze_sweep(args, grid)?;
     }
+    // The refine asks a model through the cost meter: the ai package's (#1333)
+    #[cfg(not(feature = "ai"))]
+    if args.refine.ai_refine {
+        return Err(super::absent::missing("flint render --ai-refine", "ai"));
+    }
     if let Some(dt) = args.seq.frame_dt {
         if !(dt.is_finite() && dt > 0.0) {
             anyhow::bail!("--frame-dt must be a positive number of seconds");
@@ -392,7 +399,13 @@ pub(super) fn render(
     // An echoes column with nothing to echo would draw the same picture
     // in every column (#531)
     if let Some(grid) = grid.as_ref().filter(|g| g.is_living()) {
-        if !flint_player::living_wanted(&world) {
+        #[cfg(not(feature = "living"))]
+        return Err(super::absent::missing(
+            format!("flint render --sweep {}", grid.name()),
+            "living",
+        ));
+        #[cfg(feature = "living")]
+        if !living_wanted(&world) {
             anyhow::bail!(
                 "--sweep {}: this scene has no living props, so [living] echoes draws \
                  nothing (a living prop is a model with a living_prop component whose \
@@ -445,7 +458,7 @@ pub(super) fn render(
         || args.clock.scripts
         || args.clock.expression_timeline.is_some()
         || report_json
-        || flint_player::living_wanted(&world)
+        || living_wanted(&world)
         || scene_file.tables.contains_key("wooze");
     if timed && !meshes.is_empty() {
         anyhow::bail!(
@@ -508,6 +521,20 @@ fn first_capture_done() -> Option<load_report::LoadReport> {
     Some(report)
 }
 
+/// Whether the scene grows living props, as the player's load asks.
+#[cfg(feature = "living")]
+fn living_wanted(world: &flint_ecs::FlintWorld) -> bool {
+    flint_player::living_wanted(world)
+}
+
+/// Built without the living package (#1333): the player grows none, so a
+/// `living_prop` whose model is a `[living]` spec draws nothing (its load
+/// warns once).
+#[cfg(not(feature = "living"))]
+fn living_wanted(_: &flint_ecs::FlintWorld) -> bool {
+    false
+}
+
 /// One still frame, read back: under `config` when given (a sweep column,
 /// a refine candidate), each drawn as a first frame so no column inherits
 /// the last one's ASCII history (#277's hysteresis would carry glyphs
@@ -538,6 +565,7 @@ fn draw_pixels(
 }
 
 /// [`draw_pixels`] as an image.
+#[cfg(feature = "ai")]
 fn draw_frame(
     ctx: &HeadlessContext,
     renderer: &mut SceneRenderer,

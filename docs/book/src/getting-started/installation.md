@@ -49,10 +49,10 @@ Other distributions need the same things under their own names (a C toolchain, p
 A machine that only renders, generates or packs (a CI runner, a cloud agent, a build server) can leave the devices out:
 
 ```bash
-cargo build -p flint-cli --no-default-features
+cargo build -p flint-cli --no-default-features --features packages
 ```
 
-Every command is still there. `flint render`, `gen`, `bundle`, `validate`, `music render`, `query` and the rest work exactly as in the full build, and their output is byte for byte the same, but nothing links ALSA or libudev, so a Linux box needs only `build-essential` and `pkg-config` from the list above, and about sixty crates (the audio and gamepad backends and the dialogs' async D-Bus stack) aren't built at all. What leaves is each device:
+Every command is still there. `flint render`, `gen`, `bundle`, `validate`, `music render`, `query` and the rest work exactly as in the full build, and their output is byte for byte the same, but nothing links ALSA or libudev, so a Linux box needs only `build-essential` and `pkg-config` from the list above, and about sixty crates (the audio and gamepad backends and the dialogs' async D-Bus stack) aren't built at all. `packages` puts back the engine's packages, which are default features too: plain `--no-default-features` leaves out the music, rhythm, living-props and AI crates as well, and their commands then exit 2 naming the package ([Which packages a `flint` has](../cli-reference/overview.md#which-packages-a-flint-has)). What leaves is each device:
 
 | Feature | Off means |
 |---------|-----------|
@@ -60,7 +60,7 @@ Every command is still there. `flint render`, `gen`, `bundle`, `validate`, `musi
 | `gamepad` | No pads are seen and a script's `rumble()` does nothing; the rumble spike says the build left them out. Keyboard, mouse, touch and `--input-script` still work. |
 | `dialogs` | The editors' Save As, Export and Browse buttons open no dialog and say why on stderr. |
 
-Put back any one of them with `--features`, for example `--no-default-features --features audio`. `bash scripts/headless-check.sh` checks that no device crate has crept back into the headless build's dependency tree, and CI builds it on a Linux runner with the ALSA and libudev headers removed.
+Put back any one of them with `--features`, for example `--no-default-features --features packages,audio`. `bash scripts/headless-check.sh` checks that no device crate has crept back into the headless build's dependency tree, and no package's crate into the one built with no features at all, and CI builds both on a Linux runner with the ALSA and libudev headers removed.
 
 ### To render without a GPU
 

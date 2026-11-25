@@ -19,7 +19,9 @@ cargo build                    # Debug build
 cargo build --release          # Release build
 cargo build -p flint-cli --no-default-features  # Headless CLI: no sound card, gamepads or file dialogs,
                                #   so no ALSA/libudev headers on Linux (#221; features audio/gamepad/dialogs;
-                               #   `bash scripts/headless-check.sh [--build]` keeps device crates out of its tree)
+                               #   `bash scripts/headless-check.sh [--build]` keeps device crates out of its tree),
+                               #   and no package either (#1333: living/music/rhythm/procgen/ai, or `packages`
+                               #   for all five; CI's headless job checks the book with `--features packages`)
 cargo run --bin flint -- <cmd> # Run CLI
 cargo run --bin flint -- play flint-examples/phase4_runtime.scene.toml  # Play a scene
 cargo run --bin flint-player -- flint-examples/phase4_runtime.scene.toml  # Standalone player (schemas: the root flint.toml)

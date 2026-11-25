@@ -3,8 +3,9 @@
 # writer builds on procgen's generators, so procgen comes with it.
 #
 # Its flags on the procgen and kernel commands (`gen --ai-*`, `--max-cost`,
-# `--cost-report`, `render --ai-refine`) are its too; #1333 gives flint-cli
-# the `ai` feature that gates them.
+# `--cost-report`, `--style-guide`, `render --ai-refine`, `asset resolve
+# --strategy ai_*`) are its too: flint-cli's `ai` feature (#1333) gates
+# them, and without it each exits 2 naming this package.
 
 [package]
 name = "ai"

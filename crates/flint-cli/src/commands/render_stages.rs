@@ -154,6 +154,7 @@ pub(super) fn run_stages(
 
     // --ai-refine (#357) at a moment: each candidate is the one stage redrawn
     // at that moment under the candidate's look, its clocks never rewound
+    #[cfg(feature = "ai")]
     if args.refine.ai_refine {
         let look = look.expect("clap requires --look with --ai-refine");
         let reference = reference.expect("clap requires --reference with --ai-refine");
@@ -293,9 +294,7 @@ pub(super) fn run_stages(
                         let state = stage.game.expression().get("state")?.clone();
                         state.into_string().ok()
                     }),
-                    props: stage.game.living_props().map_or_else(Vec::new, |props| {
-                        render_report::props_report(props, stage.game.wooze())
-                    }),
+                    props: render_report::of_game::props(&stage.game),
                 });
             }
         }
@@ -599,15 +598,15 @@ pub(super) fn run_stages(
     }
 
     if report_json {
-        let field = stages[0].game.wooze().map(|(field, _)| field);
+        let zones = render_report::of_game::wooze_zones(&stages[0].game);
         let report = render_report::RenderReport {
             scene: scene_name,
             output: args.output.clone(),
             width,
             height,
             frame_step,
-            wooze_field: field.is_some(),
-            wooze_zones: field.map_or(0, |f| f.zones().len()),
+            wooze_field: zones.is_some(),
+            wooze_zones: zones.unwrap_or(0),
             sweep: grid.map(crate::commands::sweep::SweepGrid::name),
             frame_dump: args.measure.frame_dump.clone(),
             frame_capture: args.measure.frame_capture.clone(),
@@ -745,7 +744,20 @@ fn stage_sheet(
 
 /// Try every cell of a sweep that turns a wooze knob on a field of its own,
 /// before anything is loaded. A preset may be a file beside the scene (#249),
-/// which has to read.
+/// which has to read. A build without the living package runs no field,
+/// so it refuses the sweep, naming the package (#1333).
+#[cfg(not(feature = "living"))]
+pub(super) fn check_wooze_sweep(
+    _: &RenderArgs,
+    grid: &crate::commands::sweep::SweepGrid,
+) -> Result<()> {
+    Err(crate::commands::absent::missing(
+        format!("flint render --sweep {}", grid.name()),
+        "living",
+    ))
+}
+
+#[cfg(feature = "living")]
 pub(super) fn check_wooze_sweep(
     args: &RenderArgs,
     grid: &crate::commands::sweep::SweepGrid,
@@ -806,7 +818,7 @@ fn stage_warnings(
         return warnings;
     }
     // Scripts are a clock of their own, so with them running this says nothing
-    if stage.game.living_props().is_none() && !stage.scripted {
+    if render_report::of_game::count(&stage.game) == 0 && !stage.scripted {
         warnings.push("this scene has no living props, so only its other clocks move".to_string());
     }
     let with = |component: &str| named_with(stage.game.world(), component);
@@ -826,10 +838,7 @@ fn stage_warnings(
 
 /// The entities that asked to be living props and drew as still models.
 fn still_props(stage: &Stage) -> Vec<String> {
-    let mut living: Vec<flint_core::EntityId> = Vec::new();
-    if let Some(props) = stage.game.living_props() {
-        living.extend(props.props().iter().map(|prop| prop.entity()));
-    }
+    let living = render_report::of_game::entities(&stage.game);
     let world = stage.game.world();
     world
         .all_entities()
@@ -838,7 +847,7 @@ fn still_props(stage: &Stage) -> Vec<String> {
             !living.contains(&entity.id)
                 && world
                     .get_components(entity.id)
-                    .is_some_and(|comps| comps.get(flint_living::components::LIVING_PROP).is_some())
+                    .is_some_and(|comps| comps.get(crate::check::LIVING_PROP).is_some())
         })
         .map(|entity| entity.name)
         .collect()
@@ -911,10 +920,7 @@ fn preset_wooze_table(knobs: &flint_procgen::WoozeKnobs) -> toml::Table {
 
 /// `   N living props` for a sheet's subtitle, or nothing in a scene without.
 fn living_note(stages: &[Stage]) -> String {
-    let props = stages[0]
-        .game
-        .living_props()
-        .map_or(0, |props| props.props().len());
+    let props = render_report::of_game::count(&stages[0].game);
     if props > 0 {
         format!("   {props} living props")
     } else {
@@ -942,9 +948,7 @@ fn sheet_text(
             .iter()
             .zip(stages)
             .map(|(value, stage)| {
-                stage.game.living_props().map_or_else(String::new, |props| {
-                    render_report::read_note(knob, value.parse().ok(), props)
-                })
+                render_report::of_game::read_note(&stage.game, knob, value.parse().ok())
             })
             .collect();
     }
