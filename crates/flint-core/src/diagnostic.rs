@@ -143,6 +143,9 @@ pub mod codes {
     pub const SCENE_LOAD: &str = "scene-load";
     /// `flint.toml` does not read.
     pub const BAD_MANIFEST: &str = "bad-manifest";
+    /// A package's `package.toml` does not read, or claims what another
+    /// package's does (ADR 0136 decision 8, #1331).
+    pub const BAD_PACKAGE: &str = "bad-package";
     /// A schema directory is missing, or a schema file does not read.
     pub const BAD_SCHEMAS: &str = "bad-schemas";
     /// A constraint file does not read, or a constraint's query does not
@@ -344,6 +347,11 @@ pub mod codes {
             "the scene parses and its load still fails",
         ),
         (BAD_MANIFEST, Severity::Error, "flint.toml does not read"),
+        (
+            BAD_PACKAGE,
+            Severity::Error,
+            "a package.toml does not read, or provides what another package does",
+        ),
         (
             BAD_SCHEMAS,
             Severity::Error,
@@ -791,6 +799,7 @@ pub const NOT_ALLOWABLE: &[&str] = &[
     codes::FILE_UNREADABLE,
     codes::SCENE_LOAD,
     codes::BAD_MANIFEST,
+    codes::BAD_PACKAGE,
     codes::BAD_PREFAB,
 ];
 
@@ -1032,7 +1041,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 56);
+        assert_eq!(seen.len(), 57);
     }
 
     /// A problem in a scene-level table names the table as its header is

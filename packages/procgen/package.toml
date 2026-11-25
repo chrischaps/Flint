@@ -1,0 +1,20 @@
+# Procedural generation at run time and from the CLI (ADR 0136 decision 7).
+# Standard: on unless a game writes `procgen = false`. A `model.asset` or a
+# texture that names a `*.procgen.toml` spec is made through it, so it owns
+# no component of its own.
+
+[package]
+name = "procgen"
+version = "0.1.0"
+tier = "standard"
+summary = "Models and textures made from procgen specs, at load and with flint gen"
+engine = "^0.1"
+
+[build]
+features = ["procgen"]
+
+[provides]
+crates = ["flint-procgen"]
+# `flint edit` on a `.procgen.toml` opens its previewers, the two hidden
+# aliases below
+commands = ["gen", "gen-preview", "tex-edit"]

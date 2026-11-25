@@ -1,0 +1,35 @@
+{
+  "about": "The shape of `flint package list --json` (#1331), held by json_cli.rs: the document's keys and types, each package's keys and types, and the packages by name and tier in the order listed. A change here is a change to what agents read.",
+  "document": {
+    "dir": "string",
+    "valid": "bool",
+    "packages": "array",
+    "problems": "array"
+  },
+  "package": {
+    "name": "string",
+    "tier": "string",
+    "version": "string",
+    "summary": "string",
+    "engine": "string|null",
+    "api": "string|null",
+    "requires": "object",
+    "features": "array",
+    "file": "string",
+    "crates": "array",
+    "components": "array",
+    "archetypes": "array",
+    "scene_tables": "array",
+    "script_modules": "array",
+    "commands": "array"
+  },
+  "packages": [
+    ["engine", "kernel"],
+    ["debug-hud", "standard"],
+    ["procgen", "standard"],
+    ["ai", "feature"],
+    ["living", "feature"],
+    ["music", "feature"],
+    ["rhythm", "feature"]
+  ]
+}

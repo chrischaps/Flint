@@ -43,7 +43,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
-  │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc
+  │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc, package
   ├── flint-asset-gen AI asset generation: providers (Flux, Meshy, ElevenLabs, Mock)
   ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
   ├── flint-procgen-ai AI-assisted procgen specs
@@ -135,7 +135,7 @@ A change a game can notice (a scene or schema key, a script function, a CLI flag
 
 ## Project Structure
 
-- `schemas/` -- engine schemas, `schemas/examples/` the examples' room-builder layer; `styles/` -- style guides and looks
+- `schemas/` -- engine schemas, `schemas/examples/` the examples' room-builder layer; `styles/` style guides, looks; `packages/` manifests
 - `flint-examples/` -- the examples, their own repository (#984): clone it here (gitignored). `tests/fixtures/scenes/` -- frozen scenes the goldens load
 - `showcase_game/` -- the example game; `docs/book/` the book, `docs/design/` notes, `docs/adr/` decisions
 - **Every byte here is in every game** (ADR 0122): `scripts/size-check.py` caps the tree. The root holds only manifests and docs

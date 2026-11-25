@@ -1,0 +1,15 @@
+# The summonable debug panels (F3/F4, ADR 0035). Standard: what a developer
+# wants on every build, and a shipped game drops with `debug-hud = false`.
+
+[package]
+name = "debug-hud"
+version = "0.1.0"
+tier = "standard"
+summary = "The F3/F4 debug panels and their shared widgets"
+engine = "^0.1"
+
+[build]
+features = ["debug-hud"]
+
+[provides]
+crates = ["flint-debug-ui"]

@@ -1,0 +1,20 @@
+# A scene's music (#745, #754): a `music_session`'s stems on their buses and
+# the beat its scripts read. A feature: off unless a game lists it. Until
+# Phase 3 the `music` script module is declared in flint-script, answering
+# -1 in a build without the package.
+
+[package]
+name = "music"
+version = "0.1.0"
+tier = "feature"
+summary = "Music sessions: stems on buses, the conductor and the beat"
+engine = "^0.1"
+
+[build]
+features = ["music"]
+
+[provides]
+crates = ["flint-music"]
+components = ["music_session"]
+script_modules = ["music"]
+commands = ["music validate", "music play", "music render"]
