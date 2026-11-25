@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The headers a full native build links on a Linux CI runner: sound, gamepads,
-# keyboard layouts and the file dialogs. ci.yml's clippy job and play.yml run
-# this, so the list lives in one place.
+# keyboard layouts and the file dialogs. ci.yml's clippy and package done-when
+# jobs and play.yml run this, so the list lives in one place.
 #
 # apt on a hosted runner sometimes can't resolve the package mirrors
 # ("Temporary failure resolving 'azure.archive.ubuntu.com'"), and left alone it

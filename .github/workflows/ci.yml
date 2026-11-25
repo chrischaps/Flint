@@ -183,6 +183,39 @@ jobs:
       - name: scripts/package-check.sh --build
         run: bash scripts/package-check.sh --build
 
+  # Epic #1328's done-when the way a game meets it (#1525): a flint with no
+  # package runs `flint init` (whose [packages] lists no feature package)
+  # and `flint build` there, and the binaries that build wrote are asked.
+  # The build's own `cargo tree` holds no left-out package's crate and the
+  # built flint has only the packages the plan put in; its `flint schema
+  # --list` has no living_prop, shallow_wooze or music_session; `flint
+  # check` on a scene with a living_prop exits 1 naming `living = "*"`; and
+  # with living listed, the built flint and player both say this build
+  # lacks it. A game's build keeps sound, gamepads and the file dialogs, so
+  # this job installs the headers the clippy job does. Its own job, so the
+  # real build runs beside the matrix's checks, not after them.
+  # Run it locally with `python3 scripts/package-done-when.py`.
+  package-done-when:
+    name: package done-when
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: package-done-when
+          cache-on-failure: true
+
+      - name: Build headers
+        timeout-minutes: 15
+        run: bash scripts/linux-build-deps.sh
+
+      - name: scripts/package-done-when.py
+        run: python3 scripts/package-done-when.py
+
   # The GPU tests and render goldens (#314) on WARP, the software DX12
   # adapter every Windows ships. A runner has no GPU, and these tests skip
   # without an adapter, so before this job they passed on every PR without
