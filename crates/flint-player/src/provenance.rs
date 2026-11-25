@@ -217,4 +217,32 @@ mod tests {
             assert_eq!(e.dirty, None, "the checkout moved on: dirty is unknown");
         }
     }
+
+    /// Cargo takes a `rerun-if-changed` path that is missing as changed, so
+    /// one such line rebuilds this crate and flint-cli on every build, a
+    /// change or none: 2 minutes a release build here, until #1338 (a
+    /// package's `schemas/archetypes`, which git keeps no folder for). The
+    /// build script's own record of what it asked for is `output`, beside
+    /// `OUT_DIR`.
+    #[test]
+    fn the_build_script_watches_only_paths_that_are_there() {
+        let output = Path::new(env!("OUT_DIR"))
+            .parent()
+            .expect("OUT_DIR is <build dir>/out")
+            .join("output");
+        let text = std::fs::read_to_string(&output).expect("the build script's output");
+        let watched: Vec<&str> = text
+            .lines()
+            .filter_map(|l| {
+                l.strip_prefix("cargo:rerun-if-changed=")
+                    .or_else(|| l.strip_prefix("cargo::rerun-if-changed="))
+            })
+            .collect();
+        assert!(!watched.is_empty(), "{} watches nothing", output.display());
+        let missing: Vec<&&str> = watched.iter().filter(|p| !Path::new(p).exists()).collect();
+        assert!(
+            missing.is_empty(),
+            "build.rs watches paths that aren't there, so every build rebuilds: {missing:?}"
+        );
+    }
 }
