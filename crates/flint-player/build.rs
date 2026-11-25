@@ -52,7 +52,14 @@ fn main() {
         let mut files: Vec<PathBuf> = Vec::new();
         for root in &roots {
             let dir = root.join(kind);
-            println!("cargo:rerun-if-changed={}", dir.display());
+            // Only a folder that is there: cargo takes a watched path that
+            // is missing as changed, so every build rebuilt this crate and
+            // flint-cli (#1338: a package has no `archetypes/`, and git
+            // keeps no empty folder). One made later is still seen: the
+            // whole `packages/` folder is watched above.
+            if dir.is_dir() {
+                println!("cargo:rerun-if-changed={}", dir.display());
+            }
             let mut here: Vec<PathBuf> = std::fs::read_dir(&dir)
                 .map(|rd| rd.filter_map(|e| Some(e.ok()?.path())).collect())
                 .unwrap_or_default();
@@ -118,6 +125,7 @@ fn main_thread_stack() {
 /// isn't tracked by the checkout around it (a `git archive` unpacked inside
 /// another worktree). Read again when HEAD moves: a commit, a checkout, a
 /// reset each write the HEAD reflog.
+#[allow(clippy::disallowed_methods)] // a build script, on the host: not the vfs's
 fn commit() {
     let here = Path::new(env!("CARGO_MANIFEST_DIR"));
     let git = |args: &[&str]| {
@@ -132,8 +140,14 @@ fn commit() {
     };
     if let Some(dir) = git(&["rev-parse", "--absolute-git-dir"]) {
         let dir = Path::new(&dir);
-        println!("cargo:rerun-if-changed={}", dir.join("HEAD").display());
-        println!("cargo:rerun-if-changed={}", dir.join("logs/HEAD").display());
+        // Each only if it is there (a missing one would rebuild every time,
+        // as a missing schema folder did, #1338): a checkout with
+        // `core.logAllRefUpdates = false` keeps no reflog
+        for file in [dir.join("HEAD"), dir.join("logs/HEAD")] {
+            if file.is_file() {
+                println!("cargo:rerun-if-changed={}", file.display());
+            }
+        }
     }
     let tracked = git(&["ls-files", "--error-unmatch", "--", "build.rs"]).is_some();
     let commit = git(&["rev-parse", "HEAD"])
