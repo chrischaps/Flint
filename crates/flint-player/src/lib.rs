@@ -12,6 +12,9 @@ pub mod load_args;
 pub mod logging;
 #[cfg(feature = "music")]
 mod music;
+// Whether this build has a project's packages, and `flint build`'s
+// set-aside binaries (#1335)
+pub mod packages;
 // `--skip-pass` / `--repeat-pass` (#1317)
 pub mod pass_knob_args;
 pub mod present_args;

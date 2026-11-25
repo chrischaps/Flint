@@ -176,6 +176,11 @@ impl RenderHost {
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
+    // A package the project lists that this flint left out (#1335): the
+    // render would draw the scene without it
+    if let Some(unbuilt) = super::package::unbuilt_at(Path::new(&args.scene), &args.debug.schemas) {
+        return Err(unbuilt.into());
+    }
     if args.out.watch {
         return super::render_watch::run(fold_script_time(args));
     }

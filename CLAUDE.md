@@ -43,7 +43,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
-  │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc, package
+  │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc, package, build
   ├── flint-asset-gen AI asset generation: providers (Flux, Meshy, ElevenLabs, Mock)
   ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
   ├── flint-procgen-ai AI-assisted procgen specs

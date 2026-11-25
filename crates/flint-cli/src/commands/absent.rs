@@ -73,8 +73,8 @@ impl std::fmt::Display for MissingPackage {
         write!(
             f,
             "{} needs the `{}` package, and this flint was built without it: \
-             build flint-cli with `--features {}` (`flint package list --built` \
-             names the packages this one has)",
+             list `{} = \"*\"` under [packages] in flint.toml and run `flint build` \
+             (`flint package list --built` names the packages this one has)",
             self.what, self.package, self.package
         )
     }
@@ -132,7 +132,11 @@ mod tests {
         let e = missing("flint music chart play", "rhythm");
         let text = e.to_string();
         assert!(text.starts_with("flint music chart play needs the `rhythm` package"));
-        assert!(text.contains("--features rhythm"), "{text}");
+        assert!(
+            text.contains("list `rhythm = \"*\"` under [packages]"),
+            "{text}"
+        );
+        assert!(text.contains("run `flint build`"), "{text}");
         assert!(e.downcast_ref::<MissingPackage>().is_some());
     }
 

@@ -33,11 +33,14 @@ Next steps:
 
 Run the git lines it printed. The `--squash` flag collapses engine history into one commit, keeping your game history clean. Full engine history stays in the Flint repo. Until the subtree is there, the manifest names a directory that doesn't exist, and every command says so (`schema directory not found: .../engine/schemas`).
 
-Then build the engine the game now carries, and put its `flint` on your PATH (or call it by path):
+Then build the engine the game now carries. The first time there is no `flint` yet, so Cargo builds one and runs its `build` command, from the engine folder:
 
 ```bash
-cargo build --release --manifest-path engine/Cargo.toml
+cd engine
+cargo run -p flint-cli -- build --release
 ```
+
+That builds the game's `flint-player` and `flint` with the packages its `flint.toml` lists, and prints where they landed: put that `flint` on your PATH (or call it by path). From then on, `flint build` in the project rebuilds the pair ([Building the game](#building-the-game-flint-build)).
 
 ### Trying a game before it has a repository
 
@@ -187,7 +190,45 @@ living = "*"
 (`--write` adds these to flint.toml)
 ```
 
-Under `--json` it is one document: `root`, `packages` (each with `name`, `tier`, `uses` as `file`, `kind`, `item`, `required_by`, and `set_to_false`), `lines` (what `--write` would add), `unused` (listed with a version, reached by nothing scanned) and `written`. The player itself still links what it was built with: `flint play` runs a left-out package's props if a scene has them. Building a player with only the listed packages in it comes next.
+Under `--json` it is one document: `root`, `packages` (each with `name`, `tier`, `uses` as `file`, `kind`, `item`, `required_by`, and `set_to_false`), `lines` (what `--write` would add), `unused` (listed with a version, reached by nothing scanned) and `written`. A player links what it was built with, whatever the list says; [`flint build`](#building-the-game-flint-build) builds one with the listed packages and nothing else.
+
+### Building the game: `flint build`
+
+`flint build` builds the project's `flint-player` and `flint` from its package list. It reads `[packages]` against the engine's manifests, turns each package that is in into the Cargo features its manifest names (on `flint-player`, `flint-cli`, or both: whichever has the feature), keeps each crate's build options (`audio`, `gamepad`, `frame-history`, `dialogs`), and runs `cargo build --no-default-features` with those features in the engine workspace. It prints the plan, the exact cargo command and where the binaries landed. `--dry-run` prints the same and builds nothing:
+
+```text
+$ flint build --dry-run
+project   C:/games/my_game
+engine    C:/games/my_game/engine (the project's engine/)
+packages  engine (the kernel), debug-hud (standard), procgen (listed)
+left out  ai, living, music, rhythm
+player    debug-hud, procgen + audio, gamepad, frame-history
+flint     procgen + audio, gamepad, dialogs
+
+cargo build -p flint-player -p flint-cli --bin flint-player --bin flint --no-default-features --features flint-player/debug-hud,flint-player/procgen,flint-player/audio,flint-player/gamepad,flint-player/frame-history,flint-cli/procgen,flint-cli/audio,flint-cli/gamepad,flint-cli/dialogs
+  in C:/games/my_game/engine
+
+Would write (--dry-run built nothing):
+  flint-player  C:/games/my_game/engine/target/debug/flint-player.exe
+  flint         C:/games/my_game/engine/target/debug/flint.exe
+```
+
+- `--release` builds optimized binaries, `--target <triple>` for another platform (the binaries land under `target/<triple>/`).
+- The engine is `--engine-path <dir>`, else the project's `engine/` subtree, else the engine its schemas name, else the tree this `flint` was built from.
+- With no `[packages]` table every package is in: the same binaries as a plain `cargo build`.
+- A project that drops `debug-hud` is built in two cargo runs, the player alone and then the CLI. `flint-cli` turns on the player's debug panels (its windows draw them), and one run would give them back to the player.
+- Under `--json` it is one document: `packages` (each with `name`, `tier` and `why`), `left_out`, `features`, `commands`, `argv`, `binaries`, `dry_run`, and after a build `built`, `seconds` and `set_aside`.
+
+On Windows a running binary can't be overwritten, and the `flint.exe` running the build is one of the two it writes. So before Cargo runs, `flint build` renames each output binary that exists to `<name>.old.exe` beside it. Windows allows that while it runs. A failed build renames it back. A copy still running is deleted the next time that binary starts ([ADR 0136](https://github.com/chrischaps/Flint/blob/main/docs/adr/0136-the-package-model.md), decision 10).
+
+A binary built some other way can lack a package the list names. With a `[packages]` table, `flint play`, `flint-player` and `flint render` refuse to run then (exit 2 for `flint`), and `flint check` reports it as an `unbuilt-package` error:
+
+```text
+$ flint check
+flint.toml: 1 error
+  error[unbuilt-package]: this flint was built without the `living` package, which flint.toml uses
+      hint: run `flint build` in the project: it builds a flint and a flint-player with the packages flint.toml lists (`flint build --dry-run` shows the cargo command)
+```
 ## Multi-Schema Layering
 
 A game loads two schema directories, in order, with the later one overriding the earlier:

@@ -27,6 +27,8 @@ use anyhow::Result;
 use clap::Parser;
 
 fn main() -> Result<()> {
+    // What `flint build` set aside last time (#1335), if it has stopped
+    flint_player::packages::sweep_set_aside();
     let cli = flint_player::PlayerCli::parse();
     // Everything the player says, to stderr, as `--log-format` and
     // `--quiet` ask (#716)

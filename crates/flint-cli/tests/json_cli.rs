@@ -285,6 +285,14 @@ fn every_command_answers_with_one_json_document() {
     // What the scaffold uses (#1334): no feature package
     run("package used");
     assert!(ok(&dir, &["package", "used"])["lines"].is_array());
+    // What `flint build` would run (#1335): a dry run builds nothing
+    run("build");
+    let build = ok(&dir, &["build", "--dry-run"]);
+    assert_eq!(build["dry_run"], true);
+    assert!(build["commands"][0]
+        .as_str()
+        .unwrap()
+        .starts_with("cargo build"));
 
     // `play` is a window, but `--list-keys` only prints its debug keys,
     // under flint's global --json (#1184: the player's own took it)

@@ -149,6 +149,9 @@ pub mod codes {
     /// A component, scene table or script function of a package the
     /// project's `[packages]` leaves out (ADR 0136 decision 9, #1334).
     pub const UNLISTED_PACKAGE: &str = "unlisted-package";
+    /// A package the project's `[packages]` lists that the running binary
+    /// was built without (#1335): `flint build` builds one with it.
+    pub const UNBUILT_PACKAGE: &str = "unbuilt-package";
     /// A schema directory is missing, or a schema file does not read.
     pub const BAD_SCHEMAS: &str = "bad-schemas";
     /// A constraint file does not read, or a constraint's query does not
@@ -359,6 +362,11 @@ pub mod codes {
             UNLISTED_PACKAGE,
             Severity::Error,
             "a scene or script uses a package flint.toml's [packages] leaves out",
+        ),
+        (
+            UNBUILT_PACKAGE,
+            Severity::Error,
+            "flint.toml's [packages] lists a package this binary was built without",
         ),
         (
             BAD_SCHEMAS,
@@ -1049,7 +1057,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 58);
+        assert_eq!(seen.len(), 59);
     }
 
     /// A problem in a scene-level table names the table as its header is

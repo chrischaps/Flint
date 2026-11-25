@@ -310,3 +310,57 @@ fn package_used_on_the_woozy_grove_reports_living_and_procgen() {
     ));
     assert!(with_code(&doc, "unlisted-package").is_empty(), "{doc:#}");
 }
+
+/// #1335's first done-when: in a project listing only `procgen`, `flint
+/// build --dry-run` prints a cargo command with `--no-default-features`
+/// and none of `living`, `music` or `rhythm`, and builds nothing.
+#[test]
+fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
+    let game = game("build_procgen");
+    set_packages(&game, "procgen = \"*\"\n");
+    let o = flint(&game, &["build", "--dry-run"]);
+    assert!(o.status.success(), "{}", said(&o));
+    let text = stdout(&o);
+    let commands: Vec<&str> = text.lines().filter(|l| l.starts_with("cargo ")).collect();
+    assert_eq!(commands.len(), 1, "{text}");
+    let line = commands[0];
+    assert!(
+        line.starts_with("cargo build -p flint-player -p flint-cli"),
+        "{line}"
+    );
+    assert!(line.contains(" --no-default-features "), "{line}");
+    assert!(line.contains("flint-player/procgen"), "{line}");
+    for left_out in ["living", "music", "rhythm"] {
+        assert!(!line.contains(left_out), "{left_out}: {line}");
+    }
+    assert!(
+        text.contains("left out  ai, living, music, rhythm"),
+        "{text}"
+    );
+    assert!(text.contains("--dry-run built nothing"), "{text}");
+
+    let doc = json(&flint(&game, &["build", "--dry-run", "--json"]));
+    assert_eq!(doc["dry_run"], true);
+    assert_eq!(doc["commands"][0], line);
+    let packages: Vec<&str> = doc["features"]["flint-player"]["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap())
+        .collect();
+    assert_eq!(packages, ["debug-hud", "procgen"], "{doc:#}");
+    for bin in ["flint-player", "flint"] {
+        let path = doc["binaries"][bin].as_str().unwrap();
+        assert!(path.contains("/debug/"), "{bin}: {path}");
+    }
+}
+
+/// The default build has every package, so a project listing `living`
+/// is never told to build: the error is for a binary that lacks one.
+#[test]
+fn the_default_flint_has_every_package_a_project_lists() {
+    let game = game("build_default");
+    set_packages(&game, "living = \"*\"\nmusic = \"*\"\nrhythm = \"*\"\n");
+    let doc = json(&flint(&game, &["check", "--json"]));
+    assert!(with_code(&doc, "unbuilt-package").is_empty(), "{doc:#}");
+}

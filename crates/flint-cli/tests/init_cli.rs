@@ -269,6 +269,45 @@ fn each_template_builds_with_the_packages_it_lists() {
     }
 }
 
+/// #1335: every template's project names a build with its own packages.
+/// `flint build --dry-run` finds the engine it names, prints a cargo
+/// command with `--no-default-features`, leaves out every feature package
+/// (no template lists one) and builds nothing.
+#[test]
+fn each_template_has_a_build_of_only_its_packages() {
+    for template in TEMPLATES {
+        let dir = scratch(&format!("build_{template}"));
+        let (game, _) = init(&dir, &["--template", template]);
+        let text = ok(&flint(&game, &["build", "--dry-run"]));
+        let commands: Vec<&str> = text.lines().filter(|l| l.starts_with("cargo ")).collect();
+        assert_eq!(commands.len(), 1, "{template}: {text}");
+        let line = commands[0];
+        assert!(line.starts_with("cargo build "), "{template}: {line}");
+        assert!(
+            line.contains(" --no-default-features "),
+            "{template}: {line}"
+        );
+        for left_out in ["living", "music", "rhythm", "/ai"] {
+            assert!(!line.contains(left_out), "{template}: {left_out} in {line}");
+        }
+        // The standard packages stay in
+        assert!(line.contains("flint-player/procgen"), "{template}: {line}");
+        assert!(
+            line.contains("flint-player/debug-hud"),
+            "{template}: {line}"
+        );
+
+        let doc: serde_json::Value =
+            serde_json::from_str(&ok(&flint(&game, &["build", "--dry-run", "--json"]))).unwrap();
+        assert_eq!(
+            doc["engine_from"], "the engine its schemas come from",
+            "{doc:#}"
+        );
+        assert_eq!(doc["dry_run"], true);
+        assert!(doc.get("built").is_none(), "{template}: {doc:#}");
+    }
+}
+
 // ── Box 1: the printed commands render a lit frame and reach play ───
 
 #[test]
