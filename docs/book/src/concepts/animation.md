@@ -1,5 +1,7 @@
 # Animation
 
+> **Package:** `engine`: every game has it. Its animation is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+
 Flint's animation system provides two tiers of animation through the `flint-animation` crate: **property tweens** for simple transform animations defined in TOML, and **skeletal animation** for character rigs imported from glTF files with GPU vertex skinning.
 
 ## Tier 1: Property Animation

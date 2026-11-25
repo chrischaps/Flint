@@ -1,5 +1,7 @@
 # Ocean
 
+> **Package:** `engine`: every game has it. Its ocean render feature is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+
 Flint renders an endless, physically-grounded ocean: a sum of Gerstner waves
 shaped by a JONSWAP wind-sea spectrum, drawn on a camera-following grid and
 shaded in hard cel bands. The waves are believable — real dispersion, real

@@ -1,5 +1,7 @@
 # Touch Input
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Flint's input system extends seamlessly to touchscreens through **touch zones** --- named screen regions that map to the same action bindings used by keyboard and gamepad. A single input config can drive a game on desktop and mobile without code changes.
 
 ## How It Works

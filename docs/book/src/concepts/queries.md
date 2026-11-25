@@ -1,5 +1,7 @@
 # Queries
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Flint's query language is a simple filter: one resource, and at most one condition on it. `entities where archetype == 'door'` is a whole query. It is parsed by a PEG grammar (pest) and run against the ECS world. Three things use it: `flint query`, the `query` of a [constraint](constraints.md), and the viewer, which evaluates the same constraints.
 
 ## Grammar

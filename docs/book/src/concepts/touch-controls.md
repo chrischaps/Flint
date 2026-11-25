@@ -1,5 +1,7 @@
 # On-Screen Touch Controls
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 A phone has no keyboard and no gamepad. A game whose actions are bound only to keys can still be played on one: add a `[touch_controls]` block to its input config and the engine draws a virtual stick, buttons and a menu button, and turns a drag on the screen into mouse-look.
 
 ![Two thumbs in the tavern: the stick pushed forward, JUMP held](../images/touch-controls-tavern.png)

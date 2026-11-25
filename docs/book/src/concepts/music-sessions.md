@@ -1,5 +1,7 @@
 # Music Sessions
 
+> **Package:** `music`, a feature package: a game has `music_session` and the `music` script module only when its `[packages]` lists `music = "*"`. Charts judged against the music, and the `conducted` module, are the `rhythm` package's, which brings `music` with it ([Packages](packages.md)).
+
 A music session gives a scene its music: a suite's stems play sample-locked on the audio clock, and scripts keep time by it with `music_beat()`, `music_bar()` and `music_section()`. Give it a beatmap chart as well and it becomes a rhythm game: the chart says what the player's controller should be doing on each beat, and the world's audio and visuals come apart or re-gather as one thing depending on how well the two agree. The machinery lives in three engine crates, `flint-music`, `flint-rhythm` and `flint-input-capture`, and is switched on per scene by a `music_session` component. The rhythm half grew out of Starchild but nothing in it is game-specific: any scene with a suite manifest and a chart can run one.
 
 The design rule throughout is "linear composition, adaptive playback": the music is authored once as a suite, and the engine adapts *how it is played back*, never what it is.

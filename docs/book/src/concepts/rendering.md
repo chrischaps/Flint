@@ -1,5 +1,7 @@
 # Rendering
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Flint uses wgpu 30 for cross-platform GPU rendering, providing physically-based rendering (PBR) with a Cook-Torrance BRDF, cascaded shadow mapping, optional 4x MSAA, and full glTF mesh support.
 
 ## PBR Shading

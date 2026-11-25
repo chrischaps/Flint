@@ -1,5 +1,7 @@
 # Grass on Any Ground
 
+> **Package:** `engine`: every game has it. Its grass render feature is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+
 The [terrain](terrain.md#grass) grows grass from its own heightmap and splat map. A game whose ground is something else, such as a mesh it builds itself, a level made of boxes or a race track, can give the grass pass its own ground instead ([ADR 0089](https://github.com/chrischaps/Flint/blob/main/docs/adr/0089-compute-grass-over-any-ground.md)). That ground is two things over a world-space rectangle:
 
 - **a density mask.** One byte per texel: 0 grows no grass and 255 grows full density.

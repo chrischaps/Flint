@@ -1,5 +1,7 @@
 # Sky
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 The `sky` component replaces the texture skybox with a procedural sky: a
 vertical gradient, a sun disc that follows the scene's light, a hashed
 starfield, and FBM clouds that drift.

@@ -147,7 +147,7 @@ Error: no scene given: pass one (a path to a .scene.toml), or name the project's
 
 ## Packages a game uses
 
-The engine comes in packages ([The `package` Command](../cli-reference/overview.md#the-package-command)): the kernel every game has, the standard `procgen` and `debug-hud`, and the features `living` (living props and the wooze field), `music`, `rhythm` and `ai`. `[packages]` in `flint.toml` lists the ones the game uses:
+The engine comes in packages ([Packages](../concepts/packages.md) says what one is and walks through adding one; [The `package` Command](../cli-reference/overview.md#the-package-command) lists them): the kernel every game has, the standard `procgen` and `debug-hud`, and the features `living` (living props and the wooze field), `music`, `rhythm` and `ai`. `[packages]` in `flint.toml` lists the ones the game uses:
 
 ```toml
 [packages]

@@ -1,5 +1,7 @@
 # Comic Panels
 
+> **Package:** `engine`: every game has it. Its panels render feature is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+
 A comic page tells one beat in several pictures at once: a wide shot beside a
 close-up, the live world in one panel and the drawn world in the next. A
 scene's `[panels]` table lays the frame out that way. Each panel is a share of

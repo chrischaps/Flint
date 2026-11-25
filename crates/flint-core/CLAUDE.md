@@ -30,4 +30,6 @@ The root file keeps the vfs rule in short. The wooze field (`flint_wooze`): `cra
 
 ## From the root (#992)
 
+- `toml::toml!` macro produces `Map<String, Value>` not `Value` -- needs `.into()` in tests (from the root's gotchas, #1337)
+
 - **`FLINT_*` environment switches are one table** (#715, `flint_core::env`): each is a `Var` (name, kind, default, help, group) read only through its getter (`env::VSYNC.choice()`, `env::LOD_SCALE.f32()`, `.flag()`, `.path()`), which warns once on a value it doesn't take; `flint env [--json]` lists them with their values, and the `--help` of `render`, `play` and `flint-player` ends with theirs. `scripts/ci.sh` refuses a `var("FLINT_` elsewhere, and `cargo test -p flint-core --test env_table` a `"FLINT_..."` name the table lacks: a new switch is a row there, then `flint env --book`. `crates/flint-core/CLAUDE.md`

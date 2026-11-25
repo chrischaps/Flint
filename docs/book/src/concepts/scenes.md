@@ -1,5 +1,7 @@
 # Scenes
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 A scene in Flint is a TOML file that describes a collection of entities and their data. Scenes are the primary unit of content --- they're what you load, save, query, validate, and render.
 
 ## File Format

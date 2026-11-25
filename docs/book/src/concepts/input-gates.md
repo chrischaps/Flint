@@ -1,5 +1,7 @@
 # Cursor Capture and Input Gates
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Mouse-look and pad play need the player to be strict about who hears what. A hidden cursor mustn't press a button nobody can see. A pad shouldn't walk the character while someone types a name into a field, or while the window is in the background. [ADR 0110](https://github.com/chrischaps/Flint/blob/main/docs/adr/0110-capture-and-focus-gates.md) sets these rules, and the player enforces them for every game. Nothing needs turning on.
 
 ## A captured cursor

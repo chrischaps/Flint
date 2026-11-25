@@ -1,5 +1,7 @@
 # Schemas
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Schemas define the structure of your game world. They specify what components exist, what fields they contain, and how they bundle together into archetypes. Schemas are TOML files stored in the `schemas/` directory of your project.
 
 ## Component Schemas

@@ -1,5 +1,7 @@
 # AI Asset Generation
 
+> **Package:** `ai`, a feature package: a game has it only when its `[packages]` lists `ai = "*"`, which brings `procgen` with it ([Packages](packages.md)).
+
 Flint includes an integrated AI asset generation pipeline through the `flint-asset-gen` crate. The system connects to external AI services to produce textures, 3D models, and audio from text descriptions, while maintaining visual consistency through style guides and validating results against constraints.
 
 ## Overview

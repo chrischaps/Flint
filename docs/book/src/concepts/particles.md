@@ -1,5 +1,7 @@
 # Particles
 
+> **Package:** `engine`: every game has it. Its particle system is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+
 Flint's particle system (`flint-particles`) provides GPU-instanced visual effects: fire, smoke, sparks, rain, dust, magic — any effect made of hundreds or thousands of small, short-lived elements. Since [ADR 0068](https://github.com/chrischaps/Flint/blob/main/docs/adr/0068-particle-effect-assets-and-deterministic-sim.md) it has two authoring paths, a deterministic simulation that headless renders can step, and its own editor.
 
 ![Campfire effect: flames, embers, puffs and smoke from one asset](../images/particles-campfire-scene.png)

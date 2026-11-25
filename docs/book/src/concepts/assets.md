@@ -1,5 +1,7 @@
 # Assets
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Flint uses a content-addressed asset system with SHA-256 hashing. Every imported file is identified by its content hash, which means identical files are automatically deduplicated and any change to a file produces a new, distinct hash.
 
 ## Content Addressing

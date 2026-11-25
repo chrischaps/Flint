@@ -27,6 +27,13 @@ Three mechanical checks, the ones a page drifts on without anyone noticing:
           github.com/chrischaps/flint-examples names a file or folder that
           repository has. Its file list comes from --examples <clone>, else a
           clone at flint-examples/ in the checkout, else GitHub's API.
+  packages
+          every engine package a page names (#1337) is one `flint package
+          list --json` lists: "the `living` package", "package `music`", the
+          span a `**Package:**` line opens with, `living = "*"`, a `[packages]`
+          table's keys in a TOML block, `packages = [..]`; and every page
+          under concepts/ states its package on a `**Package:**` line. The
+          init templates' Markdown is read for this check too.
 
 Usage:
   python scripts/docs-check.py [--flint <path to flint binary>] [--examples <clone>] [--json]
@@ -50,7 +57,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BOOK = ROOT / "docs" / "book" / "src"
 ALLOW = ROOT / "docs" / "book" / "docs-check-allow.txt"
 
-COUNTS = {"flags": 0, "styles": 0, "images": 0, "maps": 0, "examples": 0}
+COUNTS = {"flags": 0, "styles": 0, "images": 0, "maps": 0, "examples": 0, "packages": 0}
 FLAG_RE = re.compile(r"^--[a-z0-9][a-z0-9-]*")
 HELP_FLAG_RE = re.compile(r"^\s+(?:-[A-Za-z0-9], )?(--[a-z0-9][a-z0-9-]*)")
 HELP_CMD_RE = re.compile(r"^  ([a-z][a-z0-9-]*)(?:\s|$)")
@@ -78,6 +85,22 @@ EXAMPLES_REPO = "chrischaps/flint-examples"
 EXAMPLE_URL_RE = re.compile(r"github\.com/chrischaps/flint-examples/(?:blob|tree)/main/([^)\s#?`\"'>]+)")
 EXAMPLE_PATH_RE = re.compile(r"(?<![A-Za-z0-9_./-])flint-examples/([A-Za-z0-9_./*{}<>,-]*)")
 TREE_GUTTER = "│├└─ "
+# How a page names an engine package (#1337). Each group is one name.
+PACKAGE_RES = [
+    re.compile(r"`([a-z][a-z0-9-]*)` packages?\b"),          # the `living` package
+    re.compile(r"\bpackages? `([a-z][a-z0-9-]*)`"),          # package `music`
+    re.compile(r"`([a-z][a-z0-9-]*) = \"\*\"`"),             # `living = "*"`
+]
+# A page's own statement of its package: `**Package:** `music` ...`
+PACKAGE_LINE_RE = re.compile(r"^\s*>?\s*\*\*Packages?:\*\*(.*)$")
+# In a TOML block: a key of a `[packages]` table, and `packages = [..]`
+TOML_TABLE_RE = re.compile(r"^\s*\[+\s*([^\]]+?)\s*\]+")
+TOML_KEY_RE = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*=")
+PACKAGES_ARRAY_RE = re.compile(r"^\s*packages\s*=\s*\[([^\]]*)\]")
+# Every page here states its package
+STATES_PACKAGE = BOOK / "concepts"
+# The init templates (#707): what a new project's agent reads first
+TEMPLATES = ROOT / "crates" / "flint-cli" / "templates"
 # Where each crate under crates/ must be named: (file, the section it's
 # under, whether that section must hold a `### <crate>` heading for it).
 CRATE_MAPS = [
@@ -123,6 +146,25 @@ class Flint:
         data = json.loads(out.stdout)
         items = data if isinstance(data, list) else data.get("styles", [])
         return {s["name"] for s in items}
+
+    def packages(self):
+        """The engine's package names: `flint package list --json`, from the
+        manifests of this checkout (`--dir packages/`)."""
+        out = subprocess.run(
+            [self.binary, "--json", "package", "list", "--dir", str(ROOT / "packages")],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        try:
+            data = json.loads(out.stdout)
+        except ValueError:
+            raise SystemExit(f"docs-check: `flint package list --json` failed:\n{out.stderr}")
+        names = {p["name"] for p in data.get("packages", [])}
+        if not names:
+            raise SystemExit(f"docs-check: `flint package list --json` listed no package:\n{out.stdout}{out.stderr}")
+        return names
 
 
 def parse_help(text):
@@ -301,14 +343,55 @@ def check_examples(line, where, examples, source, problems, allow):
                                     f"looked in {source}; the examples moved there in #984, scenes at its root"))
 
 
-def scan(path, flint, styles, ws, problems, allow, examples=None, source=None):
+def check_package_name(name, where, packages, problems, allow):
+    COUNTS["packages"] += 1
+    if name in packages or allowed(allow, where, name):
+        return
+    import difflib
+
+    near = difflib.get_close_matches(name, sorted(packages), n=1)
+    hint = f"did you mean `{near[0]}`? " if near else ""
+    problems.append(problem("packages", where, f"`{name}`: no engine package is named that",
+                            f"{hint}`flint package list` lists them: {', '.join(sorted(packages))}"))
+
+
+def check_package_line(line, where, packages, problems, allow, toml_table):
+    """The package names one line of prose (or of a TOML block, when
+    `toml_table` is the table it is under) holds."""
+    names = []
+    if toml_table is not None:
+        if toml_table == "packages":
+            m = TOML_KEY_RE.match(line)
+            if m:
+                names.append(m.group(1))
+        m = PACKAGES_ARRAY_RE.match(line)
+        if m:
+            names += re.findall(r"\"([^\"]+)\"", m.group(1))
+    else:
+        for r in PACKAGE_RES:
+            names += r.findall(line)
+        # The line's first span is the page's package; the rest of it is
+        # prose (a module, a component) the patterns above read
+        m = PACKAGE_LINE_RE.match(line)
+        if m:
+            names += re.findall(r"^\s*`([a-z][a-z0-9-]*)`", m.group(1))
+    for name in dict.fromkeys(names):
+        check_package_name(name, where, packages, problems, allow)
+
+
+def scan(path, flint, styles, ws, problems, allow, examples=None, source=None, packages=None):
     text = path.read_text(encoding="utf-8")
     page = book_page(path)
     in_book = path.is_relative_to(BOOK)
     in_cli_ref = path.is_relative_to(BOOK / "cli-reference")
     lines = text.splitlines()
+    if packages is not None and path.parent == STATES_PACKAGE and not any(PACKAGE_LINE_RE.match(l) for l in lines):
+        problems.append(problem("packages", (page, 1), "the page doesn't state its package",
+                                "a concepts page says what it documents is whose: a `> **Package:** `engine`` line under its title"))
     fence = None
     shell_block = False
+    toml_block = False
+    toml_table = ""
     heading_cmd = None
     flag_tables = False
     pending = ""
@@ -321,10 +404,24 @@ def scan(path, flint, styles, ws, problems, allow, examples=None, source=None):
                 fence = m.group(1)
                 lang = m.group(2).strip().split(",")[0].split()[0].lower() if m.group(2).strip() else ""
                 shell_block = lang not in NON_SHELL
+                toml_block = lang == "toml"
+                toml_table = ""
             elif m.group(1).startswith(fence[0]) and len(m.group(1)) >= len(fence):
                 fence = None
                 pending = ""
             continue
+
+        if packages is not None:
+            if fence is not None and toml_block:
+                tm = TOML_TABLE_RE.match(line)
+                if tm:
+                    toml_table = tm.group(1).strip()
+                else:
+                    check_package_line(line, where, packages, problems, allow, toml_table)
+            elif fence is None:
+                check_package_line(line, where, packages, problems, allow, None)
+        if path.is_relative_to(TEMPLATES):
+            continue  # the templates are read for their packages only
 
         for name in STYLE_RE.findall(line):
             COUNTS["styles"] += 1
@@ -485,7 +582,7 @@ def sources():
         p = ROOT / name
         if p.exists() and not name.startswith(("engine/", "flint-examples/")):
             files.append(p)
-    return files
+    return files + sorted(TEMPLATES.rglob("*.md"))
 
 
 def find_flint(given):
@@ -510,22 +607,24 @@ def main():
     if flint.help([]) is None:
         raise SystemExit(f"docs-check: `{flint.binary} --help` failed")
     styles = flint.styles()
+    packages = flint.packages()
     allow = load_allow()
     problems = []
     ws = workspace()
     files = sources()
     examples, source = example_files(args.examples)
     for f in files:
-        scan(f, flint, styles, ws, problems, allow, examples, source)
+        scan(f, flint, styles, ws, problems, allow, examples, source, packages)
     check_crate_maps(ws, problems, allow)
 
     if args.json:
-        print(json.dumps({"files": len(files), "commands": len(flint.cache), "styles": sorted(styles), "checked": COUNTS, "problems": problems}, indent=2))
+        print(json.dumps({"files": len(files), "commands": len(flint.cache), "styles": sorted(styles), "packages": sorted(packages), "checked": COUNTS, "problems": problems}, indent=2))
     else:
         for p in problems:
             print(f"{p['file']}:{p['line']}: [{p['check']}] {p['message']}\n    {p['hint']}")
         print(f"docs-check: {len(files)} files; {COUNTS['flags']} flags on {len(flint.cache)} commands, "
-              f"{COUNTS['styles']} style tables, {COUNTS['images']} images, {COUNTS['maps']} map entries, {COUNTS['examples']} example citations: "
+              f"{COUNTS['styles']} style tables, {COUNTS['images']} images, {COUNTS['maps']} map entries, {COUNTS['examples']} example citations, "
+              f"{COUNTS['packages']} package names: "
               + (f"{len(problems)} problem(s)" if problems else "clean"))
     return 1 if problems else 0
 

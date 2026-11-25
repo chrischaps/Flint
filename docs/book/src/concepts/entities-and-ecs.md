@@ -1,5 +1,7 @@
 # Entities and ECS
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Flint uses an Entity-Component-System (ECS) architecture, with a world of its own (`flint-ecs`). This page explains how entities, components, and IDs work in Flint.
 
 ## What Is ECS?

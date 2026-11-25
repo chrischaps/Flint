@@ -1,5 +1,7 @@
 # Lighting
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Lights in Flint are ordinary entities with a `light` component. The renderer reads them every frame, sorts them by name so the shadow-casting sun is stable across reloads, and feeds them to the PBR shader alongside a set of scene-wide shading levers authored in the `[environment]` block. This page owns all of that: the light component, cascaded and contact-hardening shadows, area lights, and the "clay look" levers.
 
 ## The Light Component
