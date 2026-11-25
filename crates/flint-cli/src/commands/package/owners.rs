@@ -681,7 +681,7 @@ fn flint_cli_has_each_packages_feature_and_forwards_it() {
     // ticket that frees it. The test fails once it's optional, to remove it.
     const LINKED_ANYWAY: &[(&str, &str)] = &[(
         "flint-procgen",
-        "#1516: flint-viewer links it for the [living] and [wooze] tables",
+        "#1543: the gen commands, check's spec passes and flint-viewer read through it",
     )];
     let player = features_of("flint-player");
     let cli = features_of("flint-cli");

@@ -57,9 +57,9 @@ pub use living::{
     LivingSkeleton, PoseStream, RowDrift, RowLine, RowWord, SegmentPose, WarpedTime, BOIL_BONES,
     JITTER_CHANNELS, JITTER_RATE_MAX, ROW_RATE_MAX, STAGGER_PER_LEVEL,
 };
-pub use living_knobs::{
-    species_def_of, species_keys, wooze_knobs_of, KnobType, KnobValue, LivingKnob,
-};
+#[cfg(feature = "living")]
+pub use living_knobs::wooze_knobs_of;
+pub use living_knobs::{species_def_of, species_keys, KnobType, KnobValue, LivingKnob};
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{
     AssetKind, CompletedAsset, FailedAsset, GenerationRequest, ProcGenQueue, QueueStats,

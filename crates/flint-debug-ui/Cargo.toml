@@ -10,7 +10,7 @@ authors.workspace = true
 # workspace takes this crate with default features off (#754): the player
 # turns it on with its own `living` feature, and flint-cli always.
 default = ["living"]
-living = ["dep:flint-procgen"]
+living = ["dep:flint-procgen", "flint-procgen/living"]
 
 [dependencies]
 flint-core = { workspace = true }
