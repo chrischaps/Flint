@@ -60,6 +60,7 @@ fn a_bus_declared_in_flint_toml_is_made_played_on_and_turned_down_by_name() {
                 dirs: Vec::new(),
                 source: SchemaSource::Flags,
                 dropped: Vec::new(),
+                packages: None,
             },
         );
         app.core.clock.frame_step = Some(1.0 / 30.0);

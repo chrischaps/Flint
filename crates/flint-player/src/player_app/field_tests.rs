@@ -41,6 +41,7 @@ fn app_in(scene: &str) -> PlayerApp {
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     app.core.clock.frame_step = Some(0.25);

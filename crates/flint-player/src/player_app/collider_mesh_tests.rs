@@ -103,6 +103,7 @@ fn started(gpu: Option<&'static HeadlessContext>) -> PlayerApp {
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     if let Some(gpu) = gpu {

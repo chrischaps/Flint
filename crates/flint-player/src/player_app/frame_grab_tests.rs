@@ -65,6 +65,7 @@ fn started(root: &Path, gpu: &'static HeadlessContext, feed: Option<ExpressionFe
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     app.scene_renderer = Some(SceneRenderer::new_headless(

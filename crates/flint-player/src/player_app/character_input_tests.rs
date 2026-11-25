@@ -56,6 +56,7 @@ fn started(step: f64, script: &str) -> PlayerApp {
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     app.core.clock.frame_step = Some(step);

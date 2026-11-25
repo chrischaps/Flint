@@ -65,6 +65,7 @@ fn started() -> PlayerApp {
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     app.enter_scene(SceneEntry::Start)

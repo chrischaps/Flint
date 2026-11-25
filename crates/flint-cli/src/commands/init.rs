@@ -386,7 +386,7 @@ pub fn run(args: InitArgs) -> Result<()> {
 /// What a file is, for the printed list.
 fn describes(path: &str, template: Template) -> String {
     match path {
-        "flint.toml" => "the manifest: id, schemas, start scene, input".into(),
+        "flint.toml" => "the manifest: id, schemas, start scene, input, packages".into(),
         "CLAUDE.md" => "the guide to this project, for you and for agents".into(),
         "AGENTS.md" => "points other agents at CLAUDE.md".into(),
         "bundle.toml" => "packing rules for the web build".into(),

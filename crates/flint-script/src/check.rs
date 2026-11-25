@@ -24,6 +24,7 @@
 //! |---|---|---|
 //! | `script-syntax` | error | the file doesn't compile |
 //! | `unknown-function` | error | no such function; the hint is the nearest name |
+//! | `unlisted-package` | error | the function's module is a package the project's `[packages]` leaves out ([`Api::with_packages`]); the hint is the line to add |
 //! | `wrong-arity` | error | the function is there at other argument counts; the hint lists them |
 //! | `bad-argument` | error | a literal no declaration accepts (`"x"` for a num, `0.5` for an int) |
 //! | `unknown-callback` | error | `fn on_colision`: one edit from a callback, never called |
@@ -118,6 +119,10 @@ pub struct Api {
     builtins: BTreeMap<String, BTreeSet<usize>>,
     /// Names any call may use at any arity ([`Api::allow`]).
     allowed: BTreeSet<String>,
+    /// The project's `[packages]`, held to the engine's manifests (#1334):
+    /// a function only a left-out package's module declares is
+    /// `unlisted-package`. `None`: every package is in.
+    packages: Option<flint_core::package::InUse>,
 }
 
 impl Api {
@@ -163,6 +168,31 @@ impl Api {
     /// registers that this API doesn't list.
     pub fn allow(&mut self, name: impl Into<String>) {
         self.allowed.insert(name.into());
+    }
+
+    /// Hold calls to the packages `in_use` lets in (#1334): a call of a
+    /// function that only a left-out package's script modules declare is an
+    /// `unlisted-package` error naming the package and the line to add.
+    pub fn with_packages(&mut self, in_use: flint_core::package::InUse) {
+        self.packages = Some(in_use);
+    }
+
+    /// The left-out package whose script module declares every form of
+    /// `name`, if `name` is declared and every module of it is left out.
+    fn left_out_owner(&self, name: &str) -> Option<(&'static str, &str)> {
+        let in_use = self.packages.as_ref()?;
+        let entries = self.declared.get(name)?;
+        let mut owner = None;
+        for e in entries {
+            let p = in_use.left_out_owner(flint_core::package::Kind::ScriptModule, e.module)?;
+            owner.get_or_insert((e.module, p.name.as_str()));
+        }
+        owner
+    }
+
+    /// The module that declares `name`, if one does.
+    pub fn module_of(&self, name: &str) -> Option<&'static str> {
+        self.declared.get(name)?.first().map(|e| e.module)
     }
 
     /// Know `name` at `arity`: a function from a game's own `flint script
@@ -277,6 +307,9 @@ pub struct Checked {
     pub files: Vec<PathBuf>,
     /// Each file's problems in line order, the files in the order read.
     pub diagnostics: Vec<Diagnostic>,
+    /// Each file's modules of the API its calls name (#1334): what `flint
+    /// package used` maps to packages.
+    pub modules: BTreeMap<PathBuf, BTreeSet<String>>,
 }
 
 /// Holds scripts to an [`Api`]. Compiles as the player does, with the
@@ -482,6 +515,17 @@ impl Run<'_> {
                 .within
                 .as_deref()
                 .is_some_and(|f| per_frame.contains(f));
+            // What the file calls of the engine's modules (`flint package
+            // used`, #1334): a declared name the file doesn't define itself
+            if call.namespace.is_none() && !own.contains_key(&call.name) {
+                if let Some(module) = self.checker.api.module_of(&call.name) {
+                    self.out
+                        .modules
+                        .entry(path.clone())
+                        .or_default()
+                        .insert(module.to_string());
+                }
+            }
             if let Some(d) = self.judge(call, &own, &modules, &seen, fast) {
                 found.extend(d.into_iter().map(|d| d.file(path).at(call.line, call.col)));
             }
@@ -538,6 +582,20 @@ impl Run<'_> {
             if arities.contains(&n) || (call.method && arities.contains(&native)) {
                 return None;
             }
+        }
+        // A package the project leaves out (#1334): the line to add, not
+        // the arity, is what to fix
+        if let (Some((module, package)), Some(in_use)) =
+            (api.left_out_owner(name), api.packages.as_ref())
+        {
+            return Some(vec![Diagnostic::error(
+                codes::UNLISTED_PACKAGE,
+                format!(
+                    "`{name}` is in the script module `{module}`, the `{package}` package's, \
+                     and [packages] doesn't list it"
+                ),
+            )
+            .hint(in_use.hint_for(package))]);
         }
         let declared = api.declared.get(name);
         if let Some(entries) = declared {

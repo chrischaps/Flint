@@ -108,6 +108,7 @@ fn started(gpu: &'static HeadlessContext, scene: &str, mode: ProcGenMode) -> (Pl
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     app.scene_renderer = Some(SceneRenderer::new_headless(

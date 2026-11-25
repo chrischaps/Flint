@@ -106,9 +106,11 @@ flint package list            # every package: tier, version, what it owns
 flint package list --json     # the same as one JSON document
 flint package list --dir d    # the manifests under another folder
 flint package list --built    # only the packages this flint was compiled with
+flint package used            # the packages the project's scenes and scripts use
+flint package used --write    # ...and add them to [packages] in flint.toml
 ```
 
-A package is a name a game will list in its `flint.toml`, and everything that name brings ([ADR 0136](https://github.com/chrischaps/Flint/blob/main/docs/adr/0136-the-package-model.md)). Each has a manifest, `packages/<name>/package.toml`, that says what it owns, so a tool or an agent can ask what exists without compiling anything. There are seven: `engine` (the kernel, holding for now the standard parts that have no switch yet: physics, audio, animation, particles, terrain, and the ocean, grass, stylize and panels features), the standard `procgen` and `debug-hud`, and the features `living`, `music`, `rhythm` and `ai`. A game can't list them yet; `[packages]` in `flint.toml` comes next.
+A package is a name a game will list in its `flint.toml`, and everything that name brings ([ADR 0136](https://github.com/chrischaps/Flint/blob/main/docs/adr/0136-the-package-model.md)). Each has a manifest, `packages/<name>/package.toml`, that says what it owns, so a tool or an agent can ask what exists without compiling anything. There are seven: `engine` (the kernel, holding for now the standard parts that have no switch yet: physics, audio, animation, particles, terrain, and the ocean, grass, stylize and panels features), the standard `procgen` and `debug-hud`, and the features `living`, `music`, `rhythm` and `ai`. A game lists the ones it uses under `[packages]` in its `flint.toml`, and `flint package used` says which those are ([Packages a game uses](../guides/building-a-game-project.md#packages-a-game-uses)).
 
 ```text
 living     feature   0.1.0  Props that hold and glide, and the wooze field

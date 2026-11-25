@@ -103,7 +103,7 @@ strict = true                             # a field no schema declares is an err
 save_version = 2                          # the version save files are written at
 ```
 
-Every key is optional, and so is the `[project]` table: an empty `flint.toml` is still a root marker. Paths are relative to the folder the file is in. Other tables in the file are left alone.
+Every key is optional, and so is the `[project]` table: an empty `flint.toml` is still a root marker. Paths are relative to the folder the file is in. `[packages]`, beside `[project]`, says which of the engine's packages the game uses ([below](#packages-a-game-uses)). Other tables in the file are left alone.
 
 Flint finds the manifest by walking up from a scene or from the working directory, so it is found from any folder of the project, and from inside `engine/` too (an engine checkout is passed through to the game above it). Without a `flint.toml`, a `.flint/` directory or `schemas/` beside `scenes/` or `levels/` marks the root, as before. `--project <dir>` on any `flint` command names the root outright and reads that folder's `flint.toml`.
 
@@ -126,6 +126,7 @@ flint.toml: `project.schemas` must be a list of strings, found a string
 | `[project.diagnostics] allow` | A list of diagnostic codes the project accepts, each optionally at a place: `["unknown-field:material.wetness", "unknown-table"]`. What it names is left out of every report, which says how many it left out. See [Allowing a code](../concepts/schemas.md#allowing-a-code) |
 | `input` | The player: the game layer of the [input config](../concepts/physics-and-runtime.md#config-layering), unless the scene names its own with `[scene] input_config` |
 | `save_version` | The player: a whole number, 0 when left out. A save file at a lower version is handed to the scripts' `on_persist_migrate(from)` before `on_init`, then stamped with this one ([Versions and migration](../concepts/scripting.md#versions-and-migration)) |
+| `[packages]` | Every command that loads schemas, `flint script api`, `flint script check` and `flint check`: which packages' components, scene tables and script modules the game has ([Packages a game uses](#packages-a-game-uses)) |
 
 ```bash
 flint play                 # opens [project] scene
@@ -140,6 +141,53 @@ Error: no scene given: pass one (a path to a .scene.toml), or name the project's
 
 `bundle.toml` stays a separate file: it holds the packing rules (`exclude`, `include`, `[late]`, `[mount]`, `[web]`), and its `name`, `scene` and `schemas` are needed only to say something other than the manifest does. The manifest itself is packed into the bundle, so the web player finds the same project there. `flint init` writes the manifest with all four keys. The design is [ADR 0114](https://github.com/chrischaps/Flint/blob/main/docs/adr/0114-project-manifest-and-one-resolver.md).
 
+
+## Packages a game uses
+
+The engine comes in packages ([The `package` Command](../cli-reference/overview.md#the-package-command)): the kernel every game has, the standard `procgen` and `debug-hud`, and the features `living` (living props and the wooze field), `music`, `rhythm` and `ai`. `[packages]` in `flint.toml` lists the ones the game uses:
+
+```toml
+[packages]
+living = "*"        # a feature package: in only when listed
+debug-hud = false   # a standard package: in unless set to false
+```
+
+- **No `[packages]` table: every package**, as before there was one. A project that never writes it changes nothing.
+- **With it:** the kernel, every standard package not set to `false`, every feature package listed, and what those require (`living` brings `procgen`). An empty table is the kernel and the standard packages. `flint init` writes one, empty, in every template.
+- A value is a version requirement (`"*"`, `"^0.1"`), checked for its syntax and kept; nothing is held to it until packages have versions of their own. `false` drops a standard package. A table (`{ version, path }`) is for a game's own packages and package sources, which come later, and is refused until then.
+
+The list decides what the game has. Only the listed packages' schemas load, so `flint schema` lists no `living_prop` in a game without `living`, and `flint script api` lists none of its script functions (it ends naming what it left out). A scene or script that uses one is an `unlisted-package` error in `flint check`, `flint validate` and `flint script check`, naming the package and the line to add, once a file and item:
+
+```text
+$ flint check scenes/woozy_grove/woozy_grove.scene.toml
+  ...
+  error[unlisted-package] entity 'birch_00' component 'living_prop': the component `living_prop` is the `living` package's, and [packages] doesn't list it (37 other entities too)
+      hint: add `living = "*"` under [packages] in flint.toml
+$ flint script check scripts/breeze.rhai
+scripts/breeze.rhai:2:13: error[unlisted-package]: `wooze_at` is in the script module `wooze`, the `living` package's, and [packages] doesn't list it
+    hint: add `living = "*"` under [packages] in flint.toml
+```
+
+A name no package has, `false` on the kernel or a feature package, and `false` on a package a listed one requires are `bad-manifest` errors naming the line (`packages.livng`, with `did you mean `living`?`), and every command that loads schemas stops on them.
+
+`flint package used` reads the project's scenes, chunks, prefabs and scripts and says which packages they reach: each component, archetype and scene table by the package that provides it, each script call by its module's package, and each name of a procgen spec by `procgen`. What those require comes along. `--write` adds what it found to `[packages]`, keeping every line already there:
+
+```text
+$ flint package used
+procgen  standard  required by living
+                   specs grove_birch, grove_cypress, grove_floor, grove_oak, grove_thorn in scenes/woozy_grove/woozy_grove.scene.toml
+living   feature   components living_prop, shallow_wooze in scenes/woozy_grove/woozy_grove.scene.toml
+                   scene table wooze in scenes/woozy_grove/woozy_grove.scene.toml
+                   script module wooze in scripts/breeze.rhai
+
+[packages]
+procgen = "*"
+living = "*"
+
+(`--write` adds these to flint.toml)
+```
+
+Under `--json` it is one document: `root`, `packages` (each with `name`, `tier`, `uses` as `file`, `kind`, `item`, `required_by`, and `set_to_false`), `lines` (what `--write` would add), `unused` (listed with a version, reached by nothing scanned) and `written`. The player itself still links what it was built with: `flint play` runs a left-out package's props if a scene has them. Building a player with only the listed packages in it comes next.
 ## Multi-Schema Layering
 
 A game loads two schema directories, in order, with the later one overriding the earlier:

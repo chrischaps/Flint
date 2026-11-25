@@ -175,6 +175,7 @@ fn started_with_laps(log: &Log) -> PlayerApp {
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     {

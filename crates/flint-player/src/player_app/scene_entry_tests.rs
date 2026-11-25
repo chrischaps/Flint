@@ -117,6 +117,7 @@ fn started_in_a(gpu: Option<&'static HeadlessContext>) -> PlayerApp {
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     if let Some(gpu) = gpu {
@@ -445,6 +446,7 @@ fn fonts_resolve_beside_the_scene_a_transition_reaches() {
                 dirs: Vec::new(),
                 source: SchemaSource::Flags,
                 dropped: Vec::new(),
+                packages: None,
             },
         );
         app.scene_renderer = Some(SceneRenderer::new_headless(

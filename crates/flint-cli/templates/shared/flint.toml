@@ -13,3 +13,12 @@ schemas = {{schemas}}
 scene = "scenes/main.scene.toml"
 # The game's input layer, over the engine's built-in bindings.
 input = "config/input.toml"
+
+# The engine's packages the game uses (ADR 0136). The kernel and the
+# standard packages (procgen, debug-hud) are in unless set to false; a
+# feature package is in only when it is listed here, as `living = "*"`
+# (living props), `music`, `rhythm` or `ai`. Leaving one out leaves out its
+# components, scene tables and script functions, and `flint check` names
+# the line to add for a scene that uses them. `flint package list` shows
+# every package; `flint package used --write` lists what the game uses.
+[packages]

@@ -98,10 +98,16 @@ fn check(args: &CheckArgs) -> Result<()> {
 /// What `flint script check` finds, without printing it.
 pub fn check_report(args: &CheckArgs) -> Result<crate::check::Report> {
     use crate::check::{self, Checks, Subject};
-    let api = args.script.api()?;
+    let mut api = args.script.api()?;
     let path = &args.path;
     let is_script = path.extension().is_some_and(|e| e == "rhai");
     if is_script && path.is_file() {
+        // The script's project's `[packages]` (#1334), as its schemas say
+        if let Ok(dirs) = flint_core::project::schema_dirs(Some(path), &args.schemas) {
+            if let Some(in_use) = dirs.packages {
+                api.with_packages(in_use);
+            }
+        }
         let file = flint_script::check::ScriptFile::found(path.clone());
         let (diagnostics, scripts) = check::scripts::check(&api, vec![file]);
         return Ok(check::Report {
@@ -197,13 +203,34 @@ fn api(args: &ApiArgs) -> Result<()> {
         return book_cmd(dir, false);
     }
     let listing = flint_player::script_system().api_listing();
+    // The project's `[packages]` (#1334): a left-out package's modules
+    // are not the game's API
+    let in_use = super::package::project_in_use()?;
+    let (listing, left_out) = without_left_out(listing, in_use.as_ref());
     let filter = args.filter.as_deref().map(str::to_lowercase);
     let listing = filtered(listing, filter.as_deref());
     if crate::output::json() {
-        crate::output::document(&to_json(&listing));
+        let mut doc = to_json(&listing);
+        doc["left_out"] = json!(left_out
+            .iter()
+            .map(|(package, modules)| json!({ "package": package, "modules": modules }))
+            .collect::<Vec<_>>());
+        crate::output::document(&doc);
         return Ok(());
     }
-    let text = to_text(&listing);
+    let mut text = to_text(&listing);
+    if !left_out.is_empty() {
+        let named: Vec<String> = left_out
+            .iter()
+            .map(|(package, modules)| format!("{} (package `{package}`)", modules.join(", ")))
+            .collect();
+        text.push_str(&format!(
+            "
+Not listed, as flint.toml's [packages] leaves their packages out: {}
+",
+            named.join("; ")
+        ));
+    }
     // `flint script api | head` closes the pipe early: not an error
     use std::io::Write;
     match std::io::stdout().lock().write_all(text.as_bytes()) {
@@ -294,6 +321,35 @@ fn book_cmd(dir: &Path, check: bool) -> Result<()> {
         crate::output::say!("the book's script API text was already up to date");
     }
     Ok(())
+}
+
+/// The listing without the script modules of the packages `in_use` leaves
+/// out, and those packages with the modules each had in the listing.
+fn without_left_out(
+    mut listing: ApiListing,
+    in_use: Option<&flint_core::package::InUse>,
+) -> (ApiListing, Vec<(String, Vec<String>)>) {
+    let Some(in_use) = in_use else {
+        return (listing, Vec::new());
+    };
+    let owner = |module: &str| {
+        in_use
+            .left_out_owner(flint_core::package::Kind::ScriptModule, module)
+            .map(|p| p.name.clone())
+    };
+    let mut left_out: Vec<(String, Vec<String>)> = Vec::new();
+    for e in &listing.declared {
+        if let Some(package) = owner(e.module) {
+            match left_out.iter_mut().find(|(p, _)| *p == package) {
+                Some((_, modules)) if modules.iter().any(|m| m == e.module) => {}
+                Some((_, modules)) => modules.push(e.module.to_string()),
+                None => left_out.push((package, vec![e.module.to_string()])),
+            }
+        }
+    }
+    listing.declared.retain(|e| owner(e.module).is_none());
+    listing.gates.retain(|g| owner(g.module).is_none());
+    (listing, left_out)
 }
 
 /// The listing with only what matches `filter` (lowercase).

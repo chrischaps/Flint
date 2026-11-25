@@ -220,6 +220,55 @@ fn each_template_passes_flint_check() {
     }
 }
 
+/// #1334: every template writes an explicit `[packages]`, the packages
+/// its scenes and scripts use are in it (a standard one by being on unless
+/// set to false), and the project is checked and its schemas and script API
+/// built with that list: no feature package's components or modules.
+#[test]
+fn each_template_builds_with_the_packages_it_lists() {
+    for template in TEMPLATES {
+        let dir = scratch(&format!("packages_{template}"));
+        let (game, _) = init(&dir, &["--template", template]);
+        let manifest: toml::Table = std::fs::read_to_string(game.join("flint.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let listed = manifest
+            .get("packages")
+            .and_then(|p| p.as_table())
+            .unwrap_or_else(|| panic!("{template}: no [packages] in flint.toml"));
+
+        let used = ok(&flint(&game, &["package", "used", "--json"]));
+        let used: serde_json::Value = serde_json::from_str(&used).unwrap();
+        for p in used["packages"].as_array().unwrap() {
+            let name = p["name"].as_str().unwrap();
+            assert!(
+                listed.contains_key(name) || p["tier"] == "standard",
+                "{template}: uses `{name}`, which its [packages] doesn't list: {used:#}"
+            );
+            assert_eq!(p["set_to_false"], false, "{template}: {used:#}");
+        }
+
+        let check = ok(&flint(&game, &["check", "--json"]));
+        let check: serde_json::Value = serde_json::from_str(&check).unwrap();
+        assert_eq!(check["valid"], true, "{template}: {check:#}");
+        let schemas = ok(&flint(&game, &["schema", "--list"]));
+        assert!(schemas.contains("transform"), "{template}: {schemas}");
+        for feature in ["living_prop", "shallow_wooze", "music_session"] {
+            assert!(!schemas.contains(feature), "{template}: {schemas}");
+        }
+        let api = ok(&flint(&game, &["script", "api", "--json"]));
+        let api: serde_json::Value = serde_json::from_str(&api).unwrap();
+        for f in api["functions"].as_array().unwrap() {
+            let module = f["module"].as_str().unwrap_or("");
+            assert!(
+                !["living", "wooze", "debug", "conducted"].contains(&module),
+                "{template}: {f}"
+            );
+        }
+    }
+}
+
 // ── Box 1: the printed commands render a lit frame and reach play ───
 
 #[test]
