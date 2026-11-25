@@ -46,13 +46,12 @@ done
 # Crates a tree may hold although their package is out, each with the ticket
 # that frees it. Each rule is checked both ways: when the crate is gone where
 # the rule allowed it, the run fails until the rule comes out.
-#   flint-cli links flint-procgen in every build (flint-viewer reads the
-#   [living] and [wooze] tables with it), and flint-procgen links flint-wooze
-#   (#1516; owners.rs's LINKED_ANYWAY is the same row, and so is
-#   package-done-when.py's WITH_PROCGEN).
+#   flint-cli links flint-procgen in every build (its gen commands and
+#   flint-viewer read through it; owners.rs's LINKED_ANYWAY is the same row).
+#   flint-procgen no longer brings flint-wooze with it: the field is its
+#   `living` feature's (#1516).
 CLI_ALWAYS="flint-procgen"
-WITH_PROCGEN="flint-wooze"
-EXCEPTION_TICKET="#1516"
+EXCEPTION_TICKET="#1543"
 
 # --- the manifests --------------------------------------------------------
 
@@ -186,7 +185,6 @@ for bin in flint-player flint-cli; do
             for c in ${CRATES[$p]}; do
                 printf '%s\n' "$tree" | grep -qx "$c" || continue
                 if [ "$bin" = flint-cli ] && in_list "$c" $CLI_ALWAYS; then continue; fi
-                if in_list "$c" $WITH_PROCGEN && printf '%s\n' "$tree" | grep -qx flint-procgen; then continue; fi
                 bad+=("$c ($p)")
             done
         done
@@ -195,11 +193,6 @@ for bin in flint-player flint-cli; do
         if [ "$bin" = flint-cli ]; then
             for c in $CLI_ALWAYS; do
                 printf '%s\n' "$tree" | grep -qx "$c" || stale+=("flint-cli no longer links $c in every build")
-            done
-        fi
-        if printf '%s\n' "$tree" | grep -qx flint-procgen; then
-            for c in $WITH_PROCGEN; do
-                printf '%s\n' "$tree" | grep -qx "$c" || stale+=("flint-procgen no longer brings $c")
             done
         fi
 
@@ -249,7 +242,7 @@ done
 echo
 printf '%-12s %-9s %-38s %-5s %-5s %6s\n' binary config packages tree check crates
 printf '%s\n' "${SUMMARY[@]}"
-echo "exceptions: flint-cli links $CLI_ALWAYS in every build, and $WITH_PROCGEN comes with flint-procgen ($EXCEPTION_TICKET)"
+echo "exceptions: flint-cli links $CLI_ALWAYS in every build ($EXCEPTION_TICKET)"
 
 if [ ${#FAILURES[@]} -gt 0 ]; then
     echo >&2

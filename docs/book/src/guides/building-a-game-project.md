@@ -190,7 +190,21 @@ living = "*"
 (`--write` adds these to flint.toml)
 ```
 
-Under `--json` it is one document: `root`, `packages` (each with `name`, `tier`, `uses` as `file`, `kind`, `item`, `required_by`, and `set_to_false`), `lines` (what `--write` would add), `unused` (listed with a version, reached by nothing scanned) and `written`. A player links what it was built with, whatever the list says; [`flint build`](#building-the-game-flint-build) builds one with the listed packages and nothing else.
+A standard package is in unless it is set to `false`, so a list of what was found still gives the game every standard package. When the scan could have seen one used and didn't, `flint package used` prints the line that leaves it out. Today that package is `procgen`, whose uses are the names of procgen specs. `debug-hud` is never named, because no file can show the F3/F4 panels in use. A package that `[packages]` already names, or that a listed package requires (`living` and `ai` need `procgen`), isn't named either. In a project whose files name no spec:
+
+```text
+$ flint package used
+no package but the kernel is used
+
+[packages]
+procgen = false   # nothing scanned uses it
+
+(a `= false` line is yours to add: `--write` never writes one, since it changes what `flint build` gives the game)
+```
+
+`--write` prints the same line under `not written` and leaves it out of the file. With it added by hand, `flint build --dry-run` says `left out  procgen, ai, living, music, rhythm`, and the player has no `procgen` feature.
+
+Under `--json` it is one document: `root`, `packages` (each with `name`, `tier`, `uses` as `file`, `kind`, `item`, `required_by`, and `set_to_false`), `lines` (what `--write` would add), `leave_out` (each standard package to leave out, as `name` and `line`), `unused` (listed with a version, reached by nothing scanned) and `written`. A player links what it was built with, whatever the list says; [`flint build`](#building-the-game-flint-build) builds one with the listed packages and nothing else.
 
 ### Building the game: `flint build`
 

@@ -148,7 +148,7 @@ What only some features read lives a layer up, so an edit there doesn't rebuild 
 
 ### flint-wooze
 
-The wooze field (#213): how woozy any place in a scene is, one function of position and time that living props, shallow wooze, woozy grass and the shading boil all read. Also the `shallow_wooze` component's name. Depends only on `flint-core`; the renderer, procgen, the debug panels, the viewer, the player and the CLI read it.
+The wooze field (#213): how woozy any place in a scene is, one function of position and time that living props, shallow wooze, woozy grass and the shading boil all read. Also the `shallow_wooze` component's name. Depends on `flint-core` and `flint-ecs`. The living props read it, and so do procgen, the debug panels, the viewer, the player and the CLI, each only with its `living` feature: a build without the living package links none of it. The renderer takes the field's answers as frame data and links none of it either (#1330). Without the field, procgen still reads and settles a scene's `[wooze]` table, and `flint check` holds it to its schema alone (#1516).
 
 ### flint-geometry
 

@@ -259,6 +259,8 @@ Its pipeline is built the first time it is enabled, so scenes that never use it 
 
 ## Shading Boil
 
+> **Package:** `living`, a feature package: the boil keeps time with the wooze field, and a game has the `[wooze]` table only when its `[packages]` lists `living = "*"` ([Packages](packages.md)).
+
 In a scene with a [`[wooze]` table](procgen.md#the-wooze-field), paint and ink can re-decide themselves on the field's beat, the way every frame of a rotoscoped film was redrawn. Each *drawing* moves the Kuwahara filter's kernel and turns its strokes, and moves the contour's lines, changes their width and lifts the pen in places. The scene under them stays where it is.
 
 ![One drawing](../images/shading-boil-a.png)

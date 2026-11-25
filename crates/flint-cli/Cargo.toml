@@ -28,7 +28,8 @@ path = "src/main.rs"
 #   music    `music validate`, `music play`, `music render`
 #   rhythm   `music calibrate`, `music chart`, a suite's chart checks
 #   procgen  the player's procgen at load (`flint gen` keeps flint-procgen,
-#            which the viewer links anyway, until #1516)
+#            which the viewer links anyway, until #1543; with no `living`,
+#            without its wooze field, #1516)
 #   ai       the paid calls: `asset generate` and the rest, `gen --ai-*`,
 #            `render --ai-refine`, `asset resolve --strategy ai_*`
 #
@@ -43,7 +44,7 @@ gamepad = ["flint-player/gamepad", "flint-input-capture?/gamepad"]
 dialogs = ["dep:rfd"]
 living = [
     "procgen", "flint-player/living", "flint-viewer/living", "flint-debug-ui/living",
-    "dep:flint-living", "dep:flint-wooze",
+    "flint-procgen/living", "dep:flint-living", "dep:flint-wooze",
 ]
 music = ["flint-player/music", "dep:flint-music"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm", "dep:flint-input-capture"]

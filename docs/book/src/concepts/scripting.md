@@ -1252,6 +1252,8 @@ The post-process keys (`post_process`, `bloom`, `ssao`, `ssao_samples`,
 as the scene set it. They hold across scene loads.
 ### Wooze API
 
+> **Package:** `living`, a feature package: a game has the `wooze` module only when its `[packages]` lists `living = "*"` ([Packages](packages.md)).
+
 Moves the scene's [wooze field](procgen.md#the-wooze-field), which every living prop and [shallow wooze](procgen.md#shallow-wooze) mesh reads, and reads it back. Each change takes an optional last argument of seconds to get there over, an integer or a float. Without it, the change is immediate.
 
 <!-- script-api:begin module:wooze -->
@@ -1354,6 +1356,8 @@ The `field` module is enabled in a scene with a `[field]` table, in the player, 
 
 ### Living Props API
 
+> **Package:** `living`, a feature package: a game has the `living` and `debug` modules only when its `[packages]` lists `living = "*"`. Of the two, `debug` runs only where the `debug-hud` package is in the build too ([Packages](packages.md)).
+
 The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3)'s controls, for a script. These reach every prop at once, or [one species](procgen.md#species-values), and a look lab or a test can run them with no panel open.
 
 They are two modules Living Props owns (#698): `living`, the knobs and presets, and `debug`, the panel's actions (`commit_living` and the A/B comparison). `living` is enabled where the `wooze` module is, in a scene the living subsystem runs in, from the first `on_init`. `debug` is enabled there only in a player built with its `debug-hud` feature (#854): it is on by default and in `flint`'s own player, so `flint play`, `flint render --scripts` and a `--frame-step` capture all run the A/B, while a game that ships without the debug HUD carries none of the panel's tools as game API. Anywhere else a call is a script error saying the module is not enabled and when it is (`compare_living: the debug module is not enabled here; it is enabled when the player is built with its debug-hud feature ...`).
@@ -1409,6 +1413,8 @@ clear_living("grove_thorn", ["echoes"]);   // their echoes back to the grove's
 Unlike `set_wooze`, these work in a scene with no `[wooze]` table: turning a clock knob gives it a field, starting from where its props stand. What can't be used is logged, naming the key, and the rest still happens. New echoes wait until the rings have every pose they'd read, and a new variance re-holds the poses in use first. Bench: [`flint-examples/living_sweep.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/living_sweep.scene.toml), whose script moves every knob across its range.
 
 ### Conducted Parameters API
+
+> **Package:** `rhythm`, a feature package that brings `music` with it: a game has the `conducted` module only when its `[packages]` lists `rhythm = "*"` ([Packages](packages.md)).
 
 When a scene's [`music_session`](music-sessions.md) has a `chart`, the player fills a per-frame snapshot of the session's state and exposes it to the scene's scripts through these getters ([ADR 0020](https://github.com/chrischaps/Flint/blob/main/docs/adr/0020-conducted-parameters-script-surface.md), conducted-parameters script surface). They are the `conducted` module, which the music subsystem owns (#698): enabled in a scene whose `music_session` has a chart, and a script error saying the module is not enabled in any other (`music_beat()`, `music_bar()` and `music_section()` are core, for any scene). Until the session runs (its count-in, waiting for a sound device, a headless capture, a player built without the `rhythm` feature) every getter returns a neutral value: a clean, settled world with `coherence` and `reassembly` at `1.0`, zero lean, and `1e6` beats until anything upcoming. Bindings written as `1 - conducted_coherence()` therefore show nothing before the music runs, and a charted scene's scripts never need to test for a session.
 

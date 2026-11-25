@@ -167,7 +167,7 @@ flint package used
 flint build --dry-run
 ```
 
-`flint package list` shows every package and what it owns. `flint package used` names the packages the scenes, prefabs and scripts reach, and `flint package used --write` adds them to `[packages]`.
+`flint package list` shows every package and what it owns. `flint package used` names the packages the scenes, prefabs and scripts reach, and `flint package used --write` adds them to `[packages]`. When nothing names a procgen spec it also prints `procgen = false` as a line to add: that line leaves procgen out of the game's player, and it is yours to write.
 
 **To add a package** (living props, say):
 

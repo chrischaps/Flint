@@ -345,6 +345,7 @@ impl HeadlessGame {
             audio: None,
             pads: None,
             capture: Some(&mut start),
+            packages: core.packages.as_ref(),
         });
         let mut left_out = Vec::new();
         for subsystem in built {

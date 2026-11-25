@@ -54,9 +54,10 @@ lineage_seed = 3
 # The components the epic's box names. They are also read off the
 # manifests; these are held to be among what that reading finds.
 NAMED = ["living_prop", "shallow_wooze", "music_session"]
-# A crate linked although its package is out, with the ticket that frees it.
-# package-check.sh holds the same rule (both ways there too).
-WITH_PROCGEN = {"flint-wooze": "#1516"}
+# No exception: since #1516 flint-procgen links flint-wooze only with its
+# `living` feature, so a build that leaves living out links none of
+# living's crates. (package-check.sh's one exception, flint-cli linking
+# flint-procgen always (#1543), can't arise here: procgen is in.)
 
 failures = []
 
@@ -191,17 +192,8 @@ def check_build(flint, game, packages, listed):
     before = len(failures)
     for p in left_out:
         for c in packages[p].get("provides", {}).get("crates", []):
-            if c not in tree:
-                continue
-            ticket = WITH_PROCGEN.get(c)
-            if ticket and "flint-procgen" in tree:
-                say(f"tree: {c} ({p}) comes with flint-procgen until {ticket}")
-                continue
-            fail(f"the built binaries link {c}, of the left-out package `{p}`")
-    for c, ticket in WITH_PROCGEN.items():
-        if "flint-procgen" in tree and c not in tree:
-            fail(f"flint-procgen no longer brings {c}: take {ticket}'s exception "
-                 "out of scripts/package-done-when.py and package-check.sh")
+            if c in tree:
+                fail(f"the built binaries link {c}, of the left-out package `{p}`")
     if len(failures) == before:
         say(f"tree: {len(tree)} crates, none of a left-out package's")
 

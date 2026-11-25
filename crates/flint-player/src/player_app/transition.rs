@@ -170,12 +170,14 @@ impl PlayerApp {
 
         // The registry the scene was loaded with, for archetype defaults:
         // kept on the app, never re-read for a chunk (#683)
-        let registry = self.schemas.held_or_read(&self.schema_dirs.dirs);
-        // What is wrong with the chunk's entities, said once (ADR 0115)
-        flint_core::diagnostic::log_summary(
-            &flint_core::project::shown(&chunk_path),
-            &flint_scene::diagnose_scene(&scene_file, Some(&chunk_path), &registry),
-        );
+        let registry = self
+            .schemas
+            .held_or_read(&self.schema_dirs.dirs, self.schema_dirs.packages.as_ref());
+        // What is wrong with the chunk's entities, said once (ADR 0115), a
+        // left-out package's in `flint check`'s words (#1528)
+        let mut found = flint_scene::diagnose_scene(&scene_file, Some(&chunk_path), &registry);
+        flint_scene::name_unlisted(&registry, &mut found);
+        flint_core::diagnostic::log_summary(&flint_core::project::shown(&chunk_path), &found);
 
         let mut spawned_ids = Vec::new();
 
@@ -481,7 +483,8 @@ impl PlayerApp {
             Ok(dirs) => self.schema_dirs = dirs,
             Err(e) => tracing::error!("{e}; keeping the schema directories already loaded"),
         }
-        self.schemas.for_dirs(&self.schema_dirs.dirs)
+        self.schemas
+            .for_dirs(&self.schema_dirs.dirs, self.schema_dirs.packages.as_ref())
     }
 
     /// Resolve and load `target_scene` without touching the scene playing.

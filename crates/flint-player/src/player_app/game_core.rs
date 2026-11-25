@@ -104,6 +104,12 @@ pub struct GameCore {
     /// the engine's own), for an input script's `expect event` / `wait
     /// event` (#714). `None`, and nothing kept, unless the run has checks.
     pub event_log: Option<Vec<(f64, String)>>,
+    /// The packages the project's `[packages]` lets in (#1334), as the
+    /// schema directories were named under it: a package it leaves out
+    /// runs no subsystem and enables no script module here, as `flint
+    /// check` calls its parts unlisted (#1528). `None`: every package this
+    /// build has is in.
+    pub(crate) packages: Option<flint_core::package::InUse>,
 }
 
 impl GameCore {
@@ -136,6 +142,7 @@ impl GameCore {
             fixed_steps: 0,
             extension_modules: Vec::new(),
             event_log: None,
+            packages: None,
         }
     }
 }
@@ -146,6 +153,10 @@ impl GameCore {
     /// so a call into any other is "not enabled". Called whenever either
     /// list changes: a scene's subsystems built (before its scripts load) or
     /// dropped, an extension added.
+    ///
+    /// A module of a package the project's `[packages]` leaves out is never
+    /// enabled (#1528): its subsystem isn't built, and this holds for an
+    /// extension that declares one too.
     pub(crate) fn enable_script_modules(&mut self) {
         let mut modules = self.subsystems.script_modules();
         for name in &self.extension_modules {
@@ -153,7 +164,23 @@ impl GameCore {
                 modules.push(name);
             }
         }
+        if let Some(in_use) = &self.packages {
+            modules.retain(|name| {
+                in_use
+                    .left_out_owner(flint_core::package::Kind::ScriptModule, name)
+                    .is_none()
+            });
+        }
         self.script.set_enabled_modules(modules);
+    }
+
+    /// Whether the project's `[packages]` leaves `package` out (#1528). With
+    /// no `[packages]` table nothing is left out.
+    #[cfg_attr(not(feature = "living"), allow(dead_code))] // living's gates ask it
+    pub(crate) fn leaves_out(&self, package: &str) -> bool {
+        self.packages
+            .as_ref()
+            .is_some_and(|in_use| !in_use.is_on(package))
     }
 }
 

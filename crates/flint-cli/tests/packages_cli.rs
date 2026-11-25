@@ -311,6 +311,58 @@ fn package_used_on_the_woozy_grove_reports_living_and_procgen() {
     assert!(with_code(&doc, "unlisted-package").is_empty(), "{doc:#}");
 }
 
+/// #1536's done-when: on a project whose files name no procgen spec, `flint
+/// package used` names `procgen = false` as a line to add, never
+/// `debug-hud`, and `--write` writes no `= false` line.
+#[test]
+fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
+    let dir = scratch("leave_out");
+    let o = flint(&dir, &["init", "game", "--template", "blank"]);
+    assert!(o.status.success(), "{}", said(&o));
+    let game = dir.join("game");
+
+    let o = flint(&game, &["package", "used", "--json"]);
+    assert!(o.status.success(), "{}", said(&o));
+    let doc = json(&o);
+    assert_eq!(doc["lines"], serde_json::json!([]), "{doc:#}");
+    assert_eq!(
+        doc["leave_out"],
+        serde_json::json!([{ "name": "procgen", "line": "procgen = false" }]),
+        "{doc:#}"
+    );
+
+    let text = stdout(&flint(&game, &["package", "used"]));
+    assert!(text.contains("no package but the kernel is used"), "{text}");
+    assert!(
+        text.contains("[packages]\nprocgen = false   # nothing scanned uses it\n"),
+        "{text}"
+    );
+    assert!(!text.contains("debug-hud"), "{text}");
+
+    // `--write` names the line and leaves it out of the file
+    let o = flint(&game, &["package", "used", "--write"]);
+    assert!(o.status.success(), "{}", said(&o));
+    assert!(
+        stdout(&o).contains("not written, under [packages]:\nprocgen = false"),
+        "{}",
+        said(&o)
+    );
+    let manifest = std::fs::read_to_string(game.join("flint.toml")).unwrap();
+    assert!(!manifest.contains("procgen = false"), "{manifest}");
+
+    // Added by hand, the line is kept and nothing more is named
+    set_packages(&game, "procgen = false\n");
+    let doc = json(&flint(&game, &["package", "used", "--json"]));
+    assert_eq!(doc["leave_out"], serde_json::json!([]), "{doc:#}");
+    let o = flint(&game, &["build", "--dry-run"]);
+    assert!(o.status.success(), "{}", said(&o));
+    assert!(
+        stdout(&o).contains("left out  procgen, ai, living, music, rhythm"),
+        "{}",
+        said(&o)
+    );
+}
+
 /// #1335's first done-when: in a project listing only `procgen`, `flint
 /// build --dry-run` prints a cargo command with `--no-default-features`
 /// and none of `living`, `music` or `rhythm`, and builds nothing.

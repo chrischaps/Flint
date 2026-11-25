@@ -13,11 +13,19 @@
 //!
 //! Then what those packages require comes along, said as `required by`. The
 //! kernel is every game's and is never listed.
+//!
+//! A standard package is in unless a game writes `name = false`, so a list
+//! of what was found still gives the game every standard package. One that
+//! the scan could have seen used and didn't is named with the line that
+//! leaves it out (#1536): `procgen = false   # nothing scanned uses it`.
+//! It is printed, never written: writing it changes what `flint build`
+//! gives a game whose table is empty today. `debug-hud` is never named:
+//! its use is the F3/F4 panels, which no file says.
 
 use super::{packages_dir_for, Packages};
 use crate::output::{self, Answer};
 use anyhow::{Context, Result};
-use flint_core::package::{Kind, Tier};
+use flint_core::package::{Kind, Package, PackageList, Tier, Wanted};
 use flint_core::project::{shown, Project};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -109,7 +117,7 @@ fn scan(root: &Path, files: &[String], packages: &Packages) -> BTreeMap<String, 
     let procgen = packages
         .packages
         .iter()
-        .find(|p| p.name == "procgen" && p.tier != Tier::Kernel)
+        .find(|p| p.name == PROCGEN && p.tier != Tier::Kernel)
         .map(|p| p.name.clone());
 
     for file in files {
@@ -196,6 +204,74 @@ fn scan(root: &Path, files: &[String], packages: &Packages) -> BTreeMap<String, 
         }
     }
     found
+}
+
+/// The package whose uses are the procgen specs a file names.
+const PROCGEN: &str = "procgen";
+
+/// The comment a line that leaves a package out ends with.
+const NOTHING_USES_IT: &str = "# nothing scanned uses it";
+
+/// Whether the scan can see `p` used: it provides a component, archetype,
+/// scene table or script module, or it is procgen, used by the specs a
+/// file names. A package of crates and commands alone (`debug-hud`, the
+/// F3/F4 panels) is used where no file says so.
+fn seen_by_scan(p: &Package) -> bool {
+    p.name == PROCGEN
+        || [
+            Kind::Component,
+            Kind::Archetype,
+            Kind::SceneTable,
+            Kind::ScriptModule,
+        ]
+        .into_iter()
+        .any(|k| !p.provides.of(k).is_empty())
+}
+
+/// The standard packages nothing scanned uses that the scan could have
+/// seen used, in package order: each can be left out with `name = false`.
+/// Passed over: one with no build switch (it can't be dropped yet), one
+/// `[packages]` already names (set to `false`, or listed with a version,
+/// which `unused` reports), and one a listed package requires, since
+/// `false` there is a `bad-manifest`.
+fn left_out_lines(
+    packages: &Packages,
+    found: &BTreeMap<String, Found>,
+    listed: Option<&PackageList>,
+) -> Vec<String> {
+    // What the packages listed with a version bring, as the resolver does
+    let mut brought: BTreeSet<String> = BTreeSet::new();
+    let mut queue: Vec<String> = listed
+        .map(|l| {
+            l.entries
+                .iter()
+                .filter(|e| matches!(e.wanted, Wanted::Version(_)))
+                .map(|e| e.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    while let Some(name) = queue.pop() {
+        if let Some(p) = packages.get(&name) {
+            for needed in p.requires.keys() {
+                if brought.insert(needed.clone()) {
+                    queue.push(needed.clone());
+                }
+            }
+        }
+    }
+    packages
+        .packages
+        .iter()
+        .filter(|p| p.tier == Tier::Standard && !p.features.is_empty() && seen_by_scan(p))
+        .filter(|p| !found.contains_key(&p.name) && !brought.contains(&p.name))
+        .filter(|p| listed.and_then(|l| l.get(&p.name)).is_none())
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+/// `procgen = false   # nothing scanned uses it`
+fn left_out_line(name: &str) -> String {
+    format!("{name} = false   {NOTHING_USES_IT}")
 }
 
 /// Every string in `value`, at any depth.
@@ -348,21 +424,53 @@ fn answer(
             unused.join(", ")
         ));
     }
+    let leave_out = left_out_lines(packages, found, listed);
+    // `--write` never writes one: it would change what `flint build` gives
+    // a game whose table is empty today
+    const YOURS: &str = "(a `= false` line is yours to add: `--write` never writes one, since \
+                         it changes what `flint build` gives the game)\n";
     match written {
-        Some(file) => text.push_str(&format!("wrote [packages] in {}\n", here(file))),
+        Some(file) => {
+            text.push_str(&format!("wrote [packages] in {}\n", here(file)));
+            if !leave_out.is_empty() {
+                text.push_str("\nnot written, under [packages]:\n");
+                for name in &leave_out {
+                    text.push_str(&left_out_line(name));
+                    text.push('\n');
+                }
+                text.push('\n');
+                text.push_str(YOURS);
+            }
+        }
         None => {
             text.push_str("\n[packages]\n");
             for line in &lines {
                 text.push_str(line);
                 text.push('\n');
             }
-            text.push_str("\n(`--write` adds these to flint.toml)\n");
+            for name in &leave_out {
+                text.push_str(&left_out_line(name));
+                text.push('\n');
+            }
+            text.push('\n');
+            match (lines.is_empty(), leave_out.is_empty()) {
+                (_, true) => text.push_str("(`--write` adds these to flint.toml)\n"),
+                (false, false) => {
+                    text.push_str("(`--write` adds the `\"*\"` lines to flint.toml)\n");
+                    text.push_str(YOURS);
+                }
+                (true, false) => text.push_str(YOURS),
+            }
         }
     }
     let json: Value = json!({
         "root": here(&project.root),
         "packages": json_packages,
         "lines": lines,
+        "leave_out": leave_out.iter().map(|name| json!({
+            "name": name,
+            "line": format!("{name} = false"),
+        })).collect::<Vec<_>>(),
         "unused": unused,
         "written": written.map(|f| here(f)),
     });
@@ -402,6 +510,57 @@ mod tests {
         assert_eq!(
             lines(&engine_packages(), &found),
             ["procgen = \"*\"", "living = \"*\""]
+        );
+        // Procgen is used, so nothing is named to leave out
+        assert!(left_out_lines(&engine_packages(), &found, None).is_empty());
+    }
+
+    /// #1536: a scene that names no procgen spec gives `procgen = false`
+    /// as a line to add, and never `debug-hud`, which no file can show used.
+    #[test]
+    fn a_scene_naming_no_spec_names_procgen_to_leave_out_and_never_debug_hud() {
+        let packages = engine_packages();
+        let root = super::super::built_from().join("tests/fixtures/scenes");
+        let files = vec!["pbr_test.scene.toml".to_string()];
+        let found = scan(&root, &files, &packages);
+        assert!(found.is_empty(), "{found:?}");
+        assert_eq!(left_out_lines(&packages, &found, None), ["procgen"]);
+        assert_eq!(
+            left_out_line("procgen"),
+            "procgen = false   # nothing scanned uses it"
+        );
+        let debug_hud = packages.get("debug-hud").expect("the engine has debug-hud");
+        assert_eq!(debug_hud.tier, Tier::Standard);
+        assert!(!seen_by_scan(debug_hud));
+
+        // A line [packages] already has, or a listed package that needs
+        // procgen, keeps it from being named
+        let list = |lines: &[(&str, Wanted)]| PackageList {
+            file: PathBuf::from("flint.toml"),
+            entries: lines
+                .iter()
+                .map(|(name, wanted)| flint_core::package::Listed {
+                    name: name.to_string(),
+                    wanted: wanted.clone(),
+                })
+                .collect(),
+        };
+        let any = || Wanted::Version("*".into());
+        for listed in [
+            list(&[("procgen", Wanted::Off)]),
+            list(&[("procgen", any())]),
+            list(&[("ai", any())]),
+            list(&[("living", any())]),
+        ] {
+            assert!(
+                left_out_lines(&packages, &found, Some(&listed)).is_empty(),
+                "{listed:?}"
+            );
+        }
+        // A listed package that needs nothing standard leaves it named
+        assert_eq!(
+            left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
+            ["procgen"]
         );
     }
 }

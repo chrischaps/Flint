@@ -137,7 +137,9 @@ pub(crate) fn living_of(scene: &SceneFile) -> Option<LivingDef> {
 /// A table that doesn't fit is an `Err` naming the file and the table: the
 /// scene is refused, as it was. What's wrong with a preset file is warned
 /// about and the scene goes on, since a look lab shouldn't refuse to start
-/// over one; `flint validate` fails on it.
+/// over one; `flint validate` fails on it. Built without the `living`
+/// feature, a preset file is still laid in, but nothing is held to the wooze
+/// field's own ranges or built-in names (#1516).
 pub fn settle_scene(scene: &mut SceneFile, scene_path: &Path) -> flint_core::Result<()> {
     LivingTables::of(scene).map_err(|problem| {
         flint_core::FlintError::TomlParseError(format!(
