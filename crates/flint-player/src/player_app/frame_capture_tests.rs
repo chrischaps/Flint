@@ -95,6 +95,7 @@ fn started(root: &Path, gpu: &'static HeadlessContext) -> PlayerApp {
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     app.scene_renderer = Some(SceneRenderer::new_headless(

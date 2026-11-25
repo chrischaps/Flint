@@ -193,6 +193,10 @@ fn check_all(
         .flatten();
     let registry = with_styles.as_ref().unwrap_or(&schemas.registry);
     let mut found = flint_scene::diagnose_all(scene, registry, project);
+    // A component or table of a package `[packages]` leaves out (#1334)
+    if let Some(in_use) = &schemas.dirs.packages {
+        in_use.name_unlisted(&mut found);
+    }
     if with_styles.is_some() {
         say_user_styles_clamp(&mut found, memo.styles_for(scene_dir));
     }

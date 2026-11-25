@@ -282,6 +282,9 @@ fn every_command_answers_with_one_json_document() {
     // shape is held by `package_list_has_the_shape_kept_in_the_repo`
     run("package list");
     assert_eq!(ok(&dir, &["package", "list"])["valid"], true);
+    // What the scaffold uses (#1334): no feature package
+    run("package used");
+    assert!(ok(&dir, &["package", "used"])["lines"].is_array());
 
     // `play` is a window, but `--list-keys` only prints its debug keys,
     // under flint's global --json (#1184: the player's own took it)

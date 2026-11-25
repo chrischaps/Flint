@@ -69,6 +69,7 @@ fn with_sounds(script: &str, sounds: &[(&str, f32)], run: impl FnOnce(&mut Playe
                 dirs: Vec::new(),
                 source: SchemaSource::Flags,
                 dropped: Vec::new(),
+                packages: None,
             },
         );
         app.core.clock.frame_step = Some(1.0 / 30.0);

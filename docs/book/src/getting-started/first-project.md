@@ -17,7 +17,7 @@ Created Flint project `my-tavern` (walk template) in my-tavern
   AGENTS.md                  points other agents at CLAUDE.md
   CLAUDE.md                  the guide to this project, for you and for agents
   bundle.toml                packing rules for the web build
-  flint.toml                 the manifest: id, schemas, start scene, input
+  flint.toml                 the manifest: id, schemas, start scene, input, packages
   config/input.toml          the game's input actions
   renders/                   where renders go
   scenes/main.scene.toml     a lit ring of stones, a [camera], and a player facing it

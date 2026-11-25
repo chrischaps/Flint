@@ -91,6 +91,7 @@ fn started_in(path: &str, test: &str) -> PlayerApp {
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     app.core.clock.frame_step = Some(1.0 / 30.0);

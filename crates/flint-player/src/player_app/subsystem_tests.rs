@@ -57,6 +57,7 @@ fn started_in_a(feed: Option<ExpressionFeed>) -> PlayerApp {
             dirs: Vec::new(),
             source: SchemaSource::Flags,
             dropped: Vec::new(),
+            packages: None,
         },
     );
     app.launch.expression_feed = feed;

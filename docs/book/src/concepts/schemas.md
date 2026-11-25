@@ -267,9 +267,10 @@ A schema file inside a Flint engine checkout (the engine's repository, or the `e
 | `bad-field` | error | a field the scene declares (`[field.<name>]`) has a key or zone that is wrong, named by the field and the key (`weather.keys.wind`) or zone (`weather.zone.storm`) as the field; the player warns and plays without the part that's wrong ([Scripting](scripting.md#fields-a-scene-declares)) |
 | `constraint` | the constraint's | a [constraint](constraints.md) the scene breaks (`info` reads as a warning) |
 | `bad-constraint` | error | a constraint file does not read, or a constraint's query does not parse or does not select entities |
-| `bad-manifest` | error | `flint.toml` does not read |
+| `bad-manifest` | error | `flint.toml` does not read, or a line of its `[packages]` names no package or leaves out one that can't be ([Packages a game uses](../guides/building-a-game-project.md#packages-a-game-uses)) |
 | `bad-package` | error | a package's `package.toml` does not read, or provides what another package's does ([The `package` Command](../cli-reference/overview.md#the-package-command)) |
 | `bad-schemas` | error | a schema directory is missing, or a schema file does not read |
+| `unlisted-package` | error | a component, archetype, scene table or script function of a package the project's `[packages]` leaves out; the hint is the line to add (`living = "*"`) ([Packages a game uses](../guides/building-a-game-project.md#packages-a-game-uses)) |
 | `missing-cargo-patch` | warning | a game's Cargo workspace root lacks a `[patch.crates-io]` line of the engine it builds by path, or points it elsewhere; the hint is the line to add ([Upgrading the Engine](../guides/upgrading-the-engine.md#cargo)) |
 | `stale-cargo-lock` | warning | a game's `Cargo.lock` gives gpu-allocator a different `windows` crate from wgpu-hal's (a lock moved forward from before wgpu 30), so wgpu-hal fails on Windows with ``expected `ID3D12Device`, found a different `ID3D12Device` ``; the hint is the `cargo update` that mends it ([Upgrading the Engine](../guides/upgrading-the-engine.md#cargo)) |
 

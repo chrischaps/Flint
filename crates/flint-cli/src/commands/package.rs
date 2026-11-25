@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 mod owners;
+mod used;
 
 #[derive(clap::Subcommand)]
 pub enum PackageCommands {
@@ -30,6 +31,10 @@ pub enum PackageCommands {
     /// build it, and the crates, components, archetypes, scene tables,
     /// script modules and commands it owns
     List(ListArgs),
+    /// The packages the project's scenes, prefabs and scripts use, from
+    /// their components, scene tables, script calls and procgen specs; with
+    /// `--write`, the `[packages]` table of flint.toml that lists them
+    Used(used::UsedArgs),
 }
 
 #[derive(clap::Args)]
@@ -50,6 +55,7 @@ pub struct ListArgs {
 pub fn run(cmd: PackageCommands) -> Result<()> {
     match cmd {
         PackageCommands::List(args) => list(args),
+        PackageCommands::Used(args) => used::run(args),
     }
 }
 
@@ -122,6 +128,42 @@ fn built_text(read: &Packages, of: usize) -> String {
 }
 
 /// The engine's package folder for the working directory's project.
+/// The packages `[packages]` lets into the project the working directory
+/// is in (#1334), held to the engine the project's schemas come from: the
+/// schema resolver's own answer. `None` with no `[packages]` key, or with
+/// schemas that don't resolve for another reason (that command says so).
+pub fn project_in_use() -> Result<Option<package::InUse>> {
+    use flint_core::project::SchemaDirsError;
+    match flint_core::project::schema_dirs(None, &[] as &[&Path]) {
+        Ok(dirs) => Ok(dirs.packages),
+        Err(e @ SchemaDirsError::Packages { .. }) => Err(e.into()),
+        Err(_) => Ok(None),
+    }
+}
+
+/// The engine package folder of `project`: the one its schema directories
+/// come from, else its `engine/packages` (or an engine checkout's own),
+/// else the tree this binary was built from.
+fn packages_dir_for(project: &flint_core::project::Project) -> Result<PathBuf> {
+    let at = project.root.join(flint_core::project::MANIFEST_FILE);
+    if let Ok(dirs) = flint_core::project::schema_dirs(Some(&at), &[] as &[&Path]) {
+        if let Some(dir) = flint_core::project::engine_packages_for(&dirs.dirs) {
+            return Ok(dir);
+        }
+    }
+    if let Some(dir) = package::engine_packages_dir(&project.root) {
+        return Ok(dir);
+    }
+    let built = built_from().join(package::PACKAGES_DIR);
+    anyhow::ensure!(
+        built.is_dir(),
+        "no engine packages for {}: none beside its schemas, no engine/packages, and no {}",
+        flint_core::project::shown(&project.root),
+        flint_core::project::shown(&built)
+    );
+    Ok(built)
+}
+
 fn default_dir() -> Result<PathBuf> {
     let project = flint_core::project::Project::current()?;
     if let Some(dir) = package::engine_packages_dir(&project.root) {

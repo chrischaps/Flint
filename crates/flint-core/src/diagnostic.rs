@@ -146,6 +146,9 @@ pub mod codes {
     /// A package's `package.toml` does not read, or claims what another
     /// package's does (ADR 0136 decision 8, #1331).
     pub const BAD_PACKAGE: &str = "bad-package";
+    /// A component, scene table or script function of a package the
+    /// project's `[packages]` leaves out (ADR 0136 decision 9, #1334).
+    pub const UNLISTED_PACKAGE: &str = "unlisted-package";
     /// A schema directory is missing, or a schema file does not read.
     pub const BAD_SCHEMAS: &str = "bad-schemas";
     /// A constraint file does not read, or a constraint's query does not
@@ -351,6 +354,11 @@ pub mod codes {
             BAD_PACKAGE,
             Severity::Error,
             "a package.toml does not read, or provides what another package does",
+        ),
+        (
+            UNLISTED_PACKAGE,
+            Severity::Error,
+            "a scene or script uses a package flint.toml's [packages] leaves out",
         ),
         (
             BAD_SCHEMAS,
@@ -1041,7 +1049,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 57);
+        assert_eq!(seen.len(), 58);
     }
 
     /// A problem in a scene-level table names the table as its header is
