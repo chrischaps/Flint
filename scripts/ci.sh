@@ -23,8 +23,11 @@
 #                          same job), scripts/wasm-check.sh and the package
 #                          matrix (scripts/package-check.sh --build, CI's
 #                          package matrix job, #1336: fifteen `cargo check`s,
-#                          each package alone, all and none). Minutes, and
-#                          four builds (the third is the debug `flint` most
+#                          each package alone, all and none) and the epic's
+#                          done-when on a `flint init` project that `flint
+#                          build` builds (scripts/package-done-when.py, CI's
+#                          package done-when job, #1525). Minutes, and five
+#                          builds (the third is the debug `flint` most
 #                          worktrees have already).
 #
 # Formatting is rustfmt's defaults at edition 2021 (rustfmt.toml). Fix a failure
@@ -138,6 +141,8 @@ if [ "${1:-}" = "--full" ]; then
     bash scripts/wasm-check.sh
     echo "ci: scripts/package-check.sh --build"
     bash scripts/package-check.sh --build
+    echo "ci: scripts/package-done-when.py"
+    "$py" scripts/package-done-when.py
 fi
 
 echo "ci: ok"
