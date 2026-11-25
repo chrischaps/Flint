@@ -123,9 +123,11 @@ jobs:
       # package's manifest (packages/<name>/package.toml, #1331), checked in
       # the headless build. A lib test: the command tree is flint-cli's own.
       # It is the build with no package at all (#1333), so `absent::` holds
-      # each left-out command to exit 2 naming its package.
-      - name: cargo test -p flint-cli --no-default-features --lib package:: absent::
-        run: cargo test -p flint-cli --no-default-features --lib -- package:: absent::
+      # each left-out command to exit 2 naming its package. Quoted: `: ` in
+      # a plain YAML value starts a mapping, and unquoted these two lines
+      # broke the whole file, so from c3dfc8c7 to #1525 no job ran at all.
+      - name: 'cargo test -p flint-cli --no-default-features --lib package:: absent::'
+        run: 'cargo test -p flint-cli --no-default-features --lib -- package:: absent::'
 
       # The book against the script API (#695): the generated reference
       # (docs/book/src/reference/script-api.md) and the scripting chapter's
