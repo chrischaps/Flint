@@ -8,10 +8,11 @@
 //! to flint-music's contract. A rhythm suite, one that declares
 //! `[reintegration]` or is given a `--chart` (or `--rhythm`), is also held to
 //! flint-rhythm's: the six buses, the seam, a judgment window per section.
+//! A build without the `rhythm` package (#1333) checks a music suite and
+//! refuses a rhythm one, exit 2, rather than pass it half-checked.
 
 use anyhow::{Context, Result};
 use flint_music::{validate_manifest_assets, Issue, SuiteManifest};
-use flint_rhythm::{validate_chart, Chart};
 use std::path::{Path, PathBuf};
 
 #[derive(clap::Args)]
@@ -48,12 +49,11 @@ pub fn run(args: ValidateSuiteArgs) -> Result<()> {
     };
 
     // The rhythm contract runs the general pass first
-    let rhythm =
-        args.rhythm || args.chart.is_some() || flint_rhythm::Reintegration::declared(&manifest);
+    let rhythm = args.rhythm || args.chart.is_some() || rhythm::declared(&manifest);
     record(
         "manifest",
         if rhythm {
-            flint_rhythm::validate_manifest(&manifest)
+            rhythm::validate_manifest(&manifest)?
         } else {
             flint_music::validate_manifest(&manifest)
         },
@@ -71,9 +71,10 @@ pub fn run(args: ValidateSuiteArgs) -> Result<()> {
     }
 
     if let Some(chart_path) = &args.chart {
-        let chart = Chart::load(Path::new(chart_path))
-            .with_context(|| format!("loading chart {chart_path}"))?;
-        record("chart", validate_chart(&chart, &manifest));
+        record(
+            "chart",
+            rhythm::validate_chart(Path::new(chart_path), &manifest)?,
+        );
     }
 
     crate::output::when_json(|| {
@@ -110,5 +111,56 @@ pub fn run(args: ValidateSuiteArgs) -> Result<()> {
         }
         eprintln!("{} validation issue(s)", issues.len());
         Err(crate::output::failed())
+    }
+}
+
+/// The rhythm layer's half of the check: its contract and the chart.
+#[cfg(feature = "rhythm")]
+mod rhythm {
+    use anyhow::{Context, Result};
+    use flint_music::{Issue, SuiteManifest};
+    use std::path::Path;
+
+    pub fn declared(manifest: &SuiteManifest) -> bool {
+        flint_rhythm::Reintegration::declared(manifest)
+    }
+
+    pub fn validate_manifest(manifest: &SuiteManifest) -> Result<Vec<Issue>> {
+        Ok(flint_rhythm::validate_manifest(manifest))
+    }
+
+    pub fn validate_chart(path: &Path, manifest: &SuiteManifest) -> Result<Vec<Issue>> {
+        let chart = flint_rhythm::Chart::load(path)
+            .with_context(|| format!("loading chart {}", path.display()))?;
+        Ok(flint_rhythm::validate_chart(&chart, manifest))
+    }
+}
+
+/// Built without the rhythm package: a rhythm suite, `--rhythm` and
+/// `--chart` are refused, naming it.
+#[cfg(not(feature = "rhythm"))]
+mod rhythm {
+    use crate::commands::absent::missing;
+    use anyhow::Result;
+    use flint_music::{Issue, SuiteManifest};
+    use std::path::Path;
+
+    /// flint-rhythm's `Reintegration::TABLE`: the table that makes a suite
+    /// a rhythm suite.
+    const TABLE: &str = "reintegration";
+
+    pub fn declared(manifest: &SuiteManifest) -> bool {
+        manifest.tables.contains_key(TABLE)
+    }
+
+    pub fn validate_manifest(_: &SuiteManifest) -> Result<Vec<Issue>> {
+        Err(missing(
+            "flint music validate on a rhythm suite ([reintegration], --rhythm or --chart)",
+            "rhythm",
+        ))
+    }
+
+    pub fn validate_chart(_: &Path, _: &SuiteManifest) -> Result<Vec<Issue>> {
+        Err(missing("flint music validate --chart", "rhythm"))
     }
 }

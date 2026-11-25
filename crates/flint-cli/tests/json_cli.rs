@@ -15,6 +15,10 @@
 //!
 //! The renders (`render`, `goldens`, `edit <model> --render`) need a GPU and
 //! are skipped, said on stderr, on a machine with none.
+//!
+//! It runs every command, so it needs every package (#1333): a build
+//! without one answers that package's commands with exit 2 instead.
+#![cfg(feature = "packages")]
 
 use serde_json::Value;
 use std::collections::BTreeSet;

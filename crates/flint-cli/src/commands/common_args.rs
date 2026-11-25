@@ -241,10 +241,33 @@ pub fn warn_dropped_schemas(dirs: &flint_schema::SchemaDirs) {
     }
 }
 
+/// The value of a `--max-cost` flag: dollars, `$` allowed, not negative.
+/// Here, not in `ai_costs`, so the flag parses alike in a build without the
+/// ai package (#1333), whose command then names the package.
+pub fn parse_usd(s: &str) -> std::result::Result<f64, String> {
+    let v: f64 = s
+        .trim()
+        .trim_start_matches('$')
+        .parse()
+        .map_err(|_| format!("'{s}' isn't an amount in USD (e.g. 0.50)"))?;
+    if !v.is_finite() || v < 0.0 {
+        return Err(format!("--max-cost must be a non-negative amount, not {s}"));
+    }
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use flint_render::DebugMode;
+
+    #[test]
+    fn usd_amounts_parse() {
+        assert_eq!(parse_usd("1.00"), Ok(1.0));
+        assert_eq!(parse_usd("$0.50"), Ok(0.5));
+        assert!(parse_usd("-1").is_err());
+        assert!(parse_usd("lots").is_err());
+    }
 
     /// #308: `wireframe-overlay` was matched in render.rs and refused here.
     /// Now there is one table; this holds it to the renderer's modes: every

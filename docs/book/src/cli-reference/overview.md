@@ -13,7 +13,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene list` | List scene files |
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
-| `flint package list [--json]` | The engine's packages, from their manifests (`packages/<name>/package.toml`): each one's tier, version, requirements, build features, and the crates, components, archetypes, scene tables, script modules and commands it owns ([The `package` Command](#the-package-command)) |
+| `flint package list [--json]` | The engine's packages, from their manifests (`packages/<name>/package.toml`): each one's tier, version, requirements, build features, and the crates, components, archetypes, scene tables, script modules and commands it owns; `--built` lists only those this `flint` was compiled with ([The `package` Command](#the-package-command)) |
 | `flint env [--json]` | Every `FLINT_*` environment switch, what it accepts and its value now; exit 1 on a value it can't take ([Environment Switches](environment.md)) |
 | `flint schema <name>` | Inspect a component or archetype schema; an unknown name exits 1. `--list` names every one loaded (`--json`); `--format json` is the schemas as data; `--format json-schema [--output file]` is a JSON Schema for a `.scene.toml`, for editor completion ([Introspecting Schemas](../concepts/schemas.md#introspecting-schemas)) |
 | `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
@@ -105,6 +105,7 @@ No engine schema is copied into the game. One engine file is: with `--engine pat
 flint package list            # every package: tier, version, what it owns
 flint package list --json     # the same as one JSON document
 flint package list --dir d    # the manifests under another folder
+flint package list --built    # only the packages this flint was compiled with
 ```
 
 A package is a name a game will list in its `flint.toml`, and everything that name brings ([ADR 0136](https://github.com/chrischaps/Flint/blob/main/docs/adr/0136-the-package-model.md)). Each has a manifest, `packages/<name>/package.toml`, that says what it owns, so a tool or an agent can ask what exists without compiling anything. There are seven: `engine` (the kernel, holding for now the standard parts that have no switch yet: physics, audio, animation, particles, terrain, and the ocean, grass, stylize and panels features), the standard `procgen` and `debug-hud`, and the features `living`, `music`, `rhythm` and `ai`. A game can't list them yet; `[packages]` in `flint.toml` comes next.
@@ -155,6 +156,26 @@ commands = []              # paths below `flint`: "music chart", "asset generate
 ```
 
 Every crate, schema file, script module and command of the engine belongs to exactly one package. A test holds that: a new component, crate, script module or command fails it, naming the file or item, until one manifest lists it.
+
+### Which packages a `flint` has
+
+`flint-cli` has a Cargo feature for each package with a switch: `living`, `music`, `rhythm`, `procgen` and `ai` (and `packages`, all five). They are on by default; a build without one links none of that package's crates. Its commands stay in `flint --help`, so every build parses the same command lines, but running one exits 2 and names the package:
+
+```text
+$ flint music chart play x
+Error: flint music chart play needs the `rhythm` package, and this flint was built without it: build flint-cli with `--features rhythm` (`flint package list --built` names the packages this one has)
+```
+
+The same goes for a flag that needs one: `gen --ai-create` and the other AI steps, `render --ai-refine` and `asset resolve --strategy ai_generate` need `ai`; `gen --strip` and a `render --sweep` of `wooze.*` or `living.echoes.*` need `living`; `music validate --chart` needs `rhythm`. Under `--json` the error document carries `package`. `flint package list --built` lists what this binary has, each package whose `[build] features` it was compiled with. A `flint-cli --no-default-features` build has only the kernel and the debug panels:
+
+```text
+$ flint package list --built
+engine     kernel    0.1.0  The kernel, with the standard packages and render features that have no switch yet
+debug-hud  standard  0.1.0  The F3/F4 debug panels and their shared widgets
+2 of 7 packages built into this flint (features: debug-hud, frame-history)
+```
+
+Under `--json` it is the list's document with `built: true` and `features`, the Cargo features the binary has. A build without `living` still renders a scene with living props: everything else in it draws as before, and the props, whose models are `[living]` specs only that package grows, are left out, with one warning at the load. `flint check` still reads the scene's `[living]` table.
 
 ## The `check` Command
 
