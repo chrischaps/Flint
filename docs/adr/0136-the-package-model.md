@@ -1,7 +1,8 @@
 # ADR 0136: The package model: four tiers, `package.toml`, `[packages]`, two versions and the subtree
 
-Status: proposed, 2026-11-24 (#1329). Accepted when Chris accepts it; the
-"Decisions needed" at the end are his. Epic #1328 (Modularity, Phase 1).
+Status: accepted, 2026-11-25 (proposed 2026-11-24, #1329). Chris accepted
+it with every recommendation under "Decisions" at the end. Epic #1328
+(Modularity, Phase 1).
 Builds on [ADR 0114](0114-project-manifest-and-one-resolver.md) (the
 manifest and one resolver), [ADR 0117](0117-player-subsystems-and-one-game-step.md)
 (subsystems and their features),
@@ -299,9 +300,11 @@ Off Windows nothing is renamed: replacing a running file is allowed.
   Kandinski 33 scenes and none. Kandinski's styles are in 30 scenes. None
   of the 201 scenes uses living props, the wooze field or a music session.
 
-## Decisions needed
+## Decisions
 
-Each has a recommendation; none is settled until Chris says so.
+Chris accepted every recommendation below on 2026-11-25. Decisions 1, 2, 3,
+7 and 8 are settled. Decisions 4, 5 and 6 belong to later phases: the
+recommendation is the starting point, and that phase's ADR confirms it.
 
 1. **The word "package"**, or "module" or "plugin". Recommended: package
    (see Alternatives).
