@@ -429,9 +429,14 @@ impl Commands {
         Some(match self {
             Commands::Serve { .. } => "serve",
             Commands::SplineEdit(_) => "spline-edit",
+            // A build without the package opens no window: its stand-in
+            // names the package, under --json too (#1333)
             Commands::Music(cmd) => match &**cmd {
+                #[cfg(feature = "music")]
                 music::MusicCommands::Play(_) => "music play",
+                #[cfg(feature = "rhythm")]
                 music::MusicCommands::Calibrate(_) => "music calibrate",
+                #[cfg(feature = "rhythm")]
                 music::MusicCommands::Chart(music::ChartCommands::Play(_)) => "music chart play",
                 _ => return None,
             },

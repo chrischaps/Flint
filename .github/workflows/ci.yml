@@ -121,23 +121,27 @@ jobs:
 
       # Every crate, schema file, script module and command belongs to one
       # package's manifest (packages/<name>/package.toml, #1331), checked in
-      # the headless build. A lib test: the command tree is flint-cli's own
-      - name: cargo test -p flint-cli --no-default-features --lib package::
-        run: cargo test -p flint-cli --no-default-features --lib package::
+      # the headless build. A lib test: the command tree is flint-cli's own.
+      # It is the build with no package at all (#1333), so `absent::` holds
+      # each left-out command to exit 2 naming its package.
+      - name: cargo test -p flint-cli --no-default-features --lib package:: absent::
+        run: cargo test -p flint-cli --no-default-features --lib -- package:: absent::
 
       # The book against the script API (#695): the generated reference
       # (docs/book/src/reference/script-api.md) and the scripting chapter's
       # script-api tables match the engine's declarations, and no chapter
       # calls a function the engine doesn't have (docs/book/script-api-allow.txt
-      # lists the Rust and shader names that aren't script calls). Same binary
-      # as the step above. Fix a stale page with `flint script api --book`.
+      # lists the Rust and shader names that aren't script calls). The book
+      # describes every package, so this binary has them all (`packages`,
+      # #1333) and still no device crate. Fix a stale page with
+      # `flint script api --book`.
       - name: flint script api --check-book
-        run: cargo run -p flint-cli --no-default-features --bin flint -- script api --check-book
+        run: cargo run -p flint-cli --no-default-features --features packages --bin flint -- script api --check-book
 
       # The book's environment page (#715) against the table every FLINT_*
       # switch is read through (flint_core::env). Fix it with `flint env --book`.
       - name: flint env --check-book
-        run: cargo run -p flint-cli --no-default-features --bin flint -- env --check-book
+        run: cargo run -p flint-cli --no-default-features --features packages --bin flint -- env --check-book
 
       # The book's prose against the CLI (#375): every `--flag` on a `flint`
       # command line in the book and the CLAUDE.md files is one that

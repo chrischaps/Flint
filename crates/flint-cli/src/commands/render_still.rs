@@ -71,6 +71,9 @@ pub(super) fn render_still(
         wants_flips,
         reads_glyphs,
     } = still;
+    // The scene's own block is what --ai-refine lays a candidate over
+    #[cfg(not(feature = "ai"))]
+    let _ = scene_pp;
     // A still draws the scene as authored, before any script (#371): said, as
     // the clocked path says it, since a look a script sets is otherwise missing
     // from the picture with no word why
@@ -296,6 +299,7 @@ pub(super) fn render_still(
         );
     }
 
+    #[cfg(feature = "ai")]
     if args.refine.ai_refine {
         let look = look.expect("clap requires --look with --ai-refine");
         let reference = reference.expect("clap requires --reference with --ai-refine");
@@ -747,6 +751,7 @@ pub(super) fn ink_scale(
 }
 
 /// The glyph grid the last frame drew, as ink; `None` when ASCII didn't draw.
+#[cfg(feature = "ai")]
 pub(super) fn frame_ink(
     renderer: &SceneRenderer,
     ctx: &HeadlessContext,
@@ -759,6 +764,7 @@ pub(super) fn frame_ink(
 
 /// `--ai-refine` (#357): run the loop, then write the refined look, its log
 /// and the sheet of rounds.
+#[cfg(feature = "ai")]
 pub(super) fn refine_look(
     args: &RenderArgs,
     look: crate::commands::look::Look,

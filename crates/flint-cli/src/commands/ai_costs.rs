@@ -47,19 +47,6 @@ pub fn meter_at(root: &Path, provider: &str, max_cost: Option<f64>) -> Result<Co
     Ok(meter)
 }
 
-/// The value of a `--max-cost` flag: dollars, `$` allowed, not negative.
-pub fn parse_usd(s: &str) -> std::result::Result<f64, String> {
-    let v: f64 = s
-        .trim()
-        .trim_start_matches('$')
-        .parse()
-        .map_err(|_| format!("'{s}' isn't an amount in USD (e.g. 0.50)"))?;
-    if !v.is_finite() || v < 0.0 {
-        return Err(format!("--max-cost must be a non-negative amount, not {s}"));
-    }
-    Ok(v)
-}
-
 /// `$0.0500 spent over 2 calls, recorded in .flint/ai_costs.jsonl`.
 pub fn spent_line(meter: &CostMeter) -> String {
     let ceiling = meter
@@ -102,17 +89,4 @@ pub fn cost_report(ledger: &CostLedger, since: Option<&str>) -> Result<()> {
         format!("{}\nLedger: {ledger_path}", summary.render()),
         document,
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn usd_amounts_parse() {
-        assert_eq!(parse_usd("1.00"), Ok(1.0));
-        assert_eq!(parse_usd("$0.50"), Ok(0.5));
-        assert!(parse_usd("-1").is_err());
-        assert!(parse_usd("lots").is_err());
-    }
 }

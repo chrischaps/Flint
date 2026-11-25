@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{ArgGroup, Args, ValueEnum};
+#[cfg(feature = "ai")]
 use flint_asset_gen::StyleGuide;
 use flint_core::ContentHash;
 use flint_procgen::{
@@ -14,10 +15,14 @@ use flint_procgen::{
 };
 use serde::Serialize;
 
+#[cfg(feature = "ai")]
 use super::gen_ai;
 use super::gen_catalog;
 use super::gen_store::{self, WrittenFile};
+#[cfg(feature = "living")]
 use super::gen_strip::{self, StripOptions};
+#[cfg(not(feature = "ai"))]
+use no_style_guide::StyleGuide;
 
 /// Human lines go to stdout, unless stdout is carrying something a program
 /// reads: the spec (`--print-spec`) or the JSON report (`--report json`, #185).
@@ -312,10 +317,108 @@ fn parse_format(s: &str) -> std::result::Result<String, String> {
 }
 
 fn parse_usd(s: &str) -> std::result::Result<f64, String> {
-    super::ai_costs::parse_usd(s)
+    super::common_args::parse_usd(s)
+}
+
+/// The AI steps (`--ai-create`, `--ai-assist`, `--ai-refine`): the spec they
+/// make, or `None` after a dry run said what they would do.
+#[cfg(feature = "ai")]
+fn ai_steps(
+    args: &GenArgs,
+    steps: gen_ai::Steps,
+    loaded: Option<ProcGenSpec>,
+    stdout_reserved: bool,
+) -> Result<Option<ProcGenSpec>> {
+    let config = gen_ai::resolve_config(args, Path::new(gen_ai::CONFIG_PATH))?;
+    if args.dry_run {
+        // With --print-spec a dry run has no spec to print, so the plan
+        // keeps stdout; only the JSON report needs it kept clear.
+        let plan = gen_ai::plan_lines(&config, steps, args);
+        for line in &plan {
+            if stdout_reserved {
+                eprintln!("{line}");
+            } else {
+                println!("{line}");
+            }
+        }
+        crate::output::when_json(|| serde_json::json!({ "dry_run": true, "plan": plan }));
+        return Ok(None);
+    }
+    let meter = gen_ai::build_meter(&config, args)?;
+    let agent = gen_ai::build_agent(config, meter.clone(), args.refine_rounds)?;
+    gen_ai::run_steps(args, agent.as_ref(), &meter, loaded).map(Some)
+}
+
+/// Built without the ai package: [`refuse_ai`] turned every AI flag away
+/// before a step could be asked for.
+#[cfg(not(feature = "ai"))]
+fn ai_steps(
+    _: &GenArgs,
+    _: gen_ai::Steps,
+    _: Option<ProcGenSpec>,
+    _: bool,
+) -> Result<Option<ProcGenSpec>> {
+    unreachable!("refuse_ai turns the AI flags away first")
+}
+
+/// The flags that need the ai package (#1333), refused with exit 2 in a
+/// build without it.
+#[cfg(not(feature = "ai"))]
+fn refuse_ai(args: &GenArgs) -> Result<()> {
+    let flag = [
+        (args.cost_report, "--cost-report"),
+        (args.ai_create.is_some(), "--ai-create"),
+        (args.ai_assist, "--ai-assist"),
+        (args.ai_refine, "--ai-refine"),
+        (args.style_guide.is_some(), "--style-guide"),
+    ]
+    .into_iter()
+    .find_map(|(given, flag)| given.then_some(flag));
+    match flag {
+        Some(flag) => Err(super::absent::missing(format!("flint gen {flag}"), "ai")),
+        None => Ok(()),
+    }
+}
+
+/// What the AI steps are without the ai package: none.
+#[cfg(not(feature = "ai"))]
+mod gen_ai {
+    #[derive(Clone, Copy)]
+    pub struct Steps;
+
+    impl Steps {
+        pub fn of(_: &super::GenArgs) -> Self {
+            Steps
+        }
+
+        pub fn any(self) -> bool {
+            false
+        }
+    }
+}
+
+/// A style guide (`--style-guide`) is the ai package's (flint-asset-gen);
+/// without it the flag is refused first, so none is ever loaded.
+#[cfg(not(feature = "ai"))]
+mod no_style_guide {
+    use flint_procgen::ValidationConstraints;
+
+    pub enum StyleGuide {}
+
+    impl StyleGuide {
+        pub fn load(_: &std::path::Path) -> Result<Self, &'static str> {
+            Err("a style guide needs the ai package")
+        }
+
+        pub fn validation_constraints(&self) -> ValidationConstraints {
+            match *self {}
+        }
+    }
 }
 
 pub fn run(args: GenArgs) -> Result<()> {
+    #[cfg(not(feature = "ai"))]
+    refuse_ai(&args)?;
     // The global --json (#710) asks for either catalog as one document
     let as_json = crate::output::json();
     if args.list_generators {
@@ -330,6 +433,7 @@ pub fn run(args: GenArgs) -> Result<()> {
         };
         return gen_catalog::describe(&GeneratorRegistry::with_built_ins(), name, format);
     }
+    #[cfg(feature = "ai")]
     if args.cost_report {
         return super::ai_costs::cost_report(&super::ai_costs::ledger(), args.since.as_deref());
     }
@@ -364,24 +468,10 @@ pub fn run(args: GenArgs) -> Result<()> {
     // The AI steps run first: they make the spec everything below checks.
     // A dry run only says what they would do.
     let mut spec = if steps.any() {
-        let config = gen_ai::resolve_config(&args, Path::new(gen_ai::CONFIG_PATH))?;
-        if args.dry_run {
-            // With --print-spec a dry run has no spec to print, so the plan
-            // keeps stdout; only the JSON report needs it kept clear.
-            let plan = gen_ai::plan_lines(&config, steps, &args);
-            for line in &plan {
-                if json || document {
-                    eprintln!("{line}");
-                } else {
-                    println!("{line}");
-                }
-            }
-            crate::output::when_json(|| serde_json::json!({ "dry_run": true, "plan": plan }));
-            return Ok(());
+        match ai_steps(&args, steps, loaded, json || document)? {
+            Some(spec) => spec,
+            None => return Ok(()),
         }
-        let meter = gen_ai::build_meter(&config, &args)?;
-        let agent = gen_ai::build_agent(config, meter.clone(), args.refine_rounds)?;
-        gen_ai::run_steps(&args, agent.as_ref(), &meter, loaded)?
     } else {
         loaded.expect("clap requires a spec unless --ai-create or --cost-report")
     };
@@ -443,6 +533,12 @@ pub fn run(args: GenArgs) -> Result<()> {
         bail!("{ignored} spec parameter(s) would be ignored (--strict)");
     }
 
+    // A [living] spec over time is the living package's (#1333)
+    #[cfg(not(feature = "living"))]
+    if args.strip {
+        return Err(super::absent::missing("flint gen --strip", "living"));
+    }
+    #[cfg(feature = "living")]
     if args.strip {
         return gen_strip::run(
             generator,
@@ -1477,6 +1573,7 @@ target_triangles = 1000
         assert_eq!(constraints.max_triangles, None);
     }
 
+    #[cfg(feature = "ai")]
     #[test]
     fn test_build_validation_constraints_from_style() {
         let spec = ProcGenSpec::parse(

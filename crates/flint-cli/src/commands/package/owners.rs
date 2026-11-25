@@ -33,7 +33,7 @@ const NO_PACKAGE_CRATES: &[(&str, &str)] = &[(
 /// A `[build] features` name that is neither flint-player's nor
 /// flint-cli's yet, and the ticket that adds it. Once it is there the
 /// entry must go.
-const PENDING_FEATURES: &[(&str, &str)] = &[("ai", "#1333 gives flint-cli its package features")];
+const PENDING_FEATURES: &[(&str, &str)] = &[];
 
 /// One schema file and what it declares.
 #[derive(Debug, Clone)]
@@ -320,7 +320,14 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
                 _ => &|i| declared.get(&kind).is_some_and(|s| s.contains(i)),
             };
             for item in p.provides.of(kind) {
-                if !there(item) {
+                // The script API is this build's: a package the binary was
+                // built without has no modules in it to find (#1333)
+                let unbuilt = kind == Kind::ScriptModule
+                    && !p
+                        .features
+                        .iter()
+                        .all(|f| crate::commands::absent::built_with(f));
+                if !unbuilt && !there(item) {
                     out.push(format!(
                         "{file}: provides.{} lists `{item}`, and the tree has no {} of that name",
                         kind.key(),
@@ -399,10 +406,27 @@ fn the_inventory_sees_the_whole_tree() {
     assert!(count(Kind::Archetype) >= 5);
     assert!(count(Kind::SceneTable) >= 7);
     assert!(inv.crates.len() >= 34, "{}", inv.crates.len());
-    assert!(inv.script_modules.len() >= 44, "{:?}", inv.script_modules);
     assert!(inv.commands.len() >= 26);
-    for module in ["living", "wooze", "debug", "conducted", "music"] {
-        assert!(inv.script_modules.iter().any(|m| m == module), "{module}");
+    // The script API is this build's player's: a package's modules are
+    // there exactly when flint-cli was built with it (#1333). `music` is
+    // flint-script's, declared in every build.
+    assert!(inv.script_modules.len() >= 38, "{:?}", inv.script_modules);
+    for (module, package) in [
+        ("living", "living"),
+        ("wooze", "living"),
+        ("debug", "living"),
+        ("conducted", "rhythm"),
+        ("music", "engine"),
+    ] {
+        let built = package == "engine" || crate::commands::absent::built_with(package);
+        assert_eq!(
+            inv.script_modules.iter().any(|m| m == module),
+            built,
+            "{module}"
+        );
+    }
+    if cfg!(all(feature = "living", feature = "rhythm")) {
+        assert!(inv.script_modules.len() >= 44, "{:?}", inv.script_modules);
     }
 }
 
@@ -566,6 +590,80 @@ fn the_build_features_are_the_players_and_bring_what_they_require() {
                         p.name
                     );
                 }
+            }
+        }
+    }
+}
+
+/// flint-cli builds each package the manifests name (#1333): its own
+/// feature of that name turns flint-player's on, every crate the package
+/// provides that flint-cli names is optional and turned on by it, and
+/// `flint package list --built` knows the feature. `debug-hud` is the one
+/// the CLI always has.
+#[test]
+fn flint_cli_has_each_packages_feature_and_forwards_it() {
+    const ALWAYS: &[&str] = &["debug-hud"];
+    // A package's crate flint-cli still links in every build, and the
+    // ticket that frees it. The test fails once it's optional, to remove it.
+    const LINKED_ANYWAY: &[(&str, &str)] = &[(
+        "flint-procgen",
+        "#1516: flint-viewer links it for the [living] and [wooze] tables",
+    )];
+    let player = features_of("flint-player");
+    let cli = features_of("flint-cli");
+    let manifest: toml::Table = std::fs::read_to_string(repo().join("crates/flint-cli/Cargo.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let deps = manifest["dependencies"].as_table().unwrap();
+    for p in &engine_packages().packages {
+        for feature in &p.features {
+            assert!(
+                crate::commands::absent::BUILT_FEATURES
+                    .iter()
+                    .any(|(f, _)| f == feature),
+                "absent::BUILT_FEATURES has no `{feature}`"
+            );
+            if ALWAYS.contains(&feature.as_str()) {
+                assert!(crate::commands::absent::built_with(feature));
+                continue;
+            }
+            let on = cli
+                .get(feature)
+                .unwrap_or_else(|| panic!("flint-cli has no `{feature}` feature"));
+            if player.contains_key(feature) {
+                let forward = format!("flint-player/{feature}");
+                assert!(
+                    on.contains(&forward),
+                    "flint-cli's `{feature}` lacks {forward}"
+                );
+            }
+            for krate in p.provides.of(Kind::Crate) {
+                let Some(dep) = deps.get(krate.as_str()) else {
+                    continue;
+                };
+                let optional = dep.get("optional").and_then(|o| o.as_bool()) == Some(true);
+                match LINKED_ANYWAY.iter().find(|(k, _)| k == krate) {
+                    Some((_, why)) => {
+                        assert!(
+                            !optional,
+                            "`{krate}` is optional now: take it out of LINKED_ANYWAY ({why})"
+                        );
+                        continue;
+                    }
+                    None => assert!(
+                        optional,
+                        "flint-cli links `{krate}` ({}'s) in every build",
+                        p.name
+                    ),
+                }
+                let dep_on = format!("dep:{krate}");
+                let reached = std::iter::once(feature.as_str())
+                    .chain(on.iter().map(String::as_str))
+                    .filter_map(|f| cli.get(f))
+                    .flatten()
+                    .any(|f| *f == dep_on);
+                assert!(reached, "flint-cli's `{feature}` doesn't turn on {dep_on}");
             }
         }
     }

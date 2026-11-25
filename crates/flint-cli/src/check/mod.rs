@@ -56,6 +56,12 @@ pub mod scripts;
 
 pub use report::{json, text};
 
+/// The component that asks for a living prop. flint-living's
+/// `components::LIVING_PROP`, written here because a check (and a render's
+/// still-props note) reads it in a build without the living package too
+/// (#1333); `tests::the_living_prop_name_is_flint_livings` holds the two.
+pub const LIVING_PROP: &str = "living_prop";
+
 use flint_constraint::ConstraintRegistry;
 use flint_core::diagnostic::{self, codes, Allow, Diagnostic};
 use flint_core::project::{shown, Project, SchemaDirs};
@@ -604,6 +610,12 @@ mod tests {
     use super::*;
     use flint_core::vfs::MemorySource;
     use std::sync::Arc;
+
+    #[cfg(feature = "living")]
+    #[test]
+    fn the_living_prop_name_is_flint_livings() {
+        assert_eq!(LIVING_PROP, flint_living::components::LIVING_PROP);
+    }
 
     const FILES: &[(&str, &str)] = &[
         ("flint.toml", "[project]\nschemas = [\"schemas\"]\n"),

@@ -964,6 +964,19 @@ fn fields(scene: &Path, file: &SceneFile) -> Vec<Diagnostic> {
         .collect()
 }
 
+/// The values of a species table the player would leave out.
+#[cfg(feature = "living")]
+fn species_problems(def: &flint_procgen::LivingSpeciesDef) -> Vec<String> {
+    flint_player::species_problems(def)
+}
+
+/// Built without the living package (#1333), whose player grows no props:
+/// only the species no prop grows from are said.
+#[cfg(not(feature = "living"))]
+fn species_problems(_: &flint_procgen::LivingSpeciesDef) -> Vec<String> {
+    Vec::new()
+}
+
 /// What's wrong with the scene's `[living.species.<spec>]` tables (#246): a
 /// value the player would leave out, and a species no living prop in the
 /// scene grows from, which is most likely a misspelt spec name and would
@@ -984,7 +997,7 @@ fn species(scene: &Path, file: &SceneFile, world: Option<&FlintWorld>) -> Vec<Di
             .iter()
             .filter_map(|entity| {
                 let comps = world.get_components(entity.id)?;
-                comps.get(flint_living::components::LIVING_PROP)?;
+                comps.get(super::LIVING_PROP)?;
                 let asset = comps.get(flint_core::components::MODEL)?.get("asset")?;
                 Some(asset.as_str()?.to_string())
             })
@@ -1004,7 +1017,7 @@ fn species(scene: &Path, file: &SceneFile, world: Option<&FlintWorld>) -> Vec<Di
     names.sort_unstable();
     let mut found = Vec::new();
     for name in names {
-        for message in flint_player::species_problems(&living.species[name]) {
+        for message in species_problems(&living.species[name]) {
             found.push(problem(name, message));
         }
         // Which specs grow is the loaded world's to say

@@ -87,7 +87,7 @@ pub(super) struct Stage {
     /// pixels per point, the 2D view, and the boil `--boil-time` holds.
     pixels_per_point: f32,
     view_2d: flint_render::View2d,
-    pinned_boil: flint_wooze::BoilFrame,
+    pinned_boil: flint_core::field_frame::BoilFrame,
     /// Seconds between the last two captures, for styles whose history is a
     /// rate (#342); 1/60 until a second capture follows on.
     style_dt: f32,
@@ -185,9 +185,8 @@ impl Stage {
             || args.camera.yaw.is_some()
             || args.camera.pitch.is_some()
             || args.camera.target.is_some();
-        let as_authored = scene_set_position
-            && !orbit_asked
-            && (on_clock(args) || flint_player::living_wanted(&world));
+        let as_authored =
+            scene_set_position && !orbit_asked && (on_clock(args) || living_wanted(&world));
         if !as_authored {
             camera.update_orbit();
         }
@@ -217,11 +216,13 @@ impl Stage {
         let config = ModelLoadConfig::from_scene_path(&args.scene);
 
         // The scene's game (#725), which owns the world from here
-        let wants_living = flint_player::living_wanted(&world);
+        let wants_living = living_wanted(&world);
         let mut game = HeadlessGame::new(world, &args.scene, config.project.clone());
 
         // Living props (#216), and the procgen assets their scene asks for, before the
-        // model loader as in the player: catalog > procgen > file.
+        // model loader as in the player: catalog > procgen > file. A build
+        // without the procgen package (#1333) makes none: every name is a file.
+        #[cfg(feature = "procgen")]
         if wants_living || resolve_procgen {
             game.resolve_procgen(
                 flint_procgen::LivingTables::or_warn(&scene_file)
@@ -239,6 +240,11 @@ impl Stage {
         // as the player's Load does (#249), and the file's [living] tables, species
         // and all, go over the scene's as they do there.
         let (column_preset, column_knobs) = cell_knobs(args, grid, cell)?;
+        #[cfg(not(feature = "procgen"))]
+        let _ = resolve_procgen;
+        #[cfg(not(feature = "living"))]
+        let _ = (wants_living, &column_knobs);
+        #[cfg(feature = "living")]
         if let (true, Some(preset)) = (wants_living, &column_preset) {
             let props = game.living_props_mut();
             for problem in flint_player::apply_living_preset(props, &preset.living) {
@@ -248,6 +254,8 @@ impl Stage {
         // The stage's one wooze field (#581), with the column's knobs over the scene's:
         // the living props read it, the shading boil always, and shallow wooze in a
         // capture of a moment. A plain render shows those meshes at rest (#215).
+        // A build without the living package runs no field (#1333).
+        #[cfg(feature = "living")]
         let field = flint_player::wooze_of_scene(
             flint_procgen::LivingTables::or_warn(&scene_file)
                 .wooze
@@ -259,11 +267,13 @@ impl Stage {
         // the living subsystem runs the props and the field (as its first
         // frame, the props read it without moving), the music and the
         // declared fields come for the scripts
+        #[cfg(feature = "living")]
         let field_for_boil = field.clone();
         let scripted = args.clock.scripts || timeline.is_some();
         game.start_subsystems(
             scene_file.scene_tables(),
             flint_player::CaptureStart {
+                #[cfg(feature = "living")]
                 wooze: field,
                 moment,
                 scripts: scripted,
@@ -304,6 +314,15 @@ impl Stage {
         // moment. Otherwise each capture stamps the drawing its clock has reached.
         let (paint, ink) = pp_config.boil_amounts();
         let boil_wanted = paint > 0.0 || ink > 0.0;
+        #[cfg(not(feature = "living"))]
+        if boil_wanted && index == 0 {
+            if scene_file.tables.contains_key("wooze") {
+                say!("This flint was built without the living package, so nothing boils.");
+            } else {
+                say!("This scene has no [wooze] table, so nothing boils.");
+            }
+        }
+        #[cfg(feature = "living")]
         match (&field_for_boil, args.clock.boil_time) {
             (Some(field), Some(time)) => {
                 pp_config.boil = flint_player::boil_at(
@@ -584,6 +603,7 @@ impl Stage {
         // Poses held on twos tick on the capture's moment (#405), the post
         // time's own seconds, stamped before the bones go up
         self.renderer.set_motion_time(t);
+        #[cfg(feature = "living")]
         self.game
             .upload_living(&mut self.renderer, &ctx.device, &ctx.queue);
         if let Some(posed) = self.game.animation() {
@@ -698,6 +718,7 @@ impl Stage {
     /// Draw the moment `t` again under `config` (an `--ai-refine` candidate,
     /// #596): the clocks stay where they are, and the style history starts
     /// over, as the one-renderer path draws each candidate as a first frame.
+    #[cfg(feature = "ai")]
     pub(super) fn redraw(
         &mut self,
         args: &RenderArgs,

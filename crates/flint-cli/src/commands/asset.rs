@@ -1,23 +1,25 @@
 //! Asset management commands
 
-use crate::output::{self, progress, say};
+#[cfg(feature = "ai")]
+use crate::output::progress;
+use crate::output::{self, say};
 use anyhow::Result;
 use clap::Subcommand;
 use flint_asset::{
     AssetCatalog, AssetMeta, AssetResolver, AssetType, ContentStore, Project, ProjectStore,
     ResolutionStrategy,
 };
+#[cfg(feature = "ai")]
 use flint_asset_gen::provider::{
     AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams,
 };
-use flint_asset_gen::{
-    register_generated_asset_in, write_asset_sidecar_with_root, Calls, FlintConfig, JobStore,
-    StyleGuide,
-};
+#[cfg(feature = "ai")]
+use flint_asset_gen::{register_generated_asset_in, Calls, FlintConfig, JobStore, StyleGuide};
 use flint_import::import_gltf;
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
+#[cfg(feature = "ai")]
 use std::sync::Arc;
 
 #[derive(Subcommand)]
@@ -76,7 +78,7 @@ pub enum AssetCommands {
 
         /// Refuse any paid call that could take this run's spend past USD;
         /// checked before each call is sent
-        #[arg(long, value_name = "USD", value_parser = super::ai_costs::parse_usd)]
+        #[arg(long, value_name = "USD", value_parser = super::common_args::parse_usd)]
         max_cost: Option<f64>,
 
         /// Schema directory, repeatable; the list of every `asset` field
@@ -134,7 +136,7 @@ pub enum AssetCommands {
 
         /// Refuse any paid call that could take this run's spend past USD;
         /// checked before each call is sent
-        #[arg(long, value_name = "USD", value_parser = super::ai_costs::parse_usd)]
+        #[arg(long, value_name = "USD", value_parser = super::common_args::parse_usd)]
         max_cost: Option<f64>,
     },
 
@@ -182,7 +184,7 @@ pub enum AssetCommands {
 
         /// Refuse any paid call that could take this run's spend past USD;
         /// checked before each call is sent
-        #[arg(long, value_name = "USD", value_parser = super::ai_costs::parse_usd)]
+        #[arg(long, value_name = "USD", value_parser = super::common_args::parse_usd)]
         max_cost: Option<f64>,
     },
 
@@ -241,7 +243,36 @@ pub enum JobCommands {
     },
 }
 
+#[cfg(not(feature = "ai"))]
+impl AssetCommands {
+    /// The words of a subcommand that is the ai package's
+    /// (`packages/ai/package.toml`): the provider calls, their jobs, ledger
+    /// and style checks, and `resolve`'s batch strategies (#1333).
+    pub fn ai_words(&self) -> Option<String> {
+        Some(match self {
+            AssetCommands::Generate { .. } => "flint asset generate".into(),
+            AssetCommands::Validate { .. } => "flint asset validate".into(),
+            AssetCommands::Manifest { .. } => "flint asset manifest".into(),
+            AssetCommands::Regenerate { .. } => "flint asset regenerate".into(),
+            AssetCommands::Costs { .. } => "flint asset costs".into(),
+            AssetCommands::Job(_) => "flint asset job".into(),
+            AssetCommands::Resolve { strategy, .. } if BATCH_STRATEGIES.contains(&&**strategy) => {
+                format!("flint asset resolve --strategy {strategy}")
+            }
+            _ => return None,
+        })
+    }
+}
+
+/// `resolve`'s strategies that hand a missing asset to a provider or a
+/// person, through flint-asset-gen's batch.
+const BATCH_STRATEGIES: &[&str] = &["ai_generate", "human_task", "ai_then_human"];
+
 pub fn run(cmd: AssetCommands) -> Result<()> {
+    #[cfg(not(feature = "ai"))]
+    if let Some(words) = cmd.ai_words() {
+        return Err(super::absent::missing(words, "ai"));
+    }
     match cmd {
         AssetCommands::Import { path, name, tags } => run_import(&path, name, tags),
         AssetCommands::List {
@@ -265,6 +296,7 @@ pub fn run(cmd: AssetCommands) -> Result<()> {
             max_cost,
             &schemas,
         ),
+        #[cfg(feature = "ai")]
         AssetCommands::Generate {
             asset_type,
             description,
@@ -293,10 +325,13 @@ pub fn run(cmd: AssetCommands) -> Result<()> {
             max_cost,
             operation: "generate",
         }),
+        #[cfg(feature = "ai")]
         AssetCommands::Validate { path, style } => run_validate(&path, style.as_deref()),
+        #[cfg(feature = "ai")]
         AssetCommands::Manifest { output, assets_dir } => {
             run_manifest(&output, assets_dir.as_deref())
         }
+        #[cfg(feature = "ai")]
         AssetCommands::Regenerate {
             name,
             seed,
@@ -305,17 +340,22 @@ pub fn run(cmd: AssetCommands) -> Result<()> {
             output,
             max_cost,
         } => run_regenerate(&name, seed, provider, style, output, max_cost),
+        #[cfg(feature = "ai")]
         AssetCommands::Costs { since } => {
             super::ai_costs::cost_report(&super::ai_costs::ledger(), since.as_deref())
         }
         AssetCommands::Where { kind, name, scene } => {
             super::asset_where::run(kind, &name, scene.as_deref(), output::json())
         }
+        #[cfg(feature = "ai")]
         AssetCommands::Job(job_cmd) => run_job(job_cmd),
+        #[cfg(not(feature = "ai"))]
+        _ => unreachable!("ai_words refused the ai package's subcommands"),
     }
 }
 
 /// What `flint asset generate` (and `regenerate`) asks for.
+#[cfg(feature = "ai")]
 struct Generate<'a> {
     asset_type: &'a str,
     description: &'a str,
@@ -335,11 +375,13 @@ struct Generate<'a> {
 
 /// What a project's provider calls go through: its ledger and prices, the
 /// run's ceiling, and its job store.
+#[cfg(feature = "ai")]
 fn project_calls(project: &Project, max_cost: Option<f64>) -> Result<Calls> {
     let meter = super::ai_costs::meter_at(&project.root, "asset-gen", max_cost)?;
     Ok(Calls::new(Arc::new(meter)).with_jobs(JobStore::new(project.jobs_dir())))
 }
 
+#[cfg(feature = "ai")]
 fn run_generate(g: Generate<'_>) -> Result<()> {
     let Generate {
         asset_type,
@@ -545,6 +587,7 @@ fn run_generate(g: Generate<'_>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "ai")]
 fn run_manifest(output: &str, assets_dir: Option<&str>) -> Result<()> {
     let assets_dir = match assets_dir {
         Some(d) => std::path::PathBuf::from(d),
@@ -576,6 +619,7 @@ fn run_manifest(output: &str, assets_dir: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "ai")]
 fn run_regenerate(
     name: &str,
     seed: Option<u64>,
@@ -646,6 +690,7 @@ fn run_regenerate(
     })
 }
 
+#[cfg(feature = "ai")]
 fn run_job(cmd: JobCommands) -> Result<()> {
     let store = JobStore::default_store()?;
 
@@ -707,6 +752,7 @@ fn run_job(cmd: JobCommands) -> Result<()> {
     }
 }
 
+#[cfg(feature = "ai")]
 fn run_job_resume(store: &JobStore, id: &str, output: Option<&str>) -> Result<()> {
     let job = store.load(id).map_err(|e| anyhow::anyhow!("{}", e))?;
     if job.status == flint_asset_gen::JobStatus::Complete {
@@ -773,6 +819,7 @@ fn run_job_resume(store: &JobStore, id: &str, output: Option<&str>) -> Result<()
     Ok(())
 }
 
+#[cfg(feature = "ai")]
 fn run_validate(path: &str, style_name: Option<&str>) -> Result<()> {
     let asset_path = Path::new(path);
     if !asset_path.exists() {
@@ -862,7 +909,7 @@ fn run_import(path: &str, name: Option<String>, tags: Option<String>) -> Result<
     store.store(source_path)?;
 
     // Write sidecar .asset.toml into the project's catalog
-    let sidecar_path = write_asset_sidecar_with_root(&meta, &project.catalog_dir())?;
+    let sidecar_path = write_sidecar(&meta, &project.catalog_dir())?;
 
     say!("Asset '{}' registered.", meta.name);
     say!("  Hash: {}", meta.hash);
@@ -879,6 +926,30 @@ fn run_import(path: &str, name: Option<String>, tags: Option<String>) -> Result<
         })
     });
     Ok(())
+}
+
+/// An asset's sidecar, `<catalog>/<kind folder>/<name>.asset.toml`: the
+/// file flint-asset-gen's `write_asset_sidecar_with_root` writes for a
+/// generated one, written here so `asset import` is the kernel's and needs
+/// no ai package (#1333). `tests::an_imports_sidecar_is_the_one_asset_gen_writes`
+/// holds the two to the same bytes.
+fn write_sidecar(meta: &AssetMeta, catalog: &Path) -> Result<std::path::PathBuf> {
+    #[derive(serde::Serialize)]
+    struct Sidecar<'a> {
+        asset: &'a AssetMeta,
+    }
+    let folder = match meta.asset_type {
+        AssetType::Mesh => "meshes",
+        AssetType::Texture => "textures",
+        AssetType::Material => "materials",
+        AssetType::Audio => "audio",
+        AssetType::Script => "scripts",
+    };
+    let dir = catalog.join(folder);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.asset.toml", meta.name));
+    std::fs::write(&path, toml::to_string_pretty(&Sidecar { asset: meta })?)?;
+    Ok(path)
 }
 
 fn run_list(type_filter: Option<String>, tag_filter: Option<String>, format: &str) -> Result<()> {
@@ -984,16 +1055,11 @@ fn run_resolve(
     schemas: &[String],
 ) -> Result<()> {
     // Check for batch strategies (ai_generate, human_task, ai_then_human)
-    let batch_strategy = match strategy_str {
-        "ai_generate" => Some(flint_asset_gen::batch::BatchStrategy::AiGenerate),
-        "human_task" => Some(flint_asset_gen::batch::BatchStrategy::HumanTask),
-        "ai_then_human" => Some(flint_asset_gen::batch::BatchStrategy::AiThenHuman),
-        _ => None,
-    };
+    let batch = BATCH_STRATEGIES.contains(&strategy_str);
     let strategy = match strategy_str {
         "strict" => Some(ResolutionStrategy::Strict),
         "placeholder" => Some(ResolutionStrategy::Placeholder),
-        _ if batch_strategy.is_some() => None,
+        _ if batch => None,
         _ => anyhow::bail!(
             "Unknown strategy: {} (use 'strict', 'placeholder', 'ai_generate', 'human_task', 'ai_then_human')",
             strategy_str
@@ -1010,7 +1076,13 @@ fn run_resolve(
         say!("{}", reference.line());
     }
 
-    if let Some(batch_strat) = batch_strategy {
+    #[cfg(feature = "ai")]
+    if batch {
+        let batch_strat = match strategy_str {
+            "ai_generate" => flint_asset_gen::batch::BatchStrategy::AiGenerate,
+            "human_task" => flint_asset_gen::batch::BatchStrategy::HumanTask,
+            _ => flint_asset_gen::batch::BatchStrategy::AiThenHuman,
+        };
         let config = FlintConfig::load().unwrap_or_else(|_| FlintConfig {
             providers: HashMap::new(),
             generation: Default::default(),
@@ -1087,6 +1159,9 @@ fn run_resolve(
         return Ok(());
     }
 
+    // Without the ai package `run` refused a batch strategy before here
+    #[cfg(not(feature = "ai"))]
+    let _ = (style_name, output_dir, max_cost);
     let strategy = strategy.expect("a catalog strategy");
     let missing: Vec<&SceneAssetReference> =
         references.iter().filter(|r| r.found.is_none()).collect();
@@ -1134,6 +1209,7 @@ impl SceneAssetReference {
     }
 
     /// The entity, or `[environment]` for a scene table.
+    #[cfg(feature = "ai")]
     fn place(&self) -> String {
         match &self.entity {
             Some(entity) => entity.clone(),
@@ -1236,6 +1312,7 @@ fn scene_asset_references(
 
 /// What a provider can make for a field of `kinds`: a model, a texture or
 /// a sound, the first the field takes.
+#[cfg(feature = "ai")]
 fn generated_kind(
     kinds: &[flint_core::project::AssetKind],
 ) -> Option<flint_asset_gen::provider::AssetKind> {
@@ -1250,6 +1327,7 @@ fn generated_kind(
 }
 
 /// `files`, or `models or specs`.
+#[cfg(feature = "ai")]
 fn kinds_label(kinds: &[flint_core::project::AssetKind]) -> String {
     let labels: Vec<&str> = kinds.iter().map(|k| k.label()).collect();
     labels.join(" or ")

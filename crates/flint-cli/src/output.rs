@@ -21,6 +21,7 @@
 //! document(&v)    a JSON document on stdout, for a command that builds one
 //! ```
 
+use crate::commands::absent::MissingPackage;
 use serde_json::{json, Value};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -224,6 +225,19 @@ pub fn finish(result: anyhow::Result<()>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) if e.downcast_ref::<Failed>().is_some() => ExitCode::FAILURE,
+        // A command this build left out (#1333): exit 2, as a command line
+        // clap can't take, and the document names the package
+        Err(e) if e.downcast_ref::<MissingPackage>().is_some() => {
+            if json() && !emitted() {
+                let mut doc = error_document(&e);
+                if let Some(m) = e.downcast_ref::<MissingPackage>() {
+                    doc["error"]["package"] = json!(m.package);
+                }
+                document(&doc);
+            }
+            eprintln!("Error: {e}");
+            ExitCode::from(crate::commands::absent::EXIT)
+        }
         Err(e) => {
             if json() && !emitted() {
                 document(&error_document(&e));

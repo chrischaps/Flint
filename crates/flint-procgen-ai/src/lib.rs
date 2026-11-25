@@ -27,7 +27,9 @@ pub mod config;
 pub mod cost;
 pub mod error;
 pub mod http;
-pub mod measure;
+/// flint-procgen's since #1333, so `flint render --reference` measures
+/// without the ai package.
+pub use flint_procgen::measure;
 pub mod mock;
 pub mod preview;
 pub mod prompt;

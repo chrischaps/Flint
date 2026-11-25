@@ -36,6 +36,8 @@ const PALETTE_EFFORT: i32 = 10;
 const SPILL_LEVEL: u8 = 1;
 
 /// Write `frames` as a GIF that loops forever at `fps`.
+// `flint gen --strip` writes with it: the living package's (#1333)
+#[cfg_attr(not(feature = "living"), allow(dead_code))]
 pub fn write(path: &Path, frames: &[RgbImage], fps: f32) -> Result<()> {
     let Some(first) = frames.first() else {
         bail!("a GIF needs at least one frame");
