@@ -998,7 +998,9 @@ mod tests {
     }
 
     fn schemas() -> SchemaRegistry {
-        SchemaRegistry::load_from_directory("../../schemas").unwrap()
+        // The engine's set as a game gets it, the living package's with it (#1332)
+        let dirs = flint_core::project::host_schema_dirs(&["../../schemas"], None).dirs;
+        SchemaRegistry::load_from_directories(&dirs).unwrap()
     }
 
     const GROVE: &str = r#"
@@ -1164,7 +1166,7 @@ zone = { type = "array", element = { type = "table", fields = { glide = { type =
         let schemas = schemas();
         let wooze = schemas
             .get_table("wooze")
-            .expect("schemas/scene/wooze.toml");
+            .expect("packages/living/schemas/scene/wooze.toml");
         let zone = &super::zone_schema(wooze).expect("the zone's schema");
         let ranges = [
             ("amplitude", Some(0.0), Some(f64::from(AMPLITUDE_MAX))),

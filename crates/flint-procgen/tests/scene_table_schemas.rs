@@ -1,4 +1,4 @@
-//! `schemas/scene/living.toml` and `schemas/scene/wooze.toml` against the
+//! `packages/living/schemas/scene/living.toml` and `wooze.toml` against the
 //! types that read those tables (#686; flint-scene's `tests/table_schemas.rs`
 //! does the same for the tables it reads itself, flint-render's
 //! `tests/panels_schema.rs` for `[panels]`).
@@ -41,12 +41,14 @@ fn sample_table(fields: &HashMap<String, FieldSchema>) -> toml::Table {
 
 #[test]
 fn living_and_wooze_schemas_declare_only_what_is_read() {
-    let registry = SchemaRegistry::load_from_directory("../../schemas").unwrap();
+    // The engine's set as a game gets it, the living package's with it (#1332)
+    let dirs = flint_core::project::host_schema_dirs(&["../../schemas"], None).dirs;
+    let registry = SchemaRegistry::load_from_directories(&dirs).unwrap();
     let mut scene = SceneFile::new("s");
     for name in ["living", "wooze"] {
         let schema = registry
             .get_table(name)
-            .unwrap_or_else(|| panic!("schemas/scene/{name}.toml"));
+            .unwrap_or_else(|| panic!("packages/living/schemas/scene/{name}.toml"));
         scene
             .tables
             .insert(name.to_string(), sample_table(&schema.fields).into());

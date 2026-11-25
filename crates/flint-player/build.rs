@@ -2,7 +2,8 @@
 //!
 //! A browser can't list a directory over HTTP, so the web player carries
 //! `schemas/components`, `schemas/archetypes` and `schemas/scene` (the
-//! scene-level tables, #686) in the binary (about 140 KB of text). A game bundle's own schemas (#98) load over them. Writes
+//! scene-level tables, #686), and the same folders of every
+//! `packages/<name>/schemas` (#1332), in the binary (about 140 KB of text). A game bundle's own schemas (#98) load over them. Writes
 //! `$OUT_DIR/engine_schemas.rs`; the desktop player never includes it.
 //!
 //! Also lists the player's scene subsystems (ADR 0117, #724): every file in
@@ -30,16 +31,35 @@ use std::path::{Path, PathBuf};
 // the vfs rule on file reads (the root clippy.toml, #97) doesn't apply.
 #[allow(clippy::disallowed_methods)]
 fn main() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+    let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // The engine's schemas, then each package's (`packages/<name>/schemas`,
+    // by name: the order the resolver brings them in, #1332)
+    let packages = engine.join("packages");
+    println!("cargo:rerun-if-changed={}", packages.display());
+    let mut package_dirs: Vec<PathBuf> = std::fs::read_dir(&packages)
+        .map(|rd| {
+            rd.filter_map(|e| Some(e.ok()?.path().join("schemas")))
+                .collect()
+        })
+        .unwrap_or_default();
+    package_dirs.retain(|d| d.is_dir());
+    package_dirs.sort();
+    let roots: Vec<PathBuf> = std::iter::once(engine.join("schemas"))
+        .chain(package_dirs)
+        .collect();
     let mut out = String::new();
     for kind in ["components", "archetypes", "scene"] {
-        let dir = root.join(kind);
-        println!("cargo:rerun-if-changed={}", dir.display());
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-            .map(|rd| rd.filter_map(|e| Some(e.ok()?.path())).collect())
-            .unwrap_or_default();
-        files.retain(|p| p.extension().is_some_and(|e| e == "toml"));
-        files.sort();
+        let mut files: Vec<PathBuf> = Vec::new();
+        for root in &roots {
+            let dir = root.join(kind);
+            println!("cargo:rerun-if-changed={}", dir.display());
+            let mut here: Vec<PathBuf> = std::fs::read_dir(&dir)
+                .map(|rd| rd.filter_map(|e| Some(e.ok()?.path())).collect())
+                .unwrap_or_default();
+            here.retain(|p| p.extension().is_some_and(|e| e == "toml"));
+            here.sort();
+            files.extend(here);
+        }
         writeln!(out, "pub const {}: &[&str] = &[", kind.to_uppercase()).unwrap();
         for file in files {
             writeln!(out, "    include_str!({:?}),", file.display().to_string()).unwrap();

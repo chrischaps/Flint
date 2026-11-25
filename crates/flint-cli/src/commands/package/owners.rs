@@ -3,7 +3,8 @@
 //! to exactly one package, and every item a manifest lists is there.
 //!
 //! What the tree holds is read from the tree itself: the engine's schema
-//! files (`schemas/`, less the examples' layer), the root `Cargo.toml`'s
+//! files (`schemas/`, less the examples' layer, and each package's
+//! `packages/<name>/schemas/`, #1332), the root `Cargo.toml`'s
 //! members, the script API the player declares (`flint_player::
 //! script_system()`, every module flint-cli's build has, which is all of
 //! them: it turns every player feature on), and the `flint` command tree
@@ -174,14 +175,41 @@ pub fn commands() -> Vec<Command> {
 impl Inventory {
     pub fn of_repo() -> Inventory {
         let root = repo();
+        let mut schemas = schema_files(&root.join("schemas"), "schemas");
+        for (package, dir) in flint_core::project::package_schema_dirs(&root.join("schemas")) {
+            schemas.extend(schema_files(
+                &dir,
+                &format!("{PACKAGES_DIR}/{package}/schemas"),
+            ));
+        }
         Inventory {
-            schemas: schema_files(&root.join("schemas"), "schemas"),
+            schemas,
             crates: workspace_crates(&root),
             script_modules: script_modules(),
             commands: commands(),
         }
     }
 }
+
+/// The package whose folder a schema file is in: `packages/<name>/schemas/..`
+/// is `<name>`'s, the engine's own `schemas/` the kernel's.
+fn folder_of(path: &str) -> &str {
+    path.strip_prefix(&format!("{PACKAGES_DIR}/"))
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or(KERNEL)
+}
+
+/// The schema folder of a package, as the tree spells it.
+fn schemas_folder(package: &str) -> String {
+    if package == KERNEL {
+        "schemas/".to_string()
+    } else {
+        format!("{PACKAGES_DIR}/{package}/schemas/")
+    }
+}
+
+/// The kernel's package, whose schemas are the engine's `schemas/`.
+const KERNEL: &str = "engine";
 
 /// Where an item goes: `[provides] components in one packages/*/package.toml`.
 fn put_it(kind: Kind) -> String {
@@ -241,6 +269,18 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
                 file.path,
                 file_owners.into_iter().collect::<Vec<_>>().join(" and ")
             ));
+        } else if let Some(owner) = file_owners.first() {
+            // In its package's folder (#1332): what a game leaves out has
+            // to be a folder it can leave out
+            let folder = folder_of(&file.path);
+            if folder != *owner {
+                out.push(format!(
+                    "{}: its items are {owner}'s, and the file is in {}: move it to {}",
+                    file.path,
+                    schemas_folder(folder),
+                    schemas_folder(owner),
+                ));
+            }
         }
     }
 
@@ -439,6 +479,40 @@ fn a_schema_file_no_package_owns_fails_naming_the_file() {
         [
             "schemas/components/notes.toml: declares no [component.x], [archetype.x] or [table.x], so no package can own it",
             "schemas/components/zebra.toml: the component `zebra` has no package: list it under [provides] components in one packages/<name>/package.toml",
+        ]
+    );
+}
+
+/// #1332: a package's schemas are its folder's, so leaving the package out
+/// leaves them out. A feature's component back in the engine's `schemas/`,
+/// or the engine's in a package's folder, fails naming where it goes.
+#[test]
+fn a_schema_file_outside_its_packages_folder_fails_naming_where_it_goes() {
+    let mut inv = Inventory::of_repo();
+    let living = inv
+        .schemas
+        .iter()
+        .find(|f| f.path.ends_with("living_prop.toml"))
+        .expect("living_prop's schema")
+        .clone();
+    assert_eq!(
+        living.path,
+        "packages/living/schemas/components/living_prop.toml"
+    );
+    inv.schemas.push(SchemaFile {
+        path: "schemas/components/living_prop.toml".into(),
+        items: living.items.clone(),
+    });
+    inv.schemas.push(SchemaFile {
+        path: "packages/music/schemas/components/transform.toml".into(),
+        items: vec![(Kind::Component, "transform".into())],
+    });
+    let found = problems(&engine_packages(), &inv);
+    assert_eq!(
+        found,
+        [
+            "schemas/components/living_prop.toml: its items are living's, and the file is in schemas/: move it to packages/living/schemas/",
+            "packages/music/schemas/components/transform.toml: its items are engine's, and the file is in packages/music/schemas/: move it to schemas/",
         ]
     );
 }

@@ -158,7 +158,17 @@ fn a_scene_packs_alone_with_what_it_reaches() {
         main.manifest.scene.as_deref(),
         Some("levels/meadow.scene.toml")
     );
-    assert_eq!(main.manifest.schemas, ["engine/schemas"]);
+    // The engine's, named by path, at `engine/schemas`, and the packages'
+    // it brings beside it, where a subtree keeps them (#1332)
+    assert_eq!(
+        main.manifest.schemas,
+        [
+            "engine/schemas",
+            "engine/packages/living/schemas",
+            "engine/packages/music/schemas"
+        ]
+    );
+    assert!(files.contains("engine/packages/living/schemas/components/living_prop.toml"));
     for reached in [
         "flint.toml",
         "levels/meadow.scene.toml",

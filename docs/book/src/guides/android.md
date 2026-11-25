@@ -57,7 +57,7 @@ The Gradle build runs two tasks:
 2. **`copyGameAssets`** --- Copies your game's assets into the APK:
    - Scene files (`*.scene.toml`, `*.sprite.toml`, `*.anim.toml`)
    - Directories: `schemas/`, `scripts/`, `sprites/`, `textures/`, `models/`, `audio/`, `animations/`
-   - Engine schemas are copied separately into `engine/schemas/`
+   - Engine schemas are copied separately into `engine/schemas/`, and each package's manifest and `schemas/` into `engine/packages/`, so the packages' schemas come with the engine's as on desktop
    - Generates `asset_manifest.txt` listing every bundled file path
 
 ### Asset Manifest

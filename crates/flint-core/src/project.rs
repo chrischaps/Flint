@@ -621,6 +621,11 @@ pub enum SchemaDirsError {
 /// A directory that a flag or the manifest names and that isn't there is an
 /// error naming it and who named it. Discovery only returns what exists, so
 /// its list may be empty.
+///
+/// Whichever way, an engine schema directory brings its packages' schemas
+/// right after it ([`package_schema_dirs`], #1332): `--schemas schemas` in
+/// this checkout is `schemas`, `packages/living/schemas`,
+/// `packages/music/schemas`.
 pub fn schema_dirs(
     scene: Option<&Path>,
     flags: &[impl AsRef<Path>],
@@ -655,7 +660,7 @@ pub fn schema_dirs(
         add_dirs_beside(scene, &mut dirs);
     }
     Ok(SchemaDirs {
-        dirs,
+        dirs: with_packages(dirs),
         source: SchemaSource::Discovery,
         dropped: Vec::new(),
     })
@@ -677,7 +682,7 @@ pub fn host_schema_dirs(listed: &[impl AsRef<Path>], scene: Option<&Path>) -> Sc
         add_dirs_beside(scene, &mut dirs);
     }
     SchemaDirs {
-        dirs,
+        dirs: with_packages(dirs),
         source: SchemaSource::Host,
         dropped: Vec::new(),
     }
@@ -732,6 +737,7 @@ impl SchemaDirs {
             SchemaSource::Host => {
                 let mut next = self.clone();
                 add_dirs_beside(scene, &mut next.dirs);
+                next.dirs = with_packages(next.dirs);
                 Ok(next)
             }
             SchemaSource::Manifest(_) | SchemaSource::Discovery => {
@@ -759,11 +765,78 @@ fn named(dirs: Vec<PathBuf>, source: SchemaSource) -> Result<SchemaDirs, SchemaD
             named_by: source,
         }),
         None => Ok(SchemaDirs {
-            dirs,
+            dirs: with_packages(dirs),
             source,
             dropped: Vec::new(),
         }),
     }
+}
+
+/// The schema directories the engine's packages bring with an engine schema
+/// directory (ADR 0136 decision 8, #1332), as `(package, directory)` in the
+/// fixed order, by package name: `<engine>/packages/<name>/schemas` for each
+/// package that has one, spelled from `dir` (`schemas` brings
+/// `packages/living/schemas`, `engine/schemas` brings
+/// `engine/packages/living/schemas`).
+///
+/// `dir` is an engine schema directory when the kernel's manifest,
+/// `packages/engine/package.toml`, stands beside it: the engine's own
+/// checkout, a game's `engine/` subtree, `--schemas ../Flint/schemas`, an
+/// Android game's unpacked `engine/`. Any other directory brings nothing.
+/// Read through the vfs; nothing here is an error.
+pub fn package_schema_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
+    let Some(engine) = dir.parent() else {
+        return Vec::new();
+    };
+    let packages = engine.join(crate::package::PACKAGES_DIR);
+    let kernel = packages
+        .join(KERNEL_PACKAGE)
+        .join(crate::package::MANIFEST_FILE);
+    if !vfs::is_file(&kernel) {
+        return Vec::new();
+    }
+    let mut found: Vec<(String, PathBuf)> = vfs::read_dir(&packages)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|package| {
+            let name = package.file_name()?.to_string_lossy().into_owned();
+            let schemas = package.join(PACKAGE_SCHEMAS_DIR);
+            vfs::is_dir(&schemas).then_some((name, schemas))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// The kernel's package, whose manifest marks an engine tree.
+const KERNEL_PACKAGE: &str = "engine";
+
+/// A package's schemas: the folder of that name beside its manifest, laid
+/// out as the engine's are (ADR 0136 decision 8).
+pub const PACKAGE_SCHEMAS_DIR: &str = "schemas";
+
+/// `dirs` with each engine schema directory followed by the package
+/// directories it brings ([`package_schema_dirs`]), in their fixed order. A
+/// package directory the list already names, anywhere, is left where the
+/// list put it, so a list that spells them out (a bundle's) reads the same.
+fn with_packages(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut listed: Vec<String> = Vec::new();
+    let mut out = Vec::with_capacity(dirs.len());
+    for dir in &dirs {
+        listed.push(same_dir_key(dir));
+    }
+    for dir in dirs {
+        let brings = package_schema_dirs(&dir);
+        out.push(dir);
+        for (_, package) in brings {
+            let key = same_dir_key(&package);
+            if !listed.contains(&key) {
+                listed.push(key);
+                out.push(package);
+            }
+        }
+    }
+    out
 }
 
 /// Whether `dir` is the root of a Flint engine checkout: the one marker
@@ -1940,6 +2013,95 @@ save_version = 1.5
                     paths(&dirs),
                     ["engine/schemas", "schemas", "levels/schemas"]
                 );
+            },
+        );
+    }
+
+    /// #1332: an engine schema directory brings its packages' schemas, right
+    /// after it and by package name, however the list was made. A directory
+    /// with no kernel manifest beside it brings nothing.
+    #[test]
+    fn an_engine_schema_directory_brings_its_packages_schemas() {
+        let engine = [
+            ("engine/schemas/", ""),
+            ("engine/packages/engine/package.toml", ""),
+            ("engine/packages/music/package.toml", ""),
+            ("engine/packages/music/schemas/", ""),
+            ("engine/packages/living/package.toml", ""),
+            ("engine/packages/living/schemas/", ""),
+            // a package with no schemas of its own brings no directory
+            ("engine/packages/rhythm/package.toml", ""),
+            ("schemas/", ""),
+            ("levels/a.scene.toml", ""),
+        ];
+        let game = [
+            "engine/schemas",
+            "engine/packages/living/schemas",
+            "engine/packages/music/schemas",
+            "schemas",
+        ];
+        let manifest = "[project]\nschemas = [\"engine/schemas\", \"schemas\"]\n";
+        let mut files = engine.to_vec();
+        files.push(("flint.toml", manifest));
+        with_files(&files, || {
+            let scene = Some(Path::new("levels/a.scene.toml"));
+            assert_eq!(
+                package_schema_dirs(Path::new("engine/schemas")),
+                [
+                    (
+                        "living".to_string(),
+                        PathBuf::from("engine/packages/living/schemas")
+                    ),
+                    (
+                        "music".to_string(),
+                        PathBuf::from("engine/packages/music/schemas")
+                    ),
+                ]
+            );
+            assert!(package_schema_dirs(Path::new("schemas")).is_empty());
+            // The manifest, flags and a host's list read alike
+            assert_eq!(paths(&schema_dirs(scene, NO_FLAGS).unwrap()), game);
+            assert_eq!(
+                paths(&schema_dirs(scene, &["engine/schemas", "schemas"]).unwrap()),
+                game
+            );
+            assert_eq!(
+                paths(&host_schema_dirs(&["engine/schemas", "schemas"], scene)),
+                game
+            );
+            // A list that spells them out already keeps its own order
+            let spelled = ["engine/schemas", "schemas", "engine/packages/music/schemas"];
+            assert_eq!(
+                paths(&host_schema_dirs(&spelled, scene)),
+                [
+                    "engine/schemas",
+                    "engine/packages/living/schemas",
+                    "schemas",
+                    "engine/packages/music/schemas"
+                ]
+            );
+        });
+        // No kernel manifest: the directory is a game's, and brings nothing
+        let mut files: Vec<_> = engine
+            .iter()
+            .copied()
+            .filter(|(p, _)| *p != "engine/packages/engine/package.toml")
+            .collect();
+        files.push(("flint.toml", manifest));
+        with_files(&files, || {
+            let dirs = schema_dirs(None, NO_FLAGS).unwrap();
+            assert_eq!(paths(&dirs), ["engine/schemas", "schemas"]);
+        });
+        // The engine's own checkout, discovered from its root
+        with_files(
+            &[
+                ("schemas/", ""),
+                ("packages/engine/package.toml", ""),
+                ("packages/living/schemas/", ""),
+            ],
+            || {
+                let dirs = schema_dirs(None, NO_FLAGS).unwrap();
+                assert_eq!(paths(&dirs), ["schemas", "packages/living/schemas"]);
             },
         );
     }
