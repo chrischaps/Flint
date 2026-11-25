@@ -1,12 +1,13 @@
 //! Engine component name constants.
 //!
 //! Use these instead of bare string literals so the compiler catches typos.
-//! A feature crate owns the names of its own components (#754):
-//! `flint_geometry::components` (ocean, water body, splines) and
-//! `flint_wooze::components` (shallow wooze), so adding one rebuilds that
-//! crate's readers, not the engine. `LIVING_PROP` and `MUSIC_SESSION` stay
-//! here: a player built without living props or music still names them to
-//! say so (`flint-player`'s `missing_features.rs`).
+//! A feature crate owns the names of its own components (#754, #1330):
+//! `flint_geometry::components` (ocean, water body, splines),
+//! `flint_wooze::components` (shallow wooze), `flint_living::components`
+//! (living props) and `flint_music::components` (the music session), so
+//! adding one rebuilds that crate's readers, not the engine. A player built
+//! without living props or music writes the names it says so by itself
+//! (`flint-player`'s `missing_features.rs`).
 
 // --- Spatial ---
 pub const TRANSFORM: &str = "transform";
@@ -37,7 +38,6 @@ pub const ANIMATOR: &str = "animator";
 pub const SKELETON: &str = "skeleton";
 pub const SPRITE_ANIMATOR: &str = "sprite_animator";
 pub const IK_TWO_BONE: &str = "ik_two_bone";
-pub const LIVING_PROP: &str = "living_prop";
 
 // --- Physics ---
 pub const RIGIDBODY: &str = "rigidbody";
@@ -48,10 +48,6 @@ pub const CHARACTER_CONTROLLER: &str = "character_controller";
 // --- Audio ---
 pub const AUDIO_SOURCE: &str = "audio_source";
 pub const AUDIO_TRIGGER: &str = "audio_trigger";
-/// A scene's suite (#745): its stems play on their buses, sample-locked, and
-/// scripts read the beat; with a `chart`, the rhythm layer judges it too.
-/// Read by flint-player's music subsystem.
-pub const MUSIC_SESSION: &str = "music_session";
 
 // --- Particles ---
 pub const PARTICLE_EMITTER: &str = "particle_emitter";

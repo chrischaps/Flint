@@ -984,7 +984,7 @@ fn species(scene: &Path, file: &SceneFile, world: Option<&FlintWorld>) -> Vec<Di
             .iter()
             .filter_map(|entity| {
                 let comps = world.get_components(entity.id)?;
-                comps.get(flint_core::components::LIVING_PROP)?;
+                comps.get(flint_living::components::LIVING_PROP)?;
                 let asset = comps.get(flint_core::components::MODEL)?.get("asset")?;
                 Some(asset.as_str()?.to_string())
             })

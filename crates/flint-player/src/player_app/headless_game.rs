@@ -38,6 +38,7 @@ use flint_runtime::{InputState, RuntimeSystem};
 use flint_script::context::ScriptCommand;
 use flint_script::{PostProcessOverrides, ScriptHost};
 #[cfg(feature = "living")]
+#[cfg(feature = "living")]
 use flint_wooze::WoozeField;
 
 use super::expression_feed::{ExpressionFeed, ExpressionSubsystem, ExpressionTimeline};

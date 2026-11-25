@@ -27,6 +27,7 @@ pub mod env;
 mod error;
 pub mod events;
 pub mod field;
+pub mod field_frame;
 pub mod file_watch;
 pub mod frame_notes;
 mod hash;

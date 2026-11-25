@@ -1,8 +1,10 @@
 //! Shallow wooze's clocks (#215), and woozy grass's (#252): what a `shallow_wooze`
 //! component and `grass.wooze` ask of the renderer each frame, handed over as
-//! [`FrameInputs::shallow_wooze`](crate::FrameInputs::shallow_wooze),
-//! `grass_time` and `grass_wooze`. The player's living subsystem and the scene
-//! viewer each keep one of each (#739; they were the player's alone).
+//! flint-render's `FrameInputs::shallow_wooze`, `grass_time` and `grass_wooze`.
+//! The player's living subsystem and the scene viewer each keep one of each
+//! (#739; they were the player's alone). They were `flint_render::shallow_wooze`
+//! until #1330: the renderer takes only their answers, plain data in
+//! [`flint_core::field_frame`], so it links nothing of the field.
 //!
 //! A component covers its entity and everything below it, because a hand-made bench
 //! is usually several entities and a GLB can expand into several. The topmost
@@ -17,11 +19,10 @@
 
 use std::collections::HashMap;
 
-use crate::{ShallowWoozeDraw, WAVELENGTH_MIN};
+use crate::{ShallowClock, ShallowNow, ShallowWoozeDraw, WoozeField, WAVELENGTH_MIN};
 use flint_core::toml_util::toml_f32;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_wooze::{ShallowClock, ShallowNow, WoozeField};
 
 /// Metres at full swing, unless a component says.
 pub const DEFAULT_AMPLITUDE: f32 = 0.03;
@@ -62,7 +63,7 @@ impl ShallowWooze {
     ) -> &[(EntityId, ShallowWoozeDraw)] {
         self.draws.clear();
         let with_component = world
-            .entities_with_component(flint_wooze::components::SHALLOW_WOOZE)
+            .entities_with_component(crate::components::SHALLOW_WOOZE)
             .len();
         let key = (world.entity_count(), with_component);
         if key != self.built_for {
@@ -132,7 +133,7 @@ impl ShallowWooze {
 /// otherwise be a silent way for a mesh to hold still.
 pub fn warn_without_a_field(world: &FlintWorld, field: Option<&WoozeField>) {
     let with_it = world
-        .entities_with_component(flint_wooze::components::SHALLOW_WOOZE)
+        .entities_with_component(crate::components::SHALLOW_WOOZE)
         .len();
     if field.is_none() && with_it > 0 {
         tracing::warn!(
@@ -145,7 +146,7 @@ pub fn warn_without_a_field(world: &FlintWorld, field: Option<&WoozeField>) {
 fn settings(world: &FlintWorld, entity: EntityId) -> (f32, f32) {
     let read = |key: &str| {
         world
-            .get_component(entity, flint_wooze::components::SHALLOW_WOOZE)
+            .get_component(entity, crate::components::SHALLOW_WOOZE)
             .and_then(|table| table.get(key))
             .and_then(toml_f32)
             .filter(|value| value.is_finite())
@@ -163,10 +164,10 @@ fn members_of(world: &FlintWorld) -> Vec<Member> {
     let mut members = Vec::new();
     let has = |id: EntityId| {
         world
-            .get_component(id, flint_wooze::components::SHALLOW_WOOZE)
+            .get_component(id, crate::components::SHALLOW_WOOZE)
             .is_some()
     };
-    for &component in world.entities_with_component(flint_wooze::components::SHALLOW_WOOZE) {
+    for &component in world.entities_with_component(crate::components::SHALLOW_WOOZE) {
         // The topmost component above it holds the clock.
         let mut clock = component;
         let mut above = world.get_parent(component);
@@ -215,33 +216,32 @@ pub struct GrassWooze {
 }
 
 impl GrassWooze {
-    /// Move on by `dt` at `time` with the viewer at `viewer`, if `config` asks for
-    /// it. Grass that doesn't ask goes back to the wall clock.
+    /// Move on by `dt` at `time` with the viewer at `viewer`, if the grass asks
+    /// for it: `comb` is its authored `(amplitude, wavelength)`
+    /// (`flint_terrain::GrassConfig::wooze_comb`). Grass that doesn't ask goes
+    /// back to the wall clock.
     pub fn advance(
         &mut self,
-        config: Option<&flint_terrain::GrassConfig>,
+        comb: Option<(f32, f32)>,
         field: &WoozeField,
         viewer: [f32; 3],
         time: f64,
         dt: f64,
     ) {
-        let Some(config) = config.filter(|c| c.enabled && c.wooze) else {
+        let Some((amplitude, wavelength)) = comb else {
             self.clock = None;
             self.now = None;
             return;
         };
         let sample = field.sample(viewer, time);
         if self.clock.is_none() {
-            self.seconds_per_beat = f64::from(sample.step.max(flint_wooze::STEP_MIN));
+            self.seconds_per_beat = f64::from(sample.step.max(crate::STEP_MIN));
         }
         let clock = self
             .clock
             .get_or_insert_with(|| ShallowClock::starting(time - dt, &sample));
         self.now = Some(clock.advance(dt, &sample));
-        self.comb = (
-            config.wooze_amplitude.max(0.0),
-            config.wooze_wavelength.max(WAVELENGTH_MIN),
-        );
+        self.comb = (amplitude.max(0.0), wavelength.max(WAVELENGTH_MIN));
     }
 
     /// The grass's clock (`FrameInputs::grass_time`), or `None` for the frame's.
@@ -264,12 +264,10 @@ impl GrassWooze {
 }
 
 /// `grass.wooze` does nothing without a field, which would otherwise be a silent
-/// way for a meadow to keep the wall clock.
-pub fn warn_grass_without_a_field(
-    config: Option<&flint_terrain::GrassConfig>,
-    field: Option<&WoozeField>,
-) {
-    if field.is_none() && config.is_some_and(|c| c.enabled && c.wooze) {
+/// way for a meadow to keep the wall clock. `asks` is whether the grass asks
+/// for it (`GrassConfig::wooze_comb` is some).
+pub fn warn_grass_without_a_field(asks: bool, field: Option<&WoozeField>) {
+    if field.is_none() && asks {
         tracing::warn!(
             "grass.wooze is on and this scene has no [wooze] table, so the grass keeps the wall clock: give it one to opt in"
         );
@@ -279,26 +277,17 @@ pub fn warn_grass_without_a_field(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flint_wooze::{WoozeSample, STEP_MIN};
+    use crate::{WoozeSample, STEP_MIN};
 
-    fn woozy_grass() -> flint_terrain::GrassConfig {
-        flint_terrain::GrassConfig {
-            enabled: true,
-            wooze: true,
-            wooze_amplitude: 0.2,
-            wooze_wavelength: 3.0,
-            ..Default::default()
-        }
+    /// Grass asking for the field, combed 0.2 m over 3 m.
+    fn woozy_grass() -> Option<(f32, f32)> {
+        Some((0.2, 3.0))
     }
 
     #[test]
     fn grass_that_doesnt_ask_keeps_the_wall_clock() {
         let mut grass = GrassWooze::default();
-        let plain = flint_terrain::GrassConfig {
-            enabled: true,
-            ..Default::default()
-        };
-        grass.advance(Some(&plain), &field(0.5), [0.0; 3], 0.1, 0.1);
+        grass.advance(None, &field(0.5), [0.0; 3], 0.1, 0.1);
         assert_eq!(grass.sway_time(), None);
         assert_eq!(grass.comb(), None);
         grass.advance(None, &field(0.5), [0.0; 3], 0.2, 0.1);
@@ -320,7 +309,7 @@ mod tests {
         let mut sway = Vec::new();
         for _ in 0..600 {
             time += dt;
-            grass.advance(Some(&config), &field, [0.0; 3], time, dt);
+            grass.advance(config, &field, [0.0; 3], time, dt);
             sway.push(grass.sway_time().unwrap());
         }
         // Held through the first part of a beat: from 0.05 s to 0.2 s in, nothing moves.
@@ -350,7 +339,7 @@ mod tests {
         for _ in 0..200 {
             time += dt;
             let bench_now = drawn(shallow.advance(&world, &field, time, dt), bench).unwrap();
-            grass.advance(Some(&config), &field, [0.0; 3], time, dt);
+            grass.advance(config, &field, [0.0; 3], time, dt);
             let comb = grass.comb().unwrap();
             assert_eq!(
                 (comb.index, comb.weight),
@@ -391,7 +380,7 @@ mod tests {
         world
             .set_component(
                 id,
-                flint_wooze::components::SHALLOW_WOOZE,
+                crate::components::SHALLOW_WOOZE,
                 toml::Value::Table(table),
             )
             .unwrap();

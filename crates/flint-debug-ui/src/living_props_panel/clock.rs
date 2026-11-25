@@ -12,9 +12,9 @@ pub(super) const LEVEL_PHASE: f64 = 0.15;
 pub(super) const LEVELS_DRAWN: usize = 5;
 
 /// How far toward the next pose a part is, `frac` of the way through a step: the
-/// design's t', as `flint_wooze::warp` works it out.
+/// design's t', as `flint_core::step_clock::warp` works it out.
 pub(super) fn eased(frac: f64, glide: f32) -> f32 {
-    flint_wooze::warp(frac.clamp(0.0, 0.999_999), glide).1
+    flint_core::step_clock::warp(frac.clamp(0.0, 0.999_999), glide).1
 }
 
 /// The warped clock as what it is: a step's worth of hold, then the ease to the

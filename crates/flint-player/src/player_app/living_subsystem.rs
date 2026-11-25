@@ -12,9 +12,9 @@ use super::living_props;
 use super::subsystem::{
     EncodeCtx, ExitReport, FrameCtx, PlayerInput, ReportCtx, SceneCtx, Stage, StageCtx, Subsystem,
 };
-use flint_render::shallow_wooze::{self, GrassWooze, ShallowWooze};
 use flint_render::FrameInputs;
 use flint_script::context::ScriptCommand;
+use flint_wooze::shallow::{self as shallow_wooze, GrassWooze, ShallowWooze};
 
 /// Living props' and the wooze field's state for one scene.
 #[derive(Default)]
@@ -124,7 +124,10 @@ impl LivingSubsystem {
         let wooze = living_props::field_of(ctx.scene.wooze.as_ref());
         let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
         shallow_wooze::warn_without_a_field(ctx.world, wooze.as_ref());
-        shallow_wooze::warn_grass_without_a_field(grass, wooze.as_ref());
+        shallow_wooze::warn_grass_without_a_field(
+            grass.and_then(|c| c.wooze_comb()).is_some(),
+            wooze.as_ref(),
+        );
         let woozy_grass = grass.is_some_and(|c| c.enabled && c.wooze);
         let shallow = !ctx
             .world
@@ -234,7 +237,7 @@ impl LivingSubsystem {
             }
             // And so does grass that asks to (#252), where the viewer stands.
             self.grass_wooze.advance(
-                renderer.grass_config(),
+                renderer.grass_config().and_then(|c| c.wooze_comb()),
                 field,
                 ctx.camera.position_array(),
                 self.wooze_time,

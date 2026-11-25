@@ -65,7 +65,7 @@ use crate::primitives::create_grid_mesh;
 use crate::shadow::{ShadowPass, DEFAULT_SHADOW_RESOLUTION};
 use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
 use crate::texture_cache::TextureCache;
-use crate::wooze_pipeline::{grow_bounds, ShallowWoozeDraw, ShallowWoozeUniforms};
+use crate::wooze_pipeline::{grow_bounds, DriftUniforms, ShallowWoozeDraw, ShallowWoozeUniforms};
 use flint_core::components as comp;
 use flint_core::Transform;
 use flint_ecs::FlintWorld;
@@ -624,10 +624,10 @@ pub struct SceneRenderer {
     style_dt: f32,
     /// The boil the last `prepare` took (#739), stamped into the config
     /// `encode_to` draws. `None` until a host prepares a frame.
-    frame_boil: Option<flint_wooze::BoilFrame>,
+    frame_boil: Option<flint_core::field_frame::BoilFrame>,
     /// A split view's other side's boil (`prepare_again`), drawn by the
     /// next `encode_again_to` only.
-    again_boil: Option<flint_wooze::BoilFrame>,
+    again_boil: Option<flint_core::field_frame::BoilFrame>,
     // Particles (ADR 0068): their pipeline is in `pipelines`, and what it
     // draws from here, so instances uploaded before an MSAA change still draw.
     particle_buffers: Option<ParticleBuffers>,

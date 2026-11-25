@@ -512,7 +512,7 @@ impl OwnedFrameInputs {
             grass_time: s.grass_time,
             grass_wooze: s.grass_wooze.as_ref().map(WoozeDrawState::draw),
             shallow_wooze: &self.shallow_wooze,
-            boil: flint_wooze::BoilFrame {
+            boil: flint_core::field_frame::BoilFrame {
                 seed: s.boil_seed,
                 amount: s.boil_amount,
                 step: s.boil_step,

@@ -66,7 +66,7 @@ pub struct FrameInputs<'a> {
     pub shallow_wooze: &'a [(flint_core::EntityId, ShallowWoozeDraw)],
     /// The shading boil's drawing this frame (#214), from whoever owns the
     /// boil clock. The default boils nothing.
-    pub boil: flint_wooze::BoilFrame,
+    pub boil: flint_core::field_frame::BoilFrame,
     /// Physical pixels per logical point of the target: styles sized in
     /// points (ASCII cells, #265), comic panels' gutters and world lines'
     /// widths scale by it. Default 1, a headless target.
@@ -300,7 +300,7 @@ impl SceneRenderer {
         &mut self,
         device: &wgpu::Device,
         world: &FlintWorld,
-        boil: flint_wooze::BoilFrame,
+        boil: flint_core::field_frame::BoilFrame,
         shallow_wooze: &[(flint_core::EntityId, ShallowWoozeDraw)],
     ) {
         self.again_boil = Some(boil);

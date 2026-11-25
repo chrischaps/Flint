@@ -163,7 +163,7 @@ impl SceneRenderer {
     }
 
     /// This frame's drawing for the shading boil (#214), from the wooze field.
-    pub(crate) fn set_boil(&mut self, boil: flint_wooze::BoilFrame) {
+    pub(crate) fn set_boil(&mut self, boil: flint_core::field_frame::BoilFrame) {
         self.postprocess_config.boil = boil;
         self.authored_postprocess.boil = boil;
     }

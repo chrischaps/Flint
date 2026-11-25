@@ -7,10 +7,10 @@
 
 mod shared_gpu;
 
+use flint_core::field_frame::BoilFrame;
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
 use flint_render::{Camera, DebugMode, PostProcessConfig, RendererConfig, SceneRenderer, Vertex};
-use flint_wooze::BoilFrame;
 
 const SIZE: u32 = 128;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;

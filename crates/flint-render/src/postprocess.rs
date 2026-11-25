@@ -162,7 +162,7 @@ flint_schema::post_effects!(post_process_config {
     /// This frame's drawing, from the wooze field. Whoever owns the clock stamps
     /// it each frame with `SceneRenderer::set_boil`; a scene with no field never
     /// does, and its amount of 0 turns both boils off.
-    pub boil: flint_wooze::BoilFrame = Default::default(),
+    pub boil: flint_core::field_frame::BoilFrame = Default::default(),
     /// Registered stylize passes' settings by style name (#262), from a
     /// scene's `[post_process.styles.<name>]` (Kuwahara's included, #298:
     /// a scene's old `kuwahara_*` keys are folded in on the way).

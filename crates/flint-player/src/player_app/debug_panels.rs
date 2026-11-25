@@ -159,7 +159,7 @@ impl PlayerApp {
         if self
             .core
             .world
-            .entities_with_component(comp::LIVING_PROP)
+            .entities_with_component(flint_living::components::LIVING_PROP)
             .is_empty()
         {
             return;
