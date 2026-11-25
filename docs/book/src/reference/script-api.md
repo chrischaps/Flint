@@ -40,9 +40,20 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 
 ## Modules
 
-[entity](#entity) (41) · [input](#input) (22) · [time](#time) (3) · [audio](#audio) (17) · [animation](#animation) (14) · [physics](#physics) (8) · [physics_2d](#physics_2d) (5) · [nav](#nav) (3) · [camera](#camera) (8) · [camera_rig](#camera_rig) (12) · [post_process](#post_process) (22) · [quality](#quality) (5) · [math](#math) (23) · [event](#event) (2) · [log](#log) (4) · [draw](#draw) (44) · [draw_world](#draw_world) (6) · [view](#view) (6) · [ui](#ui) (26) · [screen_ui](#screen_ui) (6) · [sprite](#sprite) (14) · [camera_2d](#camera_2d) (12) · [touch](#touch) (15) · [style](#style) (25) · [style_field](#style_field) (6) · [panels](#panels) (4) · [particle](#particle) (7) · [spline](#spline) (4) · [ocean](#ocean) (3) · [terrain](#terrain) (1) · [chunk](#chunk) (3) · [scene](#scene) (10) · [state](#state) (8) · [persistence](#persistence) (15) · [data](#data) (2) · [expression](#expression) (1) · [music](#music) (3) · [test](#test) (4) · [tween](#tween) (2) · [field](#field) (9) · [wooze](#wooze) (8) · [living](#living) (8) · [debug](#debug) (5) · [conducted](#conducted) (22)
+Each module belongs to a package ([Packages](../concepts/packages.md)). A game whose `[packages]` in `flint.toml` leaves a package out has none of its modules: `flint script check` names the line to add for a call to one, and `flint script api` run in the game lists them as left out.
 
-## entity
+| Package | Tier | Modules |
+|---|---|---|
+| [`engine`](#the-engine-package) | kernel | [entity](#entity) (41) · [input](#input) (22) · [time](#time) (3) · [audio](#audio) (17) · [animation](#animation) (14) · [physics](#physics) (8) · [physics_2d](#physics_2d) (5) · [nav](#nav) (3) · [camera](#camera) (8) · [camera_rig](#camera_rig) (12) · [post_process](#post_process) (22) · [quality](#quality) (5) · [math](#math) (23) · [event](#event) (2) · [log](#log) (4) · [draw](#draw) (44) · [draw_world](#draw_world) (6) · [view](#view) (6) · [ui](#ui) (26) · [screen_ui](#screen_ui) (6) · [sprite](#sprite) (14) · [camera_2d](#camera_2d) (12) · [touch](#touch) (15) · [style](#style) (25) · [style_field](#style_field) (6) · [panels](#panels) (4) · [particle](#particle) (7) · [spline](#spline) (4) · [ocean](#ocean) (3) · [terrain](#terrain) (1) · [chunk](#chunk) (3) · [scene](#scene) (10) · [state](#state) (8) · [persistence](#persistence) (15) · [data](#data) (2) · [expression](#expression) (1) · [test](#test) (4) · [tween](#tween) (2) · [field](#field) (9) |
+| [`living`](#the-living-package) | feature | [wooze](#wooze) (8) · [living](#living) (8) · [debug](#debug) (5) |
+| [`music`](#the-music-package) | feature | [music](#music) (3) |
+| [`rhythm`](#the-rhythm-package) | feature | [conducted](#conducted) (22) |
+
+## The `engine` package
+
+*kernel: every game has it.* The kernel, with the standard packages and render features that have no switch yet.
+
+### entity
 
 | Function | Returns | Description |
 |---|---|---|
@@ -88,7 +99,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `get_joint_position(id: entity)` | `num`: the coordinate, or () when there is no physics or no such joint | The simulated joint coordinate from its rest pose: hinge degrees or prismatic metres. |
 | `find_nearest_interactable()` | `map`: `#{entity, prompt_text, interaction_type, distance}`, or () when none is in range | The enabled interactable nearest the player within its own range, as the HUD's prompt shows it. |
 
-## input
+### input
 
 | Function | Returns | Description |
 |---|---|---|
@@ -115,7 +126,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `set_cursor_captured(captured: bool)` | — | Capture (hide and lock) or release the mouse cursor, at the end of this frame. |
 | `is_cursor_captured()` | `bool` | Whether the cursor is captured now; a request shows from the next frame. |
 
-## time
+### time
 
 | Function | Returns | Description |
 |---|---|---|
@@ -123,7 +134,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `total_time()` | `num` | Seconds of game time since the scene started. |
 | `set_time_scale(scale: num)` | — | Game seconds per real second from the next frame (1 normal, 0.25 slow motion), clamped to 0.05..4; a scene load resets it. |
 
-## audio
+### audio
 
 | Function | Returns | Description |
 |---|---|---|
@@ -145,7 +156,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `set_bus_lowpass(bus: str, cutoff_hz: num)` | — | A mixer bus's own low-pass cutoff in Hz (20000 for none, as low as 10), by name: it muffles the bus and the buses under it and nothing else, and holds until changed. |
 | `set_audio_lowpass(cutoff_hz: num)` | — | The master bus low-pass cutoff in Hz (20000 for none), held until changed. |
 
-## animation
+### animation
 
 | Function | Returns | Description |
 |---|---|---|
@@ -164,7 +175,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `play_sequence(id: entity, name: str)` | — | Play a \*.sequence.toml (timed blends, layers, speeds and cues) on the entity's animator. |
 | `stop_sequence(id: entity)` | — | Stop the animator's sequence. |
 
-## physics
+### physics
 
 | Function | Returns | Description |
 |---|---|---|
@@ -177,7 +188,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `move_character(id: entity, dx: num, dy: num, dz: num, mask: any)` | `map`: `#{x, y, z, grounded}`: where it ended up; () with no physics, transform or character collider | Move a character's collider by a step, sliding along what is on a layer of \`mask\` (a layer's name or an array of names) in place of its collider's mask. |
 | `get_collider_extents(id: entity)` | `map`: `#{shape: "box", half_x, half_y, half_z}`, `#{shape: "sphere", radius}`, `#{shape: "capsule"\|"cylinder", radius, half_height}` or `#{shape: "mesh"\|"convex"\|"heightfield", half_x, half_y, half_z, centre_x, centre_y, centre_z}` (its box); () with no collider or no physics | The shape and size of an entity's collider. |
 
-## physics_2d
+### physics_2d
 
 | Function | Returns | Description |
 |---|---|---|
@@ -187,7 +198,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `set_velocity_2d(id: entity, vx: num, vy: num)` | — | Set a 2D body's velocity, applied after the script batch. |
 | `get_velocity_2d(id: entity)` | `map`: `#{vx, vy}`, or () when it has no 2D body or there is no physics | A 2D body's velocity. |
 
-## nav
+### nav
 
 | Function | Returns | Description |
 |---|---|---|
@@ -195,7 +206,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `find_path(from_x: num, from_y: num, from_z: num, to_x: num, to_y: num, to_z: num, opts: map)` | `array`: \[`#{x, y, z}`, ...\] on the floor, the first where \`from\` stands and the last where \`to\` does; \[\] when either is on no floor, no way joins them, or there is no physics | \``find_path`\` for the agent \`opts\` describes: \`radius\`, \`height\`, \`step\` (metres), \``max_slope`\` (degrees), \`cell\` (the grid's, metres, under the agent's diameter) and \``max_nodes`\` (the most cells a search visits). |
 | `move_along_path(id: entity, path: array, speed: num)` | `map`: `#{x, y, z, dir_x, dir_z, next, remaining, arrived}`: where it is now, the way it went this frame (0, 0 once arrived), the index of the point it walks to, metres of path left, and whether it is at the end | Walk the entity \`speed\` metres a second along a path from \``find_path`\`, keeping the height above it it started at; a new path starts again from its second point. |
 
-## camera
+### camera
 
 | Function | Returns | Description |
 |---|---|---|
@@ -208,7 +219,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `set_camera_ortho_height(height: num)` | — | The orthographic camera's half-height in world units. |
 | `set_camera_roll(radians: num)` | — | Roll the camera about its view axis, radians. |
 
-## camera_rig
+### camera_rig
 
 | Function | Returns | Description |
 |---|---|---|
@@ -225,7 +236,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `set_hand_held(strength: num, opts: map)` | — | \``set_hand_held`\` with opts: \`steps\` (footfalls a second, for a walk's bob and sway; 0 stands) and \`seed\`. |
 | `shot(t: num, starts: array)` | `map`: `#{index, time, length, u, first, done}`: index -1 before the first; first is true on the frame a shot began | Which shot of a list game time t is in: \`starts\` is each shot's start, then the end of the last. |
 
-## post_process
+### post_process
 
 | Function | Returns | Description |
 |---|---|---|
@@ -252,7 +263,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `get_draw_distance_scale()` | `num` | The draw-distance scale in force, or the one just asked for. |
 | `draw_distance_scale()` | `num` | **Deprecated:** use `get_draw_distance_scale`. The draw-distance scale in force, or the one just asked for. |
 
-## quality
+### quality
 
 | Function | Returns | Description |
 |---|---|---|
@@ -262,7 +273,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `get_quality(key: str)` | `any`: a bool, an int or a float; () for an unknown key | One quality setting as it stands. |
 | `gpu_info()` | `map`: `#{name, vendor, device_type, backend, driver, class, platform}`, strings | What the GPU is, as the host found it. |
 
-## math
+### math
 
 | Function | Returns | Description |
 |---|---|---|
@@ -290,14 +301,14 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `random_range(min: num, max: num)` | `num`: in \[min, max) | A random number between two, from the same sequence. |
 | `seed_random(seed: int)` | — | Restart every script's random sequence at a seed, as --seed does; call it in `on_init`, not at the top. |
 
-## event
+### event
 
 | Function | Returns | Description |
 |---|---|---|
 | `fire_event(name: str)` | — | Fire a named game event with an empty data map, heard by every `on_event` next frame. |
 | `fire_event_data(name: str, data: map)` | — | Fire a named game event with a data map (booleans, numbers, strings, arrays, maps; () is dropped). |
 
-## log
+### log
 
 | Function | Returns | Description |
 |---|---|---|
@@ -306,7 +317,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `log_warn(message: any)` | — | Log a message at warning level. |
 | `log_error(message: any)` | — | Log a message at error level. |
 
-## draw
+### draw
 
 | Function | Returns | Description |
 |---|---|---|
@@ -355,7 +366,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `screen_width()` | `num`: points | The window's width in logical points, the draw space. |
 | `screen_height()` | `num`: points | The window's height in logical points, the draw space. |
 
-## draw_world
+### draw_world
 
 | Function | Returns | Description |
 |---|---|---|
@@ -366,7 +377,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `draw_world_line(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, opts: map)` | — | A line between two world points in the 3D frame, depth-tested; opts: color, thickness (points, 1). |
 | `draw_world_text(x: num, y: num, z: num, text: str, size: num, opts: map)` | — | Text at a world point, depth-tested; opts: `draw_text`'s (no layer) plus valign, facing \[x, y, z\] and up. Without facing it's a billboard and size is points. With facing it's painted on the plane through the point, read only from the side facing points to, and size is the em in world units (0.03 is a line on a screen), as are spacing, stroke, glow and shadow. |
 
-## view
+### view
 
 | Function | Returns | Description |
 |---|---|---|
@@ -377,7 +388,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `raycast_meshes(ox: num, oy: num, oz: num, dx: num, dy: num, dz: num, max_dist: num)` | `any`: `#{entity, distance, point_x, point_y, point_z, normal_x, normal_y, normal_z}`, the normal facing back along the ray; () when it meets none | The nearest mesh drawn as a ray target that a ray meets within `max_dist`, where the last frame drew it. |
 | `screen_to_mesh(x: num, y: num)` | `any`: `#{entity, distance, point_x, point_y, point_z, normal_x, normal_y, normal_z}`, the normal facing back along the ray; () when it meets none | The nearest mesh drawn as a ray target under a screen point: picking a wall or a roof, not the ground. |
 
-## ui
+### ui
 
 | Function | Returns | Description |
 |---|---|---|
@@ -408,7 +419,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `ui_token(name: str)` | `any`: a float, an array of floats, a string or a bool; () for no such token | A style token from the loaded documents' \[tokens\] and the shared token file ("accent", "$accent", "color.accent"). |
 | `ui_get_rect(element_id: str)` | `map`: `#{x, y, w, h}`, or () for an element no document has | An element's laid-out rectangle, in points. |
 
-## screen_ui
+### screen_ui
 
 | Function | Returns | Description |
 |---|---|---|
@@ -419,7 +430,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `set_anchor(id: entity, anchor: str)` | — | Set an entity's `screen_anchor` anchor ("top-left", "center", "bottom-right", ...). |
 | `set_anchor_offset(id: entity, x: num, y: num)` | — | Set an entity's `screen_anchor` offset from its anchor, in world units. |
 
-## sprite
+### sprite
 
 | Function | Returns | Description |
 |---|---|---|
@@ -438,7 +449,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `is_sprite_playing(id: entity)` | `bool`: false without a `sprite_animator` | Whether an entity's sprite animation is playing. |
 | `sprite_is_playing(id: entity)` | `bool`: false without a `sprite_animator` | **Deprecated:** use `is_sprite_playing`. Whether an entity's sprite animation is playing. |
 
-## camera_2d
+### camera_2d
 
 | Function | Returns | Description |
 |---|---|---|
@@ -455,7 +466,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `apply_camera_shake()` | — | Add this frame's shake to a camera the script sets itself, without `follow_with_camera`. |
 | `camera_apply_shake()` | — | **Deprecated:** use `apply_camera_shake`. Add this frame's shake to a camera the script sets itself, without `follow_with_camera`. |
 
-## touch
+### touch
 
 | Function | Returns | Description |
 |---|---|---|
@@ -475,7 +486,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `swipe_y(index: int)` | `num`: 0..1 across the screen; -1.0 past the last swipe | Where a swipe started, y. |
 | `is_swipe(direction: str)` | `bool` | Whether there was a swipe in this direction this frame. |
 
-## style
+### style
 
 | Function | Returns | Description |
 |---|---|---|
@@ -505,7 +516,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `get_look()` | `str`: the look's name as it was asked for; "" for none | The look the scene draws with now: its own, or the last a script or F4 chose (a fade's target from its start). |
 | `list_looks()` | `array`: names, sorted | Every look the scene can see: its project's styles/\*.look.toml files and the built-ins, by name. |
 
-## style_field
+### style_field
 
 | Function | Returns | Description |
 |---|---|---|
@@ -516,7 +527,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `field_cone(x: num, y: num, direction: num, spread: num, length: num, soft: num)` | — | Fill a cone of the style field this frame from (x, y), pointing direction degrees clockwise from up and spread degrees either side: a flashlight's beam. |
 | `field_cone(x: num, y: num, direction: num, spread: num, length: num, soft: num, strength: num)` | — | Fill a cone of the style field this frame from (x, y), pointing direction degrees clockwise from up and spread degrees either side: a flashlight's beam. |
 
-## panels
+### panels
 
 | Function | Returns | Description |
 |---|---|---|
@@ -525,7 +536,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `remove_panel(name: str)` | — | Take one panel off the page; with the last gone the frame is one view again. |
 | `clear_panels()` | — | Draw the frame as one view again, with no panels. |
 
-## particle
+### particle
 
 | Function | Returns | Description |
 |---|---|---|
@@ -537,7 +548,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `stop_effect(handle: int)` | — | Stop a detached effect's emission; particles in flight finish. |
 | `set_effect_param(handle: int, param: str, value: num)` | — | Tune a detached effect: `emission_scale`, scale, playing (above 0.5 is on), x, y or z. |
 
-## spline
+### spline
 
 | Function | Returns | Description |
 |---|---|---|
@@ -546,7 +557,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `spline_point_attr_span(spline: entity, name: str, t: num)` | `map`: `#{value, start_t, end_t}` (`start_t` \> `end_t` when it runs through t = 1); () where the attribute is unset or the entity has no `spline_data` | The stretch of the spline t (wrapped into 0..1) is in over which a control point attribute holds one value: neighbouring points with equal values are one span. |
 | `spline_sample_at(spline: entity, t: num)` | `map`: `#{x, y, z, fwd_x, fwd_y, fwd_z, right_x, right_y, right_z}`; () with fewer than two samples | The spline's point at t (wrapped into 0..1), with its forward and level right directions. |
 
-## ocean
+### ocean
 
 | Function | Returns | Description |
 |---|---|---|
@@ -554,13 +565,13 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `ocean_velocity_y(x: num, z: num)` | `num`: m/s; 0.0 without an ocean | The ocean surface's vertical velocity at world (x, z): the impact signal beside `ocean_height`. |
 | `ocean_normal(x: num, z: num)` | `map`: `#{x, y, z}`; `#{0, 1, 0}` without an ocean | The ocean surface's normal at world (x, z). |
 
-## terrain
+### terrain
 
 | Function | Returns | Description |
 |---|---|---|
 | `terrain_height(x: num, z: num)` | `num`: metres; 0.0 when no terrain is loaded | The world-space height of the terrain at world (x, z). |
 
-## chunk
+### chunk
 
 | Function | Returns | Description |
 |---|---|---|
@@ -568,7 +579,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `unload_chunk(chunk_id: str)` | — | Unload the chunk loaded under this id. |
 | `is_chunk_loaded(chunk_id: str)` | `bool`: false too while its load is still queued | Whether a chunk is loaded under this id. |
 
-## scene
+### scene
 
 | Function | Returns | Description |
 |---|---|---|
@@ -583,7 +594,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `is_transitioning()` | `bool` | Whether a scene transition is running. |
 | `transition_phase()` | `str`: "idle", "exiting", "loading" or "entering" | The phase of the scene transition running. |
 
-## state
+### state
 
 | Function | Returns | Description |
 |---|---|---|
@@ -596,7 +607,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `state_stack()` | `array`: their names; \["playing"\] without a state machine | **Deprecated:** use `get_state_stack`. Every state on the stack, bottom first. |
 | `register_state(name: str, config: map)` | — | Make a state: a system's name (physics, scripts, animation, particles, audio, living) to "run" or "pause"; one left out runs. An unknown name is an error. |
 
-## persistence
+### persistence
 
 | Function | Returns | Description |
 |---|---|---|
@@ -616,28 +627,20 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `persist_set_version(version: int)` | — | Stamp the save data held with a version, for a game that migrates by hand. |
 | `persist_corrupt()` | `map`: `#{slot, file, backup, error}`; () when it loaded cleanly or had no file | What was wrong with the slot held's file, when it didn't load. |
 
-## data
+### data
 
 | Function | Returns | Description |
 |---|---|---|
 | `load_data(path: str)` | `map`: the document as a map; () when it is missing or doesn't parse (logged) | A TOML data file from the project root, parsed once and cached for the session. |
 | `load_data(path: str, reload: bool)` | `map`: the document as a map; () when it is missing or doesn't parse (logged) | A TOML data file from the project root; reload true reads it again in place of the cached parse. |
 
-## expression
+### expression
 
 | Function | Returns | Description |
 |---|---|---|
 | `expression()` | `map`: the state's map; `#{}` before the first arrives | The latest state from outside the process (a timeline or a socket). |
 
-## music
-
-| Function | Returns | Description |
-|---|---|---|
-| `music_beat()` | `num`: beats; negative in the count-in, -1.0 with no music playing | Beats since the music's first beat, with the fraction, across tempo changes. |
-| `music_bar()` | `int`: the bar; -1 with no music playing | The bar the music is in, counted from 0. |
-| `music_section()` | `str`: the section's name; "" before the first or with no music | The name of the section the music is in. |
-
-## test
+### test
 
 | Function | Returns | Description |
 |---|---|---|
@@ -646,14 +649,14 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `test_pass()` | — | End the playtest passing, unless an assertion has failed (the first `test_pass` or `test_fail` stands). |
 | `test_log(key: str, value: any)` | — | Put a value in the playtest's report under key (its last value is kept). |
 
-## tween
+### tween
 
 | Function | Returns | Description |
 |---|---|---|
 | `tween(id: entity, path: str, target: any, seconds: num)` | — | Ease a numeric component field ("light.intensity", "material.color") to a target over game seconds, smoothly; fires `tween_done`. |
 | `tween(id: entity, path: str, target: any, seconds: num, easing: str)` | — | Ease a numeric component field to a target over game seconds: linear, smooth, `ease_in`, `ease_out` or `ease_in_out`. |
 
-## field
+### field
 
 *Enabled when the scene declares a field: a \[field.\<name\>\] table with its keys.* Anywhere else a call is a script error saying the module is not enabled.
 
@@ -669,7 +672,11 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `field_remove_zone(field: str, zone: str)` | `bool`: whether there was one | Drop a field's named zone at once. |
 | `field_remove_zone(field: str, zone: str, seconds: num)` | `bool`: whether there was one | Fade a field's named zone out over some seconds, then drop it. |
 
-## wooze
+## The `living` package
+
+*feature: a game has it only when its `[packages]` lists it.* Props that hold and glide, and the wooze field.
+
+### wooze
 
 *Enabled when the scene has living props, a \[living\] or \[wooze\] table, a `shallow_wooze` entity or woozy grass.* Anywhere else a call is a script error saying the module is not enabled.
 
@@ -684,7 +691,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `wooze_at(x: num, y: num, z: num)` | `map`: `#{amplitude, step, glide, jitter, zones: #{name: share}`} | How woozy a place is now, zones and scripts' changes included: amplitude, step, glide, jitter and the zones there; `#{}` where the scene has no \[wooze\] table. |
 | `wooze_beat(x: num, y: num, z: num)` | `map`: `#{time, delta, beat, index, weight, amplitude, step}`: time and delta in seconds of the beat's clock | The hold-and-glide clock at a place, on the beat shallow wooze and living props keep: time held still on the beat and gliding between, for sin(b.time \* k); `#{}` where the scene has no \[wooze\] table. |
 
-## living
+### living
 
 *Enabled when the scene has living props, a \[living\] or \[wooze\] table, a `shallow_wooze` entity or woozy grass.* Anywhere else a call is a script error saying the module is not enabled.
 
@@ -699,7 +706,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `save_living_preset(name: str)` | — | Save the knobs the props agree on, and each species' own, as wooze/\<name\>.wooze.toml (not on the web). |
 | `load_living_preset(name: str)` | — | Load a .wooze.toml preset or a built-in, live. |
 
-## debug
+### debug
 
 *Enabled when the player is built with its debug-hud feature (on by default) and the scene has living props, a \[living\] or \[wooze\] table, a `shallow_wooze` entity or woozy grass.* Anywhere else a call is a script error saying the module is not enabled.
 
@@ -711,7 +718,23 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `split_living(split: bool)` | — | Show both sides of the comparison at once, A left and B right, or one at a time. |
 | `stop_comparing_living()` | — | End the comparison, keeping the side that's shown. |
 
-## conducted
+## The `music` package
+
+*feature: a game has it only when its `[packages]` lists it.* Music sessions: stems on buses, the conductor and the beat.
+
+### music
+
+| Function | Returns | Description |
+|---|---|---|
+| `music_beat()` | `num`: beats; negative in the count-in, -1.0 with no music playing | Beats since the music's first beat, with the fraction, across tempo changes. |
+| `music_bar()` | `int`: the bar; -1 with no music playing | The bar the music is in, counted from 0. |
+| `music_section()` | `str`: the section's name; "" before the first or with no music | The name of the section the music is in. |
+
+## The `rhythm` package
+
+*feature: a game has it only when its `[packages]` lists it.* Charts judged against the music, with 1 kHz pad capture.
+
+### conducted
 
 *Enabled when the scene's `music_session` has a chart.* Anywhere else a call is a script error saying the module is not enabled.
 

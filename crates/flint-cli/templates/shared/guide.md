@@ -157,6 +157,26 @@ flint render scenes/main.scene.toml --scripts --time 0.2 --ui-show pause_menu --
 
 `--ui-focus quit` draws it with another button focused. The menu helpers (`open`, `close`, `is_open`, `toggle`, `toggle_pause`) are `{{menu_lib}}`.
 
+## Packages
+
+The engine comes in packages, and the game has only those it lists under `[packages]` in `flint.toml`. The kernel is always in. The standard packages, `procgen` (models and textures from procgen specs) and `debug-hud` (the F3/F4 debug panels), are in unless set to `false`. A feature package is in only when listed: `living` (living props and the wooze field), `music` (music sessions), `rhythm` (charts judged against the music) or `ai` (AI asset generation). A left-out package's components, scene tables and script functions aren't in the game's schemas or script API, and its code isn't in the game's binaries.
+
+```bash
+flint package list
+flint package used
+flint build --dry-run
+```
+
+`flint package list` shows every package and what it owns. `flint package used` names the packages the scenes, prefabs and scripts reach, and `flint package used --write` adds them to `[packages]`.
+
+**To add a package** (living props, say):
+
+1. Add `living = "*"` under `[packages]` in `flint.toml` (or run `flint package used --write` once a scene uses one). What it needs comes with it: `living` brings `procgen`.
+2. Run `flint build` in the project. It rebuilds this game's `flint` and `flint-player` with the packages the list names, and prints where they landed. `--release` builds optimized ones. `flint build --dry-run` prints the plan and the cargo command without building.
+3. Run `flint check`. Before the rebuild it reports `unbuilt-package`: the `flint` you ran lacks a listed package. A use of a package the list doesn't name is `unlisted-package`, and its hint is the line to add.
+
+To leave a package out, delete its line, or set a standard one to `false` (`debug-hud = false`), and run `flint build` again. `flint check` names whatever still uses it.
+
 ## The engine
 
 {{engine_section}}

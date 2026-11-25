@@ -19,6 +19,7 @@
 //!   book defines with `fn`, or a name in `script-api-allow.txt` beside
 //!   `src/`. A row's `name(a, b[, c])` claims both arities.
 
+use flint_core::package::{Kind, Package, Packages, Tier};
 use flint_script::api::registry::{ApiEntry, ApiListing, CallbackSpec, CONVENTIONS};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -220,8 +221,72 @@ fn modules(listing: &ApiListing) -> Vec<&'static str> {
     modules
 }
 
-/// The whole reference page.
-pub fn reference_page(listing: &ApiListing) -> String {
+/// The modules grouped by the package whose manifest provides them
+/// (#1337): packages in the manifests' order (tier, then name), each
+/// package's modules in declaration order, and the modules no manifest
+/// names last, under `None`. With no manifests it is one `None` group.
+fn by_package<'p>(
+    listing: &ApiListing,
+    packages: &'p Packages,
+) -> Vec<(Option<&'p Package>, Vec<&'static str>)> {
+    let mods = modules(listing);
+    let mut groups = Vec::new();
+    for p in &packages.packages {
+        let own: Vec<&'static str> = mods
+            .iter()
+            .copied()
+            .filter(|m| p.provides.script_modules.iter().any(|s| s == m))
+            .collect();
+        if !own.is_empty() {
+            groups.push((Some(p), own));
+        }
+    }
+    let rest: Vec<&'static str> = mods
+        .iter()
+        .copied()
+        .filter(|m| packages.owner(Kind::ScriptModule, m).is_none())
+        .collect();
+    if !rest.is_empty() {
+        groups.push((None, rest));
+    }
+    groups
+}
+
+/// What a package's tier means for a game, in a clause.
+fn tier_words(tier: Tier) -> &'static str {
+    match tier {
+        Tier::Kernel => "every game has it",
+        Tier::Standard => "a game has it unless its `[packages]` sets it to `false`",
+        Tier::Feature => "a game has it only when its `[packages]` lists it",
+        Tier::Game => "a game's own",
+    }
+}
+
+/// The anchor mdBook gives a package's heading.
+fn package_anchor(name: &str) -> String {
+    format!("the-{name}-package")
+}
+
+/// One module's section, under a heading of `level` hashes.
+fn module_section(out: &mut String, listing: &ApiListing, m: &str, level: &str) {
+    let entries: Vec<&ApiEntry> = listing.declared.iter().filter(|e| e.module == m).collect();
+    let _ = write!(out, "\n{level} {m}\n\n");
+    // A module an optional feature owns says where it runs (#698)
+    if let Some(when) = listing.enabled_when(m) {
+        let _ = write!(
+            out,
+            "*Enabled when {}.* Anywhere else a call is a script error saying the \
+             module is not enabled.\n\n",
+            cell(when)
+        );
+    }
+    out.push_str(&function_table(&entries));
+}
+
+/// The whole reference page. `packages` are the engine's manifests: with
+/// them the modules are grouped by package, each under its heading; with
+/// none (a book outside an engine tree) they are one flat list.
+pub fn reference_page(listing: &ApiListing, packages: &Packages) -> String {
     let mut out = String::new();
     out.push_str("# Script API Reference\n\n");
     out.push_str(GENERATED);
@@ -254,29 +319,58 @@ pub fn reference_page(listing: &ApiListing) -> String {
     out.push_str("\n## Callbacks\n\n");
     out.push_str(&callback_table(&listing.callbacks));
     out.push_str("\n## Modules\n\n");
-    let mods = modules(listing);
-    let index: Vec<String> = mods
-        .iter()
-        .map(|m| {
-            let n = listing.declared.iter().filter(|e| e.module == *m).count();
-            format!("[{m}](#{m}) ({n})")
-        })
-        .collect();
-    out.push_str(&index.join(" · "));
-    out.push('\n');
-    for m in mods {
-        let entries: Vec<&ApiEntry> = listing.declared.iter().filter(|e| e.module == m).collect();
-        let _ = write!(out, "\n## {m}\n\n");
-        // A module an optional feature owns says where it runs (#698)
-        if let Some(when) = listing.enabled_when(m) {
-            let _ = write!(
-                out,
-                "*Enabled when {}.* Anywhere else a call is a script error saying the \
-                 module is not enabled.\n\n",
-                cell(when)
-            );
+    let link = |m: &str| {
+        let n = listing.declared.iter().filter(|e| e.module == m).count();
+        format!("[{m}](#{m}) ({n})")
+    };
+    let groups = by_package(listing, packages);
+    if let [(None, mods)] = groups.as_slice() {
+        let index: Vec<String> = mods.iter().map(|m| link(m)).collect();
+        out.push_str(&index.join(" · "));
+        out.push('\n');
+        for m in mods {
+            module_section(&mut out, listing, m, "##");
         }
-        out.push_str(&function_table(&entries));
+    } else {
+        out.push_str(
+            "Each module belongs to a package ([Packages](../concepts/packages.md)). A game \
+             whose `[packages]` in `flint.toml` leaves a package out has none of its \
+             modules: `flint script check` names the line to add for a call to one, and \
+             `flint script api` run in the game lists them as left out.\n\n\
+             | Package | Tier | Modules |\n|---|---|---|\n",
+        );
+        for (p, mods) in &groups {
+            let index: Vec<String> = mods.iter().map(|m| link(m)).collect();
+            let (name, tier) = match p {
+                Some(p) => (
+                    format!("[`{}`](#{})", p.name, package_anchor(&p.name)),
+                    p.tier.as_str(),
+                ),
+                None => ("[none](#no-package)".to_string(), "—"),
+            };
+            let _ = writeln!(out, "| {name} | {tier} | {} |", index.join(" · "));
+        }
+        for (p, mods) in &groups {
+            match p {
+                Some(p) => {
+                    let _ = write!(
+                        out,
+                        "\n## The `{}` package\n\n*{}: {}.* {}.\n",
+                        p.name,
+                        p.tier.as_str(),
+                        tier_words(p.tier),
+                        cell(&p.summary)
+                    );
+                }
+                None => out.push_str(
+                    "\n## No package\n\nNo package's manifest names these modules \
+                     (`flint package list` lists what each owns).\n",
+                ),
+            }
+            for m in mods {
+                module_section(&mut out, listing, m, "###");
+            }
+        }
     }
     if !listing.undeclared.is_empty() {
         out.push_str("\n## Undeclared\n\nRegistered on the Rhai engine directly: Rust types, no names or docs.\n\n");
@@ -865,7 +959,18 @@ pub fn run(
     let summary = std::fs::read_to_string(src.join("SUMMARY.md")).unwrap_or_default();
     let wanted = reference.exists() || summary.contains(REFERENCE.trim_start_matches("src/"));
     if wanted {
-        let page = reference_page(listing);
+        // The engine tree's manifests, beside the book's `docs/`: a book
+        // with none there gets the flat list
+        let dir = book
+            .join("..")
+            .join("..")
+            .join(flint_core::package::PACKAGES_DIR);
+        let packages = if dir.join("engine").join("package.toml").is_file() {
+            Packages::read(&dir)
+        } else {
+            Packages::default()
+        };
+        let page = reference_page(listing, &packages);
         let old = std::fs::read_to_string(&reference)
             .map(|s| s.replace("\r\n", "\n"))
             .unwrap_or_default();
@@ -939,6 +1044,37 @@ mod tests {
             s,
             vec!["mouse_x()".to_string(), "play_sound(\"a\");\n".to_string()]
         );
+    }
+
+    /// #1337: with the engine's manifests the reference groups each module
+    /// under the package that owns it, the kernel's first, and keeps each
+    /// module's anchor; with none it is the flat list it always was.
+    #[test]
+    fn the_reference_groups_modules_by_package() {
+        let listing = flint_player::script_system().api_listing();
+        let tree = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let packages = Packages::read(&tree.join(flint_core::package::PACKAGES_DIR));
+        assert!(!packages.failed(), "{:?}", packages.problems);
+        let page = reference_page(&listing, &packages);
+
+        let engine = page.find("\n## The `engine` package\n").expect("engine");
+        let at = |h: &str| {
+            page.find(&format!("\n### {h}\n"))
+                .unwrap_or_else(|| panic!("no ### {h}"))
+        };
+        assert!(at("entity") > engine);
+        // Every module is a package's: nothing is left over
+        assert!(!page.contains("\n## No package\n"));
+        assert!(page.contains("| [`engine`](#the-engine-package) | kernel | [entity](#entity)"));
+        if listing.declared.iter().any(|e| e.module == "wooze") {
+            let living = page.find("\n## The `living` package\n").expect("living");
+            assert!(living > engine && at("wooze") > living && at("living") > living);
+            assert!(page.contains("*feature: a game has it only when its `[packages]` lists it.*"));
+        }
+
+        // A book with no manifests beside it: one flat list, as before
+        let flat = reference_page(&listing, &Packages::default());
+        assert!(flat.contains("\n## entity\n") && !flat.contains("## The `engine` package"));
     }
 
     /// The whole cycle on a throwaway book: a stale region and the missing

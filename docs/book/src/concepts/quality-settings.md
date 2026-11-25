@@ -1,5 +1,7 @@
 # Quality Settings
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 A game can change what the renderer spends while it runs: the scene's
 render scale, MSAA, the shadow pass and the post-process effects. A
 graphics menu offers them as tiers, and an auto-tuner steps them down when

@@ -1,5 +1,7 @@
 # 2D Sprites
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Flint's 2D sprite system provides GPU-instanced flat-quad rendering for side-scrollers, top-down games, and any project that needs sprite-based visuals. It sits alongside the existing 3D billboard sprite pipeline but uses an orthographic camera and XY-plane alignment instead of camera-facing quads.
 
 ## How It Works

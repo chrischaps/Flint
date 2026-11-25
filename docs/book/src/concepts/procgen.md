@@ -1,5 +1,7 @@
 # Procedural Generation
 
+> **Package:** `procgen`, a standard package: a game has it unless its `[packages]` sets `procgen = false`. Living props and the wooze field (`living_prop`, `shallow_wooze`, `[living]`, `[wooze]` and their script modules) are the `living` package's, a feature a game lists as `living = "*"` ([Packages](packages.md)).
+
 The `flint-procgen` crate produces game-ready assets from small TOML specs: trees as glTF meshes with LOD chains, PBR texture sets from pattern parameters or a node graph, and skinned creatures from a bone hierarchy. Generation is deterministic (same spec, same seed, same bytes), runs from the CLI with `flint gen`, previews live in `flint edit`, and resolves on demand inside the player so a scene can reference a spec by name as if it were a file on disk.
 
 Procgen is the offline, rule-driven half of asset creation; [AI asset generation](ai-generation.md) is the other half. They share the content store and the provenance sidecars.

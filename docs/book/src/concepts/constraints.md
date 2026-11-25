@@ -1,5 +1,7 @@
 # Constraints
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Constraints are declarative validation rules that define what a correct scene looks like. They live in TOML files under `schemas/constraints/` and are checked by `flint validate` for one scene (which also checks the scene's [`[wooze]` table](procgen.md#the-wooze-field) against its schema), by [`flint check`](../cli-reference/overview.md#the-check-command) for every scene of a project, and by the viewer as you edit.
 
 ## Constraint File Format

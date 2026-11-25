@@ -1,5 +1,7 @@
 # Post-Processing
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Flint includes an HDR post-processing pipeline that transforms the raw scene render into polished final output: bloom, SSAO, fog, volumetric lighting, depth of field, a painterly Kuwahara filter, color grading, film grain, tonemapping, vignette, FXAA, and the frame's tear, which the reality styles and styled props show through.
 
 ## How It Works

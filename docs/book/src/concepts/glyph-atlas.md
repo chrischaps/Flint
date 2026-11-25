@@ -1,5 +1,7 @@
 # Glyph Atlas
 
+> **Package:** `engine`: every game has it. Its stylize render feature is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+
 Every ASCII look needs glyphs on the GPU. `flint_render::glyph_atlas` rasterizes a monospaced font into one coverage texture and pairs it with the data a style reads: **ramps**, glyphs ordered from no ink to the most, and **edge glyphs** for silhouettes. The full-screen and per-entity ASCII styles of epic #260 build on it, and so can any later text-based look.
 
 ![The built-in 8x8 atlas](../images/glyph-atlas-builtin.png)
