@@ -66,7 +66,7 @@ The workspace has 33 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 1 | `flint-asset` | core | asset-gen, cli, import, player, scene |
 | 1 | `flint-schema` | core | android, cli, constraint, debug-ui, ecs, player, procgen, render, scene, script, viewer |
 | 2 | `flint-ecs` | core, schema | android, animation, audio, cli, constraint, debug-ui, geometry, particles, physics, player, query, render, runtime, scene, script, terrain, viewer, wooze |
-| 2 | `flint-import` | asset, core | animation, asset-gen, cli, player, procgen, render, viewer |
+| 2 | `flint-import` | asset, core | animation, asset-gen, cli, player, procgen, procgen-ai, render, viewer |
 | 3 | `flint-geometry` | core, ecs | cli, debug-ui, player, procgen, render, script, viewer |
 | 3 | `flint-query` | core, ecs | cli, constraint, player |
 | 3 | `flint-runtime` | core, ecs | animation, audio, cli, input-capture, particles, physics, player, script, viewer |
@@ -78,20 +78,20 @@ The workspace has 33 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 4 | `flint-constraint` | core, ecs, query, schema | cli, viewer |
 | 4 | `flint-particles` | core, ecs, runtime | cli, debug-ui, player, render, viewer |
 | 4 | `flint-physics` | core, ecs, runtime | cli, player, script |
-| 4 | `flint-procgen` | core, geometry, import, scene, schema, terrain, wooze (optional) | asset-gen, cli, debug-ui (optional), living, player (optional), procgen-ai, viewer |
+| 4 | `flint-procgen` | core, geometry, import, scene, schema, terrain, wooze (optional) | asset-gen, cli (optional), debug-ui (optional), living, player (optional), procgen-ai, viewer (optional) |
 | 5 | `flint-asset-gen` | ai-core, asset, core, import, procgen | cli (optional) |
 | 5 | `flint-living` | core, procgen, wooze | cli (optional), player (optional) |
 | 5 | `flint-music` | audio, core | cli (optional), input-capture, player (optional), rhythm |
-| 5 | `flint-procgen-ai` | ai-core, procgen | cli (optional) |
+| 5 | `flint-procgen-ai` | ai-core, import, procgen | cli (optional) |
 | 5 | `flint-render` | core, ecs, geometry, import, particles, pixels, scene, schema, terrain | cli, debug-ui, player, viewer |
 | 5 | `flint-script` | animation, core, ecs, geometry, physics, runtime, schema, terrain | cli, player |
 | 6 | `flint-debug-ui` | core, ecs, geometry, particles, procgen (optional), render, scene, schema, terrain | cli, player (optional), viewer |
 | 6 | `flint-rhythm` | core, music | cli (optional), input-capture, player (optional) |
 | 7 | `flint-input-capture` | core, music, rhythm, runtime | cli (optional), player (optional) |
-| 7 | `flint-viewer` | constraint, core, debug-ui, ecs, geometry, import, particles, procgen, render, runtime, scene, schema, wooze (optional) | cli |
+| 7 | `flint-viewer` | constraint, core, debug-ui, ecs, geometry, import, particles, procgen (optional), render, runtime, scene, schema, wooze (optional) | cli |
 | 8 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, geometry, import, input-capture (optional), living (optional), music (optional), particles, physics, pixels, procgen (optional), query, render, rhythm (optional), runtime, scene, schema, script, terrain, wooze (optional) | android, cli |
 | 9 | `flint-android` | core, ecs, player, scene, schema | *(none)* |
-| 9 | `flint-cli` | ai-core (optional), animation, asset, asset-gen (optional), constraint, core, debug-ui, ecs, geometry, import, input-capture (optional), living (optional), music (optional), particles, physics, player, procgen, procgen-ai (optional), query, render, rhythm (optional), runtime, scene, schema, script, terrain, viewer, wooze (optional) | *(none)* |
+| 9 | `flint-cli` | ai-core (optional), animation, asset, asset-gen (optional), constraint, core, debug-ui, ecs, geometry, import, input-capture (optional), living (optional), music (optional), particles, physics, player, procgen (optional), procgen-ai (optional), query, render, rhythm (optional), runtime, scene, schema, script, terrain, viewer, wooze (optional) | *(none)* |
 
 <!-- crate-table:end -->
 

@@ -27,9 +27,9 @@ pub mod config;
 pub mod cost;
 pub mod error;
 pub mod http;
-/// flint-procgen's since #1333, so `flint render --reference` measures
-/// without the ai package.
-pub use flint_procgen::measure;
+/// flint-import's since #1543 (flint-procgen's from #1333), so `flint render
+/// --reference` measures without the ai or procgen package.
+pub use flint_import::measure;
 pub mod mock;
 pub mod preview;
 pub mod prompt;

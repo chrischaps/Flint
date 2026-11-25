@@ -450,19 +450,9 @@ pub fn rgba_to_hex(rgba: &[u8; 4]) -> String {
     }
 }
 
-/// Generate a pseudo-random seed from system time.
-pub fn random_seed() -> u64 {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos() as u64;
-    // Mix with a larger time component for better spread
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    (nanos ^ millis.wrapping_mul(6364136223846793005)) % 1_000_000
-}
+/// The editors' seed from the clock: `common_args`' since #1543, where the
+/// terrain editor (the kernel's) reaches it without the procgen package.
+pub use super::common_args::random_seed;
 
 /// Format a TOML value compactly for display in the object array UI.
 pub fn format_toml_value_compact(v: &toml::Value) -> String {

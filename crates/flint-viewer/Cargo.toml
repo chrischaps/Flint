@@ -8,10 +8,11 @@ description = "egui-based validation viewer for Flint scenes"
 [features]
 # The wooze field's clocks (#214, #215, #252): the shading boil, shallow
 # wooze and woozy grass on a scene's `[wooze]` table (`field_clocks.rs`).
-# Off, the viewer links no flint-wooze (#1330, and none through flint-procgen
-# since #1516) and a scene with the table is drawn still, said once.
+# Off, the viewer links neither flint-wooze (#1330) nor flint-procgen (#1543,
+# whose `settle_scene` it read the tables through): a scene with the table is
+# drawn still, said once, and its `[living]` / `[wooze]` go unsettled.
 default = ["living"]
-living = ["dep:flint-wooze", "flint-procgen/living"]
+living = ["dep:flint-wooze", "dep:flint-procgen", "flint-procgen/living"]
 
 [dependencies]
 flint-core = { workspace = true }
@@ -19,7 +20,7 @@ flint-wooze = { workspace = true, optional = true }
 flint-geometry = { workspace = true }
 flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
-flint-procgen = { workspace = true }
+flint-procgen = { workspace = true, optional = true }
 flint-schema = { workspace = true }
 flint-render = { workspace = true }
 flint-particles = { workspace = true }

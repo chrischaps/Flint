@@ -5,6 +5,12 @@
 
 mod gltf_import;
 mod lod_chain;
+// How far one picture is from another: the refine loops' ruler, and
+// `flint render --reference`'s, which every build keeps. A picture ruler,
+// not procgen: it moved here from flint-procgen (#1543) so a flint without
+// the procgen package still measures. flint-procgen-ai re-exports it as
+// `flint_procgen_ai::measure`.
+pub mod measure;
 mod types;
 
 pub use gltf_import::{import_gltf, import_gltf_geometry, memoize_imports};

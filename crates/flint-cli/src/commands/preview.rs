@@ -3285,6 +3285,7 @@ mod tests {
 
     /// `flint-procgen` can't see the renderer, so its copy of the limit is
     /// held to the real one here, in a crate that sees both.
+    #[cfg(feature = "procgen")]
     #[test]
     fn procgen_knows_the_renderers_bone_limit() {
         assert_eq!(flint_procgen::MAX_SKINNED_BONES, flint_render::MAX_BONES);

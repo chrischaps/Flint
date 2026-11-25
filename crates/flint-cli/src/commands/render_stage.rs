@@ -112,7 +112,7 @@ impl Stage {
             index,
             cell,
             grid,
-            config: mut pp_config,
+            config: pp_config,
             look: cell_look,
             timeline,
             resolve_procgen,
@@ -239,11 +239,14 @@ impl Stage {
         // A preset column names a preset file beside the scene before a built-in,
         // as the player's Load does (#249), and the file's [living] tables, species
         // and all, go over the scene's as they do there.
+        // A build without the living package refused a wooze sweep before
+        // anything loaded (`check_wooze_sweep`), so its cells lay nothing
+        #[cfg(feature = "living")]
         let (column_preset, column_knobs) = cell_knobs(args, grid, cell)?;
         #[cfg(not(feature = "procgen"))]
         let _ = resolve_procgen;
         #[cfg(not(feature = "living"))]
-        let _ = (wants_living, &column_knobs);
+        let _ = (wants_living, grid, cell);
         #[cfg(feature = "living")]
         if let (true, Some(preset)) = (wants_living, &column_preset) {
             let props = game.living_props_mut();
@@ -298,7 +301,11 @@ impl Stage {
         );
 
         // Post-processing: the column's, with a preset column's shading boil
-        // under the CLI's boil flags
+        // under the CLI's boil flags (a preset column is the living package's,
+        // and so is the field the drawing is read from below)
+        #[cfg(feature = "living")]
+        let mut pp_config = pp_config;
+        #[cfg(feature = "living")]
         if let Some(boil) = column_preset.as_ref().and_then(|preset| preset.boil) {
             let on = boil.enabled.unwrap_or(true);
             let (paint, ink) = pp_config.boil_amounts();

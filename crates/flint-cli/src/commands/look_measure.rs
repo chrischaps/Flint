@@ -15,14 +15,14 @@
 //! - **ASCII**, when the style drew: the grid's size, the share of blank
 //!   cells, and the share of cells on each step of the ramp, darkest first;
 //!   glyphs not on the ramp (edge lines) are counted apart.
-//! - **distance**, with a reference: `flint_procgen::measure`, the
+//! - **distance**, with a reference: `flint_import::measure`, the
 //!   metric `flint gen --ai-refine` uses (#183), a score out of 100. With
 //!   the reference's glyph grid too (`--reference-text`, #495) and a frame
 //!   that drew one, the score reads glyphs rather than pixels: mean colour,
 //!   glyph coverage and glyph layout ([`glyph_distance`]). Either way the
 //!   report lists each term and its points.
 
-use flint_procgen::measure::{distance_rgb, Distance};
+use flint_import::measure::{distance_rgb, Distance};
 use image::{RgbImage, RgbaImage};
 use serde::Serialize;
 

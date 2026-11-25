@@ -19,10 +19,6 @@ mod generator;
 pub mod generators;
 pub mod living;
 pub mod living_knobs;
-// How far one picture is from another: the refine loops' ruler, and
-// `flint render --reference`'s, which a build without the ai package keeps
-// (#1333). flint-procgen-ai re-exports it as `flint_procgen_ai::measure`.
-pub mod measure;
 pub mod mock;
 pub mod model;
 mod output;

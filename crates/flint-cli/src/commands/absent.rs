@@ -104,9 +104,13 @@ pub fn missing(what: impl Into<String>, package: &'static str) -> anyhow::Error 
 }
 
 /// A module standing in for a command file a build left out: its `Args`
-/// type is [`Absent`] and its `run` is [`missing`]. Only the music and
-/// rhythm commands are stubbed, so a build with both has none.
-#[cfg_attr(all(feature = "music", feature = "rhythm"), allow(unused_macros))]
+/// type is [`Absent`] and its `run` is [`missing`]. The music, rhythm and
+/// procgen commands are stubbed (`gen-preview`, `tex-edit`, #1543), so a
+/// build with all three has none.
+#[cfg_attr(
+    all(feature = "music", feature = "rhythm", feature = "procgen"),
+    allow(unused_macros)
+)]
 macro_rules! stub {
     ($module:ident, $args:ident, $words:literal, $package:literal) => {
         pub mod $module {
@@ -120,7 +124,10 @@ macro_rules! stub {
         }
     };
 }
-#[cfg_attr(all(feature = "music", feature = "rhythm"), allow(unused_imports))]
+#[cfg_attr(
+    all(feature = "music", feature = "rhythm", feature = "procgen"),
+    allow(unused_imports)
+)]
 pub(crate) use stub;
 
 #[cfg(test)]
@@ -228,6 +235,44 @@ mod tests {
         );
         assert_eq!(wanted(&["gen", "--cost-report"]), "ai");
         assert_eq!(wanted(&["gen", "--ai-create", "a dead tree"]), "ai");
+    }
+
+    /// The done-when of #1543: without procgen, `flint gen` and the spec
+    /// editors parse and exit 2 naming it, a spec handed to `flint edit`
+    /// before the file is read, while a glyph set is still `flint gen`'s
+    /// (flint-render's, the kernel's): one that isn't there fails to load,
+    /// naming no package.
+    #[cfg(not(feature = "procgen"))]
+    #[test]
+    fn without_procgen_the_spec_commands_name_it() {
+        assert_eq!(
+            wanted(&["gen", "specs/oak.procgen.toml", "-o", "x.glb"]),
+            "procgen"
+        );
+        assert_eq!(wanted(&["gen", "--list-generators"]), "procgen");
+        assert_eq!(wanted(&["gen", "--describe", "texture_v1"]), "procgen");
+        assert_eq!(
+            wanted(&["gen-preview", "specs/oak.procgen.toml"]),
+            "procgen"
+        );
+        assert_eq!(wanted(&["tex-edit", "specs/wall.procgen.toml"]), "procgen");
+        assert_eq!(
+            wanted(&["edit", "no/such/oak.procgen.toml", "--render", "x.png"]),
+            "procgen"
+        );
+        let text = ran(&["gen", "specs/oak.procgen.toml"])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            text.starts_with("flint gen needs the `procgen` package"),
+            "{text}"
+        );
+        let glyphs = ran(&["gen", "no/such/set.glyphs.toml", "--dry-run"])
+            .expect_err("there is no such set");
+        assert!(
+            glyphs.downcast_ref::<MissingPackage>().is_none(),
+            "{glyphs:#}"
+        );
     }
 
     /// A build with every package parses the same commands to their own

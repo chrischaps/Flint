@@ -27,7 +27,7 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::Window;
 
-use super::gen_preview_common::random_seed;
+use super::common_args::random_seed;
 
 // ─── CLI args ───────────────────────────────────────────────────────────────
 
@@ -216,6 +216,7 @@ pub struct TerrainEditApp {
 /// The spec file's issues, as `flint gen` prints them: the terrain_v1
 /// schema's, through the one check both run. A file that won't parse says
 /// so as its one issue.
+#[cfg(feature = "procgen")]
 fn spec_issues(path: &std::path::Path) -> Vec<String> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -229,6 +230,21 @@ fn spec_issues(path: &std::path::Path) -> Vec<String> {
                 format!("{level}: {i}")
             })
             .collect(),
+        Err(e) => vec![format!("error: {e}")],
+    }
+}
+
+/// Without the procgen package (#1543) there is no terrain_v1 schema to
+/// hold the file to, so the issues are the terrain format's own: every key
+/// nothing reads and every value the bake skips (`TerrainSpec::parse_checked`).
+#[cfg(not(feature = "procgen"))]
+fn spec_issues(path: &std::path::Path) -> Vec<String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => return vec![format!("couldn't read the spec: {e}")],
+    };
+    match TerrainSpec::parse_checked(&text) {
+        Ok((_, issues)) => issues.iter().map(|i| format!("warning: {i}")).collect(),
         Err(e) => vec![format!("error: {e}")],
     }
 }

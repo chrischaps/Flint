@@ -2045,6 +2045,7 @@ name = "flint-procgen-ai"
 version = "0.1.0"
 dependencies = [
  "flint-ai-core",
+ "flint-import",
  "flint-procgen",
  "image",
  "serde",
