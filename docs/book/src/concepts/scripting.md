@@ -1,5 +1,7 @@
 # Scripting
 
+> **Package:** `engine`, the kernel: every game has it ([Packages](packages.md)).
+
 Flint's scripting system provides runtime game logic through [Rhai](https://rhai.rs/), a lightweight embedded scripting language. Scripts can read and write entity data, respond to game events, control animation and audio, and hot-reload while the game is running.
 
 ## Overview

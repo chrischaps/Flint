@@ -24,6 +24,7 @@
 
 - [Entities and ECS](concepts/entities-and-ecs.md)
 - [Schemas](concepts/schemas.md)
+- [Packages](concepts/packages.md)
 - [Scenes](concepts/scenes.md)
 - [Queries](concepts/queries.md)
 - [Constraints](concepts/constraints.md)

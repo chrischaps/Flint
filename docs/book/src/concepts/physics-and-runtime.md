@@ -1,5 +1,7 @@
 # Physics and Runtime
 
+> **Package:** `engine`: every game has it. Its physics is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+
 Flint's runtime layer transforms static scenes into interactive, playable experiences. The `flint-runtime` crate provides the game loop infrastructure, and `flint-physics` integrates the Rapier 3D physics engine for collision detection and character movement.
 
 ## The Game Loop
