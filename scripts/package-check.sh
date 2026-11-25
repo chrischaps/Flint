@@ -48,7 +48,8 @@ done
 # the rule allowed it, the run fails until the rule comes out.
 #   flint-cli links flint-procgen in every build (flint-viewer reads the
 #   [living] and [wooze] tables with it), and flint-procgen links flint-wooze
-#   (#1516; owners.rs's LINKED_ANYWAY is the same row).
+#   (#1516; owners.rs's LINKED_ANYWAY is the same row, and so is
+#   package-done-when.py's WITH_PROCGEN).
 CLI_ALWAYS="flint-procgen"
 WITH_PROCGEN="flint-wooze"
 EXCEPTION_TICKET="#1516"
