@@ -39,7 +39,7 @@ cargo run --bin flint -- examples --dir flint-examples --topic stylize   # one t
 cargo run --bin flint -- examples --dir flint-examples --check           # what its CI runs: indexed and valid
 ```
 
-A new example needs an entry in the index, and is a pull request to flint-examples. The examples are free to change: the render goldens load frozen copies under `tests/fixtures/scenes/`, never an example, so improving one never means re-blessing a golden. A scene only a test needs goes in `tests/fixtures/scenes/`, with every file it loads.
+A new example needs an entry in the index, and is a pull request to flint-examples. An entry whose scene needs a package beyond the kernel says so, `packages = ["living"]`: a `flint` built without it passes over that example in `--check`, by name (`SKIP grove.scene.toml: needs the living package, ...`), rather than failing it. The examples are free to change: the render goldens load frozen copies under `tests/fixtures/scenes/`, never an example, so improving one never means re-blessing a golden. A scene only a test needs goes in `tests/fixtures/scenes/`, with every file it loads.
 
 An engine feature that comes with an example bench is two pull requests: the engine's first, with its tests on fixtures, then flint-examples', which takes the merged engine (`git subtree pull --prefix=engine flint-engine main --squash`) and adds the bench. Until the second lands, the engine PR can name the bench only as a link to its branch.
 

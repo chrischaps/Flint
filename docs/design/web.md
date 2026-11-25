@@ -1973,6 +1973,37 @@ gzip -9:
 | after #754, without `music`, `rhythm`, `procgen` and `living` | | 11.23 MB | 4.28 MB |
 | after #754, `--no-default-features` | | 10.92 MB | 4.14 MB |
 
+### Packages (#1336)
+
+What leaving the feature packages out saves, measured once by hand on
+2026-11-25 at `8c4501ec` plus #1336's branch (Windows 11, x86_64 MSVC, rustc
+1.99.1, trunk 0.21.14 with its wasm-opt 123 `-Oz`, gzip -9 of the `.wasm`).
+**All** is the default build: every package. **None** leaves out every
+package (living, music, rhythm, procgen, debug-hud) and keeps the devices
+(`audio`, `gamepad`) and `frame-history`. **Standard** keeps the standard
+tier (procgen, debug-hud): what a game listing none of the feature packages
+gets. The desktop builds share one target dir, one after the other; the web
+builds run from `crates/flint-player`, where `index.html` is.
+
+| Build | Command | Size | gzip -9 |
+|---|---|---|---|
+| Release player, all | `cargo build --release -p flint-player --bin flint-player` | 77.04 MB | |
+| Release player, standard | the same `--no-default-features --features audio,gamepad,frame-history,debug-hud,procgen` | 74.26 MB (-3.6%) | |
+| Release player, none | the same `--no-default-features --features audio,gamepad,frame-history` | 70.20 MB (-8.9%) | |
+| Web `.wasm`, all | `trunk build --release --cargo-profile web-release` | 18.25 MB | **6.84 MB** |
+| Web `.wasm`, standard | the same `--no-default-features --features audio,gamepad,frame-history,debug-hud,procgen` | 17.65 MB | 6.60 MB (-3.5%) |
+| Web `.wasm`, none | the same `--no-default-features --features audio,gamepad,frame-history` | 16.62 MB | **6.19 MB** (-9.5%) |
+
+The packages are a tenth of either binary. Leaving them out saves 6.8 MB of
+desktop player and 0.65 MB on the wire. The rest is the kernel, and the
+render features and standard packages that have no switch yet (ADR 0136's
+later phases).
+
+The default web build is now 6.84 MB gzipped, against 4.70 MB at #754 and
+the "4 MB gzip line" above. A second `wasm-opt -Oz` pass over it saves 0.2%,
+so it was optimized. What grew between #754 and now is not measured here
+(#1526).
+
 The **size probe** is a throwaway bin, not committed. It builds a
 `PlayerApp` from a `black_box` world and passes opaque bytes to
 `rhai::Engine::eval`, `image::load_from_memory`, `toml::from_str` and

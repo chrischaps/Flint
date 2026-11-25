@@ -198,3 +198,86 @@ fn check_fails_on_an_error_diagnostic_and_not_on_a_warning() {
     );
     assert!(!out.contains("extra_field.scene.toml:"), "{out}");
 }
+
+/// An entry's `packages` (#1336): an example needing a package this flint
+/// was built without is passed over by name, one needing a package it has
+/// is checked as ever, and a name no manifest has fails. Which of the first
+/// two applies is asked of the binary (`flint package list --built`), so
+/// the test holds in a build with any package set.
+#[test]
+fn check_passes_over_an_example_whose_package_this_flint_lacks() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("examples-packages");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // Broken on purpose: checked, it fails; passed over, it says nothing
+    let broken =
+        "[scene]\nname = \"x\"\nversion = \"1.0\"\n\n[entities.lamp.lihgt]\nintensity = 1.0\n";
+    for scene in ["grove.scene.toml", "typo.scene.toml"] {
+        std::fs::write(dir.join(scene), broken).unwrap();
+    }
+    std::fs::write(
+        dir.join("index.toml"),
+        "[[example]]\nscene = \"grove.scene.toml\"\ntopic = \"t\"\npurpose = \"p\"\n\
+         packages = [\"living\"]\n\
+         [[example]]\nscene = \"typo.scene.toml\"\ntopic = \"t\"\npurpose = \"p\"\n\
+         packages = [\"livng\"]\n",
+    )
+    .unwrap();
+    let schemas = repo().join("schemas");
+    let args = [
+        "examples",
+        "--check",
+        "--dir",
+        dir.to_str().unwrap(),
+        "--schemas",
+        schemas.to_str().unwrap(),
+    ];
+    let (ok, out) = flint(&args, &dir);
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains(
+            "FAIL typo.scene.toml: names the package `livng`, which no package manifest is \
+             (did you mean `living`?)"
+        ),
+        "{out}"
+    );
+
+    let (_, built) = flint(&["--json", "package", "list", "--built"], &repo());
+    let built: serde_json::Value = serde_json::from_str(&built).unwrap();
+    let has_living = built["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "living");
+    let grove_failed = out.contains("grove.scene.toml: error[unknown-component]");
+    let grove_skipped = out.contains(
+        "SKIP grove.scene.toml: needs the living package, which this flint was built without",
+    );
+    assert_eq!(
+        (grove_failed, grove_skipped),
+        (has_living, !has_living),
+        "living built in: {has_living}\n{out}"
+    );
+
+    let mut json_args = vec!["--json"];
+    json_args.extend(args);
+    let (_, json) = flint(&json_args, &dir);
+    let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        doc["skipped"].as_array().unwrap().len(),
+        usize::from(!has_living),
+        "{json}"
+    );
+
+    let (ok, list) = flint(
+        &["--json", "examples", "--dir", dir.to_str().unwrap()],
+        &dir,
+    );
+    assert!(ok, "{list}");
+    let list: Vec<serde_json::Value> = serde_json::from_str(&list).unwrap();
+    assert_eq!(
+        list[0]["packages"],
+        serde_json::json!(["living"]),
+        "{list:?}"
+    );
+}

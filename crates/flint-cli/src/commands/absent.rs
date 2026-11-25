@@ -82,9 +82,19 @@ impl std::fmt::Display for MissingPackage {
 
 impl std::error::Error for MissingPackage {}
 
-/// The error a left-out command returns. A build with every package has
-/// none to leave out.
-#[cfg_attr(feature = "packages", allow(dead_code))]
+/// The error a left-out command returns. A build with every package that
+/// refuses anything (ai, living, music, rhythm) has none to leave out. The
+/// features are named one by one, not as `packages`: a build that lists
+/// them (as a game's does) never turns the alias on (#1336's matrix).
+#[cfg_attr(
+    all(
+        feature = "ai",
+        feature = "living",
+        feature = "music",
+        feature = "rhythm"
+    ),
+    allow(dead_code)
+)]
 pub fn missing(what: impl Into<String>, package: &'static str) -> anyhow::Error {
     MissingPackage {
         what: what.into(),
@@ -94,8 +104,9 @@ pub fn missing(what: impl Into<String>, package: &'static str) -> anyhow::Error 
 }
 
 /// A module standing in for a command file a build left out: its `Args`
-/// type is [`Absent`] and its `run` is [`missing`].
-#[cfg_attr(feature = "packages", allow(unused_macros))]
+/// type is [`Absent`] and its `run` is [`missing`]. Only the music and
+/// rhythm commands are stubbed, so a build with both has none.
+#[cfg_attr(all(feature = "music", feature = "rhythm"), allow(unused_macros))]
 macro_rules! stub {
     ($module:ident, $args:ident, $words:literal, $package:literal) => {
         pub mod $module {
@@ -109,7 +120,7 @@ macro_rules! stub {
         }
     };
 }
-#[cfg_attr(feature = "packages", allow(unused_imports))]
+#[cfg_attr(all(feature = "music", feature = "rhythm"), allow(unused_imports))]
 pub(crate) use stub;
 
 #[cfg(test)]

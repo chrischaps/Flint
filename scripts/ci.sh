@@ -20,8 +20,11 @@
 #                          headless job), the book's environment page (`flint env
 #                          --check-book`, the same job), the book's flags, styles and images
 #                          against that `flint` (scripts/docs-check.py, the
-#                          same job) and scripts/wasm-check.sh. Minutes, and
-#                          three builds (the third is the debug `flint` most
+#                          same job), scripts/wasm-check.sh and the package
+#                          matrix (scripts/package-check.sh --build, CI's
+#                          package matrix job, #1336: fifteen `cargo check`s,
+#                          each package alone, all and none). Minutes, and
+#                          four builds (the third is the debug `flint` most
 #                          worktrees have already).
 #
 # Formatting is rustfmt's defaults at edition 2021 (rustfmt.toml). Fix a failure
@@ -128,6 +131,8 @@ if [ "${1:-}" = "--full" ]; then
     "$py" scripts/docs-check.py
     echo "ci: scripts/wasm-check.sh"
     bash scripts/wasm-check.sh
+    echo "ci: scripts/package-check.sh --build"
+    bash scripts/package-check.sh --build
 fi
 
 echo "ci: ok"

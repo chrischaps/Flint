@@ -60,7 +60,7 @@ Every command is still there. `flint render`, `gen`, `bundle`, `validate`, `musi
 | `gamepad` | No pads are seen and a script's `rumble()` does nothing; the rumble spike says the build left them out. Keyboard, mouse, touch and `--input-script` still work. |
 | `dialogs` | The editors' Save As, Export and Browse buttons open no dialog and say why on stderr. |
 
-Put back any one of them with `--features`, for example `--no-default-features --features packages,audio`. `bash scripts/headless-check.sh` checks that no device crate has crept back into the headless build's dependency tree, and no package's crate into the one built with no features at all, and CI builds both on a Linux runner with the ALSA and libudev headers removed.
+Put back any one of them with `--features`, for example `--no-default-features --features packages,audio`. `bash scripts/headless-check.sh` checks that no device crate has crept back into the headless build's dependency tree, and no package's crate into the one built with no features at all, and CI builds both on a Linux runner with the ALSA and libudev headers removed. Between none and all, CI's package matrix (`bash scripts/package-check.sh --build`) checks `flint-player` and `flint-cli` with each package alone and with only the standard ones (`procgen` and `debug-hud`), so a package that compiles only beside the others fails there, naming the build.
 
 ### To render without a GPU
 

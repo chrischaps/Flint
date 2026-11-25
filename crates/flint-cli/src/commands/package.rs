@@ -81,6 +81,25 @@ fn is_built(p: &Package) -> bool {
         .all(|f| crate::commands::absent::built_with(f))
 }
 
+/// Every package of the tree this flint was built from, each with whether
+/// the binary has it (#1336: `flint examples --check` passes over an
+/// example whose package is out). Where that tree has gone (a binary
+/// copied to another machine), each package feature stands for the package
+/// of its name, as every manifest's `[build] features` does today.
+pub(crate) fn packages_built() -> Vec<(String, bool)> {
+    let read = Packages::read(&built_from().join(package::PACKAGES_DIR));
+    if read.packages.is_empty() {
+        return crate::commands::absent::BUILT_FEATURES
+            .iter()
+            .map(|(f, on)| (f.to_string(), *on))
+            .collect();
+    }
+    read.packages
+        .iter()
+        .map(|p| (p.name.clone(), is_built(p)))
+        .collect()
+}
+
 /// The Cargo features this binary was compiled with, of those a package
 /// can name.
 fn built_features() -> Vec<&'static str> {
