@@ -33,7 +33,17 @@ Three mechanical checks, the ones a page drifts on without anyone noticing:
           span a `**Package:**` line opens with, `living = "*"`, a `[packages]`
           table's keys in a TOML block, `packages = [..]`; and every page
           under concepts/ states its package on a `**Package:**` line. The
-          init templates' Markdown is read for this check too.
+          init templates' Markdown is read for this check too. And each
+          concepts page's Package lines are held to the manifests (#1535):
+          an item a line gives to a package (a component, a `[table]`, a
+          "`x` module", each going to the first package its sentence
+          names) must be that package's; and each item the page documents
+          (the component of an `[entities.<e>.<component>]` header and the
+          table a `[<table>]` header opens, in its TOML blocks; the module
+          of a `<!-- script-api:begin -->` region, or of each function it
+          names) must be the kernel's, or a package's that a Package line
+          over it names. A Package line under the title covers the page;
+          one under another heading covers that heading's section.
 
 Usage:
   python scripts/docs-check.py [--flint <path to flint binary>] [--examples <clone>] [--json]
@@ -57,7 +67,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BOOK = ROOT / "docs" / "book" / "src"
 ALLOW = ROOT / "docs" / "book" / "docs-check-allow.txt"
 
-COUNTS = {"flags": 0, "styles": 0, "images": 0, "maps": 0, "examples": 0, "packages": 0}
+COUNTS = {"flags": 0, "styles": 0, "images": 0, "maps": 0, "examples": 0, "packages": 0, "owners": 0}
 FLAG_RE = re.compile(r"^--[a-z0-9][a-z0-9-]*")
 HELP_FLAG_RE = re.compile(r"^\s+(?:-[A-Za-z0-9], )?(--[a-z0-9][a-z0-9-]*)")
 HELP_CMD_RE = re.compile(r"^  ([a-z][a-z0-9-]*)(?:\s|$)")
@@ -148,8 +158,8 @@ class Flint:
         return {s["name"] for s in items}
 
     def packages(self):
-        """The engine's package names: `flint package list --json`, from the
-        manifests of this checkout (`--dir packages/`)."""
+        """The engine's packages: `flint package list --json`, from the
+        manifests of this checkout (`--dir packages/`), as its list."""
         out = subprocess.run(
             [self.binary, "--json", "package", "list", "--dir", str(ROOT / "packages")],
             capture_output=True,
@@ -161,10 +171,26 @@ class Flint:
             data = json.loads(out.stdout)
         except ValueError:
             raise SystemExit(f"docs-check: `flint package list --json` failed:\n{out.stderr}")
-        names = {p["name"] for p in data.get("packages", [])}
-        if not names:
+        listed = data.get("packages", [])
+        if not listed:
             raise SystemExit(f"docs-check: `flint package list --json` listed no package:\n{out.stdout}{out.stderr}")
-        return names
+        return listed
+
+    def script_modules(self):
+        """Each script function's module, from `flint script api --json`
+        ({} when it fails: a region of function names then goes unowned)."""
+        out = subprocess.run(
+            [self.binary, "--json", "script", "api"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        try:
+            data = json.loads(out.stdout)
+        except ValueError:
+            return {}
+        return {f["name"]: f["module"] for f in data.get("functions", []) if f.get("module")}
 
 
 def parse_help(text):
@@ -379,15 +405,281 @@ def check_package_line(line, where, packages, problems, allow, toml_table):
         check_package_name(name, where, packages, problems, allow)
 
 
-def scan(path, flint, styles, ws, problems, allow, examples=None, source=None, packages=None):
+class Owners:
+    """Who provides what (#1535): each component, scene table and script
+    module to the package whose manifest lists it, from `flint package list
+    --json`, and each script function to its module."""
+
+    KINDS = {"components": "component", "scene_tables": "table", "script_modules": "module"}
+
+    def __init__(self, listed, functions):
+        self.names = {p["name"] for p in listed}
+        self.kernel = {p["name"] for p in listed if p.get("tier") == "kernel"}
+        self.files = {p["name"]: p.get("file", f"packages/{p['name']}/package.toml") for p in listed}
+        self.of = {}
+        for p in listed:
+            for key, kind in self.KINDS.items():
+                for item in p.get(key) or []:
+                    self.of[(kind, item)] = p["name"]
+        self.functions = functions
+
+    def owner(self, kind, item):
+        return self.of.get((kind, item))
+
+    @staticmethod
+    def shown(kind, item):
+        return f"`[{item}]`" if kind == "table" else f"the `{item}` module" if kind == "module" else f"`{item}`"
+
+
+# How a Package line attributes an item: a run of spans ("`living` and
+# `debug`") followed by "module(s)" or "script module(s)" are modules, a
+# `[name]` span is a scene table, any other span that is a component's name
+# is that component. Each goes to the first package its sentence names.
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+SPAN_POS_RE = re.compile(r"`([^`]+)`")
+SPAN_JOIN_RE = re.compile(r"^(?:,\s*|\s+and\s+|,\s+and\s+|\s+or\s+)$")
+MODULE_AFTER_RE = re.compile(r"^\s+(?:script\s+)?modules?\b")
+TABLE_SPAN_RE = re.compile(r"^\[+\s*([a-z][a-z0-9_]*)(?:\.[^\]]*)?\s*\]+$")
+# What a TOML block documents: `[entities.<e>.<component>]`, a prefab
+# override's `[prefabs.<p>.overrides.<e>.<component>]`, else the table its
+# header opens. And a `<!-- script-api:begin ... -->` region's selectors.
+REGION_RE = re.compile(r"<!--\s*script-api:begin\s+(.*?)\s*-->")
+
+
+def line_claims(text, owners):
+    """(package, kind, item) for each item a Package line's text names, and
+    every package the line names."""
+    claims = []
+    named = []
+    lead = re.match(r"^\s*`([a-z][a-z0-9-]*)`", text)
+    for i, sentence in enumerate(SENTENCE_SPLIT_RE.split(text)):
+        found = [m for r in PACKAGE_RES for m in r.finditer(sentence)]
+        found.sort(key=lambda m: m.start())
+        pkgs = [m.group(1) for m in found if m.group(1) in owners.names]
+        if i == 0 and lead and lead.group(1) in owners.names:
+            pkgs.insert(0, lead.group(1))
+        named += pkgs
+        if not pkgs:
+            continue
+        spans = list(SPAN_POS_RE.finditer(sentence))
+        modules = set()
+        run = []
+        for k, s in enumerate(spans):
+            if run and not SPAN_JOIN_RE.match(sentence[spans[k - 1].end():s.start()]):
+                run = []
+            run.append(k)
+            if MODULE_AFTER_RE.match(sentence[s.end():]):
+                modules.update(run)
+                run = []
+        for k, s in enumerate(spans):
+            word = s.group(1).strip()
+            tm = TABLE_SPAN_RE.match(word)
+            if k in modules:
+                kind = "module"
+            elif tm:
+                kind, word = "table", tm.group(1)
+            elif owners.owner("component", word):
+                kind = "component"
+            else:
+                continue
+            if owners.owner(kind, word):
+                claims.append((pkgs[0], kind, word))
+    return claims, list(dict.fromkeys(named))
+
+
+def documented(lines, owners):
+    """(line number, kind, item) for each item a page documents: the
+    components and tables its TOML blocks' headers open, and the modules of
+    its script-api regions (a function named there counts as its module)."""
+    out = []
+    fence = None
+    toml_block = False
+    for n, line in enumerate(lines, 1):
+        m = FENCE_RE.match(line)
+        if m:
+            if fence is None:
+                fence = m.group(1)
+                toml_block = (m.group(2).strip().split() or [""])[0].lower() == "toml"
+            elif m.group(1).startswith(fence[0]) and len(m.group(1)) >= len(fence):
+                fence = None
+            continue
+        if fence is not None:
+            if toml_block:
+                tm = TOML_TABLE_RE.match(line)
+                if tm:
+                    parts = [p.strip().strip("\"'") for p in tm.group(1).split(".")]
+                    if parts[0] == "entities" and len(parts) >= 3:
+                        out.append((n, "component", parts[2]))
+                    elif parts[0] == "prefabs" and len(parts) >= 5 and parts[2] == "overrides":
+                        out.append((n, "component", parts[4]))
+                    elif parts[0] not in ("entities", "prefabs"):
+                        out.append((n, "table", parts[0]))
+            continue
+        for selectors in REGION_RE.findall(line):
+            for sel in selectors.split():
+                if sel.startswith("module:"):
+                    out.append((n, "module", sel[len("module:"):]))
+                elif sel in owners.functions:
+                    out.append((n, "module", owners.functions[sel]))
+    return [d for d in dict.fromkeys(out) if owners.owner(d[1], d[2])]
+
+
+def package_scopes(lines):
+    """(first line, last line, Package line number, its text) for each
+    `**Package:**` line: under the title it covers the page, under another
+    heading that heading's section."""
+    headings = []
+    fence = None
+    for n, line in enumerate(lines, 1):
+        m = FENCE_RE.match(line)
+        if m:
+            if fence is None:
+                fence = m.group(1)
+            elif m.group(1).startswith(fence[0]) and len(m.group(1)) >= len(fence):
+                fence = None
+            continue
+        if fence is None and re.match(r"^#{1,6}\s", line):
+            headings.append((n, len(line) - len(line.lstrip("#"))))
+    scopes = []
+    for n, line in enumerate(lines, 1):
+        m = PACKAGE_LINE_RE.match(line)
+        if not m:
+            continue
+        above = [h for h in headings if h[0] < n]
+        if not above or above[-1][1] == 1:
+            scopes.append((1, len(lines), n, m.group(1)))
+            continue
+        start, level = above[-1]
+        end = next((h[0] - 1 for h in headings if h[0] > start and h[1] <= level), len(lines))
+        scopes.append((start, end, n, m.group(1)))
+    return scopes
+
+
+def check_page_owners(path, lines, owners, problems, allow):
+    """A concepts page's Package lines against the manifests (#1535): an
+    item a line gives to a package is that package's, and each item the page
+    documents is the kernel's or a package's that a Package line over it
+    names. Either names the package the page says and the one that owns it."""
+    page = book_page(path)
+    scopes = package_scopes(lines)
+    reported = set()
+    read = []
+    for start, end, n, text in scopes:
+        claims, named = line_claims(text, owners)
+        read.append((start, end, n, named))
+        for said, kind, item in claims:
+            COUNTS["owners"] += 1
+            actual = owners.owner(kind, item)
+            if actual == said or allowed(allow, (page, n), item):
+                continue
+            reported.add((kind, item))
+            problems.append(problem("packages", (page, n),
+                                    f"the Package line gives {Owners.shown(kind, item)} to `{said}`, but the `{actual}` package provides it",
+                                    f"{owners.files.get(actual, actual)} lists it: give it to `{actual}` on the line, or list it in `{said}`'s manifest again"))
+    for n, kind, item in documented(lines, owners):
+        if (kind, item) in reported:
+            continue
+        COUNTS["owners"] += 1
+        actual = owners.owner(kind, item)
+        over = [s for s in read if s[0] <= n <= s[1]]
+        said = [p for s in over for p in s[3]]
+        if actual in owners.kernel or actual in said or allowed(allow, (page, n), item):
+            continue
+        reported.add((kind, item))
+        stated = ", ".join(f"`{p}`" for p in dict.fromkeys(said)) or "no package"
+        problems.append(problem("packages", (page, n),
+                                f"{Owners.shown(kind, item)} is the `{actual}` package's, but the Package lines over it say {stated}",
+                                f"{owners.files.get(actual, actual)} provides it: name `{actual}` on the page's `**Package:**` line, "
+                                f"or put a `> **Package:** `{actual}`` line under the heading of the section that documents it"))
+
+
+def self_test():
+    """The owner check on made-up manifests and pages, with no binary
+    (`--self-test`, in scripts/ci.sh): what a Package line gives to whom,
+    and which line covers what."""
+    def pkg(name, tier="feature", **provides):
+        return {"name": name, "tier": tier, "file": f"packages/{name}/package.toml", **provides}
+
+    def owners_with(**moved):
+        listed = [
+            pkg("engine", "kernel", components=["transform", "asset_def"], scene_tables=["post_process"], script_modules=["math"]),
+            pkg("debug-hud", "standard"),
+            pkg("procgen", "standard"),
+            pkg("living", components=["living_prop", "shallow_wooze"], scene_tables=["living", "wooze"], script_modules=["living", "wooze", "debug"]),
+            pkg("music", components=["music_session"], script_modules=["music"]),
+            pkg("rhythm", script_modules=["conducted"]),
+        ]
+        for item, to in moved.items():
+            for p in listed:
+                for key in ("components", "scene_tables", "script_modules"):
+                    if item in p.get(key, []):
+                        p[key] = [i for i in p[key] if i != item]
+                        next(q for q in listed if q["name"] == to).setdefault(key, []).append(item)
+        return Owners(listed, {"tune_living": "living", "set_wooze": "wooze", "sin": "math"})
+
+    music = ("`music`, a feature package: a game has `music_session` and the `music` script module only when its "
+             "`[packages]` lists `music = \"*\"`. Charts judged against the music, and the `conducted` module, are the "
+             "`rhythm` package's, which brings `music` with it ([Packages](packages.md)).")
+    procgen = ("`procgen`, a standard package: a game has it unless its `[packages]` sets `procgen = false`. Living props "
+               "and the wooze field (`living_prop`, `shallow_wooze`, `[living]`, `[wooze]` and their script modules) are "
+               "the `living` package's, a feature a game lists as `living = \"*\"` ([Packages](packages.md)).")
+    props = ("`living`, a feature package: a game has the `living` and `debug` modules only when its `[packages]` lists "
+             "`living = \"*\"`. Of the two, `debug` runs only where the `debug-hud` package is in the build too.")
+    o = owners_with()
+    cases = [
+        (line_claims(music, o), ([("music", "component", "music_session"), ("music", "module", "music"), ("rhythm", "module", "conducted")], ["music", "rhythm"])),
+        (line_claims(procgen, o), ([("living", "component", "living_prop"), ("living", "component", "shallow_wooze"), ("living", "table", "living"), ("living", "table", "wooze")], ["procgen", "living"])),
+        (line_claims(props, o), ([("living", "module", "living"), ("living", "module", "debug")], ["living", "debug-hud"])),
+    ]
+    failed = [f"line_claims: got {got}, want {want}" for got, want in cases if got != want]
+
+    def run(text, owners):
+        problems = []
+        check_page_owners(BOOK / "concepts" / "t.md", text.splitlines(), owners, problems, {})
+        return [(p["line"], p["message"]) for p in problems]
+
+    page = "\n".join([
+        "# T", "", "> **Package:** `engine`, the kernel.", "",
+        "```toml", "# a comment, not a heading", "[entities.e.transform]", "[entities.e.asset_def]", "```", "",
+        "## Boil", "", "{line}", "", "```toml", "[wooze]", "[post_process]", "```", "",
+        "### Deeper", "", "<!-- script-api:begin tune_living sin -->", "",
+        "## After", "", "```toml", "[prefabs.p.overrides.e.shallow_wooze]", "```",
+    ])
+    covered = page.replace("{line}", "> **Package:** `living`: the boil reads the wooze field.")
+    bare = page.replace("{line}", "Prose.")
+    want_bare = [(16, "`[wooze]` is the `living` package's, but the Package lines over it say `engine`"),
+                 (22, "the `living` module is the `living` package's, but the Package lines over it say `engine`"),
+                 (27, "`shallow_wooze` is the `living` package's, but the Package lines over it say `engine`")]
+    for got, want in [
+        (run(covered, o), want_bare[2:]),  # a section's line covers its subsections, not the next section
+        (run(bare, o), want_bare),
+        (run("# M\n\n> **Package:** " + music + "\n", owners_with(music_session="rhythm")),
+         [(3, "the Package line gives `music_session` to `music`, but the `rhythm` package provides it")]),
+        (run("# M\n\n> **Package:** " + music + "\n", owners_with(music_session="engine")),
+         [(3, "the Package line gives `music_session` to `music`, but the `engine` package provides it")]),
+        # The kernel's items in passing, on a feature's page
+        (run("# M\n\n> **Package:** " + music + "\n\n```toml\n[entities.s.transform]\n[entities.s.music_session]\n```\n", o), []),
+    ]:
+        if got != want:
+            failed.append(f"check_page_owners: got {got}, want {want}")
+    for f in failed:
+        print(f"docs-check --self-test: {f}")
+    print(f"docs-check --self-test: {'ok' if not failed else f'{len(failed)} failed'}")
+    return 1 if failed else 0
+
+
+def scan(path, flint, styles, ws, problems, allow, examples=None, source=None, packages=None, owners=None):
     text = path.read_text(encoding="utf-8")
     page = book_page(path)
     in_book = path.is_relative_to(BOOK)
     in_cli_ref = path.is_relative_to(BOOK / "cli-reference")
     lines = text.splitlines()
-    if packages is not None and path.parent == STATES_PACKAGE and not any(PACKAGE_LINE_RE.match(l) for l in lines):
-        problems.append(problem("packages", (page, 1), "the page doesn't state its package",
-                                "a concepts page says what it documents is whose: a `> **Package:** `engine`` line under its title"))
+    if packages is not None and path.parent == STATES_PACKAGE:
+        if not any(PACKAGE_LINE_RE.match(l) for l in lines):
+            problems.append(problem("packages", (page, 1), "the page doesn't state its package",
+                                    "a concepts page says what it documents is whose: a `> **Package:** `engine`` line under its title"))
+        elif owners is not None:
+            check_page_owners(path, lines, owners, problems, allow)
     fence = None
     shell_block = False
     toml_block = False
@@ -601,20 +893,25 @@ def main():
     ap.add_argument("--flint", help="the flint binary to ask (default: target/debug/flint)")
     ap.add_argument("--examples", help="a clone of flint-examples to check citations against (default: flint-examples/ here, else GitHub)")
     ap.add_argument("--json", action="store_true", help="print the problems as JSON")
+    ap.add_argument("--self-test", action="store_true", help="test the package owner check on made-up pages (no binary)")
     args = ap.parse_args()
+    if args.self_test:
+        return self_test()
 
     flint = Flint(find_flint(args.flint))
     if flint.help([]) is None:
         raise SystemExit(f"docs-check: `{flint.binary} --help` failed")
     styles = flint.styles()
-    packages = flint.packages()
+    listed = flint.packages()
+    packages = {p["name"] for p in listed}
+    owners = Owners(listed, flint.script_modules())
     allow = load_allow()
     problems = []
     ws = workspace()
     files = sources()
     examples, source = example_files(args.examples)
     for f in files:
-        scan(f, flint, styles, ws, problems, allow, examples, source, packages)
+        scan(f, flint, styles, ws, problems, allow, examples, source, packages, owners)
     check_crate_maps(ws, problems, allow)
 
     if args.json:
@@ -624,7 +921,7 @@ def main():
             print(f"{p['file']}:{p['line']}: [{p['check']}] {p['message']}\n    {p['hint']}")
         print(f"docs-check: {len(files)} files; {COUNTS['flags']} flags on {len(flint.cache)} commands, "
               f"{COUNTS['styles']} style tables, {COUNTS['images']} images, {COUNTS['maps']} map entries, {COUNTS['examples']} example citations, "
-              f"{COUNTS['packages']} package names: "
+              f"{COUNTS['packages']} package names, {COUNTS['owners']} items held to their packages: "
               + (f"{len(problems)} problem(s)" if problems else "clean"))
     return 1 if problems else 0
 
