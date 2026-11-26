@@ -37,7 +37,7 @@ impl SetAll for LivingProps {
     }
 }
 
-const OAK: &str = "../../specs/examples/oak_living.procgen.toml";
+const OAK: &str = "../../../../specs/examples/oak_living.procgen.toml";
 
 /// A small tree, so tests can make many poses even in a debug build.
 fn sapling(extra: &str) -> String {
