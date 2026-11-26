@@ -6,7 +6,8 @@
 //! ([`Subsystems`]), the builders and the lending of each context.
 //!
 //! A subsystem hears the scene come and go (`scene_loaded`,
-//! `scene_unloading`), each [`Stage`] of the frame (`update`), the scripts'
+//! `scene_unloading`), each [`Stage`] of the frame (`update`), each fixed
+//! physics step (`fixed_update`, lent a [`FixedCtx`], #1551), the scripts'
 //! commands before the player's own dispatcher (`script_command`), the debug
 //! keys it declares (`debug_keys`, `on_debug_key`), a click or an Escape
 //! (`on_input`), the frame's renderer inputs and its encoder (`frame_inputs`,
@@ -47,8 +48,8 @@
 //! engine goes before the engine (ADR 0017).
 
 pub(crate) use flint_package::{
-    EncodeCtx, ExitReport, FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, Stage,
-    StageCtx, Subsystem,
+    EncodeCtx, ExitReport, FixedCtx, FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx,
+    Stage, StageCtx, Subsystem,
 };
 use flint_render::FrameInputs;
 use flint_runtime::DebugKey;
@@ -197,6 +198,13 @@ impl Subsystems {
     pub(crate) fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
         for s in &mut self.list {
             s.update(stage, ctx);
+        }
+    }
+
+    /// One fixed physics step, in the order they were added (#1551).
+    pub(crate) fn fixed_update(&mut self, ctx: &mut FixedCtx) {
+        for s in &mut self.list {
+            s.fixed_update(ctx);
         }
     }
 

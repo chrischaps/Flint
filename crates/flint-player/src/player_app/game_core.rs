@@ -19,7 +19,7 @@
 
 use super::perf::Phase;
 use super::style_commands::StyleApplied;
-use super::subsystem::{Stage, StageCtx, Subsystems};
+use super::subsystem::{FixedCtx, Stage, StageCtx, Subsystems};
 use flint_animation::AnimationSystem;
 use flint_core::project::Project;
 use flint_core::EntityId;
@@ -640,17 +640,44 @@ impl GameCore {
         if has_fps_player && config.runs(PHYSICS) {
             self.physics.character_frame_input(input, &self.world);
         }
+        // The steps this frame runs, for a subsystem's `FixedCtx::step`
+        let frame_steps = self.clock.pending_fixed_steps() as u32;
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
             if steps && config.runs(PHYSICS) {
+                let step = self.fixed_steps;
                 self.fixed_steps += 1;
                 if has_fps_player {
                     self.physics.update_character(input, &mut self.world, dt);
                 }
-                self.physics
-                    .fixed_update(&mut self.world, dt, &mut self.events)
-                    .unwrap_or_else(|e| tracing::warn!("Physics error: {:?}", e));
+                let stepped = if self.subsystems.is_empty() {
+                    self.physics
+                        .fixed_update(&mut self.world, dt, &mut self.events)
+                } else {
+                    // Each subsystem's step, between the sync-in and
+                    // Rapier's step (ADR 0137 section 3a, #1551)
+                    let (subsystems, resources) = (&mut self.subsystems, &mut self.resources);
+                    self.physics.fixed_update_with(
+                        &mut self.world,
+                        dt,
+                        &mut self.events,
+                        |physics, world, events| {
+                            flint_core::scope!("subsystems", Stage::FixedStep.label());
+                            subsystems.fixed_update(&mut FixedCtx {
+                                world,
+                                physics,
+                                dt,
+                                step: (step, frame_steps.max(step + 1)),
+                                input,
+                                events,
+                                policy: config,
+                                resources,
+                            });
+                        },
+                    )
+                };
+                stepped.unwrap_or_else(|e| tracing::warn!("Physics error: {:?}", e));
             }
 
             self.clock.consume_fixed_step();

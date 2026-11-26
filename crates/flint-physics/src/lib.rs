@@ -39,6 +39,18 @@ use std::sync::Arc;
 use sync::PhysicsSync;
 use world::PhysicsWorld;
 
+/// Rapier, as this crate builds it, so a package reaches the same version
+/// (`flint_package::physics::rapier`, ADR 0137 section 3a).
+pub use rapier3d as rapier;
+
+/// Rapier's sets, lent at once by [`PhysicsSystem::rapier_mut`]: the
+/// bodies to change, beside the colliders and the queries to read.
+pub struct RapierSets<'a> {
+    pub bodies: &'a mut RigidBodySet,
+    pub colliders: &'a ColliderSet,
+    pub queries: &'a QueryPipeline,
+}
+
 /// The triangles of a `mesh` or `convex` collider, in the entity's own
 /// space (where its model's vertices are drawn, before the entity's
 /// transform). A host reads them from the entity's model and hands them
@@ -241,6 +253,45 @@ impl PhysicsSystem {
     /// The entity a collider belongs to.
     pub fn entity_of_collider(&self, handle: ColliderHandle) -> Option<EntityId> {
         self.sync.entity_of(handle)
+    }
+
+    /// An entity's Rapier body, once a step's sync-in has made it.
+    pub fn body_of(&self, entity_id: EntityId) -> Option<RigidBodyHandle> {
+        self.sync.get_body_handle(entity_id)
+    }
+
+    /// Rapier's bodies, to read.
+    pub fn bodies(&self) -> &RigidBodySet {
+        &self.physics_world.rigid_body_set
+    }
+
+    /// Rapier's bodies, to push (a force, an impulse, a velocity). Inside a
+    /// fixed step's hook, what is applied here is integrated by that step
+    /// ([`fixed_update_with`](Self::fixed_update_with)).
+    pub fn bodies_mut(&mut self) -> &mut RigidBodySet {
+        &mut self.physics_world.rigid_body_set
+    }
+
+    /// Rapier's colliders.
+    pub fn colliders(&self) -> &ColliderSet {
+        &self.physics_world.collider_set
+    }
+
+    /// Rapier's query pipeline, as of the last step (rays, shape casts).
+    pub fn queries(&self) -> &QueryPipeline {
+        &self.physics_world.query_pipeline
+    }
+
+    /// The bodies to change beside the colliders and the queries to cast
+    /// against, at once: what Rapier's `DynamicRayCastVehicleController::
+    /// update_vehicle` takes (ADR 0137 section 3a).
+    pub fn rapier_mut(&mut self) -> RapierSets<'_> {
+        let w = &mut self.physics_world;
+        RapierSets {
+            bodies: &mut w.rigid_body_set,
+            colliders: &w.collider_set,
+            queries: &w.query_pipeline,
+        }
     }
 
     /// Cast a ray and resolve the hit collider to an EntityId
@@ -658,7 +709,33 @@ impl PhysicsSystem {
         dt: f64,
         events: &mut EventBus,
     ) -> Result<()> {
+        self.fixed_update_with(world, dt, events, |_, _, _| {})
+    }
+
+    /// [`fixed_update`](Self::fixed_update) with `between` run inside the
+    /// step, after the sync-in (new bodies have their handles, kinematic
+    /// poses and joint targets are in) and before Rapier's step, which
+    /// integrates what it applied (ADR 0137 section 3a, #1551). Rapier's
+    /// query pipeline still shows the last step's colliders there, which is
+    /// what a raycast vehicle casts its wheels against. `between` is lent
+    /// the system, the world and the bus.
+    pub fn fixed_update_with(
+        &mut self,
+        world: &mut FlintWorld,
+        dt: f64,
+        events: &mut EventBus,
+        between: impl FnOnce(&mut PhysicsSystem, &mut FlintWorld, &mut EventBus),
+    ) -> Result<()> {
         flint_core::scope!("physics::fixed_update");
+        self.sync_in(world);
+        between(self, world, events);
+        self.step_and_publish(world, dt, events);
+        Ok(())
+    }
+
+    /// A step's first half: new bodies and joints in, then kinematic poses,
+    /// colliders and joint targets from the world.
+    fn sync_in(&mut self, world: &mut FlintWorld) {
         {
             flint_core::scope!("physics::sync_in");
             // Sync any new entities to Rapier, then any joints whose bodies now exist
@@ -683,7 +760,11 @@ impl PhysicsSystem {
             self.sync
                 .update_joint_targets(world, &mut self.physics_world);
         }
+    }
 
+    /// A step's second half: Rapier's step, this step's collisions and
+    /// triggers onto `events`, then dynamic poses back to the world.
+    fn step_and_publish(&mut self, world: &mut FlintWorld, dt: f64, events: &mut EventBus) {
         // Step physics
         {
             flint_core::scope!("physics::step", self.physics_world.rigid_body_set.len());
@@ -745,8 +826,6 @@ impl PhysicsSystem {
         self.sync
             .project_kinematic_joints(&mut self.physics_world, dt as f32);
         self.sync.sync_from_rapier(world, &self.physics_world);
-
-        Ok(())
     }
 
     /// A fixed step for a test that reads no contacts.

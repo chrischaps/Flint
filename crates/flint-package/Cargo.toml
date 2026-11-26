@@ -16,6 +16,9 @@ flint-runtime = { workspace = true }
 flint-script = { workspace = true }
 flint-render = { workspace = true }
 flint-audio = { workspace = true }
+# What the fixed-step hook lends (ADR 0137 section 3a, #1551); a kernel
+# crate until Phase 3 makes physics a package.
+flint-physics = { workspace = true }
 egui = { workspace = true }
 wgpu = { workspace = true }
 toml = { workspace = true }
