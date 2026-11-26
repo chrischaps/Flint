@@ -3,55 +3,58 @@
 //! in a build with the `music` feature (#754). Without it, such a scene is
 //! told so at its entry and plays silent.
 
-use super::{SceneCtx, Subsystem};
-
-/// The music plays on under a pause menu, as a loop does: no game state
-/// pauses it.
-pub(crate) const POLICY: Option<&str> = None;
-
-/// Its script module (#698): a rhythm session's state, enabled in a scene
-/// whose `music_session` has a chart. (`music_beat()` and the rest are
-/// flint-script's core: any scene asks them.)
-#[cfg(feature = "music")]
-pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] =
-    &[&crate::music::conducted::CONDUCTED];
+use super::SceneCtx;
 #[cfg(not(feature = "music"))]
-pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] = &[];
+use super::Subsystem;
+use flint_package::Registry;
 
-/// Its debug keys (#717): a charted session's guide, map and forced fail
-/// (`music::rhythm::RhythmSubsystem`). A suite with no chart has none, and
-/// with no session playing a chart the keys are the game's.
-pub(crate) const DEBUG_KEYS: flint_runtime::DebugKeyGroup = flint_runtime::DebugKeyGroup {
-    owner: "music",
-    when: "a scene whose music_session has a chart",
-    keys: KEYS,
-};
-
-#[cfg(all(feature = "rhythm", feature = "debug-hud"))]
-const KEYS: &[flint_runtime::DebugKey] = crate::music::rhythm::DEBUG_KEYS;
-#[cfg(not(all(feature = "rhythm", feature = "debug-hud")))]
-const KEYS: &[flint_runtime::DebugKey] = &[];
-
-/// The subsystem for the scene being entered, if it has a `music_session`.
-/// In a project whose `[packages]` leaves `music` out, none: a scene with a
-/// session hears so once, naming the line to add (#1528).
+/// The `music` package's part in this crate (#1555 moves it to its own):
+/// its builder, the line a scene with a session hears when the project
+/// leaves it out (#1528), and its module (#698): a rhythm session's state,
+/// enabled in a scene whose `music_session` has a chart (`music_beat()`
+/// and the rest are flint-script's core: any scene asks them). The music
+/// plays on under a pause menu, as a loop does: no game state pauses it.
 #[cfg(feature = "music")]
-pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
-    if let Some(in_use) = ctx.leaves_out("music") {
-        if let Some(line) =
-            crate::player_app::missing_features::music_left_out_line(in_use, ctx.world)
-        {
-            tracing::warn!(target: "load", "{line}");
-        }
-        return None;
-    }
-    crate::music::for_scene(ctx)
+pub(crate) fn register(registry: &mut Registry) {
+    registry
+        .scene_subsystem(crate::music::for_scene)
+        .when_left_out(left_out)
+        .script_modules(&[&crate::music::conducted::CONDUCTED]);
 }
 
-/// A build without the feature: a scene with a `music_session` hears so
-/// once, here.
+/// The `rhythm` package's part in this crate (#1556 moves it): its debug
+/// keys (#717), a charted session's guide, map and forced fail
+/// (`music::rhythm::RhythmSubsystem`), with the debug HUD. Music's builder
+/// makes the rhythm subsystem itself. A suite with no chart has none, and
+/// with no session playing a chart the keys are the game's.
+#[cfg(feature = "rhythm")]
+pub(crate) fn register_rhythm(registry: &mut Registry) {
+    #[cfg(feature = "debug-hud")]
+    registry.debug_keys(flint_runtime::DebugKeyGroup {
+        owner: "music",
+        when: "a scene whose music_session has a chart",
+        keys: crate::music::rhythm::DEBUG_KEYS,
+    });
+    #[cfg(not(feature = "debug-hud"))]
+    let _ = registry;
+}
+
+/// What a scene with a `music_session` hears in a project that leaves the
+/// package out: the line to add to `[packages]`.
+#[cfg(feature = "music")]
+fn left_out(ctx: &SceneCtx) -> Option<String> {
+    crate::player_app::missing_features::music_left_out_line(ctx.packages?, ctx.world)
+}
+
+/// A build without the package: the kernel says to a scene with a
+/// `music_session`, once, that it plays silent.
 #[cfg(not(feature = "music"))]
-pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+pub(crate) fn register_absent(registry: &mut Registry) {
+    registry.scene_subsystem(unbuilt);
+}
+
+#[cfg(not(feature = "music"))]
+fn unbuilt(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     if let Some(line) = crate::player_app::missing_features::music_line(ctx.world) {
         tracing::warn!(target: "load", "{line}");
     }

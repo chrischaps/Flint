@@ -16,23 +16,20 @@
 
 use super::{Lasts, SceneCtx, Subsystem};
 use flint_core::field::{SceneField, SceneFields};
+use flint_package::Registry;
 use flint_script::api::builder::kind::{Bool, Map, Num, Str};
 use flint_script::api::{map_to_toml, Call, CallResult, Module};
 use flint_script::ScriptModule;
 
-/// No game state pauses it: a pause stops the scripts that change it, and
-/// its clock is the game's.
-pub(crate) const POLICY: Option<&str> = None;
-
-/// Its script module.
-pub(crate) const SCRIPT_MODULES: &[&dyn ScriptModule] = &[&FIELD];
-
-/// It has no debug keys.
-pub(crate) const DEBUG_KEYS: flint_runtime::DebugKeyGroup = flint_runtime::DebugKeyGroup {
-    owner: "field",
-    when: "a scene with a [field.<name>] table",
-    keys: &[],
-};
+/// The kernel's `field` (ADR 0136 section 7), registered by the player's
+/// own registration (`packages::KERNEL`): its builder and its module. No
+/// game state pauses it (a pause stops the scripts that change it, and its
+/// clock is the game's), and it has no debug keys.
+pub(crate) fn register(registry: &mut Registry) {
+    registry
+        .scene_subsystem(for_scene)
+        .script_modules(&[&FIELD]);
+}
 
 /// The subsystem for a scene with a `[field]` table: what it declares goes
 /// into the script system for the `field` module, and what's wrong with it

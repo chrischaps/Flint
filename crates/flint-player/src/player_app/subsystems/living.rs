@@ -5,11 +5,12 @@
 //! entry and stands still.
 
 use super::{SceneCtx, Subsystem};
+use flint_package::Registry;
 
 /// A game state pauses the grove's clock by `living: "pause"` (#727). The
 /// name stays in a build without the feature, so a state that names it
 /// still registers.
-pub(crate) const POLICY: Option<&str> = Some("living");
+pub(crate) const POLICY: &str = "living";
 
 /// Its script modules (#698): the wooze field, the knobs and the A/B,
 /// enabled in a scene the subsystem runs in.
@@ -19,11 +20,10 @@ pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] = &[
     &crate::player_app::living_api::LIVING,
     &crate::player_app::living_api::DEBUG,
 ];
-#[cfg(not(feature = "living"))]
-pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] = &[];
 
 /// Its debug keys (#717): the A/B of #238 and the pick of #248. Live only
 /// in a scene the subsystem runs in; elsewhere F5-F8 are the game's.
+#[cfg(feature = "living")]
 pub(crate) const DEBUG_KEYS: flint_runtime::DebugKeyGroup = flint_runtime::DebugKeyGroup {
     owner: "living",
     when: "a scene with living props or wooze",
@@ -66,34 +66,54 @@ const KEYS: &[flint_runtime::DebugKey] = &[
 ];
 #[cfg(all(feature = "living", not(feature = "debug-hud")))]
 const KEYS: &[flint_runtime::DebugKey] = &A_B;
+
+/// The `living` package's part in this crate (#1558 moves it to its own):
+/// its policy name, its builder, the line a scene that uses it hears when
+/// the project leaves it out (#1528), its modules and its keys.
+#[cfg(feature = "living")]
+pub(crate) fn register(registry: &mut Registry) {
+    registry
+        .policy(POLICY)
+        .scene_subsystem(for_scene)
+        .when_left_out(left_out)
+        .script_modules(SCRIPT_MODULES)
+        .debug_keys(DEBUG_KEYS);
+}
+
+/// A build without the package: the kernel keeps its policy name and says
+/// to a scene that uses it, once, that it stands still.
 #[cfg(not(feature = "living"))]
-const KEYS: &[flint_runtime::DebugKey] = &[];
+pub(crate) fn register_absent(registry: &mut Registry) {
+    registry.policy(POLICY).scene_subsystem(unbuilt);
+}
 
 /// The subsystem for the scene being entered, if it has living props or
-/// wooze; in a capture, the grove posed at once (`ctx.capture`, #1252). In
-/// a project whose `[packages]` leaves `living` out, none: a scene that
-/// uses it hears so once, naming the line to add (#1528).
+/// wooze; in a capture, the grove posed at once (`ctx.capture`, #1252).
 #[cfg(feature = "living")]
-pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
-    if let Some(in_use) = ctx.leaves_out("living") {
-        let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
-        if let Some(line) = crate::player_app::missing_features::living_left_out_line(
-            in_use, ctx.world, ctx.tables, grass,
-        ) {
-            tracing::warn!(target: "load", "{line}");
-        }
-        return None;
-    }
+fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     debug_assert_eq!(
         POLICY,
-        Some(crate::player_app::living_subsystem::LivingSubsystem::NAME)
+        crate::player_app::living_subsystem::LivingSubsystem::NAME
     );
     crate::player_app::living_subsystem::LivingSubsystem::for_scene(ctx)
 }
 
+/// What a scene that uses living props hears in a project that leaves the
+/// package out: the line to add to `[packages]`.
+#[cfg(feature = "living")]
+fn left_out(ctx: &SceneCtx) -> Option<String> {
+    let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
+    crate::player_app::missing_features::living_left_out_line(
+        ctx.packages?,
+        ctx.world,
+        ctx.tables,
+        grass,
+    )
+}
+
 /// A build without the feature: a scene that uses it hears so once, here.
 #[cfg(not(feature = "living"))]
-pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+fn unbuilt(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
     if let Some(line) =
         crate::player_app::missing_features::living_line(ctx.world, ctx.tables, grass)

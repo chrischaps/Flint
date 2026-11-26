@@ -11,28 +11,159 @@
 //! With no `[packages]` table there is nothing to hold: every package is
 //! in, and the default build has every one.
 //!
+//! **The launcher** (ADR 0137 decision 5, #1552). What a binary was built
+//! with is the list its launcher hands the kernel: [`launch`] at the top of
+//! `main`, once a run, before any scene loads. Each package registers its
+//! scene subsystems, policy names, script modules and debug keys into the
+//! run's [`Registry`] ([`registry`]), which is where the player finds them;
+//! nothing in the player lists a package's files. The stock `flint-player`
+//! (and `flint`, and the web player) list [`stock`]: every package this
+//! build has, as "no `[packages]` key means every package" says (ADR 0136
+//! decision 3). A host that never calls [`launch`] (a test, a game binary
+//! that hasn't yet) gets the stock list.
+//!
 //! Also here: the binaries `flint build` set aside on Windows
 //! ([`sweep_set_aside`]).
 
-use flint_core::package::Packages;
+use flint_core::package::{Package as Manifest, Packages};
 use flint_core::project::{shown, SchemaDirs};
+pub use flint_package::{Package, Registry};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-/// This player library's package features: each `[build] features` name a
-/// package can give that flint-player has, and whether it was compiled in.
-pub const BUILT_FEATURES: &[(&str, bool)] = &[
-    ("debug-hud", cfg!(feature = "debug-hud")),
-    ("living", cfg!(feature = "living")),
-    ("music", cfg!(feature = "music")),
-    ("rhythm", cfg!(feature = "rhythm")),
-    ("procgen", cfg!(feature = "procgen")),
-];
+/// A package whose part is a registration function: the shape of every
+/// package still inside this crate, and of a small package a game or a
+/// test writes.
+pub struct Part {
+    /// Its `[package] name`.
+    pub name: &'static str,
+    /// What it registers.
+    pub register: fn(&mut Registry),
+}
 
-/// Whether this player lacks `feature`: one of its own package features,
-/// compiled out. A feature it doesn't have at all (`ai`, the CLI's) is not
-/// the player's to lack.
-pub fn lacks(feature: &str) -> bool {
-    BUILT_FEATURES.iter().any(|(f, on)| *f == feature && !on)
+impl Package for Part {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn register(&self, registry: &mut Registry) {
+        (self.register)(registry)
+    }
+}
+
+/// The kernel's own registration, `engine`'s: the `field` subsystem and
+/// module, and, for each package still in this crate that the build left
+/// out, the line a scene that uses it hears (and `living`'s policy name,
+/// which a game state may name in any build). It is always first.
+pub static ENGINE: Part = Part {
+    name: "engine",
+    register: |registry| {
+        use crate::player_app::subsystem;
+        subsystem::field::register(registry);
+        #[cfg(not(feature = "living"))]
+        subsystem::living::register_absent(registry);
+        #[cfg(not(feature = "music"))]
+        subsystem::music::register_absent(registry);
+    },
+};
+
+// The packages whose code is still in this crate, each behind its feature
+// until it moves into `packages/<name>/` (#1555-#1559). Those with nothing
+// to register yet (debug-hud, procgen) are listed all the same: the list
+// is what the binary was built with.
+#[cfg(feature = "debug-hud")]
+static DEBUG_HUD: Part = Part {
+    name: "debug-hud",
+    register: |_| {},
+};
+#[cfg(feature = "procgen")]
+static PROCGEN: Part = Part {
+    name: "procgen",
+    register: |_| {},
+};
+#[cfg(feature = "living")]
+static LIVING: Part = Part {
+    name: "living",
+    register: crate::player_app::subsystem::living::register,
+};
+#[cfg(feature = "music")]
+static MUSIC: Part = Part {
+    name: "music",
+    register: crate::player_app::subsystem::music::register,
+};
+#[cfg(feature = "rhythm")]
+static RHYTHM: Part = Part {
+    name: "rhythm",
+    register: crate::player_app::subsystem::music::register_rhythm,
+};
+
+/// The names of the packages this crate has a part of, in any build: what
+/// a player can lack. A package with no part here (`ai`, the CLI's; a
+/// game's own) is not the player's to lack.
+pub const PLAYER_PACKAGES: &[&str] = &["debug-hud", "procgen", "living", "music", "rhythm"];
+
+/// Every package this build has, each after the ones it `[requires]`: the
+/// stock launcher's list. A test build ends it with the toy package.
+#[allow(clippy::vec_init_then_push, unused_mut)] // a build with no package pushes none
+pub fn stock() -> Vec<&'static dyn Package> {
+    let mut list: Vec<&'static dyn Package> = Vec::new();
+    #[cfg(feature = "debug-hud")]
+    list.push(&DEBUG_HUD);
+    #[cfg(feature = "procgen")]
+    list.push(&PROCGEN);
+    #[cfg(feature = "living")]
+    list.push(&LIVING);
+    #[cfg(feature = "music")]
+    list.push(&MUSIC);
+    #[cfg(feature = "rhythm")]
+    list.push(&RHYTHM);
+    #[cfg(test)]
+    list.push(&crate::player_app::subsystem::toy::PACKAGE);
+    list
+}
+
+/// The registry a launcher's list makes: the kernel's registration
+/// ([`ENGINE`]), then each package in the order listed.
+pub fn compose(packages: &[&dyn Package]) -> Registry {
+    let mut registry = Registry::default();
+    registry.add(&ENGINE);
+    for package in packages {
+        registry.add(*package);
+    }
+    registry
+}
+
+static RUN: OnceLock<Registry> = OnceLock::new();
+
+/// Hand the kernel the run's packages: what a launcher's `main` does
+/// first. `false`, with a warning, when the run's registry was already
+/// made (a second call, or a scene, a script system or the debug-key table
+/// asked first): the packages are registered once a run.
+pub fn launch(packages: &[&dyn Package]) -> bool {
+    let composed = compose(packages);
+    let names = composed.built_with().join(", ");
+    let set = RUN.set(composed).is_ok();
+    if set {
+        tracing::debug!("launched with packages {names}");
+    } else {
+        tracing::warn!(
+            "packages {names} came too late: the run's packages were already registered ({})",
+            registry().built_with().join(", ")
+        );
+    }
+    set
+}
+
+/// The run's registry: the launcher's list, or [`stock`] when no launcher
+/// named one.
+pub fn registry() -> &'static Registry {
+    RUN.get_or_init(|| compose(&stock()))
+}
+
+/// Whether this player lacks `package`: one this crate has a part of, which
+/// the run's launcher didn't list (or the build compiled out).
+pub fn lacks(package: &str) -> bool {
+    PLAYER_PACKAGES.contains(&package) && !registry().has(package)
 }
 
 /// The packages a project lists that a binary was built without.
@@ -83,21 +214,22 @@ impl std::fmt::Display for Unbuilt {
 impl std::error::Error for Unbuilt {}
 
 /// The packages `dirs` let in (its `[packages]` resolved, #1334) that a
-/// binary lacks, by `lacks` of each package's `[build] features`. `None`
-/// with no `[packages]` table, with no engine package folder to read the
-/// manifests from, or when the binary has them all.
-pub fn unbuilt(dirs: &SchemaDirs, binary: &str, lacks: impl Fn(&str) -> bool) -> Option<Unbuilt> {
+/// binary lacks, by `lacks` of each one's manifest: the player asks
+/// [`lacks`] of its name (the launcher's list), the CLI of its `[build]
+/// features`. `None` with no `[packages]` table, with no engine package
+/// folder to read the manifests from, or when the binary has them all.
+pub fn unbuilt(
+    dirs: &SchemaDirs,
+    binary: &str,
+    lacks: impl Fn(&Manifest) -> bool,
+) -> Option<Unbuilt> {
     let in_use = dirs.packages.as_ref()?;
     let folder = flint_core::project::engine_packages_for(&dirs.dirs)?;
     let manifests = Packages::read(&folder);
     let packages: Vec<String> = in_use
         .on
         .iter()
-        .filter(|name| {
-            manifests
-                .get(name)
-                .is_some_and(|p| p.features.iter().any(|f| lacks(f)))
-        })
+        .filter(|name| manifests.get(name).is_some_and(&lacks))
         .cloned()
         .collect();
     (!packages.is_empty()).then(|| Unbuilt {
@@ -231,9 +363,67 @@ mod tests {
     }
 
     #[test]
-    fn a_feature_the_player_has_no_switch_for_is_not_lacking() {
+    fn a_package_the_player_has_no_part_of_is_not_lacking() {
         assert!(!lacks("ai"));
-        assert!(!lacks("frame-history"));
+        assert!(!lacks("engine"));
+        assert!(!lacks("frame-history"), "a build option, not a package");
         assert_eq!(lacks("living"), !cfg!(feature = "living"));
+        assert_eq!(lacks("procgen"), !cfg!(feature = "procgen"));
+    }
+
+    /// The stock list is the build's packages, each a manifest's name,
+    /// each after what it `[requires]`, and the kernel first.
+    #[test]
+    fn the_stock_list_is_every_package_this_build_has_in_requires_order() {
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+        let manifests = Packages::read(&folder);
+        assert!(!manifests.failed(), "{:?}", manifests.problems);
+        let registry = compose(&stock());
+        let built = registry.built_with();
+        assert_eq!(built[0], "engine");
+        for (i, name) in built.iter().enumerate() {
+            if *name == "toy" {
+                continue; // the test build's own
+            }
+            let manifest = manifests
+                .get(name)
+                .unwrap_or_else(|| panic!("`{name}` is no package's name"));
+            for required in manifest.requires.keys() {
+                let at = built.iter().position(|b| b == required);
+                assert!(
+                    at.is_some_and(|at| at < i),
+                    "{name} is listed before {required}, which it requires"
+                );
+            }
+        }
+        for name in PLAYER_PACKAGES {
+            assert!(manifests.get(name).is_some(), "{name}");
+            let on = manifests
+                .get(name)
+                .unwrap()
+                .features
+                .iter()
+                .all(|f| match f.as_str() {
+                    "debug-hud" => cfg!(feature = "debug-hud"),
+                    "procgen" => cfg!(feature = "procgen"),
+                    "living" => cfg!(feature = "living"),
+                    "music" => cfg!(feature = "music"),
+                    "rhythm" => cfg!(feature = "rhythm"),
+                    other => panic!("{name}'s feature {other} is no player feature"),
+                });
+            assert_eq!(registry.has(name), on, "{name}");
+        }
+    }
+
+    /// A launcher that lists fewer packages than the build has makes a
+    /// player that lacks the rest: the list, not the features, is what it
+    /// was built with.
+    #[test]
+    fn a_launcher_that_leaves_a_package_out_lacks_it() {
+        let registry = compose(&[]);
+        assert_eq!(registry.built_with(), ["engine"]);
+        let names: Vec<&str> = registry.builders().map(|(p, _)| p).collect();
+        assert!(names.iter().all(|p| *p == "engine"), "{names:?}");
+        assert!(registry.modules().all(|m| m.name() == "field"));
     }
 }

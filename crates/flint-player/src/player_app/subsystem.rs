@@ -24,18 +24,18 @@
 //!
 //! **Lifetimes.** A subsystem lasts for the run (the expression feed, which
 //! the host hands over) or for one scene (shallow wooze). The scene ones are
-//! built when a scene is entered, by the `for_scene` builders of the files in
-//! `player_app/subsystems/` (one file a subsystem, listed by `build.rs`, so
-//! adding one edits no other file), each of
-//! which looks at the scene and makes its subsystem only if the scene uses
-//! it, and they are dropped when the scene unloads. Nothing of one scene's
-//! carries into the next.
+//! built when a scene is entered, by the builders the run's packages
+//! registered (`flint_package::Registry::scene_subsystem`, #1552: the
+//! launcher's list, `crate::packages::registry`), each of which looks at
+//! the scene and makes its subsystem only if the scene uses it, and they
+//! are dropped when the scene unloads. Nothing of one scene's carries into
+//! the next.
 //!
 //! **Captures.** `flint render --scripts` builds its scene's subsystems from
 //! the same list (#1252): `HeadlessGame::start_subsystems` hands each builder
-//! a [`SceneCtx`] whose `capture` says what the capture asked for, so a new
-//! file runs in a capture as it does in the player, with nothing else to
-//! edit. A builder that builds otherwise there (a grove posed at once, music
+//! a [`SceneCtx`] whose `capture` says what the capture asked for, so a
+//! package's subsystem runs in a capture as it does in the player, with
+//! nothing else to edit. A builder that builds otherwise there (a grove posed at once, music
 //! on the game clock) asks `ctx.capture`; a subsystem that is the window's
 //! alone says so from [`Subsystem::presentation_only`], and the capture
 //! drops it and names it once in its notes.
@@ -56,21 +56,27 @@ use flint_runtime::GameStateMachine;
 use flint_script::context::ScriptCommand;
 use std::any::Any;
 
-// The scene subsystems' modules, one a file of `player_app/subsystems/`,
-// `for_scene_builders()`, their builders in file-name order, and
-// `subsystem_policies()`, each file's `POLICY` (build.rs). Each builder looks
-// at the scene being entered and makes its subsystem only if the scene uses
-// it.
-include!(concat!(env!("OUT_DIR"), "/subsystems.rs"));
+// The scene subsystems whose code is still in this crate: the kernel's
+// `field`, and the `living` and `music` packages' until each moves to its
+// own crate (#1555, #1558). Each file registers what it brings through the
+// run's `Registry` (#1552); nothing lists the files.
+#[path = "subsystems/field.rs"]
+pub(crate) mod field;
+#[path = "subsystems/living.rs"]
+pub(crate) mod living;
+#[path = "subsystems/music.rs"]
+pub(crate) mod music;
+#[cfg(test)]
+#[path = "subsystems/toy.rs"]
+pub(crate) mod toy;
 
 /// The player's game-state machine: a state may name the built-in systems
-/// and every scene subsystem that reads its policy (its file's `POLICY`),
-/// whether or not this scene has it, so a state registered in one scene
-/// pauses the grove of the next. Any other name is `register_state`'s error
-/// (#727).
+/// and every name a package registered as its policy (`living`), whether
+/// or not this scene has it, so a state registered in one scene pauses the
+/// grove of the next. Any other name is `register_state`'s error (#727).
 pub(crate) fn state_machine() -> GameStateMachine {
     let mut machine = GameStateMachine::new();
-    for name in subsystem_policies() {
+    for name in crate::packages::registry().policies() {
         machine.add_system(name);
     }
     machine
@@ -97,17 +103,30 @@ pub(crate) fn click_of(
     }
 }
 
-/// A scene subsystem's builder: its subsystem, if the scene uses it.
-pub(crate) type BuildForScene = fn(&mut SceneCtx) -> Option<Box<dyn Subsystem>>;
-
-/// Every scene subsystem `ctx`'s scene uses, built by the files'
-/// `for_scene` builders in file-name order: the player's list and a
-/// capture's alike.
+/// Every scene subsystem `ctx`'s scene uses, built by the builders the
+/// run's packages registered, in the launcher's order: the player's list
+/// and a capture's alike. A package the project's `[packages]` leaves out
+/// builds nothing, and a scene that would have used it hears the line the
+/// package registered for that, once (#1528, ADR 0137 decision 8).
 pub(crate) fn build_for_scene(ctx: &mut SceneCtx) -> Vec<Box<dyn Subsystem>> {
-    for_scene_builders()
-        .into_iter()
-        .filter_map(|build| build(ctx))
-        .collect()
+    let registry = crate::packages::registry();
+    let mut built = Vec::new();
+    let mut said: Vec<&str> = Vec::new();
+    for (package, build) in registry.builders() {
+        if ctx.leaves_out(package).is_some() {
+            if !said.contains(&package) {
+                said.push(package);
+                for line in registry.left_out_lines(package) {
+                    if let Some(line) = line(ctx) {
+                        tracing::warn!(target: "load", "{line}");
+                    }
+                }
+            }
+            continue;
+        }
+        built.extend(build(ctx));
+    }
+    built
 }
 
 /// The player's subsystems, in the order they were added, torn down in the

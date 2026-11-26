@@ -161,7 +161,9 @@ pub fn lacks(feature: &str) -> bool {
 /// so itself).
 pub fn unbuilt_at(at: &Path, flags: &[String]) -> Option<flint_player::packages::Unbuilt> {
     let dirs = flint_core::project::schema_dirs(Some(at), flags).ok()?;
-    flint_player::packages::unbuilt(&dirs, &flint_player::packages::this_binary(), lacks)
+    flint_player::packages::unbuilt(&dirs, &flint_player::packages::this_binary(), |m| {
+        m.features.iter().any(|f| lacks(f))
+    })
 }
 
 /// The engine's package folder for the working directory's project.

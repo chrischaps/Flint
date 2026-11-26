@@ -83,6 +83,10 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 fn main() {
+    // The launcher (ADR 0137 decision 5, #1552): every package this build
+    // has, as the desktop player's stock list (a game's own list on the web
+    // is Phase 3, #1537)
+    flint_player::packages::launch(&flint_player::packages::stock());
     web::run();
 }
 

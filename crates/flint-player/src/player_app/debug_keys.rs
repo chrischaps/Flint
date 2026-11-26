@@ -97,7 +97,7 @@ impl PlayerApp {
         let subsystems = &self.core.subsystems;
         let always: &dyn Fn(&str) -> bool = &|_| true;
         let present: &dyn Fn(&str) -> bool = &|action| subsystems.declares(action);
-        let files = super::subsystem::subsystem_debug_keys();
+        let files: Vec<DebugKeyGroup> = crate::packages::registry().debug_key_groups().collect();
         let filed = |action: &str| {
             files
                 .iter()
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn every_declared_default_is_a_key() {
         let mut groups = vec![PLAYER];
-        groups.extend(super::super::subsystem::subsystem_debug_keys());
+        groups.extend(crate::packages::registry().debug_key_groups());
         for g in groups {
             for k in g.keys {
                 assert!(

@@ -37,7 +37,7 @@ The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per
 The editors `flint edit` opens have the same F1 (#1170): the card lists the
 host's F1 and the editor's own keys ([the `edit` command](../cli-reference/overview.md#one-host-the-same-flags)).
 
-A scene subsystem declares its keys in its file (`DEBUG_KEYS` in `crates/flint-player/src/player_app/subsystems/`) and acts on them in `Subsystem::on_debug_key`; the table and F1 pick it up with no other edit.
+A package declares its subsystem's keys when it registers (`Registry::debug_keys`, a `DebugKeyGroup` of action, default key and what it does; `flint_package`) and acts on them in `Subsystem::on_debug_key`; the table and F1 pick it up with no other edit.
 
 ## Layout
 

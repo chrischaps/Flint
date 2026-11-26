@@ -463,6 +463,26 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   `crates/flint-cli/src` for package names. It does not grep the generated
   blocks in their `Cargo.toml` files, which name every package by design.
 
+## As built: the launcher (#1552)
+
+- `Package` and `Registry` are in `flint-package` (decision 4's rows for
+  scene subsystems, policy names, script modules and debug keys, plus
+  `when_left_out`: the line a scene hears when the project leaves the
+  package out, so the kernel skips a left-out package's builders itself).
+  `flint_player::packages::launch(&list)` composes the run's registry once,
+  the kernel's own registration (`packages::ENGINE`) first; `registry()`
+  is the stock list when no launcher called it.
+- The stock `flint-player` and web player call `launch(&stock())`; `stock()`
+  lists the packages the build's features have, in `[requires]` order.
+  `packages::lacks` (and so `Unbuilt`) asks the registry, not the features.
+- `flint build` selects the stock crate's features, and its plan names the
+  launcher's packages. For engine packages that is the launcher: a
+  generated `engine/launch/<id>/` crate is needed only for a game-local
+  package with Rust (Phase 2b).
+- Not built yet, as nothing has a crate of its own to join: the members
+  glob, `[rust]` in `package.toml`, `scripts/package-sync.py` and the
+  generated blocks. They come with the first move (#1568).
+
 ## Measured
 
 - **Cargo globs** (cargo 1.99.1, a scratch workspace, 2026-11-25): `members`

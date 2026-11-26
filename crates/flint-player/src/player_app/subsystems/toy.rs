@@ -1,7 +1,8 @@
 #![cfg(test)]
-//! A toy subsystem, to hold #724's third box: adding a subsystem is one new
-//! file here and touches no other file in `player_app/`. `build.rs` lists this
-//! file's `for_scene`; a scene with a `[toy]` table gets one, which counts the
+//! A toy subsystem, to hold #724's third box: a subsystem is what its
+//! package registers (#1552: `PACKAGE`, which the test build's stock list
+//! ends with), and nothing in `player_app/` names it. A scene with a
+//! `[toy]` table gets one, which counts the
 //! frames it hears. A capture (`HeadlessGame`) builds it from the same list
 //! (#1252), unless its table says `window = true`: then it is the window's
 //! alone, and the capture names it in its notes.
@@ -12,12 +13,19 @@ use flint_core::project::{SchemaDirs, SchemaSource};
 use flint_core::vfs::{self, MemorySource};
 use std::sync::Arc;
 
-/// It reads no game-state policy.
-pub(crate) const POLICY: Option<&str> = None;
-
-/// Its script module, `toy` (#698): `toy_frames()`, enabled in a scene
-/// with a toy.
-pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] = &[&ToyModule];
+/// The toy package, which a test build's stock list ends with
+/// (`packages::stock`): its builder, its script module `toy` (#698:
+/// `toy_frames()`, enabled in a scene with a toy) and its key. It reads no
+/// game-state policy.
+pub(crate) static PACKAGE: crate::packages::Part = crate::packages::Part {
+    name: "toy",
+    register: |registry| {
+        registry
+            .scene_subsystem(for_scene)
+            .script_modules(&[&ToyModule])
+            .debug_keys(DEBUG_KEYS);
+    },
+};
 
 /// Its debug key (#717): F12 says how many frames it has heard, in a scene
 /// with a toy; anywhere else F12 is the game's.
@@ -108,14 +116,25 @@ fn the_toys_key_is_live_only_in_a_scene_with_a_toy() {
     use winit::keyboard::KeyCode;
     let mut files = MemorySource::new();
     files.insert("toys/flint.toml", "");
-    files.insert("toys/scenes/with.scene.toml", "[scene]\nname = \"With\"\n\n[toy]\n");
-    files.insert("toys/scenes/without.scene.toml", "[scene]\nname = \"Without\"\n");
+    files.insert(
+        "toys/scenes/with.scene.toml",
+        "[scene]\nname = \"With\"\n\n[toy]\n",
+    );
+    files.insert(
+        "toys/scenes/without.scene.toml",
+        "[scene]\nname = \"Without\"\n",
+    );
     vfs::scoped(Arc::new(files), || {
         let mut app = app_in("toys/scenes/with.scene.toml");
         app.tick();
         let live = |app: &PlayerApp| {
             let table = app.debug_key_table();
-            table.entries.iter().find(|e| e.action == "toy_frames").unwrap().live
+            table
+                .entries
+                .iter()
+                .find(|e| e.action == "toy_frames")
+                .unwrap()
+                .live
         };
         assert!(live(&app));
         assert!(app.handle_debug_key(KeyCode::F12), "the toy's");

@@ -45,7 +45,8 @@ fn app_in(scene: &str) -> PlayerApp {
         },
     );
     app.core.clock.frame_step = Some(0.25);
-    app.enter_scene(SceneEntry::Start).expect("the scene starts");
+    app.enter_scene(SceneEntry::Start)
+        .expect("the scene starts");
     app
 }
 
@@ -91,7 +92,10 @@ fn on_update() {
 "#;
     let mut files = MemorySource::new();
     files.insert("game/flint.toml", "");
-    files.insert("game/scenes/weather.scene.toml", scene(WEATHER, "walker.rhai"));
+    files.insert(
+        "game/scenes/weather.scene.toml",
+        scene(WEATHER, "walker.rhai"),
+    );
     files.insert("game/scripts/walker.rhai", WALKER);
     vfs::scoped(Arc::new(files), || {
         let mut app = app_in("game/scenes/weather.scene.toml");
@@ -136,7 +140,10 @@ fn on_update() {
 "#;
     let mut files = MemorySource::new();
     files.insert("game/flint.toml", "");
-    files.insert("game/scenes/weather.scene.toml", scene(WEATHER, "changer.rhai"));
+    files.insert(
+        "game/scenes/weather.scene.toml",
+        scene(WEATHER, "changer.rhai"),
+    );
     files.insert("game/scripts/changer.rhai", CHANGER);
     vfs::scoped(Arc::new(files), || {
         let mut app = app_in("game/scenes/weather.scene.toml");
@@ -178,7 +185,10 @@ fn on_init() {
 "#;
     let mut files = MemorySource::new();
     files.insert("game/flint.toml", "");
-    files.insert("game/scenes/weather.scene.toml", scene(WEATHER, "wrong.rhai"));
+    files.insert(
+        "game/scenes/weather.scene.toml",
+        scene(WEATHER, "wrong.rhai"),
+    );
     files.insert("game/scenes/plain.scene.toml", scene("", "plain.rhai"));
     files.insert("game/scripts/wrong.rhai", WRONG);
     files.insert(
@@ -205,7 +215,10 @@ fn on_init() {
         assert!(app.core.script.enabled_modules().is_empty());
         assert_eq!(number(&app, "wind"), -1.0, "the call was an error");
         let said = errors(&app).join("\n");
-        assert!(said.contains("the field module is not enabled here"), "{said}");
+        assert!(
+            said.contains("the field module is not enabled here"),
+            "{said}"
+        );
     });
 }
 
@@ -223,7 +236,10 @@ fn on_init() {
     let fields = "[field.weather]\nkeys = { wind = 1.5 }\n\n[[field.weather.zone]]\nname = \"pit\"\nshape = \"sphere\"\ncenter = [0, 0, 0]\nwind = 2\n";
     let mut files = MemorySource::new();
     files.insert("game/flint.toml", "");
-    files.insert("game/scenes/weather.scene.toml", scene(fields, "reader.rhai"));
+    files.insert(
+        "game/scenes/weather.scene.toml",
+        scene(fields, "reader.rhai"),
+    );
     files.insert("game/scripts/reader.rhai", READER);
     vfs::scoped(Arc::new(files), || {
         let app = app_in("game/scenes/weather.scene.toml");
@@ -252,8 +268,14 @@ fn sample_cost_in_a_script() {
     };
     let mut files = MemorySource::new();
     files.insert("game/flint.toml", "");
-    files.insert("game/scenes/sample.scene.toml", scene(WEATHER, "sample.rhai"));
-    files.insert("game/scenes/control.scene.toml", scene(WEATHER, "control.rhai"));
+    files.insert(
+        "game/scenes/sample.scene.toml",
+        scene(WEATHER, "sample.rhai"),
+    );
+    files.insert(
+        "game/scenes/control.scene.toml",
+        scene(WEATHER, "control.rhai"),
+    );
     files.insert(
         "game/scripts/sample.rhai",
         looped("sum += field_sample(\"weather\", \"wind\", here);"),
