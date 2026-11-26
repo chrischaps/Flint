@@ -441,7 +441,7 @@ impl PlayerApp {
         self.core.animation.clear();
         self.core.particles.clear();
         #[cfg(feature = "procgen")]
-        self.core.procgen_resolver.clear_queue();
+        self.core.procgen_resolver_mut().clear_queue();
 
         // Clear world, keeping its ids: nothing spawned before the next
         // scene's world is installed reuses one

@@ -29,6 +29,11 @@ use flint_script::MusicClock;
 use session::{LadderPostBase, MusicSession};
 use std::path::PathBuf;
 
+/// The scene's `[post_process]` as the player read it (its look laid in),
+/// lent through the resources while a scene's subsystems are built (#1550):
+/// the ladder's base. Rhythm reads its own once it is a package (#1556).
+pub(crate) struct ScenePost(pub(crate) Option<flint_scene::PostProcessDef>);
+
 /// One scene's chart session, and what it changed.
 pub(crate) struct RhythmSubsystem {
     base: PathBuf,
@@ -51,9 +56,9 @@ impl RhythmSubsystem {
 
     pub(crate) fn new(base: PathBuf, comp: toml::Value, ctx: &mut SceneCtx) -> Self {
         let authored = ctx
-            .scene
-            .post_process
-            .as_ref()
+            .resources
+            .get::<ScenePost>()
+            .and_then(|post| post.0.as_ref())
             .map(|d| crate::player_app::scene_loading::post_process_config_from_def(d, ctx.styles))
             .unwrap_or_default();
         Self {
@@ -179,7 +184,9 @@ impl RhythmSubsystem {
     fn drain(&mut self, ctx: &mut StageCtx) {
         self.start(ctx.audio.as_deref_mut(), ctx.pads.as_mut());
         #[cfg(feature = "debug-hud")]
-        self.add_panels(ctx.panels);
+        if let Some(panels) = ctx.resources.get_mut::<flint_debug_ui::DebugPanels>() {
+            self.add_panels(panels);
+        }
         let Some(session) = &mut self.session else {
             return;
         };
@@ -190,10 +197,12 @@ impl RhythmSubsystem {
             self.stop(ctx.pads.as_mut(), ctx.script);
             self.post_restore = Some(self.post_base);
             #[cfg(feature = "debug-hud")]
-            ctx.panels.retain(|p| {
-                p.name() != guide_panel::MUSIC_GUIDE_PANEL
-                    && p.name() != timeline_panel::MANIFEST_MAP_PANEL
-            });
+            if let Some(panels) = ctx.resources.get_mut::<flint_debug_ui::DebugPanels>() {
+                panels.retain(|p| {
+                    p.name() != guide_panel::MUSIC_GUIDE_PANEL
+                        && p.name() != timeline_panel::MANIFEST_MAP_PANEL
+                });
+            }
             if quit {
                 tracing::info!(target: "music", "quit_on_finish — exiting player");
                 if let Some(flag) = ctx.quit.as_deref_mut() {
@@ -203,7 +212,9 @@ impl RhythmSubsystem {
             return;
         }
         #[cfg(feature = "debug-hud")]
-        self.feed_panels(ctx.panels);
+        if let Some(panels) = ctx.resources.get_mut::<flint_debug_ui::DebugPanels>() {
+            self.feed_panels(panels);
+        }
     }
 }
 
@@ -301,7 +312,12 @@ impl Subsystem for RhythmSubsystem {
             _ => return,
         };
         let mut found = false;
-        for p in ctx.panels.iter_mut().filter(|p| p.name() == panel) {
+        let panels = ctx.resources.get_mut::<flint_debug_ui::DebugPanels>();
+        for p in panels
+            .into_iter()
+            .flat_map(|panels| panels.iter_mut())
+            .filter(|p| p.name() == panel)
+        {
             p.toggle();
             found = true;
         }

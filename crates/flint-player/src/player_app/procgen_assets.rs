@@ -585,12 +585,14 @@ pub fn resolve_scene(
     let super::game_core::GameCore {
         scene_path,
         world,
-        procgen_resolver: resolver,
+        resources,
         collider_sources,
-        #[cfg(feature = "living")]
-        living_props,
         ..
     } = core;
+    #[cfg(feature = "living")]
+    let (living_props, resolver) = super::living_subsystem::props_and_resolver(resources);
+    #[cfg(not(feature = "living"))]
+    let resolver = super::game_core::resolver_mut_of(resources);
     let scene_path = scene_path.as_str();
     let started = web_time::Instant::now();
     // The load report's procgen stage (#1092): the note below is made by

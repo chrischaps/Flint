@@ -906,8 +906,11 @@ impl Subsystem for ExpressionSubsystem {
                 state,
             });
         }
+        // The F3 panels, when the host has them (a capture has none)
         #[cfg(feature = "debug-hud")]
-        self.feed_panel(now, ctx.panels);
+        if let Some(panels) = ctx.resources.get_mut::<flint_debug_ui::DebugPanels>() {
+            self.feed_panel(now, panels);
+        }
     }
 }
 

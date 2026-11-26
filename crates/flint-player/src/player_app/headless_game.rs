@@ -46,7 +46,7 @@ use super::game_core::{self, FrameHost, GameCore, Lent};
 use super::headless_animation::HeadlessAnimation;
 use super::style_commands::SceneStyles;
 use super::subsystem::{FrameCtx, SceneCtx};
-use super::{LaunchOptions, SceneSettings};
+use super::SceneSettings;
 
 /// The seed of `random()` in a headless run. One fixed value, so that every
 /// render of a scene draws the same numbers.
@@ -160,9 +160,6 @@ pub struct HeadlessGame {
     /// What the scene's file says, as the subsystems' builders read it: its
     /// tables (the rest is the player's window and stays the default).
     scene: SceneSettings,
-    /// The launch a subsystem may take its share of: a capture's is the
-    /// default.
-    launch: LaunchOptions,
     /// Nobody presses anything in a capture.
     input: InputState,
     screen: (f32, f32),
@@ -192,8 +189,6 @@ pub struct HeadlessGame {
     hud: Vec<flint_script::context::DrawItem>,
     /// The last step's screen field (#859), for the capture's frame inputs.
     style_field: flint_core::style_field::StyleField,
-    #[cfg(feature = "debug-hud")]
-    panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
 }
 
 impl HeadlessGame {
@@ -212,7 +207,6 @@ impl HeadlessGame {
         Self {
             core,
             scene: SceneSettings::default(),
-            launch: LaunchOptions::default(),
             input: InputState::new(),
             screen: (1.0, 1.0),
             authored: PostProcessConfig::default(),
@@ -226,8 +220,6 @@ impl HeadlessGame {
             pixels_per_point: 1.0,
             hud: Vec::new(),
             style_field: Default::default(),
-            #[cfg(feature = "debug-hud")]
-            panels: Vec::new(),
         }
     }
 
@@ -291,7 +283,7 @@ impl HeadlessGame {
     ) {
         let core = &mut self.core;
         #[cfg(feature = "living")]
-        core.living_props
+        core.living_props_mut()
             .set_defaults(super::living_props::defaults_of(living));
         #[cfg(not(feature = "living"))]
         let _ = living;
@@ -305,14 +297,14 @@ impl HeadlessGame {
     /// The living props, if the scene grew any.
     #[cfg(feature = "living")]
     pub fn living_props(&self) -> Option<&LivingProps> {
-        let props = &self.core.living_props;
+        let props = self.core.living_props();
         (!props.is_empty()).then_some(props)
     }
 
     /// The living props, to lay a preset over.
     #[cfg(feature = "living")]
     pub fn living_props_mut(&mut self) -> &mut LivingProps {
-        &mut self.core.living_props
+        self.core.living_props_mut()
     }
 
     /// Build the scene's subsystems as the player does at its entry (#1252):
@@ -325,28 +317,34 @@ impl HeadlessGame {
     /// is posed by its first frame) and before
     /// [`start_scripts`](Self::start_scripts), whose `on_init` may call the
     /// modules.
-    pub fn start_subsystems(&mut self, tables: toml::Table, mut start: CaptureStart) {
+    pub fn start_subsystems(&mut self, tables: toml::Table, start: CaptureStart) {
         self.scene.tables = tables;
         let core = &mut self.core;
+        // The capture's wooze field is living's to take (#1550)
+        #[cfg(feature = "living")]
+        core.resources
+            .insert(super::living_subsystem::CaptureWooze(start.wooze));
+        let capture = flint_package::Capture {
+            moment: start.moment,
+            scripts: start.scripts,
+        };
         let built = super::subsystem::build_for_scene(&mut SceneCtx {
             world: &mut core.world,
             scene_path: &core.scene_path,
             tables: &self.scene.tables,
-            scene: &self.scene,
-            launch: &mut self.launch,
             project: &core.project,
             styles: &core.styles,
             script: &mut core.script,
-            #[cfg(feature = "procgen")]
-            resolver: &mut core.procgen_resolver,
-            #[cfg(feature = "living")]
-            living: &mut core.living_props,
             renderer: None,
             audio: None,
             pads: None,
-            capture: Some(&mut start),
+            capture: Some(&capture),
             packages: core.packages.as_ref(),
+            resources: &mut core.resources,
         });
+        #[cfg(feature = "living")]
+        core.resources
+            .remove::<super::living_subsystem::CaptureWooze>();
         let mut left_out = Vec::new();
         for subsystem in built {
             match subsystem.presentation_only() {
@@ -572,8 +570,6 @@ impl FrameHost for CaptureFrame<'_> {
                 cursor_captured: false,
                 scene_file_writable: false,
                 note: &mut game.key_note,
-                #[cfg(feature = "debug-hud")]
-                panels: &mut game.panels,
                 audio: None,
                 pads: None,
                 quit: None,

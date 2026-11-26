@@ -77,8 +77,29 @@ pub struct PanelHost {
     pub particles_render: bool,
 }
 
+/// The player's F3/F4 panels, in its run resources (ADR 0137 decision 2,
+/// #1550): the debug HUD's registration point, which a subsystem asks for
+/// with `resources.get_mut::<DebugPanels>()` to add its own panel. `None`
+/// in a build without the debug HUD and in a capture.
+#[derive(Default)]
+pub struct DebugPanels(pub Vec<Box<dyn DebugPanel>>);
+
+impl std::ops::Deref for DebugPanels {
+    type Target = Vec<Box<dyn DebugPanel>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for DebugPanels {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// Common interface for debug overlay panels.
-/// The player app holds `Vec<Box<dyn DebugPanel>>` and renders them generically.
+/// The player app holds them in a [`DebugPanels`] and renders them
+/// generically.
 pub trait DebugPanel {
     /// Panel identifier used as egui ID and display title.
     fn name(&self) -> &str;

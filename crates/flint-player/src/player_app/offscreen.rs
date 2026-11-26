@@ -218,8 +218,7 @@ impl PlayerApp {
                 renderer: &mut *renderer,
                 world: &self.core.world,
                 camera: &self.camera,
-                #[cfg(feature = "living")]
-                living: &mut self.core.living_props,
+                resources: &mut self.core.resources,
             };
             self.core.subsystems.post_encode(&mut ctx);
         }

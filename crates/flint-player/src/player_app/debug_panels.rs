@@ -8,7 +8,39 @@ use super::{PlayerApp, CAMERA_TUNING_COMPONENT};
 #[cfg(feature = "debug-hud")]
 use flint_core::components as comp;
 
+/// The F3/F4 panels in `resources`: the run's `DebugPanels` (#1550), which
+/// the player puts in at its start and lends every subsystem.
+#[cfg(feature = "debug-hud")]
+pub(super) fn panels_mut_of(
+    resources: &mut flint_package::Resources,
+) -> &mut Vec<Box<dyn flint_debug_ui::DebugPanel>> {
+    resources.get_or_insert_with(flint_debug_ui::DebugPanels::default)
+}
+
+/// The F3/F4 panels in `resources`, to read; none before the player put
+/// them in.
+#[cfg(feature = "debug-hud")]
+pub(super) fn panels_of(
+    resources: &flint_package::Resources,
+) -> &[Box<dyn flint_debug_ui::DebugPanel>] {
+    resources
+        .get::<flint_debug_ui::DebugPanels>()
+        .map_or(&[], |panels| panels.as_slice())
+}
+
 impl PlayerApp {
+    /// The F3/F4 panels, to read.
+    #[cfg(feature = "debug-hud")]
+    pub(super) fn debug_panels(&self) -> &[Box<dyn flint_debug_ui::DebugPanel>] {
+        panels_of(&self.core.resources)
+    }
+
+    /// The F3/F4 panels: the run's `DebugPanels` resource.
+    #[cfg(feature = "debug-hud")]
+    pub(super) fn debug_panels_mut(&mut self) -> &mut Vec<Box<dyn flint_debug_ui::DebugPanel>> {
+        panels_mut_of(&mut self.core.resources)
+    }
+
     /// Create the Particles panel when the scene has any `particle_emitter`
     /// or `particle_effect` entity (ADR 0068). Rows are refreshed each frame
     /// by the drain in `frame.rs`.
@@ -27,7 +59,7 @@ impl PlayerApp {
         if !has_any {
             return;
         }
-        self.debug_panels
+        self.debug_panels_mut()
             .push(Box::new(flint_debug_ui::ParticlesDebugPanel::new()));
     }
 
@@ -77,7 +109,7 @@ impl PlayerApp {
         let current = self.current_look().map(str::to_string);
         let scene_file = self.styles_scene_file();
         let existing = self
-            .debug_panels
+            .debug_panels_mut()
             .iter_mut()
             .filter(|p| p.name() == flint_debug_ui::RENDER_DEBUG_PANEL)
             .find_map(|p| {
@@ -98,7 +130,7 @@ impl PlayerApp {
                 panel.set_looks(&looks, current.as_deref());
                 panel.set_scene_file(scene_file);
                 panel.offer_look_fade(true);
-                self.debug_panels.push(Box::new(panel));
+                self.debug_panels_mut().push(Box::new(panel));
             }
         }
     }
@@ -110,7 +142,7 @@ impl PlayerApp {
     pub(super) fn refresh_style_panels_after_look(&mut self) {
         let authored = self.authored_styles();
         let current = self.current_look().map(str::to_string);
-        for panel in &mut self.debug_panels {
+        for panel in self.debug_panels_mut().iter_mut() {
             let any = panel.as_any_mut();
             if let Some(rp) = any.downcast_mut::<flint_debug_ui::RenderDebugPanel>() {
                 rp.set_authored_styles(Some(authored.clone()));
@@ -127,7 +159,7 @@ impl PlayerApp {
     /// The `create_*` calls after the new scene loads make the rest again.
     #[cfg(feature = "debug-hud")]
     pub(super) fn drop_scene_debug_panels(&mut self) {
-        self.debug_panels.retain(|p| {
+        self.debug_panels_mut().retain(|p| {
             p.name() == flint_debug_ui::RENDER_DEBUG_PANEL || p.as_any().is::<ExtensionPanel>()
         });
     }
@@ -149,7 +181,7 @@ impl PlayerApp {
         let panel = flint_debug_ui::StylesDebugPanel::new(Some(authored))
             .with_asset_scope(self.styles_scene_dir())
             .with_scene_file(self.styles_scene_file());
-        self.debug_panels.push(Box::new(panel));
+        self.debug_panels_mut().push(Box::new(panel));
     }
 
     /// Create the Living Props panel when the scene has any `living_prop` entity
@@ -166,7 +198,7 @@ impl PlayerApp {
         {
             return;
         }
-        self.debug_panels
+        self.debug_panels_mut()
             .push(Box::new(flint_debug_ui::LivingPropsDebugPanel::new()));
     }
 
@@ -198,7 +230,7 @@ impl PlayerApp {
             std::path::PathBuf::from(&self.core.scene_path),
             name,
         );
-        self.debug_panels.push(Box::new(panel));
+        self.debug_panels_mut().push(Box::new(panel));
     }
 
     /// A panel for each entity that carries a component whose schema puts
@@ -244,7 +276,7 @@ impl PlayerApp {
                 } else {
                     spec.title.clone()
                 };
-                self.debug_panels
+                self.debug_panels_mut()
                     .push(Box::new(flint_debug_ui::ComponentPanel::new(
                         spec.clone(),
                         component,
@@ -283,7 +315,7 @@ impl PlayerApp {
             std::path::PathBuf::from(&self.core.scene_path),
             name,
         );
-        self.debug_panels.push(Box::new(panel));
+        self.debug_panels_mut().push(Box::new(panel));
     }
 
     /// Apply the scene's `camera_tuning` component to the render camera.
@@ -317,7 +349,7 @@ impl PlayerApp {
     pub(super) fn toggle_named_panel(&mut self, name: &str, key: &str, absent_msg: &str) {
         let mut opened = false;
         let mut exists = false;
-        for panel in &mut self.debug_panels {
+        for panel in self.debug_panels_mut().iter_mut() {
             if panel.name() == name {
                 exists = true;
                 panel.toggle();
@@ -340,7 +372,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_extension_debug_panels(&mut self) {
         let mut open = Vec::new();
-        self.debug_panels.retain(|panel| {
+        self.debug_panels_mut().retain(|panel| {
             let Some(ext) = panel.as_any().downcast_ref::<ExtensionPanel>() else {
                 return true;
             };
@@ -352,7 +384,7 @@ impl PlayerApp {
         for (extension, ext) in self.extensions.iter().enumerate() {
             for name in ext.debug_panels() {
                 let was_open = open.iter().any(|(e, n)| *e == extension && *n == name);
-                self.debug_panels.push(Box::new(ExtensionPanel {
+                panels_mut_of(&mut self.core.resources).push(Box::new(ExtensionPanel {
                     extension,
                     name,
                     open: was_open,
@@ -600,7 +632,7 @@ mod tests {
     }
 
     fn names(app: &PlayerApp) -> Vec<&str> {
-        app.debug_panels.iter().map(|p| p.name()).collect()
+        app.debug_panels().iter().map(|p| p.name()).collect()
     }
 
     fn styled_scene() -> flint_scene::PostProcessDef {
@@ -625,16 +657,16 @@ mod tests {
     fn f4_and_the_games_panels_outlive_a_scene_transition() {
         let mut app = app();
         app.scene.post_process = Some(styled_scene());
-        app.debug_panels.push(Box::new(Dummy));
+        app.debug_panels_mut().push(Box::new(Dummy));
         app.create_styles_debug_panel();
         app.create_render_debug_panel();
-        app.debug_panels.push(Box::new(ExtensionPanel {
+        app.debug_panels_mut().push(Box::new(ExtensionPanel {
             extension: 0,
             name: "Net".into(),
             open: true,
         }));
         // F4 is open going into the transition
-        for p in app.debug_panels.iter_mut() {
+        for p in app.debug_panels_mut().iter_mut() {
             if p.name() == flint_debug_ui::RENDER_DEBUG_PANEL {
                 p.toggle();
             }
@@ -647,7 +679,7 @@ mod tests {
         app.create_styles_debug_panel();
         app.create_render_debug_panel();
         assert_eq!(names(&app), [flint_debug_ui::RENDER_DEBUG_PANEL, "Net"]);
-        assert!(app.debug_panels[0].is_open());
+        assert!(app.debug_panels_mut()[0].is_open());
     }
 
     struct Dummy;

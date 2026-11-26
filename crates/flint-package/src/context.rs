@@ -1,0 +1,244 @@
+//! What a subsystem's hooks are lent (ADR 0117 decision 2, ADR 0137
+//! section 3). A hook never sees the player: it gets a context that lends
+//! the parts it may touch, each borrowed from its own field, so the host can
+//! lend them while it walks the subsystem list (another field).
+//!
+//! Every field is a kernel type. What a package owns, and another package
+//! reads, is in [`Resources`]: procgen's resolver, living's props, the
+//! debug-hud's panels.
+
+use crate::{Note, Resources};
+use flint_audio::engine::AudioEngine;
+use flint_core::package::InUse;
+use flint_core::project::Project;
+use flint_ecs::FlintWorld;
+use flint_render::stylize::StyleRegistry;
+use flint_render::{Camera, SceneRenderer};
+use flint_runtime::pad::Gilrs;
+use flint_runtime::{GameClock, InputState, PadRumble, StateConfig};
+use flint_script::{FrameRequests, ScriptSystem};
+
+/// What a capture (`flint render --scripts`, #1252) asks of a scene's
+/// subsystems, lent as [`SceneCtx::capture`]. A package's own capture
+/// inputs (living's wooze field) are in [`Resources`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Capture {
+    /// A capture of a moment, which draws shallow wooze.
+    pub moment: bool,
+    /// Whether the scene's scripts run: the music and the declared fields
+    /// are only the scripts' to read, and are built only for them.
+    pub scripts: bool,
+}
+
+/// What a subsystem may touch while a scene comes up or goes down.
+pub struct SceneCtx<'a> {
+    pub world: &'a mut FlintWorld,
+    pub scene_path: &'a str,
+    /// The scene file's top-level tables as written (`[living]`, `[wooze]`,
+    /// a game's own). The scene file itself is gone by the time a scene is
+    /// entered.
+    pub tables: &'a toml::Table,
+    pub project: &'a Project,
+    /// The styles the scene is drawn with (#742).
+    pub styles: &'a StyleRegistry,
+    pub script: &'a mut ScriptSystem,
+    /// `None` in a headless test and a capture.
+    pub renderer: Option<&'a mut SceneRenderer>,
+    /// The sound, when the host has it: a subsystem that plays on the
+    /// shared kira manager (the music, ADR 0017) starts there.
+    pub audio: Option<&'a mut AudioEngine>,
+    /// The pads, when the host has them.
+    pub pads: Option<Pads<'a>>,
+    /// `Some` when the host is a capture (`flint render`'s `HeadlessGame`,
+    /// #1252): what it asked for. The player's is `None`.
+    pub capture: Option<&'a Capture>,
+    /// The packages the project's `[packages]` lets in (#1334); `None`:
+    /// every package is in. A builder of a package it leaves out makes
+    /// nothing and says so ([`SceneCtx::leaves_out`], #1528).
+    pub packages: Option<&'a InUse>,
+    /// The run's resources: what one package lends another.
+    pub resources: &'a mut Resources,
+}
+
+impl SceneCtx<'_> {
+    /// The project's `[packages]` leaves `package` out: its builder makes
+    /// nothing, and says so once.
+    pub fn leaves_out(&self, package: &str) -> Option<&InUse> {
+        self.packages.filter(|in_use| !in_use.is_on(package))
+    }
+}
+
+/// The host's pads, lent to a subsystem that reads them its own way (the
+/// rhythm session's 1 kHz capture thread, ADR 0018): [`Pads::take`] stops
+/// the player's polling and its rumble, [`Pads::give_back`] opens them
+/// again. A subsystem that takes them gives them back when it goes.
+pub struct Pads<'a> {
+    gilrs: &'a mut Option<Gilrs>,
+    rumble: &'a mut PadRumble,
+    /// Whether a subsystem holds them: the player then skips its polling.
+    lent: &'a mut bool,
+}
+
+impl<'a> Pads<'a> {
+    /// The host's pads: its backend, its rumble and its flag for a
+    /// subsystem holding them.
+    pub fn new(
+        gilrs: &'a mut Option<Gilrs>,
+        rumble: &'a mut PadRumble,
+        lent: &'a mut bool,
+    ) -> Self {
+        Self {
+            gilrs,
+            rumble,
+            lent,
+        }
+    }
+
+    /// The pads are the subsystem's until it gives them back: the player's
+    /// polling stops and a script's rumble does nothing.
+    pub fn take(&mut self) {
+        self.rumble.stop_all();
+        *self.gilrs = None;
+        *self.lent = true;
+    }
+
+    /// The player polls the pads again, through a fresh backend.
+    pub fn give_back(&mut self) {
+        *self.gilrs = Gilrs::new().ok();
+        *self.lent = false;
+    }
+}
+
+/// What a subsystem may touch at a stage of the frame, and at a script
+/// command, a key or a click.
+pub struct StageCtx<'a> {
+    pub world: &'a mut FlintWorld,
+    pub clock: &'a GameClock,
+    /// The frame's input, which a subsystem may also write (the rhythm
+    /// session's pad drain, at [`Stage::Clock`](crate::Stage::Clock)).
+    pub input: &'a mut InputState,
+    pub script: &'a mut ScriptSystem,
+    /// The camera as it stands at this stage (final from `PostPhysics` on).
+    pub camera: &'a Camera,
+    /// Which systems the game state lets run this frame. `None` at
+    /// `Stage::Input`, which runs before the frame reads it (a transition
+    /// may still change the state that frame), and outside a stage. A
+    /// subsystem asks by its `name()`: [`StageCtx::runs`].
+    pub policy: Option<&'a StateConfig>,
+    /// `None` in a headless test.
+    pub renderer: Option<&'a mut SceneRenderer>,
+    /// The device and queue, when there is a window.
+    pub gpu: Option<(&'a wgpu::Device, &'a wgpu::Queue)>,
+    pub project: &'a Project,
+    pub scene_path: &'a str,
+    /// Whether the scene file may be written (#364).
+    pub scene_file_writable: bool,
+    /// egui's points per pixel, for a pointer in window pixels.
+    pub pixels_per_point: f32,
+    pub cursor_captured: bool,
+    /// What a debug key says when it has nothing to act on (#367): on
+    /// screen for a moment and in the console.
+    pub note: &'a mut Note,
+    /// What scripts asked of the frame, before the host applies it: a
+    /// subsystem may fill what they left (the rhythm ladder's post values,
+    /// at [`Stage::Procgen`](crate::Stage::Procgen), before the renderer's
+    /// sync).
+    pub requests: &'a mut FrameRequests,
+    /// The sound, when the host has it.
+    pub audio: Option<&'a mut AudioEngine>,
+    /// The pads, when the host has them.
+    pub pads: Option<Pads<'a>>,
+    /// Set to end the run as closing the window would (`quit_on_finish`);
+    /// `None` for a host with no run to end.
+    pub quit: Option<&'a mut bool>,
+    /// The run's resources: what one package lends another.
+    pub resources: &'a mut Resources,
+}
+
+impl StageCtx<'_> {
+    /// Whether the game state lets the system `name` run this frame (a
+    /// subsystem asks by its own `name()`). Outside a stage, it does.
+    pub fn runs(&self, name: &str) -> bool {
+        self.policy.is_none_or(|policy| policy.runs(name))
+    }
+}
+
+/// A mouse button, as [`PlayerInput::Click`] carries it: the kernel's own,
+/// so winit is not in the API (ADR 0137 section 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Button {
+    Left,
+    Right,
+    Middle,
+    Back,
+    Forward,
+    Other(u16),
+}
+
+/// Input a subsystem may take before the game and the player see it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayerInput {
+    /// A mouse button, real or scripted, before egui's own use of it:
+    /// `pressed` on its press, not on its release.
+    Click { button: Button, pressed: bool },
+    /// A real Escape, before it releases the cursor or quits.
+    Escape,
+}
+
+/// What a subsystem may touch after the frame's scene is encoded and before
+/// the HUD: a second look at the scene drawn over part of the frame (the
+/// Living Props A/B split, #238).
+pub struct EncodeCtx<'a> {
+    pub encoder: &'a mut wgpu::CommandEncoder,
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    /// The frame's texture, and its size
+    pub output: &'a wgpu::Texture,
+    pub depth_view: &'a wgpu::TextureView,
+    /// The scene's and the HUD's formats of the frame
+    pub formats: (wgpu::TextureFormat, wgpu::TextureFormat),
+    pub renderer: &'a mut SceneRenderer,
+    pub world: &'a FlintWorld,
+    pub camera: &'a Camera,
+    /// The run's resources: what one package lends another.
+    pub resources: &'a mut Resources,
+}
+
+/// What a subsystem may read for the `--exit-after` report.
+pub struct ReportCtx<'a> {
+    pub renderer: Option<&'a SceneRenderer>,
+    /// The run's resources: what one package lends another.
+    pub resources: &'a Resources,
+}
+
+/// What a subsystem reads when it adds to the frame's inputs.
+pub struct FrameCtx<'a> {
+    /// The frame's camera, final by the renderer's sync.
+    pub camera: &'a Camera,
+    /// The shading boil's cadence the config asks for (`[post_process]
+    /// boil_on`).
+    pub boil_on: u32,
+}
+
+/// Lines a subsystem adds to the `--exit-after` report, printed after the
+/// player's own.
+#[derive(Debug, Default)]
+pub struct ExitReport {
+    pub lines: Vec<String>,
+}
+
+impl ExitReport {
+    pub fn line(&mut self, line: impl Into<String>) {
+        self.lines.push(line.into());
+    }
+}
+
+/// How long a subsystem lasts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lasts {
+    /// The whole run: the host made it (the expression feed).
+    Run,
+    /// One scene: built by its builder when a scene that uses it is
+    /// entered, dropped when that scene unloads.
+    Scene,
+}

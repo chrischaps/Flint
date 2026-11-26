@@ -1,0 +1,25 @@
+[package]
+name = "flint-package"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The Package API: the subsystem trait, its contexts and the run's typed resources (ADR 0137)"
+
+# The kernel's API for a package (ADR 0137 decision 1). It depends only on
+# crates below flint-player, and never on a package's crate: a package's
+# crates depend on this one, and the stock binaries on them, so Cargo would
+# refuse the cycle. `cargo tree -p flint-package` holds it (#1550).
+[dependencies]
+flint-core = { workspace = true }
+flint-ecs = { workspace = true }
+flint-runtime = { workspace = true }
+flint-script = { workspace = true }
+flint-render = { workspace = true }
+flint-audio = { workspace = true }
+egui = { workspace = true }
+wgpu = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

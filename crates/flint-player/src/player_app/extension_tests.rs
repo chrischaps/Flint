@@ -510,13 +510,13 @@ fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
         log: log.clone(),
         frame: 0,
     }));
-    let names: Vec<&str> = app.debug_panels.iter().map(|p| p.name()).collect();
+    let names: Vec<&str> = app.debug_panels().iter().map(|p| p.name()).collect();
     assert_eq!(names, ["Net", "Town"], "added with the extension");
-    assert!(app.debug_panels.iter().all(|p| !p.is_open()), "closed");
+    assert!(app.debug_panels().iter().all(|p| !p.is_open()), "closed");
 
     app.handle_debug_key(winit::keyboard::KeyCode::F3);
     assert!(
-        app.debug_panels.iter().all(|p| p.is_open()),
+        app.debug_panels().iter().all(|p| p.is_open()),
         "F3 opens them"
     );
 
@@ -533,7 +533,7 @@ fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
     let _ = run_headless_frame(&ctx, input, |ui| {
         let ctx = &ui.ctx().clone();
         crate::extension::draw_ui(&mut extensions, ui);
-        super::debug_panels::show_debug_panels(ctx, &mut app.debug_panels, &mut |panel, ui| {
+        super::debug_panels::show_debug_panels(ctx, app.debug_panels_mut(), &mut |panel, ui| {
             super::debug_panels::draw_panel(panel, &mut extensions, ui)
         });
     });
@@ -545,10 +545,10 @@ fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
     );
 
     // Building the panels again (a scene load) keeps them, still open.
-    app.debug_panels[1].toggle();
+    app.debug_panels_mut()[1].toggle();
     app.create_extension_debug_panels();
     let open: Vec<(&str, bool)> = app
-        .debug_panels
+        .debug_panels_mut()
         .iter()
         .map(|p| (p.name(), p.is_open()))
         .collect();

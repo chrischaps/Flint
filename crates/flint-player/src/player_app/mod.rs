@@ -485,9 +485,8 @@ pub struct PlayerApp {
     /// `stage_scene`'s `bind_scene`.
     scene_binding: Option<flint_render::SceneBinding>,
 
-    // Debug overlay panels (F3 toggle)
-    #[cfg(feature = "debug-hud")]
-    debug_panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
+    // Debug overlay panels (F3 toggle): the run's `DebugPanels` resource,
+    // `core.resources` (`debug_panels_mut`, #1550)
     /// F3 Particles panel toggle: when false the sim still runs but nothing
     /// is uploaded to the renderer (ADR 0068).
     particles_render_enabled: bool,

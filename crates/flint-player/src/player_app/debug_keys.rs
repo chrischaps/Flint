@@ -136,13 +136,13 @@ impl PlayerApp {
             return true;
         }
         #[cfg(feature = "debug-hud")]
-        let open_before = self.debug_panels.iter().filter(|p| p.is_open()).count();
+        let open_before = self.debug_panels().iter().filter(|p| p.is_open()).count();
         self.subsystems_debug_key(action, &key);
         // A subsystem's panel opened or closed: the cursor follows the
         // panels, as F3's do
         #[cfg(feature = "debug-hud")]
         {
-            let open = self.debug_panels.iter().filter(|p| p.is_open()).count();
+            let open = self.debug_panels().iter().filter(|p| p.is_open()).count();
             if open != open_before {
                 self.cursor_follows_panels();
             }
@@ -164,7 +164,7 @@ impl PlayerApp {
                 // Rendering & Effects panel, which has its own key and
                 // would otherwise flip out of phase with it.
                 let mut any = false;
-                for panel in &mut self.debug_panels {
+                for panel in self.debug_panels_mut().iter_mut() {
                     if panel.name() != flint_debug_ui::RENDER_DEBUG_PANEL {
                         panel.toggle();
                         any = true;
@@ -201,7 +201,7 @@ impl PlayerApp {
     /// panel too), captured again once none is, in a first-person scene.
     #[cfg(feature = "debug-hud")]
     fn cursor_follows_panels(&mut self) {
-        if self.debug_panels.iter().any(|p| p.is_open()) {
+        if self.debug_panels().iter().any(|p| p.is_open()) {
             self.release_cursor();
         } else if self.core.physics.has_player_entity() {
             self.capture_cursor();

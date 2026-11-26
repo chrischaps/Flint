@@ -238,7 +238,7 @@ fn a_procgen_rock_the_queue_makes_later_gets_its_hull_then() {
 fn apply_queue(app: &mut PlayerApp, gpu: &HeadlessContext) {
     let mut completed = Vec::new();
     for _ in 0..100 {
-        completed.extend(app.core.procgen_resolver.process_frame([0.0; 3]));
+        completed.extend(app.core.procgen_resolver_mut().process_frame([0.0; 3]));
         if !completed.is_empty() {
             break;
         }

@@ -346,7 +346,7 @@ fn a_taken_port_ends_the_run_when_the_socket_would_open() {
 /// The F3 Expression panel the feed added, if any (#525).
 #[cfg(feature = "debug-hud")]
 fn expression_panel(app: &mut PlayerApp) -> Option<&mut super::expression_panel::ExpressionPanel> {
-    app.debug_panels
+    app.debug_panels_mut()
         .iter_mut()
         .find_map(|p| p.as_any_mut().downcast_mut())
 }

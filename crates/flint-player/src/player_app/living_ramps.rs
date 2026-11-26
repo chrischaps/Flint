@@ -20,7 +20,7 @@ use flint_core::field::Ramp;
 use flint_procgen::{KnobValue, LivingDef, LivingKnob, LivingSpeciesDef};
 
 use super::living_props::species_of;
-use super::living_subsystem::LivingSubsystem;
+use super::living_subsystem::{props_mut, LivingSubsystem};
 use super::living_tuning::{tune_props, tune_species, LivingView, ScriptTune};
 use super::subsystem::StageCtx;
 
@@ -288,7 +288,7 @@ impl LivingSubsystem {
         if self.ramps.is_empty() {
             return;
         }
-        let props = &mut *ctx.living;
+        let props = props_mut(ctx.resources);
         // Every value was checked when its ramp started, and an ease between
         // two good values stays between them
         for (species, def) in self.ramps.advance(dt) {

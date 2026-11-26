@@ -145,7 +145,7 @@ impl PlayerApp {
                 &self.core.world,
                 ids,
                 &config,
-                &self.core.procgen_resolver,
+                super::game_core::resolver_of(&self.core.resources),
                 &sink,
             );
             if !requests.is_empty() {
@@ -157,7 +157,7 @@ impl PlayerApp {
                 };
                 resolve(
                     &requests,
-                    &mut self.core.procgen_resolver,
+                    super::game_core::resolver_mut_of(&mut self.core.resources),
                     &mut recording,
                     self.launch.procgen_mode,
                 );

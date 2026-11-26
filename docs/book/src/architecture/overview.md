@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 34-member Cargo workspace (33 crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 35-member Cargo workspace (34 crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -14,6 +14,7 @@ flint/
 │   ├── flint-procgen-ai/   # AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
 │   ├── flint-ai-core/      # What every paid AI call goes through: transport, retry, prices, ledger, cost meter
 │   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation, scripting
+│   ├── flint-package/      # The Package API: the Subsystem trait, its contexts, the run's typed Resources
 │   ├── flint-android/      # Android entry point (NativeActivity, APK asset extraction)
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
@@ -386,6 +387,16 @@ Android entry point (excluded from default workspace members):
 - `NativeActivity` integration
 - APK asset extraction
 - Build via `cargo ndk -p flint-android`; min API 26
+
+### flint-package
+
+The Package API ([ADR 0137](https://github.com/chrischaps/Flint/blob/main/docs/adr/0137-the-public-package-api.md)): what a package's crate builds against, so it depends on this small kernel crate and never on `flint-player` or `flint-cli`. It depends only on kernel crates (flint-core, flint-ecs, flint-runtime, flint-script, flint-render, flint-audio), never on a package's.
+- `Subsystem`: a package's running part, with a hook for each moment of a run (a scene coming and going, each `Stage` of the frame, a script's command, a debug key, a click, the frame's renderer inputs and encoder, the HUD's root `egui::Ui`, the exit report), each defaulting to nothing
+- The contexts each hook is lent (`SceneCtx`, `StageCtx`, `FrameCtx`, `EncodeCtx`, `ReportCtx`): every field a kernel type
+- `Resources`: the run's typed values, one per Rust type, through which one package lends state to another without the kernel naming either (procgen's resolver to living's props; the debug HUD's `DebugPanels` to any subsystem with a panel). A missing one means the package isn't in the build
+- `Stage` (re-exported as `flint_player::Stage`), `Note` (what a debug key says on screen), `Pads`, `PlayerInput` and `Button` (a click without winit), and `egui`, re-exported so a package builds against the engine's
+
+The player keeps the ordered list of subsystems and lends each context from its own fields. Registration and the fixed physics step come next (#1551, #1552).
 
 ### flint-player
 

@@ -38,11 +38,11 @@ fn grove() -> PlayerApp {
         None,
         None,
     );
-    let core = &mut app.core;
-    let resolver = &mut core.procgen_resolver;
+    let (props, resolver) =
+        crate::player_app::living_subsystem::props_and_resolver(&mut app.core.resources);
     resolver.index_spec(ProcGenSpec::parse(SPEC).unwrap());
     for i in 0..3u64 {
-        (core.living_props)
+        props
             .add_prop(
                 resolver,
                 LivingPropRequest {
@@ -58,7 +58,7 @@ fn grove() -> PlayerApp {
             )
             .unwrap();
     }
-    core.living_props.make_now(resolver);
+    props.make_now(resolver);
     app.living().wooze = Some(WoozeField::new(WoozeSample::NEUTRAL));
     app
 }
@@ -78,7 +78,7 @@ fn spread(app: &mut PlayerApp) -> f32 {
 /// Each prop's echoes as its ring shows them, so a knob that has "arrived" in
 /// the layers but not on the props would fail.
 fn prop_spreads(app: &mut PlayerApp) -> Vec<f32> {
-    let props = &app.core.living_props;
+    let props = app.core.living_props();
     props
         .props()
         .iter()
@@ -272,7 +272,7 @@ fn a_species_eases_its_own_clock_and_a_freeze_holds_it() {
         app.tick_procgen_for_test(1.0 / 60.0);
     }
     assert_eq!(step(&mut app), 1.5);
-    let props = &app.core.living_props;
+    let props = app.core.living_props();
     assert!(props.props().iter().all(|p| p.clock().step == 1.5));
 }
 
@@ -330,7 +330,7 @@ fn the_jitter_rate_steps_eases_and_clears_and_the_boil_follows_it() {
     let mut app = grove();
     app.tick_procgen_for_test(1.0 / 60.0);
     let jitter_times = |app: &mut PlayerApp| -> Vec<f64> {
-        let props = &app.core.living_props;
+        let props = app.core.living_props();
         props.props().iter().map(|p| p.jitter_time()).collect()
     };
     let rate = |app: &mut PlayerApp| {
@@ -390,7 +390,7 @@ fn the_row_rate_steps_eases_and_clears_and_the_row_clock_follows_it() {
     let mut app = grove();
     app.tick_procgen_for_test(1.0 / 60.0);
     let row_times = |app: &mut PlayerApp| -> Vec<f64> {
-        let props = &app.core.living_props;
+        let props = app.core.living_props();
         props.props().iter().map(|p| p.row_time()).collect()
     };
     let rate = |app: &mut PlayerApp| {
