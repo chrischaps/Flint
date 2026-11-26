@@ -386,7 +386,7 @@ mod tests {
     use crate::{validate_params, GeneratorRegistry, ParamIssue};
 
     const MEADOW: &str =
-        include_str!("../../../../tests/fixtures/scenes/terrain/rolling_meadow.terrain.toml");
+        include_str!("../../../../../../tests/fixtures/scenes/terrain/rolling_meadow.terrain.toml");
 
     fn small() -> &'static str {
         r#"

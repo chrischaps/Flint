@@ -23,7 +23,7 @@ fn registry() -> GeneratorRegistry {
 }
 
 fn example_specs() -> Vec<PathBuf> {
-    let dir = crate_dir().join("../../specs/examples");
+    let dir = crate_dir().join("../../../../specs/examples");
     let mut specs: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
         .map(|e| e.unwrap().path())
@@ -168,7 +168,7 @@ fn every_spec_in_the_tree_validates() {
             }
         }
     }
-    let root = crate_dir().join("../..");
+    let root = crate_dir().join("../../../..");
     let mut specs = Vec::new();
     walk(&root, &mut specs);
     specs.sort();

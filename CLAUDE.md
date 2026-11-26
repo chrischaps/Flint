@@ -91,7 +91,7 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-cli/CLAUDE.md` | the loop's examples, `render` flags, `edit`, `gen`, goldens, fixtures, export |
 | `crates/flint-render/CLAUDE.md` | frame and GPU rules, wgpu, post-processing, quality, caches, lights |
 | `crates/flint-render/src/stylize/CLAUDE.md` | styles, style mask, per-entity and user styles |
-| `crates/flint-procgen/CLAUDE.md` | living props, wooze field, Woozy Grove |
+| `packages/procgen/crates/flint-procgen/CLAUDE.md` | living props, wooze field, Woozy Grove |
 | `crates/flint-player/CLAUDE.md` | extensions, UI, input, touch, capture, perf, web |
 | `crates/flint-script/CLAUDE.md` | Rhai detail, callbacks, script UI |
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear, project manifest, env switches |

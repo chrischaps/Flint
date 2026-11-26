@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn the_oak_validates_the_same_from_disk() {
         let spec =
-            ProcGenSpec::parse(include_str!("../../../specs/oak_tree.procgen.toml")).unwrap();
+            ProcGenSpec::parse(include_str!("../../../../../specs/oak_tree.procgen.toml")).unwrap();
         let output = crate::TreeGenerator
             .generate(&spec, &mut SeededRng::new(42))
             .unwrap();
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn the_beetle_validates_the_same_from_disk() {
-        let spec = ProcGenSpec::parse(include_str!("../../../specs/beetle.procgen.toml")).unwrap();
+        let spec = ProcGenSpec::parse(include_str!("../../../../../specs/beetle.procgen.toml")).unwrap();
         let output = crate::CreatureGenerator
             .generate(&spec, &mut SeededRng::new(7))
             .unwrap();

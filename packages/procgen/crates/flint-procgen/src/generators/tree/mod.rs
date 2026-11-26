@@ -1468,7 +1468,7 @@ target_triangles = 200
     fn oak_spec_lods_hit_targets_and_keep_the_trunk() {
         // The shipped example spec, end to end.
         let spec =
-            ProcGenSpec::parse(include_str!("../../../../../specs/oak_tree.procgen.toml")).unwrap();
+            ProcGenSpec::parse(include_str!("../../../../../../../specs/oak_tree.procgen.toml")).unwrap();
         let targets: Vec<usize> = spec
             .lod
             .as_ref()
@@ -1594,15 +1594,15 @@ branch_levels = 2
         [
             (
                 "oak_tree",
-                include_str!("../../../../../specs/oak_tree.procgen.toml"),
+                include_str!("../../../../../../../specs/oak_tree.procgen.toml"),
             ),
             (
                 "oak_tree_deep",
-                include_str!("../../../../../specs/oak_tree_deep.procgen.toml"),
+                include_str!("../../../../../../../specs/oak_tree_deep.procgen.toml"),
             ),
             (
                 "weeping_willow",
-                include_str!("../../../../../specs/weeping_willow.procgen.toml"),
+                include_str!("../../../../../../../specs/weeping_willow.procgen.toml"),
             ),
         ]
         .into_iter()

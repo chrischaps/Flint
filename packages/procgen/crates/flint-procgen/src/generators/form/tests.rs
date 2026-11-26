@@ -6,7 +6,7 @@ const LINEAGE: u64 = 11;
 fn example() -> ProcGenSpec {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../specs/examples/form_living.procgen.toml"
+        "/../../../../specs/examples/form_living.procgen.toml"
     );
     ProcGenSpec::from_file(std::path::Path::new(path)).unwrap()
 }

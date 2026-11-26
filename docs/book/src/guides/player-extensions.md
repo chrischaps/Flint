@@ -163,7 +163,7 @@ A declared function is listed with its parameters and doc by `app.core.script.ap
 
 ### Procgen generators
 
-A game can bring generators the engine doesn't ship: a `rock_v1` for a cave game, a `rune_v1` for its signage. Write one as `crates/flint-procgen/CONTRIBUTING.md` describes (a type implementing `flint_procgen::Generator`), then hand it to the player from `register_generators`:
+A game can bring generators the engine doesn't ship: a `rock_v1` for a cave game, a `rune_v1` for its signage. Write one as `packages/procgen/crates/flint-procgen/CONTRIBUTING.md` describes (a type implementing `flint_procgen::Generator`), then hand it to the player from `register_generators`:
 
 ```rust
 use flint_procgen::GeneratorRegistry;

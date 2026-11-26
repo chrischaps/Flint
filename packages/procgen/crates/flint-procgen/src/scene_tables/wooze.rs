@@ -1046,7 +1046,7 @@ mod tests {
 
     fn schemas() -> SchemaRegistry {
         // The engine's set as a game gets it, the living package's with it (#1332)
-        let dirs = flint_core::project::host_schema_dirs(&["../../schemas"], None).dirs;
+        let dirs = flint_core::project::host_schema_dirs(&["../../../../schemas"], None).dirs;
         SchemaRegistry::load_from_directories(&dirs).unwrap()
     }
 

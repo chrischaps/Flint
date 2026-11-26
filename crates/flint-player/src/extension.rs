@@ -78,7 +78,7 @@ pub trait PlayerExtension {
     ///
     /// A generator with a built-in's type name replaces the built-in.
     /// Generators are `Send + Sync` and stateless; see
-    /// `crates/flint-procgen/CONTRIBUTING.md` for writing one. Add the
+    /// `packages/procgen/crates/flint-procgen/CONTRIBUTING.md` for writing one. Add the
     /// extension before the event loop starts: the first scene's specs are
     /// resolved as it loads, and a spec resolved before its generator was
     /// registered has already fallen through to a file or a placeholder.

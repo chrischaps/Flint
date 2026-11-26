@@ -42,7 +42,7 @@ fn sample_table(fields: &HashMap<String, FieldSchema>) -> toml::Table {
 #[test]
 fn living_and_wooze_schemas_declare_only_what_is_read() {
     // The engine's set as a game gets it, the living package's with it (#1332)
-    let dirs = flint_core::project::host_schema_dirs(&["../../schemas"], None).dirs;
+    let dirs = flint_core::project::host_schema_dirs(&["../../../../schemas"], None).dirs;
     let registry = SchemaRegistry::load_from_directories(&dirs).unwrap();
     let mut scene = SceneFile::new("s");
     for name in ["living", "wooze"] {

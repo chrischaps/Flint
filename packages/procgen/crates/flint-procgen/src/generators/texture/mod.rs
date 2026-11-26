@@ -587,7 +587,7 @@ base = 0.75
     // ── Task 4.3 acceptance: registry, PNGs, routing, a schema that's true ──
 
     fn repo_root() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..")
     }
 
     /// The `specs/` of each game kept in the checkout: a top-level

@@ -12,15 +12,15 @@ The book's [Procedural Generation](https://docs.chaps.dev/concepts/procgen.html)
 
 ## Quick start
 
-Five commented specs live in [`specs/examples/`](../../specs/examples). Read one top to bottom, then run it:
+Five commented specs live in [`specs/examples/`](../../../../specs/examples). Read one top to bottom, then run it:
 
 | Spec | What it makes | Shows |
 |---|---|---|
-| [`oak_tree`](../../specs/examples/oak_tree.procgen.toml) | A broad oak, GLB with three LODs | `tree_v1`, the built-in L-system, seasonal leaf shades |
-| [`oak_living`](../../specs/examples/oak_living.procgen.toml) | The same oak as a living prop | A `[living]` table |
-| [`pine_tree`](../../specs/examples/pine_tree.procgen.toml) | A Scots pine, GLB with three LODs | `tree_v1`, space colonization in a `cone` crown |
-| [`stone_wall`](../../specs/examples/stone_wall.procgen.toml) | Fieldstone in mortar, three tiling PBR maps | `texture_v1`, the `voronoi_brick` pattern |
-| [`wood_plank`](../../specs/examples/wood_plank.procgen.toml) | Oak floorboards, three PBR maps | `texture_v1`, a `pipeline` of ops |
+| [`oak_tree`](../../../../specs/examples/oak_tree.procgen.toml) | A broad oak, GLB with three LODs | `tree_v1`, the built-in L-system, seasonal leaf shades |
+| [`oak_living`](../../../../specs/examples/oak_living.procgen.toml) | The same oak as a living prop | A `[living]` table |
+| [`pine_tree`](../../../../specs/examples/pine_tree.procgen.toml) | A Scots pine, GLB with three LODs | `tree_v1`, space colonization in a `cone` crown |
+| [`stone_wall`](../../../../specs/examples/stone_wall.procgen.toml) | Fieldstone in mortar, three tiling PBR maps | `texture_v1`, the `voronoi_brick` pattern |
+| [`wood_plank`](../../../../specs/examples/wood_plank.procgen.toml) | Oak floorboards, three PBR maps | `texture_v1`, a `pipeline` of ops |
 
 ```bash
 # Generate. The output kind picks the format: meshes are GLB, images PNG.
@@ -106,7 +106,7 @@ target_triangles = 9000
 
 `flint gen --seed N` overrides `[seed]` for one run.
 
-A spec can also have a `[living]` table, which makes it a prop that keeps drifting between versions of itself. See `LivingGenerator` in `src/generator.rs` and [`specs/examples/oak_living.procgen.toml`](../../specs/examples/oak_living.procgen.toml). `flint gen <spec> --strip -o strip.png` renders one over time as a labelled contact sheet; the clock and the blend are `LivingClock` and `PoseStream` in `src/living.rs`.
+A spec can also have a `[living]` table, which makes it a prop that keeps drifting between versions of itself. See `LivingGenerator` in `src/generator.rs` and [`specs/examples/oak_living.procgen.toml`](../../../../specs/examples/oak_living.procgen.toml). `flint gen <spec> --strip -o strip.png` renders one over time as a labelled contact sheet; the clock and the blend are `LivingClock` and `PoseStream` in `src/living.rs`.
 
 ## Generator catalog
 

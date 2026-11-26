@@ -467,7 +467,7 @@ mod tests {
 
     fn load(relative: &str) -> ProcGenSpec {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
+            .join("../../../..")
             .join(relative);
         let mut spec = ProcGenSpec::from_file(&path).unwrap();
         spec.lod = None;

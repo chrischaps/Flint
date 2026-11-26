@@ -1094,7 +1094,7 @@ variation = 0.12
     #[ignore]
     fn profile_spec_ops() {
         let path = std::env::var("PROCGEN_PROFILE")
-            .unwrap_or_else(|_| "../../specs/sci_fi_panel.procgen.toml".into());
+            .unwrap_or_else(|_| "../../../../specs/sci_fi_panel.procgen.toml".into());
         let spec = ProcGenSpec::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let map_params = TextureMapParams::from_toml(&spec.params).unwrap();
         let (_, ops) = parse_pipeline(&spec.params).unwrap();
