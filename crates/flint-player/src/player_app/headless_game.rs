@@ -30,16 +30,11 @@ use std::collections::BTreeSet;
 use flint_core::project::Project;
 use flint_core::quality::QualitySettings;
 use flint_ecs::FlintWorld;
-#[cfg(feature = "living")]
-use flint_living::LivingProps;
 use flint_particles::ParticleSystem;
 use flint_render::{Camera, FrameInputs, PostProcessConfig, SceneRenderer};
 use flint_runtime::{InputState, RuntimeSystem};
 use flint_script::context::ScriptCommand;
 use flint_script::{PostProcessOverrides, ScriptHost};
-#[cfg(feature = "living")]
-#[cfg(feature = "living")]
-use flint_wooze::WoozeField;
 
 use super::expression_feed::{ExpressionFeed, ExpressionSubsystem, ExpressionTimeline};
 use super::game_core::{self, FrameHost, GameCore, Lent};
@@ -127,13 +122,12 @@ const PARTICLE_COMMANDS: &[&str] = &[
 
 /// What a capture asks of its scene's subsystems (#1252), handed to each
 /// file's `for_scene` as [`SceneCtx::capture`]: a builder that builds
-/// otherwise in a capture reads it, and one that doesn't never looks.
+/// otherwise in a capture reads it, and one that doesn't never looks. A
+/// package's own capture inputs (living's wooze field) go in the
+/// [`resources`](HeadlessGame::resources_mut) before, which its render
+/// part puts there (#1558).
 #[derive(Debug, Default)]
 pub struct CaptureStart {
-    /// The scene's wooze field, with any sweep's knobs over it: the living
-    /// subsystem takes it.
-    #[cfg(feature = "living")]
-    pub wooze: Option<WoozeField>,
     /// A capture of a moment, which draws shallow wooze.
     pub moment: bool,
     /// Whether the scene's scripts run: the music and the declared fields
@@ -275,10 +269,12 @@ impl HeadlessGame {
     /// Make the scene's made assets as the player does at load (#1557),
     /// before the model loader, every one at once (procgen's specs, and
     /// with the living package every living prop's lineage built and ring
-    /// full: give it the scene's `[living]` first, `set_living_defaults`).
-    /// A run with no asset maker makes nothing, and every name is a file.
+    /// full, from the scene's `[living]` in `tables`, the scene file's
+    /// top-level tables as settled). A run with no asset maker makes
+    /// nothing, and every name is a file.
     pub fn make_assets(
         &mut self,
+        tables: &toml::Table,
         renderer: &mut flint_render::SceneRenderer,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -290,32 +286,36 @@ impl HeadlessGame {
                 device,
                 queue,
             },
+            tables,
             config,
             flint_package::assets::MakeMode::Immediate,
             false,
         );
     }
 
-    /// The scene's `[living]`, which the props [`make_assets`](Self::make_assets)
-    /// grows start from.
-    #[cfg(feature = "living")]
-    pub fn set_living_defaults(&mut self, living: Option<&flint_procgen::LivingDef>) {
-        self.core
-            .living_props_mut()
-            .set_defaults(super::living_props::defaults_of(living));
+    /// The run's resources (ADR 0137 decision 2): what a package's render
+    /// part reads and leaves for its subsystem (living's props, the
+    /// capture's wooze field, #1558).
+    pub fn resources_mut(&mut self) -> &mut flint_package::Resources {
+        &mut self.core.resources
     }
 
-    /// The living props, if the scene grew any.
-    #[cfg(feature = "living")]
-    pub fn living_props(&self) -> Option<&LivingProps> {
-        let props = self.core.living_props();
-        (!props.is_empty()).then_some(props)
+    /// The capture's subsystems, resources and world, for a package's CLI
+    /// side to find its own subsystem in (#1558).
+    pub fn capture_game(&self) -> flint_package::CaptureGame<'_> {
+        flint_package::CaptureGame {
+            subsystems: self.core.subsystems.as_slice(),
+            resources: &self.core.resources,
+            world: &self.core.world,
+        }
     }
 
-    /// The living props, to lay a preset over.
-    #[cfg(feature = "living")]
-    pub fn living_props_mut(&mut self) -> &mut LivingProps {
-        self.core.living_props_mut()
+    /// [`capture_game`](Self::capture_game), to change.
+    pub fn capture_game_mut(&mut self) -> flint_package::CaptureGameMut<'_> {
+        flint_package::CaptureGameMut {
+            subsystems: self.core.subsystems.as_mut_slice(),
+            resources: &mut self.core.resources,
+        }
     }
 
     /// Build the scene's subsystems as the player does at its entry (#1252):
@@ -331,10 +331,6 @@ impl HeadlessGame {
     pub fn start_subsystems(&mut self, tables: toml::Table, start: CaptureStart) {
         self.scene.tables = tables;
         let core = &mut self.core;
-        // The capture's wooze field is living's to take (#1550)
-        #[cfg(feature = "living")]
-        core.resources
-            .insert(super::living_subsystem::CaptureWooze(start.wooze));
         let capture = flint_package::Capture {
             moment: start.moment,
             scripts: start.scripts,
@@ -354,9 +350,6 @@ impl HeadlessGame {
             resources: &mut core.resources,
             registry: crate::packages::registry(),
         });
-        #[cfg(feature = "living")]
-        core.resources
-            .remove::<super::living_subsystem::CaptureWooze>();
         let mut left_out = Vec::new();
         for subsystem in built {
             match subsystem.presentation_only() {
@@ -484,7 +477,7 @@ impl HeadlessGame {
     }
 
     /// `commands` as if the scripts had just asked for them (tests).
-    #[cfg(all(test, feature = "living"))]
+    #[cfg(test)]
     pub(crate) fn dispatch_for_test(&mut self, commands: Vec<ScriptCommand>) {
         let mut camera = Camera::new();
         let mut frame = CaptureFrame {
@@ -800,6 +793,6 @@ pub fn stamp_post(config: &mut PostProcessConfig, post: &PostProcessOverrides) {
 }
 
 // Every command is sampled, the living module's among them.
-#[cfg(all(test, feature = "living"))]
+#[cfg(test)]
 #[path = "headless_host_tests.rs"]
 mod tests;

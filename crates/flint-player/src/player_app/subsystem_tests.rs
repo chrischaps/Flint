@@ -455,9 +455,12 @@ fn a_malformed_socket_line_raises_the_panels_dropped_count() {
     });
 }
 
-#[cfg(feature = "living")]
 #[test]
 fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {
+    // The living package's: a launcher without it has none to run
+    if !crate::packages::registry().has("living") {
+        return;
+    }
     vfs::scoped(Arc::new(game()), || {
         let mut app = started_in_a(None);
         assert!(app.execute_scene_transition("woozy.scene.toml"));
@@ -466,7 +469,7 @@ fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {
         assert!(app
             .core
             .subsystems
-            .find::<super::living_subsystem::LivingSubsystem>()
+            .find::<flint_living::player::subsystem::LivingSubsystem>()
             .is_some());
 
         assert!(app.execute_scene_transition("b.scene.toml"));
@@ -478,9 +481,12 @@ fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {
     });
 }
 
-#[cfg(feature = "living")]
 #[test]
 fn a_state_pauses_the_grove_by_its_living_entry_and_not_by_animation() {
+    // The living package's: a launcher without it has none to run
+    if !crate::packages::registry().has("living") {
+        return;
+    }
     use flint_runtime::{StateConfig, SystemPolicy};
     vfs::scoped(Arc::new(game()), || {
         let mut app = started_in_a(None);
@@ -488,7 +494,7 @@ fn a_state_pauses_the_grove_by_its_living_entry_and_not_by_animation() {
         let time = |app: &PlayerApp| {
             app.core
                 .subsystems
-                .find::<super::living_subsystem::LivingSubsystem>()
+                .find::<flint_living::player::subsystem::LivingSubsystem>()
                 .expect("the grove")
                 .wooze_time
         };

@@ -458,7 +458,7 @@ living = \"*\"
         )
         .unwrap();
         let found = unbuilt_at(&dir.join("flint.toml"), &[]);
-        if cfg!(feature = "living") {
+        if crate::commands::absent::built_with("living") {
             assert_eq!(found, None);
         } else {
             let found = found.expect("a flint without living lacks it");

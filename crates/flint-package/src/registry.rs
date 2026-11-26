@@ -35,6 +35,13 @@ pub type LeftOutLine = fn(&SceneCtx) -> Option<String>;
 /// props), called for each run's core as it is made.
 pub type RunResources = fn(&mut Resources);
 
+/// A package's settle of a scene file its tables are in (ADR 0137 section 4,
+/// #1558): check them and fill in what they name (living's `[wooze] preset`,
+/// which can set `[post_process]`'s boil too), right after the file loads
+/// and before anything reads it. An error refuses the load; the scene's
+/// path finds a file a table names.
+pub type SettleScene = fn(&mut flint_scene::SceneFile, &std::path::Path) -> flint_core::Result<()>;
+
 /// Everything the listed packages registered, in the order they did.
 ///
 /// A builder belongs to the package whose `register` added it, so the
@@ -50,6 +57,7 @@ pub struct Registry {
     modules: Vec<(&'static str, &'static dyn ScriptModule)>,
     debug_keys: Vec<(&'static str, DebugKeyGroup)>,
     run_resources: Vec<(&'static str, RunResources)>,
+    settles: Vec<(&'static str, SettleScene)>,
     makers: Vec<(&'static str, &'static dyn AssetMaker)>,
     /// Registration points, one value per Rust type (ADR 0137 section 4).
     points: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
@@ -144,6 +152,14 @@ impl Registry {
         self
     }
 
+    /// A settle of the scene files this package has tables in: every host
+    /// that loads a scene runs it ([`Registry::settle`]), the player, a
+    /// transition, `flint render` and the viewer alike.
+    pub fn settle_scene(&mut self, settle: SettleScene) -> &mut Self {
+        self.settles.push((self.current, settle));
+        self
+    }
+
     /// A maker of assets by name (`crate::assets`), asked at each scene's
     /// load, for spawned entities and each frame, after those before it.
     pub fn asset_maker(&mut self, maker: &'static dyn AssetMaker) -> &mut Self {
@@ -224,6 +240,20 @@ impl Registry {
         for (_, put) in &self.run_resources {
             put(resources);
         }
+    }
+
+    /// Settle `scene` (loaded from `path`) through every package's
+    /// [`settle_scene`](Registry::settle_scene), in order; the first error
+    /// refuses it. With none registered the file is as it loaded.
+    pub fn settle(
+        &self,
+        scene: &mut flint_scene::SceneFile,
+        path: &std::path::Path,
+    ) -> flint_core::Result<()> {
+        for (_, settle) in &self.settles {
+            settle(scene, path)?;
+        }
+        Ok(())
     }
 
     /// Every asset maker, in the order registered. None: every name a

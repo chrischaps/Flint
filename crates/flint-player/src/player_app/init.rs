@@ -309,30 +309,28 @@ impl PlayerApp {
         }
         self.core.styles = binding.styles().clone();
         self.scene_binding = Some(binding);
-        // Living props' tables, with the preset `[wooze] preset` names
-        // filled in (it can set the shading boil in `[post_process]` too).
-        // `flint_scene::load_scene` did this until #686; a host that has
-        // already run `flint_procgen::settle_scene` loses nothing by it,
-        // since a preset that has been filled in is no longer named. On a
-        // copy of the tables: this takes the scene by reference.
-        // A build without the `living` feature (#754) reads neither table.
-        #[cfg(feature = "living")]
-        {
-            let mut settled = flint_scene::SceneFile::new(scene_file.scene.name.clone());
-            settled.tables = scene_file.tables.clone();
-            settled.post_process = scene_file.post_process.clone();
-            let scene_path = std::path::PathBuf::from(&self.core.scene_path);
-            if let Err(problem) = flint_procgen::settle_scene(&mut settled, &scene_path) {
-                tracing::warn!("{problem}");
-            }
-            self.set_scene_post_process(settled.post_process.clone());
-            let living_tables = flint_procgen::LivingTables::or_warn(&settled);
-            self.scene.living = living_tables.living;
-            self.scene.wooze = living_tables.wooze;
+        // The packages' tables settled (`Registry::settle_scene`, #1558):
+        // living's `[wooze] preset` names filled in, which can set the
+        // shading boil in `[post_process]` too. `flint_scene::load_scene`
+        // did this until #686; a host that has already settled the file
+        // (`crate::settle_scene`) loses nothing by it, since a preset that
+        // has been filled in is no longer named. On a copy of the tables:
+        // this takes the scene by reference. A build with no package that
+        // settles reads them as written.
+        let mut settled = flint_scene::SceneFile::new(scene_file.scene.name.clone());
+        settled.tables = scene_file.tables.clone();
+        settled.post_process = scene_file.post_process.clone();
+        let scene_path = std::path::PathBuf::from(&self.core.scene_path);
+        if let Err(problem) = crate::packages::registry().settle(&mut settled, &scene_path) {
+            tracing::warn!("{problem}");
         }
-        #[cfg(not(feature = "living"))]
-        self.set_scene_post_process(scene_file.post_process.clone());
-        self.scene.tables = scene_file.scene_tables();
+        self.set_scene_post_process(settled.post_process.clone());
+        // The tables as written, the settled ones over them: what a
+        // package's builder reads (`SceneCtx::tables`) and an extension's
+        // `scene_table`
+        let mut tables = scene_file.scene_tables();
+        tables.extend(settled.tables);
+        self.scene.tables = tables;
     }
 
     /// Take a scene's `[post_process]` block, with the look it names
@@ -340,6 +338,15 @@ impl PlayerApp {
     /// (#435) over them. A look that can't be found is warned about and the
     /// block drawn without it. Call after the scene's user styles are
     /// loaded (a look may name one).
+    /// The flags the command line gave a package (`--compare`, `--split`:
+    /// living's, #238), which its builder reads from the run's resources
+    /// (#1558). Set them before the first scene is entered.
+    pub fn launch_flags_mut(&mut self) -> &mut flint_package::LaunchFlags {
+        self.core
+            .resources
+            .get_or_insert_with(flint_package::LaunchFlags::default)
+    }
+
     pub fn set_scene_post_process(&mut self, def: Option<flint_scene::PostProcessDef>) {
         let scope = self.asset_scope();
         self.scene.post_process = super::scene_loading::scene_post_process_in(

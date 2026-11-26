@@ -36,9 +36,9 @@ pub mod gen_ai;
 pub mod gen_args;
 #[cfg(feature = "ai")]
 pub mod gen_refine;
-#[cfg(feature = "living")]
-pub mod gen_strip;
-pub mod gif_writer;
+/// The GIF writer, the Package API's since #1558 (living's `gen --strip`
+/// writes with it too)
+pub use flint_package::cli::gif as gif_writer;
 pub mod glyph_preview;
 pub mod golden_sheet;
 pub mod init;

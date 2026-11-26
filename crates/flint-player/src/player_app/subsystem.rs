@@ -55,17 +55,14 @@ use flint_render::FrameInputs;
 use flint_runtime::DebugKey;
 use flint_runtime::GameStateMachine;
 use flint_script::context::ScriptCommand;
-use std::any::Any;
 
 // The scene subsystems whose code is still in this crate: the kernel's
-// `field`, and the `living` and `rhythm` packages' until each moves to its
-// own crate (#1556, #1558; music's is its own since #1555). Each file
+// `field`, and the `rhythm` package's until it moves to its own crate
+// (#1556; music's is its own since #1555, living's since #1558). Each file
 // registers what it brings through the run's `Registry` (#1552); nothing
 // lists the files.
 #[path = "subsystems/field.rs"]
 pub(crate) mod field;
-#[path = "subsystems/living.rs"]
-pub(crate) mod living;
 #[cfg(feature = "rhythm")]
 #[path = "subsystems/rhythm.rs"]
 pub(crate) mod rhythm;
@@ -169,19 +166,24 @@ impl Subsystems {
     }
 
     /// The subsystem of type `T`, if there is one.
-    #[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
     pub(crate) fn find<T: Subsystem>(&self) -> Option<&T> {
-        self.list
-            .iter()
-            .find_map(|s| (s.as_ref() as &dyn Any).downcast_ref::<T>())
+        flint_package::find(&self.list)
     }
 
     /// The subsystem of type `T`, if there is one, to change.
-    #[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
+    #[cfg_attr(not(test), allow(dead_code))] // the living tests' (#754)
     pub(crate) fn find_mut<T: Subsystem>(&mut self) -> Option<&mut T> {
-        self.list
-            .iter_mut()
-            .find_map(|s| (s.as_mut() as &mut dyn Any).downcast_mut::<T>())
+        flint_package::find_mut(&mut self.list)
+    }
+
+    /// Every one, in run order: a capture's, for a package's CLI side to
+    /// find its own in (`flint_package::CaptureGame`, #1558).
+    pub(crate) fn as_slice(&self) -> &[Box<dyn Subsystem>] {
+        &self.list
+    }
+
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [Box<dyn Subsystem>] {
+        &mut self.list
     }
 
     pub(crate) fn scene_loaded(&mut self, ctx: &mut SceneCtx) {
@@ -380,10 +382,6 @@ impl super::PlayerApp {
                 }
             }
         }
-        // What living's builder reads of the scene's settings and the launch
-        // (#1550), until living reads its own tables (#1558)
-        #[cfg(feature = "living")]
-        self.lend_living_start();
         // ...and what rhythm's reads of the scene's post-processing (#1556)
         #[cfg(feature = "rhythm")]
         self.core
@@ -426,9 +424,6 @@ impl super::PlayerApp {
             self.core.subsystems.drop_scene_ones();
             self.core.enable_script_modules();
         }
-        // What the living subsystem kept of the launch, for the next scene
-        #[cfg(feature = "living")]
-        self.take_back_living_start();
     }
 
     /// Hand a subsystem the debug action its key was pressed for.

@@ -3,116 +3,111 @@
 //! boil's beats, shallow wooze and woozy grass, the hand tuning and the A/B
 //! comparison, in one place a scene without them never runs.
 //!
-//! The props themselves are a run resource (`flint_living::LivingProps` in
+//! The props themselves are a run resource (`crate::LivingProps` in
 //! `GameCore::resources`, ADR 0137 decision 2, #1550), posed by the procgen
 //! resolver beside them on its frame budget from its generators and specs;
 //! every hook reaches both through its context's `resources` ([`props`],
 //! [`props_and_resolver`]). The tuning and A/B code is `impl LivingSubsystem`
 //! in `living_tuning.rs` and `living_ab.rs`.
 
-use super::living_props;
-use super::subsystem::{
+use super::props;
+use flint_package::{Button, CaptureGame, CaptureGameMut, Resources};
+use flint_package::{
     EncodeCtx, ExitReport, FrameCtx, PlayerInput, ReportCtx, SceneCtx, Stage, StageCtx, Subsystem,
 };
-use flint_package::{Button, Resources};
 use flint_render::FrameInputs;
 use flint_script::context::ScriptCommand;
 use flint_wooze::shallow::{self as shallow_wooze, GrassWooze, ShallowWooze};
 
 /// The scene's living props, in the run's resources (#1550).
-pub(crate) fn props(resources: &Resources) -> &flint_living::LivingProps {
+pub fn props(resources: &Resources) -> &crate::LivingProps {
     resources
         .get()
         .expect("GameCore::new puts the living props in")
 }
 
-pub(crate) fn props_mut(resources: &mut Resources) -> &mut flint_living::LivingProps {
+pub fn props_mut(resources: &mut Resources) -> &mut crate::LivingProps {
     resources
         .get_mut()
         .expect("GameCore::new puts the living props in")
 }
 
 /// The props and the procgen resolver that poses them, at once.
-pub(crate) fn props_and_resolver(
+pub fn props_and_resolver(
     resources: &mut Resources,
-) -> (
-    &mut flint_living::LivingProps,
-    &mut flint_procgen::ProcGenResolver,
-) {
+) -> (&mut crate::LivingProps, &mut flint_procgen::ProcGenResolver) {
     resources
         .get_two_mut()
         .expect("GameCore::new puts the living props and the procgen resolver in")
 }
 
-/// What the living builder reads of the player's scene settings and launch,
-/// lent through the resources while a scene's subsystems are built and
-/// taken back at its unload (#1550; living reads its own tables and flags
-/// once it is a package, #1558).
-#[derive(Default)]
-pub(crate) struct LivingStart {
-    /// The scene's `[wooze]` (its preset filled in) and whether it has a
-    /// `[living]`.
-    wooze: Option<flint_procgen::WoozeDef>,
-    living: bool,
-    /// `--compare`'s presets, which outlive the scene, and whether to start
-    /// comparing once a scene has props.
-    compare: Option<(String, String)>,
-    compare_at_start: Option<bool>,
+/// What outlives one scene's living subsystem, in the run's resources: the
+/// presets `--compare` (or the panel) picked, and a comparison `--compare`
+/// asked to start once a scene has props (`--split`: split). Made from the
+/// launch's flags the first time a scene is built ([`LivingStart::of`]),
+/// and each scene's unloading puts back what its subsystem kept.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct LivingStart {
+    pub compare: Option<(String, String)>,
+    pub compare_at_start: Option<bool>,
+}
+
+impl LivingStart {
+    /// The run's, made from `--compare A,B` and `--split` the first time
+    /// (`flint_package::LaunchFlags`, which the player checked: two names,
+    /// B not empty).
+    pub fn of(resources: &mut Resources) -> &mut Self {
+        if resources.get::<Self>().is_none() {
+            let flags = resources.get::<flint_package::LaunchFlags>();
+            let compare = flags
+                .and_then(|flags| flags.get("compare"))
+                .and_then(|spec| spec.split_once(','))
+                .map(|(a, b)| (a.trim().to_string(), b.trim().to_string()));
+            let split = flags.is_some_and(|flags| flags.has("split"));
+            resources.insert(Self {
+                compare_at_start: compare.is_some().then_some(split),
+                compare,
+            });
+        }
+        resources.get_mut().expect("just put in")
+    }
 }
 
 /// A capture's wooze field (the scene's `[wooze]` with any sweep's knobs
-/// over it), which the living builder takes in a capture (#1252).
-pub(crate) struct CaptureWooze(pub(crate) Option<flint_wooze::WoozeField>);
+/// over it), which the living builder takes in a capture (#1252): the
+/// render stage's living part puts it in the resources.
+pub struct CaptureWooze(pub Option<flint_wooze::WoozeField>);
 
-impl super::PlayerApp {
-    /// Lend the living builder the scene's settings and the launch.
-    pub(super) fn lend_living_start(&mut self) {
-        self.core.resources.insert(LivingStart {
-            wooze: self.scene.wooze.clone(),
-            living: self.scene.living.is_some(),
-            compare: self.launch.compare.clone(),
-            compare_at_start: self.launch.compare_at_start.take(),
-        });
-    }
-
-    /// What the living subsystem kept of the launch goes back to it, for
-    /// the next scene: the panel's picks, and a comparison asked for at
-    /// start that no scene had props for yet.
-    pub(super) fn take_back_living_start(&mut self) {
-        let Some(start) = self.core.resources.remove::<LivingStart>() else {
-            return;
-        };
-        if start.compare.is_some() {
-            self.launch.compare = start.compare;
-        }
-        if start.compare_at_start.is_some() {
-            self.launch.compare_at_start = start.compare_at_start;
-        }
-    }
+/// The scene's `[living]` and `[wooze]`, read from its top-level tables as
+/// a host settled them (the `[wooze] preset` filled in).
+pub fn tables_of(tables: &toml::Table) -> flint_procgen::LivingTables {
+    let mut scene = flint_scene::SceneFile::new(String::new());
+    scene.tables = tables.clone();
+    flint_procgen::LivingTables::or_warn(&scene)
 }
 
 /// Living props' and the wooze field's state for one scene.
 #[derive(Default)]
-pub(crate) struct LivingSubsystem {
+pub struct LivingSubsystem {
     /// Room to blend the props each frame
-    pub(crate) blend: flint_living::BlendFrame,
+    pub blend: crate::BlendFrame,
     /// The field made from it, sampled on a clock of its own that stops
     /// when a game state pauses `living`. No table: no field, no samples.
-    pub(crate) wooze: Option<flint_wooze::WoozeField>,
-    pub(crate) wooze_time: f64,
-    pub(crate) wooze_missing_warned: bool,
+    pub wooze: Option<flint_wooze::WoozeField>,
+    pub wooze_time: f64,
+    pub wooze_missing_warned: bool,
     /// The shading boil's beats (#214), on the same clock as the field.
-    pub(crate) boil_clock: flint_wooze::BoilClock,
+    pub boil_clock: flint_wooze::BoilClock,
     /// Shallow wooze (#215): the clocks of the meshes on the field with no poses.
-    pub(crate) shallow_wooze: ShallowWooze,
+    pub shallow_wooze: ShallowWooze,
     /// Woozy grass (#252): the grass's sway and comb on the same clock.
-    pub(crate) grass_wooze: GrassWooze,
+    pub grass_wooze: GrassWooze,
     /// What's been done to a running grove by hand (#218).
-    pub(crate) tune: super::living_tuning::LivingTune,
+    pub tune: super::tuning::LivingTune,
     /// The knobs a script's `tune_living(map, seconds)` is easing (#514).
-    pub(crate) ramps: super::living_ramps::KnobRamps,
+    pub ramps: super::ramps::KnobRamps,
     /// `Some` in a capture (`flint render`, #216, #725): see [`Capture`].
-    pub(crate) capture: Option<Capture>,
+    pub capture: Option<Capture>,
     /// The field as the `wooze` module's reads last had it (#505), shared
     /// until it changes, so a frame that changes nothing copies nothing.
     published: Option<std::sync::Arc<flint_wooze::WoozeField>>,
@@ -133,18 +128,18 @@ fn next_scene_token() -> u64 {
 /// step; and shallow wooze draws only in a capture of a moment (a plain
 /// render shows those meshes at rest, #215).
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Capture {
+pub struct Capture {
     pub shallow: bool,
 }
 
 impl LivingSubsystem {
     /// Its name, and the key a game state pauses its clock by (#727).
-    pub(crate) const NAME: &'static str = "living";
+    pub const NAME: &'static str = "living";
 
     /// A left click on a living prop while the Living Props panel is open picks
     /// it (#248), and the click, press and release, stops there: the game never
     /// hears it. One that lands on no prop goes on as it would have.
-    pub(crate) fn living_takes_click(
+    pub fn living_takes_click(
         &mut self,
         ctx: &mut StageCtx,
         button: Button,
@@ -177,7 +172,7 @@ impl LivingSubsystem {
     }
 
     /// Let go of the tree picked in the world, if one is. Returns whether one was.
-    pub(crate) fn living_let_go(&mut self, ctx: &mut StageCtx) -> bool {
+    pub fn living_let_go(&mut self, ctx: &mut StageCtx) -> bool {
         #[cfg(feature = "debug-hud")]
         if self.picked_living(ctx).is_some() {
             self.pick_living(ctx, None);
@@ -192,18 +187,18 @@ impl LivingSubsystem {
     /// `[living]` or `[wooze]` table, an entity with `shallow_wooze`, or grass
     /// that asks to wooze. A scene that asks for shallow wooze or woozy grass
     /// with no field to drive it is told so, once, here.
-    pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+    pub fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
         if let Some(capture) = ctx.capture {
             let wooze = ctx
                 .resources
-                .get_mut::<CaptureWooze>()
-                .and_then(|wooze| wooze.0.take());
+                .remove::<CaptureWooze>()
+                .and_then(|wooze| wooze.0);
             let (props, resolver) = props_and_resolver(ctx.resources);
             return Self::in_capture(props, resolver, ctx.script, capture, wooze);
         }
-        let start = ctx.resources.get_or_insert_with(LivingStart::default);
-        let wooze = living_props::field_of(start.wooze.as_ref());
-        let has_living = start.living;
+        let tables = tables_of(ctx.tables);
+        let wooze = props::field_of(tables.wooze.as_ref());
+        let has_living = tables.living.is_some();
         let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
         shallow_wooze::warn_without_a_field(ctx.world, wooze.as_ref());
         shallow_wooze::warn_grass_without_a_field(
@@ -230,7 +225,7 @@ impl LivingSubsystem {
         };
         // What --compare asked for, before any scene was: which presets, and
         // whether to start comparing; the picks outlive the scene
-        let start = ctx.resources.get_or_insert_with(LivingStart::default);
+        let start = LivingStart::of(ctx.resources);
         living.tune.ab_picks = start.compare.clone();
         living.tune.compare_at_start = start.compare_at_start.take();
         // The scripts' on_init reads the field at the scene's first moment
@@ -240,14 +235,14 @@ impl LivingSubsystem {
 
     /// Hand the `wooze` module's reads (#505) the field and the time on its
     /// clock `time`, replacing what an earlier scene or frame handed them.
-    pub(crate) fn publish_reading(&mut self, script: &mut flint_script::ScriptSystem, time: f64) {
+    pub fn publish_reading(&mut self, script: &mut flint_script::ScriptSystem, time: f64) {
         let field = match (&self.wooze, &self.published) {
             (Some(field), Some(published)) if **published == *field => Some(published.clone()),
             (Some(field), _) => Some(std::sync::Arc::new(field.clone())),
             (None, _) => None,
         };
         self.published = field.clone();
-        script.set_module_state(super::living_api::WoozeReading {
+        script.set_module_state(super::api::WoozeReading {
             field,
             time,
             scene: self.scene_token,
@@ -264,7 +259,7 @@ impl LivingSubsystem {
     /// pose is made at once, off the frame budget. A capture of a moment
     /// draws shallow wooze.
     fn in_capture(
-        props: &mut flint_living::LivingProps,
+        props: &mut crate::LivingProps,
         resolver: &flint_procgen::ProcGenResolver,
         script: &mut flint_script::ScriptSystem,
         capture: &flint_package::Capture,
@@ -287,7 +282,7 @@ impl LivingSubsystem {
         Some(Box::new(living))
     }
 
-    pub(super) fn tick(&mut self, ctx: &mut StageCtx, dt: f64) {
+    pub fn tick(&mut self, ctx: &mut StageCtx, dt: f64) {
         let living_dt = dt + self.before_living_tick(ctx);
         // Knobs a script is easing (#514), on the same clock, before the
         // props read them
@@ -346,7 +341,7 @@ impl LivingSubsystem {
                     queue,
                     config: &config,
                 };
-                living_props::apply_lineages(&lineages, &mut sink);
+                props::apply_lineages(&lineages, &mut sink);
             }
         }
         // Blend after the rings have slid and any new lineage is up (a
@@ -355,7 +350,7 @@ impl LivingSubsystem {
             return;
         }
         if let (Some(renderer), Some((device, queue))) = (ctx.renderer.as_deref_mut(), ctx.gpu) {
-            living_props::upload_blends(
+            props::upload_blends(
                 props_mut(ctx.resources),
                 &mut self.blend,
                 renderer,
@@ -391,7 +386,7 @@ impl LivingSubsystem {
             .map(|p| p.ring_len())
             .max()
             .unwrap_or(0);
-        for line in living_props::report(
+        for line in props::report(
             &props.stats(),
             props.props().len(),
             props.lineage_count(),
@@ -400,7 +395,7 @@ impl LivingSubsystem {
         ) {
             out.line(line);
         }
-        if let Some(line) = living_props::knobs_report(&props.stats(), props) {
+        if let Some(line) = props::knobs_report(&props.stats(), props) {
             out.line(line);
         }
         // The other side of an A/B (#238): its rings, and its own blending.
@@ -420,7 +415,7 @@ impl LivingSubsystem {
             ));
         }
         if let Some(field) = &self.wooze {
-            out.line(living_props::wooze_report(field, props));
+            out.line(props::wooze_report(field, props));
             out.line(format!(
                 "[wooze] shallow: {} entities on {} clocks",
                 self.shallow_wooze.draw_count(),
@@ -471,7 +466,7 @@ impl LivingSubsystem {
     /// player's host applied them before (#8, #218, #238); `false` for any
     /// other.
     fn command(&mut self, command: &ScriptCommand, ctx: &mut StageCtx) -> bool {
-        use super::living_api::LivingCommand as C;
+        use super::api::LivingCommand as C;
         let ScriptCommand::Module(command) = command else {
             return false;
         };
@@ -557,7 +552,7 @@ impl Subsystem for LivingSubsystem {
     /// knobs and the field wherever it runs, and the A/B and the commit
     /// there in a build with the debug HUD (#854).
     fn script_modules(&self) -> &[&'static str] {
-        crate::player_app::living_api::ENABLED
+        crate::player::api::ENABLED
     }
 
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
@@ -583,7 +578,7 @@ impl Subsystem for LivingSubsystem {
     }
 
     fn debug_keys(&self) -> &'static [flint_runtime::DebugKey] {
-        super::subsystem::living::DEBUG_KEYS.keys
+        super::DEBUG_KEYS.keys
     }
 
     fn on_debug_key(&mut self, action: &str, key: &str, ctx: &mut StageCtx) {
@@ -653,8 +648,8 @@ impl Subsystem for LivingSubsystem {
             format: Some(ctx.formats.1),
             ..Default::default()
         });
-        super::living_ab::draw_other_side(
-            super::living_ab::OtherSide {
+        super::ab::draw_other_side(
+            super::ab::OtherSide {
                 ab,
                 living: props_mut(ctx.resources),
                 blend: &mut self.blend,
@@ -675,13 +670,13 @@ impl Subsystem for LivingSubsystem {
     fn ui(&mut self, ui: &mut egui::Ui) {
         // Which preset is where, while two are compared (#238).
         if let Some(ab) = self.living_ab_state() {
-            super::living_ab::paint_labels(ui.ctx(), &ab);
+            super::ab::paint_labels(ui.ctx(), &ab);
         }
     }
 
     fn scene_unloading(&mut self, ctx: &mut SceneCtx) {
         // The panel's picks outlive the scene, as --compare's do
-        let start = ctx.resources.get_or_insert_with(LivingStart::default);
+        let start = LivingStart::of(ctx.resources);
         if let Some(picks) = &self.tune.ab_picks {
             start.compare = Some(picks.clone());
         }
@@ -697,52 +692,41 @@ impl Subsystem for LivingSubsystem {
     }
 }
 
-impl super::PlayerApp {
-    /// Start comparing living props preset `a` with `b` once a scene's props
-    /// are built, split if `split`: `--compare a,b` and `--split` (#238).
-    pub fn compare_living_at_start(&mut self, a: &str, b: &str, split: bool) {
-        self.launch.compare = Some((a.to_string(), b.to_string()));
-        self.launch.compare_at_start = Some(split);
-    }
-}
-
 fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
     value
         .as_table()
         .ok_or_else(|| format!("{value} isn't a map of knobs"))
 }
 
-/// What `flint render` reads of a capture's grove: the field's clock and
-/// the blends the stage writes before each capture. Here, beside the
-/// subsystem, so `headless_game.rs` names none (#1252).
-impl super::headless_game::HeadlessGame {
-    fn living(&self) -> Option<&LivingSubsystem> {
-        self.core.subsystems.find::<LivingSubsystem>()
-    }
+/// What `flint render` reads of a capture's grove (#1252): the field's
+/// clock and the blends the stage writes before each capture, through the
+/// capture's subsystems and resources, which the render's living part reads
+/// (`crate::cli`).
+pub fn living_of<'g>(game: &CaptureGame<'g>) -> Option<&'g LivingSubsystem> {
+    flint_package::find::<LivingSubsystem>(game.subsystems)
+}
 
-    /// The wooze field and the time its clock has reached, with one.
-    pub fn wooze(&self) -> Option<(&flint_wooze::WoozeField, f64)> {
-        let living = self.living()?;
-        Some((living.wooze.as_ref()?, living.wooze_time))
-    }
+/// The wooze field and the time its clock has reached, with one.
+pub fn wooze_of<'g>(game: &CaptureGame<'g>) -> Option<(&'g flint_wooze::WoozeField, f64)> {
+    let living = living_of(game)?;
+    Some((living.wooze.as_ref()?, living.wooze_time))
+}
 
-    /// Blend every prop where its clock stands and write what moved, as a
-    /// frame of the player does.
-    pub fn upload_living(
-        &mut self,
-        renderer: &mut flint_render::SceneRenderer,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) {
-        let core = &mut self.core;
-        if let Some(living) = core.subsystems.find_mut::<LivingSubsystem>() {
-            living_props::upload_blends(
-                props_mut(&mut core.resources),
-                &mut living.blend,
-                renderer,
-                device,
-                queue,
-            );
-        }
+/// Blend every prop where its clock stands and write what moved, as a
+/// frame of the player does.
+pub fn upload_living(
+    game: CaptureGameMut,
+    renderer: &mut flint_render::SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    if let Some(living) = flint_package::find_mut::<LivingSubsystem>(game.subsystems) {
+        props::upload_blends(
+            props_mut(game.resources),
+            &mut living.blend,
+            renderer,
+            device,
+            queue,
+        );
     }
 }

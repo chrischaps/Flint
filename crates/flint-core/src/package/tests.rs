@@ -86,6 +86,53 @@ fn rust_player_is_one_of_the_packages_crates() {
     );
 }
 
+/// `[with.<package>] features` (ADR 0137 decision 9, #1558): a part that
+/// needs another package listed too. Each names features, and nothing else
+/// is a key there; a part with the package itself is a mistake.
+#[test]
+fn a_part_with_another_package_names_its_features() {
+    let with = |part: &str| format!("{LIVING}{part}\n");
+    let p = parse(
+        &with("[with.debug-hud]\nfeatures = [\"flint-living/debug-hud\"]"),
+        file(),
+    )
+    .unwrap();
+    assert_eq!(
+        p.with.get("debug-hud").map(Vec::as_slice),
+        Some(&["flint-living/debug-hud".to_string()][..])
+    );
+    assert!(parse(LIVING, file()).unwrap().with.is_empty());
+    let found = mistakes(&with("[with.debug-hud]\nfeature = [\"x\"]"));
+    assert!(
+        found[0].starts_with("with.debug-hud.feature: unknown key `feature`"),
+        "{found:#?}"
+    );
+    assert_eq!(
+        mistakes(&with("[with.living]\nfeatures = []")),
+        ["with.living: a package's part with itself is the package: put it in [build]"]
+    );
+}
+
+/// A part with a package no manifest names is the cross-file check's.
+#[test]
+fn a_part_with_no_package_is_named() {
+    let mut src = MemorySource::new();
+    src.insert("p/engine/package.toml", KERNEL);
+    src.insert("p/procgen/package.toml", PROCGEN);
+    src.insert(
+        "p/living/package.toml",
+        format!("{LIVING}[with.debug-hd]\nfeatures = []\n"),
+    );
+    vfs::scoped(Arc::new(src), || {
+        let read = Packages::read(Path::new("p"));
+        let said: Vec<String> = read.problems.iter().map(|d| d.message.clone()).collect();
+        assert!(
+            said.contains(&"has a part with `debug-hd`, and no package is named that".to_string()),
+            "{said:#?}"
+        );
+    });
+}
+
 #[test]
 fn a_misspelled_key_or_table_is_named_with_the_nearest() {
     let text = LIVING

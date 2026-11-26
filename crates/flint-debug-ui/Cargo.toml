@@ -5,13 +5,6 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
-[features]
-# The Living Props panel (#219), the one panel that needs flint-procgen. The
-# workspace takes this crate with default features off (#754): the player
-# turns it on with its own `living` feature, and flint-cli always.
-default = ["living"]
-living = ["dep:flint-procgen", "flint-procgen/living"]
-
 [dependencies]
 flint-core = { workspace = true }
 flint-geometry = { workspace = true }
@@ -22,7 +15,6 @@ flint-ecs = { workspace = true }
 flint-particles = { workspace = true }
 flint-schema = { workspace = true }
 wgpu = { workspace = true }
-flint-procgen = { workspace = true, optional = true }
 egui = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }

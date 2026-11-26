@@ -1,9 +1,9 @@
 //! The knobs through the player, headless: a scene's props with no window, moved
 //! the way the panel and scripts move them.
 
-use super::*;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
+use flint_living::player::tuning::*;
 use flint_living::LivingPropRequest;
 use flint_procgen::{
     EchoConfig, LivingEchoesDef, LivingKnob, LivingVarianceDef, ProcGenSpec, Stagger,
@@ -43,7 +43,7 @@ fn app_with(n: u64, folder: &Path) -> PlayerApp {
         .index_spec(ProcGenSpec::parse(SPEC).unwrap());
     for i in 0..n {
         let (props, resolver) =
-            crate::player_app::living_subsystem::props_and_resolver(&mut app.core.resources);
+            flint_living::player::subsystem::props_and_resolver(&mut app.core.resources);
         props
             .add_prop(
                 resolver,
@@ -61,7 +61,7 @@ fn app_with(n: u64, folder: &Path) -> PlayerApp {
             .unwrap();
     }
     let (props, resolver) =
-        crate::player_app::living_subsystem::props_and_resolver(&mut app.core.resources);
+        flint_living::player::subsystem::props_and_resolver(&mut app.core.resources);
     props.make_now(resolver);
     app.living().wooze = Some(WoozeField::new(WoozeSample::NEUTRAL));
     app
@@ -325,7 +325,7 @@ fn as_loaded_puts_it_all_back() {
 #[test]
 #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
-    use flint_debug_ui::{LivingPanelAction, LivingPropsDebugPanel, PanelScope};
+    use flint_living::panel::{LivingPanelAction, LivingPropsDebugPanel, PanelScope};
 
     fn panel(app: &mut PlayerApp) -> &mut LivingPropsDebugPanel {
         app.debug_panels_mut()[0]
@@ -428,7 +428,7 @@ fn two_species_from(folder: &Path, field: bool, living: Option<&LivingDef>) -> P
     if let Some(table) = living {
         app.core
             .living_props_mut()
-            .set_defaults(super::super::living_props::defaults_of(Some(table)));
+            .set_defaults(flint_living::player::props::defaults_of(Some(table)));
     }
     let mut oak = ProcGenSpec::parse(SPEC).unwrap();
     oak.living.as_mut().unwrap().echoes = EchoConfig {
@@ -441,7 +441,7 @@ fn two_species_from(folder: &Path, field: bool, living: Option<&LivingDef>) -> P
         .index_spec(ProcGenSpec::parse(THORN).unwrap());
     for (i, spec) in ["sapling", "sapling", "thorn", "thorn"].iter().enumerate() {
         let (props, resolver) =
-            crate::player_app::living_subsystem::props_and_resolver(&mut app.core.resources);
+            flint_living::player::subsystem::props_and_resolver(&mut app.core.resources);
         props
             .add_prop(
                 resolver,
@@ -459,7 +459,7 @@ fn two_species_from(folder: &Path, field: bool, living: Option<&LivingDef>) -> P
             .unwrap();
     }
     let (props, resolver) =
-        crate::player_app::living_subsystem::props_and_resolver(&mut app.core.resources);
+        flint_living::player::subsystem::props_and_resolver(&mut app.core.resources);
     props.make_now(resolver);
     if !field {
         app.living().wooze = None;
@@ -513,7 +513,7 @@ fn a_sparse_echo_count_from_a_script_leaves_each_species_its_spread() {
 #[cfg(feature = "debug-hud")]
 mod panel_edits {
     use super::*;
-    use flint_debug_ui::{KnobFlags, LivingKnobs, LivingPanelAction, PanelScope};
+    use flint_living::panel::{KnobFlags, LivingKnobs, LivingPanelAction, PanelScope};
 
     /// What the panel does with a hand on one knob: the knobs it last heard,
     /// that one moved, and only what moved sent.
@@ -818,7 +818,7 @@ fn oak_app(n: u64, folder: &Path) -> PlayerApp {
         .index_spec(ProcGenSpec::parse(&spec).unwrap());
     for i in 0..n {
         let (props, resolver) =
-            crate::player_app::living_subsystem::props_and_resolver(&mut app.core.resources);
+            flint_living::player::subsystem::props_and_resolver(&mut app.core.resources);
         props
             .add_prop(
                 resolver,
@@ -836,7 +836,7 @@ fn oak_app(n: u64, folder: &Path) -> PlayerApp {
             .unwrap();
     }
     let (props, resolver) =
-        crate::player_app::living_subsystem::props_and_resolver(&mut app.core.resources);
+        flint_living::player::subsystem::props_and_resolver(&mut app.core.resources);
     props.make_now(resolver);
     app
 }
@@ -982,7 +982,7 @@ fn a_preset_is_laid_over_the_scene_as_it_loaded() {
 #[cfg(feature = "debug-hud")]
 #[test]
 fn the_panel_compares_flips_and_splits() {
-    use flint_debug_ui::{LivingPanelAction, LivingPropsDebugPanel};
+    use flint_living::panel::{LivingPanelAction, LivingPropsDebugPanel};
 
     let folder = Folder::new("ab_panel");
     let mut app = app_with(2, &folder.0);
@@ -1202,20 +1202,20 @@ fn a_scenes_species_table_reaches_the_player_with_bad_values_left_out() {
         "#,
     )
     .unwrap();
-    let defaults = super::super::living_props::defaults_of(Some(&living));
+    let defaults = flint_living::player::props::defaults_of(Some(&living));
     let thorn = defaults.species["thorn"];
     assert_eq!(thorn.clock.step, Some(0.25));
     assert_eq!(thorn.clock.glide, None, "4 isn't a glide");
     assert_eq!(thorn.echoes.count, Some(2));
     assert_eq!(thorn.echoes.alpha, None);
-    let problems = super::super::living_props::species_problems(&living.species["thorn"]);
+    let problems = flint_living::player::props::species_problems(&living.species["thorn"]);
     assert_eq!(problems.len(), 2, "{problems:?}");
 }
 
 #[cfg(feature = "debug-hud")]
 mod species_panel {
     use super::*;
-    use flint_debug_ui::{KnobFlags, LivingKnobs, LivingPanelAction, PanelScope};
+    use flint_living::panel::{KnobFlags, LivingKnobs, LivingPanelAction, PanelScope};
 
     #[test]
     fn as_loaded_gives_a_species_back_its_own_values() {
@@ -1256,7 +1256,7 @@ mod species_panel {
 #[cfg(feature = "debug-hud")]
 mod scopes {
     use super::*;
-    use flint_debug_ui::{
+    use flint_living::panel::{
         Knob, KnobFlags, LivingKnobs, LivingPanelAction, LivingSpeciesState, PanelScope,
     };
     use flint_living::{BlendFrame, LivingPropId};
@@ -1278,7 +1278,7 @@ mod scopes {
         let mut app = app_with(0, folder);
         app.core
             .living_props_mut()
-            .set_defaults(super::super::super::living_props::defaults_of(
+            .set_defaults(flint_living::player::props::defaults_of(
                 flint_procgen::LivingTables::of(&scene)
                     .unwrap()
                     .living
@@ -1303,7 +1303,7 @@ mod scopes {
             let spec = components["model"]["asset"].as_str().unwrap();
             let at = components["transform"]["position"].as_array().unwrap();
             let position = [0, 1, 2].map(|j| flint_core::toml_util::toml_f32(&at[j]).unwrap());
-            let request = super::super::super::living_props::read_request(
+            let request = flint_living::player::props::read_request(
                 EntityId::from_raw(i as u64 + 1),
                 name,
                 position,
@@ -1312,13 +1312,13 @@ mod scopes {
             )
             .unwrap();
             let (props, resolver) =
-                crate::player_app::living_subsystem::props_and_resolver(&mut app.core.resources);
+                flint_living::player::subsystem::props_and_resolver(&mut app.core.resources);
             props.add_prop(resolver, request).unwrap();
         }
         let (props, resolver) =
-            crate::player_app::living_subsystem::props_and_resolver(&mut app.core.resources);
+            flint_living::player::subsystem::props_and_resolver(&mut app.core.resources);
         props.make_now(resolver);
-        app.living().wooze = super::super::super::living_props::field_of(
+        app.living().wooze = flint_living::player::props::field_of(
             flint_procgen::LivingTables::of(&scene)
                 .unwrap()
                 .wooze
@@ -1578,7 +1578,7 @@ mod scopes {
 mod picks {
     use super::*;
     use flint_core::Vec3;
-    use flint_debug_ui::{
+    use flint_living::panel::{
         DebugPanel, Knob, KnobFlags, LivingKnobs, LivingPanelAction, LivingPropsDebugPanel,
         PanelScope,
     };
@@ -1918,7 +1918,7 @@ archetype = "x"
                 .living
                 .as_ref(),
         );
-        app.living().wooze = super::super::super::living_props::field_of(
+        app.living().wooze = flint_living::player::props::field_of(
             flint_procgen::LivingTables::of(&scene)
                 .unwrap()
                 .wooze
@@ -2142,7 +2142,7 @@ step = 0.75
     #[test]
     fn a_save_names_the_species_values_the_scene_would_keep() {
         let scene: flint_scene::SceneFile = toml::from_str(GROVE).unwrap();
-        let says = super::super::scene_says(&scene);
+        let says = flint_living::player::tuning::scene_says(&scene);
         assert!(
             says.contains(&"[living.species.thorn] step".to_string()),
             "{says:?}"

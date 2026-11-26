@@ -78,7 +78,7 @@ pub const MANIFEST_FILE: &str = "package.toml";
 pub const PACKAGES_DIR: &str = "packages";
 
 /// The tables a manifest may hold.
-const TABLES: [&str; 5] = ["package", "requires", "build", "rust", "provides"];
+const TABLES: [&str; 6] = ["package", "requires", "build", "rust", "with", "provides"];
 
 /// The keys `[package]` may hold.
 const PACKAGE_KEYS: [&str; 6] = ["name", "version", "tier", "summary", "engine", "api"];
@@ -88,6 +88,9 @@ const BUILD_KEYS: [&str; 1] = ["features"];
 
 /// The keys `[rust]` may hold.
 const RUST_KEYS: [&str; 2] = ["player", "cli"];
+
+/// The keys a `[with.<package>]` table may hold.
+const WITH_KEYS: [&str; 1] = ["features"];
 
 /// A package's tier (ADR 0136 decision 3): who has it without asking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -232,6 +235,12 @@ pub struct Package {
     /// `cli::extensions()` the CLI launcher lists when the build has the
     /// package (`[rust] cli`, #1554); `None` adds no command.
     pub cli: Option<String>,
+    /// `[with.<package>] features` (ADR 0137 decision 9, #1558): a part of
+    /// this package that needs another one listed too, neither requiring
+    /// the other, and the Cargo features (`crate/feature`) that turn it on
+    /// when the game lists both. Living's `debug` module and panel are its
+    /// `[with.debug-hud]`.
+    pub with: BTreeMap<String, Vec<String>>,
     pub provides: Provides,
     /// The manifest it was read from.
     pub file: PathBuf,
@@ -278,6 +287,7 @@ pub fn parse(text: &str, file: &Path) -> Result<Package, Vec<Diagnostic>> {
     let features = p.features(&table);
     let provides = p.provides(&table);
     let (player, cli) = p.rust(&table, &provides);
+    let with = p.with(&table, package.as_ref().map(|(name, _)| name.as_str()));
     match package {
         Some((name, head)) if p.problems.is_empty() => Ok(Package {
             name,
@@ -290,6 +300,7 @@ pub fn parse(text: &str, file: &Path) -> Result<Package, Vec<Diagnostic>> {
             features,
             player,
             cli,
+            with,
             provides,
             file: file.to_path_buf(),
         }),
@@ -427,6 +438,19 @@ fn across(dir: &Path, packages: &[Package]) -> Vec<Diagnostic> {
                     .file(&p.file)
                     .field(format!("requires.{wanted}"))
                     .hint_opt(did_you_mean(wanted, names.iter().copied())),
+                );
+            }
+        }
+        for other in p.with.keys() {
+            if !names.contains(&other.as_str()) {
+                problems.push(
+                    Diagnostic::error(
+                        codes::BAD_PACKAGE,
+                        format!("has a part with `{other}`, and no package is named that"),
+                    )
+                    .file(&p.file)
+                    .field(format!("with.{other}"))
+                    .hint_opt(did_you_mean(other, names.iter().copied())),
                 );
             }
         }
@@ -795,6 +819,32 @@ impl Parse<'_> {
             Some(krate)
         };
         (crate_of("player"), crate_of("cli"))
+    }
+
+    /// `[with.<package>]`: each a table of `features`, naming a package
+    /// other than this one (whether it is one is the cross-file check's).
+    fn with(&mut self, table: &toml::Table, own: Option<&str>) -> BTreeMap<String, Vec<String>> {
+        let mut out = BTreeMap::new();
+        let Some(with) = self.sub(table, "with") else {
+            return out;
+        };
+        for (name, part) in with {
+            let field = format!("with.{name}");
+            if Some(name.as_str()) == own {
+                self.error(
+                    field,
+                    "a package's part with itself is the package: put it in [build]",
+                );
+                continue;
+            }
+            let Some(part) = part.as_table() else {
+                self.error(field, format!("a table, not {}", a(part.type_str())));
+                continue;
+            };
+            self.unknown_keys(part, &field, &WITH_KEYS);
+            out.insert(name.clone(), self.strings(part, &field, "features"));
+        }
+        out
     }
 
     fn provides(&mut self, table: &toml::Table) -> Provides {

@@ -24,12 +24,10 @@
 //! each into a bone buffer of its own, and the renderer draws them in the
 //! transparent pass in the prop's own materials.
 
+use crate::{BlendFrame, LineageDone, LivingPropId, LivingPropRequest, LivingProps, LivingStats};
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
 use flint_ecs::FlintWorld;
-use flint_living::{
-    BlendFrame, LineageDone, LivingPropId, LivingPropRequest, LivingProps, LivingStats,
-};
 use flint_procgen::{AssetKind, ProcGenResolver, Stagger};
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
@@ -39,7 +37,7 @@ use flint_procgen::player::{AssetSink, ProcGenMode};
 
 // A scene's `[living]` tables in the runtime's terms are flint-living's (#1025),
 // beside the layers they fill; these names stay for the player's callers.
-pub use flint_living::{apply_preset, defaults_of, species_of, species_problems};
+pub use crate::{apply_preset, defaults_of, species_of, species_problems};
 
 /// The field a scene's `[wooze]` table describes, if it has one. For the same
 /// reason as above, what's wrong with it is named and left out, here where
@@ -58,7 +56,7 @@ pub fn wanted_by(world: &FlintWorld) -> bool {
     world.all_entities().iter().any(|entity| {
         world
             .get_components(entity.id)
-            .is_some_and(|comps| comps.get(flint_living::components::LIVING_PROP).is_some())
+            .is_some_and(|comps| comps.get(crate::components::LIVING_PROP).is_some())
     })
 }
 
@@ -258,7 +256,7 @@ pub fn resolve(
         let Some(comps) = world.get_components(entity.id) else {
             continue;
         };
-        let Some(component) = comps.get(flint_living::components::LIVING_PROP) else {
+        let Some(component) = comps.get(crate::components::LIVING_PROP) else {
             continue;
         };
         let name = &entity.name;
@@ -432,7 +430,3 @@ pub fn wooze_report(field: &WoozeField, props: &LivingProps) -> String {
         jitter.1,
     )
 }
-
-#[cfg(test)]
-#[path = "living_props_tests.rs"]
-mod tests;

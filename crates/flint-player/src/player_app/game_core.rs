@@ -116,8 +116,6 @@ impl GameCore {
     pub fn new(world: FlintWorld, scene_path: String, project: Project) -> Self {
         let mut resources = flint_package::Resources::new();
         crate::packages::registry().make_resources(&mut resources);
-        #[cfg(feature = "living")]
-        resources.insert(flint_living::LivingProps::default());
         Self {
             subsystems: Default::default(),
             world,
@@ -174,25 +172,9 @@ impl GameCore {
         self.script.set_enabled_modules(modules);
     }
 
-    /// The scene's living props, which [`GameCore::new`] puts in the
-    /// resources.
-    #[cfg(feature = "living")]
-    pub(crate) fn living_props(&self) -> &flint_living::LivingProps {
-        self.resources
-            .get()
-            .expect("GameCore::new puts the living props in")
-    }
-
-    #[cfg(feature = "living")]
-    pub(crate) fn living_props_mut(&mut self) -> &mut flint_living::LivingProps {
-        self.resources
-            .get_mut()
-            .expect("GameCore::new puts the living props in")
-    }
-
     /// Whether the project's `[packages]` leaves `package` out (#1528). With
     /// no `[packages]` table nothing is left out.
-    #[cfg_attr(not(all(feature = "living", feature = "debug-hud")), allow(dead_code))] // the Living Props panel asks it
+    #[cfg_attr(not(feature = "debug-hud"), allow(dead_code))] // a package's scene panel asks it
     pub(crate) fn leaves_out(&self, package: &str) -> bool {
         self.packages
             .as_ref()
@@ -806,6 +788,7 @@ impl GameCore {
     pub(crate) fn make_scene_assets(
         &mut self,
         gpu: flint_package::assets::Gpu<'_>,
+        tables: &toml::Table,
         config: &flint_render::model_loader::ModelLoadConfig,
         mode: flint_package::assets::MakeMode,
         say_unmade: bool,
@@ -826,6 +809,7 @@ impl GameCore {
             maker.scene(&mut flint_package::assets::MakeCtx {
                 world: &mut self.world,
                 scene_path: &self.scene_path,
+                tables,
                 config,
                 gpu: flint_package::assets::Gpu {
                     renderer: &mut *gpu.renderer,

@@ -4,7 +4,7 @@
 //! `.wooze.toml` take, and the "not enabled" error in a scene without the
 //! subsystem. The player's half is `living_props_tests.rs`.
 
-use super::LivingCommand;
+use flint_living::player::api::LivingCommand;
 use flint_wooze::{WoozeField, WoozeSample};
 
 /// What a script asked for, with the living modules enabled.
@@ -297,7 +297,7 @@ fn the_living_modules_are_listed_with_when_they_are_enabled() {
 /// is the "not enabled" error naming the feature, and queues nothing.
 #[test]
 fn the_debug_module_runs_only_in_a_build_with_the_debug_hud() {
-    let enabled = super::ENABLED;
+    let enabled = flint_living::player::api::ENABLED;
     assert!(enabled.contains(&"living") && enabled.contains(&"wooze"));
     assert_eq!(enabled.contains(&"debug"), cfg!(feature = "debug-hud"));
 

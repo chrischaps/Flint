@@ -620,12 +620,11 @@ impl PlayerArgs {
             None => None,
         };
 
-        #[cfg_attr(not(feature = "living"), allow(unused_mut))]
         let (world, mut scene_file) =
             load_scene(&scene, &registry).with_context(|| flint_scene::load_failed(&scene))?;
-        // Living props' tables: checked, and the preset [wooze] names filled in (#686)
-        #[cfg(feature = "living")]
-        flint_procgen::settle_scene(&mut scene_file, scene_path)
+        // The packages' tables settled: living's checked, and the preset
+        // [wooze] names filled in (#686, #1558)
+        crate::settle_scene(&mut scene_file, scene_path)
             .with_context(|| flint_scene::load_failed(scene_path))?;
         drop(read);
         // The scene's name and size are said with what it loaded, once it
@@ -685,14 +684,22 @@ impl PlayerArgs {
             app.capture.show_stats = true;
             app.capture.stats_view = view;
         }
+        // `--compare` and `--split` are the living package's (#238): its
+        // builder reads them from the run's launch flags (#1558). A player
+        // without it has no grove to compare.
         if let Some((a, b)) = compare {
-            #[cfg(feature = "living")]
-            app.compare_living_at_start(&a, &b, args.split);
-            #[cfg(not(feature = "living"))]
-            tracing::warn!(
-                target: "player",
-                "[living] --compare {a},{b}: this player is built without the `living` feature"
-            );
+            if crate::packages::registry().has("living") {
+                let flags = app.launch_flags_mut();
+                flags.set("compare", format!("{a},{b}"));
+                if args.split {
+                    flags.set("split", "true");
+                }
+            } else {
+                tracing::warn!(
+                    target: "player",
+                    "[living] --compare {a},{b}: this player is built without the `living` package"
+                );
+            }
         }
 
         // The game's buses (#730), then the flags over them: each scales

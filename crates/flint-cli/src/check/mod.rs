@@ -655,7 +655,7 @@ mod tests {
     use flint_core::vfs::MemorySource;
     use std::sync::Arc;
 
-    #[cfg(feature = "living")]
+    /// flint-living is a dev-dependency, so this holds in every build.
     #[test]
     fn the_living_prop_name_is_flint_livings() {
         assert_eq!(LIVING_PROP, flint_living::components::LIVING_PROP);

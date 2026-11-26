@@ -19,7 +19,7 @@ use flint_script::{ModuleCommand, ScriptModule};
 
 /// What a Living Props or wooze function asked, for the living subsystem.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum LivingCommand {
+pub enum LivingCommand {
     /// `set_wooze`: the field's global knobs (any of `amplitude`, `step`,
     /// `glide`, `jitter` and `preset`), over `seconds`.
     SetWooze { knobs: toml::Value, seconds: f64 },
@@ -82,29 +82,29 @@ const WITH_DEBUG_HUD: &str = "the player is built with its debug-hud feature (on
 /// a build with the `debug-hud` feature (#854), so a shipped build's
 /// `compare_living` is told the module is not enabled and how to enable it.
 #[cfg(feature = "debug-hud")]
-pub(crate) const ENABLED: &[&str] = &["wooze", "living", "debug"];
+pub const ENABLED: &[&str] = &["wooze", "living", "debug"];
 #[cfg(not(feature = "debug-hud"))]
-pub(crate) const ENABLED: &[&str] = &["wooze", "living"];
+pub const ENABLED: &[&str] = &["wooze", "living"];
 
 /// The `living` module: Living Props' knobs, the F3 panel's by another
 /// door, for every prop at once or one species (#246), and the clock
 /// everything woozy runs on.
-pub(crate) struct LivingModule;
+pub struct LivingModule;
 
 /// The `wooze` module: the scene's wooze field, which every living prop and
 /// shallow-wooze mesh reads, its global knobs and its named zones.
-pub(crate) struct WoozeModule;
+pub struct WoozeModule;
 
 /// The `debug` module: the look-development calls that are the Living
 /// Props panel's actions: the A/B comparison (F5/F6/F7) and the commit to
 /// the scene file. Tools for tuning a scene, not for a shipped game: it is
 /// declared in every build, so a call is always the "not enabled" error
 /// rather than an unknown function, and enabled only with `debug-hud`.
-pub(crate) struct DebugModule;
+pub struct DebugModule;
 
-pub(crate) static LIVING: LivingModule = LivingModule;
-pub(crate) static WOOZE: WoozeModule = WoozeModule;
-pub(crate) static DEBUG: DebugModule = DebugModule;
+pub static LIVING: LivingModule = LivingModule;
+pub static WOOZE: WoozeModule = WoozeModule;
+pub static DEBUG: DebugModule = DebugModule;
 
 impl ScriptModule for LivingModule {
     fn name(&self) -> &'static str {
@@ -330,7 +330,7 @@ impl ScriptModule for WoozeModule {
 /// the field as it stands and the time on its clock the frame will reach, so
 /// a script reads the moment the props and shallow wooze are drawn at.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct WoozeReading {
+pub struct WoozeReading {
     /// `None` in a scene with no `[wooze]` table: the reads answer `#{}`.
     pub field: Option<std::sync::Arc<flint_wooze::WoozeField>>,
     /// Seconds on the field's clock (the living clock, which a game state's
@@ -382,7 +382,7 @@ struct ScriptClock {
 /// Every script entity's clock. One per entity that asks, read wherever it
 /// last asked, so two reads by one script in a frame share a count.
 #[derive(Debug, Default)]
-pub(crate) struct ScriptClocks {
+pub struct ScriptClocks {
     scene: u64,
     clocks: std::collections::HashMap<flint_core::EntityId, ScriptClock>,
 }
@@ -512,11 +512,3 @@ impl ScriptModule for DebugModule {
         .run(|call, ()| queue(call, LivingCommand::StopComparing));
     }
 }
-
-#[cfg(test)]
-#[path = "living_api_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "wooze_read_tests.rs"]
-mod read_tests;

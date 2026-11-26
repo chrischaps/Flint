@@ -18,12 +18,12 @@
 //! the second side's to both. Both sides write every bone every frame while
 //! split, since the buffers swap hands twice a frame. A is always left.
 
-use flint_living::{BlendFrame, LivingProps};
+use crate::{BlendFrame, LivingProps};
 use flint_render::{Camera, SceneRenderer, SplitView};
 use flint_wooze::{BoilClock, WoozeField};
 
-use super::living_subsystem::{props_and_resolver, props_mut, LivingSubsystem};
-use super::subsystem::StageCtx;
+use super::subsystem::{props_and_resolver, props_mut, LivingSubsystem};
+use flint_package::StageCtx;
 use flint_wooze::shallow::ShallowWooze;
 
 /// What a side called "as it was" names: the knobs as they stood when the
@@ -174,7 +174,7 @@ pub fn side_label(name: &str) -> &str {
 
 impl LivingSubsystem {
     /// How the comparison stands, if there is one.
-    pub(super) fn living_ab_state(&self) -> Option<AbState> {
+    pub fn living_ab_state(&self) -> Option<AbState> {
         let ab = self.tune.ab.as_ref()?;
         Some(AbState {
             a: ab.names[0].clone(),
@@ -247,7 +247,7 @@ impl LivingSubsystem {
     /// Compare preset `a` with preset `b` on this grove, showing A. Either may be
     /// [`AS_IT_WAS`]. A comparison already going ends first, keeping what it
     /// showed. What can't be loaded is named, and that side keeps what it had.
-    pub(super) fn compare_living(
+    pub fn compare_living(
         &mut self,
         ctx: &mut StageCtx<'_>,
         a: &str,
@@ -295,7 +295,7 @@ impl LivingSubsystem {
 
     /// Show the other side, on the same clock and camera. Returns whether there
     /// was a comparison to flip.
-    pub(super) fn flip_living(&mut self, ctx: &mut StageCtx<'_>) -> bool {
+    pub fn flip_living(&mut self, ctx: &mut StageCtx<'_>) -> bool {
         if self.tune.ab.is_none() {
             return false;
         }
@@ -309,7 +309,7 @@ impl LivingSubsystem {
 
     /// Show A and B side by side, or one at a time. Returns whether there was a
     /// comparison to split.
-    pub(super) fn split_living(&mut self, ctx: &mut StageCtx<'_>, split: bool) -> bool {
+    pub fn split_living(&mut self, ctx: &mut StageCtx<'_>, split: bool) -> bool {
         let Some(ab) = self.tune.ab.as_mut() else {
             return false;
         };
@@ -322,14 +322,14 @@ impl LivingSubsystem {
     }
 
     /// End the comparison, keeping the side that's shown.
-    pub(super) fn stop_comparing_living(&mut self, ctx: &mut StageCtx<'_>) {
+    pub fn stop_comparing_living(&mut self, ctx: &mut StageCtx<'_>) {
         if self.tune.ab.take().is_some() {
             props_mut(ctx.resources).redraw_all();
         }
     }
 
     /// Move the hidden side on by the same `dt` as the scene's own, after it.
-    pub(super) fn tick_hidden_side(&mut self, ctx: &mut StageCtx<'_>, dt: f64) {
+    pub fn tick_hidden_side(&mut self, ctx: &mut StageCtx<'_>, dt: f64) {
         let Some(ab) = self.tune.ab.as_mut() else {
             return;
         };
@@ -354,14 +354,14 @@ impl LivingSubsystem {
     }
 
     /// The hidden side's ring report, for `--exit-after`.
-    pub(super) fn hidden_side_stats(&self) -> Option<flint_living::LivingStats> {
+    pub fn hidden_side_stats(&self) -> Option<crate::LivingStats> {
         Some(self.tune.ab.as_ref()?.hidden.props.stats())
     }
 
     /// What A and B would be, for a key or the panel that starts a comparison:
     /// the panel's picks, or the knobs as they stand against `linklater` (the
     /// epic's sweet spot) or the first preset on offer.
-    pub(super) fn living_ab_picks(&self, ctx: &StageCtx<'_>) -> (String, String) {
+    pub fn living_ab_picks(&self, ctx: &StageCtx<'_>) -> (String, String) {
         if let Some(picks) = &self.tune.ab_picks {
             return picks.clone();
         }
@@ -376,7 +376,7 @@ impl LivingSubsystem {
     }
 
     /// F5: stop or start the clock living props run on, as the panel's Freeze.
-    pub(super) fn toggle_living_freeze(&mut self, ctx: &mut StageCtx<'_>) {
+    pub fn toggle_living_freeze(&mut self, ctx: &mut StageCtx<'_>) {
         if !props_mut(ctx.resources).is_empty() {
             self.tune.frozen = !self.tune.frozen;
         }
@@ -384,7 +384,7 @@ impl LivingSubsystem {
 
     /// F6 flips (`split` false) and F7 splits or unsplits, starting a comparison
     /// of the picks if there isn't one. In a scene with no living props, nothing.
-    pub(super) fn living_ab_key(&mut self, ctx: &mut StageCtx<'_>, split: bool) {
+    pub fn living_ab_key(&mut self, ctx: &mut StageCtx<'_>, split: bool) {
         if props_mut(ctx.resources).is_empty() {
             return;
         }
@@ -414,7 +414,7 @@ impl LivingSubsystem {
     }
 
     /// The comparison asked for at start, once there are props to compare.
-    pub(super) fn start_asked_comparison(&mut self, ctx: &mut StageCtx<'_>) {
+    pub fn start_asked_comparison(&mut self, ctx: &mut StageCtx<'_>) {
         if props_mut(ctx.resources).is_empty() {
             return;
         }
@@ -437,7 +437,7 @@ impl LivingSubsystem {
     }
 
     /// Whether this frame is split.
-    pub(super) fn living_split(&self) -> bool {
+    pub fn living_split(&self) -> bool {
         self.tune.ab.as_ref().is_some_and(|ab| ab.split)
     }
 }
@@ -485,7 +485,7 @@ pub fn draw_other_side(
 
     // Its bones, whole, into the buffers the first drawing has finished with.
     side.props.redraw_all();
-    super::living_props::upload_props(&mut side.props, blend, renderer, device, queue);
+    super::props::upload_props(&mut side.props, blend, renderer, device, queue);
 
     // Its boil and shallow wooze, then the scene as it now stands.
     let own_config = renderer.post_process_config().clone();

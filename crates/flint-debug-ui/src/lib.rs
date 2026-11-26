@@ -2,8 +2,6 @@ mod camera_panel;
 mod component_panel;
 mod grass_panel;
 mod headless_frame;
-#[cfg(feature = "living")]
-mod living_props_panel;
 mod ocean_panel;
 mod particles_panel;
 mod render_panel;
@@ -18,13 +16,6 @@ pub use camera_panel::{CameraDebugPanel, CameraPanelConfig};
 pub use component_panel::ComponentPanel;
 pub use grass_panel::GrassDebugPanel;
 pub use headless_frame::run_headless_frame;
-#[cfg(feature = "living")]
-pub use living_props_panel::{
-    pick_prop, Knob, KnobControl, KnobDesc, KnobFlags, KnobPanel, KnobSection, KnobSources,
-    KnobValue, LivingAbState, LivingHealth, LivingKnobs, LivingPanelAction, LivingPanelState,
-    LivingPickedState, LivingPropRow, LivingPropsDebugPanel, LivingSpeciesState, PanelScope,
-    KNOB_TABLE, LIVING_PROPS_DEBUG_PANEL,
-};
 pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};
 pub use particles_panel::{
     EmitterRow, ParticlePanelAction, ParticlesDebugPanel, PARTICLES_DEBUG_PANEL,
@@ -124,6 +115,12 @@ pub trait DebugPanel {
     /// panel the host fills itself, a game's).
     fn sync(&mut self, _ctx: &mut PanelCtx) {}
 
+    /// Paint what the panel shows in the world (the Living Props pose
+    /// overlay and a picked tree's marks, #218, #248), in the HUD pass under
+    /// every panel, with the frame's view-projection. The default paints
+    /// nothing.
+    fn paint_world(&mut self, _ctx: &egui::Context, _view_proj: &[[f32; 4]; 4]) {}
+
     /// About how many widget rows tall the panel is, for balancing the F3
     /// columns ([`assign_columns`]).
     fn weight(&self) -> u32 {
@@ -140,6 +137,17 @@ pub trait DebugPanel {
     fn as_any(&self) -> &dyn std::any::Any;
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
+
+/// A package's F3 panel for a scene that uses it (#1558, ADR 0137 section
+/// 4's "debug-hud's registration point"): `None` when the scene doesn't.
+pub type ScenePanel = fn(&flint_ecs::FlintWorld) -> Option<Box<dyn DebugPanel>>;
+
+/// The registration point packages add their scene panels to: the player
+/// inserts it, and makes each at a scene's panels, in the order added, with
+/// the package it belongs to (a project's `[packages]` that leaves the
+/// package out gets none). Living's Living Props panel is one.
+#[derive(Default)]
+pub struct ScenePanels(pub Vec<(&'static str, ScenePanel)>);
 
 /// Distribute panels (by [`DebugPanel::weight`], in stable creation order)
 /// across up to `max_cols` columns via greedy lightest-bin assignment.

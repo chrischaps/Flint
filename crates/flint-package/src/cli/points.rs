@@ -93,6 +93,34 @@ pub struct SpecChecks {
 /// A spec's generator's name and its params' problems.
 pub type SpecParams = (String, Vec<SpecIssue>);
 
+/// What `flint check` asks of the scene tables a package reads itself
+/// (#1558: living's `[living]` and `[wooze]`, which the scene file keeps raw
+/// and the package's types read). Without it the scene pass's schema half
+/// is all that is said of them, as a player without the package reads
+/// neither.
+pub struct TableChecks {
+    /// Each of the package's tables that doesn't fit its type, with the
+    /// reader's words: the scene doesn't load until it does.
+    pub refused: fn(&flint_scene::SceneFile) -> Vec<(&'static str, String)>,
+    /// The tables held to what reads them, in groups, in order: each with
+    /// the table whose scene-pass errors it says again in its own words,
+    /// which go when the group has anything to say.
+    pub check: fn(&TableCheck) -> Vec<(Option<&'static str>, Vec<flint_core::Diagnostic>)>,
+}
+
+/// One scene, as [`TableChecks::check`] reads it.
+pub struct TableCheck<'a> {
+    pub scene: &'a Path,
+    pub file: &'a flint_scene::SceneFile,
+    pub registry: &'a flint_schema::SchemaRegistry,
+    /// The loaded world, when it loaded: which specs the props grow from.
+    pub world: Option<&'a flint_ecs::FlintWorld>,
+}
+
+/// `flint render`'s point for the package that clocks a scene
+/// ([`super::render::StagePart`]).
+pub struct Stages(pub &'static dyn super::render::StagePart);
+
 /// One problem with a spec's params.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpecIssue {

@@ -62,9 +62,17 @@ pub static ENGINE: Part = Part {
     register: |registry| {
         use crate::player_app::subsystem;
         subsystem::field::register(registry);
-        #[cfg(not(feature = "living"))]
-        subsystem::living::register_absent(registry);
+        // A game state may name `living` in any build (#727), and a scene
+        // that uses living props in a build without the package hears so
+        // once (its own crate since #1558)
+        registry
+            .policy("living")
+            .scene_subsystem(crate::player_app::missing_features::unbuilt_living);
         registry.scene_subsystem(crate::player_app::missing_features::unbuilt_music);
+        // Debug-hud's point for a package's scene panels (the Living Props
+        // panel, #1558), which the packages after the kernel fill
+        #[cfg(feature = "debug-hud")]
+        registry.insert_point(flint_debug_ui::ScenePanels::default());
     },
 };
 
@@ -85,11 +93,6 @@ mod generated {
 static DEBUG_HUD: Part = Part {
     name: "debug-hud",
     register: |_| {},
-};
-#[cfg(feature = "living")]
-static LIVING: Part = Part {
-    name: "living",
-    register: crate::player_app::subsystem::living::register,
 };
 #[cfg(feature = "rhythm")]
 static RHYTHM: Part = Part {
@@ -118,8 +121,6 @@ pub fn stock() -> Vec<&'static dyn Package> {
     let mut list: Vec<&'static dyn Package> = generated::moved();
     #[cfg(feature = "debug-hud")]
     list.push(&DEBUG_HUD);
-    #[cfg(feature = "living")]
-    list.push(&LIVING);
     #[cfg(feature = "rhythm")]
     list.push(&RHYTHM);
     let at = |p: &&dyn Package| {
@@ -379,7 +380,7 @@ mod tests {
         assert!(!lacks("ai"));
         assert!(!lacks("engine"));
         assert!(!lacks("frame-history"), "a build option, not a package");
-        assert_eq!(lacks("living"), !cfg!(feature = "living"));
+        assert_eq!(lacks("living"), !built_feature("living"));
         let built = built_feature;
         assert_eq!(lacks("procgen"), !built("procgen"));
     }
@@ -419,10 +420,10 @@ mod tests {
                 .all(|f| match f.as_str() {
                     // The packages still in this crate, by their gates
                     "debug-hud" => cfg!(feature = "debug-hud"),
-                    "living" => cfg!(feature = "living"),
                     "rhythm" => cfg!(feature = "rhythm"),
                     // A package in its own folder (music, #1555; procgen,
-                    // #1557), as the build script read the feature
+                    // #1557; living, #1558), as the build script read the
+                    // feature
                     other => {
                         assert!(
                             generated::BUILT.iter().any(|(f, _)| *f == other),

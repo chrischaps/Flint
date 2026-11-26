@@ -874,7 +874,7 @@ impl PlayerApp {
 
     /// The asset makers' frame (procgen's budgeted queue), as the frame
     /// runs it (tests).
-    #[cfg(all(test, feature = "living"))]
+    #[cfg(test)]
     pub(super) fn tick_procgen(&mut self) {
         use super::game_core::FrameHost;
         let (core, lent) = self.lend();
@@ -1114,7 +1114,7 @@ impl PlayerApp {
         #[cfg(feature = "debug-hud")]
         let mut debug_panels =
             std::mem::take(super::debug_panels::panels_mut_of(&mut self.core.resources));
-        #[cfg(all(feature = "debug-hud", feature = "living"))]
+        #[cfg(feature = "debug-hud")]
         let view_proj = self.camera.view_projection_matrix();
         let ui_textures = &self.hud.textures;
         let ui_fonts = &self.hud.fonts;
@@ -1276,16 +1276,12 @@ impl PlayerApp {
                 // props presets are compared, #238)
                 subsystems.ui(ui);
 
-                // The pose overlay (#218) and a picked tree's marks and window
-                // (#248), in the world and under every panel.
-                #[cfg(all(feature = "debug-hud", feature = "living"))]
+                // What panels paint in the world, under every panel: the
+                // Living Props pose overlay (#218) and a picked tree's marks
+                // and window (#248).
+                #[cfg(feature = "debug-hud")]
                 for panel in debug_panels.iter_mut() {
-                    if let Some(living) = panel
-                        .as_any_mut()
-                        .downcast_mut::<flint_debug_ui::LivingPropsDebugPanel>()
-                    {
-                        living.paint_overlay(ctx, &view_proj);
-                    }
+                    panel.paint_world(ctx, &view_proj);
                 }
 
                 #[cfg(feature = "debug-hud")]

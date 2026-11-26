@@ -196,13 +196,6 @@ impl PlayerApp {
             self.assets.of(&self.core.project),
         );
 
-        // What the scene says about living props, for the props procgen
-        // adds (their clocks and field are the living subsystem's)
-        #[cfg(feature = "living")]
-        self.core
-            .living_props_mut()
-            .set_defaults(super::living_props::defaults_of(self.scene.living.as_ref()));
-
         // The asset makers before the model loader: catalog > procgen >
         // file (#32). A run with none (#754, #1557) says what it won't make.
         self.core.make_scene_assets(
@@ -211,6 +204,7 @@ impl PlayerApp {
                 device,
                 queue,
             },
+            &self.scene.tables,
             &config,
             self.launch.procgen_mode,
             true,
@@ -340,8 +334,8 @@ impl PlayerApp {
         self.create_component_panels();
         self.create_camera_debug_panel();
         self.create_particles_debug_panel();
-        #[cfg(feature = "living")]
-        self.create_living_debug_panel();
+        // The packages' own (the Living Props panel, #218)
+        self.create_package_debug_panels();
         self.create_styles_debug_panel();
         // Rendering & Effects (ADR 0053): unconditional, F4 summons it
         self.create_render_debug_panel();

@@ -402,12 +402,12 @@ pub(super) fn render(
     // An echoes column with nothing to echo would draw the same picture
     // in every column (#531)
     if let Some(grid) = grid.as_ref().filter(|g| g.is_living()) {
-        #[cfg(not(feature = "living"))]
-        return Err(super::absent::missing(
-            format!("flint render --sweep {}", grid.name()),
-            "living",
-        ));
-        #[cfg(feature = "living")]
+        if stages().is_none() {
+            return Err(super::absent::missing(
+                format!("flint render --sweep {}", grid.name()),
+                "living",
+            ));
+        }
         if !living_wanted(&world) {
             anyhow::bail!(
                 "--sweep {}: this scene has no living props, so [living] echoes draws \
@@ -524,18 +524,20 @@ fn first_capture_done() -> Option<load_report::LoadReport> {
     Some(report)
 }
 
-/// Whether the scene grows living props, as the player's load asks.
-#[cfg(feature = "living")]
-fn living_wanted(world: &flint_ecs::FlintWorld) -> bool {
-    flint_player::living_wanted(world)
+/// The render's point for the package that clocks a scene (#1558: living's
+/// props and wooze field), `None` in a flint without it.
+pub(super) fn stages() -> Option<&'static dyn flint_package::cli::render::StagePart> {
+    crate::points()
+        .get::<flint_package::cli::Stages>()
+        .map(|stages| stages.0)
 }
 
-/// Built without the living package (#1333): the player grows none, so a
+/// Whether the scene grows living props, as the player's load asks. Built
+/// without the living package (#1333) the player grows none, so a
 /// `living_prop` whose model is a `[living]` spec draws nothing (its load
 /// warns once).
-#[cfg(not(feature = "living"))]
-fn living_wanted(_: &flint_ecs::FlintWorld) -> bool {
-    false
+fn living_wanted(world: &flint_ecs::FlintWorld) -> bool {
+    stages().is_some_and(|stages| stages.grows(world))
 }
 
 /// One still frame, read back: under `config` when given (a sweep column,

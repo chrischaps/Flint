@@ -33,6 +33,7 @@
 pub mod assets;
 pub mod cli;
 mod context;
+mod launch;
 pub mod note;
 mod registry;
 mod resources;
@@ -40,11 +41,14 @@ mod stage;
 mod subsystem;
 
 pub use context::{
-    Button, Capture, EncodeCtx, ExitReport, FixedCtx, FrameCtx, Lasts, Pads, PlayerInput,
-    ReportCtx, SceneCtx, StageCtx,
+    find, find_mut, Button, Capture, CaptureGame, CaptureGameMut, EncodeCtx, ExitReport, FixedCtx,
+    FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, StageCtx,
 };
+pub use launch::LaunchFlags;
 pub use note::Note;
-pub use registry::{left_out_line, BuildForScene, LeftOutLine, Package, Registry, RunResources};
+pub use registry::{
+    left_out_line, BuildForScene, LeftOutLine, Package, Registry, RunResources, SettleScene,
+};
 pub use resources::Resources;
 pub use stage::Stage;
 pub use subsystem::Subsystem;

@@ -13,15 +13,10 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use flint_core::package::InUse;
 use flint_core::project::{AssetKind, Project};
 use flint_ecs::FlintWorld;
 use flint_package::{SceneCtx, Subsystem};
 use flint_terrain::GrassConfig;
-
-/// One wording of a left-out package's line, the kernel's and every
-/// package's (#1528): flint-package's since #1555.
-pub(crate) use flint_package::left_out_line;
 
 /// The components of the parts a build may leave out (#1330). Each one's
 /// crate owns its name (`flint_music::components`, `flint_living::components`,
@@ -51,6 +46,20 @@ pub(crate) fn music_line(world: &FlintWorld) -> Option<String> {
     )
 }
 
+/// The kernel's builder for a run without the `living` package (its own
+/// crate since #1558): a scene that uses living props, `[living]` or
+/// `[wooze]` hears, once, that they stand still. With the package
+/// registered it says nothing; the package's own builder runs them.
+pub(crate) fn unbuilt_living(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+    if !ctx.registry.has("living") {
+        let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
+        if let Some(line) = living_line(ctx.world, ctx.tables, grass) {
+            tracing::warn!(target: "load", "{line}");
+        }
+    }
+    None
+}
+
 /// The kernel's builder for a run without the `music` package (its own
 /// crate since #1555): a scene with a `music_session` is told, once, that
 /// it plays silent. With the package registered it says nothing; the
@@ -64,8 +73,9 @@ pub(crate) fn unbuilt_music(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     None
 }
 
-/// What of living props a scene uses, in the order the line names them.
-#[cfg_attr(feature = "living", allow(dead_code))]
+/// What of living props a scene uses, in the order the line names them
+/// (the living package's left-out line says the same, from its own copy:
+/// `flint_living::player::uses`, which `the_names_are_the_crates` holds).
 pub(crate) fn living_uses(
     world: &FlintWorld,
     tables: &toml::Table,
@@ -92,7 +102,6 @@ pub(crate) fn living_uses(
 }
 
 /// The line for a scene that uses living props, in a build without `living`.
-#[cfg_attr(feature = "living", allow(dead_code))]
 pub(crate) fn living_line(
     world: &FlintWorld,
     tables: &toml::Table,
@@ -106,23 +115,6 @@ pub(crate) fn living_line(
             uses.join(", ")
         )
     })
-}
-
-/// [`left_out_line`] of living props: what [`living_uses`] finds stands
-/// still.
-#[cfg_attr(not(feature = "living"), allow(dead_code))]
-pub(crate) fn living_left_out_line(
-    in_use: &InUse,
-    world: &FlintWorld,
-    tables: &toml::Table,
-    grass: Option<&GrassConfig>,
-) -> Option<String> {
-    left_out_line(
-        in_use,
-        "living",
-        &living_uses(world, tables, grass),
-        "stand still",
-    )
 }
 
 /// The names in `world` (`model.asset`, a material's or sprite's
@@ -217,11 +209,18 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "living")]
+    /// The names are the living package's crates', and so is what its own
+    /// left-out line says the scene uses (flint-living is a dev-dependency).
     #[test]
     fn the_names_are_the_crates() {
         assert_eq!(comp::LIVING_PROP, flint_living::components::LIVING_PROP);
         assert_eq!(comp::SHALLOW_WOOZE, flint_wooze::components::SHALLOW_WOOZE);
+        let world = world_with(&[("living_prop", "species = \"oak\""), ("shallow_wooze", "")]);
+        let tables: toml::Table = "[wooze]\namplitude = 1.0\n".parse().unwrap();
+        assert_eq!(
+            living_uses(&world, &tables, None),
+            flint_living::player::uses(&world, &tables, None)
+        );
     }
 
     #[test]

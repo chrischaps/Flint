@@ -428,11 +428,9 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
             })
         })
         .transpose()?;
-    #[cfg_attr(not(feature = "living"), allow(unused_mut))]
     let (world, mut scene_file) = flint_scene::load_scene(&scene, &registry)
         .with_context(|| flint_scene::load_failed(&scene))?;
-    #[cfg(feature = "living")]
-    flint_procgen::settle_scene(&mut scene_file, scene_path)
+    crate::settle_scene(&mut scene_file, scene_path)
         .with_context(|| flint_scene::load_failed(scene_path))?;
 
     let mut app = PlayerApp::with_audio(

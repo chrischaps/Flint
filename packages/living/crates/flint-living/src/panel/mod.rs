@@ -2,9 +2,11 @@
 //! clock drawn as the curve it is, freeze and single-step, a pose overlay in the
 //! world, and presets saved as TOML a scene's `[wooze]` table can name.
 //!
-//! The panel holds plain data; the host (`flint-player`) mirrors what's true into
-//! it each frame while it's showing and drains what it asked for, so this crate
-//! never depends on `flint-procgen`.
+//! The panel holds plain data; the living subsystem mirrors what's true into
+//! it each frame while it's showing and drains what it asked for
+//! (`player::tuning::panel`). It is the living package's, behind its
+//! `debug-hud` feature (#1558): it moved here from flint-debug-ui, which so
+//! names no package's panel.
 
 mod clock;
 mod knobs;
@@ -12,8 +14,8 @@ mod overlay;
 mod state;
 mod ui;
 
-use crate::DebugPanel;
 use egui::Color32;
+use flint_debug_ui::DebugPanel;
 use ui::Mark;
 
 pub use knobs::{
@@ -240,6 +242,10 @@ impl LivingPropsDebugPanel {
 impl DebugPanel for LivingPropsDebugPanel {
     fn name(&self) -> &str {
         LIVING_PROPS_DEBUG_PANEL
+    }
+
+    fn paint_world(&mut self, ctx: &egui::Context, view_proj: &[[f32; 4]; 4]) {
+        self.paint_overlay(ctx, view_proj);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {

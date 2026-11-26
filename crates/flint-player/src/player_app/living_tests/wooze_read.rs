@@ -2,8 +2,8 @@
 //! `wooze_beat`, inside a zone and outside it, held to the clock shallow
 //! wooze keeps, and `#{}` in a scene with no field.
 
-use super::{ScriptClocks, WoozeReading};
 use flint_core::EntityId;
+use flint_living::player::api::{ScriptClocks, WoozeReading};
 use flint_wooze::{ShallowClock, WoozeField, WoozeSample};
 use std::sync::Arc;
 

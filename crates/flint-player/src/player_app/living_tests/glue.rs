@@ -3,13 +3,13 @@
 //! subsystem itself (`living()`), made bare if the test entered no scene.
 
 #![allow(unused_imports)]
-use super::*;
-use crate::player_app::living_ab::AbState;
-use crate::player_app::living_subsystem::LivingSubsystem;
 use crate::player_app::subsystem::stage_ctx;
 use crate::player_app::PlayerApp;
 #[cfg(feature = "debug-hud")]
-use flint_debug_ui::{KnobFlags, LivingPanelAction, LivingPickedState, LivingSpeciesState};
+use flint_living::panel::{KnobFlags, LivingPanelAction, LivingPickedState, LivingSpeciesState};
+use flint_living::player::ab::AbState;
+use flint_living::player::subsystem::LivingSubsystem;
+use flint_living::player::tuning::*;
 
 impl PlayerApp {
     /// The living subsystem, a bare one if the scene made none.
@@ -186,7 +186,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(crate) fn living_species_states(
         &mut self,
-        unsaved: &super::Unsaved,
+        unsaved: &flint_living::player::tuning::Unsaved,
     ) -> Vec<LivingSpeciesState> {
         self.with_living(|living, ctx| {
             let _ = &ctx;

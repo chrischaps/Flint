@@ -28,14 +28,21 @@ use flint_procgen::{
 use flint_render::{Camera, HeadlessContext, RendererConfig, SceneRenderer};
 use image::{Rgb, RgbImage};
 
-use super::gif_writer;
-use super::render_plan;
+use flint_package::cli::gif::{self as gif_writer, is_gif, GIF_MAX_FPS};
 use flint_procgen_cli::{build_mesh_world, PREVIEW_ASSET};
 
 /// What `--strip` was asked for: frames, their rate, the grid's columns
 /// (`None` picks a 4:3 sheet) and each frame's size. Procgen's `gen`
 /// declares it, with the point (`StripSheet`) this fills.
 pub use flint_procgen_cli::StripOptions;
+
+/// A human line, on stdout unless stdout carries a document (the CLI's
+/// `say!`, flint_package::cli::say).
+macro_rules! say {
+    ($($t:tt)*) => {
+        flint_package::cli::say(format!($($t)*))
+    };
+}
 
 /// Living's `--strip`, as procgen's `gen` asks for it (#1557).
 pub fn point() -> flint_procgen_cli::StripSheet {
@@ -217,12 +224,12 @@ pub fn run(
         .with_context(|| format!("{label}: --strip needs a living prop"))?;
 
     let output = output_path(spec, output)?;
-    let animated = render_plan::is_gif(&output.to_string_lossy());
-    if animated && options.fps > render_plan::GIF_MAX_FPS {
+    let animated = is_gif(&output.to_string_lossy());
+    if animated && options.fps > GIF_MAX_FPS {
         bail!(
             "a GIF can't play {} fps; it stops at {}",
             options.fps,
-            render_plan::GIF_MAX_FPS
+            GIF_MAX_FPS
         );
     }
     let skeleton = alive
@@ -234,14 +241,14 @@ pub fn run(
     let bar_rows = bar_segments(&skeleton.segments, clock.stagger).len() as u32;
     let layout = Layout::new(options.frames, options.columns, options.cell_size, bar_rows);
 
-    crate::output::say!("Spec:       {}", spec.meta.name);
-    crate::output::say!(
+    say!("Spec:       {}", spec.meta.name);
+    say!(
         "Living:     lineage {}: {} segments, {} leaf cards",
         living.lineage_seed,
         skeleton.segments.len(),
         skeleton.leaf_bindings.len()
     );
-    crate::output::say!(
+    say!(
         "Clock:      step {} s, glide {}, stagger {}",
         living.step,
         living.glide,
@@ -249,7 +256,7 @@ pub fn run(
     );
     let echoes = living.echoes.copies_placed(&living.echo_places);
     if !echoes.is_empty() {
-        crate::output::say!(
+        say!(
             "Echoes:     {} copies, out to {} of a step, alpha {}",
             echoes.len(),
             living.echoes.spread,
@@ -257,14 +264,14 @@ pub fn run(
         );
     }
     if animated {
-        crate::output::say!(
+        say!(
             "Strip:      {} frames at {} fps, {} px, as a GIF",
             options.frames,
             options.fps,
             options.cell_size,
         );
     } else {
-        crate::output::say!(
+        say!(
             "Strip:      {} frames at {} fps, {} x {} cells of {} px, {} x {} px",
             options.frames,
             options.fps,
@@ -277,8 +284,8 @@ pub fn run(
     }
     let shown = output.display().to_string().replace('\\', "/");
     if dry_run {
-        crate::output::say!("Output:     {}", output.display());
-        crate::output::when_json(|| {
+        say!("Output:     {}", output.display());
+        flint_package::cli::when_json(|| {
             serde_json::json!({
                 "dry_run": true,
                 "spec": spec.meta.name,
@@ -327,12 +334,12 @@ pub fn run(
     };
     if animated {
         gif_writer::write(&output, &frames, options.fps)?;
-        crate::output::say!(
+        say!(
             "Output:     {} ({:.1} s)",
             output.display(),
             started.elapsed().as_secs_f64()
         );
-        crate::output::when_json(|| {
+        flint_package::cli::when_json(|| {
             serde_json::json!({
                 "spec": spec.meta.name,
                 "written": [shown],
@@ -351,12 +358,12 @@ pub fn run(
     sheet
         .save_with_format(&output, image::ImageFormat::Png)
         .with_context(|| format!("failed to write {}", output.display()))?;
-    crate::output::say!(
+    say!(
         "Output:     {} ({:.1} s)",
         output.display(),
         started.elapsed().as_secs_f64()
     );
-    crate::output::when_json(|| {
+    flint_package::cli::when_json(|| {
         serde_json::json!({
             "spec": spec.meta.name,
             "written": [shown],
@@ -390,7 +397,7 @@ fn output_path(spec: &ProcGenSpec, output: Option<&str>) -> Result<PathBuf> {
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("png"));
-    if !is_png && !render_plan::is_gif(&path.to_string_lossy()) {
+    if !is_png && !is_gif(&path.to_string_lossy()) {
         bail!(
             "--strip writes one PNG or an animated GIF; {} doesn't end in .png or .gif",
             path.display()
@@ -556,7 +563,7 @@ fn render_echo_frames(
 
     let mut stage = StripStage::new(&positions, size)?;
     let ctx = &stage.ctx;
-    let import = flint_player::living_import(PREVIEW_ASSET, rig);
+    let import = flint_procgen::player::import_of(PREVIEW_ASSET, rig);
     stage
         .renderer
         .load_skinned_model(&ctx.device, &ctx.queue, PREVIEW_ASSET, &import);

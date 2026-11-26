@@ -24,7 +24,10 @@ path = "src/main.rs"
 # stay in the parser as stubs that exit 2 naming the package
 # (`commands/absent.rs`); `flint package list --built` says which are in:
 #   living   the living props and wooze field `render` and `check` read,
-#            `gen --strip`, `render --sweep wooze.*|living.*`
+#            `gen --strip`, `render --sweep wooze.*|living.*`, the
+#            viewer's boil and sway: the package's own crate's `cli` part
+#            since #1558 (`packages/living/crates/flint-living`), which
+#            fills the kernel commands' points, listed by `build.rs`
 #   music    `music validate`, `music play`, `music render`: the package's
 #            own crate's `cli` part since #1555, so without it the parser
 #            has no `music` at all, and a line asking is told to add it
@@ -53,10 +56,7 @@ packages = ["living", "music", "rhythm", "procgen", "ai"]
 audio = ["flint-player/audio", "flint-music?/device", "flint-rhythm?/device"]
 gamepad = ["flint-player/gamepad", "flint-input-capture?/gamepad"]
 dialogs = ["flint-viewer/dialogs", "flint-procgen-cli?/dialogs"]
-living = [
-    "procgen", "flint-player/living", "flint-viewer/living", "flint-debug-ui/living",
-    "flint-procgen/living", "dep:flint-living", "dep:flint-wooze",
-]
+living = ["procgen", "flint-player/living", "dep:flint-living", "flint-living?/cli"]
 music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm", "dep:flint-input-capture"]
 procgen = ["flint-player/procgen", "dep:flint-procgen", "dep:flint-procgen-cli"]
@@ -64,7 +64,6 @@ ai = ["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli", "dep:flint-procg
 
 [dependencies]
 flint-core = { workspace = true }
-flint-wooze = { workspace = true, optional = true }
 flint-geometry = { workspace = true }
 flint-schema = { workspace = true }
 flint-ecs = { workspace = true }
@@ -81,7 +80,7 @@ flint-physics = { workspace = true }
 flint-player = { workspace = true, features = ["debug-hud", "frame-history"] }
 # `CliExtension` and the one output path (#1553): a package's commands
 # build against it, and `run_with` composes them
-flint-package = { workspace = true }
+flint-package = { workspace = true, features = ["gif"] }
 # `metadata`: `flint script api` lists the functions not yet declared
 # through the builder from Rhai's metadata (ADR 0116); `check` (which has
 # it) is `flint script check` (#694). Both stay on with
@@ -93,8 +92,9 @@ flint-particles = { workspace = true }
 # AI writes); `flint gen` itself is flint-procgen-cli's
 flint-procgen = { workspace = true, optional = true }
 flint-procgen-cli = { workspace = true, optional = true }
-# `flint render --report json`'s living props (#1024): the only part of the
-# CLI that names the scheduler; `flint gen` uses flint-procgen alone.
+# The living package (#1558): its `cli` part fills `render`'s, `check`'s,
+# `gen --strip`'s and the viewer's points; this crate's source names none
+# of it (`build.rs` lists its extension from the manifest)
 flint-living = { workspace = true, optional = true }
 flint-procgen-ai = { workspace = true, optional = true }
 flint-ai-core = { workspace = true, optional = true }
@@ -119,12 +119,6 @@ image = { workspace = true, features = ["gif"] }
 # A frame capture's float and depth targets (#1087): flint-render writes them
 # with this crate (#1085), so `flint frame` reads them with it, same version
 exr = { version = "1.74", default-features = false }
-# Already in the tree through `image`. Used directly so that a GIF can share one
-# palette across its frames, which `image`'s encoder doesn't do (gif_writer.rs).
-gif = "0.14"
-color_quant = "1"
-# Also in the tree through `image`: a long GIF's frames wait on disk deflated (#588).
-miniz_oxide = "0.8"
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
@@ -160,6 +154,9 @@ flint-audio = { workspace = true }
 # well, so the test builds without the procgen package (#1543) and
 # `cargo tree -e normal` shows none
 flint-procgen = { workspace = true }
+# `check::LIVING_PROP` is the living package's component name, held to its
+# crate's (#1558), in every build
+flint-living = { workspace = true }
 
 # A game binary with commands of its own (#1140): the test is the binary,
 # so its `main` is its own

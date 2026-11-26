@@ -19,13 +19,13 @@
 use flint_core::field::Ramp;
 use flint_procgen::{KnobValue, LivingDef, LivingKnob, LivingSpeciesDef};
 
-use super::living_props::species_of;
-use super::living_subsystem::{props_mut, LivingSubsystem};
-use super::living_tuning::{tune_props, tune_species, LivingView, ScriptTune};
-use super::subsystem::StageCtx;
+use super::props::species_of;
+use super::subsystem::{props_mut, LivingSubsystem};
+use super::tuning::{tune_props, tune_species, LivingView, ScriptTune};
+use flint_package::StageCtx;
 
 /// A knob a timed tune eases rather than steps: one whose value is a number.
-pub(crate) type Eased = LivingKnob;
+pub type Eased = LivingKnob;
 
 /// Every knob a timed tune eases, for a species, in the panel's order.
 fn eased() -> impl Iterator<Item = Eased> {
@@ -98,20 +98,20 @@ struct KnobRamp {
 /// Every knob easing now, and the clock they ease on: the living clock,
 /// counted from the scene's start, which a freeze or a pause stops.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct KnobRamps {
+pub struct KnobRamps {
     time: f64,
     ramps: Vec<KnobRamp>,
 }
 
 impl KnobRamps {
     /// Whether no knob is easing.
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.ramps.is_empty()
     }
 
     /// How many are.
     #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.ramps.len()
     }
 
@@ -144,20 +144,20 @@ impl KnobRamps {
     }
 
     /// Stop easing whatever the grove's `living` sets at once.
-    pub(crate) fn cancel_grove(&mut self, living: &LivingDef) {
+    pub fn cancel_grove(&mut self, living: &LivingDef) {
         self.ramps
             .retain(|r| r.species.is_some() || r.knob.in_living(living).is_none());
     }
 
     /// Stop easing whatever `def` sets at once for `species`.
-    pub(crate) fn cancel_species(&mut self, species: &str, def: &LivingSpeciesDef) {
+    pub fn cancel_species(&mut self, species: &str, def: &LivingSpeciesDef) {
         self.ramps
             .retain(|r| r.species.as_deref() != Some(species) || r.knob.in_species(def).is_none());
     }
 
     /// Stop easing the knobs `keys` name for `species` (`None`: the grove),
     /// or all of its knobs with no keys.
-    pub(crate) fn cancel_keys(&mut self, species: Option<&str>, keys: &[String]) {
+    pub fn cancel_keys(&mut self, species: Option<&str>, keys: &[String]) {
         self.ramps.retain(|r| {
             r.species.as_deref() != species
                 || !(keys.is_empty() || keys.iter().any(|key| r.knob.named_by(key)))
@@ -165,7 +165,7 @@ impl KnobRamps {
     }
 
     /// Stop easing everything, where it stands.
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.ramps.clear();
     }
 
@@ -203,7 +203,7 @@ impl LivingSubsystem {
     /// [`Self::tune_living_from_script`] does, with each continuous knob eased
     /// there over `seconds` and the rest switched at once. `seconds` of 0 or
     /// less is that step exactly.
-    pub(crate) fn tune_living_over(
+    pub fn tune_living_over(
         &mut self,
         ctx: &mut StageCtx<'_>,
         knobs: toml::Value,
@@ -284,7 +284,7 @@ impl LivingSubsystem {
     /// Move every easing knob on by `dt` of the living clock and give the props
     /// where each now stands. Nothing easing, nothing done, so a grove no
     /// script eases runs exactly as it did.
-    pub(super) fn step_knob_ramps(&mut self, ctx: &mut StageCtx<'_>, dt: f64) {
+    pub fn step_knob_ramps(&mut self, ctx: &mut StageCtx<'_>, dt: f64) {
         if self.ramps.is_empty() {
             return;
         }
@@ -299,7 +299,3 @@ impl LivingSubsystem {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "living_ramps_tests.rs"]
-mod tests;
