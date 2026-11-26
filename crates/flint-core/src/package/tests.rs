@@ -49,6 +49,25 @@ fn a_manifest_reads_whole() {
     assert_eq!(p.provides.of(Kind::Component), ["living_prop"]);
     assert!(p.provides.of(Kind::Command).is_empty());
     assert_eq!(p.dir(), Path::new("packages/living"));
+    assert_eq!(p.cli, None);
+}
+
+/// `[rust] cli` names the crate the CLI launcher lists (#1554): one of the
+/// package's own crates, and nothing else is a key there.
+#[test]
+fn rust_cli_is_one_of_the_packages_crates() {
+    let with = |rust: &str| format!("{LIVING}[rust]\n{rust}\n");
+    let p = parse(&with("cli = \"flint-living\""), file()).unwrap();
+    assert_eq!(p.cli.as_deref(), Some("flint-living"));
+    assert_eq!(
+        mistakes(&with("cli = \"flint-core\"")),
+        ["rust.cli: `flint-core` is no crate of this package: name one of [provides] crates"]
+    );
+    let found = mistakes(&with("cly = \"flint-living\""));
+    assert!(
+        found[0].starts_with("rust.cly: unknown key `cly` in [rust] (the keys are cli)"),
+        "{found:#?}"
+    );
 }
 
 #[test]

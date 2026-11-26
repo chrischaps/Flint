@@ -313,12 +313,12 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
 /// no command has nothing here; one left out of the build has nothing in
 /// the parser, and a line naming its command is told to add it
 /// ([`commands::absent::missing_command`]).
+///
+/// `build.rs` writes the list from the manifests (#1554): each package
+/// whose `[rust] cli` names a crate, when this build has its
+/// `[build] features`, so the source names none.
 pub fn stock() -> Vec<Box<dyn CliExtension>> {
-    #[allow(unused_mut)] // a build with no package that adds a command
-    let mut list: Vec<Box<dyn CliExtension>> = Vec::new();
-    #[cfg(feature = "ai")]
-    list.extend(flint_asset_gen::cli::extensions());
-    list
+    include!(concat!(env!("OUT_DIR"), "/stock_extensions.rs"))
 }
 
 /// The stock `flint`'s whole command tree: the engine's commands with

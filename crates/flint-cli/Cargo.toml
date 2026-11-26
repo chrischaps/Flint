@@ -134,8 +134,13 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# `build.rs` reads the package manifests' `[build]` and `[rust]` and this
+# crate's `[features]` to write the CLI launcher's list (#1554)
+[build-dependencies]
+toml = { workspace = true }
+
 [dev-dependencies]
-naga = { version = "30.0.2", features = ["wgsl-in"] }
+naga ={ version = "30.0.2", features = ["wgsl-in"] }
 # A JSON Schema validator, for the test that `flint schema --format json-schema`
 # describes every example scene (#684). Tests only.
 boon = "0.6"

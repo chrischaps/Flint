@@ -39,7 +39,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-34-crate Cargo workspace (plus `tools/arch-analyzer`, which feeds the book's crate table). Every member but `flint-android` is a default member, so plain `cargo test` runs every desktop crate's tests (#758):
+34-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554). Every member but `flint-android` is a default member, so `cargo test` tests them all (#758):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,

@@ -549,6 +549,40 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   `AiAssetCommands` builds its `Command` at run time, as `Cli`'s derive
   did, so nothing moved onto a deeper frame.
 
+## As built: the first move, ai (#1554)
+
+- **The crates moved, and the glob joined.** `flint-asset-gen`,
+  `flint-procgen-ai` and `flint-ai-core` are at
+  `packages/ai/crates/<crate>/`. The root `Cargo.toml` names
+  `"packages/*/crates/*"` in `members` and `default-members` (section 5),
+  and the three member lines went. The workspace dependency paths point at
+  the new folders, so no crate that depends on them changed.
+- **`[rust] cli` in `package.toml`** names the package's crate whose
+  `cli::extensions()` the CLI launcher lists (`flint_core::package`: one of
+  `[provides] crates`, else a `bad-package` mistake). This is the `cli`
+  half of #1568's `[rust]` table. `player` comes with the first package
+  that registers a `Package` from its own crate (#1555).
+- **The CLI launcher's list is written by `build.rs`**, from the manifests
+  it already compiled in: `stock()` is `include!` of
+  `OUT_DIR/stock_extensions.rs`, and `absent::built_features()` reads
+  `OUT_DIR/package_features.rs`, so `crates/flint-cli/src` names the ai
+  package nowhere in either. flint-cli's `Cargo.toml` still declares the
+  `ai` feature and the three optional dependencies by hand. #1568's
+  `package-sync.py` generates that block. Until then a new package's crates
+  are one hand edit there.
+- **Not done: the flags.** `gen --ai-*`, `render --ai-refine` and `asset
+  resolve --strategy ai_*` are still declared by their commands, with their
+  code in flint-cli behind `feature = "ai"`: 39 lines in
+  `crates/flint-cli/src`, against 41 before (the two that went are
+  `stock()`'s and the built-features row). The code behind them (`gen_ai`,
+  `gen_refine` and `look_refine`, about 1,800 lines) calls flint-cli's
+  previews, look measures and sweeps, so it moves with the registration
+  points of the "As built: the CLI launcher" section (#1572), not here.
+- **Paths that walk the tree** take `packages/*/crates/*` too: the
+  arch-analyzer (members globs, the book's crate table), `docs-check.py`'s
+  crate and member counts, the env, schema and scene-table tests, the clippy
+  tool-crate list and the Play site's path filter.
+
 ## Measured
 
 - **Cargo globs** (cargo 1.99.1, a scratch workspace, 2026-11-25): `members`

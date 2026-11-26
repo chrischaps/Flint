@@ -784,13 +784,16 @@ def scan(path, flint, styles, ws, problems, allow, examples=None, source=None, p
 
 
 def workspace():
-    """The crates under crates/ and the workspace's member count, from disk."""
+    """The engine's crates (crates/ and a package's packages/*/crates/, #1554)
+    and the workspace's member count, globs expanded as cargo does, from disk."""
     import tomllib
 
-    crates = sorted(p.name for p in (ROOT / "crates").iterdir() if (p / "Cargo.toml").is_file())
+    dirs = [p for p in (ROOT / "crates").iterdir()] + list(ROOT.glob("packages/*/crates/*"))
+    crates = sorted(p.name for p in dirs if (p / "Cargo.toml").is_file())
     with open(ROOT / "Cargo.toml", "rb") as f:
         members = tomllib.load(f)["workspace"]["members"]
-    return {"crates": crates, "members": len(members)}
+    count = sum(len([p for p in ROOT.glob(m) if (p / "Cargo.toml").is_file()]) if "*" in m else 1 for m in members)
+    return {"crates": crates, "members": count}
 
 
 def check_counts(line, where, ws, problems, allow):
@@ -799,7 +802,7 @@ def check_counts(line, where, ws, problems, allow):
             COUNTS["maps"] += 1
             n = int(m.group(1))
             if n != len(ws["crates"]) and not allowed(allow, where, m.group(0)):
-                problems.append(problem("maps", where, f"`{m.group(0)}`: crates/ holds {len(ws['crates'])} crates", "count the directories under crates/ with a Cargo.toml"))
+                problems.append(problem("maps", where, f"`{m.group(0)}`: crates/ holds {len(ws['crates'])} crates", "count the directories under crates/ and packages/*/crates/ with a Cargo.toml"))
     for m in MEMBER_COUNT_RE.finditer(line):
         COUNTS["maps"] += 1
         if int(m.group(1)) != ws["members"] and not allowed(allow, where, m.group(0)):
@@ -864,7 +867,7 @@ def check_crate_maps(ws, problems, allow):
                 ok = re.search(rf"(?<![\w-]){re.escape(crate)}(?![\w-])", text) is not None
             if not ok and not allowed(allow, (page, start), crate):
                 what = f"`### {crate}` section" if as_heading else f"`{crate}`"
-                problems.append(problem("maps", (page, start), f"`{heading}` has no {what}", f"crates/{crate} is a workspace crate; every map of the workspace names it"))
+                problems.append(problem("maps", (page, start), f"`{heading}` has no {what}", f"{crate} is a workspace crate; every map of the workspace names it"))
 
 
 def sources():

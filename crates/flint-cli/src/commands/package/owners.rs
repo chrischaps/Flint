@@ -119,14 +119,16 @@ pub fn schema_files(schemas: &Path, prefix: &str) -> Vec<SchemaFile> {
 }
 
 /// The root manifest's `[workspace] members`, each with its package name.
+/// A `*` segment (`packages/*/crates/*`, a package's crates, #1554) is
+/// every folder there that holds a `Cargo.toml`, as cargo reads it.
 pub fn workspace_crates(root: &Path) -> Vec<Member> {
     let text = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
     let manifest: toml::Table = text.parse().unwrap();
     let members = manifest["workspace"]["members"].as_array().unwrap();
     members
         .iter()
-        .map(|m| {
-            let folder = m.as_str().unwrap();
+        .flat_map(|m| member_folders(root, m.as_str().unwrap()))
+        .map(|folder| {
             let file = format!("{folder}/Cargo.toml");
             let text =
                 std::fs::read_to_string(root.join(&file)).unwrap_or_else(|e| panic!("{file}: {e}"));
@@ -137,6 +139,43 @@ pub fn workspace_crates(root: &Path) -> Vec<Member> {
             }
         })
         .collect()
+}
+
+/// A `members` entry's folders, `/`-separated from `root`: itself, or for
+/// a glob every folder its `*` segments match that holds a `Cargo.toml`.
+fn member_folders(root: &Path, member: &str) -> Vec<String> {
+    if !member.contains('*') {
+        return vec![member.to_string()];
+    }
+    let mut found = vec![String::new()];
+    for segment in member.split('/') {
+        found = found
+            .into_iter()
+            .flat_map(|at| {
+                let join = |s: &str| {
+                    if at.is_empty() {
+                        s.to_string()
+                    } else {
+                        format!("{at}/{s}")
+                    }
+                };
+                if segment != "*" {
+                    return vec![join(segment)];
+                }
+                let mut subs: Vec<String> = std::fs::read_dir(root.join(&at))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .map(|e| join(&e.file_name().to_string_lossy()))
+                    .collect();
+                subs.sort();
+                subs
+            })
+            .collect();
+    }
+    found.retain(|f| root.join(f).join("Cargo.toml").is_file());
+    found
 }
 
 /// Every module the script API declares, in declaration order.
@@ -688,9 +727,7 @@ fn flint_cli_has_each_packages_feature_and_forwards_it() {
     for p in &engine_packages().packages {
         for feature in &p.features {
             assert!(
-                crate::commands::absent::BUILT_FEATURES
-                    .iter()
-                    .any(|(f, _)| f == feature),
+                crate::commands::absent::built_features().any(|(f, _)| f == feature),
                 "absent::BUILT_FEATURES has no `{feature}`"
             );
             if ALWAYS.contains(&feature.as_str()) {
