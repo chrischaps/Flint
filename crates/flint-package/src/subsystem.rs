@@ -2,7 +2,8 @@
 //! made public by ADR 0137).
 
 use crate::{
-    EncodeCtx, ExitReport, FrameCtx, Lasts, PlayerInput, ReportCtx, SceneCtx, Stage, StageCtx,
+    EncodeCtx, ExitReport, FixedCtx, FrameCtx, Lasts, PlayerInput, ReportCtx, SceneCtx, Stage,
+    StageCtx,
 };
 use flint_render::FrameInputs;
 use flint_runtime::DebugKey;
@@ -35,6 +36,14 @@ pub trait Subsystem: Any {
 
     /// A stage of the frame. See [`Stage`] for where each falls.
     fn update(&mut self, _stage: Stage, _ctx: &mut StageCtx) {}
+
+    /// One fixed physics step ([`Stage::FixedStep`], ADR 0137 section 3a):
+    /// once for each step that steps, so twice in a frame at 30 Hz and on
+    /// most frames none at 144. It runs after the character controller and
+    /// the physics sync-in, before Rapier's step, which integrates what it
+    /// applies. A paused state (one that stops physics) skips it, as it
+    /// skips Rapier, and so does a capture, which runs no physics.
+    fn fixed_update(&mut self, _ctx: &mut FixedCtx) {}
 
     /// The script modules this subsystem owns and enables while it runs
     /// (#698): their functions are a "not enabled" error in a scene

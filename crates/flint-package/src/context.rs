@@ -12,10 +12,11 @@ use flint_audio::engine::AudioEngine;
 use flint_core::package::InUse;
 use flint_core::project::Project;
 use flint_ecs::FlintWorld;
+use flint_physics::PhysicsSystem;
 use flint_render::stylize::StyleRegistry;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::pad::Gilrs;
-use flint_runtime::{GameClock, InputState, PadRumble, StateConfig};
+use flint_runtime::{EventBus, GameClock, InputState, PadRumble, StateConfig};
 use flint_script::{FrameRequests, ScriptSystem};
 
 /// What a capture (`flint render --scripts`, #1252) asks of a scene's
@@ -160,6 +161,45 @@ impl StageCtx<'_> {
     /// subsystem asks by its own `name()`). Outside a stage, it does.
     pub fn runs(&self, name: &str) -> bool {
         self.policy.is_none_or(|policy| policy.runs(name))
+    }
+}
+
+/// What a subsystem may touch inside a fixed physics step (ADR 0137 section
+/// 3a, #1551): [`Subsystem::fixed_update`](crate::Subsystem::fixed_update),
+/// after the character controller and the physics sync-in, before Rapier's
+/// step. What it applies to a body here, that step integrates.
+///
+/// A step is not a frame: it lends no scripts, renderer, camera or sound. A
+/// package hands its step's results to scripts and the screen at the
+/// frame's stages (vehicle state at `PreScripts`, wheel poses at `Physics`).
+pub struct FixedCtx<'a> {
+    pub world: &'a mut FlintWorld,
+    /// Bodies by entity ([`PhysicsSystem::body_of`]), Rapier's sets
+    /// ([`PhysicsSystem::rapier_mut`]); Rapier itself is
+    /// [`physics::rapier`](crate::physics::rapier).
+    pub physics: &'a mut PhysicsSystem,
+    /// The step's length, in seconds (the clock's fixed timestep).
+    pub dt: f64,
+    /// This step's index in the frame (from 0) and the steps the frame
+    /// runs: `(1, 2)` is the second of two at 30 Hz.
+    pub step: (u32, u32),
+    /// Held actions, as the character controller reads them.
+    pub input: &'a InputState,
+    /// Events a step raises; its contacts go here after Rapier's step.
+    pub events: &'a mut EventBus,
+    /// Which systems the game state lets run. A step runs only while it
+    /// lets physics run; a subsystem with its own policy name asks
+    /// [`FixedCtx::runs`].
+    pub policy: &'a StateConfig,
+    /// The run's resources: what one package lends another.
+    pub resources: &'a mut Resources,
+}
+
+impl FixedCtx<'_> {
+    /// Whether the game state lets the system `name` run (a subsystem asks
+    /// by its own `name()`).
+    pub fn runs(&self, name: &str) -> bool {
+        self.policy.runs(name)
     }
 }
 
