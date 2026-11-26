@@ -18,10 +18,15 @@
 //!   debug keys once a run (#1552), so the kernel finds them by what was
 //!   registered, never by a package's name.
 //!
+//! - [`cli::CliExtension`]: a package's commands on the `flint` command
+//!   line, and the one way a command answers (`--json`, #710), so a
+//!   package's CLI side never depends on flint-cli (#1553).
+//!
 //! The player keeps the ordered list (`Subsystems`) and lends each context
 //! from its own fields. This crate stays below 1.0 until Phase 5 (ADR 0136
 //! decision 5).
 
+pub mod cli;
 mod context;
 pub mod note;
 mod registry;

@@ -10,6 +10,8 @@
 
 pub mod batch;
 pub mod calls;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod config;
 pub mod human_task;
 pub mod job;

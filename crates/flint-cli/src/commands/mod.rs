@@ -5,8 +5,6 @@
 //! command's file, so the parser keeps the command and running it exits 2.
 
 pub mod absent;
-#[cfg(feature = "ai")]
-pub mod ai_costs;
 pub mod asset;
 pub mod asset_where;
 pub mod attach;

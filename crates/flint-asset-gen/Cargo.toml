@@ -20,6 +20,14 @@ sha2 = { workspace = true }
 dirs = { workspace = true }
 image = { workspace = true }
 tracing = { workspace = true }
+# The ai package's commands (#1553): `flint asset generate` and the rest,
+# registered with the CLI launcher as a `CliExtension` (`cli::extensions`)
+flint-package = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+
+[features]
+cli = ["dep:flint-package", "dep:clap", "dep:anyhow"]
 
 [dev-dependencies]
 uuid = { workspace = true }

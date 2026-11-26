@@ -33,8 +33,11 @@ path = "src/main.rs"
 #            with no `living`, flint-procgen without its wooze field, #1516).
 #            `flint gen x.glyphs.toml` and `flint edit x.terrain.toml` are
 #            the kernel's and stay in
-#   ai      the paid calls: `asset generate` and the rest, `gen --ai-*`,
-#            `render --ai-refine`, `asset resolve --strategy ai_*`
+#   ai      the paid calls: `gen --ai-*`, `render --ai-refine`, `asset
+#            resolve --strategy ai_*`; and `asset generate` and the rest,
+#            which are the package's own extension (`stock()`, #1553): out,
+#            they leave the parser, and asking for one names the package
+#            from its manifest
 #
 # `packages` is all five: CI's headless job checks the book against
 # `--no-default-features --features packages`, every command and script
@@ -52,7 +55,7 @@ living = [
 music = ["flint-player/music", "dep:flint-music"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm", "dep:flint-input-capture"]
 procgen = ["flint-player/procgen", "dep:flint-procgen"]
-ai = ["procgen", "dep:flint-asset-gen", "dep:flint-procgen-ai", "dep:flint-ai-core"]
+ai = ["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli", "dep:flint-procgen-ai", "dep:flint-ai-core"]
 
 [dependencies]
 flint-core = { workspace = true }
@@ -71,6 +74,9 @@ flint-animation = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-player = { workspace = true, features = ["debug-hud", "frame-history"] }
+# `CliExtension` and the one output path (#1553): a package's commands
+# build against it, and `run_with` composes them
+flint-package = { workspace = true }
 # `metadata`: `flint script api` lists the functions not yet declared
 # through the builder from Rhai's metadata (ADR 0116); `check` (which has
 # it) is `flint script check` (#694). Both stay on with

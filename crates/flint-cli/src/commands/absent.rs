@@ -17,8 +17,90 @@
 //! #[cfg(not(feature = "rhythm"))]
 //! absent::stub!(calibrate, CalibrateArgs, "music calibrate", "rhythm");
 //! ```
+//!
+//! A package that registers its commands with the CLI launcher (#1553:
+//! `ai`'s under `asset`) needs no stub: a build without it has none of
+//! them in its parser, and a line asking for one is answered from the
+//! manifests compiled in ([`missing_command`]), with the same exit 2.
 
 use std::ffi::OsString;
+
+/// Every `packages/<name>/package.toml` of the tree this binary was built
+/// from, as `(file, text)`: `build.rs` writes the list.
+const MANIFESTS: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/package_manifests.rs"));
+
+/// The manifests compiled in, read. One that doesn't read is left out
+/// (`flint package list` names its problems).
+fn manifests() -> Vec<flint_core::package::Package> {
+    MANIFESTS
+        .iter()
+        .filter_map(|(file, text)| {
+            flint_core::package::parse(text, std::path::Path::new(file)).ok()
+        })
+        .collect()
+}
+
+/// A command line `parser` refused with an unknown subcommand, when the
+/// words ask for a command a package provides (its manifest's
+/// `[provides] commands`) that this parser lacks: the package left out of
+/// this build, which the line is told to add (#1553). `None` for any other
+/// mistake, which clap explains itself.
+pub fn missing_command(
+    error: &clap::Error,
+    argv: &[OsString],
+    parser: &clap::Command,
+) -> Option<MissingPackage> {
+    if error.kind() != clap::error::ErrorKind::InvalidSubcommand {
+        return None;
+    }
+    let words = command_words(argv);
+    // How many of the words this parser knows as commands
+    let mut known = 0;
+    let mut at = parser;
+    for word in &words {
+        match at.find_subcommand(word) {
+            Some(below) => {
+                at = below;
+                known += 1;
+            }
+            None => break,
+        }
+    }
+    manifests().into_iter().find_map(|package| {
+        let provided = package.provides.commands.iter().find(|command| {
+            let path: Vec<&str> = command.split(' ').collect();
+            path.len() > known
+                && path.len() <= words.len()
+                && path.iter().zip(&words).all(|(a, b)| a == b)
+        })?;
+        // Once a run, on its way out
+        let package: &'static str = Box::leak(package.name.into_boxed_str());
+        Some(MissingPackage {
+            what: format!("flint {provided}"),
+            package,
+        })
+    })
+}
+
+/// The leading subcommand words of a command line: `asset generate` of
+/// `flint --json asset generate texture -d moss`, past the global
+/// `--json` and `--project DIR` wherever they come first.
+fn command_words(argv: &[OsString]) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut rest = argv.iter().skip(1).map(|w| w.to_string_lossy());
+    while let Some(word) = rest.next() {
+        match &*word {
+            "--json" => {}
+            "--project" => {
+                rest.next();
+            }
+            w if w.starts_with("--project=") => {}
+            w if w.starts_with('-') => break,
+            w => words.push(w.to_string()),
+        }
+    }
+    words
+}
 
 /// What a feature this binary was built with brings: the package names
 /// (`[build] features` of `packages/<name>/package.toml`) that are in.
@@ -162,14 +244,104 @@ mod tests {
         );
     }
 
-    /// `words` after `flint`, parsed by the engine's parser and run.
+    /// `words` after `flint`, parsed and run as this build's stock `flint`.
     #[allow(dead_code)] // a build with every package runs none of the cases
     fn ran(words: &[&str]) -> anyhow::Result<()> {
-        use clap::Parser as _;
-        let argv = std::iter::once("flint").chain(words.iter().copied());
-        let cli = crate::Cli::try_parse_from(argv)
-            .unwrap_or_else(|e| panic!("{words:?} doesn't parse: {e}"));
-        crate::run(cli)
+        crate::run_line(crate::stock(), words)
+    }
+
+    /// The done-when of #1553, in every build: a CLI launched with no
+    /// package extensions has no `asset generate` (nor any of the ai
+    /// package's commands) in its parser, and a line asking for one exits 2
+    /// naming the package, from the manifest compiled in.
+    #[test]
+    fn a_cli_without_ai_has_no_asset_generate_and_names_ai() {
+        use clap::CommandFactory as _;
+        let bare = crate::extension::Added::new(Vec::new(), &crate::Cli::command())
+            .unwrap()
+            .augment(crate::Cli::command());
+        let asset = bare.find_subcommand("asset").unwrap();
+        for gone in [
+            "generate",
+            "regenerate",
+            "validate",
+            "manifest",
+            "costs",
+            "job",
+        ] {
+            assert!(asset.find_subcommand(gone).is_none(), "asset {gone}");
+        }
+        for (words, what) in [
+            (
+                &["asset", "generate", "texture", "-d", "moss"][..],
+                "flint asset generate",
+            ),
+            (
+                &["--json", "asset", "generate", "--help"],
+                "flint asset generate",
+            ),
+            (&["--project", ".", "asset", "costs"], "flint asset costs"),
+            (&["asset", "job", "list"], "flint asset job"),
+        ] {
+            let e = crate::run_line(Vec::new(), words).expect_err("no ai, no command");
+            let missing = e
+                .downcast_ref::<MissingPackage>()
+                .unwrap_or_else(|| panic!("{words:?}: {e:#}"));
+            assert_eq!((missing.what.as_str(), missing.package), (what, "ai"));
+        }
+        let text = crate::run_line(Vec::new(), &["asset", "generate"])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            text.starts_with("flint asset generate needs the `ai` package"),
+            "{text}"
+        );
+        assert!(
+            text.contains("list `ai = \"*\"` under [packages]"),
+            "{text}"
+        );
+    }
+
+    /// A word no package provides is clap's own mistake, not a package's.
+    #[test]
+    fn a_typo_is_not_a_missing_package() {
+        use clap::CommandFactory as _;
+        let parser = crate::extension::Added::new(Vec::new(), &crate::Cli::command())
+            .unwrap()
+            .augment(crate::Cli::command());
+        for words in [
+            &["asset", "generat"][..],
+            &["nope"],
+            &["asset", "list", "x"],
+        ] {
+            let argv: Vec<OsString> = std::iter::once("flint")
+                .chain(words.iter().copied())
+                .map(OsString::from)
+                .collect();
+            let e = parser.clone().try_get_matches_from(&argv).unwrap_err();
+            assert!(missing_command(&e, &argv, &parser).is_none(), "{words:?}");
+        }
+    }
+
+    /// The stock `flint` of a build with ai has its commands where they
+    /// always were.
+    #[cfg(feature = "ai")]
+    #[test]
+    fn with_ai_the_asset_commands_are_its_extensions() {
+        let tree = crate::stock_command();
+        let asset = tree.find_subcommand("asset").unwrap();
+        for name in [
+            "generate",
+            "regenerate",
+            "validate",
+            "manifest",
+            "costs",
+            "job",
+        ] {
+            assert!(asset.find_subcommand(name).is_some(), "asset {name}");
+        }
+        let job = asset.find_subcommand("job").unwrap();
+        assert!(job.find_subcommand("resume").is_some());
     }
 
     /// The package a run that failed for want of one names.

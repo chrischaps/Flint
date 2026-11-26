@@ -23,6 +23,11 @@ egui = { workspace = true }
 wgpu = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
+# A package's commands on the `flint` command line (`cli`, #1553): the
+# trait, the derived-enum wrapper and the one output path
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

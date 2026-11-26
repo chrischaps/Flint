@@ -593,7 +593,7 @@ The ray is clipped to the field's box (its x/z extent and the range of its heigh
 
 ## Commands of the Game's Own
 
-A game's tools (a nav-mesh bake, a level exporter, a balance report) can be `flint` commands, beside `render`, `check` and the rest, instead of a separate binary with flags of its own. flint-cli is a library as well as the `flint` binary: a game binary that calls `flint_cli::run_with` with its **CLI extensions** is the whole `flint` CLI plus the commands they add ([ADR 0133](https://github.com/chrischaps/Flint/blob/main/docs/adr/0133-a-game-binary-adds-cli-commands.md)). The stock `flint` is `run_with(Vec::new())`.
+A game's tools (a nav-mesh bake, a level exporter, a balance report) can be `flint` commands, beside `render`, `check` and the rest, instead of a separate binary with flags of its own. flint-cli is a library as well as the `flint` binary: a game binary that calls `flint_cli::run_with` with its **CLI extensions** is the whole `flint` CLI plus the commands they add ([ADR 0133](https://github.com/chrischaps/Flint/blob/main/docs/adr/0133-a-game-binary-adds-cli-commands.md)). The engine's packages register their commands the same way: `flint asset generate` and the rest of the ai package's are its extension, under the kernel's `asset`. `run_with` puts the extensions of every package the build has (`flint_cli::stock()`) ahead of yours, so the stock `flint` is `run_with(Vec::new())` and your binary keeps every command it has. A build without a package has none of its commands, and a line asking for one exits 2 naming the package to list in `flint.toml`.
 
 The usual shape is a derived `clap::Subcommand` enum, one variant a command:
 
@@ -639,6 +639,8 @@ The game's commands parse with the engine's in one parser, so they behave as the
 - The global `--project` is applied before the command runs: `flint_core::project::Project::current()` returns it.
 - A failure is an `Err`, never `std::process::exit`. A report that is a failure (`Answer::failed_if(true)`) prints, then exits 1. Any other error prints on stderr, and under `--json` as an `{"error": ...}` document. A mistake on the command line is clap's exit 2, with the usage in the error document.
 
-A name the engine already has (`render`, `help`, a hidden command such as `serve`) is refused before anything runs, and so is a name two extensions share: a game's command never replaces the engine's. For anything a derived enum doesn't fit, implement `flint_cli::CliExtension` (`commands`, `run`, `opens_window`) yourself.
+A name the engine already has (`render`, `help`, a hidden command such as `serve`) is refused before anything runs, and so is a name two extensions share: a game's command never replaces the engine's. For anything a derived enum doesn't fit, implement `flint_cli::CliExtension` (`commands`, `under`, `run`, `opens_window`) yourself.
+
+Commands can also go under one of the engine's: `.under(&["asset"])` on the derived extension makes `bake-nav` a subcommand of `asset`, listed after its own, and the names checked against theirs. Its `run` then gets the matches of `asset`, whose chosen subcommand is yours. The trait and the output helpers are `flint_package::cli`'s, and `flint_cli::extension` re-exports them. Code that only adds commands, such as a package's crate, can depend on flint-package alone.
 
 The game's binary links its own 8 MB main-thread stack on Windows, with the `build.rs` in [A Game Binary](#a-game-binary). Each of a command's flags costs the debug parser about 8 KB of stack, so keep an `Args` struct to a dozen or so flags. Since `flint capture` and `flint goldens` run the binary they're in, in a game's binary they run the game's.
