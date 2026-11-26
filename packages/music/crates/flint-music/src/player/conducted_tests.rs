@@ -7,7 +7,8 @@ use flint_script::ScriptSystem;
 
 /// The player's script system, with the conducted module enabled or not.
 fn system(enabled: bool) -> ScriptSystem {
-    let mut system = crate::script_system();
+    let mut system = ScriptSystem::new();
+    system.declare_module(&super::CONDUCTED);
     if enabled {
         system.set_enabled_modules(vec!["conducted"]);
     }
@@ -141,7 +142,9 @@ fn a_scene_with_no_chart_is_told_the_module_is_not_enabled() {
 
 #[test]
 fn the_module_is_listed_under_its_name_with_when_it_is_enabled() {
-    let listing = crate::script_system().api_listing();
+    let mut system = ScriptSystem::new();
+    system.declare_module(&super::CONDUCTED);
+    let listing = system.api_listing();
     let conducted: Vec<_> = listing
         .declared
         .iter()

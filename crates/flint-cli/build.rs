@@ -19,6 +19,53 @@
 fn main() {
     main_thread_stack();
     package_manifests();
+    package_list();
+}
+
+#[path = "../flint-package/launch_list.rs"]
+mod launch_list;
+
+/// `$OUT_DIR/package_list.rs` (#1555, ADR 0137 decision 5): the CLI
+/// launcher's list, so `src/` names no moved package.
+///
+/// - `BUILT_FEATURES`: every feature a package's `[build] features` names,
+///   and whether this build has it (flint-player's `debug-hud` and
+///   `frame-history` always: the CLI turns them on), then the device
+///   options `audio`, `gamepad` and `dialogs`.
+/// - `moved()`: the CLI part (`<crate>::cli::extensions()`) of each package
+///   in its own folder that this build has, in the order packages register.
+fn package_list() {
+    use std::fmt::Write as _;
+    let engine = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+    let manifests = launch_list::in_order(launch_list::read(&engine));
+    launch_list::watch(&manifests);
+    const ALWAYS: [&str; 2] = ["debug-hud", "frame-history"];
+    const DEVICES: [&str; 3] = ["audio", "gamepad", "dialogs"];
+    let mut features: Vec<String> = ALWAYS.iter().map(|f| f.to_string()).collect();
+    for m in &manifests {
+        for f in &m.features {
+            if !features.contains(f) {
+                features.push(f.clone());
+            }
+        }
+    }
+    features.extend(DEVICES.iter().map(|f| f.to_string()));
+    let mut out = String::from("pub const BUILT_FEATURES: &[(&str, bool)] = &[\n");
+    for f in &features {
+        let on = ALWAYS.contains(&f.as_str()) || launch_list::built(std::slice::from_ref(f));
+        writeln!(out, "    ({f:?}, {on}),").unwrap();
+    }
+    out.push_str("];\n");
+    out.push_str(
+        "pub fn moved() -> Vec<Box<dyn flint_package::cli::CliExtension>> {\n    \
+         #[allow(unused_mut)]\n    let mut list: Vec<Box<dyn flint_package::cli::CliExtension>> = Vec::new();\n",
+    );
+    for (_, krate) in launch_list::parts(&manifests, "cli") {
+        writeln!(out, "    list.extend(::{krate}::cli::extensions());").unwrap();
+    }
+    out.push_str("    list\n}\n");
+    let dest = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("package_list.rs");
+    std::fs::write(dest, out).unwrap();
 }
 
 /// Every `packages/<name>/package.toml` of the tree this crate is built

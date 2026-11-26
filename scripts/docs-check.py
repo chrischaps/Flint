@@ -784,13 +784,25 @@ def scan(path, flint, styles, ws, problems, allow, examples=None, source=None, p
 
 
 def workspace():
-    """The crates under crates/ and the workspace's member count, from disk."""
+    """The engine's crates (under crates/, and a package's under
+    packages/<name>/crates/, #1555) and the workspace's member count, a glob
+    counted as the folders it matches, from disk."""
     import tomllib
 
-    crates = sorted(p.name for p in (ROOT / "crates").iterdir() if (p / "Cargo.toml").is_file())
+    crates = sorted(
+        p.name
+        for p in [*(ROOT / "crates").iterdir(), *ROOT.glob("packages/*/crates/*")]
+        if (p / "Cargo.toml").is_file()
+    )
     with open(ROOT / "Cargo.toml", "rb") as f:
         members = tomllib.load(f)["workspace"]["members"]
-    return {"crates": crates, "members": len(members)}
+    count = 0
+    for m in members:
+        if "*" in m:
+            count += sum(1 for p in ROOT.glob(m) if (p / "Cargo.toml").is_file())
+        else:
+            count += 1
+    return {"crates": crates, "members": count}
 
 
 def check_counts(line, where, ws, problems, allow):
@@ -799,7 +811,7 @@ def check_counts(line, where, ws, problems, allow):
             COUNTS["maps"] += 1
             n = int(m.group(1))
             if n != len(ws["crates"]) and not allowed(allow, where, m.group(0)):
-                problems.append(problem("maps", where, f"`{m.group(0)}`: crates/ holds {len(ws['crates'])} crates", "count the directories under crates/ with a Cargo.toml"))
+                problems.append(problem("maps", where, f"`{m.group(0)}`: the workspace holds {len(ws['crates'])} engine crates", "count the directories with a Cargo.toml under crates/ and packages/*/crates/"))
     for m in MEMBER_COUNT_RE.finditer(line):
         COUNTS["maps"] += 1
         if int(m.group(1)) != ws["members"] and not allowed(allow, where, m.group(0)):

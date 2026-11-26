@@ -58,6 +58,6 @@ Not recorded in the surviving text.
   alternates, cues, debug panels"
 - Vault: "Star Child World II - The Undertow - 2026-08-17"
 - Code now: `crates/flint-input-capture/src/lib.rs` (`VerbMap`),
-  `crates/flint-music/src/input_stream.rs` (`SwaySample`, `PressureSample`),
+  `packages/music/crates/flint-music/src/input_stream.rs` (`SwaySample`, `PressureSample`),
   `crates/flint-cli/src/commands/play_chart.rs` (`--input-map`),
   [Music Sessions](../book/src/concepts/music-sessions.md), "Verb Space"

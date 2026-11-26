@@ -58,15 +58,17 @@ use flint_script::context::ScriptCommand;
 use std::any::Any;
 
 // The scene subsystems whose code is still in this crate: the kernel's
-// `field`, and the `living` and `music` packages' until each moves to its
-// own crate (#1555, #1558). Each file registers what it brings through the
-// run's `Registry` (#1552); nothing lists the files.
+// `field`, and the `living` and `rhythm` packages' until each moves to its
+// own crate (#1556, #1558; music's is its own since #1555). Each file
+// registers what it brings through the run's `Registry` (#1552); nothing
+// lists the files.
 #[path = "subsystems/field.rs"]
 pub(crate) mod field;
 #[path = "subsystems/living.rs"]
 pub(crate) mod living;
-#[path = "subsystems/music.rs"]
-pub(crate) mod music;
+#[cfg(feature = "rhythm")]
+#[path = "subsystems/rhythm.rs"]
+pub(crate) mod rhythm;
 #[cfg(test)]
 #[path = "subsystems/toy.rs"]
 pub(crate) mod toy;
@@ -343,6 +345,7 @@ macro_rules! scene_ctx {
             capture: None,
             packages: $app.core.packages.as_ref(),
             resources: &mut $app.core.resources,
+            registry: $crate::packages::registry(),
         }
     };
 }
@@ -383,17 +386,15 @@ impl super::PlayerApp {
         self.lend_living_start();
         // ...and what rhythm's reads of the scene's post-processing (#1556)
         #[cfg(feature = "rhythm")]
-        self.core.resources.insert(crate::music::rhythm::ScenePost(
-            self.scene.post_process.clone(),
-        ));
+        self.core
+            .resources
+            .insert(crate::rhythm::ScenePost(self.scene.post_process.clone()));
         let mut ctx = scene_ctx!(self);
         for subsystem in build_for_scene(&mut ctx) {
             self.core.subsystems.push(subsystem);
         }
         #[cfg(feature = "rhythm")]
-        self.core
-            .resources
-            .remove::<crate::music::rhythm::ScenePost>();
+        self.core.resources.remove::<crate::rhythm::ScenePost>();
         self.core.enable_script_modules();
     }
 

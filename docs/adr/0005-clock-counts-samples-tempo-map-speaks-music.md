@@ -53,7 +53,7 @@ bought only readout convenience.
   scheduler, shared status readout"
 - Vault: "Star Child Phase 1 - The Clock That Refuses to Speak Music"
   (2026-08-15)
-- Code now: `crates/flint-music/src/session.rs`,
-  `crates/flint-music/src/conductor.rs` (`Conductor`),
-  `crates/flint-music/src/tempo.rs` (`TempoMap`),
-  `crates/flint-music/src/scheduler.rs`
+- Code now: `packages/music/crates/flint-music/src/session.rs`,
+  `packages/music/crates/flint-music/src/conductor.rs` (`Conductor`),
+  `packages/music/crates/flint-music/src/tempo.rs` (`TempoMap`),
+  `packages/music/crates/flint-music/src/scheduler.rs`

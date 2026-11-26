@@ -58,7 +58,7 @@ Not recorded in the surviving text.
   "D8: session replay — record/replay format, synthesis, flint replay-chart"
 - Commit [`226ac74`](https://github.com/chrischaps/Flint/commit/226ac748d8e2ef9c99637dcab772a2f07fa112fc)
   "E5 full-fail + reintegration sequencer"
-- Code now: `crates/flint-music/src/replay.rs` (`SessionWriter`,
+- Code now: `packages/music/crates/flint-music/src/replay.rs` (`SessionWriter`,
   `read_session_raw`, `synthesize`, `SyntheticProfile`),
   `crates/flint-cli/src/commands/replay_chart.rs`,
   [Music Sessions](../book/src/concepts/music-sessions.md), "Recording,

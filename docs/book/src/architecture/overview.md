@@ -19,7 +19,6 @@ flint/
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
 │   ├── flint-debug-ui/     # DebugPanel trait + the F3/F4 panel roster (Rendering & Effects, ocean, sky, ...)
-│   ├── flint-music/        # Music: suite manifests, manifest-named buses, tempo maps, conductor, offline render
 │   ├── flint-rhythm/       # The rhythm layer over it: charts, judgment, coherence, ladder, seam, replay, haptics
 │   ├── flint-input-capture/# 1 kHz gamepad capture thread stamped against the audio clock
 │   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
@@ -41,6 +40,9 @@ flint/
 │   ├── flint-wooze/        # The wooze field
 │   ├── flint-geometry/     # Ocean waves, splines, ray meshes
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
+├── packages/               # One folder a package: package.toml, its schemas and, once moved, its crates
+│   └── music/crates/
+│       └── flint-music/    # Music: suite manifests, manifest-named buses, tempo maps, conductor, offline render
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
 │   └── arch-viewer/        # Static web page that renders that JSON as an interactive graph
@@ -268,7 +270,8 @@ Music for any game, with no game rules in it:
 - `SuiteSession`, `BusMixer`, `Scheduler` / `EventScript` --- stems sample-locked on one clock tick, per-bus gain, low-pass and detune, bus events on the musical grid
 - `latency` --- the newest output-latency measurement and tap calibration on record
 - `render_offline` / `write_wav` --- headless suite rendering behind `flint music render`
-- Depends only on `flint-core` plus kira, symphonia, hound, toml_edit
+- Depends only on `flint-core` and `flint-audio` plus kira, symphonia, hound, toml_edit
+- The `music` package's own crate, in its folder (`packages/music/crates/flint-music`, #1555): its `player` feature is the scene's music subsystem (`flint_music::player`, a `flint_package::Package` with a chart-judge registration point the rhythm package fills), its `cli` feature the `flint music validate|play|render` commands (`flint_music::cli`). The player's and the CLI's build scripts list both from the package folder, so neither names the crate
 
 ### flint-rhythm
 

@@ -119,14 +119,43 @@ pub fn schema_files(schemas: &Path, prefix: &str) -> Vec<SchemaFile> {
 }
 
 /// The root manifest's `[workspace] members`, each with its package name.
+/// A member ending `*/crates/*` (`packages/*/crates/*`, #1555) is every
+/// folder it matches that holds a `Cargo.toml`, by name.
 pub fn workspace_crates(root: &Path) -> Vec<Member> {
     let text = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
     let manifest: toml::Table = text.parse().unwrap();
     let members = manifest["workspace"]["members"].as_array().unwrap();
+    let folders_of = |pattern: &str| -> Vec<String> {
+        let Some((base, rest)) = pattern.split_once("/*/") else {
+            return vec![pattern.to_string()];
+        };
+        let inner = rest
+            .strip_suffix("/*")
+            .expect("a glob is `<dir>/*/<dir>/*`");
+        let mut found = Vec::new();
+        let mut outer: Vec<_> = std::fs::read_dir(root.join(base))
+            .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
+            .unwrap_or_default();
+        outer.sort();
+        for name in outer {
+            let dir = format!("{base}/{}/{inner}", name.to_string_lossy());
+            let mut here: Vec<_> = std::fs::read_dir(root.join(&dir))
+                .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
+                .unwrap_or_default();
+            here.sort();
+            for krate in here {
+                let folder = format!("{dir}/{}", krate.to_string_lossy());
+                if root.join(&folder).join("Cargo.toml").is_file() {
+                    found.push(folder);
+                }
+            }
+        }
+        found
+    };
     members
         .iter()
-        .map(|m| {
-            let folder = m.as_str().unwrap();
+        .flat_map(|m| folders_of(m.as_str().unwrap()))
+        .map(|folder| {
             let file = format!("{folder}/Cargo.toml");
             let text =
                 std::fs::read_to_string(root.join(&file)).unwrap_or_else(|e| panic!("{file}: {e}"));
@@ -572,6 +601,29 @@ fn a_crate_no_package_owns_fails_naming_its_manifest() {
     assert_eq!(read[0].manifest, "crates/flint-zebra/Cargo.toml");
     assert_eq!(read[0].name, "flint-zebra");
     let _ = std::fs::remove_dir_all(&tmp);
+
+    // A package's crate joins through the glob (#1555), and a package
+    // folder with no crates/ adds nothing
+    let tmp = scratch("glob");
+    std::fs::create_dir_all(tmp.join("packages/zebra/crates/flint-zebra")).unwrap();
+    std::fs::create_dir_all(tmp.join("packages/quiet")).unwrap();
+    std::fs::write(
+        tmp.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"packages/*/crates/*\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("packages/zebra/crates/flint-zebra/Cargo.toml"),
+        "[package]\nname = \"flint-zebra\"\n",
+    )
+    .unwrap();
+    let read = workspace_crates(&tmp);
+    assert_eq!(read.len(), 1);
+    assert_eq!(
+        read[0].manifest,
+        "packages/zebra/crates/flint-zebra/Cargo.toml"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -614,11 +666,18 @@ fn an_item_two_packages_claim_or_one_the_tree_lacks_fails() {
     living.provides.commands.push("music".into());
     living.provides.crates.push("flint-gone".into());
     let found = problems(&packages, &Inventory::of_repo());
-    for want in [
+    let mut wanted = vec![
         "schemas/components/transform.toml: the component `transform` is provided by engine and living: an item has one owner",
-        "`flint music validate`: provided by `music`, and `flint music` above it by `living`: a command has one owner",
         "packages/living/package.toml: provides.crates lists `flint-gone`, and the tree has no crate of that name",
-    ] {
+    ];
+    // `flint music` is the music package's extension (#1555): a flint
+    // built without it has no such command to claim
+    if crate::commands::absent::built_with("music") {
+        wanted.push(
+            "`flint music validate`: provided by `music`, and `flint music` above it by `living`: a command has one owner",
+        );
+    }
+    for want in wanted {
         assert!(
             found.iter().any(|f| f.ends_with(want) || f == want),
             "missing {want:?} in {found:#?}"

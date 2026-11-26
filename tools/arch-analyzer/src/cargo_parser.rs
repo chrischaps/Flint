@@ -56,9 +56,32 @@ pub fn find_crate_dirs(workspace_root: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     for member in members {
         let member_path = member.as_str().unwrap();
-        let path = workspace_root.join(member_path);
-        if path.join("Cargo.toml").exists() {
-            dirs.push(path);
+        // `packages/*/crates/*` (#1555): each folder it matches
+        let candidates = match member_path.split_once("/*/") {
+            Some((base, rest)) => {
+                let inner = rest.trim_end_matches("/*");
+                let mut found = Vec::new();
+                for outer in std::fs::read_dir(workspace_root.join(base))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                {
+                    for krate in std::fs::read_dir(outer.path().join(inner))
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                    {
+                        found.push(krate.path());
+                    }
+                }
+                found
+            }
+            None => vec![workspace_root.join(member_path)],
+        };
+        for path in candidates {
+            if path.join("Cargo.toml").exists() {
+                dirs.push(path);
+            }
         }
     }
     dirs.sort();

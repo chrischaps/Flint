@@ -8,12 +8,12 @@
 //! A `*.goldens.toml` (the programmatic eyes, #271) is `flint goldens`
 //! since #327, so these flags are the music suite's alone.
 
+use crate::event_script::EventScript;
+use crate::offline::{render_offline, write_wav, OfflineRenderConfig};
+use crate::session::FileStems;
+use crate::status::status_line;
+use crate::{validate_manifest, validate_manifest_assets, Conductor, SuiteManifest};
 use anyhow::{bail, Context, Result};
-use flint_music::event_script::EventScript;
-use flint_music::offline::{render_offline, write_wav, OfflineRenderConfig};
-use flint_music::session::FileStems;
-use flint_music::status::status_line;
-use flint_music::{validate_manifest, validate_manifest_assets, Conductor, SuiteManifest};
 use std::path::{Path, PathBuf};
 
 #[derive(clap::Args)]
@@ -106,7 +106,7 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
         Some(other) => bail!("--status-every must be 'bar' or 'beat', got '{other}'"),
     };
 
-    crate::output::say!(
+    say!(
         "rendering suite '{}': {} samples ({:.1} s) at {} Hz, {} scripted events, chunk {} frames",
         manifest.id,
         duration_samples,
@@ -137,13 +137,13 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
         if key != last_line {
             last_line = key;
             let section = conductor.section_at_sample(pos.sample);
-            crate::output::say!("{}", status_line(pos, section, mixer));
+            say!("{}", status_line(pos, section, mixer));
         }
     })
     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     for f in &result.fired {
-        crate::output::say!(
+        say!(
             "fired @ sample {:>9}{}: {:?} {:?}",
             f.sample,
             if f.late { " (LATE)" } else { "" },
@@ -154,13 +154,13 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
     let out_path = Path::new(&output);
     write_wav(out_path, &result.samples, manifest.sample_rate)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    crate::output::say!(
+    say!(
         "wrote {} ({} frames, {:.1} s)",
         out_path.display(),
         result.samples.len() / 2,
         (result.samples.len() / 2) as f64 / manifest.sample_rate as f64
     );
-    crate::output::when_json(|| {
+    flint_package::cli::when_json(|| {
         serde_json::json!({
             "suite": manifest.id,
             "written": [out_path.display().to_string().replace('\\', "/")],
@@ -185,7 +185,7 @@ fn stem_duration_samples(manifest: &SuiteManifest, base_dir: &Path) -> Option<i6
         .buses
         .values()
         .filter_map(|decl| decl.file.as_ref())
-        .filter_map(|file| flint_music::probe::probe_audio(&base_dir.join(file)).ok())
+        .filter_map(|file| crate::probe::probe_audio(&base_dir.join(file)).ok())
         .map(|info| info.frames as i64)
         .max()
 }

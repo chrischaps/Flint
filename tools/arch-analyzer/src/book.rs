@@ -13,6 +13,13 @@ pub const PAGE: &str = "docs/book/src/architecture/crate-graph.md";
 pub const BEGIN: &str = "<!-- crate-table:begin -->";
 pub const END: &str = "<!-- crate-table:end -->";
 
+/// An engine crate: under `crates/`, or a package's own under
+/// `packages/<name>/crates/` (#1555). Anything else is a tool.
+fn is_engine(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    path.starts_with("crates") || (path.starts_with("packages/") && path.contains("/crates/"))
+}
+
 /// `flint-debug-ui` -> `debug-ui`; the table's columns name crates short.
 fn short(name: &str) -> &str {
     name.strip_prefix("flint-").unwrap_or(name)
@@ -87,13 +94,10 @@ pub fn render(workspace_root: &Path) -> String {
     let mut rows: Vec<&CrateMeta> = crates.iter().collect();
     rows.sort_by_key(|c| (tiers[&c.name], c.name.clone()));
 
-    let engine = crates
-        .iter()
-        .filter(|c| c.path.starts_with("crates"))
-        .count();
+    let engine = crates.iter().filter(|c| is_engine(&c.path)).count();
     let tools: Vec<String> = crates
         .iter()
-        .filter(|c| !c.path.starts_with("crates"))
+        .filter(|c| !is_engine(&c.path))
         .map(|c| format!("`{}`", c.path.replace('\\', "/")))
         .collect();
 
@@ -105,7 +109,8 @@ pub fn render(workspace_root: &Path) -> String {
          Rewrite: cargo run -p flint-arch-analyzer -- --book. CI's crate-table job runs --check-book. -->\n\n",
     );
     out.push_str(&format!(
-        "The workspace has {engine} crates under `crates/`, plus {} ({}). \
+        "The workspace has {engine} engine crates, under `crates/` and a package's under \
+         `packages/<name>/crates/`, plus {} ({}). \
          Rows run bottom-up: a crate's **tier** is the longest chain of engine crates beneath it, \
          so every crate depends only on crates of a lower tier. Optional and target-only \
          dependencies are marked; dev-dependencies are left out.\n\n",
@@ -139,7 +144,7 @@ pub fn render(workspace_root: &Path) -> String {
             }
             None => "*(none)*".to_string(),
         };
-        let name = if c.path.starts_with("crates") {
+        let name = if is_engine(&c.path) {
             format!("`{}`", c.name)
         } else {
             format!("`{}` (`{}`)", c.name, c.path.replace('\\', "/"))

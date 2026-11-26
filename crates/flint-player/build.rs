@@ -23,6 +23,84 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+#[path = "../flint-package/launch_list.rs"]
+mod launch_list;
+
+/// `$OUT_DIR/package_list.rs` (#1555, ADR 0137 decision 5): the launcher's
+/// list, so `src/packages.rs` names no moved package.
+///
+/// - `ORDER`: every package's name, in the order packages register.
+/// - `PLAYER_PACKAGES`: the packages this crate has a part of, those whose
+///   `[build] features` are features of this crate, in that order.
+/// - `BUILT`: each of those features, and whether this build has it on.
+/// - `moved()`: the player part (`<crate>::player::PACKAGE`) of each
+///   package in its own folder that this build has.
+#[allow(clippy::disallowed_methods)] // a build script reads the host's disk
+fn package_list(engine: &Path) {
+    let manifests = launch_list::in_order(launch_list::read(engine));
+    launch_list::watch(&manifests);
+    let own: toml::Table = std::fs::read_to_string(engine.join("crates/flint-player/Cargo.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let features = own
+        .get("features")
+        .and_then(|f| f.as_table())
+        .cloned()
+        .unwrap_or_default();
+    let ours = |m: &launch_list::Manifest| {
+        !m.features.is_empty() && m.features.iter().all(|f| features.contains_key(f))
+    };
+    let mut out = String::new();
+    let names = |list: Vec<&str>| {
+        list.iter()
+            .map(|n| format!("{n:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    writeln!(
+        out,
+        "pub const ORDER: &[&str] = &[{}];",
+        names(manifests.iter().map(|m| m.name.as_str()).collect())
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "pub const PLAYER_PACKAGES: &[&str] = &[{}];",
+        names(
+            manifests
+                .iter()
+                .filter(|m| ours(m))
+                .map(|m| m.name.as_str())
+                .collect()
+        )
+    )
+    .unwrap();
+    let mut built: Vec<&str> = manifests
+        .iter()
+        .filter(|m| ours(m))
+        .flat_map(|m| m.features.iter().map(String::as_str))
+        .collect();
+    built.dedup();
+    writeln!(out, "pub const BUILT: &[(&str, bool)] = &[").unwrap();
+    for feature in built {
+        let on = launch_list::built(&[feature.to_string()]);
+        writeln!(out, "    ({feature:?}, {on}),").unwrap();
+    }
+    writeln!(out, "];").unwrap();
+    writeln!(
+        out,
+        "pub fn moved() -> Vec<&'static dyn flint_package::Package> {{\n    vec!["
+    )
+    .unwrap();
+    for (_, krate) in launch_list::parts(&manifests, "player") {
+        writeln!(out, "        &::{krate}::player::PACKAGE,").unwrap();
+    }
+    writeln!(out, "    ]\n}}").unwrap();
+    let dest = Path::new(&std::env::var("OUT_DIR").unwrap()).join("package_list.rs");
+    std::fs::write(dest, out).unwrap();
+}
+
 // A build script runs on the host at compile time, never in the browser, so
 // the vfs rule on file reads (the root clippy.toml, #97) doesn't apply.
 #[allow(clippy::disallowed_methods)]
@@ -71,6 +149,7 @@ fn main() {
     }
     let dest = Path::new(&std::env::var("OUT_DIR").unwrap()).join("engine_schemas.rs");
     std::fs::write(dest, out).unwrap();
+    package_list(&engine);
     commit();
     profile();
     main_thread_stack();

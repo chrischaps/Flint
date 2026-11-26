@@ -60,4 +60,4 @@ hygiene pass, whose records were numbered 0038 to 0041; only this one and
 - Vault: "2026-08-19 Starchild hygiene pass — determinism as a refactoring
   tool"
 - Code now: `crates/flint-script/src/lib.rs` (`lock_or_recover`),
-  `crates/flint-music/src/clock_bridge.rs` (`lock_or_recover`)
+  `packages/music/crates/flint-music/src/clock_bridge.rs` (`lock_or_recover`)

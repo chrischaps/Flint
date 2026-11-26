@@ -51,5 +51,5 @@ pairwise stem skew over 10 bars (Milestone 0).
   "B6: flint play-suite — Milestone 0 passed"
 - Vault: "Star Child Milestone 0 - And the Validator Catches Its First Real
   Bug" (2026-08-15)
-- Code now: `crates/flint-music/src/validate.rs` (`StemPrimingUnsafe`),
-  `crates/flint-music/src/probe.rs`
+- Code now: `packages/music/crates/flint-music/src/validate.rs` (`StemPrimingUnsafe`),
+  `packages/music/crates/flint-music/src/probe.rs`

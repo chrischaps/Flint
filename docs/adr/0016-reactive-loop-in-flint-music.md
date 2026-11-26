@@ -56,6 +56,6 @@ stdout on `synthetic-fail-demo`, and the synthetic-perfect JSONL and stdout.
   "F1: hoist ChartSession/ChartCore into flint-music (ADR 0016)"
 - Vault: "2026-08-16 Star Child Phase 4 planned — the prototype chooses the
   harder road"
-- Code now: `crates/flint-music/src/chart_session.rs` (`ChartSession`,
+- Code now: `packages/music/crates/flint-music/src/chart_session.rs` (`ChartSession`,
   `ChartCore`), `crates/flint-cli/src/commands/play_chart.rs`,
   `crates/flint-cli/src/commands/replay_chart.rs`

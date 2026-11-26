@@ -61,6 +61,6 @@ telegraph the verbs, and a player needing a guide says it didn't.
 - Vault: "2026-08-17 Legibility is the finding"
 - Vault: "2026-08-17 Manifest Map timeline panel"
 - Code now: `crates/flint-player/src/player_app/music_guide_panel.rs`
-  (`MusicGuidePanel`), `crates/flint-music/src/chart_session.rs`
-  (`GuideFrame`, `GuideWindow`), `crates/flint-music/src/judgment.rs`,
+  (`MusicGuidePanel`), `packages/music/crates/flint-music/src/chart_session.rs`
+  (`GuideFrame`, `GuideWindow`), `packages/music/crates/flint-music/src/judgment.rs`,
   [Music Sessions](../book/src/concepts/music-sessions.md), "Debug Surfaces"

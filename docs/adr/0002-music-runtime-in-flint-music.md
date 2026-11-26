@@ -48,6 +48,6 @@ Not recorded in the surviving text.
 - Vault: "Star Child Phase 0 - Spikes Land, Latency Surprises" (2026-08-14)
 - Vault: "Star Child Phase 1 - The Clock That Refuses to Speak Music"
   (2026-08-15)
-- Code now: `crates/flint-music/src/lib.rs`,
+- Code now: `packages/music/crates/flint-music/src/lib.rs`,
   `crates/flint-audio/src/engine.rs` (`AudioEngine::manager_mut`),
   [Music Sessions](../book/src/concepts/music-sessions.md)

@@ -7,7 +7,7 @@
 //! reads, is in [`Resources`]: procgen's resolver, living's props, the
 //! debug-hud's panels.
 
-use crate::{Note, Resources};
+use crate::{Note, Registry, Resources};
 use flint_audio::engine::AudioEngine;
 use flint_core::package::InUse;
 use flint_core::project::Project;
@@ -59,6 +59,10 @@ pub struct SceneCtx<'a> {
     pub packages: Option<&'a InUse>,
     /// The run's resources: what one package lends another.
     pub resources: &'a mut Resources,
+    /// What the run's packages registered: a builder reads another
+    /// package's registration point here (music's chart judge, which
+    /// rhythm fills, #1555), and asks whether a package is in the build.
+    pub registry: &'a Registry,
 }
 
 impl SceneCtx<'_> {

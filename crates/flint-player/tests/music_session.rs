@@ -2,11 +2,32 @@
 //! script reads the beat and the bar. Headless, as `flint render --scripts`
 //! runs it: the music subsystem keeps the beat on the game clock, so the
 //! numbers are exact.
+//!
+//! From outside the crate since #1555: the music is the `music` package's
+//! own crate, which the player's launcher lists, so this test asks the run's
+//! registry for it rather than a feature, and passes over a build without
+//! it.
 
-use crate::player_app::headless_game::HeadlessGame;
 use flint_ecs::FlintWorld;
+use flint_player::HeadlessGame;
 use flint_render::{Camera, PostProcessConfig};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// A stem of `seconds` of quiet tone, 32-bit float stereo as flint-music
+/// writes them.
+fn write_wav(path: &Path, seconds: u32, sample_rate: u32) {
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).unwrap();
+    for _ in 0..2 * sample_rate * seconds {
+        writer.write_sample(0.1f32).unwrap();
+    }
+    writer.finalize().unwrap();
+}
 
 const SUITE: &str = r#"
 schema_version = 0
@@ -49,9 +70,8 @@ fn project(test: &str) -> (PathBuf, String) {
     std::fs::create_dir_all(dir.join("scripts")).unwrap();
     std::fs::write(dir.join("flint.toml"), "[project]\n").unwrap();
     std::fs::write(dir.join("music/probe.suite.toml"), SUITE).unwrap();
-    let tone = vec![0.1f32; 2 * 8000 * 4];
-    flint_music::write_wav(&dir.join("music/pad.wav"), &tone, 8000).unwrap();
-    flint_music::write_wav(&dir.join("music/drums.wav"), &tone, 8000).unwrap();
+    write_wav(&dir.join("music/pad.wav"), 4, 8000);
+    write_wav(&dir.join("music/drums.wav"), 4, 8000);
     std::fs::write(dir.join("scripts/probe.rhai"), SCRIPT).unwrap();
     let scene = dir.join("probe.scene.toml");
     std::fs::write(&scene, "[scene]\nname = \"probe\"\n").unwrap();
@@ -81,13 +101,17 @@ fn probe(game: &HeadlessGame, field: &str) -> toml::Value {
 #[test]
 #[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
 fn a_script_reads_the_beat_and_bar_of_a_suite_with_no_chart() {
+    if !flint_player::packages::registry().has("music") {
+        eprintln!("skipped: this build's launcher has no music package");
+        return;
+    }
     let (dir, scene) = project("beat");
     let mut world = FlintWorld::new();
     let id = world.spawn("conductor").unwrap();
     world
         .set_component(
             id,
-            flint_music::components::MUSIC_SESSION,
+            "music_session",
             table(&[("manifest", "music/probe.suite.toml".into())]),
         )
         .unwrap();
@@ -109,7 +133,7 @@ fn a_script_reads_the_beat_and_bar_of_a_suite_with_no_chart() {
     let mut game = HeadlessGame::new(world, &scene, project);
     game.start_subsystems(
         Default::default(),
-        crate::CaptureStart {
+        flint_player::CaptureStart {
             scripts: true,
             ..Default::default()
         },

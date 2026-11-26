@@ -5,8 +5,11 @@
 //! the debug keys here, never by a package's name.
 
 use crate::{SceneCtx, Subsystem};
+use flint_core::package::InUse;
 use flint_runtime::DebugKeyGroup;
 use flint_script::ScriptModule;
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
 
 /// What a launcher lists: one value per package, named as its
 /// `package.toml` is. A package's crate exports one as a `static`.
@@ -41,6 +44,24 @@ pub struct Registry {
     policies: Vec<&'static str>,
     modules: Vec<(&'static str, &'static dyn ScriptModule)>,
     debug_keys: Vec<(&'static str, DebugKeyGroup)>,
+    /// Registration points, one value per Rust type (ADR 0137 section 4).
+    points: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+}
+
+/// The line a scene that uses `package` hears when the project's
+/// `[packages]` leaves it out (#1528): what it uses, what that means, and
+/// the line to add. `None` when the scene uses none of it. One wording for
+/// the kernel and every package, as `flint check` calls each part
+/// `unlisted-package`.
+pub fn left_out_line(in_use: &InUse, package: &str, uses: &[&str], and_so: &str) -> Option<String> {
+    (!uses.is_empty()).then(|| {
+        format!(
+            "[{package}] [packages] in flint.toml leaves out `{package}`: the scene's {} {and_so} \
+             ({})",
+            uses.join(", "),
+            in_use.hint_for(package)
+        )
+    })
 }
 
 impl Registry {
@@ -107,6 +128,31 @@ impl Registry {
     pub fn debug_keys(&mut self, group: DebugKeyGroup) -> &mut Self {
         self.debug_keys.push((self.current, group));
         self
+    }
+
+    /// A registration point of this package: a value of its own type that
+    /// a later package fills at its `register` ([`Registry::point_mut`]),
+    /// and this package's builders read ([`Registry::point`]). Music's
+    /// chart judge is one, which rhythm fills (ADR 0137 section 4). A
+    /// second insert of a type replaces the first.
+    pub fn insert_point<T: Any + Send + Sync>(&mut self, value: T) -> &mut Self {
+        self.points.insert(TypeId::of::<T>(), Box::new(value));
+        self
+    }
+
+    /// A registration point an earlier package inserted, to fill; `None`
+    /// when that package isn't in the run.
+    pub fn point_mut<T: Any + Send + Sync>(&mut self) -> Option<&mut T> {
+        self.points
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|value| value.downcast_mut::<T>())
+    }
+
+    /// A registration point, as the packages after its owner left it.
+    pub fn point<T: Any + Send + Sync>(&self) -> Option<&T> {
+        self.points
+            .get(&TypeId::of::<T>())
+            .and_then(|value| value.downcast_ref::<T>())
     }
 
     // ── What the kernel reads ─────────────────────────────────────────
@@ -199,5 +245,25 @@ mod tests {
         assert_eq!(owners, ["a", "b", "b"]);
         assert_eq!(registry.policies(), ["a"], "a policy is named once");
         assert!(registry.has("b") && !registry.has("c"));
+    }
+
+    /// A package's registration point, filled by a package after it and
+    /// read back; absent when its owner isn't in the run.
+    #[test]
+    fn a_later_package_fills_an_earlier_ones_point() {
+        #[derive(Default)]
+        struct Judge(Option<&'static str>);
+        let owner = Named("owner", |r| {
+            r.insert_point(Judge::default());
+        });
+        let filler = Named("filler", |r| {
+            if let Some(judge) = r.point_mut::<Judge>() {
+                judge.0 = Some("filler's");
+            }
+        });
+        let registry = Registry::of(&[&owner, &filler]);
+        assert_eq!(registry.point::<Judge>().unwrap().0, Some("filler's"));
+        let alone = Registry::of(&[&filler]);
+        assert!(alone.point::<Judge>().is_none());
     }
 }

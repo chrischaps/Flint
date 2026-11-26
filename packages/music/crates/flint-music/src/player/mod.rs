@@ -1,45 +1,106 @@
-//! The scene's music (#745, ADR 0117 step 5): a subsystem, built for a scene
-//! with a `music_session` component.
+//! The `music` package's part in the player (#745, ADR 0117 step 5, ADR
+//! 0137; its own crate since #1555): a subsystem, built for a scene with a
+//! `music_session` component. A launcher lists [`PACKAGE`]; flint-player's
+//! build script names it when the player's `music` feature turns this
+//! crate's `player` feature on, so the player's source names none of it.
 //!
-//! - **The music** ([`MusicSubsystem`], always built in): the suite's stems
-//!   play on the buses its manifest names, sample-locked on the shared kira
-//!   manager (ADR 0017), its event script's bus changes fire on the musical
-//!   grid, and scripts read where the music is (`music_beat()`,
-//!   `music_bar()`, `music_section()`). In play the beat is the audio
-//!   clock's, latency-compensated; in a stepped capture (`--frame-step`,
-//!   `flint render --scripts`) and with no sound device it is the game
-//!   clock's, so a beat lands on the same frame every run.
-//! - **The rhythm game** (`rhythm::RhythmSubsystem`, the `rhythm` feature):
-//!   a component with a `chart` is judged too, through flint-rhythm's
-//!   `ChartSession`, which takes the pads for its capture thread (ADR 0018),
-//!   drives the post-processing ladder (ADR 0021) and feeds the `conducted_*`
-//!   functions (ADR 0020), the `conducted` script module this file's
-//!   [`conducted`] declares (#698). A player built without the feature
-//!   plays a charted suite as music and says the chart isn't judged; its
+//! - **The music** ([`MusicSubsystem`]): the suite's stems play on the buses
+//!   its manifest names, sample-locked on the shared kira manager (ADR
+//!   0017), its event script's bus changes fire on the musical grid, and
+//!   scripts read where the music is (`music_beat()`, `music_bar()`,
+//!   `music_section()`). In play the beat is the audio clock's,
+//!   latency-compensated; in a stepped capture (`--frame-step`, `flint
+//!   render --scripts`) and with no sound device it is the game clock's, so
+//!   a beat lands on the same frame every run.
+//! - **The chart judge** ([`ChartJudge`], a registration point): a component
+//!   with a `chart` is judged by whatever subsystem the run's packages put
+//!   there. The `rhythm` package fills it (`RhythmSubsystem`, its
+//!   `ChartSession`, ADR 0018-0021), so this crate never asks whether the
+//!   build has rhythm. With the point empty (a build without rhythm), a
+//!   charted suite plays as music and says its chart isn't judged; its
 //!   `conducted_*` read the neutral state, as a capture's do.
 //!
-//! Nothing here runs in a scene without the component, and nothing in
-//! `player_app/` names it: `player_app/subsystems/music.rs` hands the
-//! scene to [`for_scene`].
+//! Nothing here runs in a scene without the component.
 
-pub(crate) mod conducted;
-#[cfg(feature = "rhythm")]
-pub(crate) mod rhythm;
+pub mod conducted;
 
-use crate::player_app::subsystem::{SceneCtx, Stage, StageCtx, Subsystem};
+use crate::components::MUSIC_SESSION;
+use crate::{Conductor, EventScript, SuiteManifest, SuiteSession};
+use flint_core::package::InUse;
 use flint_core::project::Project;
 use flint_ecs::FlintWorld;
-use flint_music::components::MUSIC_SESSION;
-use flint_music::{Conductor, EventScript, SuiteManifest, SuiteSession};
+use flint_package::{Package, Registry, SceneCtx, Stage, StageCtx, Subsystem};
 use flint_script::MusicClock;
 use std::path::{Path, PathBuf};
 
+/// The `music` package's player part: what a launcher lists.
+pub static PACKAGE: Music = Music;
+
+/// The `music` package (`packages/music/package.toml`).
+pub struct Music;
+
+impl Package for Music {
+    fn name(&self) -> &'static str {
+        "music"
+    }
+
+    /// Its builder, the line a scene with a session hears when the project
+    /// leaves it out (#1528), its chart judge (empty until rhythm fills
+    /// it), and the `conducted` module (#698): a rhythm session's state,
+    /// enabled in a scene whose `music_session` has a chart (`music_beat()`
+    /// and the rest are flint-script's core: any scene asks them). The music
+    /// plays on under a pause menu, as a loop does: no game state pauses it.
+    fn register(&self, registry: &mut Registry) {
+        registry
+            .scene_subsystem(for_scene)
+            .when_left_out(left_out)
+            .script_modules(&[&conducted::CONDUCTED])
+            .insert_point(ChartJudge::default());
+    }
+}
+
+/// A charted session's subsystem, made by the package that judges charts:
+/// the project-root `base` its paths start from, the component, and the
+/// scene.
+pub type JudgeChart =
+    fn(base: PathBuf, comp: toml::Value, ctx: &mut SceneCtx) -> Box<dyn Subsystem>;
+
+/// Music's registration point for a chart's judge (ADR 0137 section 4):
+/// `registry.point_mut::<ChartJudge>()` at a later package's `register`.
+/// Empty, a charted suite plays as music.
+#[derive(Default, Clone, Copy)]
+pub struct ChartJudge {
+    pub judge: Option<JudgeChart>,
+}
+
+/// What a scene with a `music_session` hears in a project that leaves the
+/// package out: the line to add to `[packages]`.
+fn left_out(ctx: &SceneCtx) -> Option<String> {
+    left_out_line(ctx.packages?, ctx.world)
+}
+
+/// [`flint_package::left_out_line`] of the music: a `music_session` that
+/// doesn't play.
+pub fn left_out_line(in_use: &InUse, world: &FlintWorld) -> Option<String> {
+    let uses: &[&str] = if world.entities_with_component(MUSIC_SESSION).is_empty() {
+        &[]
+    } else {
+        &[MUSIC_SESSION]
+    };
+    flint_package::left_out_line(
+        in_use,
+        "music",
+        uses,
+        "doesn't play, and music_beat() reads -1",
+    )
+}
+
 /// Stems fade out over this when the scene goes: long enough not to click.
-pub(crate) const STOP_FADE_MS: f64 = 50.0;
+pub const STOP_FADE_MS: f64 = 50.0;
 
 /// The first `music_session` component in the world; a second one is
 /// warned about and left alone.
-pub(crate) fn component_in(world: &FlintWorld) -> Option<toml::Value> {
+pub fn component_in(world: &FlintWorld) -> Option<toml::Value> {
     let mut found = None;
     for entity in world.all_entities() {
         let comp = world
@@ -61,7 +122,7 @@ pub(crate) fn component_in(world: &FlintWorld) -> Option<toml::Value> {
 }
 
 /// A string field of the component; empty or whitespace counts as absent.
-pub(crate) fn comp_str(comp: &toml::Value, key: &str) -> Option<String> {
+pub fn comp_str(comp: &toml::Value, key: &str) -> Option<String> {
     comp.get(key)
         .and_then(|v| v.as_str())
         .map(str::trim)
@@ -80,25 +141,25 @@ fn base_dir(project: &Project, comp: &toml::Value, scene_path: &str) -> PathBuf 
     project.root_holding(MUSIC_SESSION, manifest, scene_dir)
 }
 
-/// The scene's music subsystem, if it has a `music_session`: the rhythm
-/// game's for a component with a `chart` (in a build with the `rhythm`
-/// feature), the music's otherwise. In a capture (`flint render
+/// The scene's music subsystem, if it has a `music_session`: the chart
+/// judge's for a component with a `chart` (when a package filled
+/// [`ChartJudge`]), the music's otherwise. In a capture (`flint render
 /// --scripts`), the music's alone and only for scripts that run: the beat
 /// on the game clock, no sound, no chart judged (#1252).
-pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+pub fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     if ctx.capture.as_ref().is_some_and(|c| !c.scripts) {
         return None;
     }
     let comp = component_in(ctx.world)?;
     let base = base_dir(ctx.project, &comp, ctx.scene_path);
     if ctx.capture.is_none() && comp_str(&comp, "chart").is_some() {
-        #[cfg(feature = "rhythm")]
-        return Some(Box::new(rhythm::RhythmSubsystem::new(base, comp, ctx)));
-        #[cfg(not(feature = "rhythm"))]
-        tracing::warn!(target: "music",
-            "this player is built without the `rhythm` feature: the suite plays, \
-             its chart isn't judged"
-        );
+        match ctx.registry.point::<ChartJudge>().and_then(|j| j.judge) {
+            Some(judge) => return Some(judge(base, comp, ctx)),
+            None => tracing::warn!(target: "music",
+                "this player is built without the `rhythm` package: the suite plays, \
+                 its chart isn't judged"
+            ),
+        }
     }
     match MusicSubsystem::new(&base, &comp) {
         Ok(music) => Some(Box::new(music)),
@@ -112,7 +173,7 @@ pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
 /// Where the music is on the game clock, for a capture and with no device:
 /// the count-in (the session's pre-roll) and then the suite, as the audio
 /// clock would have it with no latency.
-pub(crate) struct GameClockMusic {
+pub struct GameClockMusic {
     conductor: Conductor,
     sample_rate: f64,
     preroll_samples: i64,
@@ -121,34 +182,34 @@ pub(crate) struct GameClockMusic {
 }
 
 impl GameClockMusic {
-    pub(crate) fn new(manifest: &SuiteManifest) -> Self {
+    pub fn new(manifest: &SuiteManifest) -> Self {
         let bpm = manifest.tempo.first().map_or(120.0, |a| a.bpm);
         let sample_rate = manifest.sample_rate as f64;
         Self {
             conductor: Conductor::new(manifest, None),
             sample_rate,
-            preroll_samples: (flint_music::session::PREROLL_BEATS * sample_rate * 60.0 / bpm)
-                .round() as i64,
+            preroll_samples: (crate::session::PREROLL_BEATS * sample_rate * 60.0 / bpm).round()
+                as i64,
             started_at: None,
         }
     }
 
     /// The suite sample at this frame's game time. The first frame is the
     /// count-in's first `delta`, as the clock ticked it.
-    pub(crate) fn sample(&mut self, total_time: f64, delta: f64) -> i64 {
+    pub fn sample(&mut self, total_time: f64, delta: f64) -> i64 {
         let start = *self.started_at.get_or_insert(total_time - delta);
         ((total_time - start) * self.sample_rate).round() as i64 - self.preroll_samples
     }
 
     /// The scripts' view of the music at this frame's game time.
-    pub(crate) fn clock(&mut self, total_time: f64, delta: f64) -> MusicClock {
+    pub fn clock(&mut self, total_time: f64, delta: f64) -> MusicClock {
         let sample = self.sample(total_time, delta);
         clock_at(&self.conductor, sample)
     }
 }
 
 /// The scripts' view of a position.
-pub(crate) fn clock_at(conductor: &Conductor, sample: i64) -> MusicClock {
+pub fn clock_at(conductor: &Conductor, sample: i64) -> MusicClock {
     let pos = conductor.position_at_sample(sample);
     MusicClock {
         playing: true,
@@ -162,7 +223,7 @@ pub(crate) fn clock_at(conductor: &Conductor, sample: i64) -> MusicClock {
 }
 
 /// A scene's music: the suite playing, and the beat for scripts.
-pub(crate) struct MusicSubsystem {
+pub struct MusicSubsystem {
     manifest: SuiteManifest,
     events: Option<EventScript>,
     base: PathBuf,
@@ -189,18 +250,18 @@ pub(crate) struct MusicSubsystem {
 }
 
 impl MusicSubsystem {
-    pub(crate) const NAME: &'static str = "music";
+    pub const NAME: &'static str = "music";
 
     /// The suite of a `music_session` component, validated against
     /// flint-music's contract and its stems on disk.
-    pub(crate) fn new(base: &Path, comp: &toml::Value) -> Result<Self, String> {
+    pub fn new(base: &Path, comp: &toml::Value) -> Result<Self, String> {
         let manifest_rel =
             comp_str(comp, "manifest").ok_or("music_session component: `manifest` is required")?;
         let manifest_path = base.join(&manifest_rel);
         let manifest = SuiteManifest::load(&manifest_path)
             .map_err(|e| format!("music_session: {}: {e}", manifest_path.display()))?;
-        let mut issues = flint_music::validate_manifest(&manifest);
-        issues.extend(flint_music::validate_manifest_assets(&manifest, base));
+        let mut issues = crate::validate_manifest(&manifest);
+        issues.extend(crate::validate_manifest_assets(&manifest, base));
         if !issues.is_empty() {
             let lines: Vec<String> = issues.iter().map(|i| format!("  {i}")).collect();
             return Err(format!(
@@ -220,7 +281,7 @@ impl MusicSubsystem {
                 )
             }
         };
-        let latency_ms = flint_music::latency::latest_latency_ms(base).map(|(_, ms)| ms);
+        let latency_ms = crate::latency::latest_latency_ms(base).map(|(_, ms)| ms);
         Ok(Self {
             game_clock: GameClockMusic::new(&manifest),
             manifest,
@@ -250,7 +311,7 @@ impl MusicSubsystem {
         if self.session.is_some() || self.tried_with_device {
             return;
         }
-        let stems = flint_music::session::FileStems::new(&self.base);
+        let stems = crate::session::FileStems::new(&self.base);
         // Hosted on the engine's mixer (#730): not while silent (the web's
         // Begin is still to come); in the browser, in its worklet (#1216).
         let Ok(started) =
@@ -395,4 +456,5 @@ file = "pad.wav"
 }
 
 #[cfg(test)]
-mod tests;
+#[path = "left_out_tests.rs"]
+mod left_out_tests;

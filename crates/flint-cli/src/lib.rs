@@ -33,9 +33,9 @@ use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     asset, build, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples,
-    export, frame, gen, gen_preview, init, music, package, play, playtest, prefab, preview,
-    profile, query, render, render_goldens, scene, schema, script, spline_edit, style,
-    terrain_edit, tex_edit, validate,
+    export, frame, gen, gen_preview, init, package, play, playtest, prefab, preview, profile,
+    query, render, render_goldens, scene, schema, script, spline_edit, style, terrain_edit,
+    tex_edit, validate,
 };
 use std::ffi::OsString;
 
@@ -147,11 +147,6 @@ enum Commands {
     /// folder any static server plays it from
     #[command(subcommand)]
     Export(Box<export::ExportCommands>),
-
-    /// Music suites and rhythm charts: validate, play, render to WAV,
-    /// calibrate, chart play / chart replay
-    #[command(subcommand)]
-    Music(Box<music::MusicCommands>),
 
     /// Render a `.goldens.toml` of scenes and gate each against its golden
     /// PNG (`--bless` rewrites them)
@@ -313,12 +308,27 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
 /// no command has nothing here; one left out of the build has nothing in
 /// the parser, and a line naming its command is told to add it
 /// ([`commands::absent::missing_command`]).
+///
+/// A package in its own folder (music, #1555) is listed by `build.rs` from
+/// the manifests (`generated::moved`), in the order packages register; the
+/// rhythm package's commands, still in this crate, go after it, under its
+/// `music`.
 pub fn stock() -> Vec<Box<dyn CliExtension>> {
     #[allow(unused_mut)] // a build with no package that adds a command
     let mut list: Vec<Box<dyn CliExtension>> = Vec::new();
     #[cfg(feature = "ai")]
     list.extend(flint_asset_gen::cli::extensions());
+    list.extend(generated::moved());
+    #[cfg(feature = "rhythm")]
+    list.extend(commands::music::extensions());
     list
+}
+
+/// What `build.rs` writes from the package manifests (#1555): `moved()`,
+/// the CLI parts of the packages in their own folders that this build has,
+/// and `BUILT_FEATURES`.
+pub(crate) mod generated {
+    include!(concat!(env!("OUT_DIR"), "/package_list.rs"));
 }
 
 /// The stock `flint`'s whole command tree: the engine's commands with
@@ -452,7 +462,6 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Bundle(args) => bundle::run(*args),
         Commands::Export(cmd) => export::run(*cmd),
         Commands::Dxc(cmd) => dxc::run(*cmd),
-        Commands::Music(cmd) => music::run(*cmd),
         Commands::Goldens(args) => render_goldens::run_command(*args),
         Commands::Play(args) => play::run(*args),
         Commands::Playtest(args) => playtest::run(*args),
@@ -512,17 +521,6 @@ impl Commands {
         Some(match self {
             Commands::Serve { .. } => "serve",
             Commands::SplineEdit(_) => "spline-edit",
-            // A build without the package opens no window: its stand-in
-            // names the package, under --json too (#1333)
-            Commands::Music(cmd) => match &**cmd {
-                #[cfg(feature = "music")]
-                music::MusicCommands::Play(_) => "music play",
-                #[cfg(feature = "rhythm")]
-                music::MusicCommands::Calibrate(_) => "music calibrate",
-                #[cfg(feature = "rhythm")]
-                music::MusicCommands::Chart(music::ChartCommands::Play(_)) => "music chart play",
-                _ => return None,
-            },
             // `--list-keys` prints the debug-key table and exits (#717, #1184)
             Commands::Play(args) if !args.player.list_keys => "play",
             Commands::Preview(args) if args.render.is_none() => "preview",

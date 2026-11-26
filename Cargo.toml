@@ -21,7 +21,6 @@ members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-audio-worklet",
-    "crates/flint-music",
     "crates/flint-rhythm",
     "crates/flint-input-capture",
     "crates/flint-animation",
@@ -36,6 +35,10 @@ members = [
     "crates/flint-cli",
     "crates/flint-android",
     "tools/arch-analyzer",
+    # A package's own crates (ADR 0137 decision 5, #1555): a crate under
+    # packages/<name>/crates/ joins with no line here. A package folder with
+    # no crates/ matches nothing.
+    "packages/*/crates/*",
 ]
 # What plain `cargo build`, `cargo test` and `cargo clippy` cover: every
 # member but one (#758). flint-android depends on ndk-sys, which compiles only
@@ -64,7 +67,6 @@ default-members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-audio-worklet",
-    "crates/flint-music",
     "crates/flint-rhythm",
     "crates/flint-input-capture",
     "crates/flint-animation",
@@ -78,6 +80,7 @@ default-members = [
     "crates/flint-ai-core",
     "crates/flint-cli",
     "tools/arch-analyzer",
+    "packages/*/crates/*",
 ]
 
 [workspace.package]
@@ -240,7 +243,7 @@ flint-package = { path = "crates/flint-package" }
 # `audio` / `gamepad` / `debug-hud` on flint-player.
 flint-audio = { path = "crates/flint-audio", default-features = false }
 flint-audio-worklet = { path = "crates/flint-audio-worklet" }
-flint-music = { path = "crates/flint-music", default-features = false }
+flint-music = { path = "packages/music/crates/flint-music", default-features = false }
 flint-rhythm = { path = "crates/flint-rhythm", default-features = false }
 flint-input-capture = { path = "crates/flint-input-capture", default-features = false }
 flint-animation = { path = "crates/flint-animation" }

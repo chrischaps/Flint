@@ -1,4 +1,10 @@
-//! `flint music`: the music and rhythm tools under one command (#709).
+//! The `rhythm` package's commands, under the `music` package's `flint
+//! music` (#709, #1555): `calibrate` and `chart play|replay`, a
+//! `CliExtension` the launcher lists after music's. `music validate`,
+//! `play` and `render` are the music package's own
+//! (`flint_music::cli`), and this extension hands `validate` the rhythm
+//! contract and the chart check ([`RULES`]). #1556 moves this file to the
+//! rhythm package's crate.
 //!
 //! Each was its own top-level command until #709 (`validate-suite`,
 //! `play-suite`, `render-suite`, `calibrate`, `play-chart`,
@@ -6,24 +12,16 @@
 //! these before clap parsed; #1141 retired them, so each is an unknown
 //! command now.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Subcommand;
+use flint_music::{Issue, SuiteManifest};
+use flint_package::cli::{subcommands, CliExtension};
+use std::path::Path;
 
-use super::{calibrate, play_chart, play_suite, render_suite, replay_chart, validate_suite};
+use super::{calibrate, play_chart, replay_chart};
 
 #[derive(Subcommand)]
-pub enum MusicCommands {
-    /// Validate a music suite manifest (`.suite.toml`), its stems, and an
-    /// optional beatmap chart
-    Validate(validate_suite::ValidateSuiteArgs),
-
-    /// Play a suite's stems sample-locked, no judgment
-    Play(play_suite::PlaySuiteArgs),
-
-    /// Render a suite (and an event script) to WAV, offline and
-    /// deterministically
-    Render(render_suite::RenderSuiteArgs),
-
+pub enum RhythmCommands {
     /// Tap-to-beat calibration: write the player's median offset to
     /// logs/latency/
     Calibrate(calibrate::CalibrateArgs),
@@ -31,7 +29,7 @@ pub enum MusicCommands {
     /// A suite against its beatmap chart: `play` it live with gamepad
     /// capture, or `replay` a session through judgment, headless
     #[command(subcommand)]
-    Chart(ChartCommands),
+    Chart(Box<ChartCommands>),
 }
 
 #[derive(Subcommand)]
@@ -45,13 +43,46 @@ pub enum ChartCommands {
     Replay(replay_chart::ReplayChartArgs),
 }
 
-pub fn run(cmd: MusicCommands) -> Result<()> {
+pub fn run(cmd: RhythmCommands) -> Result<()> {
     match cmd {
-        MusicCommands::Validate(args) => validate_suite::run(args),
-        MusicCommands::Play(args) => play_suite::run(args),
-        MusicCommands::Render(args) => render_suite::run(args),
-        MusicCommands::Calibrate(args) => calibrate::run(args),
-        MusicCommands::Chart(ChartCommands::Play(args)) => play_chart::run(args),
-        MusicCommands::Chart(ChartCommands::Replay(args)) => replay_chart::run(args),
+        RhythmCommands::Calibrate(args) => calibrate::run(args),
+        RhythmCommands::Chart(chart) => match *chart {
+            ChartCommands::Play(args) => play_chart::run(args),
+            ChartCommands::Replay(args) => replay_chart::run(args),
+        },
+    }
+}
+
+/// The rhythm package's commands under `flint music`, and its rules handed
+/// to `music validate`. `calibrate` and `chart play` read a pad and sound,
+/// so `--json` refuses them.
+pub fn extensions() -> Vec<Box<dyn CliExtension>> {
+    flint_music::cli::judge_rhythm_suites_with(&RULES);
+    vec![subcommands(run)
+        .under(&["music"])
+        .opens_window_when(|cmd| match cmd {
+            RhythmCommands::Calibrate(_) => true,
+            RhythmCommands::Chart(chart) => matches!(**chart, ChartCommands::Play(_)),
+        })]
+}
+
+/// The rhythm layer's half of `music validate`: its contract and the chart.
+pub struct Rules;
+
+pub static RULES: Rules = Rules;
+
+impl flint_music::cli::RhythmSuites for Rules {
+    fn declared(&self, manifest: &SuiteManifest) -> bool {
+        flint_rhythm::Reintegration::declared(manifest)
+    }
+
+    fn validate_manifest(&self, manifest: &SuiteManifest) -> Vec<Issue> {
+        flint_rhythm::validate_manifest(manifest)
+    }
+
+    fn validate_chart(&self, path: &Path, manifest: &SuiteManifest) -> Result<Vec<Issue>> {
+        let chart = flint_rhythm::Chart::load(path)
+            .with_context(|| format!("loading chart {}", path.display()))?;
+        Ok(flint_rhythm::validate_chart(&chart, manifest))
     }
 }

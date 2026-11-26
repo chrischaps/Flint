@@ -549,6 +549,63 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   `AiAssetCommands` builds its `Command` at run time, as `Cli`'s derive
   did, so nothing moved onto a deeper frame.
 
+## As built: the first move, music (#1555)
+
+- **The crate is in the package's folder**: `packages/music/crates/flint-music`.
+  The root `Cargo.toml` takes `"packages/*/crates/*"` in `members` and
+  `default-members` (section 5), and `[workspace.dependencies]` names the
+  new path. Tools that read the members list expand the glob
+  (flint-cli's completeness test, `scripts/docs-check.py`,
+  flint-arch-analyzer), and count a package's crates as engine crates.
+- **A package crate's parts are features, found by convention** until
+  #1568 gives the manifest `[rust]`: a crate under
+  `packages/<name>/crates/` with a `player` feature has
+  `<crate>::player::PACKAGE`; one with a `cli` feature has
+  `<crate>::cli::extensions()`. Each launcher crate's feature named for
+  the package turns that feature on (`music = ["dep:flint-music",
+  "flint-music?/player"]`), so the Cargo features of ADR 0136 decision 2
+  are still the switch. `crates/flint-package/launch_list.rs`, which
+  flint-player's and flint-cli's build scripts include by `#[path]`,
+  reads the manifests and each package crate's `[features]`, and writes
+  `OUT_DIR/package_list.rs`: `moved()` (each part whose package's
+  `[build] features` are all on), the registration `ORDER` (requires first,
+  then tier, then name, which is the order the stock list had by hand),
+  and the feature tables (`PLAYER_PACKAGES`, `BUILT`, flint-cli's
+  `BUILT_FEATURES`). No `package-sync.py` and no generated Cargo block
+  yet: the dependency and feature lines were written by hand (#1568).
+- **Music's registration point for rhythm**: `Registry::insert_point`,
+  `point_mut` and `point` (one value per type, `Send + Sync` so the run's
+  registry stays a static), and `SceneCtx::registry`, so a builder reads a
+  point and asks `has(package)`. Music inserts `ChartJudge`; rhythm,
+  still in flint-player, fills it at its `register` with its subsystem's
+  constructor. A build without rhythm leaves it empty and a charted suite
+  plays as music, as before. The kernel's "built without music" line is a
+  builder `ENGINE` registers in every build, which speaks only when the
+  registry lacks `music`.
+- **The `conducted` module stays declared by music** (as before: music
+  enables it, neutral, for a charted scene nothing judges), though the
+  manifests name it rhythm's. It moved with music into
+  `flint_music::player::conducted`, and rhythm's session writes its
+  snapshot there. #1556 decides whether rhythm takes it.
+- **One left-out wording**: `flint_package::left_out_line`, which the
+  kernel's lines and a package's share; music's is
+  `flint_music::player::left_out_line`.
+- **The CLI**: `music` is the music package's top-level command
+  (`flint_music::cli`, `validate`, `play`, `render`), and rhythm's
+  `calibrate` and `chart` are an extension under it. `extension::Added`
+  now takes a place that an earlier extension added (the tree is grown
+  extension by extension), and dispatches a line to the deepest owner
+  (`music chart play` is rhythm's, `music play` music's). `music
+  validate` reaches flint-rhythm's contract through
+  `flint_music::cli::judge_rhythm_suites_with`, a static that rhythm's
+  extension sets when it is listed: the CLI has no typed registration
+  points until #1572. `MissingPackage` and `missing` are
+  `flint_package::cli`'s, so a package's command can name the package a
+  part of it needs. The music and rhythm stubs are gone: a build without
+  either has none of its commands, and `absent::missing_command` names the
+  package from the manifests. `flint --help` lists `music` after the
+  engine's commands, as extensions are.
+
 ## Measured
 
 - **Cargo globs** (cargo 1.99.1, a scratch workspace, 2026-11-25): `members`

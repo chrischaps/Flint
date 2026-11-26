@@ -328,6 +328,43 @@ impl std::fmt::Display for Failed {
 
 impl std::error::Error for Failed {}
 
+/// A command (or a flag of one) needs a package this binary was built
+/// without (#1333). The launcher exits 2 on it, naming the package, and
+/// under `--json` its error document carries `package`. A package's
+/// command returns it for a part another package brings (`flint music
+/// validate` on a rhythm suite without `rhythm`, #1555).
+#[derive(Debug)]
+pub struct MissingPackage {
+    /// What was asked for: `flint music chart play`, `--ai-refine`.
+    pub what: String,
+    /// The package (and the flint-cli feature) it needs.
+    pub package: &'static str,
+}
+
+impl std::fmt::Display for MissingPackage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} needs the `{}` package, and this flint was built without it: \
+             list `{} = \"*\"` under [packages] in flint.toml and run `flint build` \
+             (`flint package list --built` names the packages this one has)",
+            self.what, self.package, self.package
+        )
+    }
+}
+
+impl std::error::Error for MissingPackage {}
+
+/// The error a command returns for a part of it whose package this binary
+/// lacks.
+pub fn missing(what: impl Into<String>, package: &'static str) -> anyhow::Error {
+    MissingPackage {
+        what: what.into(),
+        package,
+    }
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

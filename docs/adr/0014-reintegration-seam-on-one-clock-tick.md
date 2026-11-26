@@ -68,8 +68,8 @@ skew, no click, a single backwards jump, bit-identical renders.
   [`975f0e4`](https://github.com/chrischaps/Flint/commit/975f0e461d5666eed574bcc99bc2a1303c830c77),
   [`dcdb466`](https://github.com/chrischaps/Flint/commit/dcdb4668a72729326f7bf612460a173f3331281d)
 - Vault: "Starchild Phase 3 - Where the Signal Actually Lives (2026-08-15)"
-- Code now: `crates/flint-music/src/reintegration.rs` (`Reintegrator`,
-  `SeqPhase`), `crates/flint-music/src/mixer.rs` (`StemBus`),
-  `crates/flint-music/src/chart_session.rs`,
+- Code now: `packages/music/crates/flint-music/src/reintegration.rs` (`Reintegrator`,
+  `SeqPhase`), `packages/music/crates/flint-music/src/mixer.rs` (`StemBus`),
+  `packages/music/crates/flint-music/src/chart_session.rs`,
   [Music Sessions](../book/src/concepts/music-sessions.md), "Full Fail and
   Reintegration"
