@@ -83,12 +83,15 @@ pub struct SpecChecks {
     /// The spec's params against its generator's schema: its generator's
     /// name and each issue. `None` when the spec doesn't parse or its
     /// generator is no built-in (a game's own).
-    pub param_issues: fn(&Path) -> Option<(String, Vec<SpecIssue>)>,
+    pub param_issues: fn(&Path) -> Option<SpecParams>,
     /// A `.terrain.toml`'s issues as the terrain editor's status bar shows
     /// them (`error: ..` / `warning: ..`, `flint gen`'s own), from its text:
     /// the terrain_v1 schema's.
     pub terrain_issues: fn(&str) -> Vec<String>,
 }
+
+/// A spec's generator's name and its params' problems.
+pub type SpecParams = (String, Vec<SpecIssue>);
 
 /// One problem with a spec's params.
 #[derive(Debug, Clone, PartialEq, Eq)]

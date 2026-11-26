@@ -1939,6 +1939,7 @@ dependencies = [
  "serde_json",
  "toml",
  "tracing",
+ "web-time",
  "wgpu",
 ]
 

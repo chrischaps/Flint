@@ -1,11 +1,13 @@
 //! The wall clock, as a command writes it down: a timestamp for what it
 //! stored (`flint gen --register`'s provenance), a seed for an editor's
-//! "new seed". Both flint-cli's and a package's commands use them.
+//! "new seed". Both flint-cli's and a package's commands use them. On
+//! `web_time`'s clock, since this crate builds for the web player too (std's
+//! panics in wasm; scripts/wasm-check.sh).
 
 /// Now, UTC, as RFC 3339 to the second.
 pub fn utc_now() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let secs = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     rfc3339(secs)
 }
@@ -35,13 +37,13 @@ pub fn rfc3339(secs: u64) -> String {
 /// A seed from the system time, for an editor's "new seed" (the procgen
 /// previewer, texture graph and terrain editors).
 pub fn random_seed() -> u64 {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let nanos = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .unwrap_or_default()
         .subsec_nanos() as u64;
     // Mix with a larger time component for better spread
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let millis = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
     (nanos ^ millis.wrapping_mul(6364136223846793005)) % 1_000_000

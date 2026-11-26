@@ -42,7 +42,7 @@ mod points;
 
 pub use clock::{random_seed, rfc3339, utc_now};
 pub use missing::{missing, MissingPackage, EXIT as MISSING_EXIT};
-pub use points::{points, points_or, Points, SpecChecks, SpecGen, SpecIssue};
+pub use points::{points, points_or, Points, SpecChecks, SpecGen, SpecIssue, SpecParams};
 
 /// Subcommands a package or an embedding game adds to `flint`, given to
 /// flint-cli's `run_with`. The engine's own commands keep their names: an
