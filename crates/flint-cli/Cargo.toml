@@ -27,10 +27,13 @@ path = "src/main.rs"
 #            `gen --strip`, `render --sweep wooze.*|living.*`
 #   music    `music validate`, `music play`, `music render`
 #   rhythm   `music calibrate`, `music chart`, a suite's chart checks
-#   procgen  the player's procgen at load (`flint gen` keeps flint-procgen,
-#            which the viewer links anyway, until #1543; with no `living`,
-#            without its wooze field, #1516)
-#   ai       the paid calls: `asset generate` and the rest, `gen --ai-*`,
+#   procgen  the player's procgen at load, `flint gen` and the spec editors
+#            (`flint edit x.procgen.toml`, `gen-preview`, `tex-edit`), check's
+#            spec passes, and `[living]` / `[wooze]` settled at load (#1543;
+#            with no `living`, flint-procgen without its wooze field, #1516).
+#            `flint gen x.glyphs.toml` and `flint edit x.terrain.toml` are
+#            the kernel's and stay in
+#   ai      the paid calls: `asset generate` and the rest, `gen --ai-*`,
 #            `render --ai-refine`, `asset resolve --strategy ai_*`
 #
 # `packages` is all five: CI's headless job checks the book against
@@ -48,7 +51,7 @@ living = [
 ]
 music = ["flint-player/music", "dep:flint-music"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm", "dep:flint-input-capture"]
-procgen = ["flint-player/procgen"]
+procgen = ["flint-player/procgen", "dep:flint-procgen"]
 ai = ["procgen", "dep:flint-asset-gen", "dep:flint-procgen-ai", "dep:flint-ai-core"]
 
 [dependencies]
@@ -75,7 +78,7 @@ flint-player = { workspace = true, features = ["debug-hud", "frame-history"] }
 flint-script = { workspace = true, features = ["metadata", "check"] }
 flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
-flint-procgen = { workspace = true }
+flint-procgen = { workspace = true, optional = true }
 # `flint render --report json`'s living props (#1024): the only part of the
 # CLI that names the scheduler; `flint gen` uses flint-procgen alone.
 flint-living = { workspace = true, optional = true }
@@ -135,6 +138,10 @@ hound = { workspace = true }
 # The engine a script's sound plays on, with no device: the check's test that
 # a sound passes exactly when the engine finds it (#975).
 flint-audio = { workspace = true }
+# `tests/gen_validate_cli.rs` reads what `flint gen` wrote with it: here as
+# well, so the test builds without the procgen package (#1543) and
+# `cargo tree -e normal` shows none
+flint-procgen = { workspace = true }
 
 # A game binary with commands of its own (#1140): the test is the binary,
 # so its `main` is its own

@@ -175,7 +175,8 @@ impl Sweep {
 
     /// What column `i` of a wooze sweep lays over the scene's `[wooze]` table
     /// (#216): the knob at the column's value, a number unless it's a preset's name.
-    /// `None` for a sweep of anything else.
+    /// `None` for a sweep of anything else. Read only where the field runs.
+    #[cfg_attr(not(feature = "living"), allow(dead_code))]
     pub fn wooze_table(&self, i: usize) -> Option<toml::Table> {
         let knob = self.wooze_knob()?;
         let text = &self.values[i];
@@ -718,33 +719,55 @@ fn parse_living(field: &str, values: &[String]) -> Result<SweepKey, String> {
         ));
     };
     for value in values {
-        let mut echoes = flint_procgen::EchoConfig::default();
-        if knob == "count" {
-            echoes.count = value.parse().map_err(|_| {
-                format!("--sweep: living.echoes.count takes whole numbers, and '{value}' isn't")
-            })?;
-        } else {
-            let number = value
-                .parse::<f32>()
-                .ok()
-                .filter(|n| n.is_finite())
-                .ok_or_else(|| {
-                    format!("--sweep: living.echoes.{knob} takes numbers, and '{value}' isn't")
-                })?;
-            if knob == "spread" {
-                echoes.spread = number;
-            } else {
-                echoes.alpha = number;
-            }
-        }
-        // `why` starts with the value: `3: must be from 0 to 1.82 steps, ...`
-        if let Err((_, why)) = echoes.check() {
-            return Err(format!("--sweep living.echoes.{knob}={why}"));
-        }
+        echo_value(knob, value)?;
     }
     Ok(SweepKey::Echoes {
         knob: knob.to_string(),
     })
+}
+
+/// One `living.echoes.<knob>` value, held to what a spec's echoes take
+/// (`EchoConfig::check`).
+#[cfg(feature = "procgen")]
+fn echo_value(knob: &str, value: &str) -> Result<(), String> {
+    let mut echoes = flint_procgen::EchoConfig::default();
+    if knob == "count" {
+        echoes.count = value.parse().map_err(|_| {
+            format!("--sweep: living.echoes.count takes whole numbers, and '{value}' isn't")
+        })?;
+    } else {
+        let number = echo_number(knob, value)?;
+        if knob == "spread" {
+            echoes.spread = number;
+        } else {
+            echoes.alpha = number;
+        }
+    }
+    // `why` starts with the value: `3: must be from 0 to 1.82 steps, ...`
+    echoes
+        .check()
+        .map_err(|(_, why)| format!("--sweep living.echoes.{knob}={why}"))
+}
+
+/// Without the procgen package (#1543) there is no `EchoConfig` to hold the
+/// value to: it must read as a number, and the render then refuses the
+/// sweep, naming the living package, which draws the echoes.
+#[cfg(not(feature = "procgen"))]
+fn echo_value(knob: &str, value: &str) -> Result<(), String> {
+    if knob == "count" {
+        return value.parse::<u32>().map(|_| ()).map_err(|_| {
+            format!("--sweep: living.echoes.count takes whole numbers, and '{value}' isn't")
+        });
+    }
+    echo_number(knob, value).map(|_| ())
+}
+
+fn echo_number(knob: &str, value: &str) -> Result<f32, String> {
+    value
+        .parse::<f32>()
+        .ok()
+        .filter(|n| n.is_finite())
+        .ok_or_else(|| format!("--sweep: living.echoes.{knob} takes numbers, and '{value}' isn't"))
 }
 
 fn parse_style(key: &str, style: &str, k: &str, values: &[String]) -> Result<SweepKey, String> {

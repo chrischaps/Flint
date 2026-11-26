@@ -677,12 +677,6 @@ fn the_build_features_are_the_players_and_bring_what_they_require() {
 #[test]
 fn flint_cli_has_each_packages_feature_and_forwards_it() {
     const ALWAYS: &[&str] = &["debug-hud"];
-    // A package's crate flint-cli still links in every build, and the
-    // ticket that frees it. The test fails once it's optional, to remove it.
-    const LINKED_ANYWAY: &[(&str, &str)] = &[(
-        "flint-procgen",
-        "#1543: the gen commands, check's spec passes and flint-viewer read through it",
-    )];
     let player = features_of("flint-player");
     let cli = features_of("flint-cli");
     let manifest: toml::Table = std::fs::read_to_string(repo().join("crates/flint-cli/Cargo.toml"))
@@ -716,21 +710,14 @@ fn flint_cli_has_each_packages_feature_and_forwards_it() {
                 let Some(dep) = deps.get(krate.as_str()) else {
                     continue;
                 };
+                // No exception since #1543, which made flint-procgen, the
+                // last crate linked in every build, optional too
                 let optional = dep.get("optional").and_then(|o| o.as_bool()) == Some(true);
-                match LINKED_ANYWAY.iter().find(|(k, _)| k == krate) {
-                    Some((_, why)) => {
-                        assert!(
-                            !optional,
-                            "`{krate}` is optional now: take it out of LINKED_ANYWAY ({why})"
-                        );
-                        continue;
-                    }
-                    None => assert!(
-                        optional,
-                        "flint-cli links `{krate}` ({}'s) in every build",
-                        p.name
-                    ),
-                }
+                assert!(
+                    optional,
+                    "flint-cli links `{krate}` ({}'s) in every build",
+                    p.name
+                );
                 let dep_on = format!("dep:{krate}");
                 let reached = std::iter::once(feature.as_str())
                     .chain(on.iter().map(String::as_str))

@@ -102,6 +102,7 @@ pub struct Memo {
     catalogs: BTreeMap<PathBuf, Option<HeldAssets>>,
     /// Procgen specs whose params have been checked: each is reported
     /// once a run, however many scenes name it.
+    #[cfg(feature = "procgen")]
     specs_checked: BTreeSet<PathBuf>,
 }
 
@@ -259,7 +260,10 @@ fn check_all(
     // check, by the table's name. One mistake is said once (#807): the
     // scene pass has held the table to its `[table.<name>]` schema, which
     // the type mirrors, and named the field; that diagnostic becomes the
-    // error, and serde's message stands only when the pass said nothing
+    // error, and serde's message stands only when the pass said nothing.
+    // A flint without the procgen package (#1543) has no living package
+    // either, and its player reads neither table, so nothing is refused
+    #[cfg(feature = "procgen")]
     for (table, said) in flint_procgen::LivingTables::problems(&file) {
         refuses_the_load(&mut out.diagnostics, scene, table, &said);
     }
@@ -267,6 +271,7 @@ fn check_all(
         if let Some(world) = &world {
             particle_emitters(scene, world, &mut out.diagnostics);
         }
+        #[cfg(feature = "procgen")]
         spec_params(scene, scene_dir, &file, project, memo, &mut out.diagnostics);
     }
     if checks.files {
@@ -275,6 +280,11 @@ fn check_all(
     if checks.styles {
         styles(scene, scene_dir, &file, &text, memo, &mut out.diagnostics);
     }
+    // `[wooze]` and `[living.species]` held to the field and the props
+    // through flint-procgen's types: without the procgen package (#1543)
+    // the scene pass's schema half is what is said of them, as the player
+    // built without it reads neither table
+    #[cfg(feature = "procgen")]
     if checks.tables {
         let wooze = wooze(scene, &file, schemas);
         // The scene pass has checked `[wooze]` against its `[table.wooze]`
@@ -290,6 +300,8 @@ fn check_all(
         out.diagnostics.extend(wooze);
         out.diagnostics
             .extend(species(scene, &file, world.as_ref()));
+    }
+    if checks.tables {
         out.diagnostics.extend(fields(scene, &file));
     }
     if checks.constraints {
@@ -316,6 +328,8 @@ fn refuses_a_table(d: &Diagnostic, refused: &[&str]) -> bool {
 /// the spec's file with the parameter's path as its field. A spec found in
 /// the asset catalog first, one that doesn't parse (the files pass's
 /// `bad-spec`) or one whose generator is a game's own is passed over.
+/// The procgen package's: a flint without it holds no spec to a generator.
+#[cfg(feature = "procgen")]
 fn spec_params(
     scene: &Path,
     scene_dir: &Path,
@@ -431,7 +445,7 @@ fn assets(
 
     let mut names: Vec<&String> = file.entities.keys().collect();
     names.sort_unstable();
-    let mut bad_specs = BTreeSet::new();
+    let mut bad_specs: BTreeSet<PathBuf> = BTreeSet::new();
     let mut bad_splines = BTreeSet::new();
     // One asset missing is one problem, however many entities name it: the
     // first is the diagnostic's, the rest are counted in its message
@@ -458,7 +472,11 @@ fn assets(
             }
             if let Some(spec) = made.then(|| specs.get(name)).flatten() {
                 // A spec that doesn't parse is skipped by the player, and
-                // the name is then nobody's
+                // the name is then nobody's. A flint without the procgen
+                // package (#1543) reads no spec, so it judges none
+                #[cfg(not(feature = "procgen"))]
+                let _ = (spec, &mut bad_specs);
+                #[cfg(feature = "procgen")]
                 if let Err(e) = flint_procgen::ProcGenSpec::from_file(spec) {
                     if bad_specs.insert(spec.clone()) {
                         out.diagnostics.push(
@@ -829,6 +847,7 @@ fn user_style_diagnostic(message: &str, scene_dir: &Path) -> Diagnostic {
 /// wrong type its error), those diagnostics are made the errors, with the
 /// load's hint; serde's `said` is added only when the pass found nothing,
 /// so one mistake is one diagnostic.
+#[cfg(feature = "procgen")]
 fn refuses_the_load(found: &mut Vec<Diagnostic>, scene: &Path, table: &str, said: &str) {
     const HINT: &str = flint_scene::REFUSES_THE_LOAD;
     let mut named = false;
@@ -917,6 +936,7 @@ fn particle_emitters(scene: &Path, world: &FlintWorld, found: &mut Vec<Diagnosti
 
 /// What's wrong with the scene's `[wooze]` table and the preset it names.
 /// The zone, when it is about one, is the diagnostic's field.
+#[cfg(feature = "procgen")]
 fn wooze(scene: &Path, file: &SceneFile, schemas: &SceneSchemas) -> Vec<Diagnostic> {
     let mut file = file.clone();
     let preset_issues = flint_procgen::apply_preset_file(&mut file, scene);
@@ -976,7 +996,7 @@ fn species_problems(def: &flint_procgen::LivingSpeciesDef) -> Vec<String> {
 
 /// Built without the living package (#1333), whose player grows no props:
 /// only the species no prop grows from are said.
-#[cfg(not(feature = "living"))]
+#[cfg(all(feature = "procgen", not(feature = "living")))]
 fn species_problems(_: &flint_procgen::LivingSpeciesDef) -> Vec<String> {
     Vec::new()
 }
@@ -985,6 +1005,7 @@ fn species_problems(_: &flint_procgen::LivingSpeciesDef) -> Vec<String> {
 /// value the player would leave out, and a species no living prop in the
 /// scene grows from, which is most likely a misspelt spec name and would
 /// change nothing. The species is the diagnostic's field.
+#[cfg(feature = "procgen")]
 fn species(scene: &Path, file: &SceneFile, world: Option<&FlintWorld>) -> Vec<Diagnostic> {
     let mut file = file.clone();
     // A preset the scene names can hold species too, laid under its own.

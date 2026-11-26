@@ -6,7 +6,9 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use flint_viewer::host::{self, CameraFlags, Editor, HostOptions, StillOptions};
 
-use super::{gen_preview, particle_edit, preview, spline_edit, terrain_edit, tex_edit};
+#[cfg(feature = "procgen")]
+use super::{gen_preview, tex_edit};
+use super::{particle_edit, preview, spline_edit, terrain_edit};
 
 /// Recognised file kinds that `flint edit` can route to.
 pub enum FileKind {
@@ -411,10 +413,23 @@ fn check_flags(args: &EditArgs, kind: EditorKind) -> Result<()> {
 
 pub fn run(args: EditArgs) -> Result<()> {
     let path = Path::new(&args.file);
+    // A spec's previewers are the procgen package's (#1543): named before
+    // the file is read, as a left-out command is before its arguments
+    #[cfg(not(feature = "procgen"))]
+    if path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().ends_with(".procgen.toml"))
+    {
+        return Err(super::absent::missing(
+            format!("flint edit {}", args.file),
+            "procgen",
+        ));
+    }
     let file_kind = detect_file_kind(path)?;
     let kind = match file_kind {
         FileKind::Scene if args.spline => K::Track,
         FileKind::Scene => K::Scene,
+        #[cfg(feature = "procgen")]
         FileKind::ProcGenSpec => {
             if gen_preview::draws_images(path)? {
                 K::Texture
@@ -422,7 +437,12 @@ pub fn run(args: EditArgs) -> Result<()> {
                 K::Mesh
             }
         }
+        #[cfg(feature = "procgen")]
         FileKind::TexturePipeline => K::TextureGraph,
+        #[cfg(not(feature = "procgen"))]
+        FileKind::ProcGenSpec | FileKind::TexturePipeline => {
+            unreachable!("a .procgen.toml is refused above")
+        }
         FileKind::TerrainSpec => K::Terrain,
         FileKind::Model => K::Model,
         FileKind::ParticleEffect => K::Particles,
@@ -485,6 +505,7 @@ pub fn run(args: EditArgs) -> Result<()> {
             viewer.set_load_summary(player_load_summary());
             launch.go(viewer)
         }
+        #[cfg(feature = "procgen")]
         K::Mesh | K::Texture => launch.go(gen_preview::editor(gen_preview::GenPreviewArgs {
             spec: args.file,
             seed: args.seed,
@@ -493,12 +514,15 @@ pub fn run(args: EditArgs) -> Result<()> {
             no_grid: args.no_grid,
             auto_orbit: args.auto_orbit,
         })?),
+        #[cfg(feature = "procgen")]
         K::TextureGraph => launch.go(tex_edit::editor(tex_edit::TexEditArgs {
             spec: args.file,
             seed: args.seed,
             width: options.width,
             height: options.height,
         })?),
+        #[cfg(not(feature = "procgen"))]
+        K::Mesh | K::Texture | K::TextureGraph => unreachable!("a .procgen.toml is refused above"),
         K::Terrain => launch.go(terrain_edit::editor(terrain_edit::TerrainEditArgs {
             spec: args.file,
             seed: args.seed,

@@ -450,8 +450,10 @@ impl Commands {
             // `--list-keys` prints the debug-key table and exits (#717, #1184)
             Commands::Play(args) if !args.player.list_keys => "play",
             Commands::Preview(args) if args.render.is_none() => "preview",
+            #[cfg(feature = "procgen")]
             Commands::GenPreview(_) => "gen-preview",
             Commands::TerrainEdit(_) => "terrain-edit",
+            #[cfg(feature = "procgen")]
             Commands::TexEdit(_) => "tex-edit",
             Commands::Prefab(_) => "prefab view",
             Commands::Frame(args) => match &args.command {

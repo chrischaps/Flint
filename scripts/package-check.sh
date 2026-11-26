@@ -43,15 +43,9 @@ for arg in "$@"; do
     esac
 done
 
-# Crates a tree may hold although their package is out, each with the ticket
-# that frees it. Each rule is checked both ways: when the crate is gone where
-# the rule allowed it, the run fails until the rule comes out.
-#   flint-cli links flint-procgen in every build (its gen commands and
-#   flint-viewer read through it; owners.rs's LINKED_ANYWAY is the same row).
-#   flint-procgen no longer brings flint-wooze with it: the field is its
-#   `living` feature's (#1516).
-CLI_ALWAYS="flint-procgen"
-EXCEPTION_TICKET="#1543"
+# No exception: every package crate is out of a tree whose package is out.
+# The last, flint-cli's flint-procgen, went optional with #1543 (its wooze
+# field had gone behind its own `living` feature in #1516).
 
 # --- the manifests --------------------------------------------------------
 
@@ -184,17 +178,9 @@ for bin in flint-player flint-cli; do
             in_list "$p" $on && continue
             for c in ${CRATES[$p]}; do
                 printf '%s\n' "$tree" | grep -qx "$c" || continue
-                if [ "$bin" = flint-cli ] && in_list "$c" $CLI_ALWAYS; then continue; fi
                 bad+=("$c ($p)")
             done
         done
-        # The exceptions, held both ways
-        stale=()
-        if [ "$bin" = flint-cli ]; then
-            for c in $CLI_ALWAYS; do
-                printf '%s\n' "$tree" | grep -qx "$c" || stale+=("flint-cli no longer links $c in every build")
-            done
-        fi
 
         tree_result="ok"
         if [ ${#bad[@]} -gt 0 ]; then
@@ -207,14 +193,6 @@ for bin in flint-player flint-cli; do
             done
             FAILURES+=("$name: links ${bad[*]}")
             annotate "$name links ${bad[*]} (cargo tree -p $bin $flags)"
-        fi
-        if [ ${#stale[@]} -gt 0 ]; then
-            tree_result="FAIL"
-            for s in "${stale[@]}"; do
-                echo "FAIL $name: $s: take its exception ($EXCEPTION_TICKET) out of scripts/package-check.sh" >&2
-                FAILURES+=("$name: $s ($EXCEPTION_TICKET's exception is stale)")
-                annotate "$name: $s; remove the $EXCEPTION_TICKET exception from scripts/package-check.sh"
-            done
         fi
         crates=$(printf '%s\n' "$tree" | grep -c . || true)
         echo "-- $name: tree $tree_result, $crates crates ($flags)"
@@ -242,7 +220,6 @@ done
 echo
 printf '%-12s %-9s %-38s %-5s %-5s %6s\n' binary config packages tree check crates
 printf '%s\n' "${SUMMARY[@]}"
-echo "exceptions: flint-cli links $CLI_ALWAYS in every build ($EXCEPTION_TICKET)"
 
 if [ ${#FAILURES[@]} -gt 0 ]; then
     echo >&2

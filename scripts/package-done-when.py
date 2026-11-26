@@ -56,8 +56,9 @@ lineage_seed = 3
 NAMED = ["living_prop", "shallow_wooze", "music_session"]
 # No exception: since #1516 flint-procgen links flint-wooze only with its
 # `living` feature, so a build that leaves living out links none of
-# living's crates. (package-check.sh's one exception, flint-cli linking
-# flint-procgen always (#1543), can't arise here: procgen is in.)
+# living's crates, and since #1543 flint-cli and flint-viewer link
+# flint-procgen only with procgen (and living), so package-check.sh has no
+# exception left either.
 
 failures = []
 

@@ -195,6 +195,20 @@ pub fn run(
     )
 }
 
+/// Living props' tables: checked, and the preset `[wooze]` names filled in
+/// (#686). A viewer built without `living` draws those tables still and
+/// links no flint-procgen, so it has nothing to settle (#1543), as the
+/// player's build without the feature reads neither table.
+fn settle(scene_file: &mut flint_scene::SceneFile, path: &Path) -> flint_core::Result<()> {
+    #[cfg(feature = "living")]
+    return flint_procgen::settle_scene(scene_file, path);
+    #[cfg(not(feature = "living"))]
+    {
+        let _ = (scene_file, path);
+        Ok(())
+    }
+}
+
 /// The scene viewer on `scene_path`, for [`crate::host`] to open in a
 /// window or draw as a `--render` still (#712).
 pub fn viewer(
@@ -215,9 +229,7 @@ pub fn viewer(
     // A failure names the file (#1044)
     let (world, mut scene_file) =
         load_scene(scene_path, &registry).with_context(|| load_failed(scene_path))?;
-    // Living props' tables: checked, and the preset [wooze] names filled in (#686)
-    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))
-        .with_context(|| load_failed(scene_path))?;
+    settle(&mut scene_file, Path::new(scene_path)).with_context(|| load_failed(scene_path))?;
     // Its entities and files are said in one line once its models are
     // loaded too (`say_loaded`, at the end of `initialize`)
 
@@ -313,8 +325,7 @@ pub fn track_editor(
     let binding = scene_binding(scene_path);
     let (world, mut scene_file) =
         load_scene(scene_path, &registry).with_context(|| load_failed(scene_path))?;
-    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))
-        .with_context(|| load_failed(scene_path))?;
+    settle(&mut scene_file, Path::new(scene_path)).with_context(|| load_failed(scene_path))?;
 
     let state = Arc::new(Mutex::new(ViewerState {
         world,
@@ -2244,7 +2255,7 @@ impl ViewerApp {
                 load_scene_after(&scene_path, &state.registry, &state.world).and_then(
                     |(world, mut scene_file)| {
                         let path = std::path::Path::new(&scene_path);
-                        flint_procgen::settle_scene(&mut scene_file, path)?;
+                        settle(&mut scene_file, path)?;
                         Ok((world, scene_file))
                     },
                 )

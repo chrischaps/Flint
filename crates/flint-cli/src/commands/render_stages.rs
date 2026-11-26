@@ -855,6 +855,7 @@ fn still_props(stage: &Stage) -> Vec<String> {
 
 /// The preset file a `--sweep wooze.preset=...` value names, if it's a file the
 /// scene can see rather than a built-in (#249).
+#[cfg(feature = "living")]
 fn preset_file_of(
     args: &RenderArgs,
     sweep: &crate::commands::sweep::Sweep,
@@ -874,7 +875,9 @@ fn preset_file_of(
 /// What a sweep cell lays over the scene's `[wooze]` table: a preset file one
 /// of its axes names (its knobs first), then every other wooze value it takes,
 /// so a `wooze.glide` row turns the glide a preset column set (#596). `None`
-/// for a cell no axis of which is a wooze knob.
+/// for a cell no axis of which is a wooze knob. The living package's: a
+/// build without it refuses a wooze sweep (`check_wooze_sweep`).
+#[cfg(feature = "living")]
 pub(super) fn cell_knobs(
     args: &RenderArgs,
     grid: Option<&crate::commands::sweep::SweepGrid>,
@@ -903,6 +906,7 @@ pub(super) fn cell_knobs(
 }
 
 /// A preset's `[wooze]` knobs as the table the field takes.
+#[cfg(feature = "living")]
 fn preset_wooze_table(knobs: &flint_procgen::WoozeKnobs) -> toml::Table {
     let mut table = toml::Table::new();
     for (key, value) in [

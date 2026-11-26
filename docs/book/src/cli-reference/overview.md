@@ -169,7 +169,7 @@ $ flint music chart play x
 Error: flint music chart play needs the `rhythm` package, and this flint was built without it: list `rhythm = "*"` under [packages] in flint.toml and run `flint build` (`flint package list --built` names the packages this one has)
 ```
 
-The same goes for a flag that needs one: `gen --ai-create` and the other AI steps, `render --ai-refine` and `asset resolve --strategy ai_generate` need `ai`; `gen --strip` and a `render --sweep` of `wooze.*` or `living.echoes.*` need `living`; `music validate --chart` needs `rhythm`. Under `--json` the error document carries `package`. `flint package list --built` lists what this binary has, each package whose `[build] features` it was compiled with. A `flint-cli --no-default-features` build has only the kernel and the debug panels:
+`flint gen` and `flint edit` on a `.procgen.toml` need `procgen` (a glyph set, `flint gen <set>.glyphs.toml`, and the terrain editor are every build's). The same goes for a flag that needs one: `gen --ai-create` and the other AI steps, `render --ai-refine` and `asset resolve --strategy ai_generate` need `ai`; `gen --strip` and a `render --sweep` of `wooze.*` or `living.echoes.*` need `living`; `music validate --chart` needs `rhythm`. Under `--json` the error document carries `package`. `flint package list --built` lists what this binary has, each package whose `[build] features` it was compiled with. A `flint-cli --no-default-features` build has only the kernel and the debug panels:
 
 ```text
 $ flint package list --built

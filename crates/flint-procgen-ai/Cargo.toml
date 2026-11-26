@@ -8,6 +8,8 @@ description = "AI-assisted procedural generation spec creation and refinement"
 [dependencies]
 flint-ai-core = { workspace = true }
 flint-procgen = { workspace = true }
+# `measure`, the refine's ruler, re-exported (#1543)
+flint-import = { workspace = true }
 image = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
