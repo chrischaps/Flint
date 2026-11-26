@@ -39,7 +39,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-34-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554). Every member but `flint-android` is a default member, so `cargo test` tests them all (#758):
+35-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554). Every member but `flint-android` is a default member, so `cargo test` tests them all (#758):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
@@ -50,9 +50,9 @@ flint-cli           CLI binary (clap). Commands: init, entity, scene, query, sch
   └── flint-ai-core   Every paid AI call: retries, prices, cost ledger
 flint-android       Android entry point (NativeActivity)
 flint-player        Standalone player: the game loop, the subsystems, egui HUD
-  ├── flint-rhythm   Rhythm layer: charts, judgment, coherence, replay, haptics
+  ├── flint-rhythm-game Rhythm's subsystem, `music chart`; on flint-rhythm (charts, judgment, replay)
   ├── flint-music    Music: suite manifests, buses, tempo maps, conductor, offline render
-  ├── flint-input-capture 1 kHz pad capture on the audio clock
+  ├── flint-input-capture 1 kHz pad capture
   ├── flint-debug-ui F3/F4 debug panels and shared widgets
   ├── flint-package  Package API: Subsystem, its contexts
   ├── flint-script   Rhai scripting with hot-reload

@@ -311,21 +311,9 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
 ///
 /// `build.rs` writes the list from the manifests (#1554): each package
 /// whose `[rust] cli` names a crate, when this build has its
-/// `[build] features`, so the source names none (ai, and music since
-/// #1555). The rhythm package's commands, still in this crate, go after
-/// them, under music's `music`.
+/// `[build] features`, in the order packages register, so the source names
+/// none (ai; music since #1555; rhythm, under music's `music`, since #1556).
 pub fn stock() -> Vec<Box<dyn CliExtension>> {
-    #[allow(unused_mut)] // a build without rhythm adds nothing after them
-    let mut list = package_extensions();
-    #[cfg(feature = "rhythm")]
-    list.extend(commands::music::extensions());
-    list
-}
-
-/// The extensions of the packages whose manifest names a `[rust] cli`
-/// crate, as `build.rs` lists them: [`stock`] less what this crate still
-/// holds of a package (rhythm's).
-pub(crate) fn package_extensions() -> Vec<Box<dyn CliExtension>> {
     include!(concat!(env!("OUT_DIR"), "/stock_extensions.rs"))
 }
 

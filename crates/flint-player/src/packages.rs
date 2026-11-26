@@ -76,7 +76,7 @@ mod generated {
 }
 
 // The packages whose code is still in this crate, each behind its feature
-// until it moves into `packages/<name>/` (#1556-#1559). Those with nothing
+// until it moves into `packages/<name>/` (#1557-#1559). Those with nothing
 // to register yet (debug-hud, procgen) are listed all the same: the list
 // is what the binary was built with.
 #[cfg(feature = "debug-hud")]
@@ -93,11 +93,6 @@ static PROCGEN: Part = Part {
 static LIVING: Part = Part {
     name: "living",
     register: crate::player_app::subsystem::living::register,
-};
-#[cfg(feature = "rhythm")]
-static RHYTHM: Part = Part {
-    name: "rhythm",
-    register: crate::player_app::subsystem::rhythm::register,
 };
 
 /// The names of the packages this crate has a part of, in any build: what
@@ -125,8 +120,6 @@ pub fn stock() -> Vec<&'static dyn Package> {
     list.push(&PROCGEN);
     #[cfg(feature = "living")]
     list.push(&LIVING);
-    #[cfg(feature = "rhythm")]
-    list.push(&RHYTHM);
     let at = |p: &&dyn Package| {
         generated::ORDER
             .iter()
@@ -425,9 +418,8 @@ mod tests {
                     "debug-hud" => cfg!(feature = "debug-hud"),
                     "procgen" => cfg!(feature = "procgen"),
                     "living" => cfg!(feature = "living"),
-                    "rhythm" => cfg!(feature = "rhythm"),
-                    // A package in its own folder (music, #1555), as the
-                    // build script read the feature
+                    // A package in its own folder (music, #1555; rhythm,
+                    // #1556), as the build script read the feature
                     other => {
                         assert!(
                             generated::BUILT.iter().any(|(f, _)| *f == other),
@@ -454,15 +446,21 @@ mod tests {
         assert_eq!(built, kept);
     }
 
-    /// The default build has the music package through the generated list.
-    #[cfg(feature = "rhythm")]
+    /// The packages in their own folders come from the generated list,
+    /// each exactly when this build has its feature, music before rhythm,
+    /// which requires it (#1555, #1556).
     #[test]
-    fn the_music_package_comes_from_its_own_crate() {
-        assert!(PLAYER_PACKAGES.contains(&"music"));
-        assert!(built_feature("music"));
+    fn the_moved_packages_come_from_their_own_crates() {
         let moved: Vec<&str> = generated::moved().iter().map(|p| p.name()).collect();
-        assert_eq!(moved, ["music"]);
-        assert!(registry().has("music"));
+        let expected: Vec<&str> = ["music", "rhythm"]
+            .into_iter()
+            .filter(|name| built_feature(name))
+            .collect();
+        assert_eq!(moved, expected);
+        for name in ["music", "rhythm"] {
+            assert!(PLAYER_PACKAGES.contains(&name), "{name}");
+            assert_eq!(registry().has(name), built_feature(name), "{name}");
+        }
     }
 
     /// A launcher that lists fewer packages than the build has makes a

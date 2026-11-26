@@ -1,10 +1,10 @@
 //! The `rhythm` package's commands, under the `music` package's `flint
 //! music` (#709, #1555): `calibrate` and `chart play|replay`, a
-//! `CliExtension` the launcher lists after music's. `music validate`,
-//! `play` and `render` are the music package's own
+//! `CliExtension` the launcher lists after music's, from the manifest's
+//! `[rust] cli` (in this crate since #1556, so flint-cli names none of it).
+//! `music validate`, `play` and `render` are the music package's own
 //! (`flint_music::cli`), and this extension hands `validate` the rhythm
-//! contract and the chart check ([`RULES`]). #1556 moves this file to the
-//! rhythm package's crate.
+//! contract and the chart check ([`RULES`]).
 //!
 //! Each was its own top-level command until #709 (`validate-suite`,
 //! `play-suite`, `render-suite`, `calibrate`, `play-chart`,
@@ -18,7 +18,18 @@ use flint_music::{Issue, SuiteManifest};
 use flint_package::cli::{subcommands, CliExtension};
 use std::path::Path;
 
-use super::{calibrate, play_chart, replay_chart};
+/// A human line through the one output path (stdout, or stderr once stdout
+/// is a document's).
+macro_rules! say {
+    ($($arg:tt)*) => {
+        flint_package::cli::say(format_args!($($arg)*))
+    };
+}
+
+mod calibrate;
+mod play_chart;
+mod play_chart_window;
+mod replay_chart;
 
 #[derive(Subcommand)]
 pub enum RhythmCommands {
@@ -85,4 +96,47 @@ impl flint_music::cli::RhythmSuites for Rules {
             .with_context(|| format!("loading chart {}", path.display()))?;
         Ok(flint_rhythm::validate_chart(&chart, manifest))
     }
+}
+
+/// The manifest/chart/base-dir trio shared by `music chart play` and
+/// `music chart replay`.
+#[derive(clap::Args)]
+pub struct ChartCommonArgs {
+    /// Path to the suite manifest (.suite.toml)
+    pub manifest: String,
+
+    /// Beatmap chart (.chart.toml) for the suite
+    #[arg(long)]
+    pub chart: String,
+
+    /// Directory the manifest's file paths are relative to (default: cwd)
+    #[arg(long)]
+    pub base_dir: Option<String>,
+}
+
+/// Write a report into `<base_dir>/logs/latency/` as
+/// `<prefix>-<host>-<epoch>.toml` — the shared naming scheme the offset
+/// readers sort lexicographically (name embeds host + epoch, so max =
+/// newest). One writer for `music calibrate` and the input spike
+/// (`music chart play --spike-input-secs`); the rumble spike, an example
+/// of flint-input-capture since #709, writes its own.
+#[allow(clippy::disallowed_methods)] // a command writes its report to the disk
+fn write_latency_report(
+    base_dir: &std::path::Path,
+    prefix: &str,
+    contents: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    use anyhow::Context;
+    let dir = base_dir.join("logs/latency");
+    std::fs::create_dir_all(&dir).context("creating logs/latency")?;
+    let host = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "host".into());
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("{prefix}-{host}-{epoch}.toml"));
+    std::fs::write(&path, contents).with_context(|| format!("writing {path:?}"))?;
+    Ok(path)
 }

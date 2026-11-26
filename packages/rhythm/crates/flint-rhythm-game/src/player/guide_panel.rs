@@ -7,6 +7,7 @@
 //! in the felt experience (the no-gamified-UI rule).
 
 use flint_debug_ui::DebugPanel;
+use flint_package::egui;
 use flint_rhythm::chart_session::{GuideFrame, GuideWindow};
 use flint_rhythm::VisualFrame;
 

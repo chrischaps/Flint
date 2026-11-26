@@ -7,22 +7,6 @@
 //! coupling) stays declared on each command so `--help` keeps saying the
 //! right thing.
 
-/// The manifest/chart/base-dir trio shared by `music chart play` and
-/// `music chart replay`.
-#[derive(clap::Args)]
-pub struct ChartCommonArgs {
-    /// Path to the suite manifest (.suite.toml)
-    pub manifest: String,
-
-    /// Beatmap chart (.chart.toml) for the suite
-    #[arg(long)]
-    pub chart: String,
-
-    /// Directory the manifest's file paths are relative to (default: cwd)
-    #[arg(long)]
-    pub base_dir: Option<String>,
-}
-
 /// `--style` and `--style-time`, shared by `flint render`, the headless
 /// `flint edit --render` paths (#271), `flint play` and the scene viewer
 /// (#328, which write the words over every scene load and hot reload).

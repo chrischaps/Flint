@@ -50,6 +50,6 @@ Not recorded in the surviving text.
   0012)"
 - Commit [`2e782c4`](https://github.com/chrischaps/Flint/commit/2e782c4b198ea6c9bf685ff33833b6910b2e375c)
   "Harden play-chart stdin against gamepad-to-keyboard mappers"
-- Code now: `crates/flint-cli/src/commands/play_chart_window.rs`
-  (`run_windowed`), `crates/flint-cli/src/commands/play_chart.rs`,
+- Code now: `packages/rhythm/crates/flint-rhythm-game/src/cli/play_chart_window.rs`
+  (`run_windowed`), `packages/rhythm/crates/flint-rhythm-game/src/cli/play_chart.rs`,
   [Music CLI](../book/src/cli-reference/music.md)

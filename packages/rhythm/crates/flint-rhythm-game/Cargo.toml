@@ -1,0 +1,65 @@
+[package]
+name = "flint-rhythm-game"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The rhythm package's parts on the Package API: a charted music session judged in the player, and `flint music calibrate|chart`"
+
+# Its own crate, not flint-rhythm's features: the session reads the pads
+# through flint-input-capture, which depends on flint-rhythm (#1556).
+[features]
+default = []
+# The package's player part (`player::PACKAGE`): music's chart judge filled
+# with the rhythm session's subsystem. flint-player's `rhythm` feature turns
+# it on, and its build script lists the package from `[rust] player`.
+player = [
+    "dep:flint-package", "dep:flint-ecs", "dep:flint-script", "dep:flint-scene",
+    "dep:flint-audio", "dep:flint-runtime", "dep:flint-render", "dep:anyhow",
+    "flint-music/player",
+]
+# The Music Guide and Manifest Map panels and the session's debug keys:
+# flint-player's `debug-hud` turns it on when the player part is in.
+debug-hud = ["player", "dep:flint-debug-ui", "dep:winit"]
+# The package's commands (`cli::extensions()`): `flint music calibrate` and
+# `flint music chart play|replay`, under music's `music`. flint-cli's
+# `rhythm` feature turns it on.
+cli = [
+    "dep:flint-package", "dep:clap", "dep:anyhow", "dep:serde_json",
+    "dep:flint-render", "dep:winit", "dep:wgpu", "dep:pollster", "dep:bytemuck",
+    "flint-music/cli",
+]
+# Sound and pads, passed on (#221): a host says which devices it wants.
+device = ["flint-rhythm/device", "flint-music/device", "flint-audio?/device"]
+gamepad = ["flint-input-capture/gamepad"]
+
+[dependencies]
+flint-core = { workspace = true }
+flint-music = { workspace = true }
+flint-rhythm = { workspace = true }
+flint-input-capture = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+web-time = { workspace = true }
+# The Package API (ADR 0137): what the two parts build against
+flint-package = { workspace = true, optional = true }
+flint-ecs = { workspace = true, optional = true }
+flint-script = { workspace = true, optional = true }
+flint-scene = { workspace = true, optional = true }
+flint-audio = { workspace = true, optional = true }
+flint-runtime = { workspace = true, optional = true }
+flint-debug-ui = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+# `flint music chart play --window`'s pulse window
+flint-render = { workspace = true, optional = true }
+winit = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+
+[dev-dependencies]
+naga = { version = "30.0.2", features = ["wgsl-in"] }
+
+[lints]
+workspace = true
