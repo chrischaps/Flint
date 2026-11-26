@@ -71,6 +71,7 @@ pub fn run(args: SchemaArgs) -> Result<()> {
              and no schemas/ in the working directory"
         );
     }
+    let registry = with_user_styles(registry);
     // Named from the working directory where they are under it, so a JSON
     // Schema kept in a repository doesn't carry one machine's folders
     let cwd = std::env::current_dir().ok();
@@ -235,6 +236,20 @@ fn list_text(registry: &SchemaRegistry, dirs: &[String]) -> String {
          <name>` shows one; `--format json` gives all of it as data.\n",
     );
     out
+}
+
+/// `registry` with the component of each user style the working
+/// directory's style search finds (#1522). A user style's `<name>_style`
+/// has no schema file since #1320: its `.shader.toml` makes the schema when
+/// the style loads, and `flint check` holds a scene to it. So the export
+/// describes what the check holds to, fields, ranges and all; a style in a
+/// scene's own `styles/`, which this search can't see, is left open by
+/// name in the JSON Schema. What a style that won't load says is
+/// `flint check`'s to report.
+fn with_user_styles(registry: SchemaRegistry) -> SchemaRegistry {
+    let scope = flint_core::project::AssetScope::for_dir(std::path::Path::new("."));
+    let (styles, _messages) = flint_render::stylize::StyleRegistry::new().for_scene(&scope);
+    crate::check::scene::with_style_schemas(&registry, &styles).unwrap_or(registry)
 }
 
 fn one_text(name: &str, registry: &SchemaRegistry) -> String {

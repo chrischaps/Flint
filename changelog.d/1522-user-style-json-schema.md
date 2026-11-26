@@ -1,0 +1,3 @@
+### `flint schema --format json-schema` describes a user style's `<name>_style` component (#1522)
+**What changed.** Since #1320 a user style's component has no schema file, and the scene JSON Schema refused every `[entities.<e>.<name>_style]` table as an unknown component. The export now loads the user styles the project's search finds from the working directory (`styles/` at the project root) and describes each component with its params, colours and options, so the editor completes them; `flint schema <name>_style` and `--list` know them too. A `*_style` table the export didn't find (a style in a scene's own `styles/`) is allowed as any table.
+**What to do.** Write the schema again (`flint schema --format json-schema --output scene.schema.json`) and reload the editor.

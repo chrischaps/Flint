@@ -769,8 +769,9 @@ fn say_unmasked_user_styles(
 /// `registry` with the component schema of each style `styles` holds
 /// whose component it declares open or not at all (#556:
 /// `flint_render::stylize::add_component_schemas`), or `None` when there
-/// is none, so the registry the run loaded is used as it is.
-fn with_style_schemas(
+/// is none, so the registry the run loaded is used as it is. `flint schema`
+/// asks it too (#1522), so the export describes what this pass holds to.
+pub(crate) fn with_style_schemas(
     registry: &flint_schema::SchemaRegistry,
     styles: &flint_render::stylize::StyleRegistry,
 ) -> Option<flint_schema::SchemaRegistry> {
