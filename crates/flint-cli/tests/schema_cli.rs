@@ -208,6 +208,75 @@ fn an_unknown_name_exits_non_zero_and_suggests() {
     assert_eq!(out.status.code(), Some(1));
 }
 
+/// #1522: a user style the project's style search finds (`styles/` at its
+/// root) has its component described as `flint check` holds a scene to it,
+/// fields, ranges and all, though no schema file names it (#1320).
+#[test]
+fn a_projects_user_style_is_described_with_its_fields() {
+    let style = |name: &str| {
+        std::fs::read_to_string(repo().join("tests/fixtures/scenes/styles").join(name)).unwrap()
+    };
+    let (toml, wgsl) = (style("hologram.shader.toml"), style("hologram.wgsl"));
+    let game = Game::new(
+        "user_style",
+        &[
+            ("flint.toml", "[project]\nid = \"dusk\"\n"),
+            ("schemas/components/.gitkeep", ""),
+            ("styles/hologram.shader.toml", &toml),
+            ("styles/hologram.wgsl", &wgsl),
+        ],
+    );
+
+    let schema = json(&game.flint(&["schema", "--format", "json-schema"]));
+    let hologram = &schema["definitions"]["components"]["hologram_style"];
+    assert_eq!(
+        hologram["properties"]["glow"]["type"], "number",
+        "{hologram}"
+    );
+    assert_eq!(hologram["properties"]["glow"]["minimum"], 0.0);
+    assert_eq!(hologram["properties"]["glow"]["maximum"], 2.0);
+    // Every per-entity style takes `blend_source`; its values are the
+    // engine's list, not copied here (#1285 is why)
+    let sources = hologram["properties"]["blend_source"]["enum"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{hologram}"));
+    assert!(sources.contains(&serde_json::json!("own")), "{hologram}");
+    assert_eq!(
+        schema["definitions"]["entity"]["properties"]["hologram_style"]["$ref"],
+        "#/definitions/components/hologram_style"
+    );
+
+    let mut schemas = boon::Schemas::new();
+    let mut compiler = boon::Compiler::new();
+    compiler
+        .add_resource("scene.schema.json", schema)
+        .expect("the schema is a resource");
+    let compiled = compiler
+        .compile("scene.schema.json", &mut schemas)
+        .unwrap_or_else(|e| panic!("the JSON Schema does not compile: {e}"));
+    let check = |glow: &str| {
+        let text = format!(
+            "[scene]\nname = \"Dusk\"\n\n[entities.barrel.hologram_style]\nglow = {glow}\n"
+        );
+        let doc: toml::Value = text.parse().unwrap();
+        schemas
+            .validate(&serde_json::to_value(doc).unwrap(), compiled)
+            .is_ok()
+    };
+    assert!(check("1.5"));
+    assert!(!check("\"bright\""), "the style's field is typed");
+
+    // The other forms know it too, as `flint check` does
+    let out = game.flint(&["schema", "hologram_style"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).contains("glow"), "{}", stdout(&out));
+    let list = json(&game.flint(&["schema", "--list", "--json"]));
+    assert!(
+        names_in(&list, "components").contains("hologram_style"),
+        "{list}"
+    );
+}
+
 /// Every `*.scene.toml` under `dir`.
 fn scenes_under(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
@@ -289,6 +358,18 @@ blend_mode = "additive"
             .is_ok()
     };
     assert!(check(good));
+    // A user style's `<name>_style` the export didn't find (one in a
+    // scene's own styles/, as user_styles.scene.toml's hologram is) is any
+    // table, by name (#1522); not a table, it is still refused
+    let styled = good.replace(
+        "blend_mode = \"additive\"",
+        "blend_mode = \"additive\"\n[entities.crate.dusk_style]\nglow = 1.0",
+    );
+    assert!(check(&styled), "an unknown user style's table is refused");
+    assert!(!check(&good.replace(
+        "archetype = \"furniture\"",
+        "archetype = \"furniture\"\ndusk_style = 2"
+    )));
     // A field the component doesn't declare is allowed, as the engine allows it
     assert!(check(
         &good.replace("intensity = 3.0", "intensity = 3.0\nwarmth = 0.5")

@@ -344,6 +344,10 @@ pub fn list_json(registry: &SchemaRegistry, dirs: &[String]) -> Value {
 
 const DRAFT: &str = "http://json-schema.org/draft-07/schema#";
 
+/// The entity tables a JSON Schema leaves open by name: a user style's
+/// component is `<name>_style` (`StyleDescriptor::component`).
+const USER_STYLE_PATTERN: &str = "_style$";
+
 fn numbers(min: usize, max: usize) -> Value {
     json!({
         "type": "array",
@@ -570,6 +574,9 @@ pub fn scene_table_schema(table: &ComponentSchema) -> Value {
 ///   `parent`, and a table per component. A table that is no loaded
 ///   component is refused, as `flint validate` refuses it
 ///   (`unknown-component`).
+///   A `*_style` table none declares is any table (#1522): a user style's
+///   component, whose schema `registry` holds only when the style's
+///   `.shader.toml` was found (`flint schema` adds the project's).
 /// - A component's table takes its fields, each by its type. A key the
 ///   component doesn't declare is allowed, as the engine allows it.
 /// - `[scene]` and `[prefabs.<name>]` are described, and so is every
@@ -668,6 +675,19 @@ pub fn scene_json_schema(registry: &SchemaRegistry, dirs: &[String]) -> Value {
             "entity": {
                 "type": "object",
                 "properties": entity_properties,
+                // A user style's `<name>_style` (#1320, #1522): its schema is
+                // made from the `.shader.toml` when the style loads, and a
+                // style the export didn't find (one in a scene's own
+                // `styles/`) still names a real component
+                "patternProperties": {
+                    (USER_STYLE_PATTERN): {
+                        "type": "object",
+                        "description": "The per-entity settings of a user style whose \
+                                        .shader.toml this file doesn't describe (one in a \
+                                        scene's own styles/ folder). `flint check` holds them \
+                                        to the style.",
+                    },
+                },
                 "additionalProperties": false,
             },
             "components": components,

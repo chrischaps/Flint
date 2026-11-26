@@ -643,6 +643,7 @@ These rules come from taplo 0.10.0's source (#1062); nobody has yet tried this s
 What it holds to, and what it leaves to `flint validate`:
 
 - A table under an entity that is no loaded component is refused, as `flint validate` refuses it. A key a component doesn't declare is allowed, as the engine allows it (a warning).
+- A [user style](stylize-passes.md#user-authored-styles)'s `<name>_style` component has no schema file: the style's `.shader.toml` makes its schema when it loads. The export loads the styles the project's own search finds from where it runs (`styles/` at the project root, then `engine/`) and describes each one's component with every param, colour and option, so they complete like a built-in's. A `*_style` table it didn't find, such as one for a style in a scene's own `styles/` folder, is allowed as any table, and `flint check` holds it to the style.
 - A field is `required` only when nothing else can supply it: it has no default and no archetype gives it one.
 - Whether an `entity` or an `asset` leads anywhere is not something a JSON Schema can say: run `flint validate`.
 - `[scene]`, `[prefabs.<name>]` and every [scene-level table](#scene-level-tables) a loaded schema declares (`[camera]`, `[post_process]`, a game's `[weather]`) are described, so their keys complete too. A top-level table none declares is allowed, as the engine allows it (a warning).
