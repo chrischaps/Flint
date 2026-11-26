@@ -95,8 +95,7 @@ fn is_built(p: &Package) -> bool {
 pub(crate) fn packages_built() -> Vec<(String, bool)> {
     let read = Packages::read(&built_from().join(package::PACKAGES_DIR));
     if read.packages.is_empty() {
-        return crate::commands::absent::BUILT_FEATURES
-            .iter()
+        return crate::commands::absent::built_features()
             .map(|(f, on)| (f.to_string(), *on))
             .collect();
     }
@@ -109,8 +108,7 @@ pub(crate) fn packages_built() -> Vec<(String, bool)> {
 /// The Cargo features this binary was compiled with, of those a package
 /// can name.
 fn built_features() -> Vec<&'static str> {
-    crate::commands::absent::BUILT_FEATURES
-        .iter()
+    crate::commands::absent::built_features()
         .filter(|(_, on)| *on)
         .map(|(f, _)| *f)
         .collect()
@@ -149,9 +147,7 @@ fn built_text(read: &Packages, of: usize) -> String {
 /// Whether this flint lacks `feature`: one of the package features it
 /// can be built with, compiled out (#1333's `BUILT_FEATURES`).
 pub fn lacks(feature: &str) -> bool {
-    crate::commands::absent::BUILT_FEATURES
-        .iter()
-        .any(|(f, on)| *f == feature && !on)
+    crate::commands::absent::built_features().any(|(f, on)| *f == feature && !on)
 }
 
 /// The packages the project at `at` (a scene, or a project's flint.toml)

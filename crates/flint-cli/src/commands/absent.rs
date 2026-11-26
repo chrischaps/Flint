@@ -102,25 +102,36 @@ fn command_words(argv: &[OsString]) -> Vec<String> {
     words
 }
 
-/// What a feature this binary was built with brings: the package names
-/// (`[build] features` of `packages/<name>/package.toml`) that are in.
-/// flint-player's `debug-hud` and `frame-history` are always on in the CLI.
-pub const BUILT_FEATURES: &[(&str, bool)] = &[
-    ("debug-hud", true),
-    ("frame-history", true),
-    ("living", cfg!(feature = "living")),
-    ("music", cfg!(feature = "music")),
-    ("rhythm", cfg!(feature = "rhythm")),
-    ("procgen", cfg!(feature = "procgen")),
-    ("ai", cfg!(feature = "ai")),
+/// flint-player's features the CLI always has.
+const ALWAYS_ON: &[(&str, bool)] = &[("debug-hud", true), ("frame-history", true)];
+
+/// This crate's features that a package's `[build] features` names, each
+/// with whether this build has it: `build.rs` writes it from the manifests
+/// (#1554), so the source names no package.
+const PACKAGE_FEATURES: &[(&str, bool)] =
+    include!(concat!(env!("OUT_DIR"), "/package_features.rs"));
+
+/// The device features.
+const DEVICE_FEATURES: &[(&str, bool)] = &[
     ("audio", cfg!(feature = "audio")),
     ("gamepad", cfg!(feature = "gamepad")),
     ("dialogs", cfg!(feature = "dialogs")),
 ];
 
+/// What a feature this binary was built with brings, each with whether it
+/// is in: flint-player's `debug-hud` and `frame-history` (always on in the
+/// CLI), the package features (`[build] features` of
+/// `packages/<name>/package.toml`), then the device features.
+pub fn built_features() -> impl Iterator<Item = &'static (&'static str, bool)> {
+    ALWAYS_ON
+        .iter()
+        .chain(PACKAGE_FEATURES)
+        .chain(DEVICE_FEATURES)
+}
+
 /// Whether this binary was built with `feature`.
 pub fn built_with(feature: &str) -> bool {
-    BUILT_FEATURES.iter().any(|(f, on)| *on && *f == feature)
+    built_features().any(|(f, on)| *on && *f == feature)
 }
 
 /// The arguments of a command this build left out: every word after its

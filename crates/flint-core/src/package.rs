@@ -22,6 +22,9 @@
 //! [build]                    # how flint build turns it on (Phase 1)
 //! features = ["living"]      # features of flint-player and flint-cli, same names
 //!
+//! [rust]                     # where its Rust joins the launchers (ADR 0137, #1554)
+//! cli = "flint-living"       # the crate whose `cli::extensions()` flint lists; one of `crates`
+//!
 //! [provides]                 # what it owns; every item has exactly one owner
 //! crates = ["flint-living", "flint-wooze"]
 //! components = ["living_prop", "shallow_wooze"]
@@ -74,13 +77,16 @@ pub const MANIFEST_FILE: &str = "package.toml";
 pub const PACKAGES_DIR: &str = "packages";
 
 /// The tables a manifest may hold.
-const TABLES: [&str; 4] = ["package", "requires", "build", "provides"];
+const TABLES: [&str; 5] = ["package", "requires", "build", "rust", "provides"];
 
 /// The keys `[package]` may hold.
 const PACKAGE_KEYS: [&str; 6] = ["name", "version", "tier", "summary", "engine", "api"];
 
 /// The keys `[build]` may hold.
 const BUILD_KEYS: [&str; 1] = ["features"];
+
+/// The keys `[rust]` may hold.
+const RUST_KEYS: [&str; 1] = ["cli"];
 
 /// A package's tier (ADR 0136 decision 3): who has it without asking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -216,6 +222,10 @@ pub struct Package {
     pub requires: BTreeMap<String, String>,
     /// The Cargo features of flint-player and flint-cli that turn it on.
     pub features: Vec<String>,
+    /// The crate of its own (one of `provides.crates`) whose
+    /// `cli::extensions()` the CLI launcher lists when the build has the
+    /// package (`[rust] cli`, #1554); `None` adds no command.
+    pub cli: Option<String>,
     pub provides: Provides,
     /// The manifest it was read from.
     pub file: PathBuf,
@@ -261,6 +271,7 @@ pub fn parse(text: &str, file: &Path) -> Result<Package, Vec<Diagnostic>> {
     let requires = p.requires(&table, package.as_ref().map(|(name, _)| name.as_str()));
     let features = p.features(&table);
     let provides = p.provides(&table);
+    let cli = p.rust(&table, &provides);
     match package {
         Some((name, head)) if p.problems.is_empty() => Ok(Package {
             name,
@@ -271,6 +282,7 @@ pub fn parse(text: &str, file: &Path) -> Result<Package, Vec<Diagnostic>> {
             api: head.api,
             requires,
             features,
+            cli,
             provides,
             file: file.to_path_buf(),
         }),
@@ -505,7 +517,7 @@ impl Parse<'_> {
                 self.error(
                     key.clone(),
                     format!(
-                        "unknown table `[{key}]` (the tables are [package], [requires], [build], [provides])"
+                        "unknown table `[{key}]` (the tables are [package], [requires], [build], [rust], [provides])"
                     ),
                 )
                 .hint = hint;
@@ -752,6 +764,20 @@ impl Parse<'_> {
         };
         self.unknown_keys(build, "build", &BUILD_KEYS);
         self.strings(build, "build", "features")
+    }
+
+    /// `[rust] cli`: a crate the package provides, or a mistake.
+    fn rust(&mut self, table: &toml::Table, provides: &Provides) -> Option<String> {
+        let rust = self.sub(table, "rust")?;
+        self.unknown_keys(rust, "rust", &RUST_KEYS);
+        let cli = self.string(rust, "rust", "cli")?;
+        if !provides.crates.contains(&cli) {
+            self.error(
+                "rust.cli",
+                format!("`{cli}` is no crate of this package: name one of [provides] crates"),
+            );
+        }
+        Some(cli)
     }
 
     fn provides(&mut self, table: &toml::Table) -> Provides {
