@@ -8,7 +8,7 @@ use super::clock::draw_clock;
 use super::knobs::{Knob, KnobControl, KnobFlags, KnobPanel, KnobSection, KnobValue, LivingKnobs};
 use super::state::{side_name, LivingPanelAction, LivingPropRow, PanelScope};
 use super::{LivingPropsDebugPanel, FROZEN, INK, PARTS};
-use crate::widgets::{mixed_slider, section};
+use flint_debug_ui::widgets::{mixed_slider, section};
 
 /// What a `mixed` knob says when hovered, for the whole grove.
 pub(super) const MIXED: &str = "The species disagree here, so this shows the first prop's value. \

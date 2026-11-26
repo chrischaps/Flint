@@ -51,14 +51,14 @@ fn variant(cmd: &ScriptCommand) -> String {
 /// A living-subsystem module command, as `function` queues it.
 fn module(
     function: &'static str,
-    command: crate::player_app::living_api::LivingCommand,
+    command: flint_living::player::api::LivingCommand,
 ) -> ScriptCommand {
     ScriptCommand::Module(flint_script::ModuleCommand::new(function, command))
 }
 
 /// One of each command, aimed at `entity`, a live one.
 fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
-    use crate::player_app::living_api::LivingCommand as L;
+    use flint_living::player::api::LivingCommand as L;
     use ScriptCommand as C;
     let s = |v: &str| v.to_string();
     let table = |k: &str, v: f64| {

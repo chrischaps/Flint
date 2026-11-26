@@ -260,11 +260,14 @@ fn check_all(
     // scene pass has held the table to its `[table.<name>]` schema, which
     // the type mirrors, and named the field; that diagnostic becomes the
     // error, and serde's message stands only when the pass said nothing.
-    // They are the living package's tables: a flint without it reads
-    // neither, as its player doesn't, so nothing is refused (#1543, #1557)
-    #[cfg(feature = "living")]
-    for (table, said) in flint_procgen::LivingTables::problems(&file) {
-        refuses_the_load(&mut out.diagnostics, scene, table, &said);
+    // They are the living package's tables, which its CLI part reads
+    // (`TableChecks`, #1558): a flint without it reads neither, as its
+    // player doesn't, so nothing is refused (#1543, #1557)
+    let tables = crate::points().get::<flint_package::cli::TableChecks>();
+    if let Some(tables) = tables {
+        for (table, said) in (tables.refused)(&file) {
+            refuses_the_load(&mut out.diagnostics, scene, table, &said);
+        }
     }
     if checks.schema {
         if let Some(world) = &world {
@@ -282,22 +285,26 @@ fn check_all(
     // through the living package's types: without it (#1543, #1557) the
     // scene pass's schema half is what is said of them, as the player built
     // without it reads neither table
-    #[cfg(feature = "living")]
-    if checks.tables {
-        let wooze = wooze(scene, &file, schemas);
-        // The scene pass has checked `[wooze]` against its `[table.wooze]`
-        // schema like any table (#686), and this check holds it to the same
-        // schema and to the field itself, one issue a zone, in the field's
-        // words and by the zone's name. One mistake is said once: these
-        // stay, and the pass's warnings (a key the schema doesn't declare)
-        // with them.
-        if !wooze.is_empty() {
-            out.diagnostics
-                .retain(|d| !(d.is_error() && d.table.as_deref() == Some("wooze")));
+    if let (true, Some(tables)) = (checks.tables, tables) {
+        let found = (tables.check)(&flint_package::cli::TableCheck {
+            scene,
+            file: &file,
+            registry: &schemas.registry,
+            world: world.as_ref(),
+        });
+        for (table, said) in found {
+            // The scene pass has checked `[wooze]` against its
+            // `[table.wooze]` schema like any table (#686), and the
+            // package's check holds it to the same schema and to the field
+            // itself, one issue a zone, in the field's words and by the
+            // zone's name. One mistake is said once: these stay, and the
+            // pass's warnings (a key the schema doesn't declare) with them.
+            if let (Some(table), false) = (table, said.is_empty()) {
+                out.diagnostics
+                    .retain(|d| !(d.is_error() && d.table.as_deref() == Some(table)));
+            }
+            out.diagnostics.extend(said);
         }
-        out.diagnostics.extend(wooze);
-        out.diagnostics
-            .extend(species(scene, &file, world.as_ref()));
     }
     if checks.tables {
         out.diagnostics.extend(fields(scene, &file));
@@ -845,7 +852,6 @@ fn user_style_diagnostic(message: &str, scene_dir: &Path) -> Diagnostic {
 /// wrong type its error), those diagnostics are made the errors, with the
 /// load's hint; serde's `said` is added only when the pass found nothing,
 /// so one mistake is one diagnostic.
-#[cfg(feature = "living")]
 fn refuses_the_load(found: &mut Vec<Diagnostic>, scene: &Path, table: &str, said: &str) {
     const HINT: &str = flint_scene::REFUSES_THE_LOAD;
     let mut named = false;
@@ -932,33 +938,6 @@ fn particle_emitters(scene: &Path, world: &FlintWorld, found: &mut Vec<Diagnosti
     found.extend(ours);
 }
 
-/// What's wrong with the scene's `[wooze]` table and the preset it names.
-/// The zone, when it is about one, is the diagnostic's field.
-#[cfg(feature = "living")]
-fn wooze(scene: &Path, file: &SceneFile, schemas: &SceneSchemas) -> Vec<Diagnostic> {
-    let mut file = file.clone();
-    let preset_issues = flint_procgen::apply_preset_file(&mut file, scene);
-    let Some(table) = flint_procgen::LivingTables::of(&file)
-        .ok()
-        .and_then(|tables| tables.wooze)
-    else {
-        return Vec::new();
-    };
-    preset_issues
-        .into_iter()
-        .chain(table.check(&schemas.registry))
-        .map(|issue| {
-            let d = Diagnostic::error(codes::BAD_WOOZE, issue.to_string())
-                .file(scene)
-                .component("wooze");
-            match &issue.zone {
-                Some(zone) => d.field(zone.clone()),
-                None => d,
-            }
-        })
-        .collect()
-}
-
 /// What's wrong with the fields the scene declares, `[field.<name>]`
 /// (#1014): each key and zone the player would leave out, in the field's
 /// words (the zones' are the wooze field's), placed by field and key
@@ -984,78 +963,6 @@ fn fields(scene: &Path, file: &SceneFile) -> Vec<Diagnostic> {
             }
         })
         .collect()
-}
-
-/// The values of a species table the player would leave out.
-#[cfg(feature = "living")]
-fn species_problems(def: &flint_procgen::LivingSpeciesDef) -> Vec<String> {
-    flint_player::species_problems(def)
-}
-
-/// What's wrong with the scene's `[living.species.<spec>]` tables (#246): a
-/// value the player would leave out, and a species no living prop in the
-/// scene grows from, which is most likely a misspelt spec name and would
-/// change nothing. The species is the diagnostic's field.
-#[cfg(feature = "living")]
-fn species(scene: &Path, file: &SceneFile, world: Option<&FlintWorld>) -> Vec<Diagnostic> {
-    let mut file = file.clone();
-    // A preset the scene names can hold species too, laid under its own.
-    flint_procgen::apply_preset_file(&mut file, scene);
-    let living = flint_procgen::LivingTables::of(&file)
-        .ok()
-        .and_then(|tables| tables.living);
-    let Some(living) = living.filter(|living| !living.species.is_empty()) else {
-        return Vec::new();
-    };
-    let grown: Option<Vec<String>> = world.map(|world| {
-        let mut grown: Vec<String> = world
-            .all_entities()
-            .iter()
-            .filter_map(|entity| {
-                let comps = world.get_components(entity.id)?;
-                comps.get(super::LIVING_PROP)?;
-                let asset = comps.get(flint_core::components::MODEL)?.get("asset")?;
-                Some(asset.as_str()?.to_string())
-            })
-            .collect();
-        grown.sort();
-        grown.dedup();
-        grown
-    });
-
-    let problem = |name: &str, message: String| {
-        Diagnostic::error(codes::BAD_SPECIES, message)
-            .file(scene)
-            .component("living")
-            .field(format!("species.{name}"))
-    };
-    let mut names: Vec<&String> = living.species.keys().collect();
-    names.sort_unstable();
-    let mut found = Vec::new();
-    for name in names {
-        for message in species_problems(&living.species[name]) {
-            found.push(problem(name, message));
-        }
-        // Which specs grow is the loaded world's to say
-        let Some(grown) = &grown else {
-            continue;
-        };
-        if !grown.contains(name) {
-            let species = if grown.is_empty() {
-                "it has no living props".to_string()
-            } else {
-                format!("its living props grow from {}", grown.join(", "))
-            };
-            found.push(problem(
-                name,
-                format!(
-                    "no living prop in this scene grows from '{name}', \
-                     so it changes nothing; {species}"
-                ),
-            ));
-        }
-    }
-    found
 }
 
 /// The constraints the scene breaks, each at the constraint's own severity

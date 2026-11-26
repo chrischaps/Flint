@@ -7,6 +7,12 @@
 //! judge. So every frame here shares one palette, with no dithering, and a pixel the
 //! render didn't change is written as transparent over the frame before it. A still
 //! pixel can't flicker, and stillness compresses to almost nothing.
+//!
+//! The kernel's CLI writer (`flint render`'s spans, a package's sheets:
+//! living's `gen --strip`, #1558), behind this crate's `gif` feature, so the
+//! player links none of it. It writes and reads its own spool beside the
+//! file it makes, on the disk, never through the vfs.
+#![allow(clippy::disallowed_methods)] // the spool is this writer's own file
 
 use anyhow::{anyhow, bail, Context, Result};
 use color_quant::NeuQuant;
@@ -35,9 +41,19 @@ const PALETTE_EFFORT: i32 = 10;
 /// difference it packs is mostly zeros, which any level packs to almost nothing.
 const SPILL_LEVEL: u8 = 1;
 
+/// The most frames a second a GIF can honestly hold. Its delays count hundredths
+/// of a second, and browsers play anything under two of them at ten.
+pub const GIF_MAX_FPS: f32 = 50.0;
+
+/// Whether `path` asks for an animation.
+pub fn is_gif(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("gif"))
+}
+
 /// Write `frames` as a GIF that loops forever at `fps`.
-// `flint gen --strip` writes with it: the living package's (#1333)
-#[cfg_attr(not(feature = "living"), allow(dead_code))]
 pub fn write(path: &Path, frames: &[RgbImage], fps: f32) -> Result<()> {
     let Some(first) = frames.first() else {
         bail!("a GIF needs at least one frame");

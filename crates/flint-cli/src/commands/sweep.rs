@@ -15,7 +15,8 @@
 //! typo costs nothing. How a column takes its value is up to its family: a look,
 //! post or style column changes the `[post_process]` it draws with
 //! ([`Sweep::column_def`], [`Sweep::column_style`]); a wooze column lays
-//! [`Sweep::wooze_table`] over the scene's `[wooze]`, and so draws through
+//! its value over the scene's `[wooze]` (the living package's render part,
+//! #1558), and so draws through
 //! `render.rs`'s stages, a world and renderer a column (#487); an echoes column
 //! is written into its own copy of the scene's `[living]` table
 //! ([`SweepGrid::lay_living`]) before its stage loads, so it draws what a scene
@@ -171,22 +172,6 @@ impl Sweep {
             SweepKey::Wooze { knob } => Some(knob),
             _ => None,
         }
-    }
-
-    /// What column `i` of a wooze sweep lays over the scene's `[wooze]` table
-    /// (#216): the knob at the column's value, a number unless it's a preset's name.
-    /// `None` for a sweep of anything else. Read only where the field runs.
-    #[cfg_attr(not(feature = "living"), allow(dead_code))]
-    pub fn wooze_table(&self, i: usize) -> Option<toml::Table> {
-        let knob = self.wooze_knob()?;
-        let text = &self.values[i];
-        let value = match text.parse::<f64>() {
-            Ok(number) => toml::Value::Float(number),
-            Err(_) => toml::Value::String(text.clone()),
-        };
-        let mut table = toml::Table::new();
-        table.insert(knob.to_string(), value);
-        Some(table)
     }
 
     /// The `[living] echoes` field column `i` of an echoes sweep sets, and its
@@ -727,33 +712,14 @@ fn parse_living(field: &str, values: &[String]) -> Result<SweepKey, String> {
 }
 
 /// One `living.echoes.<knob>` value, held to what a spec's echoes take
-/// (`EchoConfig::check`).
-#[cfg(feature = "living")]
+/// (`EchoConfig::check`) by the living package's render part (#1558).
+/// Without the package (#1543, #1557), which draws the echoes, there is no
+/// `EchoConfig` to hold the value to: it must read as a number, and the
+/// render then refuses the sweep, naming the package.
 fn echo_value(knob: &str, value: &str) -> Result<(), String> {
-    let mut echoes = flint_procgen::EchoConfig::default();
-    if knob == "count" {
-        echoes.count = value.parse().map_err(|_| {
-            format!("--sweep: living.echoes.count takes whole numbers, and '{value}' isn't")
-        })?;
-    } else {
-        let number = echo_number(knob, value)?;
-        if knob == "spread" {
-            echoes.spread = number;
-        } else {
-            echoes.alpha = number;
-        }
+    if let Some(stages) = super::render::stages() {
+        return stages.check_echo(knob, value);
     }
-    // `why` starts with the value: `3: must be from 0 to 1.82 steps, ...`
-    echoes
-        .check()
-        .map_err(|(_, why)| format!("--sweep living.echoes.{knob}={why}"))
-}
-
-/// Without the living package (#1543, #1557), which draws the echoes,
-/// there is no `EchoConfig` to hold the value to: it must read as a
-/// number, and the render then refuses the sweep, naming the package.
-#[cfg(not(feature = "living"))]
-fn echo_value(knob: &str, value: &str) -> Result<(), String> {
     if knob == "count" {
         return value.parse::<u32>().map(|_| ()).map_err(|_| {
             format!("--sweep: living.echoes.count takes whole numbers, and '{value}' isn't")
@@ -834,7 +800,7 @@ mod tests {
             }
         );
         assert_eq!(s.column_style(2).as_deref(), Some("ascii:cell=12"));
-        assert_eq!(s.wooze_table(0), None, "a style column leaves [wooze] be");
+        assert_eq!(s.wooze_knob(), None, "a style column leaves [wooze] be");
 
         let s = Sweep::parse("look=ascii_noir,matrix").unwrap();
         assert_eq!(s.key, SweepKey::Look);
@@ -870,10 +836,7 @@ mod tests {
         let sweep = parse_sweep("wooze.glide=0,0.25,0.5,1").unwrap();
         assert_eq!(sweep.name(), "wooze.glide");
         assert_eq!(sweep.values, ["0", "0.25", "0.5", "1"]);
-        assert_eq!(
-            sweep.wooze_table(1).unwrap()["glide"].as_float(),
-            Some(0.25)
-        );
+        assert_eq!(sweep.wooze_knob(), Some("glide"));
         assert_eq!(sweep.label(1), "glide 0.25");
     }
 
@@ -881,8 +844,8 @@ mod tests {
     fn a_preset_sweep_keeps_its_names() {
         let sweep = parse_sweep("wooze.preset=boil,morph").unwrap();
         assert_eq!(
-            sweep.wooze_table(1).unwrap()["preset"].as_str(),
-            Some("morph")
+            (sweep.wooze_knob(), sweep.values[1].as_str()),
+            (Some("preset"), "morph")
         );
         assert_eq!(sweep.label(1), "morph", "a preset is labelled by its name");
     }

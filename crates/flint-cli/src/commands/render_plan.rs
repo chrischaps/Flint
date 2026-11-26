@@ -9,9 +9,9 @@ use std::path::Path;
 /// `--particle-time` uses, which is also a 60 Hz player's frame.
 pub const DEFAULT_FRAME_STEP: f64 = 1.0 / 60.0;
 
-/// The most frames a second a GIF can honestly hold. Its delays count hundredths
-/// of a second, and browsers play anything under two of them at ten.
-pub const GIF_MAX_FPS: f32 = 50.0;
+/// The most frames a second a GIF can honestly hold, and whether a path asks
+/// for one: the GIF writer's (`flint_package::cli::gif`, #1558).
+pub use flint_package::cli::gif::{is_gif, GIF_MAX_FPS};
 
 /// `--time`: one moment, a span of them, or a list of them.
 #[derive(Debug, Clone, PartialEq)]
@@ -61,14 +61,6 @@ pub fn parse_time(text: &str) -> Result<TimeSpec, String> {
             Ok(TimeSpec::Range(from, to))
         }
     }
-}
-
-/// Whether `path` asks for an animation.
-pub fn is_gif(path: &str) -> bool {
-    Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("gif"))
 }
 
 /// Where a frame sequence's `%d` or `%05d` sits in `path`, and its width: a span

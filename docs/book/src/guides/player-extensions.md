@@ -108,7 +108,7 @@ flint-player = { path = "engine/crates/flint-player", default-features = false, 
 | `music` | A `music_session`'s suite and `music_beat()` (`flint-music`) | The suite doesn't play and the beat reads -1 |
 | `rhythm` | A charted suite judged (`flint-rhythm`, the 1 kHz pad capture); turns on `music` | A charted suite plays as music |
 | `procgen` | Assets made from `*.procgen.toml` specs, and a game's own generators (the procgen package's crate, `flint-procgen`) | Every model and texture name is a file's |
-| `living` | Living props, `[living]`, `[wooze]`, shallow wooze, woozy grass and the `wooze` and `living` script modules (and `debug` with `debug-hud`); turns on `procgen` | The grove stands still |
+| `living` | Living props, `[living]`, `[wooze]`, shallow wooze, woozy grass and the `wooze` and `living` script modules (and `debug` with `debug-hud`), from the living package's crate, `flint-living`; turns on `procgen` | The grove stands still |
 | `profile` | Tracy's frame profiler (off by default) | The scopes compile to nothing |
 
 A scene that uses a part the build left out prints one line when it's entered, naming what won't run, for example ``[living] this player is built without the `living` feature: the scene's living props, [wooze] stand still``. With every default off the player links neither `flint-music` nor `flint-procgen`.

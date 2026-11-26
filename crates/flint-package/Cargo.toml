@@ -9,18 +9,30 @@ description = "The Package API: the subsystem trait, its contexts and the run's 
 # crates below flint-player, and never on a package's crate: a package's
 # crates depend on this one, and the stock binaries on them, so Cargo would
 # refuse the cycle. `cargo tree -p flint-package` holds it (#1550).
+[features]
+# The CLI's GIF writer (`cli::gif`, #1558): flint render's spans and a
+# package's sheets (living's `gen --strip`). Off in the player, which never
+# writes one.
+gif = ["dep:gif", "dep:color_quant", "dep:miniz_oxide", "dep:image"]
+
 [dependencies]
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }
 flint-runtime = { workspace = true }
 flint-script = { workspace = true }
 flint-render = { workspace = true }
-# `SceneCtx::post`, the scene's `[post_process]` as the host read it (#1556)
+# `SceneCtx::post`, the scene's `[post_process]` as the host read it
+# (#1556); a scene file a package settles (`Registry::settle_scene`) and the
+# tables `flint check` asks a package to judge (`cli::TableChecks`), #1558
 flint-scene = { workspace = true }
 flint-audio = { workspace = true }
 # What the fixed-step hook lends (ADR 0137 section 3a, #1551); a kernel
 # crate until Phase 3 makes physics a package.
 flint-physics = { workspace = true }
+# The registry `cli::TableChecks` judges a scene's tables against (#1558)
+flint-schema = { workspace = true }
+# `flint render --report json`'s props (`cli::render`)
+serde = { workspace = true }
 egui = { workspace = true }
 wgpu = { workspace = true }
 toml = { workspace = true }
@@ -32,6 +44,12 @@ anyhow = { workspace = true }
 serde_json = { workspace = true }
 # The commands' clock (`cli::utc_now`, `random_seed`): std's panics in wasm
 web-time = { workspace = true }
+# The GIF writer's (`gif`): one palette across a file's frames, which
+# `image`'s encoder doesn't do, and its spilled frames deflated (#588)
+gif = { version = "0.14", optional = true }
+color_quant = { version = "1", optional = true }
+miniz_oxide = { version = "0.8", optional = true }
+image = { workspace = true, optional = true, features = ["gif"] }
 
 [lints]
 workspace = true

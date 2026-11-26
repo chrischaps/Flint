@@ -731,6 +731,92 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   same bytes. `git grep 'feature = "rhythm"' crates/flint-player
   crates/flint-cli` finds nothing.
 
+## As built: living moves into its package (#1558)
+
+- **Its crates are in its folder**: `packages/living/crates/flint-living`
+  and `flint-wooze`, moved whole. flint-living's parts are features, as
+  procgen's are: `player` (`player::PACKAGE`: the subsystem, its builder,
+  the props as a run resource, its step of procgen's `LoadSteps`, its
+  script modules, keys and policy name), `debug-hud` (the Living Props
+  panel, moved from flint-debug-ui, and F8's pick) and `cli`
+  (`cli::extensions()`, which adds no command). The manifest names the
+  crate for both launchers under `[rust]`, and both build scripts list it.
+  flint-debug-ui links no flint-procgen now, and flint-viewer neither
+  flint-procgen nor flint-wooze.
+- **`[with.<package>] features`** (decision 9) is a manifest table now:
+  `flint_core::package::Package::with`, held to name another package by
+  the cross-file check. Living's is `[with.debug-hud] features =
+  ["flint-living/debug-hud"]`. flint-player's `debug-hud` feature turns it
+  on by hand (`"flint-living?/debug-hud"`) until #1568 generates such lines
+  from the table.
+- **Decision 4's "scene settling"** is `Registry::settle_scene(fn(&mut
+  SceneFile, &Path) -> Result<()>)`, not the `toml::Table` form the table
+  sketched: living's preset can set `[post_process]`'s boil, which lives on
+  the `SceneFile`, not in its tables. `flint_player::settle_scene` runs every
+  package's. The player (`prepare`, a transition, a playtest, the web
+  entry, `apply_scene_settings` on a copy) and `flint render`'s
+  `load_settled` call it. The viewer can't depend on flint-player, so it
+  asks its own point for the settle (next bullet but two).
+- **The living builder reads its own tables.** `SceneSettings::{living,
+  wooze}` went. `apply_scene_settings` keeps the settled tables in
+  `scene.tables`, and the builder reads `[wooze]` and `[living]` from
+  `SceneCtx::tables`. The props' defaults (`[living]`) are set in living's
+  load step, which reads the scene's tables from procgen's `LoadCtx`. They
+  come from the kernel's `MakeCtx::tables`, a new field, filled by the
+  player and by `HeadlessGame::make_assets`, which takes the tables now.
+- **`--compare` and `--split` are not yet a package's `player_args`.**
+  They stay declared by `PlayerArgs`, so the help and #990's flag count
+  don't change. Their values reach the package as `flint_package::LaunchFlags`
+  (by long name, in the run's resources, `PlayerApp::launch_flags_mut`).
+  Living's `LivingStart::of` reads them the first time a scene is built.
+  `LaunchOptions::{compare, compare_at_start}` went. A package bringing its
+  own `clap::Args` is #1572's work.
+- **A capture's living state**: `CaptureStart::wooze` and `HeadlessGame`'s
+  living methods went. The render declares `flint_package::cli::render::StagePart`,
+  and living's CLI part fills it (`flint_package::cli::Stages`). It puts the
+  stage's wooze field in the capture's resources for the builder
+  (`HeadlessGame::resources_mut`), lays a preset column's boil, blends the
+  props before each capture, and answers `--report json`'s props. It reads
+  its own subsystem through `HeadlessGame::capture_game()`, the scene's
+  subsystems and resources as `flint_package::CaptureGame`, found with
+  `flint_package::find`. The report's prop types (`PropReport` and the
+  rest) are the Package API's, so the document has one shape. This is the
+  "ticket e" seam for `render --sweep wooze.*|living.*`: the flags stay
+  declared by `render` (the help is unchanged), and the sweep's cells are
+  held and laid by the point.
+- **`flint check`'s tables**: `flint_package::cli::TableChecks`
+  (`refused`, and `check` over a `TableCheck`), so `[living]` / `[wooze]`'s
+  refusals and the `[wooze]` / `[living.species]` checks are living's.
+- **The viewer's field**: `flint_viewer::field_clocks::SceneFields` (the
+  settle, the field, the clocks), a point living's CLI part registers. The
+  viewer reads it from `flint_package::cli::points()` and depends on
+  flint-package for it.
+- **The Living Props panel goes in through debug-hud's point**:
+  `flint_debug_ui::ScenePanels`, which the kernel inserts (behind
+  `debug-hud`) and each package adds a `fn(&FlintWorld) -> Option<Box<dyn
+  DebugPanel>>` to. The player makes them where it made living's panel, so
+  the F3 order holds. The pose overlay is `DebugPanel::paint_world`, a
+  default method, so the frame no longer downcasts to a panel type.
+- **`gen --strip`** moved with living (`flint_living::cli::strip`, still
+  procgen's `StripSheet`). The GIF writer it shares with `render` is
+  `flint_package::cli::gif`, behind flint-package's `gif` feature, so the
+  player compiles none of it.
+- **What the kernel keeps of living, as it keeps music's**: the policy
+  name `living` (so a state that names it registers in every build), and
+  the "built without" line (`missing_features::unbuilt_living`, said only
+  when the registry lacks the package). No `feature = "living"` is left in
+  flint-player, flint-cli, flint-viewer or flint-debug-ui. Their tests that
+  drive the living subsystem through a `PlayerApp` stay in flint-player
+  (`player_app/living_tests/`, over a dev-dependency on flint-living), and
+  pass over a launcher without the package.
+- **Measured**: the frozen Woozy Grove and the three wooze and echo
+  fixtures, rendered by a build from before the move and one after, are
+  byte-identical: a still, `--time 2`, `--boil-time`, a list of moments, a
+  wooze sweep, a preset sweep, an echoes sweep, `--scripts`, `--report json`,
+  `check --json`, `validate`, and two player screenshots (one with
+  `--compare ,calm --split`). Their logs match too, once clock times are
+  taken out.
+
 ## Measured
 
 - **Cargo globs** (cargo 1.99.1, a scratch workspace, 2026-11-25): `members`

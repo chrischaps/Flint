@@ -37,10 +37,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 mod clock;
 pub mod gen;
+#[cfg(feature = "gif")]
+pub mod gif;
 mod points;
+pub mod render;
 
 pub use clock::{random_seed, rfc3339, utc_now};
-pub use points::{points, points_or, Points, SpecChecks, SpecGen, SpecIssue, SpecParams};
+pub use points::{
+    points, points_or, Points, SpecChecks, SpecGen, SpecIssue, SpecParams, Stages, TableCheck,
+    TableChecks,
+};
 
 /// Subcommands a package or an embedding game adds to `flint`, given to
 /// flint-cli's `run_with`. The engine's own commands keep their names: an

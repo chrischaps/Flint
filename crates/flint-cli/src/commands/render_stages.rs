@@ -745,33 +745,39 @@ fn stage_sheet(
 /// Try every cell of a sweep that turns a wooze knob on a field of its own,
 /// before anything is loaded. A preset may be a file beside the scene (#249),
 /// which has to read. A build without the living package runs no field,
-/// so it refuses the sweep, naming the package (#1333).
-#[cfg(not(feature = "living"))]
-pub(super) fn check_wooze_sweep(
-    _: &RenderArgs,
-    grid: &crate::commands::sweep::SweepGrid,
-) -> Result<()> {
-    Err(crate::commands::absent::missing(
-        format!("flint render --sweep {}", grid.name()),
-        "living",
-    ))
-}
-
-#[cfg(feature = "living")]
+/// so it refuses the sweep, naming the package (#1333); with it, the
+/// package's render part holds each cell (#1558).
 pub(super) fn check_wooze_sweep(
     args: &RenderArgs,
     grid: &crate::commands::sweep::SweepGrid,
 ) -> Result<()> {
+    let Some(stages) = super::stages() else {
+        return Err(crate::commands::absent::missing(
+            format!("flint render --sweep {}", grid.name()),
+            "living",
+        ));
+    };
     for (column, row) in grid.cells() {
-        let (_, Some(table)) = cell_knobs(args, Some(grid), (column, row))? else {
-            continue;
-        };
-        let mut field = flint_wooze::WoozeField::new(flint_wooze::WoozeSample::NEUTRAL);
-        field
-            .set_global(&table, 0.0, 0.0)
-            .map_err(|reason| anyhow!("--sweep {}: {reason}", grid.name()))?;
+        let axes = wooze_axes(Some(grid), (column, row));
+        stages.check_cell(Path::new(&args.scene), &grid.name(), &axes)?;
     }
     Ok(())
+}
+
+/// The wooze values a sweep cell turns, `(knob, value)` an axis, in axis
+/// order: what the living package's part lays over the scene's `[wooze]`
+/// (`StagePart::stage`). Empty without a grid or with no wooze axis.
+pub(super) fn wooze_axes(
+    grid: Option<&crate::commands::sweep::SweepGrid>,
+    (column, row): (usize, usize),
+) -> Vec<(&str, &str)> {
+    let Some(grid) = grid else {
+        return Vec::new();
+    };
+    grid.axes(column, row)
+        .into_iter()
+        .filter_map(|(sweep, i)| Some((sweep.wooze_knob()?, sweep.values[i].as_str())))
+        .collect()
 }
 
 /// Whether a render is of a moment of the game (#216): a time, frames of it, or
@@ -851,75 +857,6 @@ fn still_props(stage: &Stage) -> Vec<String> {
         })
         .map(|entity| entity.name)
         .collect()
-}
-
-/// The preset file a `--sweep wooze.preset=...` value names, if it's a file the
-/// scene can see rather than a built-in (#249).
-#[cfg(feature = "living")]
-fn preset_file_of(
-    args: &RenderArgs,
-    sweep: &crate::commands::sweep::Sweep,
-    index: usize,
-) -> Result<Option<flint_procgen::WoozePreset>> {
-    if sweep.wooze_knob() != Some("preset") {
-        return Ok(None);
-    }
-    let name = &sweep.values[index];
-    match flint_procgen::read_preset(Path::new(&args.scene), name) {
-        None => Ok(None),
-        Some(Ok(preset)) => Ok(Some(preset)),
-        Some(Err(reason)) => Err(anyhow!("--sweep: preset '{name}': {reason}")),
-    }
-}
-
-/// What a sweep cell lays over the scene's `[wooze]` table: a preset file one
-/// of its axes names (its knobs first), then every other wooze value it takes,
-/// so a `wooze.glide` row turns the glide a preset column set (#596). `None`
-/// for a cell no axis of which is a wooze knob. The living package's: a
-/// build without it refuses a wooze sweep (`check_wooze_sweep`).
-#[cfg(feature = "living")]
-pub(super) fn cell_knobs(
-    args: &RenderArgs,
-    grid: Option<&crate::commands::sweep::SweepGrid>,
-    (column, row): (usize, usize),
-) -> Result<(Option<flint_procgen::WoozePreset>, Option<toml::Table>)> {
-    let Some(grid) = grid else {
-        return Ok((None, None));
-    };
-    let axes = grid.axes(column, row);
-    let mut preset = None;
-    for &(sweep, i) in &axes {
-        if let Some(file) = preset_file_of(args, sweep, i)? {
-            preset = Some(file);
-        }
-    }
-    let mut table = preset.as_ref().map(|p| preset_wooze_table(&p.wooze));
-    for &(sweep, i) in &axes {
-        if preset.is_some() && sweep.wooze_knob() == Some("preset") {
-            continue;
-        }
-        if let Some(knobs) = sweep.wooze_table(i) {
-            table.get_or_insert_with(toml::Table::new).extend(knobs);
-        }
-    }
-    Ok((preset, table))
-}
-
-/// A preset's `[wooze]` knobs as the table the field takes.
-#[cfg(feature = "living")]
-fn preset_wooze_table(knobs: &flint_procgen::WoozeKnobs) -> toml::Table {
-    let mut table = toml::Table::new();
-    for (key, value) in [
-        ("amplitude", knobs.amplitude),
-        ("step", knobs.step),
-        ("glide", knobs.glide),
-        ("jitter", knobs.jitter),
-    ] {
-        if let Some(value) = value {
-            table.insert(key.to_string(), toml::Value::Float(f64::from(value)));
-        }
-    }
-    table
 }
 
 /// `   N living props` for a sheet's subtitle, or nothing in a scene without.

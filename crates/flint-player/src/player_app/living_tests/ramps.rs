@@ -39,7 +39,7 @@ fn grove() -> PlayerApp {
         None,
     );
     let (props, resolver) =
-        crate::player_app::living_subsystem::props_and_resolver(&mut app.core.resources);
+        flint_living::player::subsystem::props_and_resolver(&mut app.core.resources);
     resolver.index_spec(ProcGenSpec::parse(SPEC).unwrap());
     for i in 0..3u64 {
         props

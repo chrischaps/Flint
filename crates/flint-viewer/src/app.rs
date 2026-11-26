@@ -2,7 +2,9 @@
 //! Supports an optional spline editor mode for interactive track editing.
 
 use crate::edits::FieldEdits;
-use crate::field_clocks::{field_of, FieldClocks, SceneField};
+// Living props' tables, checked and the preset `[wooze]` names filled in
+// (#686), by the living package when the build has it (#1558)
+use crate::field_clocks::{field_of, settle, FieldClocks, SceneField};
 use crate::host::{self, Editor, Flow, Gpu, HostOptions, InitCx, Target, Tick};
 use crate::panels::transform_gizmo::apply_gizmo_delta;
 use crate::panels::{
@@ -193,20 +195,6 @@ pub fn run(
         )?,
         options,
     )
-}
-
-/// Living props' tables: checked, and the preset `[wooze]` names filled in
-/// (#686). A viewer built without `living` draws those tables still and
-/// links no flint-procgen, so it has nothing to settle (#1543), as the
-/// player's build without the feature reads neither table.
-fn settle(scene_file: &mut flint_scene::SceneFile, path: &Path) -> flint_core::Result<()> {
-    #[cfg(feature = "living")]
-    return flint_procgen::settle_scene(scene_file, path);
-    #[cfg(not(feature = "living"))]
-    {
-        let _ = (scene_file, path);
-        Ok(())
-    }
 }
 
 /// The scene viewer on `scene_path`, for [`crate::host`] to open in a

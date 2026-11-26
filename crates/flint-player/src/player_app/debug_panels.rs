@@ -184,22 +184,25 @@ impl PlayerApp {
         self.debug_panels_mut().push(Box::new(panel));
     }
 
-    /// Create the Living Props panel when the scene has any `living_prop` entity
-    /// (#218). The drain in `living_tuning.rs` mirrors the grove into it.
-    #[cfg(all(feature = "debug-hud", feature = "living"))]
-    pub(super) fn create_living_debug_panel(&mut self) {
-        // Nor in a project whose `[packages]` leaves `living` out (#1528)
-        if self.core.leaves_out("living")
-            || self
-                .core
-                .world
-                .entities_with_component(flint_living::components::LIVING_PROP)
-                .is_empty()
-        {
+    /// Each package's panel for this scene (#1558), in the order the
+    /// packages registered them (`flint_debug_ui::ScenePanels`): the Living
+    /// Props panel in a scene with a `living_prop` (#218), whose subsystem
+    /// mirrors the grove into it. None of a package the project's
+    /// `[packages]` leaves out (#1528).
+    #[cfg(feature = "debug-hud")]
+    pub(super) fn create_package_debug_panels(&mut self) {
+        let Some(makers) = crate::packages::registry().point::<flint_debug_ui::ScenePanels>()
+        else {
             return;
+        };
+        for (package, make) in &makers.0 {
+            if self.core.leaves_out(package) {
+                continue;
+            }
+            if let Some(panel) = make(&self.core.world) {
+                self.debug_panels_mut().push(panel);
+            }
         }
-        self.debug_panels_mut()
-            .push(Box::new(flint_debug_ui::LivingPropsDebugPanel::new()));
     }
 
     /// Create the ocean tuning panel if the scene has an `ocean` component.

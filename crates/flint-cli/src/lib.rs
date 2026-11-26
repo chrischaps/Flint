@@ -331,8 +331,6 @@ fn points_of(extensions: &[Box<dyn CliExtension>]) -> flint_package::cli::Points
     points.insert(flint_procgen_cli::gen::AiPoint(Box::new(
         commands::gen_ai::Ai,
     )));
-    #[cfg(feature = "living")]
-    points.insert(commands::gen_strip::point());
     points
 }
 

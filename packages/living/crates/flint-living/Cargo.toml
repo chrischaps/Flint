@@ -1,0 +1,73 @@
+[package]
+name = "flint-living"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Living props at run time: rings of poses on a frame budget, their clocks, knobs and blending"
+
+# The scheduler a game links only when it has living props (#1024). The
+# generators' side (`LivingGenerator`, the rig and its poses, the `[living]`
+# spec and scene tables) stays in flint-procgen, whose resolver lends these
+# props its specs, its generators and what its queue left of the frame budget.
+# Depending on flint-procgen with its `living` feature is what turns procgen's
+# part for living on (ADR 0137 decision 9): no other crate names it.
+#
+# The living package's crate (`packages/living/`, #1558). Its parts are
+# features, as procgen's and music's are:
+[features]
+# The package's part of the player (`src/player/`): `player::PACKAGE`, the
+# subsystem (the field and its clock, the boil, shallow wooze, woozy grass,
+# the hand tuning, the A/B), the `living`, `wooze` and `debug` script modules,
+# the props' load step and the scene settle. flint-player's `living` feature
+# turns it on; its build script lists `PACKAGE` from the manifest's `[rust]`.
+player = [
+    "dep:flint-package", "dep:flint-render", "dep:flint-ecs", "dep:flint-script",
+    "dep:flint-runtime", "dep:flint-scene", "dep:flint-terrain", "dep:egui", "dep:wgpu",
+    "dep:toml", "dep:rhai", "flint-procgen/player",
+]
+# With the debug-hud package too (the manifest's `[with.debug-hud]`, ADR 0137
+# decision 9): the Living Props panel, its pick keys (F8, Shift+F8) and the
+# `debug` module's A/B and commit calls (#854).
+debug-hud = ["player", "dep:flint-debug-ui"]
+# The package's part of the `flint` command line (`src/cli/`, #1558):
+# `cli::extensions()`, which adds no command and fills the kernel's points:
+# `render`'s stage (props over time, wooze and echoes sweeps, the boil,
+# `--report json`'s props), `check`'s tables, procgen's `gen --strip` and
+# the viewer's field clocks. flint-cli's `living` feature turns it on; its
+# build script lists `extensions()` from the manifest's `[rust]`.
+cli = [
+    "player", "dep:flint-procgen-cli", "dep:flint-viewer", "dep:flint-import",
+    "dep:flint-schema", "dep:image", "dep:pollster", "dep:anyhow", "dep:clap", "dep:serde_json",
+    "flint-package?/gif",
+]
+
+[dependencies]
+web-time = { workspace = true }
+tracing = { workspace = true }
+flint-core = { workspace = true }
+flint-wooze = { workspace = true }
+flint-procgen = { workspace = true, features = ["living"] }
+flint-package = { workspace = true, optional = true }
+flint-render = { workspace = true, optional = true }
+flint-ecs = { workspace = true, optional = true }
+flint-script = { workspace = true, optional = true }
+flint-runtime = { workspace = true, optional = true }
+flint-scene = { workspace = true, optional = true }
+flint-terrain = { workspace = true, optional = true }
+flint-debug-ui = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+rhai = { workspace = true, optional = true }
+flint-procgen-cli = { workspace = true, optional = true }
+flint-viewer = { workspace = true, optional = true }
+flint-import = { workspace = true, optional = true }
+flint-schema = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[lints]
+workspace = true

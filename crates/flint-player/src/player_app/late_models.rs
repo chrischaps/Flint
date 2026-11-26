@@ -138,6 +138,7 @@ impl PlayerApp {
                 &mut flint_package::assets::MakeCtx {
                     world: &mut self.core.world,
                     scene_path: &self.core.scene_path,
+                    tables: &self.scene.tables,
                     config: &config,
                     gpu: flint_package::assets::Gpu {
                         renderer: &mut *renderer,

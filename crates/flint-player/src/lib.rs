@@ -40,8 +40,6 @@ pub use extension::{
 pub use flint_audio::{Bus, Buses};
 pub use flint_core::quality::{GpuInfo, QualitySettings, QualityValue};
 pub use flint_geometry::ray_mesh::{RayHit, RayMesh, RayScene};
-#[cfg(feature = "living")]
-pub use flint_procgen::player::import_of as living_import;
 pub use flint_render::{
     river_points, GrassGround, GrassHeight, GroundFog, RiverPoint, WaterBodyLook, WaterBodyMesh,
     WaterVertex,
@@ -69,11 +67,6 @@ pub use player_app::input_checks::CheckOutcome;
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::inspect::InspectListener;
-#[cfg(feature = "living")]
-pub use player_app::living_props::{
-    apply_preset as apply_living_preset, boil_at, species_problems, wanted_by as living_wanted,
-    wooze_of_scene,
-};
 pub use player_app::playtest::{
     run as playtest, Ended as PlaytestEnded, Failure as PlaytestFailure, PlaytestOptions,
     PlaytestReport, SaveReport as PlaytestSave, DEFAULT_STEP as PLAYTEST_STEP,
@@ -109,6 +102,17 @@ pub use provenance::Provenance;
 pub use record_args::RecordArgs;
 pub use trace_args::TraceArgs;
 pub use window_args::WindowArgs;
+
+/// Settle a scene file just loaded from `path`, as every host does before
+/// anything reads it (#686, #1558): each package of the run checks and
+/// fills in its own tables (living's `[living]` and `[wooze]`, a preset
+/// named laid in, `Registry::settle_scene`). An error refuses the scene.
+pub fn settle_scene(
+    scene: &mut flint_scene::SceneFile,
+    path: &std::path::Path,
+) -> flint_core::Result<()> {
+    packages::registry().settle(scene, path)
+}
 
 /// A script system with the player's whole API: flint-script's core and
 /// the modules the run's packages registered (`living`, `wooze`, `debug`,

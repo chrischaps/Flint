@@ -4,8 +4,8 @@ use super::knobs::*;
 use super::overlay::*;
 use super::ui::*;
 use super::*;
-use crate::run_headless_frame;
 use egui::{Pos2, Rect, Shape, Vec2};
+use flint_debug_ui::run_headless_frame;
 use flint_procgen::WoozePreset;
 
 fn row(name: &str, position: [f32; 3]) -> LivingPropRow {

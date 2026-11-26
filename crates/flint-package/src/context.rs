@@ -7,7 +7,7 @@
 //! reads, is in [`Resources`]: procgen's resolver, living's props, the
 //! debug-hud's panels.
 
-use crate::{Note, Registry, Resources};
+use crate::{Note, Registry, Resources, Subsystem};
 use flint_audio::engine::AudioEngine;
 use flint_core::package::InUse;
 use flint_core::project::Project;
@@ -279,6 +279,38 @@ impl ExitReport {
     pub fn line(&mut self, line: impl Into<String>) {
         self.lines.push(line.into());
     }
+}
+
+/// A capture's game as a package's CLI side reads it (#1558): the scene's
+/// subsystems, the run's resources and the world. `flint render`'s
+/// `HeadlessGame` lends it, so the render's registration points
+/// (`cli::render::StagePart`) reach a package's own subsystem without the
+/// command naming it: the package finds it with [`find`].
+pub struct CaptureGame<'a> {
+    pub subsystems: &'a [Box<dyn Subsystem>],
+    pub resources: &'a Resources,
+    pub world: &'a FlintWorld,
+}
+
+/// [`CaptureGame`], to change: a package's subsystem and resources as a
+/// capture draws (living's blends, uploaded each capture).
+pub struct CaptureGameMut<'a> {
+    pub subsystems: &'a mut [Box<dyn Subsystem>],
+    pub resources: &'a mut Resources,
+}
+
+/// The subsystem of type `T` among `subsystems`, if there is one.
+pub fn find<T: Subsystem>(subsystems: &[Box<dyn Subsystem>]) -> Option<&T> {
+    subsystems
+        .iter()
+        .find_map(|s| (s.as_ref() as &dyn std::any::Any).downcast_ref::<T>())
+}
+
+/// The subsystem of type `T` among `subsystems`, to change.
+pub fn find_mut<T: Subsystem>(subsystems: &mut [Box<dyn Subsystem>]) -> Option<&mut T> {
+    subsystems
+        .iter_mut()
+        .find_map(|s| (s.as_mut() as &mut dyn std::any::Any).downcast_mut::<T>())
 }
 
 /// How long a subsystem lasts.

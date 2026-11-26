@@ -102,8 +102,8 @@ fn read(path: &Path) -> String {
 const COMPONENT_FILES: &[&str] = &[
     "crates/flint-core/src/components.rs",
     "crates/flint-geometry/src/components.rs",
-    "crates/flint-wooze/src/components.rs",
-    "crates/flint-living/src/components.rs",
+    "packages/living/crates/flint-wooze/src/components.rs",
+    "packages/living/crates/flint-living/src/components.rs",
     "packages/music/crates/flint-music/src/components.rs",
 ];
 

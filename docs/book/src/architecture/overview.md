@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 37-member Cargo workspace (36 crates, 27 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 37-member Cargo workspace (36 crates, 25 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -8,7 +8,6 @@ Flint is structured as a 37-member Cargo workspace (36 crates, 27 under `crates/
 flint/
 ├── crates/
 │   ├── flint-cli/          # CLI binary (clap). Entry point for all commands.
-│   ├── flint-living/       # Living props at run time: pose rings on the frame budget, clocks, knobs, blending
 │   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation, scripting
 │   ├── flint-package/      # The Package API: the Subsystem trait, its contexts, the run's typed Resources
 │   ├── flint-android/      # Android entry point (NativeActivity, APK asset extraction)
@@ -31,7 +30,6 @@ flint/
 │   ├── flint-scene/        # TOML scene serialization/deserialization
 │   ├── flint-ecs/          # hecs wrapper with stable IDs, names, hierarchy
 │   ├── flint-schema/       # Component/archetype schema loading and validation
-│   ├── flint-wooze/        # The wooze field
 │   ├── flint-geometry/     # Ocean waves, splines, ray meshes
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
 ├── packages/               # One folder a package: its package.toml, and its schemas/ and crates/
@@ -48,7 +46,10 @@ flint/
 │   │   ├── flint-rhythm/       # The rhythm layer over music: charts, judgment, coherence, ladder, seam, replay, haptics
 │   │   ├── flint-input-capture/# 1 kHz gamepad capture thread stamped against the audio clock
 │   │   └── flint-rhythm-game/  # The package's parts: the chart judge's subsystem, `flint music calibrate|chart`
-│   └── <name>/             # living, debug-hud, engine: manifests and schemas, for now
+│   ├── living/crates/
+│   │   ├── flint-living/       # Living props at run time, and the package's player, F3 panel and CLI parts
+│   │   └── flint-wooze/        # The wooze field
+│   └── <name>/             # debug-hud, engine: manifests and schemas, for now
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
 │   └── arch-viewer/        # Static web page that renders that JSON as an interactive graph
@@ -157,7 +158,7 @@ What only some features read lives a layer up, so an edit there doesn't rebuild 
 
 ### flint-wooze
 
-The wooze field (#213): how woozy any place in a scene is, one function of position and time that living props, shallow wooze, woozy grass and the shading boil all read. Also the `shallow_wooze` component's name. Depends on `flint-core` and `flint-ecs`. The living props read it, and so do procgen, the debug panels, the viewer, the player and the CLI, each only with its `living` feature: a build without the living package links none of it. The renderer takes the field's answers as frame data and links none of it either (#1330). Without the field, procgen still reads and settles a scene's `[wooze]` table, and `flint check` holds it to its schema alone (#1516).
+The wooze field (#213): how woozy any place in a scene is, one function of position and time that living props, shallow wooze, woozy grass and the shading boil all read. Also the `shallow_wooze` component's name. Depends on `flint-core` and `flint-ecs`. The living props read it, and so does procgen's `living` part; the player, the viewer and the CLI reach it only through flint-living's parts (#1558): a build without the living package links none of it. The renderer takes the field's answers as frame data and links none of it either (#1330). Without the field, procgen still reads and settles a scene's `[wooze]` table, and `flint check` holds it to its schema alone (#1516).
 
 ### flint-geometry
 
@@ -231,7 +232,8 @@ egui-based GUI inspector built on top of `flint-render`:
 The summonable debug overlay shared by the viewer and the player:
 - `DebugPanel` trait (`name`, `ui`, `sync(&mut PanelCtx)`, `weight`, `is_open`, `toggle`, `layout`, dirty tracking) and `PanelLayout::{SideRight, Bottom}`; the player syncs every panel in one loop
 - `assign_columns()` balances open panels across three side columns by each panel's `weight()`
-- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4), Ocean, Camera, Grass, Particles, Styles, Living Props, and `ComponentPanel`, drawn from any component schema whose fields say `panel = ...` (#744)
+- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4), Ocean, Camera, Grass, Particles, Styles, and `ComponentPanel`, drawn from any component schema whose fields say `panel = ...` (#744)
+- `ScenePanels` --- the registration point a package adds its scene's panel to (the living package's Living Props panel, #1558), and `DebugPanel::paint_world` for what a panel paints in the world
 - Depends on `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-particles`, `flint-schema`, `flint-terrain`, and `flint-scene`
 - Optional in the player behind the default-on `debug-hud` cargo feature; feature-off builds carry no debug surface
 
@@ -373,11 +375,14 @@ The procgen package's part of the `flint` command line (`packages/procgen/crates
 
 ### flint-living
 
-Living props at run time (#1024), split out of `flint-procgen` so that only a game with living props links the scheduler (`flint-player`'s `living` feature):
+Living props at run time (#1024), split out of `flint-procgen` so that only a game with living props links the scheduler; the living package's crate (`packages/living/crates/flint-living`, #1558), whose parts are features:
 - `LivingProps` --- every lineage (one skeleton and rig a spec and lineage seed) and every prop on it, each with its ring of poses a few steps ahead of its clock, its echoes and its knobs' layers
 - The seam with the resolver: a host keeps `LivingProps` beside its `ProcGenResolver`, which lends it its specs (`living_spec`), its generators and what its queue left of the frame budget (`budget_left_ms`); `add_prop`, `process`, `step_now`, `process_beside` and `settle` take the resolver
 - `BlendFrame` / `blend_prop` --- each frame's two-pose blend per part, written only where something moved
 - Knobs (`tune_*`, `LivingScope`, `LivingLayers`) and the A/B fork (`fork`, `swap_cache`, `redraw_all`)
+- `player` --- the package's part of the player: `player::PACKAGE`, the living subsystem (the wooze field and its clock, the shading boil, shallow wooze, woozy grass, the hand tuning, the A/B), the `living`, `wooze` and `debug` script modules, its step of procgen's load and its settle of `[living]` / `[wooze]`
+- `debug-hud` --- the F3 Living Props panel (`panel`), with the debug-hud package listed too (the manifest's `[with.debug-hud]`)
+- `cli` --- `cli::extensions()`: no command of its own; it fills `flint render`'s stage point, `flint check`'s table checks, `gen --strip` and the scene viewer's field clocks
 
 ### flint-procgen-ai
 

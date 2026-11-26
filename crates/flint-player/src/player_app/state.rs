@@ -115,11 +115,6 @@ pub struct LaunchOptions {
     /// `on_expression` (`--expression-timeline`, `--expression-listen`;
     /// Flint#518). `None` when neither was given.
     pub expression_feed: Option<expression_feed::ExpressionFeed>,
-    /// `--compare A,B` (#238): the Living Props presets to compare, kept
-    /// across scenes and changed by the panel's picks, and whether to start
-    /// comparing (split or not) once a scene has props to compare.
-    pub compare: Option<(String, String)>,
-    pub compare_at_start: Option<bool>,
     /// `--strict-scripts` (#693): a run with any script error, at load or
     /// run time, fails (`PlayerApp::run_failure`), so a headless run of a
     /// broken game can't exit 0.
@@ -183,8 +178,6 @@ impl Default for LaunchOptions {
             motion_hold: None,
             save_dir: None,
             expression_feed: None,
-            compare: None,
-            compare_at_start: None,
             strict_scripts: false,
             saves_in_memory: false,
             save_seed: None,
@@ -229,8 +222,6 @@ impl std::fmt::Debug for LaunchOptions {
             motion_hold,
             save_dir,
             expression_feed,
-            compare,
-            compare_at_start,
             strict_scripts,
             saves_in_memory,
             save_seed,
@@ -266,8 +257,6 @@ impl std::fmt::Debug for LaunchOptions {
             .field("motion_hold", motion_hold)
             .field("save_dir", save_dir)
             .field("expression_feed", &expression_feed.is_some())
-            .field("compare", compare)
-            .field("compare_at_start", compare_at_start)
             .field("strict_scripts", strict_scripts)
             .field("saves_in_memory", saves_in_memory)
             .field("save_seed", save_seed)
@@ -315,12 +304,6 @@ pub struct SceneSettings {
     /// `[scene] input_config`: the scene's own input config, over the
     /// project's.
     pub input_config: Option<String>,
-    /// The scene's `[living]` and `[wooze]` tables (living props, #211-#252),
-    /// with a `[wooze] preset` filled in.
-    #[cfg(feature = "living")]
-    pub living: Option<flint_procgen::LivingDef>,
-    #[cfg(feature = "living")]
-    pub wooze: Option<flint_procgen::WoozeDef>,
 }
 
 impl Default for SceneSettings {
@@ -338,10 +321,6 @@ impl Default for SceneSettings {
             tables: toml::Table::new(),
             preload_audio: true,
             input_config: None,
-            #[cfg(feature = "living")]
-            living: None,
-            #[cfg(feature = "living")]
-            wooze: None,
         }
     }
 }

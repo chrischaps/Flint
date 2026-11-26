@@ -155,7 +155,6 @@ fn warned<T>(run: impl FnOnce() -> T) -> (T, String) {
 }
 
 /// What the keeper's script wrote down: `module_enabled("living")`.
-#[cfg(feature = "living")]
 fn living_enabled(app: &PlayerApp) -> Option<bool> {
     app.core.store.get("living").and_then(|v| v.as_bool())
 }
@@ -190,15 +189,21 @@ fn a_left_out_packages_component_is_unlisted_in_the_load_summary() {
 /// The ticket's second box: there, `module_enabled("living")` is false, no
 /// living subsystem runs, and one line names `[packages]` and what stands
 /// still.
-#[cfg(feature = "living")]
 #[test]
 fn a_build_with_living_runs_none_of_it_where_the_project_leaves_it_out() {
+    // The living package's: a launcher without it has none to run
+    if !crate::packages::registry().has("living") {
+        return;
+    }
     vfs::scoped(game(""), || {
         let (app, log) = warned(play);
         assert_eq!(living_enabled(&app), Some(false));
         assert!(!app.core.subsystems.names().contains(&"living"));
         assert!(!app.core.script.enabled_modules().contains(&"living"));
-        assert!(app.core.living_props().is_empty(), "no prop grows");
+        assert!(
+            flint_living::player::subsystem::props(&app.core.resources).is_empty(),
+            "no prop grows"
+        );
         let lines: Vec<&str> = log
             .lines()
             .map(str::trim)
@@ -217,9 +222,12 @@ fn a_build_with_living_runs_none_of_it_where_the_project_leaves_it_out() {
 
 /// The same game listing `living`: the subsystem and its module are back,
 /// and nothing is called unlisted.
-#[cfg(feature = "living")]
 #[test]
 fn listing_living_brings_it_back() {
+    // The living package's: a launcher without it has none to run
+    if !crate::packages::registry().has("living") {
+        return;
+    }
     vfs::scoped(game("living = \"*\"\n"), || {
         let (app, log) = warned(play);
         assert_eq!(living_enabled(&app), Some(true));
@@ -230,9 +238,12 @@ fn listing_living_brings_it_back() {
 }
 
 /// With no `[packages]` table every package is in, as before the key.
-#[cfg(feature = "living")]
 #[test]
 fn no_packages_table_leaves_nothing_out() {
+    // The living package's: a launcher without it has none to run
+    if !crate::packages::registry().has("living") {
+        return;
+    }
     let mut files = (*game("")).clone();
     files.insert(
         "game/flint.toml",

@@ -62,9 +62,17 @@ pub static ENGINE: Part = Part {
     register: |registry| {
         use crate::player_app::subsystem;
         subsystem::field::register(registry);
-        #[cfg(not(feature = "living"))]
-        subsystem::living::register_absent(registry);
+        // A game state may name `living` in any build (#727), and a scene
+        // that uses living props in a build without the package hears so
+        // once (its own crate since #1558)
+        registry
+            .policy("living")
+            .scene_subsystem(crate::player_app::missing_features::unbuilt_living);
         registry.scene_subsystem(crate::player_app::missing_features::unbuilt_music);
+        // Debug-hud's point for a package's scene panels (the Living Props
+        // panel, #1558), which the packages after the kernel fill
+        #[cfg(feature = "debug-hud")]
+        registry.insert_point(flint_debug_ui::ScenePanels::default());
     },
 };
 
@@ -75,21 +83,16 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/package_list.rs"));
 }
 
-// The packages whose code is still in this crate, each behind its feature
-// until it moves into `packages/<name>/` (#1558-#1559). One with nothing
-// to register yet (debug-hud) is listed all the same: the list is what the
-// binary was built with. A package in its own folder (music, #1555;
-// procgen, #1557; rhythm, #1556) is its crate's `player::PACKAGE`, which
-// `generated::moved` lists from the manifests.
+// The one package whose part is still this crate's, behind its feature
+// until it moves into `packages/<name>/` (#1559): debug-hud, which has
+// nothing to register yet and is listed all the same, since the list is
+// what the binary was built with. A package in its own folder (music,
+// #1555; procgen, #1557; rhythm, #1556; living, #1558) is its crate's
+// `player::PACKAGE`, which `generated::moved` lists from the manifests.
 #[cfg(feature = "debug-hud")]
 static DEBUG_HUD: Part = Part {
     name: "debug-hud",
     register: |_| {},
-};
-#[cfg(feature = "living")]
-static LIVING: Part = Part {
-    name: "living",
-    register: crate::player_app::subsystem::living::register,
 };
 
 /// The names of the packages this crate has a part of, in any build: what
@@ -113,8 +116,6 @@ pub fn stock() -> Vec<&'static dyn Package> {
     let mut list: Vec<&'static dyn Package> = generated::moved();
     #[cfg(feature = "debug-hud")]
     list.push(&DEBUG_HUD);
-    #[cfg(feature = "living")]
-    list.push(&LIVING);
     let at = |p: &&dyn Package| {
         generated::ORDER
             .iter()
@@ -372,7 +373,7 @@ mod tests {
         assert!(!lacks("ai"));
         assert!(!lacks("engine"));
         assert!(!lacks("frame-history"), "a build option, not a package");
-        assert_eq!(lacks("living"), !cfg!(feature = "living"));
+        assert_eq!(lacks("living"), !built_feature("living"));
         let built = built_feature;
         assert_eq!(lacks("procgen"), !built("procgen"));
     }
@@ -412,9 +413,9 @@ mod tests {
                 .all(|f| match f.as_str() {
                     // The packages still in this crate, by their gates
                     "debug-hud" => cfg!(feature = "debug-hud"),
-                    "living" => cfg!(feature = "living"),
                     // A package in its own folder (music, #1555; procgen,
-                    // #1557; rhythm, #1556), as the build script read the feature
+                    // #1557; rhythm, #1556; living, #1558), as the build
+                    // script read the feature
                     other => {
                         assert!(
                             generated::BUILT.iter().any(|(f, _)| *f == other),
@@ -443,17 +444,20 @@ mod tests {
 
     /// The packages in their own folders come from the generated list,
     /// each exactly when this build has its feature, in registration order:
-    /// procgen (standard tier) first, then music, then rhythm, which
-    /// requires music (#1555, #1556, #1557).
+    /// procgen (standard tier) first, then living and music, then rhythm,
+    /// which requires music (#1555, #1556, #1557, #1558).
     #[test]
     fn the_moved_packages_come_from_their_own_crates() {
         let moved: Vec<&str> = generated::moved().iter().map(|p| p.name()).collect();
-        let expected: Vec<&str> = ["procgen", "music", "rhythm"]
+        // In registration order: procgen (standard), then the feature
+        // packages by name, rhythm after the music it requires; each in its
+        // own folder when the build has it
+        let expected: Vec<&str> = ["procgen", "living", "music", "rhythm"]
             .into_iter()
             .filter(|name| built_feature(name))
             .collect();
         assert_eq!(moved, expected);
-        for name in ["procgen", "music", "rhythm"] {
+        for name in ["procgen", "living", "music", "rhythm"] {
             assert!(PLAYER_PACKAGES.contains(&name), "{name}");
             assert_eq!(registry().has(name), built_feature(name), "{name}");
         }

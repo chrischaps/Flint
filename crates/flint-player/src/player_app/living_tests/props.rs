@@ -1,12 +1,22 @@
 //! Living props in the player, headless: the recording sink stands in for the
 //! renderer, as it does for the rest of procgen's resolution.
 
-use super::*;
 use flint_core::components as comp;
+use flint_core::toml_util::toml_f32;
 use flint_core::EntityId;
+use flint_ecs::FlintWorld;
+use flint_living::player::props::*;
+use flint_living::{
+    BlendFrame, LineageDone, LivingPropId, LivingPropRequest, LivingProps, LivingStats,
+};
 use flint_procgen::player::import_of;
 use flint_procgen::player::recorder::{Event, Recorder};
+use flint_procgen::player::{AssetSink, ProcGenMode};
+use flint_procgen::{AssetKind, ProcGenResolver, Stagger};
 use flint_procgen::{LivingRig, ProcGenSpec};
+use flint_render::model_loader::ModelLoadConfig;
+use flint_render::SceneRenderer;
+use flint_wooze::WoozeField;
 
 const SAPLING: &str = r#"
 generator = "tree_v1"
@@ -625,7 +635,7 @@ fn the_report_says_how_it_went() {
 /// scene with none, which is what keeps that scene's passes from boiling.
 #[test]
 fn the_boil_clock_runs_with_the_field_and_only_with_it() {
-    let mut app = super::super::PlayerApp::new(
+    let mut app = crate::player_app::PlayerApp::new(
         flint_ecs::FlintWorld::new(),
         "boil_test.scene.toml".into(),
         false,

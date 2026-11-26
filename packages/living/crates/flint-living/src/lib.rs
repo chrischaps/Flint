@@ -44,9 +44,15 @@
 
 mod ab;
 mod blend;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod components;
 mod defs;
 mod layers;
+#[cfg(feature = "debug-hud")]
+pub mod panel;
+#[cfg(feature = "player")]
+pub mod player;
 mod prop;
 mod ring;
 mod schedule;

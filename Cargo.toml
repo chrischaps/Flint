@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/flint-core",
-    "crates/flint-wooze",
     "crates/flint-geometry",
     "crates/flint-schema",
     "crates/flint-ecs",
@@ -25,7 +24,6 @@ members = [
     "crates/flint-particles",
     "crates/flint-terrain",
     "crates/flint-debug-ui",
-    "crates/flint-living",
     "crates/flint-cli",
     "packages/*/crates/*",
     "crates/flint-android",
@@ -39,7 +37,6 @@ members = [
 # too cannot build on a desktop, and then the reason goes here.
 default-members = [
     "crates/flint-core",
-    "crates/flint-wooze",
     "crates/flint-geometry",
     "crates/flint-schema",
     "crates/flint-ecs",
@@ -62,7 +59,6 @@ default-members = [
     "crates/flint-particles",
     "crates/flint-terrain",
     "crates/flint-debug-ui",
-    "crates/flint-living",
     "crates/flint-cli",
     "packages/*/crates/*",
     "tools/arch-analyzer",
@@ -206,7 +202,7 @@ skrifa = { version = "0.44", default-features = false, features = ["std", "autoh
 
 # Internal crates
 flint-core = { path = "crates/flint-core" }
-flint-wooze = { path = "crates/flint-wooze" }
+flint-wooze = { path = "packages/living/crates/flint-wooze" }
 flint-geometry = { path = "crates/flint-geometry" }
 flint-schema = { path = "crates/flint-schema" }
 flint-ecs = { path = "crates/flint-ecs" }
@@ -217,7 +213,8 @@ flint-constraint = { path = "crates/flint-constraint" }
 flint-asset = { path = "crates/flint-asset" }
 flint-import = { path = "crates/flint-import" }
 flint-pixels = { path = "crates/flint-pixels" }
-# Its `living` feature is flint-cli's to turn on (#1333)
+# Its `living` feature went with the living package's move (#1558): the field
+# clocks are the package's, through `field_clocks::SceneFields`
 flint-viewer = { path = "crates/flint-viewer", default-features = false }
 flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }
@@ -244,7 +241,7 @@ flint-terrain = { path = "crates/flint-terrain" }
 # living package's to turn on (#1516)
 flint-procgen = { path = "packages/procgen/crates/flint-procgen", default-features = false }
 flint-procgen-cli = { path = "packages/procgen/crates/flint-procgen-cli" }
-flint-living = { path = "crates/flint-living" }
+flint-living = { path = "packages/living/crates/flint-living" }
 flint-procgen-ai = { path = "packages/ai/crates/flint-procgen-ai" }
 flint-ai-core = { path = "packages/ai/crates/flint-ai-core" }
 flint-debug-ui = { path = "crates/flint-debug-ui", default-features = false }

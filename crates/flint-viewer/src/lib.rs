@@ -8,7 +8,7 @@
 
 pub mod app;
 pub mod edits;
-mod field_clocks;
+pub mod field_clocks;
 pub mod file_dialog;
 pub mod host;
 pub mod panels;

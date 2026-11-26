@@ -503,17 +503,15 @@ impl PlayerApp {
         let schema_dirs = self.schema_dirs.clone();
         let registry = self.schemas_for_scene(&path);
 
-        // Living props' tables are checked and their preset filled in, as at
-        // the first load (#686): a scene that won't settle doesn't load.
+        // The packages' tables are settled, as at the first load (#686,
+        // #1558: living's checked and its preset filled in): a scene that
+        // won't settle doesn't load.
         // Its ids start past the scene playing's (#688), so an id a script
         // kept (a persistent value, an event that outlives the scene) names
         // nothing in the next one, as it did under the old global counter
         let loaded = flint_scene::load_scene_after(&path, &registry, &self.core.world).and_then(
             |(world, mut file)| {
-                #[cfg(feature = "living")]
-                flint_procgen::settle_scene(&mut file, Path::new(&path))?;
-                #[cfg(not(feature = "living"))]
-                let _ = &mut file;
+                crate::settle_scene(&mut file, Path::new(&path))?;
                 Ok((world, file))
             },
         );

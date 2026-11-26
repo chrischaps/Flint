@@ -2,23 +2,56 @@
 //! `PlayerApp`, each handing the living subsystem its context, and the
 //! subsystem itself (`living()`), made bare if the test entered no scene.
 
-#![allow(unused_imports)]
-use super::*;
-use crate::player_app::living_ab::AbState;
-use crate::player_app::living_subsystem::LivingSubsystem;
 use crate::player_app::subsystem::stage_ctx;
 use crate::player_app::PlayerApp;
 #[cfg(feature = "debug-hud")]
-use flint_debug_ui::{KnobFlags, LivingPanelAction, LivingPickedState, LivingSpeciesState};
+use flint_living::panel::{KnobFlags, LivingPanelAction, LivingPickedState, LivingSpeciesState};
+use flint_living::player::ab::AbState;
+use flint_living::player::props::species_of;
+use flint_living::player::subsystem::LivingSubsystem;
+use flint_living::player::subsystem::{props, props_mut};
+use flint_living::player::tuning::*;
+use flint_living::LivingProps;
+use flint_living::{LivingLayer, LivingLayers, LivingPropId, ResolvedProp};
+use flint_package::StageCtx;
+use flint_procgen::{
+    commit_look, read_preset, species_keys, wooze_knobs_of, BoilDef, KnobValue, LivingDef,
+    LivingKnob, LivingSpeciesDef, WoozeKnobs, WoozePreset,
+};
+use flint_wooze::{preset as builtin_preset, WoozeField, WoozeSample, PRESETS};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+impl crate::player_app::GameCore {
+    /// The scene's living props, which the living package puts in the
+    /// run's resources.
+    pub(crate) fn living_props(&self) -> &LivingProps {
+        props(&self.resources)
+    }
+
+    pub(crate) fn living_props_mut(&mut self) -> &mut LivingProps {
+        props_mut(&mut self.resources)
+    }
+}
 
 impl PlayerApp {
+    /// `--compare a,b` (and `--split`) as the launch hands them over (#238).
+    /// Set after the scene is up, so it goes straight to what the builder
+    /// made of the launch's flags, which outlives the scene.
+    pub(crate) fn compare_living_at_start(&mut self, a: &str, b: &str, split: bool) {
+        let start = flint_living::player::subsystem::LivingStart::of(&mut self.core.resources);
+        start.compare = Some((a.to_string(), b.to_string()));
+        start.compare_at_start = Some(split);
+    }
+
     /// The living subsystem, a bare one if the scene made none.
     pub(crate) fn living(&mut self) -> &mut LivingSubsystem {
         if self.core.subsystems.find::<LivingSubsystem>().is_none() {
             // As a scene's builder makes it: the comparison --compare asked for
+            let start = flint_living::player::subsystem::LivingStart::of(&mut self.core.resources);
             let mut living = LivingSubsystem::default();
-            living.tune.ab_picks = self.launch.compare.clone();
-            living.tune.compare_at_start = self.launch.compare_at_start.take();
+            living.tune.ab_picks = start.compare.clone();
+            living.tune.compare_at_start = start.compare_at_start.take();
             self.core.subsystems.push(Box::new(living));
         }
         self.core.subsystems.find_mut::<LivingSubsystem>().unwrap()
@@ -186,7 +219,7 @@ impl PlayerApp {
     #[cfg(feature = "debug-hud")]
     pub(crate) fn living_species_states(
         &mut self,
-        unsaved: &super::Unsaved,
+        unsaved: &flint_living::player::tuning::Unsaved,
     ) -> Vec<LivingSpeciesState> {
         self.with_living(|living, ctx| {
             let _ = &ctx;

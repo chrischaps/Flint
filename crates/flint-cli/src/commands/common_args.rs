@@ -211,14 +211,12 @@ pub fn load_settled(
     path: &str,
     registry: &flint_schema::SchemaRegistry,
 ) -> anyhow::Result<(flint_ecs::FlintWorld, flint_scene::SceneFile)> {
-    #[cfg_attr(not(feature = "living"), allow(unused_mut))]
+    use anyhow::Context;
     let (world, mut scene_file) = load_scene(path, registry)?;
-    #[cfg(feature = "living")]
-    {
-        use anyhow::Context;
-        flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(path))
-            .with_context(|| flint_scene::load_failed(path))?;
-    }
+    // Each package's settle, as the player's (`flint_player::settle_scene`,
+    // #1558)
+    flint_player::settle_scene(&mut scene_file, std::path::Path::new(path))
+        .with_context(|| flint_scene::load_failed(path))?;
     Ok((world, scene_file))
 }
 

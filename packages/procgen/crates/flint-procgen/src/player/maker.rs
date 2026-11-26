@@ -51,6 +51,8 @@ pub struct LoadSteps(pub Vec<LoadStep>);
 pub struct LoadCtx<'a> {
     pub world: &'a mut flint_ecs::FlintWorld,
     pub config: &'a ModelLoadConfig,
+    /// The scene file's top-level tables, as settled (`[living]`, #1558).
+    pub tables: &'a toml::Table,
     pub resources: &'a mut Resources,
     pub packages: Option<&'a flint_core::package::InUse>,
 }
@@ -128,6 +130,7 @@ impl AssetMaker for Maker {
             let mut load = LoadCtx {
                 world: &mut *ctx.world,
                 config: ctx.config,
+                tables: ctx.tables,
                 resources: &mut *ctx.resources,
                 packages: ctx.packages,
             };

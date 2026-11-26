@@ -75,18 +75,9 @@ mod key_note;
 mod late_models;
 #[cfg(test)]
 mod late_models_tests;
-#[cfg(feature = "living")]
-mod living_ab;
-#[cfg(feature = "living")]
-mod living_api;
-#[cfg(feature = "living")]
-pub mod living_props;
-#[cfg(feature = "living")]
-mod living_ramps;
-#[cfg(feature = "living")]
-mod living_subsystem;
-#[cfg(feature = "living")]
-pub(crate) mod living_tuning;
+// The living package's tests that bring a scene up in the player (#1558)
+#[cfg(test)]
+mod living_tests;
 #[cfg(test)]
 mod load_report_tests;
 mod os_pacing;

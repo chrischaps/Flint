@@ -60,6 +60,10 @@ pub trait MadeMeshes {
 pub struct MakeCtx<'a> {
     pub world: &'a mut FlintWorld,
     pub scene_path: &'a str,
+    /// The scene file's top-level tables, as the host settled them: what a
+    /// package's own tables say its made assets start from (living's
+    /// `[living]`, the props' defaults, #1558).
+    pub tables: &'a toml::Table,
     /// The model loader's search: its catalog, the project, the scene's
     /// folder. A name the catalog has is the catalog's.
     pub config: &'a ModelLoadConfig,

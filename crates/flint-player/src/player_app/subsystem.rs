@@ -55,17 +55,13 @@ use flint_render::FrameInputs;
 use flint_runtime::DebugKey;
 use flint_runtime::GameStateMachine;
 use flint_script::context::ScriptCommand;
-use std::any::Any;
 
 // The scene subsystems whose code is still in this crate: the kernel's
-// `field`, and the `living` package's until it moves to its own crate
-// (#1558; music's and rhythm's are their own since #1555 and #1556). Each
-// file registers what it brings through the run's `Registry` (#1552);
-// nothing lists the files.
+// `field`; every package's is its own crate's (music's since #1555,
+// rhythm's since #1556, living's since #1558). Each file registers what it
+// brings through the run's `Registry` (#1552); nothing lists the files.
 #[path = "subsystems/field.rs"]
 pub(crate) mod field;
-#[path = "subsystems/living.rs"]
-pub(crate) mod living;
 #[cfg(test)]
 #[path = "subsystems/toy.rs"]
 pub(crate) mod toy;
@@ -165,20 +161,27 @@ impl Subsystems {
         }
     }
 
-    /// The subsystem of type `T`, if there is one.
-    #[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
+    /// The subsystem of type `T`, if there is one (the native hosts': the
+    /// world dump, the expression feed's socket).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn find<T: Subsystem>(&self) -> Option<&T> {
-        self.list
-            .iter()
-            .find_map(|s| (s.as_ref() as &dyn Any).downcast_ref::<T>())
+        flint_package::find(&self.list)
     }
 
     /// The subsystem of type `T`, if there is one, to change.
-    #[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
+    #[cfg_attr(not(test), allow(dead_code))] // the living tests' (#754)
     pub(crate) fn find_mut<T: Subsystem>(&mut self) -> Option<&mut T> {
-        self.list
-            .iter_mut()
-            .find_map(|s| (s.as_mut() as &mut dyn Any).downcast_mut::<T>())
+        flint_package::find_mut(&mut self.list)
+    }
+
+    /// Every one, in run order: a capture's, for a package's CLI side to
+    /// find its own in (`flint_package::CaptureGame`, #1558).
+    pub(crate) fn as_slice(&self) -> &[Box<dyn Subsystem>] {
+        &self.list
+    }
+
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [Box<dyn Subsystem>] {
+        &mut self.list
     }
 
     pub(crate) fn scene_loaded(&mut self, ctx: &mut SceneCtx) {
@@ -378,10 +381,6 @@ impl super::PlayerApp {
                 }
             }
         }
-        // What living's builder reads of the scene's settings and the launch
-        // (#1550), until living reads its own tables (#1558)
-        #[cfg(feature = "living")]
-        self.lend_living_start();
         let mut ctx = scene_ctx!(self);
         for subsystem in build_for_scene(&mut ctx) {
             self.core.subsystems.push(subsystem);
@@ -417,9 +416,6 @@ impl super::PlayerApp {
             self.core.subsystems.drop_scene_ones();
             self.core.enable_script_modules();
         }
-        // What the living subsystem kept of the launch, for the next scene
-        #[cfg(feature = "living")]
-        self.take_back_living_start();
     }
 
     /// Hand a subsystem the debug action its key was pressed for.
