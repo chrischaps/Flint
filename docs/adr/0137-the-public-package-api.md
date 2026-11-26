@@ -529,7 +529,7 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
 - **Package flags on a command the package doesn't own** (ADR 0136
   section 7: `gen --ai-*`, `--max-cost`, `--cost-report`, `--style-guide`,
   `render --ai-refine`, `render --sweep wooze.*|living.*`, `asset resolve
-  --strategy ai_*`): decided, not yet built. Each flag changes how the
+  --strategy ai_*`): decided, not yet built (#1572). Each flag changes how the
   owning command runs, at one point in its run. The owner declares that
   point as a registration point (section 4's "Registration points of
   another package" row): a trait object the flag's package registers. The
