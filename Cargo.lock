@@ -1926,6 +1926,7 @@ dependencies = [
  "flint-audio",
  "flint-core",
  "flint-ecs",
+ "flint-physics",
  "flint-render",
  "flint-runtime",
  "flint-script",

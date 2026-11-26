@@ -22,6 +22,11 @@ pub enum Stage {
     PreScripts,
     /// After `on_update`, before the fixed physics steps.
     Scripts,
+    /// Inside each fixed physics step, before Rapier's step. Delivered
+    /// through [`Subsystem::fixed_update`](crate::Subsystem::fixed_update)
+    /// with a [`FixedCtx`](crate::FixedCtx), once a step, not through
+    /// `update`; named here so the schedule is whole in one place.
+    FixedStep,
     /// After the physics steps and the first-person camera.
     Physics,
     /// After script commands and camera overrides: the camera is final for
@@ -52,6 +57,7 @@ impl Stage {
             Stage::Input => "input",
             Stage::PreScripts => "pre_scripts",
             Stage::Scripts => "scripts",
+            Stage::FixedStep => "fixed_step",
             Stage::Physics => "physics",
             Stage::PostPhysics => "post_physics",
             Stage::ScriptUi => "script_ui",
@@ -89,5 +95,7 @@ mod tests {
         labels.dedup();
         assert_eq!(labels.len(), Stage::UPDATES.len());
         assert!(!Stage::UPDATES.contains(&Stage::PreRender));
+        assert!(!Stage::UPDATES.contains(&Stage::FixedStep));
+        assert_ne!(Stage::FixedStep.label(), Stage::PreRender.label());
     }
 }

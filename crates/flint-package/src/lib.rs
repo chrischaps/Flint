@@ -7,16 +7,15 @@
 //!   script's command, a debug key, a click, the frame's renderer inputs,
 //!   the HUD, the exit report).
 //! - The contexts each hook is lent: [`SceneCtx`], [`StageCtx`],
-//!   [`FrameCtx`], [`EncodeCtx`], [`ReportCtx`]. Every field is a kernel
-//!   type.
+//!   [`FixedCtx`] (inside each physics step, #1551), [`FrameCtx`],
+//!   [`EncodeCtx`], [`ReportCtx`]. Every field is a kernel type.
 //! - [`Resources`]: the run's typed values, one per Rust type, through which
 //!   one package lends state to another (procgen's resolver to living)
 //!   without the kernel naming either.
 //!
 //! The player keeps the ordered list (`Subsystems`) and lends each context
-//! from its own fields. Registration (`Package`, `Registry`) and the
-//! fixed-step hook come with the launcher and the physics tickets (#1551,
-//! #1552). This crate stays below 1.0 until Phase 5 (ADR 0136 decision 5).
+//! from its own fields. Registration (`Package`, `Registry`) comes with the
+//! launcher ticket (#1552). This crate stays below 1.0 until Phase 5 (ADR 0136 decision 5).
 
 mod context;
 pub mod note;
@@ -25,8 +24,8 @@ mod stage;
 mod subsystem;
 
 pub use context::{
-    Button, Capture, EncodeCtx, ExitReport, FrameCtx, Lasts, Pads, PlayerInput, ReportCtx,
-    SceneCtx, StageCtx,
+    Button, Capture, EncodeCtx, ExitReport, FixedCtx, FrameCtx, Lasts, Pads, PlayerInput,
+    ReportCtx, SceneCtx, StageCtx,
 };
 pub use note::Note;
 pub use resources::Resources;
@@ -36,3 +35,8 @@ pub use subsystem::Subsystem;
 /// The engine's egui, so a package's `ui` builds against the same version
 /// (ADR 0137 decision 6).
 pub use egui;
+
+/// The engine's physics, which [`FixedCtx::physics`] lends, with Rapier as
+/// `physics::rapier` (ADR 0137 section 3a), so a package's forces and rays
+/// build against the same version.
+pub use flint_physics as physics;

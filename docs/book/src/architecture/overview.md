@@ -390,13 +390,14 @@ Android entry point (excluded from default workspace members):
 
 ### flint-package
 
-The Package API ([ADR 0137](https://github.com/chrischaps/Flint/blob/main/docs/adr/0137-the-public-package-api.md)): what a package's crate builds against, so it depends on this small kernel crate and never on `flint-player` or `flint-cli`. It depends only on kernel crates (flint-core, flint-ecs, flint-runtime, flint-script, flint-render, flint-audio), never on a package's.
-- `Subsystem`: a package's running part, with a hook for each moment of a run (a scene coming and going, each `Stage` of the frame, a script's command, a debug key, a click, the frame's renderer inputs and encoder, the HUD's root `egui::Ui`, the exit report), each defaulting to nothing
-- The contexts each hook is lent (`SceneCtx`, `StageCtx`, `FrameCtx`, `EncodeCtx`, `ReportCtx`): every field a kernel type
+The Package API ([ADR 0137](https://github.com/chrischaps/Flint/blob/main/docs/adr/0137-the-public-package-api.md)): what a package's crate builds against, so it depends on this small kernel crate and never on `flint-player` or `flint-cli`. It depends only on kernel crates (flint-core, flint-ecs, flint-runtime, flint-script, flint-render, flint-audio, flint-physics), never on a package's.
+- `Subsystem`: a package's running part, with a hook for each moment of a run (a scene coming and going, each `Stage` of the frame, each fixed physics step, a script's command, a debug key, a click, the frame's renderer inputs and encoder, the HUD's root `egui::Ui`, the exit report), each defaulting to nothing
+- The contexts each hook is lent (`SceneCtx`, `StageCtx`, `FixedCtx`, `FrameCtx`, `EncodeCtx`, `ReportCtx`): every field a kernel type
+- `Subsystem::fixed_update(&mut FixedCtx)`: once for each fixed physics step that steps (two in a frame at 30 Hz, none on most frames at 144), after the character controller and the physics sync-in and before Rapier's step, so a force it applies is integrated by that step. `FixedCtx` lends the world, the physics (`PhysicsSystem::body_of`, `bodies_mut`, `colliders`, `queries`, and `rapier_mut` for all three at once, as Rapier's ray-cast vehicle controller takes them), the step's `dt`, its index in the frame, held input, the event bus, the game state's policy and the resources; no scripts, renderer, camera or sound. A paused state and a capture (`flint render`, which runs no physics) skip it. `flint_package::physics::rapier` is the engine's Rapier
 - `Resources`: the run's typed values, one per Rust type, through which one package lends state to another without the kernel naming either (procgen's resolver to living's props; the debug HUD's `DebugPanels` to any subsystem with a panel). A missing one means the package isn't in the build
 - `Stage` (re-exported as `flint_player::Stage`), `Note` (what a debug key says on screen), `Pads`, `PlayerInput` and `Button` (a click without winit), and `egui`, re-exported so a package builds against the engine's
 
-The player keeps the ordered list of subsystems and lends each context from its own fields. Registration and the fixed physics step come next (#1551, #1552).
+The player keeps the ordered list of subsystems and lends each context from its own fields. Registration comes next (#1552).
 
 ### flint-player
 
