@@ -15,6 +15,8 @@ flint-ecs = { workspace = true }
 flint-runtime = { workspace = true }
 flint-script = { workspace = true }
 flint-render = { workspace = true }
+# `SceneCtx::post`, the scene's `[post_process]` as the host read it (#1556)
+flint-scene = { workspace = true }
 flint-audio = { workspace = true }
 # What the fixed-step hook lends (ADR 0137 section 3a, #1551); a kernel
 # crate until Phase 3 makes physics a package.

@@ -83,7 +83,7 @@ fn the_old_names_are_unknown_commands() {
     // The spike lives on as an example program
     let example = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../flint-input-capture/examples/spike_rumble.rs"
+        "/../../packages/rhythm/crates/flint-input-capture/examples/spike_rumble.rs"
     );
     assert!(std::path::Path::new(example).is_file(), "{example}");
 }

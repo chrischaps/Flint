@@ -345,6 +345,7 @@ impl HeadlessGame {
             tables: &self.scene.tables,
             project: &core.project,
             styles: &core.styles,
+            post: self.scene.post_process.as_ref(),
             script: &mut core.script,
             renderer: None,
             audio: None,

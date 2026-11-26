@@ -38,13 +38,14 @@ pub fn data_dir() -> PathBuf {
 /// The repo's golden `fixtures/` directory, or None when the crate is built
 /// outside the game repo (tests skip in that case).
 pub fn fixtures_dir() -> Option<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../../fixtures");
     dir.canonicalize().ok().filter(|d| d.join("valid").exists())
 }
 
-/// The game repo root (three levels above this crate).
+/// The game repo root (five levels above this crate: its engine subtree
+/// holds it at `engine/packages/rhythm/crates/flint-rhythm`).
 pub fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../..")
 }
 
 /// The synthetic tempo-change suite: 120 BPM 4/4 until suite sample

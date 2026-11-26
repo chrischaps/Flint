@@ -20,8 +20,6 @@ members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-audio-worklet",
-    "crates/flint-rhythm",
-    "crates/flint-input-capture",
     "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
@@ -59,8 +57,6 @@ default-members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-audio-worklet",
-    "crates/flint-rhythm",
-    "crates/flint-input-capture",
     "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
@@ -228,13 +224,17 @@ flint-physics = { path = "crates/flint-physics" }
 flint-package = { path = "crates/flint-package" }
 # The crates that open devices take default-features = false here, so a
 # dependent says which devices it wants (#221): `device` (sound) on
-# flint-audio, flint-music and flint-rhythm, `gamepad` on flint-input-capture, and
+# flint-audio, flint-music, flint-rhythm and flint-rhythm-game, `gamepad` on
+# flint-input-capture and flint-rhythm-game, and
 # `audio` / `gamepad` / `debug-hud` on flint-player.
 flint-audio = { path = "crates/flint-audio", default-features = false }
 flint-audio-worklet = { path = "crates/flint-audio-worklet" }
 flint-music = { path = "packages/music/crates/flint-music", default-features = false }
-flint-rhythm = { path = "crates/flint-rhythm", default-features = false }
-flint-input-capture = { path = "crates/flint-input-capture", default-features = false }
+flint-rhythm = { path = "packages/rhythm/crates/flint-rhythm", default-features = false }
+flint-input-capture = { path = "packages/rhythm/crates/flint-input-capture", default-features = false }
+# The rhythm package's parts (#1556): `player`, the chart judge's
+# subsystem, and `cli`, `flint music calibrate|chart`
+flint-rhythm-game = { path = "packages/rhythm/crates/flint-rhythm-game", default-features = false }
 flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "packages/ai/crates/flint-asset-gen" }

@@ -41,15 +41,18 @@ frame-history = []
 # The sound card (kira's cpal backend: ALSA on Linux). Off, the player runs
 # silent and a music session's stems don't play, as on a machine without a
 # device (its beat still counts, on the game clock).
-audio = ["flint-audio/device", "flint-music?/device", "flint-rhythm?/device"]
+audio = ["flint-audio/device", "flint-music?/device", "flint-rhythm-game?/device"]
 # Gamepads (gilrs: libudev on Linux). Off, no pad is ever seen; keyboard,
 # mouse, touch and --input-script's pad still work (#221).
-gamepad = ["flint-runtime/gamepad", "flint-input-capture?/gamepad"]
+gamepad = ["flint-runtime/gamepad", "flint-rhythm-game?/gamepad"]
 # The rhythm game (ADR 0117 decision 2, #745): a `music_session` with a
 # `chart` is judged by flint-rhythm (coherence, the ladder, reintegration,
 # the 1 kHz pad capture of flint-input-capture). Off, the player links none
-# of it, and a charted suite plays as music, its chart not judged.
-rhythm = ["music", "dep:flint-rhythm", "dep:flint-input-capture"]
+# of it, and a charted suite plays as music, its chart not judged. The
+# package's own crates since #1556 (packages/rhythm/crates): the `player`
+# part of flint-rhythm-game is its subsystem, which build.rs lists, so src/
+# names it nowhere.
+rhythm = ["music", "dep:flint-rhythm-game", "flint-rhythm-game?/player"]
 # A scene's music (#745, #754): a `music_session`'s stems on their buses and
 # the beat for `music_beat()` and the rest, through flint-music. Off, a scene
 # with one says so once at its entry and plays silent, its scripts reading
@@ -75,7 +78,7 @@ living = ["procgen", "dep:flint-living", "dep:flint-wooze", "flint-procgen/livin
 # Summonable debug overlay (Phase 4 F8, ADR 0035), and the `debug` script
 # module where living props run (#854). Feature-off builds carry zero debug
 # surface and must still compile.
-debug-hud = ["dep:flint-debug-ui"]
+debug-hud = ["dep:flint-debug-ui", "flint-rhythm-game?/debug-hud"]
 # The frame profiler (ADR 0109): the frame loop's and the renderer's scopes
 # (and wgpu's own) go to Tracy, and each frame is marked. Off, the scopes
 # compile to nothing. The client listens on loopback only (no firewall
@@ -104,8 +107,7 @@ flint-package = { workspace = true }
 flint-import = { workspace = true }
 flint-audio = { workspace = true }
 flint-music = { workspace = true, optional = true }
-flint-rhythm = { workspace = true, optional = true }
-flint-input-capture = { workspace = true, optional = true }
+flint-rhythm-game = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 skrifa = { workspace = true }

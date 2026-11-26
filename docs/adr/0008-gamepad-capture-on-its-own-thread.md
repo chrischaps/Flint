@@ -62,7 +62,7 @@ plumbing was deferred to Phase 4 on purpose, so Phase 2 stayed CLI-first.
   granularity spike"
 - Vault: "Starchild Phase 2 Planning - 2026-08-15"; "Starchild Phase 2
   Implementation - 2026-08-15"
-- Code now: `crates/flint-input-capture/src/lib.rs` (`VerbMap`,
+- Code now: `packages/rhythm/crates/flint-input-capture/src/lib.rs` (`VerbMap`,
   `measure_granularity`), `packages/music/crates/flint-music/src/input_stream.rs`
   (`InputEvent`), `packages/music/crates/flint-music/src/clock_bridge.rs` (`ClockBridge`),
   [Music Sessions](../book/src/concepts/music-sessions.md)

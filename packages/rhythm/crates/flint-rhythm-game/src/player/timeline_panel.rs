@@ -7,6 +7,7 @@
 //! (the no-gamified-UI rule).
 
 use flint_debug_ui::{DebugPanel, PanelLayout};
+use flint_package::egui;
 use flint_rhythm::chart_session::{PulseKind, SeamMarkKind, TimelineFrame, TimelineMap};
 
 pub const MANIFEST_MAP_PANEL: &str = "Manifest Map";

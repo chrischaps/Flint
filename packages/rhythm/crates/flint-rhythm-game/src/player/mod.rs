@@ -1,6 +1,10 @@
-//! The rhythm game (the `rhythm` feature, ADR 0117 decision 2): a
-//! `music_session` with a `chart`, judged by flint-rhythm's `ChartSession`
-//! as the suite plays (ADR 0019).
+//! The `rhythm` package's part in the player (ADR 0117 decision 2, ADR
+//! 0137; its own crate since #1556): a `music_session` with a `chart`,
+//! judged by flint-rhythm's `ChartSession` as the suite plays (ADR 0019).
+//! The music is its own package's (`flint_music::player`), whose builder
+//! hands a charted session to its chart judge ([`ChartJudge`]); [`PACKAGE`]
+//! fills it with [`RhythmSubsystem`]. A launcher lists [`PACKAGE`] from the
+//! manifest's `[rust] player`, so flint-player names none of this.
 //!
 //! Where it sits in the frame:
 //!
@@ -23,19 +27,50 @@ pub(crate) mod session;
 #[cfg(feature = "debug-hud")]
 pub(crate) mod timeline_panel;
 
-use crate::player_app::subsystem::{Pads, SceneCtx, Stage, StageCtx, Subsystem};
 use flint_music::player::conducted::ConductedSnapshot;
+use flint_music::player::ChartJudge;
+use flint_package::{Package, Pads, Registry, SceneCtx, Stage, StageCtx, Subsystem};
 use flint_script::MusicClock;
 use session::{LadderPostBase, MusicSession};
 use std::path::PathBuf;
 
-/// The scene's `[post_process]` as the player read it (its look laid in),
-/// lent through the resources while a scene's subsystems are built (#1550):
-/// the ladder's base. Rhythm reads its own once it is a package (#1556).
-pub(crate) struct ScenePost(pub(crate) Option<flint_scene::PostProcessDef>);
+/// The `rhythm` package's player part: what a launcher lists.
+pub static PACKAGE: Rhythm = Rhythm;
+
+/// The `rhythm` package (`packages/rhythm/package.toml`).
+pub struct Rhythm;
+
+impl Package for Rhythm {
+    fn name(&self) -> &'static str {
+        "rhythm"
+    }
+
+    /// Music's chart judge, filled with [`RhythmSubsystem`] (music registers
+    /// first: rhythm `[requires]` it), and with the debug HUD its keys
+    /// (#717): a charted session's guide, map and forced fail. A suite with
+    /// no chart has none, and with no session playing a chart the keys are
+    /// the game's. The `conducted` module stays music's to declare: music
+    /// enables it, neutral, for a charted scene nothing judges.
+    fn register(&self, registry: &mut Registry) {
+        if let Some(point) = registry.point_mut::<ChartJudge>() {
+            point.judge = Some(judge);
+        }
+        #[cfg(feature = "debug-hud")]
+        registry.debug_keys(flint_runtime::DebugKeyGroup {
+            owner: "music",
+            when: "a scene whose music_session has a chart",
+            keys: DEBUG_KEYS,
+        });
+    }
+}
+
+/// A charted session's subsystem: the rhythm game's.
+fn judge(base: PathBuf, comp: toml::Value, ctx: &mut SceneCtx) -> Box<dyn Subsystem> {
+    Box::new(RhythmSubsystem::new(base, comp, ctx))
+}
 
 /// One scene's chart session, and what it changed.
-pub(crate) struct RhythmSubsystem {
+pub struct RhythmSubsystem {
     base: PathBuf,
     comp: toml::Value,
     session: Option<MusicSession>,
@@ -52,14 +87,15 @@ pub(crate) struct RhythmSubsystem {
 }
 
 impl RhythmSubsystem {
-    pub(crate) const NAME: &'static str = "rhythm";
+    pub const NAME: &'static str = "rhythm";
 
-    pub(crate) fn new(base: PathBuf, comp: toml::Value, ctx: &mut SceneCtx) -> Self {
+    /// The session for `comp` (a `music_session` with a `chart`), its paths
+    /// from `base`. The ladder's base is the scene's `[post_process]` as the
+    /// host read it (`SceneCtx::post`, its look laid in).
+    pub fn new(base: PathBuf, comp: toml::Value, ctx: &mut SceneCtx) -> Self {
         let authored = ctx
-            .resources
-            .get::<ScenePost>()
-            .and_then(|post| post.0.as_ref())
-            .map(|d| crate::player_app::scene_loading::post_process_config_from_def(d, ctx.styles))
+            .post
+            .map(|d| flint_render::postprocess::post_process_config_from_def(d, ctx.styles))
             .unwrap_or_default();
         Self {
             base,
@@ -223,7 +259,8 @@ impl Subsystem for RhythmSubsystem {
         Self::NAME
     }
 
-    /// The session's state for scripts (`music/conducted.rs`, #698).
+    /// The session's state for scripts (`flint_music::player::conducted`,
+    /// #698).
     fn script_modules(&self) -> &[&'static str] {
         &["conducted"]
     }
@@ -335,10 +372,10 @@ const MANIFEST_MAP: &str = "manifest_map";
 #[cfg(feature = "debug-hud")]
 const FORCE_FAIL: &str = "music_force_fail";
 
-/// A charted session's debug keys (#717; ADR 0035's debug surface), the
-/// `DEBUG_KEYS` of `player_app/subsystems/rhythm.rs`.
+/// A charted session's debug keys (#717; ADR 0035's debug surface), which
+/// [`Rhythm::register`] declares.
 #[cfg(feature = "debug-hud")]
-pub(crate) const DEBUG_KEYS: &[flint_runtime::DebugKey] = &[
+pub const DEBUG_KEYS: &[flint_runtime::DebugKey] = &[
     flint_runtime::DebugKey {
         action: MUSIC_GUIDE,
         key: "Backquote",

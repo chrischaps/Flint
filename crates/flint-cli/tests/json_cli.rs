@@ -571,7 +571,7 @@ fn every_command_answers_with_one_json_document() {
     assert_eq!(mixed["written"], serde_json::json!(["mix.wav"]));
     run("music chart replay");
     std::fs::copy(
-        repo.join("crates/flint-rhythm/tests/data/tempo_change.suite.toml"),
+        repo.join("packages/rhythm/crates/flint-rhythm/tests/data/tempo_change.suite.toml"),
         dir.join("tempo.suite.toml"),
     )
     .unwrap();

@@ -50,15 +50,15 @@ path = "src/main.rs"
 [features]
 default = ["audio", "gamepad", "dialogs", "packages"]
 packages = ["living", "music", "rhythm", "procgen", "ai"]
-audio = ["flint-player/audio", "flint-music?/device", "flint-rhythm?/device"]
-gamepad = ["flint-player/gamepad", "flint-input-capture?/gamepad"]
+audio = ["flint-player/audio", "flint-music?/device", "flint-rhythm-game?/device"]
+gamepad = ["flint-player/gamepad", "flint-rhythm-game?/gamepad"]
 dialogs = ["flint-viewer/dialogs", "flint-procgen-cli?/dialogs"]
 living = [
     "procgen", "flint-player/living", "flint-viewer/living", "flint-debug-ui/living",
     "flint-procgen/living", "dep:flint-living", "dep:flint-wooze",
 ]
 music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
-rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm", "dep:flint-input-capture"]
+rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
 procgen = ["flint-player/procgen", "dep:flint-procgen", "dep:flint-procgen-cli"]
 ai = ["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli", "dep:flint-procgen-ai", "dep:flint-ai-core"]
 
@@ -101,8 +101,7 @@ flint-ai-core = { workspace = true, optional = true }
 flint-viewer = { workspace = true }
 flint-debug-ui = { workspace = true }
 flint-music = { workspace = true, optional = true }
-flint-rhythm = { workspace = true, optional = true }
-flint-input-capture = { workspace = true, optional = true }
+flint-rhythm-game = { workspace = true, optional = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

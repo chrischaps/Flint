@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 #[derive(clap::Args)]
 pub struct ReplayChartArgs {
     #[command(flatten)]
-    pub common: super::common_args::ChartCommonArgs,
+    pub common: super::ChartCommonArgs,
 
     /// Session file to replay (.session.jsonl)
     #[arg(long, conflicts_with = "synthetic")]
@@ -73,6 +73,9 @@ pub struct ReplayChartArgs {
     pub gradient: Option<String>,
 }
 
+// A command asks the disk it runs on for its default configs, as it did in
+// flint-cli (a tool crate) before #1556 moved it into a crate the player links
+#[allow(clippy::disallowed_methods)]
 pub fn run(args: ReplayChartArgs) -> Result<()> {
     let base_dir = args
         .common
@@ -119,7 +122,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
                     manifest.id
                 );
             }
-            crate::output::say!(
+            say!(
                 "session: {path} ({} event(s); recorded latency {:.1} ms, calibration {:+.1} ms)",
                 pairs.len(),
                 header.latency_ms,
@@ -131,7 +134,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
             let profile = SyntheticProfile::parse(profile)
                 .with_context(|| format!("parsing synthetic profile '{profile}'"))?;
             let events = synthesize(&eval, &conductor, profile);
-            crate::output::say!("synthetic session: {profile:?} ({} event(s))", events.len());
+            say!("synthetic session: {profile:?} ({} event(s))", events.len());
             let pairs = events.into_iter().map(|ev| (ev.sample(), ev)).collect();
             (pairs, None, true)
         }
@@ -167,7 +170,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         }
         w.flush()
             .with_context(|| format!("flushing session file {path}"))?;
-        crate::output::say!("session saved: {path} ({} event(s))", w.written());
+        say!("session saved: {path} ({} event(s))", w.written());
     }
 
     // --- coherence config: explicit flag > session header snapshot >
@@ -182,28 +185,26 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     .context("resolving coherence config")?;
     let config_path = match &coherence_source {
         CoherenceSource::Explicit(p) => {
-            crate::output::say!("coherence config: {}", p.display());
+            say!("coherence config: {}", p.display());
             if session_header
                 .as_ref()
                 .and_then(|h| h.coherence_config.as_ref())
                 .is_some_and(|snap| *snap != coherence_cfg.to_json())
             {
-                crate::output::say!(
-                    "  (differs from the session's recorded config — offline retune)"
-                );
+                say!("  (differs from the session's recorded config — offline retune)");
             }
             p.clone()
         }
         CoherenceSource::Snapshot => {
-            crate::output::say!("coherence config: session header snapshot");
+            say!("coherence config: session header snapshot");
             base_dir.join("config/coherence.toml")
         }
         CoherenceSource::DefaultFile(p) => {
-            crate::output::say!("coherence config: {}", p.display());
+            say!("coherence config: {}", p.display());
             p.clone()
         }
         CoherenceSource::Builtin(p) => {
-            crate::output::say!("coherence config: built-in defaults");
+            say!("coherence config: built-in defaults");
             p.clone()
         }
     };
@@ -214,7 +215,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
             .with_context(|| format!("parsing lean mode '{}'", args.lean_mode))?,
         ..Default::default()
     };
-    crate::output::say!("lean mode: {}", lean_mode_name(judgment_cfg.lean_mode));
+    say!("lean mode: {}", lean_mode_name(judgment_cfg.lean_mode));
     let eval_for_judge = ChartEval::new(&chart, &conductor)
         .with_context(|| format!("building chart evaluator for {}", args.common.chart))?;
     let judge = Judge::new(
@@ -247,10 +248,10 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     let (ladder_cfg, ladder_path) = if let Some(path) = &args.ladder {
         let cfg = LadderConfig::load(Path::new(path))
             .with_context(|| format!("loading ladder config {path}"))?;
-        crate::output::say!("ladder config: {path}");
+        say!("ladder config: {path}");
         (Some(cfg), PathBuf::from(path))
     } else if default_ladder_path.exists() {
-        crate::output::say!("ladder config: {}", default_ladder_path.display());
+        say!("ladder config: {}", default_ladder_path.display());
         (
             Some(LadderConfig::load(&default_ladder_path).with_context(|| {
                 format!("loading ladder config {}", default_ladder_path.display())
@@ -264,9 +265,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     let mut ladder_cfg = ladder_cfg;
     let reactive = args.render.is_some() && ladder_cfg.is_some();
     if args.render.is_none() && ladder_cfg.is_some() {
-        crate::output::say!(
-            "(ladder inactive without --render; judgment replay is Milestone-2 semantics)"
-        );
+        say!("(ladder inactive without --render; judgment replay is Milestone-2 semantics)");
     }
     let core_ladder = if reactive {
         ladder_cfg
@@ -282,7 +281,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     let (gradient_cfg, gradient_path) = if let Some(path) = &args.gradient {
         let cfg = GradientConfig::load(Path::new(path))
             .with_context(|| format!("loading gradient config {path}"))?;
-        crate::output::say!("gradient config: {path} (tune bus: {})", cfg.tune.bus);
+        say!("gradient config: {path} (tune bus: {})", cfg.tune.bus);
         (cfg, PathBuf::from(path))
     } else if default_gradient_path.exists() {
         let cfg = GradientConfig::load(&default_gradient_path).with_context(|| {
@@ -291,7 +290,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
                 default_gradient_path.display()
             )
         })?;
-        crate::output::say!(
+        say!(
             "gradient config: {} (tune bus: {})",
             default_gradient_path.display(),
             cfg.tune.bus
@@ -345,7 +344,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         let bar = conductor.position_at_sample(ev.sample()).bar;
         if bar != last_bar {
             last_bar = bar;
-            crate::output::say!(
+            say!(
                 "bar {:>3} | {}",
                 bar + 1,
                 coherence_meter(core.coherence().value())
@@ -359,7 +358,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     core.flush_log().context("flushing judgment log")?;
 
     let s = core.summary();
-    crate::output::say!(
+    say!(
         "done. pulses hit {} (mean |err| {:.1} ms), missed {}, spurious {} | final {}",
         s.hits,
         s.mean_abs_err_ms,
@@ -367,7 +366,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         s.spurious,
         coherence_meter(core.coherence().value())
     );
-    crate::output::say!("judgment log: {}", out_path.display());
+    say!("judgment log: {}", out_path.display());
     let mut document = serde_json::json!({
         "hits": s.hits,
         "mean_abs_err_ms": s.mean_abs_err_ms,
@@ -399,14 +398,14 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         .context("rendering suite audio offline")?;
         flint_music::write_wav(Path::new(&wav), &result.samples, manifest.sample_rate)
             .with_context(|| format!("writing WAV {wav}"))?;
-        crate::output::say!(
+        say!(
             "rendered {} ({:.1} s) alongside the coherence trace",
             wav,
             duration_samples as f64 / manifest.sample_rate as f64
         );
         document["rendered"] = wav.replace('\\', "/").into();
     }
-    crate::output::when_json(|| document);
+    flint_package::cli::when_json(|| document);
     Ok(())
 }
 
@@ -486,7 +485,7 @@ fn run_reactive(
                     } = ev
                     {
                         fails += 1;
-                        crate::output::say!(
+                        say!(
                             "FULL FAIL at sample {at_suite_sample}: reintegrating to \
                              {re_entry_sample} (seam at {seam_suite_sample})"
                         );
@@ -499,7 +498,7 @@ fn run_reactive(
                         Some(r) => format!(" | rung {} ({})", core.ladder().level(), r.name),
                         None => String::new(),
                     };
-                    crate::output::say!(
+                    say!(
                         "bar {:>3} | {}{rung}",
                         pos.bar + 1,
                         coherence_meter(core.coherence().value())
@@ -518,7 +517,7 @@ fn run_reactive(
     }
 
     let s = core.finish().context("finishing judgment core")?;
-    crate::output::say!(
+    say!(
         "done. pulses hit {} (mean |err| {:.1} ms), missed {}, spurious \
          {} | {fails} full-fail(s) | final {}",
         s.hits,
@@ -527,16 +526,16 @@ fn run_reactive(
         s.spurious,
         coherence_meter(core.coherence().value())
     );
-    crate::output::say!("judgment log: {}", out_path.display());
+    say!("judgment log: {}", out_path.display());
 
     flint_music::write_wav(Path::new(wav), &result.samples, sample_rate)
         .with_context(|| format!("writing WAV {wav}"))?;
-    crate::output::say!(
+    say!(
         "rendered {} ({:.1} s, reactive: ladder + reintegration live)",
         wav,
         cfg.duration_samples as f64 / sample_rate as f64
     );
-    crate::output::when_json(|| {
+    flint_package::cli::when_json(|| {
         serde_json::json!({
             "hits": s.hits,
             "mean_abs_err_ms": s.mean_abs_err_ms,

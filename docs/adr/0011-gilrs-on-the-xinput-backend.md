@@ -59,6 +59,6 @@ The session that prompted `2fc8606`: zero input events in 126 s.
   [`9ab343e`](https://github.com/chrischaps/Flint/commit/9ab343e4630d41e4eade66de65ca0d1fe9a17aa4)
   "Web platform shims: time, gamepads, settings (#100)"
 - Vault: "2026-08-16 Audio Gradient - Tuning by Wobble Not Offset"
-- Code now: `Cargo.toml` (`gilrs`), `crates/flint-input-capture/src/lib.rs`,
-  `crates/flint-input-capture/src/rumble.rs`,
+- Code now: `Cargo.toml` (`gilrs`), `packages/rhythm/crates/flint-input-capture/src/lib.rs`,
+  `packages/rhythm/crates/flint-input-capture/src/rumble.rs`,
   `packages/music/crates/flint-music/src/chart_session.rs`, `docs/design/web.md`

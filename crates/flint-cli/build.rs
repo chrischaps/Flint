@@ -17,6 +17,13 @@
 //! asks for the stack itself (guides/player-extensions.md). flint-player's
 //! build script says the same; keep the two alike.
 
+// The player launcher's order (requires first, then tier, then name),
+// shared with flint-player's build script, so a package's commands under
+// another's (rhythm's under music's `music`, #1556) come after them.
+#[path = "../flint-player/launch_list.rs"]
+#[allow(dead_code)] // the player's half: its crate lists and feature checks
+mod launch_list;
+
 fn main() {
     main_thread_stack();
     let manifests = package_manifests();
@@ -65,7 +72,9 @@ fn has_feature(name: &str) -> bool {
 ///
 /// - `OUT_DIR/stock_extensions.rs`: `stock()`'s body, the `cli::extensions()`
 ///   of each package whose `[rust] cli` names a crate and whose
-///   `[build] features` this build has, by package folder.
+///   `[build] features` this build has, in the order packages register
+///   (`launch_list::in_order`), so an extension under another package's
+///   command is added after it.
 /// - `OUT_DIR/package_features.rs`: `(feature, on)` for each feature of
 ///   this crate that a manifest's `[build] features` names, which is what
 ///   `flint package list --built` reads.
@@ -83,14 +92,30 @@ fn launcher_list(manifests: &[(String, std::path::PathBuf)]) {
     let mut features = String::from("&[\n");
     let mut seen: Vec<String> = Vec::new();
     for (_, file) in manifests {
-        let b = built(file);
-        for f in &b.features {
+        for f in &built(file).features {
             let ours = own_features.is_some_and(|t| t.contains_key(f));
             if ours && !seen.contains(f) {
                 seen.push(f.clone());
                 writeln!(features, "    ({f:?}, {}),", has_feature(f)).unwrap();
             }
         }
+    }
+    let folder = |file: &std::path::Path| {
+        let dir = file.parent().and_then(|d| d.file_name());
+        dir.map(|d| d.to_string_lossy().into_owned())
+    };
+    let engine = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+    let order: Vec<Option<String>> = launch_list::in_order(launch_list::read(&engine))
+        .iter()
+        .map(|m| folder(&m.file))
+        .collect();
+    let mut registering: Vec<&std::path::PathBuf> = manifests.iter().map(|(_, f)| f).collect();
+    registering.sort_by_key(|file| {
+        let at = order.iter().position(|o| *o == folder(file));
+        at.unwrap_or(usize::MAX)
+    });
+    for file in registering {
+        let b = built(file);
         let on = !b.features.is_empty() && b.features.iter().all(|f| has_feature(f));
         if let (Some(krate), true) = (&b.cli, on) {
             let ident = krate.replace('-', "_");

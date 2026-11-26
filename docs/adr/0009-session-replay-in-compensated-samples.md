@@ -60,6 +60,6 @@ Not recorded in the surviving text.
   "E5 full-fail + reintegration sequencer"
 - Code now: `packages/music/crates/flint-music/src/replay.rs` (`SessionWriter`,
   `read_session_raw`, `synthesize`, `SyntheticProfile`),
-  `crates/flint-cli/src/commands/replay_chart.rs`,
+  `packages/rhythm/crates/flint-rhythm-game/src/cli/replay_chart.rs`,
   [Music Sessions](../book/src/concepts/music-sessions.md), "Recording,
   Replay and Offline Render"

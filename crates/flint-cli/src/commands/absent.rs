@@ -288,11 +288,27 @@ mod tests {
             .package
     }
 
-    /// The done-when of #1333: in a build without rhythm the chart's
-    /// player still parses, whatever follows it, and exits 2 naming rhythm.
-    #[cfg(not(feature = "rhythm"))]
+    /// The stock list less the rhythm package's extension, the one that
+    /// adds `chart` (#1556): a launcher that lists every package this build
+    /// has but rhythm.
+    fn without_rhythm() -> Vec<Box<dyn crate::extension::CliExtension>> {
+        crate::stock()
+            .into_iter()
+            .filter(|e| !e.commands().iter().any(|c| c.get_name() == "chart"))
+            .collect()
+    }
+
+    /// The done-when of #1333, in every build since #1556: without rhythm
+    /// the chart's player still parses, whatever follows it, and exits 2
+    /// naming rhythm.
     #[test]
     fn without_rhythm_the_rhythm_commands_name_it() {
+        let wanted = |words: &[&str]| {
+            let e = crate::run_line(without_rhythm(), words).expect_err("no rhythm");
+            e.downcast_ref::<MissingPackage>()
+                .unwrap_or_else(|| panic!("{words:?}: {e:#}"))
+                .package
+        };
         assert_eq!(wanted(&["music", "chart", "play", "x"]), "rhythm");
         assert_eq!(
             wanted(&["music", "chart", "play", "x", "--window"]),
@@ -303,7 +319,7 @@ mod tests {
             "rhythm"
         );
         assert_eq!(wanted(&["music", "calibrate"]), "rhythm");
-        let text = ran(&["music", "chart", "play", "x"])
+        let text = crate::run_line(without_rhythm(), &["music", "chart", "play", "x"])
             .unwrap_err()
             .to_string();
         assert!(text.contains("flint music chart"), "{text}");
@@ -361,11 +377,8 @@ mod tests {
     /// music's three commands, and a rhythm one names rhythm.
     #[test]
     fn music_without_rhythm_names_rhythm_for_its_commands() {
-        let e = crate::run_line(
-            crate::package_extensions(),
-            &["music", "chart", "play", "x"],
-        )
-        .expect_err("no rhythm");
+        let e = crate::run_line(without_rhythm(), &["music", "chart", "play", "x"])
+            .expect_err("no rhythm");
         let missing = e.downcast_ref::<MissingPackage>().unwrap();
         assert_eq!(
             (missing.what.as_str(), missing.package),
@@ -375,9 +388,11 @@ mod tests {
 
     /// The stock `flint` of a build with music has its commands where they
     /// always were, rhythm's beside them.
-    #[cfg(feature = "rhythm")]
     #[test]
     fn with_music_the_music_commands_are_its_extensions() {
+        if !built_with("rhythm") {
+            return; // a build without them has none (above)
+        }
         let tree = crate::stock_command();
         let music = tree.find_subcommand("music").unwrap();
         for name in ["validate", "play", "render", "calibrate", "chart"] {
@@ -485,9 +500,11 @@ mod tests {
 
     /// A build with every package parses the same commands to their own
     /// arguments, not the stand-in's.
-    #[cfg(all(feature = "rhythm", feature = "ai"))]
     #[test]
     fn with_every_package_no_command_is_a_stand_in() {
+        if !(built_with("rhythm") && built_with("ai")) {
+            return;
+        }
         // The packages' commands are the launcher's extensions (#1555)
         let mut cli = crate::stock_command();
         let chart = cli

@@ -57,5 +57,5 @@ stdout on `synthetic-fail-demo`, and the synthetic-perfect JSONL and stdout.
 - Vault: "2026-08-16 Star Child Phase 4 planned — the prototype chooses the
   harder road"
 - Code now: `packages/music/crates/flint-music/src/chart_session.rs` (`ChartSession`,
-  `ChartCore`), `crates/flint-cli/src/commands/play_chart.rs`,
-  `crates/flint-cli/src/commands/replay_chart.rs`
+  `ChartCore`), `packages/rhythm/crates/flint-rhythm-game/src/cli/play_chart.rs`,
+  `packages/rhythm/crates/flint-rhythm-game/src/cli/replay_chart.rs`
