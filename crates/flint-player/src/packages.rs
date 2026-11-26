@@ -458,11 +458,12 @@ mod tests {
         assert!(PLAYER_PACKAGES.contains(&"music"));
         assert!(built_feature("music"));
         let moved: Vec<&str> = generated::moved().iter().map(|p| p.name()).collect();
-        let want: &[&str] = if built_feature("procgen") {
-            &["procgen", "music"]
-        } else {
-            &["music"]
-        };
+        // In registration order: procgen (standard), then the feature
+        // packages by name; each in its own folder when the build has it
+        let want: Vec<&str> = ["procgen", "living", "music"]
+            .into_iter()
+            .filter(|name| built_feature(name))
+            .collect();
         assert_eq!(moved, want);
         assert!(registry().has("music"));
     }

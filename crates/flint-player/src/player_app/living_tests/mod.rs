@@ -7,9 +7,15 @@
 //! flint-living, and run where the run's launcher lists the package, as the
 //! stock one does in a build with `living`.
 
+#[allow(unused_imports)] // each has its old module's imports
 mod api;
+#[allow(unused_imports)] // each has its old module's imports
 mod glue;
+#[allow(unused_imports)] // each has its old module's imports
 mod props;
+#[allow(unused_imports)] // each has its old module's imports
 mod ramps;
+#[allow(unused_imports)] // each has its old module's imports
 mod tuning;
+#[allow(unused_imports)] // each has its old module's imports
 mod wooze_read;

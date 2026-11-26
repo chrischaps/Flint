@@ -1,15 +1,26 @@
 //! The knobs through the player, headless: a scene's props with no window, moved
 //! the way the panel and scripts move them.
 
+use crate::player_app::PlayerApp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
+use flint_living::player::subsystem::{props, props_mut, LivingSubsystem};
 use flint_living::player::tuning::*;
 use flint_living::LivingPropRequest;
+use flint_living::{LivingLayer, LivingLayers, LivingPropId, ResolvedProp};
+use flint_package::StageCtx;
+use flint_procgen::{
+    commit_look, read_preset, species_keys, wooze_knobs_of, BoilDef, KnobValue, LivingDef,
+    LivingSpeciesDef, WoozeKnobs, WoozePreset,
+};
 use flint_procgen::{
     EchoConfig, LivingEchoesDef, LivingKnob, LivingVarianceDef, ProcGenSpec, Stagger,
     VarianceConfig,
 };
 use flint_wooze::warp;
+use flint_wooze::{preset as builtin_preset, WoozeField, WoozeSample, PRESETS};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 const SPEC: &str = r#"
 generator = "tree_v1"
@@ -336,7 +347,7 @@ fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
 
     let folder = Folder::new("panel");
     let mut app = app_with(2, &folder.0);
-    app.create_living_debug_panel();
+    app.create_package_debug_panels();
     assert!(app.debug_panels().is_empty(), "no living_prop entities yet");
 
     let id = app.core.world.spawn("oak_0").unwrap();
@@ -348,7 +359,7 @@ fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
             toml::Value::Table(Default::default()),
         )
         .unwrap();
-    app.create_living_debug_panel();
+    app.create_package_debug_panels();
     assert_eq!(app.debug_panels().len(), 1);
     app.debug_panels_mut()[0].toggle();
 
@@ -995,7 +1006,7 @@ fn the_panel_compares_flips_and_splits() {
             toml::Value::Table(Default::default()),
         )
         .unwrap();
-    app.create_living_debug_panel();
+    app.create_package_debug_panels();
     app.debug_panels_mut()[0].toggle();
     fn panel(app: &mut PlayerApp) -> &mut LivingPropsDebugPanel {
         app.debug_panels_mut()[0]
@@ -1578,9 +1589,9 @@ mod scopes {
 mod picks {
     use super::*;
     use flint_core::Vec3;
+    use flint_debug_ui::DebugPanel;
     use flint_living::panel::{
-        DebugPanel, Knob, KnobFlags, LivingKnobs, LivingPanelAction, LivingPropsDebugPanel,
-        PanelScope,
+        Knob, KnobFlags, LivingKnobs, LivingPanelAction, LivingPropsDebugPanel, PanelScope,
     };
     use flint_living::{LivingPropId, ResolvedProp};
     use winit::event::{ElementState, MouseButton};
@@ -1709,7 +1720,7 @@ mod picks {
     /// The same, as the picked tree's window shows them.
     fn shown_of(
         knobs: &LivingKnobs,
-        sources: &flint_debug_ui::KnobSources,
+        sources: &flint_living::panel::KnobSources,
     ) -> Vec<(Knob, String, String)> {
         let value = |knob: Knob| knobs.value_of(knob).to_string();
         Knob::ALL
@@ -2176,7 +2187,9 @@ fn no_player_source_names_a_knob() {
     );
     let tests = |path: &Path| {
         let name = path.file_name().unwrap().to_string_lossy();
-        name.ends_with("_tests.rs") || name == "tests.rs" || name == "living_test_glue.rs"
+        name.ends_with("_tests.rs")
+            || name == "tests.rs"
+            || path.components().any(|c| c.as_os_str() == "living_tests")
     };
     let mut named = Vec::new();
     for path in files.iter().filter(|path| !tests(path)) {

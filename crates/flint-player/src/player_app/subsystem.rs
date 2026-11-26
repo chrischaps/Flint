@@ -165,7 +165,9 @@ impl Subsystems {
         }
     }
 
-    /// The subsystem of type `T`, if there is one.
+    /// The subsystem of type `T`, if there is one (the native hosts': the
+    /// world dump, the expression feed's socket).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn find<T: Subsystem>(&self) -> Option<&T> {
         flint_package::find(&self.list)
     }

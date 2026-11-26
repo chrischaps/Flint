@@ -110,7 +110,7 @@ impl KnobRamps {
     }
 
     /// How many are.
-    #[cfg(test)]
+    #[doc(hidden)] // the player's living tests
     pub fn len(&self) -> usize {
         self.ramps.len()
     }

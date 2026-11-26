@@ -217,7 +217,8 @@ flint-constraint = { path = "crates/flint-constraint" }
 flint-asset = { path = "crates/flint-asset" }
 flint-import = { path = "crates/flint-import" }
 flint-pixels = { path = "crates/flint-pixels" }
-# Its `living` feature is flint-cli's to turn on (#1333)
+# Its `living` feature went with the living package's move (#1558): the field
+# clocks are the package's, through `field_clocks::SceneFields`
 flint-viewer = { path = "crates/flint-viewer", default-features = false }
 flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }

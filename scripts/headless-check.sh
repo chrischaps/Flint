@@ -58,15 +58,16 @@ if [ -n "$found" ]; then
 fi
 echo "smallest flint-cli: none of music, rhythm, living, procgen, ai, wooze"
 
-# The viewer reads a scene's [living] and [wooze] tables through flint-procgen,
-# whose wooze field is its `living` feature's (#1516)
+# The viewer's [living] and [wooze] are the living package's, through a point
+# its CLI part registers (#1558): the viewer links neither flint-procgen nor
+# flint-wooze in any build
 if cargo tree -p flint-viewer --no-default-features -e normal --prefix none \
-    | grep -qE '^flint-wooze v'; then
-    echo "flint-viewer with no default features links flint-wooze:" >&2
+    | grep -qE '^(flint-wooze|flint-procgen) v'; then
+    echo "flint-viewer links flint-wooze or flint-procgen:" >&2
     cargo tree -p flint-viewer --no-default-features -e normal,features -i flint-wooze >&2 || true
     exit 1
 fi
-echo "smallest flint-viewer: no flint-wooze"
+echo "smallest flint-viewer: no flint-wooze, no flint-procgen"
 
 OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-procgen|flint-living|flint-wooze|flint-debug-ui) v'
 player=$(cargo tree -p flint-player --no-default-features -e normal --prefix none)

@@ -884,7 +884,7 @@ pub mod panel {
         /// stagger from prop to prop, variance from lineage to lineage, and in
         /// a scene with no field, the clocks their specs gave them. A species
         /// with its own value for a knob is left out of it.
-        #[cfg(test)]
+        #[doc(hidden)] // the player's living tests
         pub fn living_mixed(&self, ctx: &StageCtx<'_>) -> KnobFlags {
             mixed_of(&self.living_view(ctx, None))
         }

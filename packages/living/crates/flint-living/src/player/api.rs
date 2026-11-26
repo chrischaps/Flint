@@ -367,7 +367,8 @@ fn wooze_at(reading: &WoozeReading, position: [f32; 3]) -> rhai::Map {
 /// the one shallow wooze keeps, counted in beats so a change of step bends it
 /// from where it stands rather than jumping.
 #[derive(Debug, Clone)]
-struct ScriptClock {
+#[doc(hidden)] // the player's wooze read tests count them
+pub struct ScriptClock {
     clock: flint_wooze::ShallowClock,
     now: flint_wooze::ShallowNow,
     /// The field's time the clock has counted to.
@@ -384,14 +385,14 @@ struct ScriptClock {
 #[derive(Debug, Default)]
 pub struct ScriptClocks {
     scene: u64,
-    clocks: std::collections::HashMap<flint_core::EntityId, ScriptClock>,
+    pub clocks: std::collections::HashMap<flint_core::EntityId, ScriptClock>,
 }
 
 impl ScriptClocks {
     /// `entity`'s clock read at `position`: started on the beat the scene has
     /// reached the first time it asks, as a shallow-wooze mesh spawned late
     /// is, and moved on by however much the field's clock has since.
-    fn read(
+    pub fn read(
         &mut self,
         reading: &WoozeReading,
         entity: flint_core::EntityId,
