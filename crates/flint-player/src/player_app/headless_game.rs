@@ -352,6 +352,7 @@ impl HeadlessGame {
             capture: Some(&capture),
             packages: core.packages.as_ref(),
             resources: &mut core.resources,
+            registry: crate::packages::registry(),
         });
         #[cfg(feature = "living")]
         core.resources

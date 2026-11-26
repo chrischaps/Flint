@@ -121,7 +121,7 @@ fn a_package_outside_the_player_runs_from_the_launchers_list() {
 
     // What the player was built with is the list: these are compiled in
     // (the default features) but not listed, so the player lacks them
-    for package in flint_player::packages::player_packages() {
+    for package in flint_player::packages::PLAYER_PACKAGES {
         assert!(flint_player::packages::lacks(package), "{package}");
     }
     let api = flint_player::script_system().api_listing();

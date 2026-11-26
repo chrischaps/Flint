@@ -56,16 +56,20 @@ fn path(words: &[String], name: &str) -> String {
 
 impl Added {
     /// Collects every extension's commands, refusing a place that is no
-    /// command of the engine's, and at each place a name that is the
-    /// engine's (`builtin`'s subcommands there, hidden ones included,
-    /// their aliases, `help`) or an earlier extension's.
+    /// command of the engine's or of an earlier extension's (the rhythm
+    /// package's go under the music package's `music`, #1555), and at each
+    /// place a name that is the engine's (`builtin`'s subcommands there,
+    /// hidden ones included, their aliases, `help`) or an earlier
+    /// extension's.
     pub(crate) fn new(extensions: Vec<Box<dyn CliExtension>>, builtin: &Command) -> Result<Self> {
         let mut taken: BTreeMap<String, String> = BTreeMap::new();
         let mut places: Vec<(Vec<String>, Vec<Command>)> = Vec::new();
         let mut owner = BTreeMap::new();
+        // The engine's tree with each earlier extension's commands added
+        let mut tree = builtin.clone();
         for (index, extension) in extensions.iter().enumerate() {
             let words: Vec<String> = extension.under().iter().map(|w| w.to_string()).collect();
-            let Some(parent) = find(builtin, &words) else {
+            let Some(parent) = find(&tree, &words) else {
                 anyhow::bail!(
                     "extension {index} puts its commands under `flint {}`, \
                      which is no command of flint's",
@@ -92,7 +96,8 @@ impl Added {
                     places.len() - 1
                 }
             };
-            for command in extension.commands() {
+            let commands = extension.commands();
+            for command in &commands {
                 let names = std::iter::once(command.get_name().to_string())
                     .chain(command.get_all_aliases().map(String::from));
                 for name in names {
@@ -105,8 +110,9 @@ impl Added {
                     taken.insert(full.clone(), format!("extension {index}'s too"));
                     owner.insert(full, index);
                 }
-                places[at].1.push(command);
+                places[at].1.push(command.clone());
             }
+            tree = add_at(tree, &words, &commands);
         }
         Ok(Self {
             extensions,
@@ -127,18 +133,20 @@ impl Added {
     }
 
     /// The extension the line chose, and the matches its command sits
-    /// under.
+    /// under: the deepest one, so a command an extension added under
+    /// another's (`music chart`, under `music`) is its own.
     fn owner<'m>(&self, matches: &'m ArgMatches) -> Option<(usize, &'m ArgMatches)> {
         let mut words: Vec<String> = Vec::new();
         let mut at = matches;
-        loop {
-            let (name, below) = at.subcommand()?;
+        let mut found = None;
+        while let Some((name, below)) = at.subcommand() {
             if let Some(&index) = self.owner.get(&path(&words, name)) {
-                return Some((index, at));
+                found = Some((index, at));
             }
             words.push(name.to_string());
             at = below;
         }
+        found
     }
 
     /// Whether the line chose an extension's command.

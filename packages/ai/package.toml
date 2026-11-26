@@ -2,13 +2,20 @@
 # #721). A feature: a game that never generates links none of it. Its spec
 # writer builds on procgen's generators, so procgen comes with it.
 #
+# Its crates are this folder's `crates/` (#1554): the workspace takes
+# `packages/*/crates/*`, so they joined with no member line of their own.
+#
+# Its `asset` subcommands below are its own `CliExtension`
+# (`flint_asset_gen::cli`, #1553), which the CLI launcher lists because
+# `[rust] cli` names the crate (flint-cli's build.rs writes the list): a
+# flint without the package has none of them, and the launcher names this
+# package for one from the list below.
+#
 # Its flags on the procgen and kernel commands (`gen --ai-*`, `--max-cost`,
 # `--cost-report`, `--style-guide`, `render --ai-refine`, `asset resolve
-# --strategy ai_*`) are its too: flint-cli's `ai` feature (#1333) gates
-# them, and without it each exits 2 naming this package. Its `asset`
-# subcommands below are its own `CliExtension` (`flint_asset_gen::cli`,
-# #1553): a flint without the package has none of them, and the launcher
-# names this package for one from the list below.
+# --strategy ai_*`) are its too, still declared by those commands: flint-cli's
+# `ai` feature (#1333) gates them, and without it each exits 2 naming this
+# package. They become registration points with #1572.
 
 [package]
 name = "ai"
@@ -22,6 +29,9 @@ procgen = "*"
 
 [build]
 features = ["ai"]
+
+[rust]
+cli = "flint-asset-gen"
 
 [provides]
 crates = ["flint-asset-gen", "flint-procgen-ai", "flint-ai-core"]

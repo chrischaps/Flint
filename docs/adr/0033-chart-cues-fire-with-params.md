@@ -48,7 +48,7 @@ Not recorded in the surviving text.
   "World II baseline (engine): full verb map, per-channel judgment,
   alternates, cues, debug panels"
 - Vault: "Star Child World II - The Undertow - 2026-08-17"
-- Code now: `crates/flint-music/src/chart_session.rs` (`resolve_cues`,
+- Code now: `packages/music/crates/flint-music/src/chart_session.rs` (`resolve_cues`,
   `ResolvedCue`, `ConductedCue`, `ChartCore::set_cues`),
   `crates/flint-script/src/context.rs` (`CueParam`, `ConductedCue`),
   `crates/flint-script/src/api/conducted.rs` (`conducted_cues`),

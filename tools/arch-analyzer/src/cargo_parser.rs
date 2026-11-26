@@ -55,14 +55,41 @@ pub fn find_crate_dirs(workspace_root: &Path) -> Vec<PathBuf> {
 
     let mut dirs = Vec::new();
     for member in members {
-        let member_path = member.as_str().unwrap();
-        let path = workspace_root.join(member_path);
-        if path.join("Cargo.toml").exists() {
-            dirs.push(path);
+        for path in expand(workspace_root, member.as_str().unwrap()) {
+            if path.join("Cargo.toml").exists() {
+                dirs.push(path);
+            }
         }
     }
     dirs.sort();
     dirs
+}
+
+/// A `members` entry's folders: a `*` segment (`packages/*/crates/*`, a
+/// package's crates, #1554) is every folder there, as cargo reads it.
+fn expand(root: &Path, member: &str) -> Vec<PathBuf> {
+    let mut found = vec![root.to_path_buf()];
+    for segment in member.split('/') {
+        found = found
+            .into_iter()
+            .flat_map(|dir| {
+                if segment == "*" {
+                    let mut subs: Vec<PathBuf> = std::fs::read_dir(&dir)
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .map(|e| e.path())
+                        .filter(|p| p.is_dir())
+                        .collect();
+                    subs.sort();
+                    subs
+                } else {
+                    vec![dir.join(segment)]
+                }
+            })
+            .collect();
+    }
+    found
 }
 
 pub fn parse_crate(workspace_root: &Path, crate_dir: &Path) -> (CrateMeta, Vec<Edge>) {

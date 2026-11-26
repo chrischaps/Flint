@@ -49,6 +49,41 @@ fn a_manifest_reads_whole() {
     assert_eq!(p.provides.of(Kind::Component), ["living_prop"]);
     assert!(p.provides.of(Kind::Command).is_empty());
     assert_eq!(p.dir(), Path::new("packages/living"));
+    assert_eq!(p.cli, None);
+}
+
+/// `[rust] cli` names the crate the CLI launcher lists (#1554): one of the
+/// package's own crates, and nothing else is a key there.
+#[test]
+fn rust_cli_is_one_of_the_packages_crates() {
+    let with = |rust: &str| format!("{LIVING}[rust]\n{rust}\n");
+    let p = parse(&with("cli = \"flint-living\""), file()).unwrap();
+    assert_eq!(p.cli.as_deref(), Some("flint-living"));
+    assert_eq!(
+        mistakes(&with("cli = \"flint-core\"")),
+        ["rust.cli: `flint-core` is no crate of this package: name one of [provides] crates"]
+    );
+    let found = mistakes(&with("cly = \"flint-living\""));
+    assert!(
+        found[0].starts_with("rust.cly: unknown key `cly` in [rust] (the keys are player, cli)"),
+        "{found:#?}"
+    );
+}
+
+/// `[rust] player` names the crate the player launcher lists (#1555), held
+/// to the package's crates as `cli` is.
+#[test]
+fn rust_player_is_one_of_the_packages_crates() {
+    let with = |rust: &str| format!("{LIVING}[rust]\n{rust}\n");
+    let p = parse(&with("player = \"flint-living\""), file()).unwrap();
+    assert_eq!(
+        (p.player.as_deref(), p.cli.as_deref()),
+        (Some("flint-living"), None)
+    );
+    assert_eq!(
+        mistakes(&with("player = \"flint-core\"")),
+        ["rust.player: `flint-core` is no crate of this package: name one of [provides] crates"]
+    );
 }
 
 #[test]
@@ -267,37 +302,4 @@ fn the_engines_manifests_read() {
     assert_eq!(read.packages.len(), 7);
     assert_eq!(read.packages[0].name, "engine");
     assert_eq!(read.packages[0].tier, Tier::Kernel);
-}
-
-/// `[rust]` (ADR 0137 decision 10, #1557): the crate whose `PACKAGE` the
-/// player's launcher lists and the one whose `cli()` the CLI's does, each
-/// `crate[/feature]`; anything else there is named.
-#[test]
-fn rust_names_a_packages_crates_for_the_launchers() {
-    let text = format!(
-        "{PROCGEN}[rust]\nplayer = \"flint-procgen/player\"\ncli = \"flint-procgen-cli\"\n"
-    );
-    let p = parse(&text, file()).unwrap();
-    assert_eq!(p.rust.player.as_deref(), Some("flint-procgen/player"));
-    assert_eq!(p.rust.cli.as_deref(), Some("flint-procgen-cli"));
-    assert_eq!(
-        Rust::split("flint-procgen/player"),
-        ("flint-procgen", Some("player"))
-    );
-    assert_eq!(
-        Rust::split("flint-procgen-cli"),
-        ("flint-procgen-cli", None)
-    );
-    assert_eq!(parse(PROCGEN, file()).unwrap().rust, Rust::default());
-    let bad = mistakes(&format!(
-        "{PROCGEN}[rust]\nplayr = \"x\"\ncli = \"Not A Crate\"\n"
-    ));
-    assert!(
-        bad.iter().any(|m| m.starts_with("rust.playr: unknown key")),
-        "{bad:?}"
-    );
-    assert!(
-        bad.iter().any(|m| m.starts_with("rust.cli: `Not A Crate`")),
-        "{bad:?}"
-    );
 }

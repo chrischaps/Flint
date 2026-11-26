@@ -62,6 +62,6 @@ within two bars.
   mid-session reload"
 - Vault: "Starchild Phase 2 Implementation - 2026-08-15"; "Starchild Phase 3 -
   Where the Signal Actually Lives (2026-08-15)"
-- Code now: `crates/flint-music/src/coherence.rs` (`Coherence`,
-  `CoherenceConfig`), `crates/flint-music/tests/judgment_milestone2.rs`,
+- Code now: `packages/music/crates/flint-music/src/coherence.rs` (`Coherence`,
+  `CoherenceConfig`), `packages/music/crates/flint-music/tests/judgment_milestone2.rs`,
   [Music Sessions](../book/src/concepts/music-sessions.md), "Coherence"

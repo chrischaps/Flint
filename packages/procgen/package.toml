@@ -13,11 +13,11 @@ engine = "^0.1"
 [build]
 features = ["procgen"]
 
-# Its Rust (ADR 0137 decision 10, #1557): the crate whose `PACKAGE` the
-# player's launcher lists (and the feature of it that holds that side), and
-# the crate whose `cli()` the CLI launcher lists.
+# Its Rust (ADR 0137 decision 10, #1557): the crate whose `player::PACKAGE`
+# the player's launcher lists (its `player` feature holds that side), and the
+# crate whose `cli::extensions()` the CLI launcher lists.
 [rust]
-player = "flint-procgen/player"
+player = "flint-procgen"
 cli = "flint-procgen-cli"
 
 [provides]

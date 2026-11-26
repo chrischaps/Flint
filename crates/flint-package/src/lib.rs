@@ -44,7 +44,7 @@ pub use context::{
     ReportCtx, SceneCtx, StageCtx,
 };
 pub use note::Note;
-pub use registry::{BuildForScene, LeftOutLine, Package, Registry, RunResources};
+pub use registry::{left_out_line, BuildForScene, LeftOutLine, Package, Registry, RunResources};
 pub use resources::Resources;
 pub use stage::Stage;
 pub use subsystem::Subsystem;

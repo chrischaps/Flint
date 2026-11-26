@@ -784,16 +784,20 @@ def scan(path, flint, styles, ws, problems, allow, examples=None, source=None, p
 
 
 def workspace():
-    """The crates under crates/ and the workspace's member count, from disk."""
+    """The engine's crates (crates/ and a package's packages/*/crates/, #1554)
+    and the workspace's member count, globs expanded as cargo does, from disk."""
     import tomllib
 
-    crates = sorted(p.name for p in (ROOT / "crates").iterdir() if (p / "Cargo.toml").is_file())
-    # A package's own crates (#1557): engine crates in `packages/<name>/crates/`,
-    # named in every map as the ones under crates/ are, and counted apart
-    packaged = sorted(p.name for p in (ROOT / "packages").glob("*/crates/*") if (p / "Cargo.toml").is_file())
+    under = [p for p in (ROOT / "crates").iterdir() if (p / "Cargo.toml").is_file()]
+    # A package's own crates (#1554, #1557): engine crates in
+    # `packages/<name>/crates/`, named in every map as the ones under crates/
+    # are, and counted with them ("N-crate") or apart ("N crates under `crates/`")
+    dirs = under + list(ROOT.glob("packages/*/crates/*"))
+    crates = sorted(p.name for p in dirs if (p / "Cargo.toml").is_file())
     with open(ROOT / "Cargo.toml", "rb") as f:
         members = tomllib.load(f)["workspace"]["members"]
-    return {"crates": crates + packaged, "under_crates": len(crates), "members": len(members)}
+    count = sum(len([p for p in ROOT.glob(m) if (p / "Cargo.toml").is_file()]) if "*" in m else 1 for m in members)
+    return {"crates": crates, "under_crates": len(under), "members": count}
 
 
 def check_counts(line, where, ws, problems, allow):
@@ -873,7 +877,7 @@ def check_crate_maps(ws, problems, allow):
                 ok = re.search(rf"(?<![\w-]){re.escape(crate)}(?![\w-])", text) is not None
             if not ok and not allowed(allow, (page, start), crate):
                 what = f"`### {crate}` section" if as_heading else f"`{crate}`"
-                problems.append(problem("maps", (page, start), f"`{heading}` has no {what}", f"crates/{crate} is a workspace crate; every map of the workspace names it"))
+                problems.append(problem("maps", (page, start), f"`{heading}` has no {what}", f"{crate} is a workspace crate; every map of the workspace names it"))
 
 
 def sources():

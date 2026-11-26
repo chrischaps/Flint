@@ -58,7 +58,7 @@ where it had rewound.
   [`a08af57`](https://github.com/chrischaps/Flint/commit/a08af578df9b4785cbbb83713040ad75ecaa006d)
   "Hygiene WS2a.4: lift the debug-timeline cluster out of chart_session"
 - Vault: "2026-08-17 Manifest Map timeline panel"
-- Code now: `crates/flint-music/src/timeline.rs` (`TimelineMap`,
+- Code now: `packages/music/crates/flint-music/src/timeline.rs` (`TimelineMap`,
   `TimelineFrame`), `crates/flint-player/src/player_app/timeline_panel.rs`,
   `crates/flint-debug-ui/src/lib.rs` (`DebugPanel::layout`),
   [Music Sessions](../book/src/concepts/music-sessions.md), "Debug Surfaces"

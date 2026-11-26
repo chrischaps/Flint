@@ -27,13 +27,15 @@ fn top_level_help_lists_the_general_tools_plus_music_and_goldens() {
     let out = flint(&["--help"]);
     assert!(out.status.success());
     let listed = commands(&String::from_utf8_lossy(&out.stdout));
+    // `music` is the music package's extension (#1555), listed after the
+    // engine's own commands, as every extension is
     assert_eq!(
         listed,
         [
             "init", "entity", "scene", "query", "schema", "script", "edit", "validate", "check",
-            "frame", "profile", "examples", "env", "bundle", "export", "music", "goldens",
-            "prefab", "asset", "package", "build", "play", "playtest", "capture", "gen", "render",
-            "dxc", "style",
+            "frame", "profile", "examples", "env", "bundle", "export", "goldens", "prefab",
+            "asset", "package", "build", "play", "playtest", "capture", "gen", "render", "dxc",
+            "style", "music",
         ],
         "a new top-level command belongs here only if it is a general tool"
     );

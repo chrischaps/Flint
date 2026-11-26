@@ -11,8 +11,23 @@ default = ["device"]
 # Linux). Off, a realtime session fails to start as with no device; offline
 # rendering (`flint music render`) never needs it (#221).
 device = ["kira/cpal"]
+# The package's player part (`player::PACKAGE`, #1555): the subsystem, its
+# chart judge and the `conducted` module, on the Package API. flint-player's
+# `music` feature turns it on, and its build script lists the package.
+player = ["dep:flint-package", "dep:flint-ecs", "dep:flint-script", "dep:rhai"]
+# The package's commands (`cli::extensions()`, #1555): `flint music
+# validate|play|render`. flint-cli's `music` feature turns it on.
+cli = ["dep:flint-package", "dep:clap", "dep:anyhow", "dep:serde_json"]
 
 [dependencies]
+# The Package API (ADR 0137): what the two parts build against
+flint-package = { workspace = true, optional = true }
+flint-ecs = { workspace = true, optional = true }
+flint-script = { workspace = true, optional = true }
+rhai = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 web-time = { workspace = true }
 flint-core = { workspace = true }
 # The mixer a suite plays on, here or in the browser's worklet (#1216)

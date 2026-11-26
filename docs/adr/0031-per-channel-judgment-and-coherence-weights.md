@@ -57,7 +57,7 @@ Not recorded in the surviving text.
   "World II baseline (engine): full verb map, per-channel judgment,
   alternates, cues, debug panels"
 - Vault: "Star Child World II - The Undertow - 2026-08-17"
-- Code now: `crates/flint-music/src/judgment.rs` (`JudgmentRecord`, `Judge`),
-  `crates/flint-music/src/coherence.rs` (`CoherenceConfig`),
-  `crates/flint-music/tests/world2_milestone.rs`,
+- Code now: `packages/music/crates/flint-music/src/judgment.rs` (`JudgmentRecord`, `Judge`),
+  `packages/music/crates/flint-music/src/coherence.rs` (`CoherenceConfig`),
+  `packages/music/crates/flint-music/tests/world2_milestone.rs`,
   [Music Sessions](../book/src/concepts/music-sessions.md), "Coherence"

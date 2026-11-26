@@ -1,8 +1,9 @@
 //! CLI command implementations
 //!
 //! A module that names a package's crate is compiled only with that
-//! package's feature (#1333); without it, `absent::stub!` stands in for a
-//! command's file, so the parser keeps the command and running it exits 2.
+//! package's feature (#1333). A package's own commands are its crate's
+//! extension (#1553, #1555), and a kernel command it fills in asks its
+//! point (#1557): without the package, `absent` names it, with exit 2.
 
 pub mod absent;
 pub mod asset;
@@ -12,8 +13,6 @@ pub mod build;
 pub mod bundle;
 #[cfg(feature = "rhythm")]
 pub mod calibrate;
-#[cfg(not(feature = "rhythm"))]
-absent::stub!(calibrate, CalibrateArgs, "music calibrate", "rhythm");
 pub mod capture;
 mod capture_compare;
 mod capture_disk;
@@ -48,20 +47,17 @@ pub mod look_measure;
 #[cfg(feature = "ai")]
 pub mod look_refine;
 pub mod mesh_seq;
+// The rhythm package's commands under the music package's `music`
+// (#1555; its own crate takes them, #1556)
+#[cfg(feature = "rhythm")]
 pub mod music;
 pub mod package;
 pub mod particle_edit;
 pub mod play;
 #[cfg(feature = "rhythm")]
 pub mod play_chart;
-#[cfg(not(feature = "rhythm"))]
-absent::stub!(play_chart, PlayChartArgs, "music chart play", "rhythm");
 #[cfg(feature = "rhythm")]
 pub mod play_chart_window;
-#[cfg(feature = "music")]
-pub mod play_suite;
-#[cfg(not(feature = "music"))]
-absent::stub!(play_suite, PlaySuiteArgs, "music play", "music");
 pub mod playtest;
 pub mod prefab;
 pub mod preview;
@@ -75,20 +71,9 @@ pub mod render_plan;
 pub mod render_post;
 pub mod render_report;
 pub mod render_retired;
-#[cfg(feature = "music")]
-pub mod render_suite;
-#[cfg(not(feature = "music"))]
-absent::stub!(render_suite, RenderSuiteArgs, "music render", "music");
 pub mod render_watch;
 #[cfg(feature = "rhythm")]
 pub mod replay_chart;
-#[cfg(not(feature = "rhythm"))]
-absent::stub!(
-    replay_chart,
-    ReplayChartArgs,
-    "music chart replay",
-    "rhythm"
-);
 pub mod scene;
 pub mod schema;
 pub mod schema_export;
@@ -103,10 +88,6 @@ pub mod sweep;
 pub mod terrain_edit;
 pub(crate) mod trace;
 pub mod validate;
-#[cfg(feature = "music")]
-pub mod validate_suite;
-#[cfg(not(feature = "music"))]
-absent::stub!(validate_suite, ValidateSuiteArgs, "music validate", "music");
 pub mod variants;
 
 /// Write a report into `<base_dir>/logs/latency/` as

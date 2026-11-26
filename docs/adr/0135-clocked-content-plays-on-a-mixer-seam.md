@@ -77,7 +77,7 @@ Stop a stem at a tick. Read the clock, and a stem's position and end.
 
 - A suite plays the same on the desktop and in the browser. Both are kira at
   128-frame chunks, so a stem lands on the same sample:
-  `crates/flint-music/tests/worklet_parity.rs` renders one suite offline and
+  `packages/music/crates/flint-music/tests/worklet_parity.rs` renders one suite offline and
   on the worklet's `Mixer` through a `Link`. All 16 clicks start on the same
   samples, and the gain and low-pass changes land on the same beats. kira
   starts a clock-timed sound at the start of the chunk its tick falls in,

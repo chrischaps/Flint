@@ -18,17 +18,6 @@ mod assets;
 mod maker;
 pub mod recorder;
 
-#[cfg(test)]
-mod tests {
-    /// The renderer's bone limit, which a living rig's palette must fit:
-    /// held here, where the package's player side sees both (#1557; it was
-    /// flint-cli's `preview.rs` test).
-    #[test]
-    fn procgen_knows_the_renderers_bone_limit() {
-        assert_eq!(crate::MAX_SKINNED_BONES, flint_render::MAX_BONES);
-    }
-}
-
 pub use assets::{
     apply_completed, apply_failures, collect_requests, collect_requests_of, discover_specs,
     image_set_name, resolve, upload_output, AssetRequest, AssetSink, GpuSink, Outcome, ProcGenMode,
@@ -115,4 +104,15 @@ pub fn import_of(name: &str, rig: &LivingRig) -> ImportResult {
         });
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    /// The renderer's bone limit, which a living rig's palette must fit:
+    /// held here, where the package's player side sees both (#1557; it was
+    /// flint-cli's `preview.rs` test).
+    #[test]
+    fn procgen_knows_the_renderers_bone_limit() {
+        assert_eq!(crate::MAX_SKINNED_BONES, flint_render::MAX_BONES);
+    }
 }

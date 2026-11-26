@@ -30,7 +30,7 @@ impl Package for Procgen {
             .run_resources(|resources| {
                 resources.insert(ProcGenResolver::new());
             })
-            .point(LoadSteps::default())
+            .insert_point(LoadSteps::default())
             .asset_maker(&MAKER);
     }
 }
@@ -124,7 +124,7 @@ impl AssetMaker for Maker {
             &ctx.config.project,
             ctx.scene_path,
         );
-        if let Some(steps) = ctx.registry.get_point::<LoadSteps>() {
+        if let Some(steps) = ctx.registry.point::<LoadSteps>() {
             let mut load = LoadCtx {
                 world: &mut *ctx.world,
                 config: ctx.config,

@@ -1,8 +1,9 @@
 //! The `conducted` script module (ADR 0020, ADR 0116, #698): a rhythm
 //! session's per-frame state for scene bindings: lean, target, coherence,
 //! the musical position, the pulses judged and the ladder and
-//! reintegration visual ramps. The music subsystem declares it
-//! (`player_app/subsystems/music.rs`) and enables it in a scene whose
+//! reintegration visual ramps. The music package declares it (its
+//! `register`, until rhythm's own crate takes it, #1556; the manifest
+//! names it rhythm's) and enables it in a scene whose
 //! `music_session` has a chart; anywhere else a call is a "not enabled"
 //! error. Until a session runs (its count-in, waiting for a device, a
 //! capture, a player built without `rhythm`), every getter reads the
@@ -12,9 +13,6 @@
 //! The snapshot is the module's state ([`flint_script::ScriptSystem::set_module_state`]):
 //! the rhythm subsystem sets it at `Stage::PreScripts` each frame.
 
-// Without `rhythm` only the neutral snapshot is ever made
-#![cfg_attr(not(feature = "rhythm"), allow(dead_code))]
-
 use flint_script::api::builder::kind::{Array as ArrayKind, Bool, Int, Map as MapKind, Num, Str};
 use flint_script::api::{Call, Module};
 use flint_script::ScriptModule;
@@ -23,19 +21,19 @@ use rhai::{Array, Dynamic, Map};
 /// One judged pulse event from the music session, for scripts. A plain POD
 /// mirror of flint-rhythm's, so this module needs no rhythm (ADR 0020).
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ConductedPulse {
+pub struct ConductedPulse {
     /// Seconds before "now" the event was stamped (suite-time arithmetic).
-    pub(crate) age: f64,
+    pub age: f64,
     /// Timing error in ms (hits only; 0.0 for miss/spurious).
-    pub(crate) err_ms: f64,
+    pub err_ms: f64,
     /// "hit" | "miss" | "spurious".
-    pub(crate) kind: String,
+    pub kind: String,
 }
 
 /// One typed value from a chart cue's free-form `params` table (ADR 0033).
 /// A plain POD, so scripts see no toml shapes.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum CueParam {
+pub enum CueParam {
     Number(f64),
     Text(String),
     Flag(bool),
@@ -43,62 +41,62 @@ pub(crate) enum CueParam {
 
 /// One chart cue fired this frame (ADR 0033), for scene bindings.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ConductedCue {
-    pub(crate) name: String,
+pub struct ConductedCue {
+    pub name: String,
     /// Seconds since the cue's authored beat (suite-time arithmetic).
-    pub(crate) age: f64,
+    pub age: f64,
     /// The chart's `params` table, flattened to primitives (nested tables
     /// and arrays are dropped by the host — author flat params).
-    pub(crate) params: Vec<(String, CueParam)>,
+    pub params: Vec<(String, CueParam)>,
 }
 
 /// Per-frame conducted-parameters snapshot (Phase 4 decision 4 / ADR 0020).
 /// Filled by the rhythm subsystem from the session every frame;
 /// neutral defaults when no session so scripts never branch on existence.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ConductedSnapshot {
+pub struct ConductedSnapshot {
     /// Player lean and the chart's lean target, both in [-1,1]².
-    pub(crate) lean: [f64; 2],
-    pub(crate) target: [f64; 2],
+    pub lean: [f64; 2],
+    pub target: [f64; 2],
     /// Player sway (right stick; zeros under the prototype input map).
-    pub(crate) sway: [f64; 2],
+    pub sway: [f64; 2],
     /// Trigger depths in [0,1] (zeros under the prototype input map).
-    pub(crate) pressure_l: f64,
-    pub(crate) pressure_r: f64,
+    pub pressure_l: f64,
+    pub pressure_r: f64,
     /// Cues fired this frame (empty most frames — ADR 0033).
-    pub(crate) cues: Vec<ConductedCue>,
+    pub cues: Vec<ConductedCue>,
     /// The next authored lean key's value (ADR 0023); `target` when nothing
     /// is upcoming.
-    pub(crate) next_target: [f64; 2],
+    pub next_target: [f64; 2],
     /// Suite beats until that key's anchor; 1e6 = nothing upcoming.
-    pub(crate) next_target_beats: f64,
+    pub next_target_beats: f64,
     /// Suite beats until the next unconsumed judgment window's anchor beat
     /// (any kind); 1e6 = nothing upcoming. Lets the world telegraph that
     /// input is expected (P5 immediate-feedback pass).
-    pub(crate) next_pulse_beats: f64,
+    pub next_pulse_beats: f64,
     /// True while that window is open right now (a press would land).
-    pub(crate) pulse_window_open: bool,
-    pub(crate) coherence: f64,
+    pub pulse_window_open: bool,
+    pub coherence: f64,
     /// 0..1 within the current beat / bar (0 at the boundary).
-    pub(crate) beat_phase: f64,
-    pub(crate) bar_phase: f64,
-    pub(crate) bar: i64,
+    pub beat_phase: f64,
+    pub bar_phase: f64,
+    pub bar: i64,
     /// Suite beats from zero, accumulated across tempo changes.
-    pub(crate) beat: f64,
+    pub beat: f64,
     /// Current section name; "" when none.
-    pub(crate) section: String,
+    pub section: String,
     /// Pulses judged this frame (empty most frames).
-    pub(crate) pulses: Vec<ConductedPulse>,
+    pub pulses: Vec<ConductedPulse>,
     /// Ladder visual params (0 = clean).
-    pub(crate) desaturate: f64,
-    pub(crate) blur: f64,
-    pub(crate) chromatic: f64,
+    pub desaturate: f64,
+    pub blur: f64,
+    pub chromatic: f64,
     /// Reassembly progress: 1 = normal play, 0→1 while re-gathering.
-    pub(crate) reassembly: f64,
+    pub reassembly: f64,
     /// Rewind interlude progress: 0 = not rewinding.
-    pub(crate) rewind: f64,
-    pub(crate) no_input: bool,
-    pub(crate) preroll: bool,
+    pub rewind: f64,
+    pub no_input: bool,
+    pub preroll: bool,
 }
 
 impl Default for ConductedSnapshot {
@@ -376,9 +374,9 @@ fn declare_conducted(m: &mut Module<'_>) {
 }
 
 /// The `conducted` module.
-pub(crate) struct ConductedModule;
+pub struct ConductedModule;
 
-pub(crate) static CONDUCTED: ConductedModule = ConductedModule;
+pub static CONDUCTED: ConductedModule = ConductedModule;
 
 impl ScriptModule for ConductedModule {
     fn name(&self) -> &'static str {

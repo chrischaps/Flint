@@ -1,29 +1,15 @@
 //! Commands a build left out (#1333, ADR 0136).
 //!
 //! flint-cli's package features (`living`, `music`, `rhythm`, `procgen`,
-//! `ai`) each take crates out of the binary. A command that needs one of
-//! them stays in the parser, so `flint --help` lists the same commands in
-//! every build and a game's own command can't take its name. Its
-//! arguments become [`Absent`], which takes whatever words follow, and
-//! running it is [`missing`]: exit 2, naming the package to build with.
-//!
-//! [`stub!`] writes the module a left-out command's file would have been,
-//! with the same `Args` type name and `run`, so `music.rs` and the others
-//! read the same in both builds:
-//!
-//! ```ignore
-//! #[cfg(feature = "rhythm")]
-//! pub mod calibrate;
-//! #[cfg(not(feature = "rhythm"))]
-//! absent::stub!(calibrate, CalibrateArgs, "music calibrate", "rhythm");
-//! ```
-//!
-//! A package that registers its commands with the CLI launcher (#1553:
-//! `ai`'s under `asset`) needs no stub: a build without it has none of
-//! them in its parser, and a line asking for one is answered from the
-//! manifests compiled in ([`missing_command`]), with the same exit 2. A
-//! kernel command a package fills in (`flint gen` for a spec, #1557) names
-//! the package that provides it the same way ([`missing_owned`]).
+//! `ai`) each take crates out of the binary. A package that registers its
+//! commands with the CLI launcher (#1553: `ai`'s under `asset`; `music`
+//! and `rhythm`'s, #1555) needs no stand-in: a build without it has none
+//! of them in its parser, and a line asking for one is answered from the
+//! manifests compiled in ([`missing_command`]): exit 2, naming the package
+//! to build with. A kernel command a package fills in (`flint gen` for a
+//! spec, `gen-preview`, `tex-edit`, #1557) names the package that provides
+//! it the same way ([`missing_owned`]), and so does a flag that needs one
+//! ([`missing`]). Until #1557 the left-out commands were `stub!` modules.
 
 use std::ffi::OsString;
 
@@ -119,59 +105,47 @@ fn command_words(argv: &[OsString]) -> Vec<String> {
     words
 }
 
-/// What a feature this binary was built with brings: the package names
-/// (`[build] features` of `packages/<name>/package.toml`) that are in.
-/// flint-player's `debug-hud` and `frame-history` are always on in the CLI.
-/// `build.rs` writes it from the manifests and the features cargo turned on
-/// (#1557), so the source names no package feature to say it.
-pub const BUILT_FEATURES: &[(&str, bool)] =
-    include!(concat!(env!("OUT_DIR"), "/built_features.rs"));
+/// flint-player's features the CLI always has.
+const ALWAYS_ON: &[(&str, bool)] = &[("debug-hud", true), ("frame-history", true)];
+
+/// This crate's features that a package's `[build] features` names, each
+/// with whether this build has it: `build.rs` writes it from the manifests
+/// (#1554), so the source names no package.
+const PACKAGE_FEATURES: &[(&str, bool)] =
+    include!(concat!(env!("OUT_DIR"), "/package_features.rs"));
+
+/// The device features.
+const DEVICE_FEATURES: &[(&str, bool)] = &[
+    ("audio", cfg!(feature = "audio")),
+    ("gamepad", cfg!(feature = "gamepad")),
+    ("dialogs", cfg!(feature = "dialogs")),
+];
+
+/// What a feature this binary was built with brings, each with whether it
+/// is in: flint-player's `debug-hud` and `frame-history` (always on in the
+/// CLI), the package features (`[build] features` of
+/// `packages/<name>/package.toml`), then the device features.
+pub fn built_features() -> impl Iterator<Item = &'static (&'static str, bool)> {
+    ALWAYS_ON
+        .iter()
+        .chain(PACKAGE_FEATURES)
+        .chain(DEVICE_FEATURES)
+}
 
 /// Whether this binary was built with `feature`.
 pub fn built_with(feature: &str) -> bool {
-    BUILT_FEATURES.iter().any(|(f, on)| *on && *f == feature)
+    built_features().any(|(f, on)| *on && *f == feature)
 }
 
-/// The arguments of a command this build left out: every word after its
-/// name, unread, so any command line that would have parsed still does.
-#[derive(clap::Args, Debug, Default)]
-pub struct Absent {
-    #[arg(
-        trailing_var_arg = true,
-        allow_hyphen_values = true,
-        hide = true,
-        num_args = 0..
-    )]
-    pub words: Vec<OsString>,
-}
+/// A command (or a flag of one) needs a package this binary was built
+/// without. `output::finish` exits 2 on it, naming the package. A
+/// package's own command returns the same error, so it is flint-package's
+/// (#1555).
+pub use flint_package::cli::{missing, MissingPackage};
 
-/// A command (or a flag of one) that needs a package this binary was
-/// built without: the Package API's since #1557, so a package's command
-/// says so of another as the kernel's do. `output::finish` exits 2 on it
-/// ([`EXIT`]), naming the package.
-pub use flint_package::cli::{missing, MissingPackage, MISSING_EXIT as EXIT};
-
-/// A module standing in for a command file a build left out: its `Args`
-/// type is [`Absent`] and its `run` is [`missing`]. The music and rhythm
-/// commands are stubbed, so a build with both has none. (Procgen's were,
-/// until #1557 made `gen-preview` and `tex-edit` the kernel's, asking the
-/// package's point.)
-#[cfg_attr(all(feature = "music", feature = "rhythm"), allow(unused_macros))]
-macro_rules! stub {
-    ($module:ident, $args:ident, $words:literal, $package:literal) => {
-        pub mod $module {
-            pub type $args = $crate::commands::absent::Absent;
-            pub fn run(_: $args) -> anyhow::Result<()> {
-                Err($crate::commands::absent::missing(
-                    concat!("flint ", $words),
-                    $package,
-                ))
-            }
-        }
-    };
-}
-#[cfg_attr(all(feature = "music", feature = "rhythm"), allow(unused_imports))]
-pub(crate) use stub;
+/// The exit code a missing package leaves with: clap's for a command line
+/// it can't take, since this one can't be run here either.
+pub const EXIT: u8 = 2;
 
 #[cfg(test)]
 mod tests {
@@ -332,19 +306,83 @@ mod tests {
         let text = ran(&["music", "chart", "play", "x"])
             .unwrap_err()
             .to_string();
-        assert!(text.contains("flint music chart play"), "{text}");
+        assert!(text.contains("flint music chart"), "{text}");
         assert!(text.contains("`rhythm`"), "{text}");
     }
 
-    #[cfg(not(feature = "music"))]
+    /// The done-when of #1555, in every build: a CLI launched with no
+    /// package extensions has no `music` command, and each of the music
+    /// package's commands, and the rhythm package's under it, exits 2
+    /// naming its package, from the manifests compiled in.
     #[test]
-    fn without_music_the_suite_commands_name_it() {
-        assert_eq!(wanted(&["music", "validate", "s.suite.toml"]), "music");
-        assert_eq!(wanted(&["music", "play", "s.suite.toml"]), "music");
+    fn a_cli_without_music_has_no_music_command_and_names_it() {
+        use clap::CommandFactory as _;
+        let bare = crate::extension::Added::new(Vec::new(), &crate::Cli::command())
+            .unwrap()
+            .augment(crate::Cli::command());
+        assert!(bare.find_subcommand("music").is_none());
+        for (words, what, package) in [
+            (
+                &["music", "validate", "s.suite.toml"][..],
+                "flint music validate",
+                "music",
+            ),
+            (
+                &["music", "play", "s.suite.toml"],
+                "flint music play",
+                "music",
+            ),
+            (
+                &["music", "render", "s.suite.toml", "-o", "x.wav"],
+                "flint music render",
+                "music",
+            ),
+            (
+                &["--json", "music", "validate", "x"],
+                "flint music validate",
+                "music",
+            ),
+            (
+                &["music", "chart", "play", "x"],
+                "flint music chart",
+                "rhythm",
+            ),
+            (&["music", "calibrate"], "flint music calibrate", "rhythm"),
+        ] {
+            let e = crate::run_line(Vec::new(), words).expect_err("no music, no command");
+            let missing = e
+                .downcast_ref::<MissingPackage>()
+                .unwrap_or_else(|| panic!("{words:?}: {e:#}"));
+            assert_eq!((missing.what.as_str(), missing.package), (what, package));
+        }
+    }
+
+    /// With the music package and not rhythm's, `flint music` has the
+    /// music's three commands, and a rhythm one names rhythm.
+    #[test]
+    fn music_without_rhythm_names_rhythm_for_its_commands() {
+        let e = crate::run_line(
+            crate::package_extensions(),
+            &["music", "chart", "play", "x"],
+        )
+        .expect_err("no rhythm");
+        let missing = e.downcast_ref::<MissingPackage>().unwrap();
         assert_eq!(
-            wanted(&["music", "render", "s.suite.toml", "-o", "x.wav"]),
-            "music"
+            (missing.what.as_str(), missing.package),
+            ("flint music chart", "rhythm")
         );
+    }
+
+    /// The stock `flint` of a build with music has its commands where they
+    /// always were, rhythm's beside them.
+    #[cfg(feature = "rhythm")]
+    #[test]
+    fn with_music_the_music_commands_are_its_extensions() {
+        let tree = crate::stock_command();
+        let music = tree.find_subcommand("music").unwrap();
+        for name in ["validate", "play", "render", "calibrate", "chart"] {
+            assert!(music.find_subcommand(name).is_some(), "music {name}");
+        }
     }
 
     #[cfg(not(feature = "ai"))]
@@ -450,8 +488,8 @@ mod tests {
     #[cfg(all(feature = "rhythm", feature = "ai"))]
     #[test]
     fn with_every_package_no_command_is_a_stand_in() {
-        use clap::CommandFactory as _;
-        let mut cli = crate::Cli::command();
+        // The packages' commands are the launcher's extensions (#1555)
+        let mut cli = crate::stock_command();
         let chart = cli
             .find_subcommand_mut("music")
             .and_then(|m| m.find_subcommand_mut("chart"))

@@ -31,7 +31,7 @@ mod tests {
     /// command from the manifest, so the two must agree.
     #[test]
     fn the_extension_adds_what_the_manifest_lists() {
-        let manifest = include_str!("../../../../packages/ai/package.toml");
+        let manifest = include_str!("../../../../package.toml");
         let manifest: toml::Value = toml::from_str(manifest).unwrap();
         let mut listed: Vec<String> = manifest["provides"]["commands"]
             .as_array()

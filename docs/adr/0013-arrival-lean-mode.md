@@ -48,8 +48,8 @@ Synthetic perfect play on the re-authored chart: 92/92, coherence 1.00.
 
 - Commit [`8a5fb9a`](https://github.com/chrischaps/Flint/commit/8a5fb9acbe2535c33d9815e8e57ca3097ed6d406)
   "Arrival lean mode: beat-anchored targets rolled to in time (ADR 0013)"
-- Code now: `crates/flint-music/src/judgment.rs` (`LeanMode`,
+- Code now: `packages/music/crates/flint-music/src/judgment.rs` (`LeanMode`,
   `JudgmentConfig::arrival_half_beats`),
-  `crates/flint-music/src/chart_session.rs` (`parse_lean_mode`),
+  `packages/music/crates/flint-music/src/chart_session.rs` (`parse_lean_mode`),
   `crates/flint-player/src/player_app/music_session.rs`,
   [Music Sessions](../book/src/concepts/music-sessions.md)

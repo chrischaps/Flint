@@ -4,7 +4,7 @@ Status: accepted, 2026-08-17 (commit
 [`27c5ff4`](https://github.com/chrischaps/Flint/commit/27c5ff449142539780c1cb1d471090d6c3777302)).
 Backfilled 2026-11-12 (#374) from commit `27c5ff4`, Vault notes "2026-08-16
 The 50ms Server Nobody Mentions" and "Starchild Programmers Guide Draft -
-2026-08-17", and the module docs of `crates/flint-music/src/haptics.rs` and
+2026-08-17", and the module docs of `packages/music/crates/flint-music/src/haptics.rs` and
 `crates/flint-input-capture/src/rumble.rs`.
 The original record was in the Starchild repo, which no longer exists; this
 is a reconstruction.
@@ -71,8 +71,8 @@ Not recorded in the surviving text.
 - Vault: "Starchild Programmers Guide Draft - 2026-08-17"
 - Vault: "2026-08-19 Starchild hygiene pass — determinism as a refactoring
   tool"
-- Code now: `crates/flint-music/src/haptics.rs` (`HapticsDriver`,
+- Code now: `packages/music/crates/flint-music/src/haptics.rs` (`HapticsDriver`,
   `HapticsConfig`), `crates/flint-input-capture/src/rumble.rs`
-  (`RumbleEngine`, `haptic_sink`), `crates/flint-music/tests/haptics_driver.rs`,
+  (`RumbleEngine`, `haptic_sink`), `packages/music/crates/flint-music/tests/haptics_driver.rs`,
   [Music Sessions](../book/src/concepts/music-sessions.md), "Audio Gradient
   and Haptics"

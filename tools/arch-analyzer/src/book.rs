@@ -87,33 +87,34 @@ pub fn render(workspace_root: &Path) -> String {
     let mut rows: Vec<&CrateMeta> = crates.iter().collect();
     rows.sort_by_key(|c| (tiers[&c.name], c.name.clone()));
 
-    let engine = crates
+    // An engine crate is the kernel's (`crates/`) or a package's
+    // (`packages/<name>/crates/`, #1554); the rest are tools
+    let in_package = |c: &CrateMeta| c.path.starts_with("packages");
+    let is_engine = |c: &CrateMeta| c.path.starts_with("crates") || in_package(c);
+    let engine = crates.iter().filter(|c| is_engine(c)).count();
+    let mut package_dirs: Vec<String> = crates
         .iter()
-        .filter(|c| c.path.starts_with("crates"))
-        .count();
-    // A package's own crates (#1557): `packages/<name>/crates/<crate>`
-    let packaged: Vec<&CrateMeta> = crates.iter().filter(|c| in_package(&c.path)).collect();
+        .filter(|c| in_package(c))
+        .filter_map(|c| {
+            let path = c.path.replace('\\', "/");
+            path.rsplit_once('/').map(|(dir, _)| format!("`{dir}/`"))
+        })
+        .collect();
+    package_dirs.dedup();
+    let packaged = crates.iter().filter(|c| in_package(c)).count();
     let tools: Vec<String> = crates
         .iter()
-        .filter(|c| !c.path.starts_with("crates") && !in_package(&c.path))
+        .filter(|c| !is_engine(c))
         .map(|c| format!("`{}`", c.path.replace('\\', "/")))
         .collect();
-    let packaged_words = match packaged.len() {
-        0 => String::new(),
-        n => {
-            let mut folders: Vec<String> = packaged
-                .iter()
-                .filter_map(|c| {
-                    let path = c.path.replace('\\', "/");
-                    path.rsplit_once('/').map(|(dir, _)| format!("`{dir}/`"))
-                })
-                .collect();
-            folders.dedup();
-            format!(
-                " and {n} in a package's own folder ({})",
-                folders.join(", ")
-            )
-        }
+    let where_ = if packaged == 0 {
+        "under `crates/`".to_string()
+    } else {
+        format!(
+            "{} under `crates/` and {packaged} in packages ({})",
+            engine - packaged,
+            package_dirs.join(", ")
+        )
     };
 
     let mut out = String::new();
@@ -124,7 +125,7 @@ pub fn render(workspace_root: &Path) -> String {
          Rewrite: cargo run -p flint-arch-analyzer -- --book. CI's crate-table job runs --check-book. -->\n\n",
     );
     out.push_str(&format!(
-        "The workspace has {engine} crates under `crates/`{packaged_words}, plus {} ({}). \
+        "The workspace has {engine} engine crates, {where_}, plus {} ({}). \
          Rows run bottom-up: a crate's **tier** is the longest chain of engine crates beneath it, \
          so every crate depends only on crates of a lower tier. Optional and target-only \
          dependencies are marked; dev-dependencies are left out.\n\n",
@@ -158,7 +159,7 @@ pub fn render(workspace_root: &Path) -> String {
             }
             None => "*(none)*".to_string(),
         };
-        let name = if c.path.starts_with("crates") || in_package(&c.path) {
+        let name = if is_engine(c) {
             format!("`{}`", c.name)
         } else {
             format!("`{}` (`{}`)", c.name, c.path.replace('\\', "/"))
@@ -171,14 +172,6 @@ pub fn render(workspace_root: &Path) -> String {
     out.push('\n');
     out.push_str(END);
     out
-}
-
-/// Whether a crate is a package's own (`packages/<name>/crates/<crate>`,
-/// #1557): an engine crate, kept in its package's folder.
-fn in_package(path: &str) -> bool {
-    let path = path.replace('\\', "/");
-    let parts: Vec<&str> = path.split('/').collect();
-    parts.len() == 4 && parts[0] == "packages" && parts[2] == "crates"
 }
 
 /// `page` with its block replaced by `block`; None when the markers are missing.

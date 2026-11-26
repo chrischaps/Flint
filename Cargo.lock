@@ -1910,11 +1910,18 @@ dependencies = [
 name = "flint-music"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
  "flint-audio",
  "flint-audio-worklet",
  "flint-core",
+ "flint-ecs",
+ "flint-package",
+ "flint-script",
  "hound",
  "kira",
+ "rhai",
+ "serde_json",
  "symphonia",
  "toml",
  "toml_edit 0.22.27",
@@ -2018,6 +2025,7 @@ dependencies = [
  "flint-terrain",
  "flint-wooze",
  "getrandom 0.3.4",
+ "hound",
  "image",
  "js-sys",
  "kira",

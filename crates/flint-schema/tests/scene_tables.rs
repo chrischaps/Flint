@@ -218,7 +218,7 @@ fn scenes() -> Vec<(String, toml::Table)> {
         .flatten()
         .map(|e| e.path())
         .filter(|d| d.join("flint.toml").is_file());
-    for dir in ["tests", "crates", "tools"]
+    for dir in ["tests", "crates", "packages", "tools"]
         .map(|d| root.join(d))
         .into_iter()
         .chain(games)

@@ -54,8 +54,8 @@ Not recorded in the surviving text.
   "B4: flint-music crate + flint validate-suite; golden-fixture tests pass"
 - Vault: "Star Child Milestone 0 - And the Validator Catches Its First Real
   Bug" (2026-08-15)
-- Code now: `crates/flint-music/src/manifest.rs`,
-  `crates/flint-music/src/validate.rs` (`Issue`),
-  `crates/flint-music/src/tempo.rs` (`TempoMap`),
-  `crates/flint-music/tests/common/mod.rs` (`fixtures_dir`),
+- Code now: `packages/music/crates/flint-music/src/manifest.rs`,
+  `packages/music/crates/flint-music/src/validate.rs` (`Issue`),
+  `packages/music/crates/flint-music/src/tempo.rs` (`TempoMap`),
+  `packages/music/crates/flint-music/tests/common/mod.rs` (`fixtures_dir`),
   [Music Sessions](../book/src/concepts/music-sessions.md)

@@ -6,7 +6,7 @@
 //! The commands stay the kernel's (`flint gen`, `flint edit`, the hidden
 //! `gen-preview` and `tex-edit`), so `flint --help` is the same in every
 //! build and a glyph set or a terrain spec is the kernel's to run. What
-//! this crate brings it registers as points ([`cli`]'s extension, in
+//! this crate brings it registers as points ([`cli::extensions`], in
 //! [`CliExtension::register`]):
 //!
 //! - [`SpecGen`]: `flint gen <spec>`, the whole run ([`gen::run`]);
@@ -38,9 +38,15 @@ use flint_viewer::host::{Editor, SpecEdit, SpecEditors, SpecKind};
 use std::path::Path;
 
 /// What the CLI launcher lists for the procgen package
-/// (`packages/procgen/package.toml`'s `[rust] cli`).
-pub fn cli() -> Vec<Box<dyn CliExtension>> {
-    vec![Box::new(Procgen)]
+/// (`packages/procgen/package.toml`'s `[rust] cli`, which flint-cli's
+/// `build.rs` turns into `flint_procgen_cli::cli::extensions()`, #1554).
+pub mod cli {
+    use flint_package::cli::CliExtension;
+
+    /// The package's one extension: no command, its points.
+    pub fn extensions() -> Vec<Box<dyn CliExtension>> {
+        vec![Box::new(super::Procgen)]
+    }
 }
 
 /// The package's extension: no command of its own, its points.

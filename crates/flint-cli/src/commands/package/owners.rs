@@ -119,14 +119,16 @@ pub fn schema_files(schemas: &Path, prefix: &str) -> Vec<SchemaFile> {
 }
 
 /// The root manifest's `[workspace] members`, each with its package name.
+/// A `*` segment (`packages/*/crates/*`, a package's crates, #1554) is
+/// every folder there that holds a `Cargo.toml`, as cargo reads it.
 pub fn workspace_crates(root: &Path) -> Vec<Member> {
     let text = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
     let manifest: toml::Table = text.parse().unwrap();
     let members = manifest["workspace"]["members"].as_array().unwrap();
     members
         .iter()
-        .map(|m| {
-            let folder = m.as_str().unwrap();
+        .flat_map(|m| member_folders(root, m.as_str().unwrap()))
+        .map(|folder| {
             let file = format!("{folder}/Cargo.toml");
             let text =
                 std::fs::read_to_string(root.join(&file)).unwrap_or_else(|e| panic!("{file}: {e}"));
@@ -137,6 +139,43 @@ pub fn workspace_crates(root: &Path) -> Vec<Member> {
             }
         })
         .collect()
+}
+
+/// A `members` entry's folders, `/`-separated from `root`: itself, or for
+/// a glob every folder its `*` segments match that holds a `Cargo.toml`.
+fn member_folders(root: &Path, member: &str) -> Vec<String> {
+    if !member.contains('*') {
+        return vec![member.to_string()];
+    }
+    let mut found = vec![String::new()];
+    for segment in member.split('/') {
+        found = found
+            .into_iter()
+            .flat_map(|at| {
+                let join = |s: &str| {
+                    if at.is_empty() {
+                        s.to_string()
+                    } else {
+                        format!("{at}/{s}")
+                    }
+                };
+                if segment != "*" {
+                    return vec![join(segment)];
+                }
+                let mut subs: Vec<String> = std::fs::read_dir(root.join(&at))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .map(|e| join(&e.file_name().to_string_lossy()))
+                    .collect();
+                subs.sort();
+                subs
+            })
+            .collect();
+    }
+    found.retain(|f| root.join(f).join("Cargo.toml").is_file());
+    found
 }
 
 /// Every module the script API declares, in declaration order.
@@ -572,6 +611,29 @@ fn a_crate_no_package_owns_fails_naming_its_manifest() {
     assert_eq!(read[0].manifest, "crates/flint-zebra/Cargo.toml");
     assert_eq!(read[0].name, "flint-zebra");
     let _ = std::fs::remove_dir_all(&tmp);
+
+    // A package's crate joins through the glob (#1555), and a package
+    // folder with no crates/ adds nothing
+    let tmp = scratch("glob");
+    std::fs::create_dir_all(tmp.join("packages/zebra/crates/flint-zebra")).unwrap();
+    std::fs::create_dir_all(tmp.join("packages/quiet")).unwrap();
+    std::fs::write(
+        tmp.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"packages/*/crates/*\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("packages/zebra/crates/flint-zebra/Cargo.toml"),
+        "[package]\nname = \"flint-zebra\"\n",
+    )
+    .unwrap();
+    let read = workspace_crates(&tmp);
+    assert_eq!(read.len(), 1);
+    assert_eq!(
+        read[0].manifest,
+        "packages/zebra/crates/flint-zebra/Cargo.toml"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -614,11 +676,18 @@ fn an_item_two_packages_claim_or_one_the_tree_lacks_fails() {
     living.provides.commands.push("music".into());
     living.provides.crates.push("flint-gone".into());
     let found = problems(&packages, &Inventory::of_repo());
-    for want in [
+    let mut wanted = vec![
         "schemas/components/transform.toml: the component `transform` is provided by engine and living: an item has one owner",
-        "`flint music validate`: provided by `music`, and `flint music` above it by `living`: a command has one owner",
         "packages/living/package.toml: provides.crates lists `flint-gone`, and the tree has no crate of that name",
-    ] {
+    ];
+    // `flint music` is the music package's extension (#1555): a flint
+    // built without it has no such command to claim
+    if crate::commands::absent::built_with("music") {
+        wanted.push(
+            "`flint music validate`: provided by `music`, and `flint music` above it by `living`: a command has one owner",
+        );
+    }
+    for want in wanted {
         assert!(
             found.iter().any(|f| f.ends_with(want) || f == want),
             "missing {want:?} in {found:#?}"
@@ -688,9 +757,7 @@ fn flint_cli_has_each_packages_feature_and_forwards_it() {
     for p in &engine_packages().packages {
         for feature in &p.features {
             assert!(
-                crate::commands::absent::BUILT_FEATURES
-                    .iter()
-                    .any(|(f, _)| f == feature),
+                crate::commands::absent::built_features().any(|(f, _)| f == feature),
                 "absent::BUILT_FEATURES has no `{feature}`"
             );
             if ALWAYS.contains(&feature.as_str()) {

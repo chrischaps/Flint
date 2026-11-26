@@ -43,7 +43,7 @@ Not recorded in the surviving text.
   spacing from the engine as the cleaner fix; the frame has neither today.
 - With no session running the snapshot is neutral and the lookahead is
   effectively infinite.
-- `crates/flint-music/tests/conducted_trace.rs` checks every frame's
+- `packages/music/crates/flint-music/tests/conducted_trace.rs` checks every frame's
   `next_target` and `next_target_beats`.
 
 ## Sources
@@ -54,8 +54,8 @@ Not recorded in the surviving text.
   audio gradient, haptics, depth-of-field"
 - Vault: "Starchild - conducted_next_target needs spacing-aware blends
   (2026-08-17)"
-- Code now: `crates/flint-music/src/chart_eval.rs` (`ChartEval::next_key`),
-  `crates/flint-music/src/chart_session.rs` (`ConductedFrame`),
+- Code now: `packages/music/crates/flint-music/src/chart_eval.rs` (`ChartEval::next_key`),
+  `packages/music/crates/flint-music/src/chart_session.rs` (`ConductedFrame`),
   `crates/flint-script/src/api/conducted.rs` (`conducted_next_target`),
   [Scripting](../book/src/concepts/scripting.md),
   [Music Sessions](../book/src/concepts/music-sessions.md)

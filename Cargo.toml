@@ -11,7 +11,6 @@ members = [
     "crates/flint-render",
     "crates/flint-constraint",
     "crates/flint-asset",
-    "crates/flint-asset-gen",
     "crates/flint-import",
     "crates/flint-pixels",
     "crates/flint-viewer",
@@ -21,7 +20,6 @@ members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-audio-worklet",
-    "crates/flint-music",
     "crates/flint-rhythm",
     "crates/flint-input-capture",
     "crates/flint-animation",
@@ -29,12 +27,9 @@ members = [
     "crates/flint-particles",
     "crates/flint-terrain",
     "crates/flint-debug-ui",
-    "packages/procgen/crates/flint-procgen",
-    "packages/procgen/crates/flint-procgen-cli",
     "crates/flint-living",
-    "crates/flint-procgen-ai",
-    "crates/flint-ai-core",
     "crates/flint-cli",
+    "packages/*/crates/*",
     "crates/flint-android",
     "tools/arch-analyzer",
 ]
@@ -55,7 +50,6 @@ default-members = [
     "crates/flint-render",
     "crates/flint-constraint",
     "crates/flint-asset",
-    "crates/flint-asset-gen",
     "crates/flint-import",
     "crates/flint-pixels",
     "crates/flint-viewer",
@@ -65,7 +59,6 @@ default-members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-audio-worklet",
-    "crates/flint-music",
     "crates/flint-rhythm",
     "crates/flint-input-capture",
     "crates/flint-animation",
@@ -73,12 +66,9 @@ default-members = [
     "crates/flint-particles",
     "crates/flint-terrain",
     "crates/flint-debug-ui",
-    "packages/procgen/crates/flint-procgen",
-    "packages/procgen/crates/flint-procgen-cli",
     "crates/flint-living",
-    "crates/flint-procgen-ai",
-    "crates/flint-ai-core",
     "crates/flint-cli",
+    "packages/*/crates/*",
     "tools/arch-analyzer",
 ]
 
@@ -242,12 +232,12 @@ flint-package = { path = "crates/flint-package" }
 # `audio` / `gamepad` / `debug-hud` on flint-player.
 flint-audio = { path = "crates/flint-audio", default-features = false }
 flint-audio-worklet = { path = "crates/flint-audio-worklet" }
-flint-music = { path = "crates/flint-music", default-features = false }
+flint-music = { path = "packages/music/crates/flint-music", default-features = false }
 flint-rhythm = { path = "crates/flint-rhythm", default-features = false }
 flint-input-capture = { path = "crates/flint-input-capture", default-features = false }
 flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
-flint-asset-gen = { path = "crates/flint-asset-gen" }
+flint-asset-gen = { path = "packages/ai/crates/flint-asset-gen" }
 flint-particles = { path = "crates/flint-particles" }
 flint-terrain = { path = "crates/flint-terrain" }
 # Its `living` feature (the [wooze] table's field and knob checks) is the
@@ -255,8 +245,8 @@ flint-terrain = { path = "crates/flint-terrain" }
 flint-procgen = { path = "packages/procgen/crates/flint-procgen", default-features = false }
 flint-procgen-cli = { path = "packages/procgen/crates/flint-procgen-cli" }
 flint-living = { path = "crates/flint-living" }
-flint-procgen-ai = { path = "crates/flint-procgen-ai" }
-flint-ai-core = { path = "crates/flint-ai-core" }
+flint-procgen-ai = { path = "packages/ai/crates/flint-procgen-ai" }
+flint-ai-core = { path = "packages/ai/crates/flint-ai-core" }
 flint-debug-ui = { path = "crates/flint-debug-ui", default-features = false }
 flint-player = { path = "crates/flint-player", default-features = false }
 flint-android = { path = "crates/flint-android" }

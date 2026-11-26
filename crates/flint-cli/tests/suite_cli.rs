@@ -5,7 +5,9 @@
 //! and `flint music render` mixes it offline, both stems sample-locked. The
 //! rhythm layer's contract is still there for a suite that asks for it:
 //! `--rhythm` names what such a suite lacks.
-#![cfg(all(feature = "music", feature = "rhythm"))]
+// The rhythm package brings music (its `[requires]`, and flint-cli's `rhythm`
+// feature turns `music` on), so a build with rhythm has both (#1555).
+#![cfg(feature = "rhythm")]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

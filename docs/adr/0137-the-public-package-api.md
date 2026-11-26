@@ -550,18 +550,105 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   `AiAssetCommands` builds its `Command` at run time, as `Cli`'s derive
   did, so nothing moved onto a deeper frame.
 
+## As built: the first move, ai (#1554)
+
+- **The crates moved, and the glob joined.** `flint-asset-gen`,
+  `flint-procgen-ai` and `flint-ai-core` are at
+  `packages/ai/crates/<crate>/`. The root `Cargo.toml` names
+  `"packages/*/crates/*"` in `members` and `default-members` (section 5),
+  and the three member lines went. The workspace dependency paths point at
+  the new folders, so no crate that depends on them changed.
+- **`[rust] cli` in `package.toml`** names the package's crate whose
+  `cli::extensions()` the CLI launcher lists (`flint_core::package`: one of
+  `[provides] crates`, else a `bad-package` mistake). This is the `cli`
+  half of #1568's `[rust]` table. `player` comes with the first package
+  that registers a `Package` from its own crate (#1555).
+- **The CLI launcher's list is written by `build.rs`**, from the manifests
+  it already compiled in: `stock()` is `include!` of
+  `OUT_DIR/stock_extensions.rs`, and `absent::built_features()` reads
+  `OUT_DIR/package_features.rs`, so `crates/flint-cli/src` names the ai
+  package nowhere in either. flint-cli's `Cargo.toml` still declares the
+  `ai` feature and the three optional dependencies by hand. #1568's
+  `package-sync.py` generates that block. Until then a new package's crates
+  are one hand edit there.
+- **Not done: the flags.** `gen --ai-*`, `render --ai-refine` and `asset
+  resolve --strategy ai_*` are still declared by their commands, with their
+  code in flint-cli behind `feature = "ai"`: 39 lines in
+  `crates/flint-cli/src`, against 41 before (the two that went are
+  `stock()`'s and the built-features row). The code behind them (`gen_ai`,
+  `gen_refine` and `look_refine`, about 1,800 lines) calls flint-cli's
+  previews, look measures and sweeps, so it moves with the registration
+  points of the "As built: the CLI launcher" section (#1572), not here.
+- **Paths that walk the tree** take `packages/*/crates/*` too: the
+  arch-analyzer (members globs, the book's crate table), `docs-check.py`'s
+  crate and member counts, the env, schema and scene-table tests, the clippy
+  tool-crate list and the Play site's path filter.
+
+## As built: the second move, music (#1555)
+
+- **The crate is in the package's folder**: `packages/music/crates/flint-music`,
+  joined by #1554's members glob, its workspace dependency path pointed
+  there. Its two parts are features: `player` (`player::PACKAGE`) and
+  `cli` (`cli::extensions()`).
+- **`[rust] player`** joins #1554's `cli` in `package.toml`: the crate
+  whose `player::PACKAGE` the player launcher lists. Music's manifest names
+  `flint-music` for both. flint-player's feature named for the package
+  turns that crate's `player` feature on (`music = ["dep:flint-music",
+  "flint-music?/player"]`), as flint-cli's does `cli`, so the Cargo
+  features of ADR 0136 decision 2 are still the switch.
+  `crates/flint-player/launch_list.rs`, which flint-player's build script
+  includes by `#[path]`, reads the manifests and writes
+  `OUT_DIR/package_list.rs`: `moved()` (each `[rust] player` crate whose
+  package's `[build] features` are all on), the registration `ORDER`
+  (requires first, then tier, then name, which is the order the stock list
+  had by hand) and the feature tables (`PLAYER_PACKAGES`, `BUILT`). The
+  CLI's list is #1554's `stock_extensions.rs`, which lists music's
+  commands from its `[rust] cli`. No `package-sync.py` and no generated
+  Cargo block yet: the dependency and feature lines were written by hand
+  (#1568).
+- **Music's registration point for rhythm**: `Registry::insert_point`,
+  `point_mut` and `point` (one value per type, `Send + Sync` so the run's
+  registry stays a static), and `SceneCtx::registry`, so a builder reads a
+  point and asks `has(package)`. Music inserts `ChartJudge`; rhythm,
+  still in flint-player, fills it at its `register` with its subsystem's
+  constructor. A build without rhythm leaves it empty and a charted suite
+  plays as music, as before. The kernel's "built without music" line is a
+  builder `ENGINE` registers in every build, which speaks only when the
+  registry lacks `music`.
+- **The `conducted` module stays declared by music** (as before: music
+  enables it, neutral, for a charted scene nothing judges), though the
+  manifests name it rhythm's. It moved with music into
+  `flint_music::player::conducted`, and rhythm's session writes its
+  snapshot there. #1556 decides whether rhythm takes it.
+- **One left-out wording**: `flint_package::left_out_line`, which the
+  kernel's lines and a package's share; music's is
+  `flint_music::player::left_out_line`.
+- **The CLI**: `music` is the music package's top-level command
+  (`flint_music::cli`, `validate`, `play`, `render`), and rhythm's
+  `calibrate` and `chart` are an extension under it. `extension::Added`
+  now takes a place that an earlier extension added (the tree is grown
+  extension by extension), and dispatches a line to the deepest owner
+  (`music chart play` is rhythm's, `music play` music's). `music
+  validate` reaches flint-rhythm's contract through
+  `flint_music::cli::judge_rhythm_suites_with`, a static that rhythm's
+  extension sets when it is listed: the CLI has no typed registration
+  points until #1572. `MissingPackage` and `missing` are
+  `flint_package::cli`'s, so a package's command can name the package a
+  part of it needs. The music and rhythm stubs are gone: a build without
+  either has none of its commands, and `absent::missing_command` names the
+  package from the manifests. `flint --help` lists `music` after the
+  engine's commands, as extensions are.
+
 ## As built: procgen moves into its package (#1557)
 
 - **Its crates are in its folder:** `packages/procgen/crates/flint-procgen`
-  (moved whole, history kept) and a new `flint-procgen-cli`. The root
-  `Cargo.toml` lists both by path rather than by the `packages/*/crates/*`
-  glob, because the book's maps count `members` (#1568 can add the glob).
-  `package.toml` names them under `[rust]` (decision 10: `player =
-  "flint-procgen/player"`, `cli = "flint-procgen-cli"`), which
-  `flint_core::package` reads. Each binary's `build.rs` writes the
-  launcher's list from these lines and the Cargo features that are on.
-  The player's `moved()` sorts by the manifests' `[requires]` order, and
-  the CLI's `moved::cli()`. `src/` names no moved package. The hand-written
+  (moved whole, history kept) and a new `flint-procgen-cli`, both members
+  by #1554's `packages/*/crates/*` glob. `package.toml` names them under
+  `[rust]` in #1554's and #1555's form: `player = "flint-procgen"` (its
+  `player` feature holds the player part, `player::PACKAGE`) and
+  `cli = "flint-procgen-cli"` (its `cli::extensions()`). The launchers'
+  build scripts list both from those lines (`package_list.rs`'s `moved()`,
+  `stock_extensions.rs`), so `src/` names no procgen crate. The hand-written
   optional dependency and the `procgen` feature stay until #1568
   generates them.
 - **The player's half is a registration point the kernel defines**,
@@ -572,11 +659,11 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   `MakeCtx`: the world, the `ModelLoadConfig`, a `Gpu`, the colliders as
   `&mut dyn MadeMeshes`, the resources, the registry and `[packages]`. A
   package also registers `run_resources`, which put its resolver in each
-  core's `Resources`, and `point(value)`, its own registration points.
-  `Registry::point_mut` lets a later package add to them. That is how
-  living's props join procgen's load: a `LoadStep` pushed onto procgen's
-  `LoadSteps`, in `[requires]` order. This record's section 4 listed that
-  point as "procgen's resolve steps".
+  core's `Resources`. Its own registration points use #1555's
+  `insert_point` / `point_mut` / `point`. That is how living's props join
+  procgen's load: a `LoadStep` pushed onto procgen's `LoadSteps`, in
+  `[requires]` order. This record's section 4 listed that point as
+  "procgen's resolve steps".
 - **`PlayerExtension::register_generators` became `resources(&mut
   Resources)`.** It was the one hook that named a package's type, so it
   couldn't stay without a `cfg`. A game finds the registry with
@@ -589,15 +676,17 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   `tex-edit` ask registration points on the command line,
   `flint_package::cli::Points`. That is one typed map for the run, filled
   before parsing by each `CliExtension::register` and then by the binary's
-  own parts. Procgen registers `SpecGen` (the run of a spec; `GenArgs`
-  moved into `flint_package::cli::gen` so the package can take it),
-  `flint_viewer::host::SpecEditors` (its two editors as `Box<dyn Editor>`)
-  and `SpecChecks` (parse, params, a terrain spec's issues). Procgen's own
-  `gen` declares two points of its own, `AiSteps` and `StripSheet`. The
-  binary fills them from its ai and living code under those features. That
-  is #1572's shape for `gen --ai-*`, built for `gen` alone. A missing point
-  is `MissingPackage` (moved to `flint_package::cli`), naming the package
-  whose manifest provides the command's words.
+  own parts. Procgen's extension adds no command. It registers `SpecGen`
+  (the run of a spec; `GenArgs` moved into `flint_package::cli::gen` so
+  the package can take it), `flint_viewer::host::SpecEditors` (its two
+  editors as `Box<dyn Editor>`) and `SpecChecks` (parse, params, a terrain
+  spec's issues). Procgen's own `gen` declares two points of its own,
+  `AiSteps` and `StripSheet`. The binary fills them from its ai and living
+  code under those features. That is #1572's shape for `gen --ai-*`,
+  built for `gen` alone. A missing point is `MissingPackage`, naming the
+  package whose manifest provides the command's words. With procgen's two
+  `absent::stub!`s gone (music's and rhythm's went with #1555), no
+  command is stubbed, and the macro went too.
 - **Living's tables are living's in the CLI too.** The `[living]` and
   `[wooze]` checks, the settle at load and the echo sweep check were
   behind `procgen` only because flint-procgen holds their types. They are

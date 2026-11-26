@@ -14,6 +14,7 @@ on:
     branches: [main]
     paths:
       - "crates/**"
+      - "packages/**"
       - "schemas/**"
       - "Cargo.toml"
       - "Cargo.lock"

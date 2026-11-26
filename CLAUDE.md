@@ -39,14 +39,14 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-35-crate Cargo workspace (plus `tools/arch-analyzer`, which feeds the book's crate table):
+35-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554). Every member but `flint-android` is a default member, so `cargo test` tests them all (#758):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
   │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc, package, build
   ├── flint-asset-gen AI asset generation: providers (Flux, Meshy, ElevenLabs, Mock)
   ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
-  ├── flint-procgen-cli `flint gen`, spec editors and checks
+  ├── flint-procgen-cli `flint gen` and the spec editors
   ├── flint-procgen-ai AI-assisted procgen specs
   └── flint-ai-core   Every paid AI call: retries, prices, cost ledger
 flint-android       Android entry point (NativeActivity)
@@ -113,7 +113,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 - **Scripting via Rhai** -- `script` component with `.rhai` files in `scripts/`; `ScriptCommand` for deferred effects; `flint script api` lists every function
 - **All game UI is script-driven** -- no hardcoded HUD: scripts draw it, and a menu is a UI document (`.ui.toml` + `.style.toml`, `load_ui`)
 - **Game project pattern** -- the engine as a git subtree at `engine/`; `schemas = ["engine/schemas", "schemas"]` under `[project]` in the game's `flint.toml`; a game binary embeds `PlayerApp` with `PlayerExtension`s
-- **Every runtime read goes through `flint_core::vfs`** (#97) -- never `std::fs` or `Path::exists` in a runtime crate (tests and the CLI keep `std::fs`); `cargo clippy` denies it, and a call that means it says why, `#[allow(clippy::disallowed_methods)] // <reason>`
+- **Every runtime read goes through `flint_core::vfs`** (#97) -- never `std::fs` or `Path::exists` in a runtime crate (tests and the CLI may); `cargo clippy` denies it (`scripts/CLAUDE.md`)
 - **`FLINT_*` environment switches are one table** (#715, `flint_core::env`): read one only through its getter; a new switch is a row there
 - **The engine is packages** (ADR 0136): every crate, component, archetype, scene table, script module and command is in one `packages/<name>/package.toml`'s `[provides]`, which a test holds
 - **A game lists its packages** under `[packages]` in `flint.toml`; `flint build` builds its player and CLI from it
@@ -125,7 +125,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 - `world.get_components_mut(id)` is a `ComponentsMut` guard (bind it `mut`); `despawn` takes the whole subtree
 - Runtime crates build for wasm (`bash scripts/wasm-check.sh` before pushing): time through `web-time`, never `Instant::now`
 - `AudioManager::new()` / `Gilrs::new()` may fail in headless/CI -- wrap in `Option`
-- `flint-android` is the one crate outside `default-members` (a new crate goes in both lists, #758); `cargo test --workspace` fails on `ndk-sys` on Windows: use plain `cargo test`
+- `flint-android` is the one crate outside `default-members` (a new crate goes in both lists); `cargo test --workspace` fails on `ndk-sys` on Windows: use plain `cargo test`
 - On Windows `flint` and `flint-player` link an 8 MB stack from `build.rs` (#990): keep a clap `Args` struct to a dozen or so flags
 - Dependency API notes live in their crates' files: wgpu 30, winit 0.30 (render), Rapier 0.22 (physics), Kira 0.11 (audio), Rhai 1.24 (script)
 - Never allocate GPU buffers or bind groups per entity per frame; a frame is one submission (#139)
@@ -136,7 +136,7 @@ A change a game can notice (a scene or schema key, a script function, a CLI flag
 
 ## Project Structure
 
-- `schemas/` -- engine schemas, `schemas/examples/` the examples' room-builder layer; `styles/` style guides, looks; `packages/` manifests, schemas, crates (#1557)
+- `schemas/` -- engine schemas, `schemas/examples/` the examples' room-builder layer; `styles/` style guides, looks; `packages/` manifests
 - `flint-examples/` -- the examples, their own repository (#984): clone it here (gitignored). `tests/fixtures/scenes/` -- frozen scenes the goldens load
 - `showcase_game/` -- the example game; `docs/book/` the book, `docs/design/` notes, `docs/adr/` decisions
 - **Every byte here is in every game** (ADR 0122): `scripts/size-check.py` caps the tree. The root holds only manifests and docs

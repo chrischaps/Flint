@@ -22,6 +22,10 @@
 //! [build]                    # how flint build turns it on (Phase 1)
 //! features = ["living"]      # features of flint-player and flint-cli, same names
 //!
+//! [rust]                     # where its Rust joins the launchers (ADR 0137, #1554, #1555)
+//! player = "flint-living"    # the crate whose `player::PACKAGE` flint-player lists; one of `crates`
+//! cli = "flint-living"       # the crate whose `cli::extensions()` flint lists; one of `crates`
+//!
 //! [provides]                 # what it owns; every item has exactly one owner
 //! crates = ["flint-living", "flint-wooze"]
 //! components = ["living_prop", "shallow_wooze"]
@@ -74,7 +78,7 @@ pub const MANIFEST_FILE: &str = "package.toml";
 pub const PACKAGES_DIR: &str = "packages";
 
 /// The tables a manifest may hold.
-const TABLES: [&str; 5] = ["package", "requires", "build", "provides", "rust"];
+const TABLES: [&str; 5] = ["package", "requires", "build", "rust", "provides"];
 
 /// The keys `[package]` may hold.
 const PACKAGE_KEYS: [&str; 6] = ["name", "version", "tier", "summary", "engine", "api"];
@@ -82,30 +86,8 @@ const PACKAGE_KEYS: [&str; 6] = ["name", "version", "tier", "summary", "engine",
 /// The keys `[build]` may hold.
 const BUILD_KEYS: [&str; 1] = ["features"];
 
-/// The keys `[rust]` may hold (ADR 0137 decision 10).
+/// The keys `[rust]` may hold.
 const RUST_KEYS: [&str; 2] = ["player", "cli"];
-
-/// Where a package's Rust is (`[rust]`, ADR 0137 decision 10): each a
-/// `crate[/feature]`, the crate a launcher lists and the feature of it that
-/// holds that side. A package with neither has no Rust of its own (its code
-/// is still in the kernel's crates, or it is schemas and scripts alone).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct Rust {
-    /// The crate whose `PACKAGE` the player's launcher lists.
-    pub player: Option<String>,
-    /// The crate whose `cli()` the CLI's launcher lists.
-    pub cli: Option<String>,
-}
-
-impl Rust {
-    /// `crate[/feature]` split: (`flint-procgen`, `Some("player")`).
-    pub fn split(entry: &str) -> (&str, Option<&str>) {
-        match entry.split_once('/') {
-            Some((krate, feature)) => (krate, Some(feature)),
-            None => (entry, None),
-        }
-    }
-}
 
 /// A package's tier (ADR 0136 decision 3): who has it without asking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -241,8 +223,16 @@ pub struct Package {
     pub requires: BTreeMap<String, String>,
     /// The Cargo features of flint-player and flint-cli that turn it on.
     pub features: Vec<String>,
+    /// The crate of its own (one of `provides.crates`) whose
+    /// `player::PACKAGE` the player launcher lists when the build has the
+    /// package (`[rust] player`, #1555); `None`: its player part, if any,
+    /// is still in flint-player.
+    pub player: Option<String>,
+    /// The crate of its own (one of `provides.crates`) whose
+    /// `cli::extensions()` the CLI launcher lists when the build has the
+    /// package (`[rust] cli`, #1554); `None` adds no command.
+    pub cli: Option<String>,
     pub provides: Provides,
-    pub rust: Rust,
     /// The manifest it was read from.
     pub file: PathBuf,
 }
@@ -287,7 +277,7 @@ pub fn parse(text: &str, file: &Path) -> Result<Package, Vec<Diagnostic>> {
     let requires = p.requires(&table, package.as_ref().map(|(name, _)| name.as_str()));
     let features = p.features(&table);
     let provides = p.provides(&table);
-    let rust = p.rust(&table);
+    let (player, cli) = p.rust(&table, &provides);
     match package {
         Some((name, head)) if p.problems.is_empty() => Ok(Package {
             name,
@@ -298,8 +288,9 @@ pub fn parse(text: &str, file: &Path) -> Result<Package, Vec<Diagnostic>> {
             api: head.api,
             requires,
             features,
+            player,
+            cli,
             provides,
-            rust,
             file: file.to_path_buf(),
         }),
         _ => Err(p.problems),
@@ -533,7 +524,7 @@ impl Parse<'_> {
                 self.error(
                     key.clone(),
                     format!(
-                        "unknown table `[{key}]` (the tables are [package], [requires], [build], [provides], [rust])"
+                        "unknown table `[{key}]` (the tables are [package], [requires], [build], [rust], [provides])"
                     ),
                 )
                 .hint = hint;
@@ -774,35 +765,36 @@ impl Parse<'_> {
         out
     }
 
-    fn rust(&mut self, table: &toml::Table) -> Rust {
-        let Some(rust) = self.sub(table, "rust") else {
-            return Rust::default();
-        };
-        self.unknown_keys(rust, "rust", &RUST_KEYS);
-        let mut out = Rust::default();
-        for (key, slot) in [("player", &mut out.player), ("cli", &mut out.cli)] {
-            let Some(entry) = self.string(rust, "rust", key) else {
-                continue;
-            };
-            let (krate, feature) = Rust::split(&entry);
-            if !is_name(krate) || feature.is_some_and(|f| !is_name(f)) {
-                self.error(
-                    format!("rust.{key}"),
-                    format!("`{entry}` is no `crate` or `crate/feature`"),
-                );
-                continue;
-            }
-            *slot = Some(entry);
-        }
-        out
-    }
-
     fn features(&mut self, table: &toml::Table) -> Vec<String> {
         let Some(build) = self.sub(table, "build") else {
             return Vec::new();
         };
         self.unknown_keys(build, "build", &BUILD_KEYS);
         self.strings(build, "build", "features")
+    }
+
+    /// `[rust] player` and `cli`: each a crate the package provides, or a
+    /// mistake.
+    fn rust(
+        &mut self,
+        table: &toml::Table,
+        provides: &Provides,
+    ) -> (Option<String>, Option<String>) {
+        let Some(rust) = self.sub(table, "rust") else {
+            return (None, None);
+        };
+        self.unknown_keys(rust, "rust", &RUST_KEYS);
+        let mut crate_of = |key: &str| {
+            let krate = self.string(rust, "rust", key)?;
+            if !provides.crates.contains(&krate) {
+                self.error(
+                    format!("rust.{key}"),
+                    format!("`{krate}` is no crate of this package: name one of [provides] crates"),
+                );
+            }
+            Some(krate)
+        };
+        (crate_of("player"), crate_of("cli"))
     }
 
     fn provides(&mut self, table: &toml::Table) -> Provides {

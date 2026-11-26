@@ -61,4 +61,4 @@ The session that prompted `2fc8606`: zero input events in 126 s.
 - Vault: "2026-08-16 Audio Gradient - Tuning by Wobble Not Offset"
 - Code now: `Cargo.toml` (`gilrs`), `crates/flint-input-capture/src/lib.rs`,
   `crates/flint-input-capture/src/rumble.rs`,
-  `crates/flint-music/src/chart_session.rs`, `docs/design/web.md`
+  `packages/music/crates/flint-music/src/chart_session.rs`, `docs/design/web.md`

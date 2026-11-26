@@ -53,8 +53,10 @@ rhythm = ["music", "dep:flint-rhythm", "dep:flint-input-capture"]
 # A scene's music (#745, #754): a `music_session`'s stems on their buses and
 # the beat for `music_beat()` and the rest, through flint-music. Off, a scene
 # with one says so once at its entry and plays silent, its scripts reading
-# the beat as with no music (-1).
-music = ["dep:flint-music"]
+# the beat as with no music (-1). The package's own crate since #1555
+# (packages/music/crates/flint-music): its `player` part is the subsystem,
+# and the launcher's list names it from build.rs, so src/ names it nowhere.
+music = ["dep:flint-music", "flint-music?/player"]
 # The procgen package (#754, #1557): a `model.asset` or texture named by a
 # `*.procgen.toml` spec is generated at load (or on the frame queue). Its
 # code is the package's crate (`packages/procgen/crates/flint-procgen`, its
@@ -62,7 +64,7 @@ music = ["dep:flint-music"]
 # names none of it, and `build.rs` lists its `PACKAGE` in the stock
 # launcher. Off, every name is the file loader's, and a scene whose names a
 # spec would have made says so once.
-procgen = ["dep:flint-procgen", "flint-procgen/player"]
+procgen = ["dep:flint-procgen", "flint-procgen?/player"]
 # Living props and the wooze field (#211-#252): props that hold and glide,
 # the `[living]` / `[wooze]` tables, shallow wooze, woozy grass, the A/B
 # compare, the `wooze` and `living` script modules, and with `debug-hud` the
@@ -132,7 +134,13 @@ image = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+[build-dependencies]
+# The package manifests the launcher's list is read from (#1555)
+toml = { workspace = true }
+
 [dev-dependencies]
+# The music session test writes its stems (tests/music_session.rs)
+hound = { workspace = true }
 # run_headless_frame: every test's egui frame clears its texture updates
 # (#944), whatever features the tests build with.
 flint-debug-ui = { workspace = true }
@@ -143,11 +151,6 @@ flint-audio-worklet = { workspace = true }
 # only where the run's launcher lists it, which a build without `procgen`
 # doesn't.
 flint-procgen = { workspace = true, features = ["player"] }
-
-# build.rs reads the package manifests: which moved package's `PACKAGE`
-# the stock launcher lists, and in what order (#1557).
-[build-dependencies]
-toml = { workspace = true }
 
 # The hitch log's marks on a sampler's ETW timeline (#1250,
 # player_app/sampler_marks.rs)

@@ -15,13 +15,6 @@
 //! was built from, not the repository it happens to run in. See
 //! `src/provenance.rs`.
 //!
-//! And writes the stock launcher's list of the packages whose Rust has
-//! moved into `packages/<name>/crates/` (#1557, ADR 0137 decision 5):
-//! `$OUT_DIR/moved_packages.rs` ([`moved_packages`]), so `src/` names no
-//! such package. The manifest says where its `PACKAGE` is (`[rust]
-//! player`) and which of this crate's features turn it on (`[build]
-//! features`).
-//!
 //! And links the player's binaries with an 8 MB main-thread stack on
 //! Windows, as flint-cli's build script does `flint` (#990): there
 //! `.cargo/config.toml` is read only by a build run inside the engine's
@@ -29,6 +22,84 @@
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+
+#[path = "launch_list.rs"]
+mod launch_list;
+
+/// `$OUT_DIR/package_list.rs` (#1555, ADR 0137 decision 5): the launcher's
+/// list, so `src/packages.rs` names no moved package.
+///
+/// - `ORDER`: every package's name, in the order packages register.
+/// - `PLAYER_PACKAGES`: the packages this crate has a part of, those whose
+///   `[build] features` are features of this crate, in that order.
+/// - `BUILT`: each of those features, and whether this build has it on.
+/// - `moved()`: the player part (`<crate>::player::PACKAGE`) of each
+///   package whose manifest names `[rust] player`, when this build has it.
+#[allow(clippy::disallowed_methods)] // a build script reads the host's disk
+fn package_list(engine: &Path) {
+    let manifests = launch_list::in_order(launch_list::read(engine));
+    launch_list::watch(&manifests);
+    let own: toml::Table = std::fs::read_to_string(engine.join("crates/flint-player/Cargo.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let features = own
+        .get("features")
+        .and_then(|f| f.as_table())
+        .cloned()
+        .unwrap_or_default();
+    let ours = |m: &launch_list::Manifest| {
+        !m.features.is_empty() && m.features.iter().all(|f| features.contains_key(f))
+    };
+    let mut out = String::new();
+    let names = |list: Vec<&str>| {
+        list.iter()
+            .map(|n| format!("{n:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    writeln!(
+        out,
+        "pub const ORDER: &[&str] = &[{}];",
+        names(manifests.iter().map(|m| m.name.as_str()).collect())
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "pub const PLAYER_PACKAGES: &[&str] = &[{}];",
+        names(
+            manifests
+                .iter()
+                .filter(|m| ours(m))
+                .map(|m| m.name.as_str())
+                .collect()
+        )
+    )
+    .unwrap();
+    let mut built: Vec<&str> = manifests
+        .iter()
+        .filter(|m| ours(m))
+        .flat_map(|m| m.features.iter().map(String::as_str))
+        .collect();
+    built.dedup();
+    writeln!(out, "pub const BUILT: &[(&str, bool)] = &[").unwrap();
+    for feature in built {
+        let on = launch_list::built(&[feature.to_string()]);
+        writeln!(out, "    ({feature:?}, {on}),").unwrap();
+    }
+    writeln!(out, "];").unwrap();
+    writeln!(
+        out,
+        "pub fn moved() -> Vec<&'static dyn flint_package::Package> {{\n    vec!["
+    )
+    .unwrap();
+    for krate in launch_list::players(&manifests) {
+        writeln!(out, "        &::{krate}::player::PACKAGE,").unwrap();
+    }
+    writeln!(out, "    ]\n}}").unwrap();
+    let dest = Path::new(&std::env::var("OUT_DIR").unwrap()).join("package_list.rs");
+    std::fs::write(dest, out).unwrap();
+}
 
 // A build script runs on the host at compile time, never in the browser, so
 // the vfs rule on file reads (the root clippy.toml, #97) doesn't apply.
@@ -78,131 +149,10 @@ fn main() {
     }
     let dest = Path::new(&std::env::var("OUT_DIR").unwrap()).join("engine_schemas.rs");
     std::fs::write(dest, out).unwrap();
+    package_list(&engine);
     commit();
     profile();
     main_thread_stack();
-    moved_packages(&packages);
-}
-
-/// `$OUT_DIR/moved_packages.rs` (#1557), from every `packages/*/package.toml`:
-///
-/// - `moved() -> Vec<&'static dyn Package>`: the `PACKAGE` of each manifest
-///   with a `[rust] player` whose `[build] features` this build has on
-///   (`CARGO_FEATURE_*`): the stock launcher's share of the moved packages;
-/// - `ORDER`: every package by name, each after what it `[requires]`, the
-///   order `packages::stock()` lists in;
-/// - `FEATURES`: each feature a manifest's `[build]` names that this
-///   crate's Cargo.toml declares, and whether this build has it on.
-///
-/// A manifest that doesn't parse is skipped here: `flint package list`
-/// and the packages tests are where it is said.
-#[allow(clippy::disallowed_methods)] // a build script, on the host: not the vfs's
-fn moved_packages(packages: &Path) {
-    let mut manifests: Vec<(String, toml::Table)> = std::fs::read_dir(packages)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| entry.path().join("package.toml"))
-        .filter(|file| file.is_file())
-        .filter_map(|file| {
-            println!("cargo:rerun-if-changed={}", file.display());
-            let table: toml::Table = std::fs::read_to_string(&file).ok()?.parse().ok()?;
-            let name = table.get("package")?.get("name")?.as_str()?.to_string();
-            Some((name, table))
-        })
-        .collect();
-    manifests.sort_by(|a, b| a.0.cmp(&b.0));
-    let strings = |table: &toml::Table, at: &str, key: &str| -> Vec<String> {
-        table
-            .get(at)
-            .and_then(|t| t.get(key))
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let on = |feature: &str| {
-        let var = format!("CARGO_FEATURE_{}", feature.to_uppercase().replace('-', "_"));
-        std::env::var_os(var).is_some()
-    };
-    let declared: toml::Table =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
-            .ok()
-            .and_then(|t| t.parse::<toml::Table>().ok())
-            .and_then(|t| t.get("features")?.as_table().cloned())
-            .unwrap_or_default();
-
-    let mut code = String::new();
-    let moved: Vec<&str> = manifests
-        .iter()
-        .filter(|(_, table)| table.get("rust").and_then(|r| r.get("player")).is_some())
-        .map(|(name, _)| name.as_str())
-        .collect();
-    code.push_str("/// The packages whose `PACKAGE` is a crate of theirs (`[rust] player`),\n");
-    code.push_str("/// in any build: what a player can lack beside its own parts.\n");
-    writeln!(code, "pub(crate) const MOVED: &[&str] = &{moved:?};").unwrap();
-    code.push_str("/// The moved packages' `PACKAGE`s this build has (#1557).\n");
-    code.push_str("#[allow(clippy::vec_init_then_push, unused_mut)]\n");
-    code.push_str("pub(crate) fn moved() -> Vec<&'static dyn flint_package::Package> {\n");
-    code.push_str("    let mut list: Vec<&'static dyn flint_package::Package> = Vec::new();\n");
-    for (_, table) in &manifests {
-        let Some(player) = table
-            .get("rust")
-            .and_then(|r| r.get("player"))
-            .and_then(|p| p.as_str())
-        else {
-            continue;
-        };
-        let krate = player.split('/').next().unwrap_or(player).replace('-', "_");
-        let features = strings(table, "build", "features");
-        if !features.is_empty() && features.iter().all(|f| on(f)) {
-            writeln!(code, "    list.push(&{krate}::PACKAGE);").unwrap();
-        }
-    }
-    code.push_str("    list\n}\n");
-
-    // Each after what it requires, ties by name: the first by name whose
-    // requirements are all placed, a round at a time (a cycle, which the
-    // manifests' own check refuses, ends the walk)
-    let mut order: Vec<String> = Vec::new();
-    while order.len() < manifests.len() {
-        let next = manifests.iter().find(|(name, table)| {
-            !order.contains(name)
-                && table
-                    .get("requires")
-                    .and_then(|r| r.as_table())
-                    .is_none_or(|r| {
-                        r.keys()
-                            .all(|k| order.contains(k) || !manifests.iter().any(|(n, _)| n == k))
-                    })
-        });
-        match next {
-            Some((name, _)) => order.push(name.clone()),
-            None => break,
-        }
-    }
-    code.push_str("/// Every package by name, each after what it `[requires]`.\n");
-    writeln!(code, "pub(crate) const ORDER: &[&str] = &{order:?};").unwrap();
-
-    let mut features: Vec<String> = manifests
-        .iter()
-        .flat_map(|(_, table)| strings(table, "build", "features"))
-        .filter(|f| declared.contains_key(f))
-        .collect();
-    features.sort();
-    features.dedup();
-    code.push_str("/// The manifests' `[build]` features this crate declares, each with\n");
-    code.push_str("/// whether this build turns it on.\n");
-    code.push_str("#[allow(dead_code)]\npub(crate) const FEATURES: &[(&str, bool)] = &[\n");
-    for feature in &features {
-        writeln!(code, "    ({feature:?}, {}),", on(feature)).unwrap();
-    }
-    code.push_str("];\n");
-    let dest = Path::new(&std::env::var("OUT_DIR").unwrap()).join("moved_packages.rs");
-    std::fs::write(dest, code).unwrap();
 }
 
 /// `ENGINE_BUILD_PROFILE`: the Cargo profile this crate was built under

@@ -70,8 +70,8 @@ into its 480-sample ramp; two renders bit-identical.
 - Vault: "Star Child Phase 1 - The Clock That Refuses to Speak Music"
   (2026-08-15); "Starchild Phase 3 - Where the Signal Actually Lives"
   (2026-08-15)
-- Code now: `crates/flint-music/src/offline.rs` (`render_offline`,
-  `render_offline_with`), `crates/flint-music/src/analysis.rs`,
+- Code now: `packages/music/crates/flint-music/src/offline.rs` (`render_offline`,
+  `render_offline_with`), `packages/music/crates/flint-music/src/analysis.rs`,
   `crates/flint-cli/src/commands/render_suite.rs`,
   `crates/flint-cli/src/commands/replay_chart.rs`,
   [Music CLI](../book/src/cli-reference/music.md)
