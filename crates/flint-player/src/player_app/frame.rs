@@ -131,7 +131,10 @@ impl PlayerApp {
         // back through `PanelHost`.
         #[cfg(feature = "debug-hud")]
         {
-            flint_core::scope!("sync_debug_panels", self.debug_panels.len());
+            flint_core::scope!(
+                "sync_debug_panels",
+                super::debug_panels::panels_of(&self.core.resources).len()
+            );
             let mut host = flint_debug_ui::PanelHost {
                 particles_render: self.particles_render_enabled,
                 ..Default::default()
@@ -144,7 +147,7 @@ impl PlayerApp {
                 particles: &mut self.core.particles.sync,
                 host: &mut host,
             };
-            for panel in &mut self.debug_panels {
+            for panel in super::debug_panels::panels_mut_of(&mut self.core.resources).iter_mut() {
                 panel.sync(&mut ctx);
             }
             if let Some(freeze) = host.freeze_scripts {
@@ -158,7 +161,10 @@ impl PlayerApp {
             // (#364): the scene's authored settings after it, for the other
             // editor too
             if let Some(authored) = host.committed_styles {
-                super::debug_panels::set_panels_authored_styles(&mut self.debug_panels, &authored);
+                super::debug_panels::set_panels_authored_styles(
+                    super::debug_panels::panels_mut_of(&mut self.core.resources),
+                    &authored,
+                );
             }
         }
 
@@ -236,8 +242,7 @@ impl PlayerApp {
                 renderer: &mut *renderer,
                 world: &self.core.world,
                 camera: &self.camera,
-                #[cfg(feature = "living")]
-                living: &mut self.core.living_props,
+                resources: &mut self.core.resources,
             };
             self.core.subsystems.post_encode(&mut ctx);
         }
@@ -849,7 +854,7 @@ impl PlayerApp {
         // panel is open — the panel needs the mouse).
         if let Some(capture) = self.core.script_requests.cursor_captured.take() {
             #[cfg(feature = "debug-hud")]
-            let panel_open = self.debug_panels.iter().any(|p| p.is_open());
+            let panel_open = self.debug_panels().iter().any(|p| p.is_open());
             #[cfg(not(feature = "debug-hud"))]
             let panel_open = false;
             if capture && !panel_open && !self.focus.cursor_captured {
@@ -1106,7 +1111,8 @@ impl PlayerApp {
         let mut extensions = std::mem::take(&mut self.extensions);
         let mut subsystems = std::mem::take(&mut self.core.subsystems);
         #[cfg(feature = "debug-hud")]
-        let mut debug_panels = std::mem::take(&mut self.debug_panels);
+        let mut debug_panels =
+            std::mem::take(super::debug_panels::panels_mut_of(&mut self.core.resources));
         #[cfg(all(feature = "debug-hud", feature = "living"))]
         let view_proj = self.camera.view_projection_matrix();
         let ui_textures = &self.hud.textures;
@@ -1267,7 +1273,7 @@ impl PlayerApp {
 
                 // The subsystems' own (which preset is where, while two living
                 // props presets are compared, #238)
-                subsystems.ui(ctx);
+                subsystems.ui(ui);
 
                 // The pose overlay (#218) and a picked tree's marks and window
                 // (#248), in the world and under every panel.
@@ -1347,7 +1353,7 @@ impl PlayerApp {
         self.core.subsystems = subsystems;
         #[cfg(feature = "debug-hud")]
         {
-            self.debug_panels = debug_panels;
+            *super::debug_panels::panels_mut_of(&mut self.core.resources) = debug_panels;
         }
         // Fonts exist from here on; measure_text may now lay text out for real.
         self.hud
@@ -1473,7 +1479,7 @@ impl PlayerApp {
         let time = self.core.clock.total_time;
         let camera_pos = self.camera.position_array();
         let forward = self.camera.forward_vector();
-        for panel in &mut self.debug_panels {
+        for panel in super::debug_panels::panels_mut_of(&mut self.core.resources).iter_mut() {
             if panel.name() != "Ocean Debug" {
                 continue;
             }
@@ -1513,14 +1519,12 @@ impl super::game_core::FrameHost for PlayerApp {
                 cursor_captured: self.focus.cursor_captured,
                 scene_file_writable: self.launch.scene_file_writable,
                 note: &mut self.hud.key_note,
-                #[cfg(feature = "debug-hud")]
-                panels: &mut self.debug_panels,
                 audio: Some(&mut self.audio.engine),
-                pads: Some(super::subsystem::Pads {
-                    gilrs: &mut self.gilrs,
-                    rumble: &mut self.pad_rumble,
-                    lent: &mut self.pads_lent,
-                }),
+                pads: Some(super::subsystem::Pads::new(
+                    &mut self.gilrs,
+                    &mut self.pad_rumble,
+                    &mut self.pads_lent,
+                )),
                 quit: Some(&mut self.outcome.exit_requested),
             },
         )

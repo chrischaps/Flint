@@ -95,6 +95,8 @@ flint-render = { workspace = true }
 flint-pixels = { workspace = true }
 flint-runtime = { workspace = true, features = ["egui"] }
 flint-physics = { workspace = true }
+# The Package API (ADR 0137, #1550): the subsystem trait and its contexts
+flint-package = { workspace = true }
 flint-import = { workspace = true }
 flint-audio = { workspace = true }
 flint-music = { workspace = true, optional = true }

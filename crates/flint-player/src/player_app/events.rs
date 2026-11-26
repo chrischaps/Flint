@@ -557,9 +557,7 @@ impl ApplicationHandler for PlayerApp {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                if !self
-                    .subsystems_take_input(super::subsystem::PlayerInput::Click { state, button })
-                {
+                if !self.subsystems_take_input(super::subsystem::click_of(state, button)) {
                     self.handle_mouse_input(state, button);
                 }
             }
@@ -895,7 +893,7 @@ impl PlayerApp {
     /// interactive UI on screen, an open debug panel or an extension's ui().
     fn egui_sees_input(&self) -> bool {
         #[cfg(feature = "debug-hud")]
-        let any_panel_open = self.debug_panels.iter().any(|p| p.is_open());
+        let any_panel_open = self.debug_panels().iter().any(|p| p.is_open());
         #[cfg(not(feature = "debug-hud"))]
         let any_panel_open = false;
         any_panel_open || !self.extensions.is_empty()
@@ -1034,9 +1032,7 @@ impl PlayerApp {
         }
         match event {
             WindowEvent::MouseInput { state, button, .. } => {
-                if !self
-                    .subsystems_take_input(super::subsystem::PlayerInput::Click { state, button })
-                {
+                if !self.subsystems_take_input(super::subsystem::click_of(state, button)) {
                     self.handle_mouse_input(state, button);
                 }
             }
@@ -1082,7 +1078,7 @@ impl PlayerApp {
             && button == MouseButton::Left
         {
             #[cfg(feature = "debug-hud")]
-            let panel_open = self.debug_panels.iter().any(|p| p.is_open());
+            let panel_open = self.debug_panels().iter().any(|p| p.is_open());
             #[cfg(not(feature = "debug-hud"))]
             let panel_open = false;
             if !panel_open {

@@ -200,7 +200,7 @@ impl PlayerApp {
         // adds (their clocks and field are the living subsystem's)
         #[cfg(feature = "living")]
         self.core
-            .living_props
+            .living_props_mut()
             .set_defaults(super::living_props::defaults_of(self.scene.living.as_ref()));
 
         // Procgen before the model loader: catalog > procgen > file (#32).
@@ -342,7 +342,7 @@ impl PlayerApp {
                 info.terrain_entity_name,
             )
             .with_component(info.component);
-            self.debug_panels.push(Box::new(panel));
+            self.debug_panels_mut().push(Box::new(panel));
         }
         self.create_ocean_debug_panel();
         // A game's controllers, from their schemas (#744)

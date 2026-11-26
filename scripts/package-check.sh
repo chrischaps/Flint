@@ -18,7 +18,8 @@
 # it with no edit here. For each configuration it
 #
 #   1. reads `cargo tree` and fails if a left-out package's crates
-#      (`[provides] crates`) are linked, naming who pulls each;
+#      (`[provides] crates`) are linked, naming who pulls each (and, once,
+#      that the Package API crate, flint-package, links none at all);
 #   2. with --build, runs `cargo check` (tests and examples included), all
 #      configurations in the one target dir, and fails naming each that
 #      didn't compile.
@@ -216,6 +217,29 @@ for bin in flint-player flint-cli; do
     done
     unset done_sets
 done
+
+# --- the Package API ------------------------------------------------------
+
+# flint-package (ADR 0137, #1550) is what a package's crate builds against:
+# it may link no package's crate, nor flint-player or flint-cli, or a package
+# depending on it would make a cycle Cargo refuses. Dev-dependencies count.
+api_tree=$(cargo tree -q -p flint-package -e normal,build,dev --prefix none | cut -d' ' -f1 | sort -u)
+api_bad=()
+for p in "${PACKAGES[@]}"; do
+    for c in ${CRATES[$p]}; do
+        printf '%s\n' "$api_tree" | grep -qx "$c" && api_bad+=("$c ($p)")
+    done
+done
+for c in flint-player flint-cli; do
+    printf '%s\n' "$api_tree" | grep -qx "$c" && api_bad+=("$c")
+done
+if [ ${#api_bad[@]} -gt 0 ]; then
+    echo "FAIL flint-package links ${api_bad[*]}; who pulls each: cargo tree -p flint-package -e normal,build,dev -i <crate>" >&2
+    FAILURES+=("flint-package (the Package API): links ${api_bad[*]}")
+    annotate "flint-package links ${api_bad[*]} (cargo tree -p flint-package)"
+else
+    echo "-- flint-package: tree ok, no package's crate and no binary"
+fi
 
 echo
 printf '%-12s %-9s %-38s %-5s %-5s %6s\n' binary config packages tree check crates

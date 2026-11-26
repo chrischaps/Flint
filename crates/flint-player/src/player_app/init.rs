@@ -141,8 +141,15 @@ impl PlayerApp {
         // Before the file source may be final (the web installs its bundle
         // later): `refresh_project` asks again when the scene loads.
         let project = flint_core::project::Project::for_scene(Path::new(&scene_path));
+        #[allow(unused_mut)] // the panels go in only with the debug HUD
+        let mut core = super::GameCore::new(world, scene_path, project);
+        // The F3/F4 panels, lent to every subsystem through its context's
+        // resources (ADR 0137, #1550): a capture has none
+        #[cfg(feature = "debug-hud")]
+        core.resources
+            .insert(flint_debug_ui::DebugPanels::default());
         Self {
-            core: super::GameCore::new(world, scene_path, project),
+            core,
             input: InputState::new(),
             audio,
             launch: LaunchOptions {
@@ -184,8 +191,6 @@ impl PlayerApp {
             schemas: Default::default(),
             terrain: None,
             scene_binding: None,
-            #[cfg(feature = "debug-hud")]
-            debug_panels: Vec::new(),
             particles_render_enabled: true,
             stats: Default::default(),
             loaded_chunks: HashMap::new(),
@@ -212,7 +217,7 @@ impl PlayerApp {
         extension.register_script_api(self.core.script.rhai_engine_mut());
         extension.declare_script_api(&mut self.core.script.script_api());
         #[cfg(feature = "procgen")]
-        extension.register_generators(self.core.procgen_resolver.registry_mut());
+        extension.register_generators(self.core.procgen_resolver_mut().registry_mut());
         // The game's own script modules (#754): declared, and enabled for
         // the run beside whatever the scene's subsystems enable
         for module in extension.script_modules() {
@@ -250,8 +255,8 @@ impl PlayerApp {
     /// ones extensions registered alike (#195).
     #[cfg(feature = "procgen")]
     pub(super) fn use_procgen_disk(&mut self, disk: flint_procgen::DiskCacheConfig) {
-        let registry = std::mem::take(self.core.procgen_resolver.registry_mut());
-        self.core.procgen_resolver = flint_procgen::ProcGenResolver::with_registry(
+        let registry = std::mem::take(self.core.procgen_resolver_mut().registry_mut());
+        *self.core.procgen_resolver_mut() = flint_procgen::ProcGenResolver::with_registry(
             flint_procgen::ProcGenCacheConfig {
                 disk: Some(disk),
                 ..Default::default()
@@ -852,7 +857,7 @@ impl PlayerApp {
     /// for the run, transitions included.
     #[cfg(feature = "procgen")]
     fn init_procgen_disk_cache(&mut self) {
-        if self.core.procgen_resolver.disk_stats().is_some() {
+        if self.core.procgen_resolver().disk_stats().is_some() {
             return;
         }
         let scene_dir = self.scene_dir();

@@ -21,11 +21,11 @@
 //! player.add_extension(Box::new(MyGame { .. }));
 //! ```
 
-pub use crate::player_app::subsystem::Stage;
 use flint_audio::{AudioSystem, Bus};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
+pub use flint_package::Stage;
 use flint_render::{Camera, GrassGround, SceneRenderer, Vertex};
 use flint_runtime::{GameClock, GameEvent, InputState, PersistentStore};
 use winit::event::{ElementState, WindowEvent};

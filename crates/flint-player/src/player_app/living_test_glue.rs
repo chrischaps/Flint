@@ -204,7 +204,12 @@ impl PlayerApp {
     ) -> bool {
         self.with_living(|living, ctx| {
             let _ = &ctx;
-            living.living_takes_click(ctx, state, button)
+            let flint_package::PlayerInput::Click { button, pressed } =
+                crate::player_app::subsystem::click_of(state, button)
+            else {
+                unreachable!("a click is a click")
+            };
+            living.living_takes_click(ctx, button, pressed)
         })
     }
 

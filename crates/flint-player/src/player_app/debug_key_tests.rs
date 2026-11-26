@@ -68,7 +68,7 @@ fn scripted_f2_steps_the_stats_overlay() {
 fn f3_and_f4_with_nothing_to_toggle_say_so_on_screen() {
     let mut app = with_script("0 tap F3\n0.25 tap F4\n");
     app.core.clock.frame_step = Some(0.25);
-    assert!(app.debug_panels.is_empty(), "a scene with no panels");
+    assert!(app.debug_panels().is_empty(), "a scene with no panels");
     assert!(app.hud.key_note.showing().is_none());
     app.tick();
     assert_eq!(

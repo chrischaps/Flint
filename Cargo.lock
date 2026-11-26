@@ -1919,6 +1919,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-package"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "flint-audio",
+ "flint-core",
+ "flint-ecs",
+ "flint-render",
+ "flint-runtime",
+ "flint-script",
+ "toml",
+ "tracing",
+ "wgpu",
+]
+
+[[package]]
 name = "flint-particles"
 version = "0.1.0"
 dependencies = [
@@ -1978,6 +1994,7 @@ dependencies = [
  "flint-input-capture",
  "flint-living",
  "flint-music",
+ "flint-package",
  "flint-particles",
  "flint-physics",
  "flint-pixels",

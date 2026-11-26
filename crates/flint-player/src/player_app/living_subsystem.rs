@@ -3,18 +3,93 @@
 //! boil's beats, shallow wooze and woozy grass, the hand tuning and the A/B
 //! comparison, in one place a scene without them never runs.
 //!
-//! The props themselves stay in the procgen resolver, which makes their poses
-//! on its frame budget from its generators and specs; every hook is lent it
-//! (`StageCtx::resolver`). The tuning and A/B code is `impl LivingSubsystem`
+//! The props themselves are a run resource (`flint_living::LivingProps` in
+//! `GameCore::resources`, ADR 0137 decision 2, #1550), posed by the procgen
+//! resolver beside them on its frame budget from its generators and specs;
+//! every hook reaches both through its context's `resources` ([`props`],
+//! [`props_and_resolver`]). The tuning and A/B code is `impl LivingSubsystem`
 //! in `living_tuning.rs` and `living_ab.rs`.
 
 use super::living_props;
 use super::subsystem::{
     EncodeCtx, ExitReport, FrameCtx, PlayerInput, ReportCtx, SceneCtx, Stage, StageCtx, Subsystem,
 };
+use flint_package::{Button, Resources};
 use flint_render::FrameInputs;
 use flint_script::context::ScriptCommand;
 use flint_wooze::shallow::{self as shallow_wooze, GrassWooze, ShallowWooze};
+
+/// The scene's living props, in the run's resources (#1550).
+pub(crate) fn props(resources: &Resources) -> &flint_living::LivingProps {
+    resources
+        .get()
+        .expect("GameCore::new puts the living props in")
+}
+
+pub(crate) fn props_mut(resources: &mut Resources) -> &mut flint_living::LivingProps {
+    resources
+        .get_mut()
+        .expect("GameCore::new puts the living props in")
+}
+
+/// The props and the procgen resolver that poses them, at once.
+pub(crate) fn props_and_resolver(
+    resources: &mut Resources,
+) -> (
+    &mut flint_living::LivingProps,
+    &mut flint_procgen::ProcGenResolver,
+) {
+    resources
+        .get_two_mut()
+        .expect("GameCore::new puts the living props and the procgen resolver in")
+}
+
+/// What the living builder reads of the player's scene settings and launch,
+/// lent through the resources while a scene's subsystems are built and
+/// taken back at its unload (#1550; living reads its own tables and flags
+/// once it is a package, #1558).
+#[derive(Default)]
+pub(crate) struct LivingStart {
+    /// The scene's `[wooze]` (its preset filled in) and whether it has a
+    /// `[living]`.
+    wooze: Option<flint_procgen::WoozeDef>,
+    living: bool,
+    /// `--compare`'s presets, which outlive the scene, and whether to start
+    /// comparing once a scene has props.
+    compare: Option<(String, String)>,
+    compare_at_start: Option<bool>,
+}
+
+/// A capture's wooze field (the scene's `[wooze]` with any sweep's knobs
+/// over it), which the living builder takes in a capture (#1252).
+pub(crate) struct CaptureWooze(pub(crate) Option<flint_wooze::WoozeField>);
+
+impl super::PlayerApp {
+    /// Lend the living builder the scene's settings and the launch.
+    pub(super) fn lend_living_start(&mut self) {
+        self.core.resources.insert(LivingStart {
+            wooze: self.scene.wooze.clone(),
+            living: self.scene.living.is_some(),
+            compare: self.launch.compare.clone(),
+            compare_at_start: self.launch.compare_at_start.take(),
+        });
+    }
+
+    /// What the living subsystem kept of the launch goes back to it, for
+    /// the next scene: the panel's picks, and a comparison asked for at
+    /// start that no scene had props for yet.
+    pub(super) fn take_back_living_start(&mut self) {
+        let Some(start) = self.core.resources.remove::<LivingStart>() else {
+            return;
+        };
+        if start.compare.is_some() {
+            self.launch.compare = start.compare;
+        }
+        if start.compare_at_start.is_some() {
+            self.launch.compare_at_start = start.compare_at_start;
+        }
+    }
+}
 
 /// Living props' and the wooze field's state for one scene.
 #[derive(Default)]
@@ -72,16 +147,16 @@ impl LivingSubsystem {
     pub(crate) fn living_takes_click(
         &mut self,
         ctx: &mut StageCtx,
-        state: winit::event::ElementState,
-        button: winit::event::MouseButton,
+        button: Button,
+        pressed: bool,
     ) -> bool {
         #[cfg(feature = "debug-hud")]
         {
-            if button != winit::event::MouseButton::Left {
+            if button != Button::Left {
                 return false;
             }
-            match state {
-                winit::event::ElementState::Pressed => {
+            match pressed {
+                true => {
                     if !self.living_wants_clicks(ctx) {
                         return false;
                     }
@@ -91,12 +166,12 @@ impl LivingSubsystem {
                     self.tune.click_held = took;
                     took
                 }
-                winit::event::ElementState::Released => std::mem::take(&mut self.tune.click_held),
+                false => std::mem::take(&mut self.tune.click_held),
             }
         }
         #[cfg(not(feature = "debug-hud"))]
         {
-            let _ = (ctx, state, button);
+            let _ = (ctx, button, pressed);
             false
         }
     }
@@ -118,10 +193,17 @@ impl LivingSubsystem {
     /// that asks to wooze. A scene that asks for shallow wooze or woozy grass
     /// with no field to drive it is told so, once, here.
     pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
-        if let Some(capture) = ctx.capture.as_deref_mut() {
-            return Self::in_capture(ctx.living, ctx.resolver, ctx.script, capture);
+        if let Some(capture) = ctx.capture {
+            let wooze = ctx
+                .resources
+                .get_mut::<CaptureWooze>()
+                .and_then(|wooze| wooze.0.take());
+            let (props, resolver) = props_and_resolver(ctx.resources);
+            return Self::in_capture(props, resolver, ctx.script, capture, wooze);
         }
-        let wooze = living_props::field_of(ctx.scene.wooze.as_ref());
+        let start = ctx.resources.get_or_insert_with(LivingStart::default);
+        let wooze = living_props::field_of(start.wooze.as_ref());
+        let has_living = start.living;
         let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
         shallow_wooze::warn_without_a_field(ctx.world, wooze.as_ref());
         shallow_wooze::warn_grass_without_a_field(
@@ -133,8 +215,8 @@ impl LivingSubsystem {
             .world
             .entities_with_component(flint_wooze::components::SHALLOW_WOOZE)
             .is_empty();
-        let used = !ctx.living.is_empty()
-            || ctx.scene.living.is_some()
+        let used = !props(ctx.resources).is_empty()
+            || has_living
             || wooze.is_some()
             || shallow
             || woozy_grass;
@@ -148,8 +230,9 @@ impl LivingSubsystem {
         };
         // What --compare asked for, before any scene was: which presets, and
         // whether to start comparing; the picks outlive the scene
-        living.tune.ab_picks = ctx.launch.compare.clone();
-        living.tune.compare_at_start = ctx.launch.compare_at_start.take();
+        let start = ctx.resources.get_or_insert_with(LivingStart::default);
+        living.tune.ab_picks = start.compare.clone();
+        living.tune.compare_at_start = start.compare_at_start.take();
         // The scripts' on_init reads the field at the scene's first moment
         living.publish_reading(ctx.script, 0.0);
         Some(Box::new(living))
@@ -184,9 +267,9 @@ impl LivingSubsystem {
         props: &mut flint_living::LivingProps,
         resolver: &flint_procgen::ProcGenResolver,
         script: &mut flint_script::ScriptSystem,
-        capture: &mut super::headless_game::CaptureStart,
+        capture: &flint_package::Capture,
+        wooze: Option<flint_wooze::WoozeField>,
     ) -> Option<Box<dyn Subsystem>> {
-        let wooze = capture.wooze.take();
         if props.is_empty() && wooze.is_none() {
             return None;
         }
@@ -213,7 +296,7 @@ impl LivingSubsystem {
         if self.wooze.is_some() {
             self.wooze_time += living_dt;
             let world = &*ctx.world;
-            ctx.living.track_positions(|entity| {
+            props_mut(ctx.resources).track_positions(|entity| {
                 world.get_world_position(entity).map(|p| [p.x, p.y, p.z])
             });
         }
@@ -224,8 +307,14 @@ impl LivingSubsystem {
         }
         let wooze = self.wooze.as_ref().map(|field| (field, self.wooze_time));
         let lineages = match self.capture {
-            Some(_) => ctx.living.step_now(ctx.resolver, living_dt, wooze),
-            None => ctx.living.process(ctx.resolver, living_dt, wooze),
+            Some(_) => {
+                let (living, resolver) = props_and_resolver(ctx.resources);
+                living.step_now(resolver, living_dt, wooze)
+            }
+            None => {
+                let (living, resolver) = props_and_resolver(ctx.resources);
+                living.process(resolver, living_dt, wooze)
+            }
         };
         let shallow = self.capture.is_none_or(|c| c.shallow);
         // Hand-made meshes read the same field on the same dt (#215); the
@@ -266,7 +355,13 @@ impl LivingSubsystem {
             return;
         }
         if let (Some(renderer), Some((device, queue))) = (ctx.renderer.as_deref_mut(), ctx.gpu) {
-            living_props::upload_blends(ctx.living, &mut self.blend, renderer, device, queue);
+            living_props::upload_blends(
+                props_mut(ctx.resources),
+                &mut self.blend,
+                renderer,
+                device,
+                queue,
+            );
         }
         // The other side of an A/B (#238), on the same dt, after the scene's own.
         self.tick_hidden_side(ctx, living_dt);
@@ -286,7 +381,7 @@ impl LivingSubsystem {
     /// The `--exit-after` lines: whether the rings stayed full and within
     /// budget. Silent with no props.
     fn report(&self, ctx: &ReportCtx, out: &mut ExitReport) {
-        let props = &*ctx.living;
+        let props = props(ctx.resources);
         if props.is_empty() {
             return;
         }
@@ -301,7 +396,7 @@ impl LivingSubsystem {
             props.props().len(),
             props.lineage_count(),
             ring,
-            ctx.resolver.frame_budget_ms(),
+            super::game_core::resolver_of(ctx.resources).frame_budget_ms(),
         ) {
             out.line(line);
         }
@@ -519,7 +614,7 @@ impl Subsystem for LivingSubsystem {
 
     fn on_input(&mut self, input: PlayerInput, ctx: &mut StageCtx) -> bool {
         match input {
-            PlayerInput::Click { state, button } => self.living_takes_click(ctx, state, button),
+            PlayerInput::Click { button, pressed } => self.living_takes_click(ctx, button, pressed),
             PlayerInput::Escape => self.living_let_go(ctx),
         }
     }
@@ -561,7 +656,7 @@ impl Subsystem for LivingSubsystem {
         super::living_ab::draw_other_side(
             super::living_ab::OtherSide {
                 ab,
-                living: ctx.living,
+                living: props_mut(ctx.resources),
                 blend: &mut self.blend,
                 world: ctx.world,
                 camera: ctx.camera,
@@ -577,23 +672,24 @@ impl Subsystem for LivingSubsystem {
         );
     }
 
-    fn ui(&mut self, egui: &egui::Context) {
+    fn ui(&mut self, ui: &mut egui::Ui) {
         // Which preset is where, while two are compared (#238).
         if let Some(ab) = self.living_ab_state() {
-            super::living_ab::paint_labels(egui, &ab);
+            super::living_ab::paint_labels(ui.ctx(), &ab);
         }
     }
 
     fn scene_unloading(&mut self, ctx: &mut SceneCtx) {
         // The panel's picks outlive the scene, as --compare's do
+        let start = ctx.resources.get_or_insert_with(LivingStart::default);
         if let Some(picks) = &self.tune.ab_picks {
-            ctx.launch.compare = Some(picks.clone());
+            start.compare = Some(picks.clone());
         }
         // ...and a comparison asked for at start that no scene had props for yet
         if let Some(split) = self.tune.compare_at_start.take() {
-            ctx.launch.compare_at_start = Some(split);
+            start.compare_at_start = Some(split);
         }
-        ctx.living.clear_props();
+        props_mut(ctx.resources).clear_props();
     }
 
     fn exit_report(&self, ctx: &ReportCtx, report: &mut ExitReport) {
@@ -641,7 +737,7 @@ impl super::headless_game::HeadlessGame {
         let core = &mut self.core;
         if let Some(living) = core.subsystems.find_mut::<LivingSubsystem>() {
             living_props::upload_blends(
-                &mut core.living_props,
+                props_mut(&mut core.resources),
                 &mut living.blend,
                 renderer,
                 device,

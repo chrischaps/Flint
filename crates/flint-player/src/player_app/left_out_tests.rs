@@ -198,7 +198,7 @@ fn a_build_with_living_runs_none_of_it_where_the_project_leaves_it_out() {
         assert_eq!(living_enabled(&app), Some(false));
         assert!(!app.core.subsystems.names().contains(&"living"));
         assert!(!app.core.script.enabled_modules().contains(&"living"));
-        assert!(app.core.living_props.is_empty(), "no prop grows");
+        assert!(app.core.living_props().is_empty(), "no prop grows");
         let lines: Vec<&str> = log
             .lines()
             .map(str::trim)

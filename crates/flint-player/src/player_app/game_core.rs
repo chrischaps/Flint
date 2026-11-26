@@ -75,18 +75,18 @@ pub struct GameCore {
     /// The renderer's config generation the scripts' style reader was
     /// last made from (#372).
     pub(crate) style_reader_generation: Option<u64>,
-    /// The procgen resolver: the scene's specs and generators, and the
-    /// frame budget its queue lends the living props.
-    #[cfg(feature = "procgen")]
-    pub(crate) procgen_resolver: ProcGenResolver,
+    /// The run's resources (ADR 0137 decision 2, #1550): what one package
+    /// lends another, which every subsystem context lends. With `procgen`,
+    /// the procgen resolver (the scene's specs and generators, and the frame
+    /// budget its queue lends the living props: [`Self::procgen_resolver`]);
+    /// with `living`, the scene's living props (flint-living, #1024: added
+    /// at load, before the living subsystem exists, and kept across scenes
+    /// for their pose cache: [`Self::living_props`]); in the player with
+    /// `debug-hud`, the F3/F4 panels (`flint_debug_ui::DebugPanels`).
+    pub(crate) resources: flint_package::Resources,
     /// The triangles of procgen and runtime meshes, for the `mesh` and
     /// `convex` colliders that name them (#1222; `collider_meshes.rs`)
     pub(crate) collider_sources: super::collider_meshes::ColliderSources,
-    /// The scene's living props (flint-living, #1024), beside the resolver
-    /// that makes their poses: added at load, before the living subsystem
-    /// exists, and kept across scenes for their pose cache.
-    #[cfg(feature = "living")]
-    pub(crate) living_props: flint_living::LivingProps,
     /// What scripts asked of the frame (#697): the camera, post-processing,
     /// distance levers, cursor and touch, held from the command that asked
     /// to the step of the frame that applies each.
@@ -115,6 +115,12 @@ pub struct GameCore {
 impl GameCore {
     /// A core for `world`, loaded from `scene_path`, with nothing started.
     pub fn new(world: FlintWorld, scene_path: String, project: Project) -> Self {
+        #[allow(unused_mut)] // without procgen nothing goes in
+        let mut resources = flint_package::Resources::new();
+        #[cfg(feature = "procgen")]
+        resources.insert(ProcGenResolver::new());
+        #[cfg(feature = "living")]
+        resources.insert(flint_living::LivingProps::default());
         Self {
             subsystems: Default::default(),
             world,
@@ -132,11 +138,8 @@ impl GameCore {
             style_tweens: Default::default(),
             field_tweens: Default::default(),
             style_reader_generation: None,
-            #[cfg(feature = "procgen")]
-            procgen_resolver: ProcGenResolver::new(),
+            resources,
             collider_sources: Default::default(),
-            #[cfg(feature = "living")]
-            living_props: Default::default(),
             script_requests: Default::default(),
             commands_warned: Default::default(),
             fixed_steps: 0,
@@ -174,6 +177,33 @@ impl GameCore {
         self.script.set_enabled_modules(modules);
     }
 
+    /// The procgen resolver, which [`GameCore::new`] puts in the resources.
+    #[cfg(feature = "procgen")]
+    pub(crate) fn procgen_resolver(&self) -> &ProcGenResolver {
+        resolver_of(&self.resources)
+    }
+
+    #[cfg(feature = "procgen")]
+    pub(crate) fn procgen_resolver_mut(&mut self) -> &mut ProcGenResolver {
+        resolver_mut_of(&mut self.resources)
+    }
+
+    /// The scene's living props, which [`GameCore::new`] puts in the
+    /// resources.
+    #[cfg(feature = "living")]
+    pub(crate) fn living_props(&self) -> &flint_living::LivingProps {
+        self.resources
+            .get()
+            .expect("GameCore::new puts the living props in")
+    }
+
+    #[cfg(feature = "living")]
+    pub(crate) fn living_props_mut(&mut self) -> &mut flint_living::LivingProps {
+        self.resources
+            .get_mut()
+            .expect("GameCore::new puts the living props in")
+    }
+
     /// Whether the project's `[packages]` leaves `package` out (#1528). With
     /// no `[packages]` table nothing is left out.
     #[cfg_attr(not(feature = "living"), allow(dead_code))] // living's gates ask it
@@ -182,6 +212,22 @@ impl GameCore {
             .as_ref()
             .is_some_and(|in_use| !in_use.is_on(package))
     }
+}
+
+/// The procgen resolver in `resources`, for a borrow of the resources field
+/// alone (beside the world, the subsystems).
+#[cfg(feature = "procgen")]
+pub(crate) fn resolver_of(resources: &flint_package::Resources) -> &ProcGenResolver {
+    resources
+        .get()
+        .expect("GameCore::new puts the procgen resolver in")
+}
+
+#[cfg(feature = "procgen")]
+pub(crate) fn resolver_mut_of(resources: &mut flint_package::Resources) -> &mut ProcGenResolver {
+    resources
+        .get_mut()
+        .expect("GameCore::new puts the procgen resolver in")
 }
 
 /// What a host lends the core for a stage of the frame.
@@ -200,8 +246,6 @@ pub(crate) struct Lent<'a> {
     pub scene_file_writable: bool,
     /// What a debug key says when it has nothing to act on (#367).
     pub note: &'a mut super::key_note::KeyNote,
-    #[cfg(feature = "debug-hud")]
-    pub panels: &'a mut Vec<Box<dyn flint_debug_ui::DebugPanel>>,
     /// The sound engine, when the host has one (the music plays on it).
     pub audio: Option<&'a mut flint_audio::engine::AudioEngine>,
     /// The pads, when the host has them.
@@ -497,22 +541,17 @@ impl GameCore {
             policy,
             renderer: lent.renderer,
             gpu: lent.gpu,
-            #[cfg(feature = "procgen")]
-            resolver: &mut self.procgen_resolver,
-            #[cfg(feature = "living")]
-            living: &mut self.living_props,
             project: &self.project,
             scene_path: &self.scene_path,
             scene_file_writable: lent.scene_file_writable,
             pixels_per_point: lent.pixels_per_point,
             cursor_captured: lent.cursor_captured,
             note: lent.note,
-            #[cfg(feature = "debug-hud")]
-            panels: lent.panels,
             requests: &mut self.script_requests,
             audio: lent.audio,
             pads: lent.pads,
             quit: lent.quit,
+            resources: &mut self.resources,
         };
         f(&mut self.subsystems, &mut ctx)
     }
@@ -776,10 +815,9 @@ impl GameCore {
         // A load's procgen stage too (#1092), forgotten when nothing came
         let span =
             flint_core::load_report::span(flint_core::load_report::Stage::Procgen, String::new);
-        let completed = self
-            .procgen_resolver
-            .process_frame(lent.camera.position_array());
-        let failures = self.procgen_resolver.take_failures();
+        let resolver = resolver_mut_of(&mut self.resources);
+        let completed = resolver.process_frame(lent.camera.position_array());
+        let failures = resolver.take_failures();
         if completed.is_empty() && failures.is_empty() {
             span.discard();
             return;

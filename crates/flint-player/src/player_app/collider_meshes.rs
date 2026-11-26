@@ -370,7 +370,7 @@ impl PlayerApp {
         // them quietly rather than warn or read a file in its place
         #[cfg(feature = "procgen")]
         let requests: Vec<(EntityId, String)> = {
-            let resolver = &self.core.procgen_resolver;
+            let resolver = super::game_core::resolver_of(&self.core.resources);
             let physics = &mut self.core.physics;
             requests
                 .iter()

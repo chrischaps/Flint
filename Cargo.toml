@@ -17,6 +17,7 @@ members = [
     "crates/flint-viewer",
     "crates/flint-runtime",
     "crates/flint-physics",
+    "crates/flint-package",
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-audio-worklet",
@@ -59,6 +60,7 @@ default-members = [
     "crates/flint-viewer",
     "crates/flint-runtime",
     "crates/flint-physics",
+    "crates/flint-package",
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-audio-worklet",
@@ -231,6 +233,7 @@ flint-pixels = { path = "crates/flint-pixels" }
 flint-viewer = { path = "crates/flint-viewer", default-features = false }
 flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }
+flint-package = { path = "crates/flint-package" }
 # The crates that open devices take default-features = false here, so a
 # dependent says which devices it wants (#221): `device` (sound) on
 # flint-audio, flint-music and flint-rhythm, `gamepad` on flint-input-capture, and

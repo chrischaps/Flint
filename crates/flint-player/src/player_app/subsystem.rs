@@ -1,23 +1,26 @@
 //! The player's subsystems (ADR 0117 decision 2, #724 step 3): optional
-//! features behind one internal trait, so `PlayerApp` holds a list of them
-//! instead of each one's fields, and a scene that doesn't use a feature runs
-//! no code for it.
+//! features behind one trait, so `PlayerApp` holds a list of them instead of
+//! each one's fields, and a scene that doesn't use a feature runs no code for
+//! it. The trait, [`Stage`] and the contexts are the Package API's
+//! (`flint_package`, ADR 0137, #1550); this file keeps the ordered list
+//! ([`Subsystems`]), the builders and the lending of each context.
 //!
 //! A subsystem hears the scene come and go (`scene_loaded`,
 //! `scene_unloading`), each [`Stage`] of the frame (`update`), the scripts'
 //! commands before the player's own dispatcher (`script_command`), the debug
-//! keys it declares (`debug_keys`, `on_debug_key`), the moment before the
-//! frame is encoded (`pre_render`) and
-//! the end of an `--exit-after` run (`exit_report`). Every hook has a default
-//! that does nothing.
+//! keys it declares (`debug_keys`, `on_debug_key`), a click or an Escape
+//! (`on_input`), the frame's renderer inputs and its encoder (`frame_inputs`,
+//! `post_encode`), the HUD (`ui`) and the end of an `--exit-after` run
+//! (`exit_report`). Every hook has a default that does nothing.
 //!
 //! **Borrowing.** A hook never sees `PlayerApp`. It gets a context that lends
 //! the parts it may touch, each borrowed from its own field: the world, the
 //! clock, input, the script system, the camera, the renderer. The list lives
 //! in a field of its own (`GameCore::subsystems`), so the player can lend
-//! those while it walks the list. What a context holds is what the clients so
-//! far have needed, and it grows with the next ones (shallow wooze, living
-//! props); see each context's notes.
+//! those while it walks the list. Every field is a kernel type: what a
+//! package owns is in the run's `Resources` (`GameCore::resources`), which
+//! every context lends (the procgen resolver, the living props, the debug
+//! panels).
 //!
 //! **Lifetimes.** A subsystem lasts for the run (the expression feed, which
 //! the host hands over) or for one scene (shallow wooze). The scene ones are
@@ -43,293 +46,15 @@
 //! declared before `audio` in `PlayerApp`, so whatever one holds of the audio
 //! engine goes before the engine (ADR 0017).
 
-use super::{LaunchOptions, SceneSettings};
-use flint_audio::engine::AudioEngine;
-use flint_core::project::Project;
-use flint_ecs::FlintWorld;
-#[cfg(feature = "procgen")]
-use flint_procgen::ProcGenResolver;
-use flint_render::{Camera, FrameInputs, SceneRenderer};
-use flint_runtime::pad::Gilrs;
+pub(crate) use flint_package::{
+    EncodeCtx, ExitReport, FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, Stage,
+    StageCtx, Subsystem,
+};
+use flint_render::FrameInputs;
 use flint_runtime::DebugKey;
-use flint_runtime::{GameClock, GameStateMachine, InputState, StateConfig};
+use flint_runtime::GameStateMachine;
 use flint_script::context::ScriptCommand;
-use flint_script::ScriptSystem;
 use std::any::Any;
-
-/// The stages of a frame, in the order `tick` runs them (ADR 0117
-/// decision 1). A subsystem's `update` is called at each, after the player's
-/// own work of the stage before it and before its own work of this one, and
-/// then each extension's `PlayerExtension::update` (decision 5, #754).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Stage {
-    /// The frame's very start, before the clock ticks, in place of the
-    /// player's pad polling while a subsystem has the pads ([`Pads`]): where
-    /// the rhythm session drains its capture into input (ADR 0018). Run by
-    /// the host, which owns the clock, not by `game_core::step`; a host with
-    /// no pads (a capture) skips it.
-    Clock,
-    /// The clock has ticked and scripted input is in; before the transition
-    /// advances and before extensions' `pre_update`. Where outside input for
-    /// scripts is queued (the expression feed).
-    Input,
-    /// After extensions' `pre_update`, before scripts' `on_update`.
-    PreScripts,
-    /// After `on_update`, before the fixed physics steps.
-    Scripts,
-    /// After the physics steps and the first-person camera.
-    Physics,
-    /// After script commands and camera overrides: the camera is final for
-    /// the frame.
-    PostPhysics,
-    /// After `on_draw_ui` and the draw commands.
-    ScriptUi,
-    /// After audio triggers, animation and particles.
-    Animation,
-    /// After the procgen queue and living props.
-    Procgen,
-    /// After the renderer's sync, the frame's post overrides and a
-    /// script's quality settings; before the frame's input is cleared.
-    Sync,
-    /// Before the frame is encoded. Delivered through `pre_render`, with
-    /// the renderer, not through `update`; named here so the schedule is
-    /// whole in one place.
-    #[allow(dead_code)]
-    PreRender,
-}
-
-impl Stage {
-    /// The stage's name, for a profiler scope's detail (#1096).
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Stage::Clock => "clock",
-            Stage::Input => "input",
-            Stage::PreScripts => "pre_scripts",
-            Stage::Scripts => "scripts",
-            Stage::Physics => "physics",
-            Stage::PostPhysics => "post_physics",
-            Stage::ScriptUi => "script_ui",
-            Stage::Animation => "animation",
-            Stage::Procgen => "procgen",
-            Stage::Sync => "sync",
-            Stage::PreRender => "pre_render",
-        }
-    }
-
-    /// Every stage `update` hears in the player's frame, in order: the
-    /// host's [`Stage::Clock`], then `game_core::step`'s.
-    #[cfg(test)]
-    pub(crate) const UPDATES: [Stage; 10] = [
-        Stage::Clock,
-        Stage::Input,
-        Stage::PreScripts,
-        Stage::Scripts,
-        Stage::Physics,
-        Stage::PostPhysics,
-        Stage::ScriptUi,
-        Stage::Animation,
-        Stage::Procgen,
-        Stage::Sync,
-    ];
-}
-
-/// What a subsystem may touch while a scene comes up or goes down.
-#[allow(dead_code)]
-pub(crate) struct SceneCtx<'a> {
-    pub world: &'a mut FlintWorld,
-    pub scene_path: &'a str,
-    /// The scene file's top-level tables as written (`[living]`, `[wooze]`,
-    /// a game's own). The `SceneFile` itself is gone by the time a scene is
-    /// entered; `apply_scene_settings` kept these, and `scene` what it read.
-    pub tables: &'a toml::Table,
-    /// What the scene's file says, as `apply_scene_settings` read it (with a
-    /// `[wooze]` preset filled in, for one).
-    pub scene: &'a SceneSettings,
-    /// What the host asked for. A subsystem may take what is its own: the
-    /// comparison `--compare` asked for, kept across scenes.
-    pub launch: &'a mut LaunchOptions,
-    pub project: &'a Project,
-    /// The styles the scene is drawn with (#742).
-    pub styles: &'a flint_render::stylize::StyleRegistry,
-    pub script: &'a mut ScriptSystem,
-    /// The procgen resolver, whose specs the scene's living props grow from.
-    #[cfg(feature = "procgen")]
-    pub resolver: &'a mut ProcGenResolver,
-    /// The scene's living props, added by its load.
-    #[cfg(feature = "living")]
-    pub living: &'a mut flint_living::LivingProps,
-    /// `None` in a headless test.
-    pub renderer: Option<&'a mut SceneRenderer>,
-    /// The sound, when the host has it: a subsystem that plays on the
-    /// shared kira manager (the music, ADR 0017) starts there.
-    pub audio: Option<&'a mut AudioEngine>,
-    /// The pads, when the host has them.
-    pub pads: Option<Pads<'a>>,
-    /// `Some` when the host is a capture (`flint render`'s `HeadlessGame`,
-    /// #1252): what it asked for. The player's is `None`.
-    pub capture: Option<&'a mut super::headless_game::CaptureStart>,
-    /// The packages the project's `[packages]` lets in (#1334); `None`:
-    /// every package is in. A builder of a package it leaves out makes
-    /// nothing and says so ([`SceneCtx::leaves_out`], #1528).
-    pub packages: Option<&'a flint_core::package::InUse>,
-}
-
-impl SceneCtx<'_> {
-    /// The project's `[packages]` leaves `package` out: its builder makes
-    /// nothing, and says so once with `missing_features::left_out_line`.
-    #[cfg_attr(
-        not(any(feature = "living", feature = "music")),
-        allow(dead_code) // the builders of living and the music ask it
-    )]
-    pub(crate) fn leaves_out(&self, package: &str) -> Option<&flint_core::package::InUse> {
-        self.packages.filter(|in_use| !in_use.is_on(package))
-    }
-}
-
-/// The host's pads, lent to a subsystem that reads them its own way (the
-/// rhythm session's 1 kHz capture thread, ADR 0018): [`Pads::take`] stops
-/// the player's polling and its rumble, [`Pads::give_back`] opens them
-/// again. A subsystem that takes them gives them back when it goes.
-pub(crate) struct Pads<'a> {
-    pub(crate) gilrs: &'a mut Option<Gilrs>,
-    pub(crate) rumble: &'a mut flint_runtime::PadRumble,
-    /// Whether a subsystem holds them: the player then skips its polling.
-    pub(crate) lent: &'a mut bool,
-}
-
-impl Pads<'_> {
-    /// The pads are the subsystem's until it gives them back: the player's
-    /// polling stops and a script's rumble does nothing.
-    #[allow(dead_code)]
-    pub(crate) fn take(&mut self) {
-        self.rumble.stop_all();
-        *self.gilrs = None;
-        *self.lent = true;
-    }
-
-    /// The player polls the pads again, through a fresh backend.
-    #[allow(dead_code)]
-    pub(crate) fn give_back(&mut self) {
-        *self.gilrs = Gilrs::new().ok();
-        *self.lent = false;
-    }
-}
-
-/// What a subsystem may touch at a stage of the frame, and at a script
-/// command, a key or a click.
-#[allow(dead_code)]
-pub(crate) struct StageCtx<'a> {
-    pub world: &'a mut FlintWorld,
-    pub clock: &'a GameClock,
-    /// The frame's input, which a subsystem may also write (the rhythm
-    /// session's pad drain, at [`Stage::Clock`]).
-    pub input: &'a mut InputState,
-    pub script: &'a mut ScriptSystem,
-    /// The camera as it stands at this stage (final from `PostPhysics` on).
-    pub camera: &'a Camera,
-    /// Which systems the game state lets run this frame. `None` at
-    /// `Stage::Input`, which runs before the frame reads it (a transition
-    /// may still change the state that frame), and outside a stage. A
-    /// subsystem asks by its `name()`: [`StageCtx::runs`].
-    pub policy: Option<&'a StateConfig>,
-    /// `None` in a headless test.
-    pub renderer: Option<&'a mut SceneRenderer>,
-    /// The device and queue, when there is a window.
-    pub gpu: Option<(&'a wgpu::Device, &'a wgpu::Queue)>,
-    /// The procgen resolver, which lends the living props its generators and
-    /// what its queue left of the frame budget.
-    #[cfg(feature = "procgen")]
-    pub resolver: &'a mut ProcGenResolver,
-    /// The scene's living props (flint-living, #1024).
-    #[cfg(feature = "living")]
-    pub living: &'a mut flint_living::LivingProps,
-    pub project: &'a Project,
-    pub scene_path: &'a str,
-    /// Whether the scene file may be written (#364).
-    pub scene_file_writable: bool,
-    /// egui's points per pixel, for a pointer in window pixels.
-    pub pixels_per_point: f32,
-    pub cursor_captured: bool,
-    /// What a debug key says when it has nothing to act on (#367): on
-    /// screen for a moment and in the console.
-    pub note: &'a mut super::key_note::KeyNote,
-    /// The F3/F4 panels, for a subsystem that has one.
-    #[cfg(feature = "debug-hud")]
-    pub panels: &'a mut Vec<Box<dyn flint_debug_ui::DebugPanel>>,
-    /// What scripts asked of the frame, before the host applies it: a
-    /// subsystem may fill what they left (the rhythm ladder's post values,
-    /// at [`Stage::Procgen`], before the renderer's sync).
-    pub requests: &'a mut flint_script::FrameRequests,
-    /// The sound, when the host has it.
-    pub audio: Option<&'a mut AudioEngine>,
-    /// The pads, when the host has them.
-    pub pads: Option<Pads<'a>>,
-    /// Set to end the run as closing the window would (`quit_on_finish`);
-    /// `None` for a host with no run to end.
-    pub quit: Option<&'a mut bool>,
-}
-
-impl StageCtx<'_> {
-    /// Whether the game state lets the system `name` run this frame (a
-    /// subsystem asks by its own `name()`). Outside a stage, it does.
-    #[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
-    pub(crate) fn runs(&self, name: &str) -> bool {
-        self.policy.is_none_or(|policy| policy.runs(name))
-    }
-}
-
-/// Input a subsystem may take before the game and the player see it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PlayerInput {
-    /// A mouse button, real or scripted, before egui's own use of it.
-    Click {
-        state: winit::event::ElementState,
-        button: winit::event::MouseButton,
-    },
-    /// A real Escape, before it releases the cursor or quits.
-    Escape,
-}
-
-/// What a subsystem may touch after the frame's scene is encoded and before
-/// the HUD: a second look at the scene drawn over part of the frame (the
-/// Living Props A/B split, #238).
-#[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
-pub(crate) struct EncodeCtx<'a> {
-    pub encoder: &'a mut wgpu::CommandEncoder,
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    /// The frame's texture, and its size
-    pub output: &'a wgpu::Texture,
-    pub depth_view: &'a wgpu::TextureView,
-    /// The scene's and the HUD's formats of the frame
-    pub formats: (wgpu::TextureFormat, wgpu::TextureFormat),
-    pub renderer: &'a mut SceneRenderer,
-    pub world: &'a FlintWorld,
-    pub camera: &'a Camera,
-    #[cfg(feature = "living")]
-    pub living: &'a mut flint_living::LivingProps,
-}
-
-/// What a subsystem may read for the `--exit-after` report.
-#[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
-pub(crate) struct ReportCtx<'a> {
-    #[cfg(feature = "procgen")]
-    pub resolver: &'a ProcGenResolver,
-    #[cfg(feature = "living")]
-    pub living: &'a flint_living::LivingProps,
-    pub renderer: Option<&'a SceneRenderer>,
-}
-
-/// How long a subsystem lasts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Lasts {
-    /// The whole run: the host made it (the expression feed).
-    Run,
-    /// One scene: built by its `for_scene` builder when a scene that uses it
-    /// is entered, dropped when that scene unloads.
-    Scene,
-}
 
 // The scene subsystems' modules, one a file of `player_app/subsystems/`,
 // `for_scene_builders()`, their builders in file-name order, and
@@ -351,113 +76,29 @@ pub(crate) fn state_machine() -> GameStateMachine {
     machine
 }
 
+/// A winit click as the Package API carries it (ADR 0137 section 3: winit
+/// is not in the API).
+pub(crate) fn click_of(
+    state: winit::event::ElementState,
+    button: winit::event::MouseButton,
+) -> PlayerInput {
+    use flint_package::Button;
+    use winit::event::MouseButton;
+    PlayerInput::Click {
+        button: match button {
+            MouseButton::Left => Button::Left,
+            MouseButton::Right => Button::Right,
+            MouseButton::Middle => Button::Middle,
+            MouseButton::Back => Button::Back,
+            MouseButton::Forward => Button::Forward,
+            MouseButton::Other(n) => Button::Other(n),
+        },
+        pressed: state == winit::event::ElementState::Pressed,
+    }
+}
+
 /// A scene subsystem's builder: its subsystem, if the scene uses it.
 pub(crate) type BuildForScene = fn(&mut SceneCtx) -> Option<Box<dyn Subsystem>>;
-
-/// What a subsystem reads when it adds to the frame's inputs. Only the
-/// living subsystem reads it today.
-#[cfg_attr(not(feature = "living"), allow(dead_code))]
-pub(crate) struct FrameCtx<'a> {
-    /// The frame's camera, final by the renderer's sync.
-    pub camera: &'a Camera,
-    /// The shading boil's cadence the config asks for (`[post_process]
-    /// boil_on`).
-    pub boil_on: u32,
-}
-
-/// Lines a subsystem adds to the `--exit-after` report, printed after the
-/// player's own.
-#[derive(Debug, Default)]
-pub(crate) struct ExitReport {
-    pub lines: Vec<String>,
-}
-
-impl ExitReport {
-    #[allow(dead_code)] // no client reports yet
-    pub(crate) fn line(&mut self, line: impl Into<String>) {
-        self.lines.push(line.into());
-    }
-}
-
-/// An optional part of the player (ADR 0117 decision 2). Internal for now;
-/// `PlayerExtension` gains the same hooks once the engine's own features
-/// have shown what they must carry (decision 5).
-pub(crate) trait Subsystem: Any {
-    /// For logs and the debug panels, and the name a game state's policy
-    /// pauses it by when its file lists it as its `POLICY` (#727).
-    fn name(&self) -> &'static str;
-
-    /// For one scene (the default) or the whole run.
-    fn lasts(&self) -> Lasts {
-        Lasts::Scene
-    }
-
-    /// The scene is up: its world, settings and renderer state are in and
-    /// its scripts have run `on_init` (the last step of `enter_scene`).
-    fn scene_loaded(&mut self, _ctx: &mut SceneCtx) {}
-
-    /// The scene is going: its scripts have heard `on_scene_exit`, nothing
-    /// has been cleared yet.
-    fn scene_unloading(&mut self, _ctx: &mut SceneCtx) {}
-
-    /// A stage of the frame. See [`Stage`] for where each falls.
-    fn update(&mut self, _stage: Stage, _ctx: &mut StageCtx) {}
-
-    /// The script modules this subsystem owns and enables while it runs
-    /// (#698): their functions are a "not enabled" error in a scene
-    /// without it. The modules themselves are declared from its file's
-    /// `SCRIPT_MODULES`, once, for every scene.
-    fn script_modules(&self) -> &[&'static str] {
-        &[]
-    }
-
-    /// A script's command, before the player's dispatcher sees it. Return
-    /// `true` to take it: the player then never applies it.
-    fn script_command(&mut self, _command: &ScriptCommand, _ctx: &mut StageCtx) -> bool {
-        false
-    }
-
-    /// The debug keys it acts on (#717): its file's `DEBUG_KEYS.keys` (a
-    /// test's subsystem may declare its own). While it is in the scene the
-    /// table dispatches them to [`on_debug_key`](Self::on_debug_key) and
-    /// the game never sees the press; with it gone they are the game's.
-    fn debug_keys(&self) -> &'static [DebugKey] {
-        &[]
-    }
-
-    /// One of its [`debug_keys`](Self::debug_keys) was pressed (real or
-    /// scripted). `key` is the chord it is on, as a note names it.
-    fn on_debug_key(&mut self, _action: &str, _key: &str, _ctx: &mut StageCtx) {}
-
-    /// A click or a real Escape, before anything else hears it. Return `true`
-    /// to take it: then nothing else does.
-    fn on_input(&mut self, _input: PlayerInput, _ctx: &mut StageCtx) -> bool {
-        false
-    }
-
-    /// Its share of the frame's renderer inputs (#739): what it draws this
-    /// frame that the world doesn't say (the living subsystem's boil,
-    /// shallow wooze and woozy grass). Called once a frame, just before the
-    /// renderer's `prepare`; what it leaves at the default is off.
-    fn frame_inputs<'s>(&'s self, _ctx: &FrameCtx, _inputs: &mut FrameInputs<'s>) {}
-
-    /// After the frame's scene is encoded, before the HUD.
-    fn post_encode(&mut self, _ctx: &mut EncodeCtx) {}
-
-    /// The HUD's egui pass, over the game's UI and under the debug panels.
-    fn ui(&mut self, _egui: &egui::Context) {}
-
-    /// The end of an `--exit-after` run.
-    fn exit_report(&self, _ctx: &ReportCtx, _report: &mut ExitReport) {}
-
-    /// Why a capture (`flint render --scripts`) leaves it out, for a
-    /// subsystem that is the window's alone; `None`, the default, runs it
-    /// there as in the player (#1252). A capture asks once it is built for
-    /// the scene, so it names only what the scene would have had.
-    fn presentation_only(&self) -> Option<&'static str> {
-        None
-    }
-}
 
 /// Every scene subsystem `ctx`'s scene uses, built by the files'
 /// `for_scene` builders in file-name order: the player's list and a
@@ -593,9 +234,9 @@ impl Subsystems {
         }
     }
 
-    pub(crate) fn ui(&mut self, egui: &egui::Context) {
+    pub(crate) fn ui(&mut self, ui: &mut egui::Ui) {
         for s in &mut self.list {
-            s.ui(egui);
+            s.ui(ui);
         }
     }
 
@@ -634,26 +275,21 @@ macro_rules! stage_ctx {
             policy: $policy,
             renderer: $app.scene_renderer.as_mut(),
             gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
-            #[cfg(feature = "procgen")]
-            resolver: &mut $app.core.procgen_resolver,
-            #[cfg(feature = "living")]
-            living: &mut $app.core.living_props,
             project: &$app.core.project,
             scene_path: &$app.core.scene_path,
             scene_file_writable: $app.launch.scene_file_writable,
             pixels_per_point: $app.hud.egui_ctx.pixels_per_point(),
             cursor_captured: $app.focus.cursor_captured,
             note: &mut $app.hud.key_note,
-            #[cfg(feature = "debug-hud")]
-            panels: &mut $app.debug_panels,
             requests: &mut $app.core.script_requests,
             audio: Some(&mut $app.audio.engine),
-            pads: Some($crate::player_app::subsystem::Pads {
-                gilrs: &mut $app.gilrs,
-                rumble: &mut $app.pad_rumble,
-                lent: &mut $app.pads_lent,
-            }),
+            pads: Some($crate::player_app::subsystem::Pads::new(
+                &mut $app.gilrs,
+                &mut $app.pad_rumble,
+                &mut $app.pads_lent,
+            )),
             quit: Some(&mut $app.outcome.exit_requested),
+            resources: &mut $app.core.resources,
         }
     };
 }
@@ -667,24 +303,19 @@ macro_rules! scene_ctx {
             world: &mut $app.core.world,
             scene_path: &$app.core.scene_path,
             tables: &$app.scene.tables,
-            scene: &$app.scene,
-            launch: &mut $app.launch,
             project: &$app.core.project,
             styles: &$app.core.styles,
             script: &mut $app.core.script,
-            #[cfg(feature = "procgen")]
-            resolver: &mut $app.core.procgen_resolver,
-            #[cfg(feature = "living")]
-            living: &mut $app.core.living_props,
             renderer: $app.scene_renderer.as_mut(),
             audio: Some(&mut $app.audio.engine),
-            pads: Some($crate::player_app::subsystem::Pads {
-                gilrs: &mut $app.gilrs,
-                rumble: &mut $app.pad_rumble,
-                lent: &mut $app.pads_lent,
-            }),
+            pads: Some($crate::player_app::subsystem::Pads::new(
+                &mut $app.gilrs,
+                &mut $app.pad_rumble,
+                &mut $app.pads_lent,
+            )),
             capture: None,
             packages: $app.core.packages.as_ref(),
+            resources: &mut $app.core.resources,
         }
     };
 }
@@ -719,10 +350,23 @@ impl super::PlayerApp {
                 }
             }
         }
+        // What living's builder reads of the scene's settings and the launch
+        // (#1550), until living reads its own tables (#1558)
+        #[cfg(feature = "living")]
+        self.lend_living_start();
+        // ...and what rhythm's reads of the scene's post-processing (#1556)
+        #[cfg(feature = "rhythm")]
+        self.core.resources.insert(crate::music::rhythm::ScenePost(
+            self.scene.post_process.clone(),
+        ));
         let mut ctx = scene_ctx!(self);
         for subsystem in build_for_scene(&mut ctx) {
             self.core.subsystems.push(subsystem);
         }
+        #[cfg(feature = "rhythm")]
+        self.core
+            .resources
+            .remove::<crate::music::rhythm::ScenePost>();
         self.core.enable_script_modules();
     }
 
@@ -748,13 +392,15 @@ impl super::PlayerApp {
             ext.scene_unloading(ctx);
             false
         });
-        if self.core.subsystems.is_empty() {
-            return;
+        if !self.core.subsystems.is_empty() {
+            let mut ctx = scene_ctx!(self);
+            self.core.subsystems.scene_unloading(&mut ctx);
+            self.core.subsystems.drop_scene_ones();
+            self.core.enable_script_modules();
         }
-        let mut ctx = scene_ctx!(self);
-        self.core.subsystems.scene_unloading(&mut ctx);
-        self.core.subsystems.drop_scene_ones();
-        self.core.enable_script_modules();
+        // What the living subsystem kept of the launch, for the next scene
+        #[cfg(feature = "living")]
+        self.take_back_living_start();
     }
 
     /// Hand a subsystem the debug action its key was pressed for.
@@ -779,11 +425,8 @@ impl super::PlayerApp {
     pub(super) fn subsystem_report(&self) -> Vec<String> {
         let mut report = ExitReport::default();
         let ctx = ReportCtx {
-            #[cfg(feature = "procgen")]
-            resolver: &self.core.procgen_resolver,
-            #[cfg(feature = "living")]
-            living: &self.core.living_props,
             renderer: self.scene_renderer.as_ref(),
+            resources: &self.core.resources,
         };
         self.core.subsystems.exit_report(&ctx, &mut report);
         report.lines

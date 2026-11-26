@@ -77,12 +77,12 @@ fn beacon(app: &PlayerApp, field: &str) -> toml::Value {
 fn a_games_own_schema_gives_its_component_an_f3_panel() {
     vfs::scoped(Arc::new(coast()), || {
         let mut app = harbour();
-        let names: Vec<&str> = app.debug_panels.iter().map(|p| p.name()).collect();
+        let names: Vec<&str> = app.debug_panels().iter().map(|p| p.name()).collect();
         assert_eq!(names, ["Lighthouse"], "one entity carries a beacon");
 
         // F3 opens it; the status line is the live component. The panels
         // come out of the app for the test, as the frame's sync lends them
-        let mut panels = std::mem::take(&mut app.debug_panels);
+        let mut panels = std::mem::take(app.debug_panels_mut());
         let panel = panels[0]
             .as_any_mut()
             .downcast_mut::<ComponentPanel>()
@@ -119,6 +119,6 @@ fn a_scene_with_no_marked_component_has_no_component_panel() {
     );
     vfs::scoped(Arc::new(files), || {
         let app = harbour();
-        assert!(app.debug_panels.is_empty());
+        assert!(app.debug_panels().is_empty());
     });
 }
