@@ -39,13 +39,14 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-34-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554). Every member but `flint-android` is a default member, so `cargo test` tests them all (#758):
+35-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554). Every member but `flint-android` is a default member, so `cargo test` tests them all (#758):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
   │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc, package, build
   ├── flint-asset-gen AI asset generation: providers (Flux, Meshy, ElevenLabs, Mock)
   ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
+  ├── flint-procgen-cli `flint gen` and the spec editors
   ├── flint-procgen-ai AI-assisted procgen specs
   └── flint-ai-core   Every paid AI call: retries, prices, cost ledger
 flint-android       Android entry point (NativeActivity)
@@ -91,7 +92,7 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-cli/CLAUDE.md` | the loop's examples, `render` flags, `edit`, `gen`, goldens, fixtures, export |
 | `crates/flint-render/CLAUDE.md` | frame and GPU rules, wgpu, post-processing, quality, caches, lights |
 | `crates/flint-render/src/stylize/CLAUDE.md` | styles, style mask, per-entity and user styles |
-| `crates/flint-procgen/CLAUDE.md` | living props, wooze field, Woozy Grove |
+| `packages/procgen/crates/flint-procgen/CLAUDE.md` | living props, wooze field, Woozy Grove |
 | `crates/flint-player/CLAUDE.md` | extensions, UI, input, touch, capture, perf, web |
 | `crates/flint-script/CLAUDE.md` | Rhai detail, callbacks, script UI |
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear, project manifest, env switches |
@@ -112,7 +113,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 - **Scripting via Rhai** -- `script` component with `.rhai` files in `scripts/`; `ScriptCommand` for deferred effects; `flint script api` lists every function
 - **All game UI is script-driven** -- no hardcoded HUD: scripts draw it, and a menu is a UI document (`.ui.toml` + `.style.toml`, `load_ui`)
 - **Game project pattern** -- the engine as a git subtree at `engine/`; `schemas = ["engine/schemas", "schemas"]` under `[project]` in the game's `flint.toml`; a game binary embeds `PlayerApp` with `PlayerExtension`s
-- **Every runtime read goes through `flint_core::vfs`** (#97) -- never `std::fs` or `Path::exists` in a runtime crate (tests and the CLI keep `std::fs`); `cargo clippy` denies it, and a call that means it says why, `#[allow(clippy::disallowed_methods)] // <reason>`
+- **Every runtime read goes through `flint_core::vfs`** (#97) -- never `std::fs` or `Path::exists` in a runtime crate (tests and the CLI may); `cargo clippy` denies it (`scripts/CLAUDE.md`)
 - **`FLINT_*` environment switches are one table** (#715, `flint_core::env`): read one only through its getter; a new switch is a row there
 - **The engine is packages** (ADR 0136): every crate, component, archetype, scene table, script module and command is in one `packages/<name>/package.toml`'s `[provides]`, which a test holds
 - **A game lists its packages** under `[packages]` in `flint.toml`; `flint build` builds its player and CLI from it

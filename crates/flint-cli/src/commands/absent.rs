@@ -1,27 +1,15 @@
 //! Commands a build left out (#1333, ADR 0136).
 //!
 //! flint-cli's package features (`living`, `music`, `rhythm`, `procgen`,
-//! `ai`) each take crates out of the binary. A command that needs one of
-//! them stays in the parser, so `flint --help` lists the same commands in
-//! every build and a game's own command can't take its name. Its
-//! arguments become [`Absent`], which takes whatever words follow, and
-//! running it is [`missing`]: exit 2, naming the package to build with.
-//!
-//! [`stub!`] writes the module a left-out command's file would have been,
-//! with the same `Args` type name and `run`, so `music.rs` and the others
-//! read the same in both builds:
-//!
-//! ```ignore
-//! #[cfg(feature = "rhythm")]
-//! pub mod calibrate;
-//! #[cfg(not(feature = "rhythm"))]
-//! absent::stub!(calibrate, CalibrateArgs, "music calibrate", "rhythm");
-//! ```
-//!
-//! A package that registers its commands with the CLI launcher (#1553:
-//! `ai`'s under `asset`) needs no stub: a build without it has none of
-//! them in its parser, and a line asking for one is answered from the
-//! manifests compiled in ([`missing_command`]), with the same exit 2.
+//! `ai`) each take crates out of the binary. A package that registers its
+//! commands with the CLI launcher (#1553: `ai`'s under `asset`; `music`
+//! and `rhythm`'s, #1555) needs no stand-in: a build without it has none
+//! of them in its parser, and a line asking for one is answered from the
+//! manifests compiled in ([`missing_command`]): exit 2, naming the package
+//! to build with. A kernel command a package fills in (`flint gen` for a
+//! spec, `gen-preview`, `tex-edit`, #1557) names the package that provides
+//! it the same way ([`missing_owned`]), and so does a flag that needs one
+//! ([`missing`]). Until #1557 the left-out commands were `stub!` modules.
 
 use std::ffi::OsString;
 
@@ -82,6 +70,21 @@ pub fn missing_command(
     })
 }
 
+/// `what` needs whichever package's manifest provides the command `words`
+/// (`["gen"]`: procgen's), named from the manifests compiled in, so the
+/// source names no package to say it (#1557).
+pub fn missing_owned(what: impl Into<String>, words: &[&str]) -> anyhow::Error {
+    let command = words.join(" ");
+    let owner = manifests()
+        .into_iter()
+        .find(|package| package.provides.commands.contains(&command))
+        .map(|package| package.name)
+        .unwrap_or(command);
+    // Once a run, on its way out
+    let package: &'static str = Box::leak(owner.into_boxed_str());
+    missing(what, package)
+}
+
 /// The leading subcommand words of a command line: `asset generate` of
 /// `flint --json asset generate texture -d moss`, past the global
 /// `--json` and `--project DIR` wherever they come first.
@@ -134,61 +137,15 @@ pub fn built_with(feature: &str) -> bool {
     built_features().any(|(f, on)| *on && *f == feature)
 }
 
-/// The arguments of a command this build left out: every word after its
-/// name, unread, so any command line that would have parsed still does.
-#[derive(clap::Args, Debug, Default)]
-pub struct Absent {
-    #[arg(
-        trailing_var_arg = true,
-        allow_hyphen_values = true,
-        hide = true,
-        num_args = 0..
-    )]
-    pub words: Vec<OsString>,
-}
-
 /// A command (or a flag of one) needs a package this binary was built
 /// without. `output::finish` exits 2 on it, naming the package. A
 /// package's own command returns the same error, so it is flint-package's
 /// (#1555).
-pub use flint_package::cli::MissingPackage;
+pub use flint_package::cli::{missing, MissingPackage};
 
 /// The exit code a missing package leaves with: clap's for a command line
 /// it can't take, since this one can't be run here either.
 pub const EXIT: u8 = 2;
-
-/// The error a left-out command returns (flint-package's, #1555). A build
-/// with every package that refuses anything (ai, living, procgen) has none
-/// to leave out. The features are named one by one, not as `packages`: a
-/// build that lists them (as a game's does) never turns the alias on
-/// (#1336's matrix).
-#[cfg_attr(
-    all(feature = "ai", feature = "living", feature = "procgen"),
-    allow(unused_imports)
-)]
-pub use flint_package::cli::missing;
-
-/// A module standing in for a command file a build left out: its `Args`
-/// type is [`Absent`] and its `run` is [`missing`]. The procgen commands
-/// are stubbed (`gen-preview`, `tex-edit`, #1543), so a build with procgen
-/// has none. The music and rhythm commands are their packages'
-/// extensions (#1555): a build without one has none of them in its parser.
-#[cfg_attr(feature = "procgen", allow(unused_macros))]
-macro_rules! stub {
-    ($module:ident, $args:ident, $words:literal, $package:literal) => {
-        pub mod $module {
-            pub type $args = $crate::commands::absent::Absent;
-            pub fn run(_: $args) -> anyhow::Result<()> {
-                Err($crate::commands::absent::missing(
-                    concat!("flint ", $words),
-                    $package,
-                ))
-            }
-        }
-    };
-}
-#[cfg_attr(feature = "procgen", allow(unused_imports))]
-pub(crate) use stub;
 
 #[cfg(test)]
 mod tests {
@@ -451,38 +408,75 @@ mod tests {
         assert_eq!(wanted(&["gen", "--ai-create", "a dead tree"]), "ai");
     }
 
-    /// The done-when of #1543: without procgen, `flint gen` and the spec
-    /// editors parse and exit 2 naming it, a spec handed to `flint edit`
+    /// The done-when of #1543, in every build since #1557: a launcher
+    /// without the procgen package (no points) parses `flint gen` and the
+    /// spec editors and exits 2 naming it, a spec handed to `flint edit`
     /// before the file is read, while a glyph set is still `flint gen`'s
     /// (flint-render's, the kernel's): one that isn't there fails to load,
     /// naming no package.
-    #[cfg(not(feature = "procgen"))]
     #[test]
     fn without_procgen_the_spec_commands_name_it() {
+        use clap::Parser as _;
+        let none = flint_package::cli::Points::new();
+        let gen = |words: &[&str]| {
+            let line = std::iter::once("flint")
+                .chain(std::iter::once("gen"))
+                .chain(words.iter().copied());
+            let crate::Cli { command, .. } = crate::Cli::parse_from(line);
+            let crate::Commands::Gen(args) = command else {
+                unreachable!()
+            };
+            super::super::gen::run_in(*args, &none)
+        };
+        let package = |run: anyhow::Result<()>| {
+            let e = run.expect_err("no package runs it");
+            e.downcast_ref::<MissingPackage>()
+                .unwrap_or_else(|| panic!("{e:#}"))
+                .package
+        };
         assert_eq!(
-            wanted(&["gen", "specs/oak.procgen.toml", "-o", "x.glb"]),
+            package(gen(&["specs/oak.procgen.toml", "-o", "x.glb"])),
             "procgen"
         );
-        assert_eq!(wanted(&["gen", "--list-generators"]), "procgen");
-        assert_eq!(wanted(&["gen", "--describe", "texture_v1"]), "procgen");
+        assert_eq!(package(gen(&["--list-generators"])), "procgen");
+        assert_eq!(package(gen(&["--describe", "texture_v1"])), "procgen");
+        let editors = |words: &[&str]| {
+            let line = std::iter::once("flint").chain(words.iter().copied());
+            match crate::Cli::parse_from(line).command {
+                crate::Commands::GenPreview(args) => {
+                    super::super::spec_edit::gen_preview_in(*args, &none)
+                }
+                crate::Commands::TexEdit(args) => {
+                    super::super::spec_edit::tex_edit_in(*args, &none)
+                }
+                crate::Commands::Edit(args) => super::super::edit_router::run_in(*args, &none),
+                _ => unreachable!(),
+            }
+        };
         assert_eq!(
-            wanted(&["gen-preview", "specs/oak.procgen.toml"]),
+            package(editors(&["gen-preview", "specs/oak.procgen.toml"])),
             "procgen"
         );
-        assert_eq!(wanted(&["tex-edit", "specs/wall.procgen.toml"]), "procgen");
         assert_eq!(
-            wanted(&["edit", "no/such/oak.procgen.toml", "--render", "x.png"]),
+            package(editors(&["tex-edit", "specs/wall.procgen.toml"])),
             "procgen"
         );
-        let text = ran(&["gen", "specs/oak.procgen.toml"])
-            .unwrap_err()
-            .to_string();
+        assert_eq!(
+            package(editors(&[
+                "edit",
+                "no/such/oak.procgen.toml",
+                "--render",
+                "x.png"
+            ])),
+            "procgen"
+        );
+        let text = gen(&["specs/oak.procgen.toml"]).unwrap_err().to_string();
         assert!(
             text.starts_with("flint gen needs the `procgen` package"),
             "{text}"
         );
-        let glyphs = ran(&["gen", "no/such/set.glyphs.toml", "--dry-run"])
-            .expect_err("there is no such set");
+        let glyphs =
+            gen(&["no/such/set.glyphs.toml", "--dry-run"]).expect_err("there is no such set");
         assert!(
             glyphs.downcast_ref::<MissingPackage>().is_none(),
             "{glyphs:#}"

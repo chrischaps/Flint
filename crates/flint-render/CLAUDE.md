@@ -1,6 +1,6 @@
 # flint-render: renderer notes that are not stylize (moved out of the root CLAUDE.md by #755)
 
-Styles, the style mask and user styles: `src/stylize/CLAUDE.md`. Flags: `crates/flint-cli/CLAUDE.md`. The wooze field, whose clock drives boil and shallow wooze: `crates/flint-procgen/CLAUDE.md`. The root file keeps a short form of the first two bullets and of the lights bullet.
+Styles, the style mask and user styles: `src/stylize/CLAUDE.md`. Flags: `crates/flint-cli/CLAUDE.md`. The wooze field, whose clock drives boil and shallow wooze: `packages/procgen/crates/flint-procgen/CLAUDE.md`. The root file keeps a short form of the first two bullets and of the lights bullet.
 
 ## Frame and GPU rules
 

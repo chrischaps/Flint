@@ -203,26 +203,17 @@ impl PlayerApp {
             .living_props_mut()
             .set_defaults(super::living_props::defaults_of(self.scene.living.as_ref()));
 
-        // Procgen before the model loader: catalog > procgen > file (#32).
-        // A build without it (#754) says what it won't make.
-        #[cfg(not(feature = "procgen"))]
-        if let Some(line) = super::missing_features::procgen_line(
-            &self.core.world,
-            &self.core.project,
-            &self.core.scene_path,
-        ) {
-            tracing::warn!(target: "load", "{line}");
-        }
-        #[cfg(feature = "procgen")]
-        super::procgen_assets::resolve_scene(
-            &mut self.core,
-            self.launch.procgen_mode,
-            super::procgen_assets::GpuSink {
-                renderer,
+        // The asset makers before the model loader: catalog > procgen >
+        // file (#32). A run with none (#754, #1557) says what it won't make.
+        self.core.make_scene_assets(
+            flint_package::assets::Gpu {
+                renderer: &mut *renderer,
                 device,
                 queue,
-                config: &config,
             },
+            &config,
+            self.launch.procgen_mode,
+            true,
         );
 
         let load_result = model_loader::load_models_from_world(

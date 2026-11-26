@@ -24,7 +24,6 @@
 mod check;
 mod commands;
 pub mod extension;
-mod file_dialog;
 mod output;
 
 pub use extension::CliExtension;
@@ -33,9 +32,8 @@ use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     asset, build, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples,
-    export, frame, gen, gen_preview, init, package, play, playtest, prefab, preview, profile,
-    query, render, render_goldens, scene, schema, script, spline_edit, style, terrain_edit,
-    tex_edit, validate,
+    export, frame, gen, init, package, play, playtest, prefab, preview, profile, query, render,
+    render_goldens, scene, schema, script, spec_edit, spline_edit, style, terrain_edit, validate,
 };
 use std::ffi::OsString;
 
@@ -188,7 +186,7 @@ enum Commands {
 
     /// Interactive previewer for procedural generation specs
     #[command(hide = true)]
-    GenPreview(Box<gen_preview::GenPreviewArgs>),
+    GenPreview(Box<spec_edit::GenPreviewArgs>),
 
     /// Interactive terrain editor with procgen, sculpting, and painting
     #[command(hide = true)]
@@ -196,7 +194,7 @@ enum Commands {
 
     /// Visual node editor for texture pipeline specs
     #[command(hide = true)]
-    TexEdit(Box<tex_edit::TexEditArgs>),
+    TexEdit(Box<spec_edit::TexEditArgs>),
 
     /// Render a scene to a PNG image (headless)
     Render(Box<render::RenderArgs>),
@@ -233,6 +231,8 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
     let argv: Vec<OsString> = std::env::args_os().collect();
     let mut all = stock();
     all.extend(extensions);
+    // The run's registration points, before any command runs (#1557)
+    flint_package::cli::points_or(|| points_of(&all));
     let mut added = match extension::Added::new(all, &Cli::command()) {
         Ok(added) => added,
         Err(e) => {
@@ -327,6 +327,37 @@ pub fn stock() -> Vec<Box<dyn CliExtension>> {
 /// holds of a package (rhythm's).
 pub(crate) fn package_extensions() -> Vec<Box<dyn CliExtension>> {
     include!(concat!(env!("OUT_DIR"), "/stock_extensions.rs"))
+}
+
+/// The run's registration points (#1557, `flint_package::cli::Points`):
+/// what the extensions of `extensions` register (procgen's spec commands),
+/// then this binary's own parts of another package's commands (the ai
+/// package's steps of procgen's `gen`, living's `--strip`), each under its
+/// feature.
+fn points_of(extensions: &[Box<dyn CliExtension>]) -> flint_package::cli::Points {
+    let mut points = flint_package::cli::Points::new();
+    for extension in extensions {
+        extension.register(&mut points);
+    }
+    #[cfg(feature = "ai")]
+    points.insert(flint_procgen_cli::gen::AiPoint(Box::new(
+        commands::gen_ai::Ai,
+    )));
+    #[cfg(feature = "living")]
+    points.insert(commands::gen_strip::point());
+    points
+}
+
+/// The run's points: the launcher's ([`run_with`] makes them before any
+/// command runs), else the stock list's (a unit test).
+pub(crate) fn points() -> &'static flint_package::cli::Points {
+    flint_package::cli::points_or(|| points_of(&stock()))
+}
+
+/// Whether this run opens procgen's spec editors (a window): a run without
+/// the package refuses the command naming the package instead.
+fn procgen_editors() -> bool {
+    points().get::<flint_viewer::host::SpecEditors>().is_some()
 }
 
 /// The stock `flint`'s whole command tree: the engine's commands with
@@ -486,9 +517,9 @@ fn run(cli: Cli) -> Result<()> {
             Default::default(),
         ),
         Commands::Gen(args) => gen::run(*args),
-        Commands::GenPreview(args) => gen_preview::run(*args),
+        Commands::GenPreview(args) => spec_edit::gen_preview(*args),
         Commands::TerrainEdit(args) => terrain_edit::run(*args),
-        Commands::TexEdit(args) => tex_edit::run(*args),
+        Commands::TexEdit(args) => spec_edit::tex_edit(*args),
         Commands::Render(mut args) => {
             // --variant builds each variant's command line on this one (#291)
             // --json is the global flag, not render's: a variant's words leave it out
@@ -522,11 +553,11 @@ impl Commands {
             // `--list-keys` prints the debug-key table and exits (#717, #1184)
             Commands::Play(args) if !args.player.list_keys => "play",
             Commands::Preview(args) if args.render.is_none() => "preview",
-            #[cfg(feature = "procgen")]
-            Commands::GenPreview(_) => "gen-preview",
+            // A flint without the procgen package opens no window: the
+            // command names the package, under --json too
+            Commands::GenPreview(_) if procgen_editors() => "gen-preview",
             Commands::TerrainEdit(_) => "terrain-edit",
-            #[cfg(feature = "procgen")]
-            Commands::TexEdit(_) => "tex-edit",
+            Commands::TexEdit(_) if procgen_editors() => "tex-edit",
             Commands::Prefab(_) => "prefab view",
             Commands::Frame(args) => match &args.command {
                 frame::FrameCommands::Open(open) if open.interactive() => "frame open",

@@ -76,17 +76,14 @@ mod generated {
 }
 
 // The packages whose code is still in this crate, each behind its feature
-// until it moves into `packages/<name>/` (#1556-#1559). Those with nothing
-// to register yet (debug-hud, procgen) are listed all the same: the list
-// is what the binary was built with.
+// until it moves into `packages/<name>/` (#1556-#1559). One with nothing
+// to register yet (debug-hud) is listed all the same: the list is what the
+// binary was built with. A package in its own folder (music, #1555;
+// procgen, #1557) is its crate's `player::PACKAGE`, which `generated::moved`
+// lists from the manifests.
 #[cfg(feature = "debug-hud")]
 static DEBUG_HUD: Part = Part {
     name: "debug-hud",
-    register: |_| {},
-};
-#[cfg(feature = "procgen")]
-static PROCGEN: Part = Part {
-    name: "procgen",
     register: |_| {},
 };
 #[cfg(feature = "living")]
@@ -121,8 +118,6 @@ pub fn stock() -> Vec<&'static dyn Package> {
     let mut list: Vec<&'static dyn Package> = generated::moved();
     #[cfg(feature = "debug-hud")]
     list.push(&DEBUG_HUD);
-    #[cfg(feature = "procgen")]
-    list.push(&PROCGEN);
     #[cfg(feature = "living")]
     list.push(&LIVING);
     #[cfg(feature = "rhythm")]
@@ -385,7 +380,8 @@ mod tests {
         assert!(!lacks("engine"));
         assert!(!lacks("frame-history"), "a build option, not a package");
         assert_eq!(lacks("living"), !cfg!(feature = "living"));
-        assert_eq!(lacks("procgen"), !cfg!(feature = "procgen"));
+        let built = built_feature;
+        assert_eq!(lacks("procgen"), !built("procgen"));
     }
 
     /// The stock list is the build's packages, each a manifest's name,
@@ -423,11 +419,10 @@ mod tests {
                 .all(|f| match f.as_str() {
                     // The packages still in this crate, by their gates
                     "debug-hud" => cfg!(feature = "debug-hud"),
-                    "procgen" => cfg!(feature = "procgen"),
                     "living" => cfg!(feature = "living"),
                     "rhythm" => cfg!(feature = "rhythm"),
-                    // A package in its own folder (music, #1555), as the
-                    // build script read the feature
+                    // A package in its own folder (music, #1555; procgen,
+                    // #1557), as the build script read the feature
                     other => {
                         assert!(
                             generated::BUILT.iter().any(|(f, _)| *f == other),
@@ -454,14 +449,20 @@ mod tests {
         assert_eq!(built, kept);
     }
 
-    /// The default build has the music package through the generated list.
+    /// The default build has the music package through the generated list,
+    /// after procgen (#1557) when the build has it: registration order.
     #[cfg(feature = "rhythm")]
     #[test]
     fn the_music_package_comes_from_its_own_crate() {
         assert!(PLAYER_PACKAGES.contains(&"music"));
         assert!(built_feature("music"));
         let moved: Vec<&str> = generated::moved().iter().map(|p| p.name()).collect();
-        assert_eq!(moved, ["music"]);
+        let want: &[&str] = if built_feature("procgen") {
+            &["procgen", "music"]
+        } else {
+            &["music"]
+        };
+        assert_eq!(moved, want);
         assert!(registry().has("music"));
     }
 

@@ -42,6 +42,11 @@ impl PlayerApp {
         self.with_living(|living, ctx| living.tick(ctx, dt));
     }
 
+    /// The run's procgen resolver.
+    pub(crate) fn resolver_for_test(&mut self) -> &mut flint_procgen::ProcGenResolver {
+        flint_procgen::player::resolver_mut(&mut self.core.resources)
+    }
+
     #[cfg(feature = "debug-hud")]
     pub(crate) fn apply_living_action(&mut self, action: LivingPanelAction) {
         self.with_living(|living, ctx| {

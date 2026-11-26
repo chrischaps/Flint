@@ -14,7 +14,7 @@ The five numbered engine phases (ECS, constraints, PBR rendering, runtime, AI as
 - **Animation** --- blend trees, animation state machines
 - **Scripting** --- new Rhai API functions, script debugging tools, performance profiling
 - **AI generation** --- new provider integrations, improved style validation, prompt engineering
-- **Procedural generators** --- new `flint-procgen` generators; the crate's [CONTRIBUTING guide](https://github.com/chrischaps/Flint/blob/main/crates/flint-procgen/CONTRIBUTING.md) builds one from scratch, schema and tests included
+- **Procedural generators** --- new `flint-procgen` generators; the crate's [CONTRIBUTING guide](https://github.com/chrischaps/Flint/blob/main/packages/procgen/crates/flint-procgen/CONTRIBUTING.md) builds one from scratch, schema and tests included
 
 ## Development Setup
 
@@ -84,7 +84,7 @@ Changelog: none (reason)
 
 ## Architecture
 
-The project is a 35-member Cargo workspace: 34 crates under `crates/` plus the `tools/arch-analyzer` static analyzer. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
+The project is a 36-member Cargo workspace: 29 crates under `crates/`, 6 in their packages' folders (`packages/<name>/crates/`: ai's three, music's one, procgen's two), and the `tools/arch-analyzer` static analyzer. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
 
 - Dependencies flow in one direction (binary crates at the top, `flint-core` at the bottom)
 - Components are dynamic `toml::Value`, not Rust types --- schemas are runtime data

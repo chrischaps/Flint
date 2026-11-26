@@ -14,7 +14,7 @@ mod catalog_root_tests;
 #[cfg(test)]
 mod collider_mesh_tests;
 mod collider_meshes;
-#[cfg(all(test, feature = "procgen"))]
+#[cfg(test)]
 mod made_collider_mesh_tests;
 // The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
@@ -104,8 +104,8 @@ mod perf_report;
 mod persist;
 pub mod playtest;
 pub mod playtest_warnings;
-#[cfg(feature = "procgen")]
-pub mod procgen_assets;
+#[cfg(test)]
+mod procgen_extension_tests;
 mod quality;
 pub mod render_scale;
 mod sampler_marks;

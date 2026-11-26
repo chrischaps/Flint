@@ -4,7 +4,8 @@
 //! scene's subsystems, the game-state policy names, the script modules and
 //! the debug keys here, never by a package's name.
 
-use crate::{SceneCtx, Subsystem};
+use crate::assets::AssetMaker;
+use crate::{Resources, SceneCtx, Subsystem};
 use flint_core::package::InUse;
 use flint_runtime::DebugKeyGroup;
 use flint_script::ScriptModule;
@@ -30,6 +31,10 @@ pub type BuildForScene = fn(&mut SceneCtx) -> Option<Box<dyn Subsystem>>;
 /// it. The kernel asks it in place of the package's builders.
 pub type LeftOutLine = fn(&SceneCtx) -> Option<String>;
 
+/// What a package puts in every run's [`Resources`] (its resolver, its
+/// props), called for each run's core as it is made.
+pub type RunResources = fn(&mut Resources);
+
 /// Everything the listed packages registered, in the order they did.
 ///
 /// A builder belongs to the package whose `register` added it, so the
@@ -44,6 +49,8 @@ pub struct Registry {
     policies: Vec<&'static str>,
     modules: Vec<(&'static str, &'static dyn ScriptModule)>,
     debug_keys: Vec<(&'static str, DebugKeyGroup)>,
+    run_resources: Vec<(&'static str, RunResources)>,
+    makers: Vec<(&'static str, &'static dyn AssetMaker)>,
     /// Registration points, one value per Rust type (ADR 0137 section 4).
     points: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
@@ -130,11 +137,26 @@ impl Registry {
         self
     }
 
+    /// What this package puts in each run's resources ([`Resources`]):
+    /// called for every core the kernel makes, before any scene.
+    pub fn run_resources(&mut self, put: RunResources) -> &mut Self {
+        self.run_resources.push((self.current, put));
+        self
+    }
+
+    /// A maker of assets by name (`crate::assets`), asked at each scene's
+    /// load, for spawned entities and each frame, after those before it.
+    pub fn asset_maker(&mut self, maker: &'static dyn AssetMaker) -> &mut Self {
+        self.makers.push((self.current, maker));
+        self
+    }
+
     /// A registration point of this package: a value of its own type that
     /// a later package fills at its `register` ([`Registry::point_mut`]),
     /// and this package's builders read ([`Registry::point`]). Music's
-    /// chart judge is one, which rhythm fills (ADR 0137 section 4). A
-    /// second insert of a type replaces the first.
+    /// chart judge is one, which rhythm fills, and procgen's load steps,
+    /// which living fills (ADR 0137 section 4). A second insert of a type
+    /// replaces the first.
     pub fn insert_point<T: Any + Send + Sync>(&mut self, value: T) -> &mut Self {
         self.points.insert(TypeId::of::<T>(), Box::new(value));
         self
@@ -196,6 +218,19 @@ impl Registry {
     pub fn debug_key_groups(&self) -> impl Iterator<Item = DebugKeyGroup> + '_ {
         self.debug_keys.iter().map(|(_, g)| *g)
     }
+
+    /// Put every package's run resources in `resources`, in order.
+    pub fn make_resources(&self, resources: &mut Resources) {
+        for (_, put) in &self.run_resources {
+            put(resources);
+        }
+    }
+
+    /// Every asset maker, in the order registered. None: every name a
+    /// scene gives is a file.
+    pub fn asset_makers(&self) -> impl Iterator<Item = &'static dyn AssetMaker> + '_ {
+        self.makers.iter().map(|(_, m)| *m)
+    }
 }
 
 impl std::fmt::Debug for Registry {
@@ -203,6 +238,7 @@ impl std::fmt::Debug for Registry {
         f.debug_struct("Registry")
             .field("built_with", &self.built)
             .field("builders", &self.builders.len())
+            .field("asset_makers", &self.makers.len())
             .field("policies", &self.policies)
             .field(
                 "modules",

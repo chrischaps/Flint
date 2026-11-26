@@ -26,8 +26,6 @@ use anyhow::{anyhow, Context, Result};
 use flint_core::components as comp;
 use flint_core::load_report;
 use flint_core::Vec3;
-#[cfg(feature = "procgen")]
-use flint_player::GpuSink;
 use flint_player::{ExpressionTimeline, HeadlessAnimation, HeadlessGame, ScriptLook};
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{

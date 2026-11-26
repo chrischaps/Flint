@@ -524,8 +524,9 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   source names no package to do it. A match is the same `MissingPackage`
   as a stub's: exit 2, naming the package to list, with `package` in the
   `--json` error document. A stub (`absent::stub!`) is still how a package
-  whose commands live in flint-cli keeps them (music, rhythm, procgen). It
-  goes when its package's commands move to its crate (#1555, #1557).
+  whose commands live in flint-cli keeps them (music, rhythm; procgen's
+  went with #1557, below). It goes when its package's commands move to its
+  crate (#1555).
 - **Package flags on a command the package doesn't own** (ADR 0136
   section 7: `gen --ai-*`, `--max-cost`, `--cost-report`, `--style-guide`,
   `render --ai-refine`, `render --sweep wooze.*|living.*`, `asset resolve
@@ -637,6 +638,60 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   either has none of its commands, and `absent::missing_command` names the
   package from the manifests. `flint --help` lists `music` after the
   engine's commands, as extensions are.
+
+## As built: procgen moves into its package (#1557)
+
+- **Its crates are in its folder:** `packages/procgen/crates/flint-procgen`
+  (moved whole, history kept) and a new `flint-procgen-cli`, both members
+  by #1554's `packages/*/crates/*` glob. `package.toml` names them under
+  `[rust]` in #1554's and #1555's form: `player = "flint-procgen"` (its
+  `player` feature holds the player part, `player::PACKAGE`) and
+  `cli = "flint-procgen-cli"` (its `cli::extensions()`). The launchers'
+  build scripts list both from those lines (`package_list.rs`'s `moved()`,
+  `stock_extensions.rs`), so `src/` names no procgen crate. The hand-written
+  optional dependency and the `procgen` feature stay until #1568
+  generates them.
+- **The player's half is a registration point the kernel defines**,
+  `flint_package::assets::AssetMaker`, called at five moments: the run's
+  start (the disk tier), a scene's load before the model loader, spawned
+  entities, each frame before `Stage::Procgen`, and a teardown. It also
+  answers `pending(name)` for a model's collider. The kernel lends it a
+  `MakeCtx`: the world, the `ModelLoadConfig`, a `Gpu`, the colliders as
+  `&mut dyn MadeMeshes`, the resources, the registry and `[packages]`. A
+  package also registers `run_resources`, which put its resolver in each
+  core's `Resources`. Its own registration points use #1555's
+  `insert_point` / `point_mut` / `point`. That is how living's props join
+  procgen's load: a `LoadStep` pushed onto procgen's `LoadSteps`, in
+  `[requires]` order. This record's section 4 listed that point as
+  "procgen's resolve steps".
+- **`PlayerExtension::register_generators` became `resources(&mut
+  Resources)`.** It was the one hook that named a package's type, so it
+  couldn't stay without a `cfg`. A game finds the registry with
+  `flint_procgen::player::generators_mut`. Decision 7 keeps
+  `PlayerExtension` as it is apart from this; no game in the three repos
+  used the old hook.
+- **The CLI's commands stay the kernel's**, so `--help` is unchanged in
+  every build, and `flint gen x.glyphs.toml` stays the kernel's, as #1543
+  decided. The kernel's `flint gen`, `flint edit`, `gen-preview` and
+  `tex-edit` ask registration points on the command line,
+  `flint_package::cli::Points`. That is one typed map for the run, filled
+  before parsing by each `CliExtension::register` and then by the binary's
+  own parts. Procgen's extension adds no command. It registers `SpecGen`
+  (the run of a spec; `GenArgs` moved into `flint_package::cli::gen` so
+  the package can take it), `flint_viewer::host::SpecEditors` (its two
+  editors as `Box<dyn Editor>`) and `SpecChecks` (parse, params, a terrain
+  spec's issues). Procgen's own `gen` declares two points of its own,
+  `AiSteps` and `StripSheet`. The binary fills them from its ai and living
+  code under those features. That is #1572's shape for `gen --ai-*`,
+  built for `gen` alone. A missing point is `MissingPackage`, naming the
+  package whose manifest provides the command's words. With procgen's two
+  `absent::stub!`s gone (music's and rhythm's went with #1555), no
+  command is stubbed, and the macro went too.
+- **Living's tables are living's in the CLI too.** The `[living]` and
+  `[wooze]` checks, the settle at load and the echo sweep check were
+  behind `procgen` only because flint-procgen holds their types. They are
+  behind `living` now. A procgen build without living no longer checks
+  tables its player never reads.
 
 ## Measured
 

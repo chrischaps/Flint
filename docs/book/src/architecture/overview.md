@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 35-member Cargo workspace (34 crates, 30 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 36-member Cargo workspace (35 crates, 29 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -8,7 +8,6 @@ Flint is structured as a 35-member Cargo workspace (34 crates, 30 under `crates/
 flint/
 ├── crates/
 │   ├── flint-cli/          # CLI binary (clap). Entry point for all commands.
-│   ├── flint-procgen/      # Procedural generation: Generator trait, registry, tree/texture/creature generators
 │   ├── flint-living/       # Living props at run time: pose rings on the frame budget, clocks, knobs, blending
 │   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation, scripting
 │   ├── flint-package/      # The Package API: the Subsystem trait, its contexts, the run's typed Resources
@@ -44,7 +43,10 @@ flint/
 │   │   └── flint-ai-core/      # What every paid AI call goes through: transport, retry, prices, ledger, cost meter
 │   ├── music/crates/
 │   │   └── flint-music/    # Music: suite manifests, manifest-named buses, tempo maps, conductor, offline render
-│   └── <name>/             # living, rhythm, procgen, debug-hud, engine: manifests and schemas, for now
+│   ├── procgen/crates/
+│   │   ├── flint-procgen/      # Procedural generation: Generator trait, registry, tree/texture/creature generators; the player's asset maker
+│   │   └── flint-procgen-cli/  # `flint gen` for a spec, the spec editors, check's spec passes, as points the kernel asks
+│   └── <name>/             # living, rhythm, debug-hud, engine: manifests and schemas, for now
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
 │   └── arch-viewer/        # Static web page that renders that JSON as an interactive graph
@@ -340,7 +342,7 @@ AI asset generation pipeline:
 
 ### flint-procgen
 
-Procedural generation framework:
+Procedural generation framework, the procgen package's own crate (`packages/procgen/crates/flint-procgen`, #1557):
 - `Generator` trait --- pluggable generator interface with `generate()`, `param_schema()`, `estimate_cost()`
 - `GeneratorRegistry` --- register and look up generators by type name
 - `ProcGenSpec` --- TOML spec format with metadata, seed config, and generator parameters
@@ -348,6 +350,14 @@ Procedural generation framework:
 - `ProcGenCache` --- LRU cache keyed by (spec_hash, seed) with memory budget, over a `DiskCache` tier in `.flint/procgen-cache/` that keeps outputs between runs
 - Algorithmic building blocks: noise (Perlin, simplex, Worley, FBM), L-system engine, mesh builder, space colonization
 - The living side of a generator: `LivingGenerator` (a structure and its poses), `LivingRig`, `LivingSkeleton`, `LivingPose`, and the `[living]` / `[wooze]` scene tables. What runs them over time is `flint-living`
+- The package's part of the player, behind its `player` feature (`player/`): `PACKAGE`, which a launcher lists; the run's resolver in the resources; the `AssetMaker` the kernel calls at a scene's load, for spawned entities and each frame (catalog > procgen > file > placeholder); `GpuSink`; and `LoadSteps`, where living's props join the load
+
+### flint-procgen-cli
+
+The procgen package's part of the `flint` command line (`packages/procgen/crates/flint-procgen-cli`, #1557). The commands stay the kernel's, so `flint --help` is the same in every build; what the package brings it registers as points (`flint_package::cli::Points`):
+- `SpecGen` --- `flint gen <spec>`: generate, validate, register, batch; it asks the ai package's steps (`AiSteps`) and living's contact sheet (`StripSheet`) by points of its own
+- `SpecEditors` --- the procgen previewer and the texture node editor a `.procgen.toml` opens in (`flint edit`, `gen-preview`, `tex-edit`)
+- `SpecChecks` --- what `flint check` asks of a spec: it parses, its params fit its generator, a terrain spec's issues
 
 ### flint-living
 

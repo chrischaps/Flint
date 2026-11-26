@@ -67,28 +67,37 @@ pub trait PlayerExtension {
     /// listed as undeclared.
     fn declare_script_api(&mut self, _api: &mut flint_script::api::ScriptApi) {}
 
-    /// Register the game's own procgen generators (ADR 0119, #195). Called
-    /// once, from `add_extension`, after the script API hooks, with the
-    /// registry the player resolves every scene's `*.procgen.toml` specs
-    /// through; it already holds the
-    /// built-ins. A spec whose `generator` names a type registered here
-    /// resolves like a built-in's: generated at load (or queued, under
-    /// `--procgen-defer`), cached in memory and on the disk, and uploaded
-    /// before the model loader looks for a file of that name.
+    /// The run's resources (ADR 0137 decision 2), once, from
+    /// `add_extension`, after the script API hooks: where a package keeps
+    /// what a game may add to. The one use so far is a game's own procgen
+    /// generators (ADR 0119, #195), which go into the procgen package's
+    /// registry, built-ins already in:
     ///
-    /// A generator with a built-in's type name replaces the built-in.
-    /// Generators are `Send + Sync` and stateless; see
-    /// `crates/flint-procgen/CONTRIBUTING.md` for writing one. Add the
-    /// extension before the event loop starts: the first scene's specs are
-    /// resolved as it loads, and a spec resolved before its generator was
-    /// registered has already fallen through to a file or a placeholder.
+    /// ```ignore
+    /// fn resources(&mut self, resources: &mut flint_package::Resources) {
+    ///     if let Some(generators) = flint_procgen::player::generators_mut(resources) {
+    ///         generators.register(Box::new(RockGenerator));
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// A spec whose `generator` names a type registered there resolves like
+    /// a built-in's: generated at load (or queued, under `--procgen-defer`),
+    /// cached in memory and on the disk, and uploaded before the model
+    /// loader looks for a file of that name. A generator with a built-in's
+    /// type name replaces the built-in. Generators are `Send + Sync` and
+    /// stateless; see `packages/procgen/crates/flint-procgen/CONTRIBUTING.md`
+    /// for writing one. Add the extension before the event loop starts: the
+    /// first scene's specs are resolved as it loads, and a spec resolved
+    /// before its generator was registered has already fallen through to a
+    /// file or a placeholder.
     ///
     /// Only the player sees these: `flint gen`, `flint edit` and
-    /// `flint render` build their registries from the built-ins alone. A
-    /// player built without the `procgen` feature (#754) has no registry,
-    /// and no such hook.
-    #[cfg(feature = "procgen")]
-    fn register_generators(&mut self, _registry: &mut flint_procgen::GeneratorRegistry) {}
+    /// `flint render` build their registries from the built-ins alone. In a
+    /// run without the procgen package there is no registry to find. This
+    /// was `register_generators(&mut GeneratorRegistry)` until #1557, which
+    /// moved procgen out of this crate.
+    fn resources(&mut self, _resources: &mut flint_package::Resources) {}
 
     /// The game's own Rust styles (#419): stylize passes written as the
     /// engine's are (a `static` [`StyleDescriptor`] built with its `const`

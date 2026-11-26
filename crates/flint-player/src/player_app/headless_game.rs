@@ -272,26 +272,37 @@ impl HeadlessGame {
         )
     }
 
-    /// Resolve the scene's procgen assets as the player does at load, before
-    /// the model loader, every one at once, with every living prop's lineage
-    /// built and ring full. `living` is the scene's `[living]`.
-    #[cfg(feature = "procgen")]
-    pub fn resolve_procgen(
+    /// Make the scene's made assets as the player does at load (#1557),
+    /// before the model loader, every one at once (procgen's specs, and
+    /// with the living package every living prop's lineage built and ring
+    /// full: give it the scene's `[living]` first, `set_living_defaults`).
+    /// A run with no asset maker makes nothing, and every name is a file.
+    pub fn make_assets(
         &mut self,
-        living: Option<&flint_procgen::LivingDef>,
-        sink: super::procgen_assets::GpuSink<'_>,
+        renderer: &mut flint_render::SceneRenderer,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        config: &flint_render::model_loader::ModelLoadConfig,
     ) {
-        let core = &mut self.core;
-        #[cfg(feature = "living")]
-        core.living_props_mut()
-            .set_defaults(super::living_props::defaults_of(living));
-        #[cfg(not(feature = "living"))]
-        let _ = living;
-        super::procgen_assets::resolve_scene(
-            core,
-            super::procgen_assets::ProcGenMode::Immediate,
-            sink,
+        self.core.make_scene_assets(
+            flint_package::assets::Gpu {
+                renderer,
+                device,
+                queue,
+            },
+            config,
+            flint_package::assets::MakeMode::Immediate,
+            false,
         );
+    }
+
+    /// The scene's `[living]`, which the props [`make_assets`](Self::make_assets)
+    /// grows start from.
+    #[cfg(feature = "living")]
+    pub fn set_living_defaults(&mut self, living: Option<&flint_procgen::LivingDef>) {
+        self.core
+            .living_props_mut()
+            .set_defaults(super::living_props::defaults_of(living));
     }
 
     /// The living props, if the scene grew any.
