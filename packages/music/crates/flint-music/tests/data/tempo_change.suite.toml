@@ -5,7 +5,7 @@
 # the pinned fixtures are the validator contract and stay untouched.
 # A suite that only plays music: any buses, named as it likes, two of them
 # silent. The rhythm layer's six-bus copy, with its seam table, is
-# crates/flint-rhythm/tests/data/tempo_change.suite.toml (#1041).
+# packages/rhythm/crates/flint-rhythm/tests/data/tempo_change.suite.toml (#1041).
 schema_version = 0
 
 [suite]

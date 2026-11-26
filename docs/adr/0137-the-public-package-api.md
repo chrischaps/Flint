@@ -693,6 +693,44 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   behind `living` now. A procgen build without living no longer checks
   tables its player never reads.
 
+## As built: the fourth move, rhythm (#1556)
+
+- **Three crates in the package's folder**: `packages/rhythm/crates/`
+  holds flint-rhythm and flint-input-capture, moved as they were, and a new
+  one, **flint-rhythm-game**, which is the package's two parts (`player`,
+  `cli`) as features, the shape music's crate has. It is its own crate, not
+  features of flint-rhythm, because the session needs both of the others
+  and flint-input-capture depends on flint-rhythm. The manifest's `[rust]`
+  names it for both parts. Its `debug-hud` feature (the guide panels and
+  the three keys) is turned on by flint-player's `debug-hud` through
+  `flint-rhythm-game?/debug-hud`, the Cargo form of decision 9's
+  `[with.debug-hud]`, which no launcher reads yet.
+- **The ladder's base is a context field**: `SceneCtx::post`, the scene's
+  `[post_process]` as the host read it (its look laid in), in place of
+  #1550's lent `ScenePost` resource. The raw `[post_process]` table in
+  `SceneCtx::tables` would have lost the look. flint-package takes
+  flint-scene for the type, a kernel crate.
+- **The pads are lent as they were**: `Pads::take` / `give_back` on the
+  context's `Pads`, now from another crate. Nothing on the capture thread
+  changed: the same `flint_input_capture::attach_session_input`, the same
+  channel and the same drain at `Stage::Clock`.
+- **The `conducted` module stays music's to declare**. Music enables it,
+  neutral, for a charted scene that nothing judges (a capture, a build
+  without rhythm), so a script reading `conducted_lean()` works there too.
+  Rhythm's manifest still lists it, since rhythm is what fills it.
+- **The CLI list is in registration order**: flint-cli's build script
+  includes flint-player's `launch_list.rs` by `#[path]` and lists the
+  `[rust] cli` crates requires first, so rhythm's extension, which sits
+  `under(&["music"])`, comes after music's whatever the folder names. Its
+  tests ask for a list without rhythm by dropping the extension that adds
+  `chart`, so they run in every build.
+- **Measured**: four synthetic replays of one chart over the tempo-change
+  suite (`perfect`, `late:30`, `late:-45`, `neglect`) gave byte-identical
+  judgment logs, console text and `--json` documents from a binary built
+  before the move and one after. The eight `flint music` help pages are the
+  same bytes. `git grep 'feature = "rhythm"' crates/flint-player
+  crates/flint-cli` finds nothing.
+
 ## As built: living moves into its package (#1558)
 
 - **Its crates are in its folder**: `packages/living/crates/flint-living`

@@ -505,8 +505,9 @@ fn the_inventory_sees_the_whole_tree() {
             "{module}"
         );
     }
-    let built = crate::commands::absent::built_with;
-    if built("living") && cfg!(feature = "rhythm") {
+    if crate::commands::absent::built_with("living")
+        && crate::commands::absent::built_with("rhythm")
+    {
         assert!(inv.script_modules.len() >= 44, "{:?}", inv.script_modules);
     }
 }

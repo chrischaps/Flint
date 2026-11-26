@@ -1,6 +1,15 @@
 # The rhythm game (ADR 0117 decision 2, #745): a `music_session` with a
 # `chart` is judged, and the pad is read at 1 kHz against the audio clock.
 # It judges a session's chart, so it owns no component and brings music.
+#
+# Its crates are in this folder (#1556): crates/flint-rhythm (the judging),
+# crates/flint-input-capture (the pad capture) and crates/flint-rhythm-game,
+# whose `player` feature fills music's chart judge
+# (`flint_rhythm_game::player::PACKAGE`) and `cli` adds `flint music
+# calibrate|chart` (`flint_rhythm_game::cli::extensions()`), named by
+# `[rust]` below. The `conducted` module is declared by music's crate, which
+# enables it neutral for a chart nothing judges; it is listed here because
+# rhythm is what fills it.
 
 [package]
 name = "rhythm"
@@ -15,7 +24,11 @@ music = "*"
 [build]
 features = ["rhythm"]
 
+[rust]
+player = "flint-rhythm-game"
+cli = "flint-rhythm-game"
+
 [provides]
-crates = ["flint-rhythm", "flint-input-capture"]
+crates = ["flint-rhythm", "flint-input-capture", "flint-rhythm-game"]
 script_modules = ["conducted"]
 commands = ["music calibrate", "music chart"]

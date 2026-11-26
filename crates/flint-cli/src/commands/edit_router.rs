@@ -729,8 +729,8 @@ name = \"x\"
     /// #712's first done-when: one `initialize`. Every editor `flint edit`
     /// opens is a `flint_viewer::host::Editor`, and the host is the only
     /// place a window, a render context or egui's window state is made.
-    /// The play-chart window (`flint music chart play`) is no editor, and nor is
-    /// the frame debugger (`flint frame open`, #1088): it edits nothing,
+    /// The play-chart window (`flint music chart play`, the rhythm package's
+    /// own since #1556) is no editor, and nor is the frame debugger (`flint frame open`, #1088): it edits nothing,
     /// orbits no camera and watches no file, and its `--screenshot` draws
     /// the egui window itself, where the host's still draws a scene (#1202).
     #[test]
@@ -738,7 +738,6 @@ name = \"x\"
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let allowed = [
             "flint-viewer/src/host.rs",
-            "flint-cli/src/commands/play_chart_window.rs",
             "flint-cli/src/commands/frame/open/host.rs",
         ];
         let mut found = Vec::new();

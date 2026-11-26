@@ -4,7 +4,7 @@ Status: accepted, 2026-08-19 (commit
 [`86d21ec`](https://github.com/chrischaps/Flint/commit/86d21ec404a5cf822956fcb4bf04058c6a2e3fe5)).
 Backfilled 2026-11-12 (#374) from commit `86d21ec`, Vault note "Star Child
 World II - The Undertow - 2026-08-17", the module doc of
-`crates/flint-input-capture/src/lib.rs`, and the book.
+`packages/rhythm/crates/flint-input-capture/src/lib.rs`, and the book.
 The original record was in the Starchild repo, which no longer exists; this
 is a reconstruction.
 
@@ -57,7 +57,7 @@ Not recorded in the surviving text.
   "World II baseline (engine): full verb map, per-channel judgment,
   alternates, cues, debug panels"
 - Vault: "Star Child World II - The Undertow - 2026-08-17"
-- Code now: `crates/flint-input-capture/src/lib.rs` (`VerbMap`),
+- Code now: `packages/rhythm/crates/flint-input-capture/src/lib.rs` (`VerbMap`),
   `packages/music/crates/flint-music/src/input_stream.rs` (`SwaySample`, `PressureSample`),
-  `crates/flint-cli/src/commands/play_chart.rs` (`--input-map`),
+  `packages/rhythm/crates/flint-rhythm-game/src/cli/play_chart.rs` (`--input-map`),
   [Music Sessions](../book/src/concepts/music-sessions.md), "Verb Space"

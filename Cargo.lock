@@ -1757,7 +1757,6 @@ dependencies = [
  "flint-ecs",
  "flint-geometry",
  "flint-import",
- "flint-input-capture",
  "flint-living",
  "flint-music",
  "flint-package",
@@ -1769,7 +1768,7 @@ dependencies = [
  "flint-procgen-cli",
  "flint-query",
  "flint-render",
- "flint-rhythm",
+ "flint-rhythm-game",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
@@ -2030,7 +2029,6 @@ dependencies = [
  "flint-ecs",
  "flint-geometry",
  "flint-import",
- "flint-input-capture",
  "flint-living",
  "flint-music",
  "flint-package",
@@ -2040,7 +2038,7 @@ dependencies = [
  "flint-procgen",
  "flint-query",
  "flint-render",
- "flint-rhythm",
+ "flint-rhythm-game",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
@@ -2200,6 +2198,35 @@ dependencies = [
  "toml",
  "tracing",
  "web-time",
+]
+
+[[package]]
+name = "flint-rhythm-game"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "clap",
+ "flint-audio",
+ "flint-core",
+ "flint-debug-ui",
+ "flint-ecs",
+ "flint-input-capture",
+ "flint-music",
+ "flint-package",
+ "flint-render",
+ "flint-rhythm",
+ "flint-runtime",
+ "flint-scene",
+ "flint-script",
+ "naga",
+ "pollster",
+ "serde_json",
+ "toml",
+ "tracing",
+ "web-time",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]

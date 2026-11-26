@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 36-member Cargo workspace (35 crates, 27 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 37-member Cargo workspace (36 crates, 25 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -14,8 +14,6 @@ flint/
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
 │   ├── flint-debug-ui/     # DebugPanel trait + the F3/F4 panel roster (Rendering & Effects, ocean, sky, ...)
-│   ├── flint-rhythm/       # The rhythm layer over it: charts, judgment, coherence, ladder, seam, replay, haptics
-│   ├── flint-input-capture/# 1 kHz gamepad capture thread stamped against the audio clock
 │   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
 │   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
@@ -44,10 +42,14 @@ flint/
 │   ├── procgen/crates/
 │   │   ├── flint-procgen/      # Procedural generation: Generator trait, registry, tree/texture/creature generators; the player's asset maker
 │   │   └── flint-procgen-cli/  # `flint gen` for a spec, the spec editors, check's spec passes, as points the kernel asks
+│   ├── rhythm/crates/
+│   │   ├── flint-rhythm/       # The rhythm layer over music: charts, judgment, coherence, ladder, seam, replay, haptics
+│   │   ├── flint-input-capture/# 1 kHz gamepad capture thread stamped against the audio clock
+│   │   └── flint-rhythm-game/  # The package's parts: the chart judge's subsystem, `flint music calibrate|chart`
 │   ├── living/crates/
 │   │   ├── flint-living/       # Living props at run time, and the package's player, F3 panel and CLI parts
 │   │   └── flint-wooze/        # The wooze field
-│   └── <name>/             # rhythm, debug-hud, engine: manifests and schemas, for now
+│   └── <name>/             # debug-hud, engine: manifests and schemas, for now
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
 │   └── arch-viewer/        # Static web page that renders that JSON as an interactive graph
@@ -121,13 +123,13 @@ User / AI Agent
       ├──► flint-viewer    (GUI)         ├──► flint-runtime   (game loop, input)
       ├──► flint-query     (queries)     ├──► flint-physics   (Rapier 3D)
       ├──► flint-scene     (load/save)   ├──► flint-audio     (Kira spatial audio)
-      ├──► flint-render    (renderer)    ├──► flint-rhythm    (rhythm sessions, over flint-music)
-      ├──► flint-constraint(validation)  ├──► flint-input-capture (1 kHz gamepad)
+      ├──► flint-render    (renderer)    ├──► flint-rhythm-game (rhythm sessions: flint-rhythm,
+      ├──► flint-constraint(validation)  │      flint-input-capture's 1 kHz pad, over flint-music)
       ├──► flint-asset     (catalog)     ├──► flint-animation (tweens + skeletal)
       ├──► flint-asset-gen (AI gen)      ├──► flint-particles (GPU particles)
       ├──► flint-procgen   (proc gen)    ├──► flint-script    (Rhai scripting)
-      ├──► flint-rhythm    (chart tools) ├──► flint-terrain   (heightmap terrain)
-      ├──► flint-input-capture           ├──► flint-debug-ui  (F3/F4 panels, optional)
+      ├──► flint-rhythm-game (chart tools) ├──► flint-terrain (heightmap terrain)
+      │                                  ├──► flint-debug-ui  (F3/F4 panels, optional)
       ├──► flint-player    (play)        └──► flint-render    (PBR + skinned mesh)
       └──► flint-import    (glTF import)         │
               │                                  ▼
@@ -139,7 +141,7 @@ User / AI Agent
                                              flint-core
 ```
 
-`flint-cli` depends on `flint-player` directly: `flint play` is the player embedded in the CLI, and the rhythm commands (`flint music chart play`, `chart replay`, `render`, ...) drive `flint-music`, `flint-rhythm` and `flint-input-capture` without a scene at all. `flint-procgen-ai` is tool-time only: `flint-cli` links it, the player does not. Every crate but `flint-android` is a default workspace member, so plain `cargo test` runs all their tests.
+`flint-cli` depends on `flint-player` directly: `flint play` is the player embedded in the CLI, and the music and rhythm packages' commands (`flint music render`, `chart play`, `chart replay`, ...) are their crates' own (`flint-music`, `flint-rhythm-game`), listed from the package manifests, and run without a scene at all. `flint-procgen-ai` is tool-time only: `flint-cli` links it, the player does not. Every crate but `flint-android` is a default workspace member, so plain `cargo test` runs all their tests.
 
 ## Crate Details
 
@@ -288,6 +290,7 @@ The rhythm-game layer over `flint-music` ("linear composition, adaptive playback
 - `GradientDriver`, `HapticsDriver` --- error-driven audio gradient, rumble entrainment
 - `SessionWriter` / `read_session` / `synthesize` --- `.session.jsonl` recording, replay, and synthetic input profiles
 - Depends on `flint-music` and `flint-core`
+- The `rhythm` package's, in its folder (`packages/rhythm/crates/flint-rhythm`, #1556), with flint-input-capture and flint-rhythm-game
 
 ### flint-input-capture
 
@@ -297,6 +300,15 @@ A dedicated thread that owns `Gilrs` and polls it at 1 kHz (`CaptureConfig::poll
 - Uses the gilrs XInput backend on Windows because the default WGI backend delivers nothing to console apps
 - Reads pads through `flint-runtime`'s `pad`, as the player does; nothing outside the rhythm layer needs this crate
 - Depends on `flint-core`, `flint-music`, `flint-rhythm` and `flint-runtime`
+- The `rhythm` package's (`packages/rhythm/crates/flint-input-capture`, #1556)
+
+### flint-rhythm-game
+
+The `rhythm` package's two parts on the Package API (`packages/rhythm/crates/flint-rhythm-game`, #1556), its own crate because the session needs both flint-rhythm and flint-input-capture, and flint-input-capture depends on flint-rhythm:
+- `player` feature: `player::PACKAGE`, a `flint_package::Package` that fills the music package's chart judge with `RhythmSubsystem`. The subsystem starts a `ChartSession` on the shared Kira manager, takes the pads (`Pads::take`) for the 1 kHz capture, drains it at `Stage::Clock`, sets the `conducted_*` snapshot and the music clock at `PreScripts`, and lays the disintegration ladder's post values at `Procgen` over the scene's `[post_process]` (`SceneCtx::post`). With `debug-hud` it adds the Music Guide and Manifest Map panels and their keys
+- `cli` feature: `cli::extensions()`, `flint music calibrate` and `flint music chart play|replay` under the music package's `music`, and the rhythm contract `music validate` checks
+- flint-player's `rhythm` feature turns `player` on and flint-cli's turns `cli` on. Both build scripts list the crate from the manifest's `[rust]`, so neither names it
+- Depends on `flint-package`, `flint-music`, `flint-rhythm`, `flint-input-capture` and, by feature, `flint-script`, `flint-render`, `flint-debug-ui`, winit and wgpu
 
 ### flint-animation
 
@@ -431,7 +443,7 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 - Billboard sprite rendering for Doom-style entities
 - First-person controls (WASD, mouse look, jump, sprint, interact, fire)
 - Optional asset catalog integration for runtime name-based asset resolution
-- Music-session lifecycle: starts a `flint-rhythm` `ChartSession` on the shared Kira manager and hands the gamepad to `flint-input-capture` while a `music_session` component is active
+- Package subsystems by registration: the music package's session and the rhythm package's chart judge (`flint-rhythm-game`) are listed from the manifests, so the player names neither; the player lends its pads (`Pads`) to whichever takes them
 - Summonable debug overlay (F3 scene panels, F4 Rendering & Effects, Music Guide and Manifest Map strips) behind the `debug-hud` feature
 - One launch (`player_args.rs`, #705): `flint_player::PlayerArgs` is every flag, `flint_player::launch` turns them into a running `PlayerApp`, and both `flint-player` (which adds `--bundle`) and `flint play` call it, so the two take the same flags and play a scene the same
 - One set of options (`play_options.rs`, #1142): the desktop's flags (`PlayerArgs::options`), the web page's query string (`PlayOptions::from_query`) and Android's `dev_profile.toml` each build a `flint_player::PlayOptions`, and `PlayOptions::apply` sets the `PlayerApp` from it, so a value means the same whichever host read it. A bad value stops the desktop before its window opens. The page and Android warn of it and play on with the default

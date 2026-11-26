@@ -83,21 +83,16 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/package_list.rs"));
 }
 
-// The packages whose code is still in this crate, each behind its feature
-// until it moves into `packages/<name>/` (#1556-#1559). One with nothing
-// to register yet (debug-hud) is listed all the same: the list is what the
-// binary was built with. A package in its own folder (music, #1555;
-// procgen, #1557) is its crate's `player::PACKAGE`, which `generated::moved`
-// lists from the manifests.
+// The one package whose part is still this crate's, behind its feature
+// until it moves into `packages/<name>/` (#1559): debug-hud, which has
+// nothing to register yet and is listed all the same, since the list is
+// what the binary was built with. A package in its own folder (music,
+// #1555; procgen, #1557; rhythm, #1556; living, #1558) is its crate's
+// `player::PACKAGE`, which `generated::moved` lists from the manifests.
 #[cfg(feature = "debug-hud")]
 static DEBUG_HUD: Part = Part {
     name: "debug-hud",
     register: |_| {},
-};
-#[cfg(feature = "rhythm")]
-static RHYTHM: Part = Part {
-    name: "rhythm",
-    register: crate::player_app::subsystem::rhythm::register,
 };
 
 /// The names of the packages this crate has a part of, in any build: what
@@ -121,8 +116,6 @@ pub fn stock() -> Vec<&'static dyn Package> {
     let mut list: Vec<&'static dyn Package> = generated::moved();
     #[cfg(feature = "debug-hud")]
     list.push(&DEBUG_HUD);
-    #[cfg(feature = "rhythm")]
-    list.push(&RHYTHM);
     let at = |p: &&dyn Package| {
         generated::ORDER
             .iter()
@@ -420,10 +413,9 @@ mod tests {
                 .all(|f| match f.as_str() {
                     // The packages still in this crate, by their gates
                     "debug-hud" => cfg!(feature = "debug-hud"),
-                    "rhythm" => cfg!(feature = "rhythm"),
                     // A package in its own folder (music, #1555; procgen,
-                    // #1557; living, #1558), as the build script read the
-                    // feature
+                    // #1557; rhythm, #1556; living, #1558), as the build
+                    // script read the feature
                     other => {
                         assert!(
                             generated::BUILT.iter().any(|(f, _)| *f == other),
@@ -450,22 +442,25 @@ mod tests {
         assert_eq!(built, kept);
     }
 
-    /// The default build has the music package through the generated list,
-    /// after procgen (#1557) when the build has it: registration order.
-    #[cfg(feature = "rhythm")]
+    /// The packages in their own folders come from the generated list,
+    /// each exactly when this build has its feature, in registration order:
+    /// procgen (standard tier) first, then living and music, then rhythm,
+    /// which requires music (#1555, #1556, #1557, #1558).
     #[test]
-    fn the_music_package_comes_from_its_own_crate() {
-        assert!(PLAYER_PACKAGES.contains(&"music"));
-        assert!(built_feature("music"));
+    fn the_moved_packages_come_from_their_own_crates() {
         let moved: Vec<&str> = generated::moved().iter().map(|p| p.name()).collect();
         // In registration order: procgen (standard), then the feature
-        // packages by name; each in its own folder when the build has it
-        let want: Vec<&str> = ["procgen", "living", "music"]
+        // packages by name, rhythm after the music it requires; each in its
+        // own folder when the build has it
+        let expected: Vec<&str> = ["procgen", "living", "music", "rhythm"]
             .into_iter()
             .filter(|name| built_feature(name))
             .collect();
-        assert_eq!(moved, want);
-        assert!(registry().has("music"));
+        assert_eq!(moved, expected);
+        for name in ["procgen", "living", "music", "rhythm"] {
+            assert!(PLAYER_PACKAGES.contains(&name), "{name}");
+            assert_eq!(registry().has(name), built_feature(name), "{name}");
+        }
     }
 
     /// A launcher that lists fewer packages than the build has makes a

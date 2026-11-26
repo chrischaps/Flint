@@ -42,6 +42,10 @@ pub struct SceneCtx<'a> {
     pub project: &'a Project,
     /// The styles the scene is drawn with (#742).
     pub styles: &'a StyleRegistry,
+    /// The scene's `[post_process]` as the host read it, its look laid in
+    /// (`None`: the defaults, or a capture). The rhythm ladder's base
+    /// (#1556): what a package reads of the scene's look without its tables.
+    pub post: Option<&'a flint_scene::PostProcessDef>,
     pub script: &'a mut ScriptSystem,
     /// `None` in a headless test and a capture.
     pub renderer: Option<&'a mut SceneRenderer>,

@@ -20,7 +20,7 @@ use std::time::Duration;
 #[derive(clap::Args)]
 pub struct PlayChartArgs {
     #[command(flatten)]
-    pub common: super::common_args::ChartCommonArgs,
+    pub common: super::ChartCommonArgs,
 
     /// Stop after this many bars (default: play to the end)
     #[arg(long)]

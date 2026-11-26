@@ -5,9 +5,11 @@
 //! and `flint music render` mixes it offline, both stems sample-locked. The
 //! rhythm layer's contract is still there for a suite that asks for it:
 //! `--rhythm` names what such a suite lacks.
-// The rhythm package brings music (its `[requires]`, and flint-cli's `rhythm`
-// feature turns `music` on), so a build with rhythm has both (#1555).
-#![cfg(feature = "rhythm")]
+//
+// The music package's commands and the rhythm contract are the packages'
+// own (#1555, #1556): each test asks the binary which it was built with
+// (`flint package list --built`) and passes over what it lacks, so this
+// file names no feature and holds in a build with any package set.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -76,9 +78,43 @@ fn project(name: &str) -> PathBuf {
             })
             .collect()
     };
-    flint_music::write_wav(&dir.join("stems/pad.wav"), &tone(220.0, 0.3), RATE).unwrap();
-    flint_music::write_wav(&dir.join("stems/drums.wav"), &tone(1_760.0, 0.2), RATE).unwrap();
+    write_wav(&dir.join("stems/pad.wav"), &tone(220.0, 0.3), RATE);
+    write_wav(&dir.join("stems/drums.wav"), &tone(1_760.0, 0.2), RATE);
     dir
+}
+
+/// A stereo 32-bit float WAV, as `flint_music::write_wav` writes one.
+fn write_wav(path: &Path, interleaved: &[f32], rate: u32) {
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).unwrap();
+    for &s in interleaved {
+        writer.write_sample(s).unwrap();
+    }
+    writer.finalize().unwrap();
+}
+
+/// Whether the binary has `package` (`flint package list --built`).
+fn built(package: &str) -> bool {
+    let out = Command::new(FLINT)
+        .args(["--json", "package", "list", "--built"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("flint runs");
+    let list: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let has = list["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == package);
+    if !has {
+        eprintln!("skipped: this flint was built without the {package} package");
+    }
+    has
 }
 
 fn flint(dir: &Path, args: &[&str]) -> Output {
@@ -99,6 +135,9 @@ fn text(out: &Output) -> String {
 
 #[test]
 fn a_suite_with_two_named_buses_and_no_reintegration_validates() {
+    if !built("music") {
+        return;
+    }
     let dir = project("validate");
     let out = flint(&dir, &["music", "validate", "two.suite.toml"]);
     let said = text(&out);
@@ -110,6 +149,9 @@ fn a_suite_with_two_named_buses_and_no_reintegration_validates() {
 
 #[test]
 fn the_rhythm_contract_names_what_a_music_suite_lacks() {
+    if !built("rhythm") {
+        return;
+    }
     let dir = project("rhythm");
     let out = flint(&dir, &["music", "validate", "two.suite.toml", "--rhythm"]);
     let said = text(&out);
@@ -126,6 +168,9 @@ fn the_rhythm_contract_names_what_a_music_suite_lacks() {
 
 #[test]
 fn a_suite_with_two_named_buses_renders_offline() {
+    if !built("music") {
+        return;
+    }
     let dir = project("render");
     let out = flint(
         &dir,

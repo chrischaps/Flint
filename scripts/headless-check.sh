@@ -47,7 +47,7 @@ echo "headless flint-cli tree for Linux: no device crates" \
 
 # The packages' crates (packages/<name>/package.toml) a flint-cli with no
 # package feature leaves out
-CLI_OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-living|flint-wooze|flint-procgen|flint-procgen-cli|flint-asset-gen|flint-procgen-ai|flint-ai-core) v'
+CLI_OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-rhythm-game|flint-living|flint-wooze|flint-procgen|flint-procgen-cli|flint-asset-gen|flint-procgen-ai|flint-ai-core) v'
 found=$(printf '%s\n' "$tree" | grep -E "$CLI_OPTIONAL" | sort -u || true)
 if [ -n "$found" ]; then
     echo "flint-cli with no default features links a package's crate:" >&2
@@ -69,7 +69,7 @@ if cargo tree -p flint-viewer --no-default-features -e normal --prefix none \
 fi
 echo "smallest flint-viewer: no flint-wooze, no flint-procgen"
 
-OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-procgen|flint-living|flint-wooze|flint-debug-ui) v'
+OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-rhythm-game|flint-procgen|flint-living|flint-wooze|flint-debug-ui) v'
 player=$(cargo tree -p flint-player --no-default-features -e normal --prefix none)
 found=$(printf '%s\n' "$player" | grep -E "$OPTIONAL" | sort -u || true)
 if [ -n "$found" ]; then
