@@ -54,22 +54,22 @@ The long arrow into `render` comes from the player (top right) and from `viewer`
 <!-- Written by tools/arch-analyzer from each Cargo.toml; don't edit by hand.
      Rewrite: cargo run -p flint-arch-analyzer -- --book. CI's crate-table job runs --check-book. -->
 
-The workspace has 35 engine crates, 28 under `crates/` and 7 in packages (`packages/ai/crates/`, `packages/music/crates/`, `packages/rhythm/crates/`), plus one tool (`tools/arch-analyzer`). Rows run bottom-up: a crate's **tier** is the longest chain of engine crates beneath it, so every crate depends only on crates of a lower tier. Optional and target-only dependencies are marked; dev-dependencies are left out.
+The workspace has 36 engine crates, 27 under `crates/` and 9 in packages (`packages/ai/crates/`, `packages/music/crates/`, `packages/procgen/crates/`, `packages/rhythm/crates/`), plus one tool (`tools/arch-analyzer`). Rows run bottom-up: a crate's **tier** is the longest chain of engine crates beneath it, so every crate depends only on crates of a lower tier. Optional and target-only dependencies are marked; dev-dependencies are left out.
 
 | Tier | Crate | Depends On | Depended On By |
 |-----:|-------|-----------|----------------|
 | 0 | `flint-ai-core` | *(none)* | asset-gen, cli (optional), procgen-ai |
 | 0 | `flint-arch-analyzer` (`tools/arch-analyzer`) | *(none)* | *(none)* |
 | 0 | `flint-audio-worklet` | *(none)* | *(none)* |
-| 0 | `flint-core` | *(none)* | android, animation, asset, asset-gen, audio, cli, constraint, debug-ui, ecs, geometry, import, input-capture, living, music, package, particles, physics, player, procgen, query, render, rhythm, rhythm-game, runtime, scene, schema, script, terrain, viewer, wooze |
+| 0 | `flint-core` | *(none)* | android, animation, asset, asset-gen, audio, cli, constraint, debug-ui, ecs, geometry, import, input-capture, living, music, package, particles, physics, player, procgen, procgen-cli, query, render, rhythm, rhythm-game, runtime, scene, schema, script, terrain, viewer, wooze |
 | 0 | `flint-pixels` | *(none)* | player, render |
-| 1 | `flint-asset` | core | asset-gen, cli, import, player, scene |
+| 1 | `flint-asset` | core | asset-gen, cli, import, player, procgen (optional), procgen-cli, scene |
 | 1 | `flint-schema` | core | android, cli, constraint, debug-ui, ecs, player, procgen, render, scene, script, viewer |
-| 2 | `flint-ecs` | core, schema | android, animation, audio, cli, constraint, debug-ui, geometry, music (optional), package, particles, physics, player, query, render, rhythm-game (optional), runtime, scene, script, terrain, viewer, wooze |
-| 2 | `flint-import` | asset, core | animation, asset-gen, cli, player, procgen, procgen-ai, render, viewer |
+| 2 | `flint-ecs` | core, schema | android, animation, audio, cli, constraint, debug-ui, geometry, music (optional), package, particles, physics, player, procgen (optional), procgen-cli, query, render, rhythm-game (optional), runtime, scene, script, terrain, viewer, wooze |
+| 2 | `flint-import` | asset, core | animation, asset-gen, cli, player, procgen, procgen-ai, procgen-cli, render, viewer |
 | 3 | `flint-geometry` | core, ecs | cli, debug-ui, player, procgen, render, script, viewer |
 | 3 | `flint-query` | core, ecs | cli, constraint, player |
-| 3 | `flint-runtime` | core, ecs | animation, audio, cli, input-capture, package, particles, physics, player, rhythm-game (optional), script, viewer |
+| 3 | `flint-runtime` | core, ecs | animation, audio, cli, input-capture, package, particles, physics, player, procgen-cli, rhythm-game (optional), script, viewer |
 | 3 | `flint-scene` | asset, core, ecs, schema | android, cli, debug-ui, package, player, procgen, render, rhythm-game (optional), viewer |
 | 3 | `flint-terrain` | core, ecs | cli, debug-ui, player, procgen, render, script |
 | 3 | `flint-wooze` | core, ecs | cli (optional), living, player (optional), procgen (optional), viewer (optional) |
@@ -78,22 +78,23 @@ The workspace has 35 engine crates, 28 under `crates/` and 7 in packages (`packa
 | 4 | `flint-constraint` | core, ecs, query, schema | cli, viewer |
 | 4 | `flint-particles` | core, ecs, runtime | cli, debug-ui, player, render, viewer |
 | 4 | `flint-physics` | core, ecs, runtime | cli, package, player, script |
-| 4 | `flint-procgen` | core, geometry, import, scene, schema, terrain, wooze (optional) | asset-gen, cli (optional), debug-ui (optional), living, player (optional), procgen-ai, viewer (optional) |
-| 5 | `flint-living` | core, procgen, wooze | cli (optional), player (optional) |
-| 5 | `flint-procgen-ai` | ai-core, import, procgen | cli (optional) |
-| 5 | `flint-render` | core, ecs, geometry, import, particles, pixels, scene, schema, terrain | cli, debug-ui, package, player, rhythm-game (optional), viewer |
+| 5 | `flint-render` | core, ecs, geometry, import, particles, pixels, scene, schema, terrain | cli, debug-ui, package, player, procgen (optional), procgen-cli, rhythm-game (optional), viewer |
 | 5 | `flint-script` | animation, core, ecs, geometry, physics, runtime, schema, terrain | cli, music (optional), package, player, rhythm-game (optional) |
-| 6 | `flint-debug-ui` | core, ecs, geometry, particles, procgen (optional), render, scene, schema, terrain | cli, player (optional), rhythm-game (optional), viewer |
-| 6 | `flint-package` | audio, core, ecs, physics, render, runtime, scene, script | asset-gen (optional), cli, music (optional), player, rhythm-game (optional) |
-| 7 | `flint-asset-gen` | ai-core, asset, core, import, package (optional), procgen | cli (optional) |
+| 6 | `flint-package` | audio, core, ecs, physics, render, runtime, scene, script | asset-gen (optional), cli, music (optional), player, procgen (optional), procgen-cli, rhythm-game (optional) |
 | 7 | `flint-music` | audio, core, ecs (optional), package (optional), script (optional) | cli (optional), input-capture, player (optional), rhythm, rhythm-game |
-| 7 | `flint-viewer` | constraint, core, debug-ui, ecs, geometry, import, particles, procgen (optional), render, runtime, scene, schema, wooze (optional) | cli |
+| 7 | `flint-procgen` | asset (optional), core, ecs (optional), geometry, import, package (optional), render (optional), scene, schema, terrain, wooze (optional) | asset-gen, cli (optional), debug-ui (optional), living, player (optional), procgen-ai, procgen-cli, viewer (optional) |
+| 8 | `flint-asset-gen` | ai-core, asset, core, import, package (optional), procgen | cli (optional) |
+| 8 | `flint-debug-ui` | core, ecs, geometry, particles, procgen (optional), render, scene, schema, terrain | cli, player (optional), rhythm-game (optional), viewer |
+| 8 | `flint-living` | core, procgen, wooze | cli (optional), player (optional) |
+| 8 | `flint-procgen-ai` | ai-core, import, procgen | cli (optional) |
 | 8 | `flint-rhythm` | core, music | input-capture, rhythm-game |
 | 9 | `flint-input-capture` | core, music, rhythm, runtime | rhythm-game |
+| 9 | `flint-viewer` | constraint, core, debug-ui, ecs, geometry, import, particles, procgen (optional), render, runtime, scene, schema, wooze (optional) | cli, procgen-cli |
+| 10 | `flint-procgen-cli` | asset, core, ecs, import, package, procgen, render, runtime, viewer | cli (optional) |
 | 10 | `flint-rhythm-game` | audio (optional), core, debug-ui (optional), ecs (optional), input-capture, music, package (optional), render (optional), rhythm, runtime (optional), scene (optional), script (optional) | cli (optional), player (optional) |
 | 11 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, geometry, import, living (optional), music (optional), package, particles, physics, pixels, procgen (optional), query, render, rhythm-game (optional), runtime, scene, schema, script, terrain, wooze (optional) | android, cli |
 | 12 | `flint-android` | core, ecs, player, scene, schema | *(none)* |
-| 12 | `flint-cli` | ai-core (optional), animation, asset, asset-gen (optional), constraint, core, debug-ui, ecs, geometry, import, living (optional), music (optional), package, particles, physics, player, procgen (optional), procgen-ai (optional), query, render, rhythm-game (optional), runtime, scene, schema, script, terrain, viewer, wooze (optional) | *(none)* |
+| 12 | `flint-cli` | ai-core (optional), animation, asset, asset-gen (optional), constraint, core, debug-ui, ecs, geometry, import, living (optional), music (optional), package, particles, physics, player, procgen (optional), procgen-ai (optional), procgen-cli (optional), query, render, rhythm-game (optional), runtime, scene, schema, script, terrain, viewer, wooze (optional) | *(none)* |
 
 <!-- crate-table:end -->
 

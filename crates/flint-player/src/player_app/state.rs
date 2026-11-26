@@ -18,16 +18,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// When the player generates a scene's procgen assets (`LaunchOptions::procgen_mode`).
-/// A build without the `procgen` feature (#754) generates none either way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ProcGenMode {
-    /// Generate during scene load; the first frame shows the real assets.
-    #[default]
-    Immediate,
-    /// Show placeholders at once and generate on the frame-budgeted queue.
-    Deferred,
-}
+/// When the player makes a scene's made assets (`LaunchOptions::procgen_mode`):
+/// the kernel's [`MakeMode`](flint_package::assets::MakeMode), under the name
+/// games set it by. A run without the procgen package makes none either way.
+pub use flint_package::assets::MakeMode as ProcGenMode;
 
 /// What the host asked for before the event loop started: the command line's
 /// flags (`flint-player`, `flint play`), the web page's query, an Android dev

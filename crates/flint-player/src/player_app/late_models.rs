@@ -131,37 +131,27 @@ impl PlayerApp {
             self.assets.of(&self.core.project),
         );
 
-        // Procgen before the file, for the names it has a spec of
-        #[cfg(feature = "procgen")]
-        {
-            use super::procgen_assets::{collect_requests_of, resolve, GpuSink};
-            let mut sink = GpuSink {
-                renderer,
-                device,
-                queue,
-                config: &config,
-            };
-            let requests = collect_requests_of(
-                &self.core.world,
+        // The asset makers before the file (procgen, for the names it has a
+        // spec of), each mesh's triangles kept for the colliders naming it
+        for maker in crate::packages::registry().asset_makers() {
+            maker.spawned(
+                &mut flint_package::assets::MakeCtx {
+                    world: &mut self.core.world,
+                    scene_path: &self.core.scene_path,
+                    config: &config,
+                    gpu: flint_package::assets::Gpu {
+                        renderer: &mut *renderer,
+                        device,
+                        queue,
+                    },
+                    colliders: &mut self.core.collider_sources,
+                    resources: &mut self.core.resources,
+                    registry: crate::packages::registry(),
+                    packages: self.core.packages.as_ref(),
+                    mode: self.launch.procgen_mode,
+                },
                 ids,
-                &config,
-                super::game_core::resolver_of(&self.core.resources),
-                &sink,
             );
-            if !requests.is_empty() {
-                // Each mesh's triangles kept for the colliders naming it
-                // (#1222)
-                let mut recording = super::collider_meshes::Recording {
-                    sink: &mut sink,
-                    sources: &mut self.core.collider_sources,
-                };
-                resolve(
-                    &requests,
-                    super::game_core::resolver_mut_of(&mut self.core.resources),
-                    &mut recording,
-                    self.launch.procgen_mode,
-                );
-            }
         }
 
         let wanted = model_loader::model_assets_of(&self.core.world, ids);

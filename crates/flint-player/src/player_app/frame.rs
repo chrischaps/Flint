@@ -872,12 +872,13 @@ impl PlayerApp {
         self.input.end_frame();
     }
 
-    /// The frame-budgeted procgen queue, as the frame runs it (tests).
+    /// The asset makers' frame (procgen's budgeted queue), as the frame
+    /// runs it (tests).
     #[cfg(all(test, feature = "living"))]
     pub(super) fn tick_procgen(&mut self) {
         use super::game_core::FrameHost;
         let (core, lent) = self.lend();
-        core.tick_procgen(lent);
+        core.tick_asset_makers(lent);
     }
 
     /// Hot reload of user styles' descriptions (#275, natively): a few

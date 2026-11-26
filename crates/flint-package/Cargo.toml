@@ -30,6 +30,8 @@ tracing = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
+# The commands' clock (`cli::utc_now`, `random_seed`): std's panics in wasm
+web-time = { workspace = true }
 
 [lints]
 workspace = true

@@ -440,8 +440,10 @@ impl PlayerApp {
         self.core.events.retain(|event| !event.is_contact());
         self.core.animation.clear();
         self.core.particles.clear();
-        #[cfg(feature = "procgen")]
-        self.core.procgen_resolver_mut().clear_queue();
+        // What the asset makers queued for the scene going (procgen's)
+        for maker in crate::packages::registry().asset_makers() {
+            maker.scene_gone(&mut self.core.resources);
+        }
 
         // Clear world, keeping its ids: nothing spawned before the next
         // scene's world is installed reuses one

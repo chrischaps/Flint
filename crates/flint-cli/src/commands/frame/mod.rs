@@ -292,33 +292,11 @@ pub(crate) fn commit_words(
     s
 }
 
-pub(crate) fn utc_now() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    rfc3339(secs)
-}
-
-fn rfc3339(secs: u64) -> String {
-    let days = (secs / 86_400) as i64;
-    let rem = secs % 86_400;
-    // Howard Hinnant's civil_from_days
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        rem / 3600,
-        rem % 3600 / 60,
-        rem % 60
-    )
-}
+#[cfg(test)]
+use flint_package::cli::rfc3339;
+/// Now, UTC, as RFC 3339 to the second: the Package API's clock (#1557),
+/// which procgen's `gen --register` writes its provenance with too.
+pub(crate) use flint_package::cli::utc_now;
 
 #[cfg(test)]
 mod tests {

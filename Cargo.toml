@@ -25,7 +25,6 @@ members = [
     "crates/flint-particles",
     "crates/flint-terrain",
     "crates/flint-debug-ui",
-    "crates/flint-procgen",
     "crates/flint-living",
     "crates/flint-cli",
     "packages/*/crates/*",
@@ -63,7 +62,6 @@ default-members = [
     "crates/flint-particles",
     "crates/flint-terrain",
     "crates/flint-debug-ui",
-    "crates/flint-procgen",
     "crates/flint-living",
     "crates/flint-cli",
     "packages/*/crates/*",
@@ -244,7 +242,8 @@ flint-particles = { path = "crates/flint-particles" }
 flint-terrain = { path = "crates/flint-terrain" }
 # Its `living` feature (the [wooze] table's field and knob checks) is the
 # living package's to turn on (#1516)
-flint-procgen = { path = "crates/flint-procgen", default-features = false }
+flint-procgen = { path = "packages/procgen/crates/flint-procgen", default-features = false }
+flint-procgen-cli = { path = "packages/procgen/crates/flint-procgen-cli" }
 flint-living = { path = "crates/flint-living" }
 flint-procgen-ai = { path = "packages/ai/crates/flint-procgen-ai" }
 flint-ai-core = { path = "packages/ai/crates/flint-ai-core" }

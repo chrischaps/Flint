@@ -2,7 +2,9 @@
 //! procgen spec makes at load or on the queue, and one a game uploads at
 //! runtime. Each takes the triangles it is drawn with, in the player's own
 //! frames, on a GPU (procgen resolves into the renderer, and a runtime mesh
-//! is uploaded to it). Skipped without one.
+//! is uploaded to it). Skipped without one. The procgen ones run where the
+//! run's launcher lists the procgen package (#1557), and pass over in a
+//! build without it.
 
 use super::scene_entry::SceneEntry;
 use super::state::ProcGenMode;
@@ -179,6 +181,9 @@ fn the_rock_is_its_hull(app: &PlayerApp) {
 
 #[test]
 fn a_procgen_rocks_convex_collider_rests_a_ball_on_its_drawn_surface() {
+    if !crate::packages::registry().has("procgen") {
+        return;
+    }
     let Some(gpu) = super::scene_entry_tests::gpu() else {
         flint_render::gpu_select::skip_without_gpu("procgen collider test");
         return;
@@ -198,6 +203,9 @@ fn a_procgen_rocks_convex_collider_rests_a_ball_on_its_drawn_surface() {
 
 #[test]
 fn a_procgen_rock_the_queue_makes_later_gets_its_hull_then() {
+    if !crate::packages::registry().has("procgen") {
+        return;
+    }
     let Some(gpu) = super::scene_entry_tests::gpu() else {
         flint_render::gpu_select::skip_without_gpu("deferred procgen collider test");
         return;
@@ -221,7 +229,7 @@ fn a_procgen_rock_the_queue_makes_later_gets_its_hull_then() {
         // its GPU to the queue's share only from a window's context (a
         // frame here would make the rock and drop it), so the tests' GPU
         // does that share by hand, through the same calls
-        // (`GameCore::tick_procgen`), before the first frame
+        // (`GameCore::tick_asset_makers`), before the first frame
         apply_queue(&mut app, gpu);
         ticks(&mut app, 240);
         the_rock_is_its_hull(&app);
@@ -233,12 +241,13 @@ fn a_procgen_rock_the_queue_makes_later_gets_its_hull_then() {
     });
 }
 
-/// The frame's procgen share (`GameCore::tick_procgen`) on the tests' GPU:
+/// The frame's procgen share (`GameCore::tick_asset_makers`) on the tests' GPU:
 /// the queue run until the rock is made, then swapped in.
 fn apply_queue(app: &mut PlayerApp, gpu: &HeadlessContext) {
     let mut completed = Vec::new();
     for _ in 0..100 {
-        completed.extend(app.core.procgen_resolver_mut().process_frame([0.0; 3]));
+        let resolver = flint_procgen::player::resolver_mut(&mut app.core.resources);
+        completed.extend(resolver.process_frame([0.0; 3]));
         if !completed.is_empty() {
             break;
         }
@@ -248,17 +257,17 @@ fn apply_queue(app: &mut PlayerApp, gpu: &HeadlessContext) {
         app.core.project.clone(),
         &app.core.scene_path,
     );
-    let mut sink = super::procgen_assets::GpuSink {
+    let mut sink = flint_procgen::player::GpuSink {
         renderer: app.scene_renderer.as_mut().unwrap(),
         device: &gpu.device,
         queue: &gpu.queue,
         config: &config,
     };
-    let mut recording = super::collider_meshes::Recording {
+    let mut recording = flint_procgen::player::Recording {
         sink: &mut sink,
-        sources: &mut app.core.collider_sources,
+        colliders: &mut app.core.collider_sources,
     };
-    super::procgen_assets::apply_completed(&completed, &mut recording);
+    flint_procgen::player::apply_completed(&completed, &mut recording);
 }
 
 /// A 2 x 1 x 2 block with its base at y = 0, as a game would build it.

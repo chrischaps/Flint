@@ -1,0 +1,44 @@
+[package]
+name = "flint-procgen-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The procgen package's commands: flint gen for a spec, its previewer and texture graph editor"
+
+# The procgen package's part of the `flint` command line (#1557, ADR 0137
+# decision 4): `flint gen <spec>` (the kernel's command, which hands a spec
+# to the `SpecGen` this registers), `flint edit` on a `.procgen.toml` (the
+# previewers, through `flint_viewer::host::SpecEditors`), the hidden
+# `gen-preview` / `tex-edit` aliases, and what `flint check` asks of a spec.
+# It builds against flint-package and the kernel crates, never flint-cli;
+# flint-cli's `procgen` feature turns it on, and its `build.rs` lists
+# `cli()` from `packages/procgen/package.toml`'s `[rust] cli`.
+[features]
+# The editors' Save As / Export buttons open the system's dialog (rfd);
+# off, they say so (flint-cli's `dialogs` turns this on).
+dialogs = ["flint-viewer/dialogs"]
+
+[dependencies]
+flint-package = { workspace = true }
+flint-procgen = { workspace = true }
+flint-core = { workspace = true }
+flint-ecs = { workspace = true }
+flint-asset = { workspace = true }
+flint-import = { workspace = true }
+flint-render = { workspace = true }
+flint-runtime = { workspace = true }
+flint-viewer = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+egui = { workspace = true }
+egui-snarl = { workspace = true }
+image = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+tracing = { workspace = true }
+winit = { workspace = true }
+
+[lints]
+workspace = true

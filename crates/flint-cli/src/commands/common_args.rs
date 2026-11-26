@@ -203,17 +203,17 @@ pub fn load_scene(
 
 /// [`load_scene`], then living props' tables checked and the preset
 /// `[wooze] preset` names filled in (`flint_procgen::settle_scene`), as the
-/// player loads one: a scene loaded for drawing. A build without the
-/// procgen package (#1543) links no flint-procgen and settles nothing: it
-/// has no living package either (living needs procgen), so the tables are
-/// drawn still, as the player built without `living` reads neither.
+/// player loads one: a scene loaded for drawing. They are the living
+/// package's tables: a build without it settles nothing (#1543, #1557), so
+/// the tables are drawn still, as the player built without `living` reads
+/// neither.
 pub fn load_settled(
     path: &str,
     registry: &flint_schema::SchemaRegistry,
 ) -> anyhow::Result<(flint_ecs::FlintWorld, flint_scene::SceneFile)> {
-    #[cfg_attr(not(feature = "procgen"), allow(unused_mut))]
+    #[cfg_attr(not(feature = "living"), allow(unused_mut))]
     let (world, mut scene_file) = load_scene(path, registry)?;
-    #[cfg(feature = "procgen")]
+    #[cfg(feature = "living")]
     {
         use anyhow::Context;
         flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(path))
@@ -232,35 +232,12 @@ pub fn warn_dropped_schemas(dirs: &flint_schema::SchemaDirs) {
     }
 }
 
-/// The value of a `--max-cost` flag: dollars, `$` allowed, not negative.
-/// Here, not in `ai_costs`, so the flag parses alike in a build without the
-/// ai package (#1333), whose command then names the package.
-pub fn parse_usd(s: &str) -> std::result::Result<f64, String> {
-    let v: f64 = s
-        .trim()
-        .trim_start_matches('$')
-        .parse()
-        .map_err(|_| format!("'{s}' isn't an amount in USD (e.g. 0.50)"))?;
-    if !v.is_finite() || v < 0.0 {
-        return Err(format!("--max-cost must be a non-negative amount, not {s}"));
-    }
-    Ok(v)
-}
-
-/// A seed from the system time, for an editor's "new seed" (the procgen
-/// previewer, texture graph and terrain editors).
-pub fn random_seed() -> u64 {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos() as u64;
-    // Mix with a larger time component for better spread
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    (nanos ^ millis.wrapping_mul(6364136223846793005)) % 1_000_000
-}
+/// The value of a `--max-cost` flag (dollars, `$` allowed, not negative),
+/// and a seed from the clock for an editor's "new seed": the Package API's
+/// (#1557), since the procgen package's commands read them too. Not in
+/// `ai_costs`, so the flag parses alike in a build without the ai package
+/// (#1333), whose command then names the package.
+pub use flint_package::cli::{gen::parse_usd, random_seed};
 
 #[cfg(test)]
 mod tests {

@@ -340,7 +340,7 @@ impl LivingSubsystem {
                     ctx.project.clone(),
                     ctx.scene_path,
                 );
-                let mut sink = super::procgen_assets::GpuSink {
+                let mut sink = flint_procgen::player::GpuSink {
                     renderer,
                     device,
                     queue,
@@ -396,7 +396,7 @@ impl LivingSubsystem {
             props.props().len(),
             props.lineage_count(),
             ring,
-            super::game_core::resolver_of(ctx.resources).frame_budget_ms(),
+            flint_procgen::player::resolver(ctx.resources).frame_budget_ms(),
         ) {
             out.line(line);
         }

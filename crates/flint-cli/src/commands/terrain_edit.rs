@@ -214,35 +214,20 @@ pub struct TerrainEditApp {
 }
 
 /// The spec file's issues, as `flint gen` prints them: the terrain_v1
-/// schema's, through the one check both run. A file that won't parse says
-/// so as its one issue.
-#[cfg(feature = "procgen")]
+/// schema's, through the one check both run (the procgen package's
+/// `SpecChecks::terrain_issues`, #1557). Without the package there is no
+/// terrain_v1 schema to hold the file to, so the issues are the terrain
+/// format's own: every key nothing reads and every value the bake skips
+/// (`TerrainSpec::parse_checked`, #1543). A file that won't parse says so
+/// as its one issue.
 fn spec_issues(path: &std::path::Path) -> Vec<String> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) => return vec![format!("couldn't read the spec: {e}")],
     };
-    match flint_procgen::generators::terrain::check_terrain_toml(&text) {
-        Ok(issues) => issues
-            .iter()
-            .map(|i| {
-                let level = if i.is_error() { "error" } else { "warning" };
-                format!("{level}: {i}")
-            })
-            .collect(),
-        Err(e) => vec![format!("error: {e}")],
+    if let Some(checks) = crate::points().get::<flint_package::cli::SpecChecks>() {
+        return (checks.terrain_issues)(&text);
     }
-}
-
-/// Without the procgen package (#1543) there is no terrain_v1 schema to
-/// hold the file to, so the issues are the terrain format's own: every key
-/// nothing reads and every value the bake skips (`TerrainSpec::parse_checked`).
-#[cfg(not(feature = "procgen"))]
-fn spec_issues(path: &std::path::Path) -> Vec<String> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) => return vec![format!("couldn't read the spec: {e}")],
-    };
     match TerrainSpec::parse_checked(&text) {
         Ok((_, issues)) => issues.iter().map(|i| format!("warning: {i}")).collect(),
         Err(e) => vec![format!("error: {e}")],
@@ -498,7 +483,7 @@ impl TerrainEditApp {
     }
 
     fn save_spec_as(&mut self) {
-        let dialog = crate::file_dialog::FileDialog::new()
+        let dialog = flint_viewer::file_dialog::FileDialog::new()
             .set_title("Save Terrain Spec As")
             .add_filter("Terrain Spec", &["toml"])
             .set_file_name(
@@ -529,7 +514,7 @@ impl TerrainEditApp {
     }
 
     fn export_maps(&mut self) {
-        let dialog = crate::file_dialog::FileDialog::new()
+        let dialog = flint_viewer::file_dialog::FileDialog::new()
             .set_title("Export Heightmap PNG")
             .add_filter("PNG Image", &["png"])
             .set_file_name("heightmap.png");

@@ -47,7 +47,7 @@ echo "headless flint-cli tree for Linux: no device crates" \
 
 # The packages' crates (packages/<name>/package.toml) a flint-cli with no
 # package feature leaves out
-CLI_OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-rhythm-game|flint-living|flint-wooze|flint-asset-gen|flint-procgen-ai|flint-ai-core) v'
+CLI_OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-rhythm-game|flint-living|flint-wooze|flint-procgen|flint-procgen-cli|flint-asset-gen|flint-procgen-ai|flint-ai-core) v'
 found=$(printf '%s\n' "$tree" | grep -E "$CLI_OPTIONAL" | sort -u || true)
 if [ -n "$found" ]; then
     echo "flint-cli with no default features links a package's crate:" >&2
@@ -56,7 +56,7 @@ if [ -n "$found" ]; then
     cargo tree -p flint-cli --no-default-features -e normal,features -i "$first" >&2 || true
     exit 1
 fi
-echo "smallest flint-cli: none of music, rhythm, living, ai, wooze"
+echo "smallest flint-cli: none of music, rhythm, living, procgen, ai, wooze"
 
 # The viewer reads a scene's [living] and [wooze] tables through flint-procgen,
 # whose wooze field is its `living` feature's (#1516)

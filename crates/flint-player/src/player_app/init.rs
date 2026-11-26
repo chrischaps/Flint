@@ -216,8 +216,8 @@ impl PlayerApp {
     pub fn add_extension(&mut self, mut extension: Box<dyn crate::extension::PlayerExtension>) {
         extension.register_script_api(self.core.script.rhai_engine_mut());
         extension.declare_script_api(&mut self.core.script.script_api());
-        #[cfg(feature = "procgen")]
-        extension.register_generators(self.core.procgen_resolver_mut().registry_mut());
+        // A package's registration points for a game (procgen's generators)
+        extension.resources(&mut self.core.resources);
         // The game's own script modules (#754): declared, and enabled for
         // the run beside whatever the scene's subsystems enable
         for module in extension.script_modules() {
@@ -248,21 +248,6 @@ impl PlayerApp {
         // And its debug panels, before the next scene load builds them again.
         #[cfg(feature = "debug-hud")]
         self.create_extension_debug_panels();
-    }
-
-    /// Give the procgen resolver a disk tier (#181). The resolver is
-    /// rebuilt around it, and its generators move across, built-ins and the
-    /// ones extensions registered alike (#195).
-    #[cfg(feature = "procgen")]
-    pub(super) fn use_procgen_disk(&mut self, disk: flint_procgen::DiskCacheConfig) {
-        let registry = std::mem::take(self.core.procgen_resolver_mut().registry_mut());
-        *self.core.procgen_resolver_mut() = flint_procgen::ProcGenResolver::with_registry(
-            flint_procgen::ProcGenCacheConfig {
-                disk: Some(disk),
-                ..Default::default()
-            },
-            registry,
-        );
     }
 
     /// A handle on the camera scripts' `world_to_screen` uses, for native
@@ -816,11 +801,11 @@ impl PlayerApp {
         // gpu_info() answer from the first frame.
         self.init_quality();
 
-        // Which project the scene is in, and the procgen disk tier (#181),
-        // set up once, before the first scene's assets are resolved.
+        // Which project the scene is in, and the asset makers' start (the
+        // procgen disk tier, #181), once, before the first scene's assets
+        // are made.
         self.refresh_project();
-        #[cfg(feature = "procgen")]
-        self.init_procgen_disk_cache();
+        self.start_asset_makers();
 
         self.enter_scene(super::scene_entry::SceneEntry::Start)
     }
@@ -853,22 +838,17 @@ impl PlayerApp {
         Ok(window)
     }
 
-    /// The procgen disk tier (#181), once: a resolver made with it is kept
-    /// for the run, transitions included.
-    #[cfg(feature = "procgen")]
-    fn init_procgen_disk_cache(&mut self) {
-        if self.core.procgen_resolver().disk_stats().is_some() {
-            return;
-        }
+    /// Each asset maker's start of the run (#1557): the procgen package's
+    /// disk tier (#181), kept for the run, transitions included.
+    pub(super) fn start_asset_makers(&mut self) {
         let scene_dir = self.scene_dir();
-        if let Some(disk) = self
-            .launch
-            .procgen_disk_cache
-            .then(|| procgen_disk_config(&self.core.project, &scene_dir))
-            .flatten()
-        {
-            tracing::debug!(target: "load", "[procgen] disk cache: {}", disk.dir.display());
-            self.use_procgen_disk(disk);
+        for maker in crate::packages::registry().asset_makers() {
+            maker.run_starts(&mut flint_package::assets::RunStart {
+                resources: &mut self.core.resources,
+                project: &self.core.project,
+                scene_dir: &scene_dir,
+                disk: self.launch.procgen_disk_cache,
+            });
         }
     }
 
@@ -1203,28 +1183,6 @@ impl PlayerApp {
             self.load_ui_texture(&name);
         }
     }
-}
-
-/// Where the procgen disk tier goes for a scene in `scene_dir` (#181):
-/// `FLINT_PROCGEN_CACHE=<dir>` if set (`0`, `off`, `false`, `no`: no disk tier),
-/// else `.flint/procgen-cache/` at the scene's project root
-/// (`Project::root_for`, ADR 0114), so every scene of a project shares one
-/// cache and the `.flint/` it makes marks the root that was already in use.
-#[cfg(feature = "procgen")]
-fn procgen_disk_config(
-    project: &flint_core::project::Project,
-    scene_dir: &Path,
-) -> Option<flint_procgen::DiskCacheConfig> {
-    match flint_core::env::PROCGEN_CACHE.get() {
-        Some(flint_core::env::Value::Off) => return None,
-        Some(flint_core::env::Value::Path(dir)) => {
-            return Some(flint_procgen::DiskCacheConfig::new(dir))
-        }
-        _ => {}
-    }
-    Some(flint_procgen::DiskCacheConfig::in_project(
-        &project.root_for(scene_dir),
-    ))
 }
 
 #[cfg(test)]

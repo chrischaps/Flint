@@ -30,12 +30,14 @@ path = "src/main.rs"
 #            has no `music` at all, and a line asking is told to add it
 #   rhythm   `music calibrate`, `music chart`, a suite's chart checks: an
 #            extension under music's `music` (#1555), with no stubs
-#   procgen  the player's procgen at load, `flint gen` and the spec editors
-#            (`flint edit x.procgen.toml`, `gen-preview`, `tex-edit`), check's
-#            spec passes, and `[living]` / `[wooze]` settled at load (#1543;
-#            with no `living`, flint-procgen without its wooze field, #1516).
+#   procgen  the player's procgen at load, `flint gen` for a spec and the
+#            spec editors (`flint edit x.procgen.toml`, `gen-preview`,
+#            `tex-edit`) and check's spec passes: the package's own crate,
+#            flint-procgen-cli (#1557), which registers each with the
+#            kernel; `build.rs` lists it from the manifest's `[rust] cli`.
 #            `flint gen x.glyphs.toml` and `flint edit x.terrain.toml` are
-#            the kernel's and stay in
+#            the kernel's and stay in. `[living]` / `[wooze]` are settled
+#            at load with `living`, whose tables they are
 #   ai      the paid calls: `gen --ai-*`, `render --ai-refine`, `asset
 #            resolve --strategy ai_*`; and `asset generate` and the rest,
 #            which are the package's own extension (`stock()`, #1553): out,
@@ -50,14 +52,14 @@ default = ["audio", "gamepad", "dialogs", "packages"]
 packages = ["living", "music", "rhythm", "procgen", "ai"]
 audio = ["flint-player/audio", "flint-music?/device", "flint-rhythm-game?/device"]
 gamepad = ["flint-player/gamepad", "flint-rhythm-game?/gamepad"]
-dialogs = ["dep:rfd"]
+dialogs = ["flint-viewer/dialogs", "flint-procgen-cli?/dialogs"]
 living = [
     "procgen", "flint-player/living", "flint-viewer/living", "flint-debug-ui/living",
     "flint-procgen/living", "dep:flint-living", "dep:flint-wooze",
 ]
 music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
-procgen = ["flint-player/procgen", "dep:flint-procgen"]
+procgen = ["flint-player/procgen", "dep:flint-procgen", "dep:flint-procgen-cli"]
 ai = ["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli", "dep:flint-procgen-ai", "dep:flint-ai-core"]
 
 [dependencies]
@@ -87,7 +89,10 @@ flint-package = { workspace = true }
 flint-script = { workspace = true, features = ["metadata", "check"] }
 flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
+# What `living` and `ai` read of procgen's (its living tables, a spec the
+# AI writes); `flint gen` itself is flint-procgen-cli's
 flint-procgen = { workspace = true, optional = true }
+flint-procgen-cli = { workspace = true, optional = true }
 # `flint render --report json`'s living props (#1024): the only part of the
 # CLI that names the scheduler; `flint gen` uses flint-procgen alone.
 flint-living = { workspace = true, optional = true }
@@ -126,7 +131,6 @@ bytemuck = { workspace = true }
 egui-snarl = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rfd = { workspace = true, optional = true }
 
 # `flint capture` asks the disk under `out` for its free space (#1196): std
 # has no call for it. Both already in the tree, these features included.

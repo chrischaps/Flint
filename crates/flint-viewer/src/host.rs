@@ -375,6 +375,114 @@ pub trait Editor {
     fn on_debug_key(&mut self, _action: &str) {}
 }
 
+/// An editor a package made (#1557), boxed: the host runs it as it runs
+/// its own, every hook forwarded.
+impl<E: Editor + ?Sized> Editor for Box<E> {
+    fn title(&self) -> String {
+        (**self).title()
+    }
+    fn init(&mut self, cx: InitCx) -> Result<()> {
+        (**self).init(cx)
+    }
+    fn orbit(&mut self) -> Option<(&mut Camera, &mut OrbitCameraController)> {
+        (**self).orbit()
+    }
+    fn camera(&mut self) -> Option<&mut Camera> {
+        (**self).camera()
+    }
+    fn watched_files(&self) -> Vec<PathBuf> {
+        (**self).watched_files()
+    }
+    fn watched_folders(&self) -> Vec<PathBuf> {
+        (**self).watched_folders()
+    }
+    fn file_change_counts(&self, path: &Path) -> bool {
+        (**self).file_change_counts(path)
+    }
+    fn on_file_changed(&mut self) {
+        (**self).on_file_changed()
+    }
+    fn early_event(&mut self, event: &WindowEvent) -> Flow {
+        (**self).early_event(event)
+    }
+    fn event(&mut self, event: &WindowEvent) -> Flow {
+        (**self).event(event)
+    }
+    fn resized(&mut self, gpu: &Gpu) {
+        (**self).resized(gpu)
+    }
+    fn update(&mut self, tick: Tick) {
+        (**self).update(tick)
+    }
+    fn times_frames(&self) -> bool {
+        (**self).times_frames()
+    }
+    fn frame_timed(&mut self, times: &FrameTimes) {
+        (**self).frame_timed(times)
+    }
+    fn draw(&mut self, target: &Target) {
+        (**self).draw(target)
+    }
+    fn show_ui(&self) -> bool {
+        (**self).show_ui()
+    }
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        (**self).ui(ui)
+    }
+    fn overlay(&mut self, ctx: &egui::Context) {
+        (**self).overlay(ctx)
+    }
+    fn still(&mut self, options: &StillOptions) -> Result<Option<image::RgbaImage>> {
+        (**self).still(options)
+    }
+    fn still_note(&self) -> Option<String> {
+        (**self).still_note()
+    }
+    fn debug_keys(&self) -> Option<DebugKeyGroup> {
+        (**self).debug_keys()
+    }
+    fn debug_keys_live(&self) -> bool {
+        (**self).debug_keys_live()
+    }
+    fn on_debug_key(&mut self, action: &str) {
+        (**self).on_debug_key(action)
+    }
+}
+
+/// Which of a package's spec editors a `.procgen.toml` opens in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecKind {
+    /// A spec whose generator makes a mesh: the procgen previewer.
+    Mesh,
+    /// A spec whose generator makes images: the same previewer, a texture.
+    Texture,
+    /// A `texture_v1` pipeline: the node graph editor.
+    Graph,
+}
+
+/// What `flint edit <spec>` hands the editor it opens.
+#[derive(Debug, Clone)]
+pub struct SpecEdit {
+    pub spec: String,
+    pub seed: Option<u64>,
+    pub width: u32,
+    pub height: u32,
+    pub no_grid: bool,
+    pub auto_orbit: bool,
+}
+
+/// The editors a package opens a procgen spec in (#1557): a registration
+/// point the procgen package's CLI side fills, which `flint edit` asks for
+/// a `.procgen.toml` (as a `flint_package::cli::Points` value). A flint
+/// without the package has none, and names the package.
+pub struct SpecEditors {
+    /// Which editor the spec at the path opens in (`TexturePipeline` files
+    /// are told apart by the router before this is asked).
+    pub kind: fn(&Path) -> Result<SpecKind>,
+    /// The editor for it.
+    pub open: fn(SpecKind, SpecEdit) -> Result<Box<dyn Editor>>,
+}
+
 /// The host's own debug key action: show or hide the table.
 pub const SHOW_KEYS_ACTION: &str = "keys";
 

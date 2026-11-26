@@ -60,19 +60,21 @@ rhythm = ["music", "dep:flint-rhythm-game", "flint-rhythm-game?/player"]
 # (packages/music/crates/flint-music): its `player` part is the subsystem,
 # and the launcher's list names it from build.rs, so src/ names it nowhere.
 music = ["dep:flint-music", "flint-music?/player"]
-# Procgen at run time (#754): a `model.asset` or texture named by a
-# `*.procgen.toml` spec is generated at load (or on the frame queue), through
-# flint-procgen, and an extension may register generators. Off, every name is
-# the file loader's, and a scene whose names a spec would have made says so
-# once.
-procgen = ["dep:flint-procgen"]
+# The procgen package (#754, #1557): a `model.asset` or texture named by a
+# `*.procgen.toml` spec is generated at load (or on the frame queue). Its
+# code is the package's crate (`packages/procgen/crates/flint-procgen`, its
+# `player` part), which registers an asset maker with the kernel; this crate
+# names none of it, and `build.rs` lists its `PACKAGE` in the stock
+# launcher. Off, every name is the file loader's, and a scene whose names a
+# spec would have made says so once.
+procgen = ["dep:flint-procgen", "flint-procgen?/player"]
 # Living props and the wooze field (#211-#252): props that hold and glide,
 # the `[living]` / `[wooze]` tables, shallow wooze, woozy grass, the A/B
 # compare, the `wooze` and `living` script modules, and with `debug-hud` the
 # `debug` one (the A/B and commit calls, #854) and the Living Props panel.
 # Needs procgen, which makes the props' poses. Off, a scene with any of it
 # says so once and stands still.
-living = ["procgen", "dep:flint-living", "dep:flint-wooze", "flint-procgen/living", "flint-debug-ui?/living"]
+living = ["procgen", "dep:flint-living", "dep:flint-wooze", "flint-procgen/living", "flint-procgen/player", "flint-debug-ui?/living"]
 # Summonable debug overlay (Phase 4 F8, ADR 0035), and the `debug` script
 # module where living props run (#854). Feature-off builds carry zero debug
 # surface and must still compile.
@@ -146,6 +148,11 @@ hound = { workspace = true }
 flint-debug-ui = { workspace = true }
 # The browser's mixer, fed what a scene's scripts sent (#730's bus test).
 flint-audio-worklet = { workspace = true }
+# The procgen package's player part, named by the tests that make assets
+# through it (a game's generators, made meshes as colliders): they run
+# only where the run's launcher lists it, which a build without `procgen`
+# doesn't.
+flint-procgen = { workspace = true, features = ["player"] }
 
 # The hitch log's marks on a sampler's ETW timeline (#1250,
 # player_app/sampler_marks.rs)

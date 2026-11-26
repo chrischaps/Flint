@@ -6,9 +6,9 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use flint_viewer::host::{self, CameraFlags, Editor, HostOptions, StillOptions};
 
-#[cfg(feature = "procgen")]
-use super::{gen_preview, tex_edit};
 use super::{particle_edit, preview, spline_edit, terrain_edit};
+use flint_package::cli::Points;
+use flint_viewer::host::{SpecEdit, SpecKind};
 
 /// Recognised file kinds that `flint edit` can route to.
 pub enum FileKind {
@@ -412,40 +412,42 @@ fn check_flags(args: &EditArgs, kind: EditorKind) -> Result<()> {
 }
 
 pub fn run(args: EditArgs) -> Result<()> {
+    run_in(args, crate::points())
+}
+
+/// [`run`] against `points`, for a test's own.
+pub(crate) fn run_in(args: EditArgs, points: &Points) -> Result<()> {
     let path = Path::new(&args.file);
-    // A spec's previewers are the procgen package's (#1543): named before
-    // the file is read, as a left-out command is before its arguments
-    #[cfg(not(feature = "procgen"))]
-    if path
+    // A spec's previewers are the procgen package's (#1543, #1557): the
+    // editors it registered, or the package named before the file is read,
+    // as a left-out command is before its arguments
+    let spec_editors = if path
         .file_name()
         .is_some_and(|n| n.to_string_lossy().ends_with(".procgen.toml"))
     {
-        return Err(super::absent::missing(
-            format!("flint edit {}", args.file),
-            "procgen",
-        ));
-    }
+        Some(super::spec_edit::editors(
+            points,
+            &format!("flint edit {}", args.file),
+            &["gen-preview"],
+        )?)
+    } else {
+        None
+    };
     let file_kind = detect_file_kind(path)?;
-    let kind = match file_kind {
-        FileKind::Scene if args.spline => K::Track,
-        FileKind::Scene => K::Scene,
-        #[cfg(feature = "procgen")]
-        FileKind::ProcGenSpec => {
-            if gen_preview::draws_images(path)? {
-                K::Texture
-            } else {
-                K::Mesh
-            }
+    let kind = match (file_kind, spec_editors) {
+        (FileKind::Scene, _) if args.spline => K::Track,
+        (FileKind::Scene, _) => K::Scene,
+        (FileKind::ProcGenSpec, Some(editors)) => match (editors.kind)(path)? {
+            SpecKind::Texture => K::Texture,
+            _ => K::Mesh,
+        },
+        (FileKind::TexturePipeline, Some(_)) => K::TextureGraph,
+        (FileKind::ProcGenSpec | FileKind::TexturePipeline, None) => {
+            unreachable!("a .procgen.toml found its editors above")
         }
-        #[cfg(feature = "procgen")]
-        FileKind::TexturePipeline => K::TextureGraph,
-        #[cfg(not(feature = "procgen"))]
-        FileKind::ProcGenSpec | FileKind::TexturePipeline => {
-            unreachable!("a .procgen.toml is refused above")
-        }
-        FileKind::TerrainSpec => K::Terrain,
-        FileKind::Model => K::Model,
-        FileKind::ParticleEffect => K::Particles,
+        (FileKind::TerrainSpec, _) => K::Terrain,
+        (FileKind::Model, _) => K::Model,
+        (FileKind::ParticleEffect, _) => K::Particles,
     };
     check_flags(&args, kind)?;
     // A window can't answer --json (#710); a still of any kind can (#712)
@@ -505,24 +507,25 @@ pub fn run(args: EditArgs) -> Result<()> {
             viewer.set_load_summary(player_load_summary());
             launch.go(viewer)
         }
-        #[cfg(feature = "procgen")]
-        K::Mesh | K::Texture => launch.go(gen_preview::editor(gen_preview::GenPreviewArgs {
-            spec: args.file,
-            seed: args.seed,
-            width: options.width,
-            height: options.height,
-            no_grid: args.no_grid,
-            auto_orbit: args.auto_orbit,
-        })?),
-        #[cfg(feature = "procgen")]
-        K::TextureGraph => launch.go(tex_edit::editor(tex_edit::TexEditArgs {
-            spec: args.file,
-            seed: args.seed,
-            width: options.width,
-            height: options.height,
-        })?),
-        #[cfg(not(feature = "procgen"))]
-        K::Mesh | K::Texture | K::TextureGraph => unreachable!("a .procgen.toml is refused above"),
+        K::Mesh | K::Texture | K::TextureGraph => {
+            let editors = spec_editors.expect("a .procgen.toml found its editors above");
+            let spec_kind = match kind {
+                K::TextureGraph => SpecKind::Graph,
+                K::Texture => SpecKind::Texture,
+                _ => SpecKind::Mesh,
+            };
+            launch.go((editors.open)(
+                spec_kind,
+                SpecEdit {
+                    spec: args.file,
+                    seed: args.seed,
+                    width: options.width,
+                    height: options.height,
+                    no_grid: args.no_grid,
+                    auto_orbit: args.auto_orbit,
+                },
+            )?)
+        }
         K::Terrain => launch.go(terrain_edit::editor(terrain_edit::TerrainEditArgs {
             spec: args.file,
             seed: args.seed,
@@ -774,21 +777,26 @@ name = \"x\"
         );
     }
 
-    /// Every source file of the viewer and the `flint edit` modules
+    /// Every source file of the viewer and the `flint edit` modules, the
+    /// procgen package's editors among them (#1557)
     fn editor_sources() -> Vec<PathBuf> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let commands = root.join("flint-cli/src/commands");
+        let procgen = root.join("../packages/procgen/crates/flint-procgen-cli/src");
         let mut files: Vec<PathBuf> = [
             "edit_router.rs",
-            "gen_preview.rs",
-            "gen_preview_common.rs",
             "preview.rs",
+            "spec_edit.rs",
             "spline_edit.rs",
             "terrain_edit.rs",
-            "tex_edit.rs",
         ]
         .iter()
         .map(|f| commands.join(f))
+        .chain(
+            ["gen_preview.rs", "gen_preview_common.rs", "tex_edit.rs"]
+                .iter()
+                .map(|f| procgen.join(f)),
+        )
         .collect();
         let mut stack = vec![
             root.join("flint-viewer/src"),

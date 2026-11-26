@@ -13,7 +13,7 @@ use flint_procgen_ai::cost::{self, CostMeter};
 use flint_procgen_ai::{AgentConfig, AnthropicAgent, Distance, MockAgent, ProcGenAgent, Report};
 use serde::Deserialize;
 
-use super::gen::GenArgs;
+use super::gen_args::GenArgs;
 use super::gen_refine::{MeshRenderPreviewer, PREVIEW_SIZE};
 
 /// Project defaults for the agent, read from this file when it exists.
@@ -32,6 +32,58 @@ struct ProjectConfig {
     model: Option<String>,
     max_iterations: Option<u32>,
     effort: Option<String>,
+}
+
+/// The ai package's steps of procgen's `flint gen` (#1557): what the
+/// binary registers as its `AiPoint`, which procgen's `gen` asks.
+pub struct Ai;
+
+impl flint_procgen_cli::AiSteps for Ai {
+    fn any(&self, args: &GenArgs) -> bool {
+        Steps::of(args).any()
+    }
+
+    /// The AI steps (`--ai-create`, `--ai-assist`, `--ai-refine`): the spec
+    /// they make, or `None` after a dry run said what they would do.
+    fn run(
+        &self,
+        args: &GenArgs,
+        loaded: Option<ProcGenSpec>,
+        stdout_reserved: bool,
+    ) -> Result<Option<ProcGenSpec>> {
+        let steps = Steps::of(args);
+        let config = resolve_config(args, Path::new(CONFIG_PATH))?;
+        if args.dry_run {
+            // With --print-spec a dry run has no spec to print, so the plan
+            // keeps stdout; only the JSON report needs it kept clear.
+            let plan = plan_lines(&config, steps, args);
+            for line in &plan {
+                if stdout_reserved {
+                    eprintln!("{line}");
+                } else {
+                    println!("{line}");
+                }
+            }
+            crate::output::when_json(|| serde_json::json!({ "dry_run": true, "plan": plan }));
+            return Ok(None);
+        }
+        let meter = build_meter(&config, args)?;
+        let agent = build_agent(config, meter.clone(), args.refine_rounds)?;
+        run_steps(args, agent.as_ref(), &meter, loaded).map(Some)
+    }
+
+    fn cost_report(&self, since: Option<&str>) -> Result<()> {
+        flint_asset_gen::cli::costs::cost_report(&flint_asset_gen::cli::costs::ledger(), since)
+    }
+
+    fn style_constraints(
+        &self,
+        path: &Path,
+    ) -> std::result::Result<flint_procgen::ValidationConstraints, String> {
+        flint_asset_gen::StyleGuide::load(path)
+            .map(|guide| guide.validation_constraints())
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// Which AI steps a run asked for.
