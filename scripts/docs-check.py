@@ -788,18 +788,27 @@ def workspace():
     import tomllib
 
     crates = sorted(p.name for p in (ROOT / "crates").iterdir() if (p / "Cargo.toml").is_file())
+    # A package's own crates (#1557): engine crates in `packages/<name>/crates/`,
+    # named in every map as the ones under crates/ are, and counted apart
+    packaged = sorted(p.name for p in (ROOT / "packages").glob("*/crates/*") if (p / "Cargo.toml").is_file())
     with open(ROOT / "Cargo.toml", "rb") as f:
         members = tomllib.load(f)["workspace"]["members"]
-    return {"crates": crates, "members": len(members)}
+    return {"crates": crates + packaged, "under_crates": len(crates), "members": len(members)}
 
 
 def check_counts(line, where, ws, problems, allow):
-    for r in CRATE_COUNT_RES:
+    # "N-crate" counts every engine crate, a package's own (#1557) too;
+    # "N crates under `crates/`" that folder's alone
+    whole, under = CRATE_COUNT_RES
+    for r, n_real, how in [
+        (whole, len(ws["crates"]), "the directories under crates/ and packages/*/crates/ with a Cargo.toml"),
+        (under, ws["under_crates"], "the directories under crates/ with a Cargo.toml"),
+    ]:
         for m in r.finditer(line):
             COUNTS["maps"] += 1
             n = int(m.group(1))
-            if n != len(ws["crates"]) and not allowed(allow, where, m.group(0)):
-                problems.append(problem("maps", where, f"`{m.group(0)}`: crates/ holds {len(ws['crates'])} crates", "count the directories under crates/ with a Cargo.toml"))
+            if n != n_real and not allowed(allow, where, m.group(0)):
+                problems.append(problem("maps", where, f"`{m.group(0)}`: the workspace has {n_real} such crates", f"count {how}"))
     for m in MEMBER_COUNT_RE.finditer(line):
         COUNTS["maps"] += 1
         if int(m.group(1)) != ws["members"] and not allowed(allow, where, m.group(0)):

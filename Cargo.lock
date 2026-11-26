@@ -1767,6 +1767,7 @@ dependencies = [
  "flint-player",
  "flint-procgen",
  "flint-procgen-ai",
+ "flint-procgen-cli",
  "flint-query",
  "flint-render",
  "flint-rhythm",
@@ -1787,7 +1788,6 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "pollster",
- "rfd",
  "serde",
  "serde_json",
  "toml",
@@ -2046,9 +2046,13 @@ name = "flint-procgen"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "flint-asset",
  "flint-core",
+ "flint-ecs",
  "flint-geometry",
  "flint-import",
+ "flint-package",
+ "flint-render",
  "flint-scene",
  "flint-schema",
  "flint-terrain",
@@ -2063,6 +2067,7 @@ dependencies = [
  "toml",
  "tracing",
  "web-time",
+ "wgpu",
 ]
 
 [[package]]
@@ -2077,6 +2082,32 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "toml",
+]
+
+[[package]]
+name = "flint-procgen-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "egui",
+ "egui-snarl",
+ "flint-asset",
+ "flint-core",
+ "flint-ecs",
+ "flint-import",
+ "flint-package",
+ "flint-procgen",
+ "flint-render",
+ "flint-runtime",
+ "flint-viewer",
+ "image",
+ "serde",
+ "serde_json",
+ "toml",
+ "toml_edit 0.22.27",
+ "tracing",
+ "winit",
 ]
 
 [[package]]
@@ -2244,6 +2275,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "pollster",
+ "rfd",
  "serde_json",
  "toml",
  "tracing",

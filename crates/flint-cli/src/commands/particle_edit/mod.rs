@@ -668,7 +668,7 @@ impl ParticleEditApp {
 
     fn browse_texture(&mut self, emitter: usize) {
         let dir = effect_dir(&self.path);
-        let picked = crate::file_dialog::FileDialog::new()
+        let picked = flint_viewer::file_dialog::FileDialog::new()
             .add_filter("image", &["png", "jpg", "jpeg", "ktx2"])
             .set_directory(&dir)
             .pick_file();

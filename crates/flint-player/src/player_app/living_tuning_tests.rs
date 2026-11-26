@@ -39,8 +39,7 @@ fn app_with(n: u64, folder: &Path) -> PlayerApp {
         None,
         None,
     );
-    app.core
-        .procgen_resolver_mut()
+    app.resolver_for_test()
         .index_spec(ProcGenSpec::parse(SPEC).unwrap());
     for i in 0..n {
         let (props, resolver) =
@@ -437,9 +436,8 @@ fn two_species_from(folder: &Path, field: bool, living: Option<&LivingDef>) -> P
         spread: 0.9,
         alpha: 0.2,
     };
-    app.core.procgen_resolver_mut().index_spec(oak);
-    app.core
-        .procgen_resolver_mut()
+    app.resolver_for_test().index_spec(oak);
+    app.resolver_for_test()
         .index_spec(ProcGenSpec::parse(THORN).unwrap());
     for (i, spec) in ["sapling", "sapling", "thorn", "thorn"].iter().enumerate() {
         let (props, resolver) =
@@ -816,8 +814,7 @@ fn oak_app(n: u64, folder: &Path) -> PlayerApp {
         None,
     );
     let spec = std::fs::read_to_string("../../specs/examples/oak_living.procgen.toml").unwrap();
-    app.core
-        .procgen_resolver_mut()
+    app.resolver_for_test()
         .index_spec(ProcGenSpec::parse(&spec).unwrap());
     for i in 0..n {
         let (props, resolver) =
@@ -1292,8 +1289,7 @@ mod scopes {
                 "tests/fixtures/scenes/woozy_grove/specs/{spec}.procgen.toml"
             ));
             let text = std::fs::read_to_string(path).unwrap();
-            app.core
-                .procgen_resolver_mut()
+            app.resolver_for_test()
                 .index_spec(ProcGenSpec::parse(&text).unwrap());
         }
         // In name order, so two runs build the same grove.

@@ -39,13 +39,14 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-34-crate Cargo workspace (plus `tools/arch-analyzer`, which feeds the book's crate table). Every member but `flint-android` is a default member, so plain `cargo test` runs every desktop crate's tests (#758):
+35-crate Cargo workspace (plus `tools/arch-analyzer`, which feeds the book's crate table):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
   │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc, package, build
   ├── flint-asset-gen AI asset generation: providers (Flux, Meshy, ElevenLabs, Mock)
   ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
+  ├── flint-procgen-cli `flint gen`, spec editors and checks
   ├── flint-procgen-ai AI-assisted procgen specs
   └── flint-ai-core   Every paid AI call: retries, prices, cost ledger
 flint-android       Android entry point (NativeActivity)
@@ -124,7 +125,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 - `world.get_components_mut(id)` is a `ComponentsMut` guard (bind it `mut`); `despawn` takes the whole subtree
 - Runtime crates build for wasm (`bash scripts/wasm-check.sh` before pushing): time through `web-time`, never `Instant::now`
 - `AudioManager::new()` / `Gilrs::new()` may fail in headless/CI -- wrap in `Option`
-- `flint-android` is the one crate outside `default-members` (a new crate goes in both lists); `cargo test --workspace` fails on `ndk-sys` on Windows: use plain `cargo test`
+- `flint-android` is the one crate outside `default-members` (a new crate goes in both lists, #758); `cargo test --workspace` fails on `ndk-sys` on Windows: use plain `cargo test`
 - On Windows `flint` and `flint-player` link an 8 MB stack from `build.rs` (#990): keep a clap `Args` struct to a dozen or so flags
 - Dependency API notes live in their crates' files: wgpu 30, winit 0.30 (render), Rapier 0.22 (physics), Kira 0.11 (audio), Rhai 1.24 (script)
 - Never allocate GPU buffers or bind groups per entity per frame; a frame is one submission (#139)
@@ -135,7 +136,7 @@ A change a game can notice (a scene or schema key, a script function, a CLI flag
 
 ## Project Structure
 
-- `schemas/` -- engine schemas, `schemas/examples/` the examples' room-builder layer; `styles/` style guides, looks; `packages/` manifests
+- `schemas/` -- engine schemas, `schemas/examples/` the examples' room-builder layer; `styles/` style guides, looks; `packages/` manifests, schemas, crates (#1557)
 - `flint-examples/` -- the examples, their own repository (#984): clone it here (gitignored). `tests/fixtures/scenes/` -- frozen scenes the goldens load
 - `showcase_game/` -- the example game; `docs/book/` the book, `docs/design/` notes, `docs/adr/` decisions
 - **Every byte here is in every game** (ADR 0122): `scripts/size-check.py` caps the tree. The root holds only manifests and docs

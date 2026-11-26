@@ -1467,8 +1467,10 @@ target_triangles = 200
     #[test]
     fn oak_spec_lods_hit_targets_and_keep_the_trunk() {
         // The shipped example spec, end to end.
-        let spec =
-            ProcGenSpec::parse(include_str!("../../../../../../../specs/oak_tree.procgen.toml")).unwrap();
+        let spec = ProcGenSpec::parse(include_str!(
+            "../../../../../../../specs/oak_tree.procgen.toml"
+        ))
+        .unwrap();
         let targets: Vec<usize> = spec
             .lod
             .as_ref()

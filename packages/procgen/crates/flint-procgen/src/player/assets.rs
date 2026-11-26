@@ -21,22 +21,28 @@
 //!
 //! Everything here speaks to the renderer through [`AssetSink`], so the
 //! resolution order is tested without a GPU; [`GpuSink`] is the real one.
+//! (Until #1557 this was flint-player's `procgen_assets.rs`; the package's
+//! maker, `maker.rs`, is what the player calls now.)
 
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::{
+    AssetKind, ChannelSemantics, CompletedAsset, FailedAsset, GeneratorOutput, ImageData,
+    LivingRig, MeshData, ProcGenResolver,
+};
 use flint_core::components as comp;
 use flint_core::project::Project;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_procgen::{
-    AssetKind, ChannelSemantics, CompletedAsset, FailedAsset, GeneratorOutput, ImageData,
-    LivingRig, MeshData, ProcGenResolver,
-};
+use flint_package::assets::MadeMeshes;
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::SceneRenderer;
 
-pub use super::state::ProcGenMode;
+/// When a scene's procgen assets are made: the kernel's
+/// [`MakeMode`](flint_package::assets::MakeMode), the player's
+/// `LaunchOptions::procgen_mode`.
+pub use flint_package::assets::MakeMode as ProcGenMode;
 
 /// The magenta of "this asset is missing or still coming", in linear RGB.
 pub const PLACEHOLDER_RGBA: [f32; 4] = [0.85, 0.05, 0.7, 1.0];
@@ -80,10 +86,8 @@ pub trait AssetSink {
     /// Upload (or replace) the mesh `name`.
     fn upload_mesh(&mut self, name: &str, mesh: &MeshData);
     /// Upload (or replace) a living lineage's skinned rest mesh as `name`.
-    #[cfg_attr(not(feature = "living"), allow(dead_code))]
     fn upload_living(&mut self, name: &str, rig: &LivingRig);
     /// Write one entity's own bone buffer, drawing the skinned mesh `name`.
-    #[cfg_attr(not(feature = "living"), allow(dead_code))]
     fn upload_bones(&mut self, entity: EntityId, name: &str, palette: &[[[f32; 4]; 4]]);
     /// Upload (or replace) the texture `name`.
     fn upload_image(&mut self, name: &str, image: &ImageData);
@@ -106,7 +110,7 @@ pub fn discover_specs(resolver: &mut ProcGenResolver, project: &Project, scene_p
     for listed in project.list(flint_core::project::AssetKind::Specs, scene_dir) {
         // The list holds one file a name, the nearest, so none overwrites
         // another. A spec that doesn't parse is skipped, as it always was.
-        match flint_procgen::ProcGenSpec::from_file(&listed.path) {
+        match crate::ProcGenSpec::from_file(&listed.path) {
             Ok(spec) => resolver.index_spec(spec),
             Err(e) => tracing::debug!(
                 "procgen spec {} skipped: {e}",
@@ -370,7 +374,7 @@ pub struct GpuSink<'a> {
 }
 
 impl GpuSink<'_> {
-    fn material(mat: &flint_procgen::MaterialData) -> flint_import::ImportedMaterial {
+    fn material(mat: &crate::MaterialData) -> flint_import::ImportedMaterial {
         flint_import::ImportedMaterial {
             name: mat.name.clone(),
             base_color: mat.base_color,
@@ -406,15 +410,15 @@ impl AssetSink for GpuSink<'_> {
     }
 
     fn upload_mesh(&mut self, name: &str, mesh: &MeshData) {
-        let default_material = flint_procgen::MaterialData::default();
+        let default_material = crate::MaterialData::default();
         // One part per sub-mesh (one for the whole mesh when it has none),
         // all under `name`: a tree's bark and leaves draw as one model.
-        let whole = [flint_procgen::SubMesh {
+        let whole = [crate::SubMesh {
             index_start: 0,
             index_count: mesh.indices.len() as u32,
             material_index: 0,
         }];
-        let subs: &[flint_procgen::SubMesh] = if mesh.submeshes.is_empty() {
+        let subs: &[crate::SubMesh] = if mesh.submeshes.is_empty() {
             &whole
         } else {
             &mesh.submeshes
@@ -461,16 +465,11 @@ impl AssetSink for GpuSink<'_> {
     fn upload_living(&mut self, name: &str, rig: &LivingRig) {
         // A placeholder may be standing under this name.
         self.renderer.remove_mesh(name);
-        // Only living props make rigs, and a build without them (#754)
+        // Only living props make rigs: a run without the living package
         // never asks for one.
-        #[cfg(feature = "living")]
-        {
-            let import = super::living_props::import_of(name, rig);
-            self.renderer
-                .load_skinned_model(self.device, self.queue, name, &import);
-        }
-        #[cfg(not(feature = "living"))]
-        let _ = rig;
+        let import = super::import_of(name, rig);
+        self.renderer
+            .load_skinned_model(self.device, self.queue, name, &import);
     }
 
     fn upload_bones(&mut self, entity: EntityId, name: &str, palette: &[[[f32; 4]; 4]]) {
@@ -571,90 +570,54 @@ impl AssetSink for GpuSink<'_> {
     }
 }
 
-/// Resolve the scene's procgen assets into the renderer: discover specs, turn
-/// `living_prop` entities into living props, then catalog > procgen > file >
-/// placeholder for each other name. Runs before the model loader, which then
-/// skips every name this uploaded.
-pub fn resolve_scene(
-    core: &mut super::game_core::GameCore,
-    mode: ProcGenMode,
-    mut sink: GpuSink<'_>,
-) {
-    #[cfg(feature = "living")]
-    let living_left_out = core.leaves_out("living");
-    let super::game_core::GameCore {
-        scene_path,
-        world,
-        resources,
-        collider_sources,
-        ..
-    } = core;
-    #[cfg(feature = "living")]
-    let (living_props, resolver) = super::living_subsystem::props_and_resolver(resources);
-    #[cfg(not(feature = "living"))]
-    let resolver = super::game_core::resolver_mut_of(resources);
-    let scene_path = scene_path.as_str();
-    let started = web_time::Instant::now();
-    // The load report's procgen stage (#1092): the note below is made by
-    // hand once the time is known, which a load report doesn't hear
-    let _span = flint_core::load_report::span(flint_core::load_report::Stage::Procgen, String::new);
-    discover_specs(resolver, &sink.config.project, scene_path);
-    // A project whose `[packages]` leaves `living` out grows no props: each
-    // takes the plain path, a still model, as in a build without it (#1528)
-    #[cfg(feature = "living")]
-    if !living_left_out {
-        super::living_props::resolve(world, sink.config, resolver, living_props, &mut sink, mode);
+/// An [`AssetSink`] that keeps the triangles of each mesh it passes on for
+/// the colliders that name it (#1222), and forgets a name a placeholder or
+/// a file takes: the kernel's [`MadeMeshes`].
+pub struct Recording<'s> {
+    pub sink: &'s mut dyn AssetSink,
+    pub colliders: &'s mut dyn MadeMeshes,
+}
+
+impl AssetSink for Recording<'_> {
+    fn has_mesh(&self, name: &str) -> bool {
+        self.sink.has_mesh(name)
     }
-    let requests = collect_requests(world, sink.config, resolver, &sink);
-    if requests.is_empty() {
-        return;
+    fn has_file(&self, name: &str, kind: AssetKind) -> bool {
+        self.sink.has_file(name, kind)
     }
-    let before = resolver.cache_stats();
-    // Each mesh's triangles kept for the colliders naming it (#1222)
-    let mut recording = super::collider_meshes::Recording {
-        sink: &mut sink,
-        sources: collider_sources,
-    };
-    resolve(&requests, resolver, &mut recording, mode);
-    let stats = resolver.cache_stats();
-    // A frame note (#1077) when the scene had assets to make or find
-    flint_core::frame_notes::note(
-        flint_core::frame_notes::NoteKind::Procgen,
-        || {
-            format!(
-                "{} asset(s) for {}",
-                requests.len(),
-                flint_core::project::shown(std::path::Path::new(scene_path))
-            )
-        },
-        Some(started.elapsed().as_secs_f32() * 1000.0),
-    );
-    // One line a load: how long procgen held the scene up, and where the
-    // assets came from (#181: the disk tier is what makes a relaunch fast).
-    // Deferred assets are queued, so they appear in none of the three.
-    // Counted into the load's summary as `procgen assets` (#716).
-    tracing::debug!(
-        target: "load",
-        kind = "procgen_asset",
-        count = requests.len() as u64,
-        "[procgen] {} asset(s) in {:.0} ms: {} generated, {} from disk, {} from memory",
-        requests.len(),
-        started.elapsed().as_secs_f64() * 1e3,
-        stats.misses - before.misses,
-        stats.disk_hits - before.disk_hits,
-        stats.hits - before.hits,
-    );
-    tracing::debug!(
-        "Procgen cache: {} entries, {} of {} bytes, {} hits / {} misses, {} evicted",
-        stats.entry_count,
-        stats.total_bytes,
-        stats.max_memory_bytes,
-        stats.hits,
-        stats.misses,
-        stats.evictions,
-    );
+    fn missing_file(&self, name: &str, kind: AssetKind) -> Option<String> {
+        self.sink.missing_file(name, kind)
+    }
+    fn upload_mesh(&mut self, name: &str, mesh: &MeshData) {
+        let positions = mesh.vertices.iter().map(|v| v.position).collect();
+        let triangles = mesh.indices.as_chunks::<3>().0.to_vec();
+        self.colliders.made(name, positions, triangles);
+        self.sink.upload_mesh(name, mesh);
+    }
+    fn upload_living(&mut self, name: &str, rig: &LivingRig) {
+        self.colliders.forget(name);
+        self.sink.upload_living(name, rig);
+    }
+    fn upload_bones(&mut self, entity: EntityId, name: &str, palette: &[[[f32; 4]; 4]]) {
+        self.sink.upload_bones(entity, name, palette);
+    }
+    fn upload_image(&mut self, name: &str, image: &ImageData) {
+        self.sink.upload_image(name, image);
+    }
+    fn upload_placeholder(&mut self, name: &str, kind: AssetKind) {
+        if kind == AssetKind::Model {
+            self.colliders.forget(name);
+        }
+        self.sink.upload_placeholder(name, kind);
+    }
+    fn load_file(&mut self, name: &str, kind: AssetKind) -> bool {
+        if kind == AssetKind::Model {
+            self.colliders.forget(name);
+        }
+        self.sink.load_file(name, kind)
+    }
 }
 
 #[cfg(test)]
-#[path = "procgen_assets_tests.rs"]
-pub(super) mod tests;
+#[path = "assets_tests.rs"]
+mod tests;

@@ -151,7 +151,6 @@ pub(crate) fn music_left_out_line(in_use: &InUse, world: &FlintWorld) -> Option<
 /// `texture`) that a spec the scene can see would have made, in name order.
 /// A spec is named by its `[meta] name`, as flint-procgen indexes it, and
 /// found by the project's one search (`AssetKind::Specs`).
-#[cfg_attr(feature = "procgen", allow(dead_code))]
 pub(crate) fn names_a_spec_would_make(
     world: &FlintWorld,
     project: &Project,
@@ -190,7 +189,6 @@ pub(crate) fn names_a_spec_would_make(
 
 /// The line for a scene that names assets a spec would make, in a build
 /// without `procgen`.
-#[cfg_attr(feature = "procgen", allow(dead_code))]
 pub(crate) fn procgen_line(
     world: &FlintWorld,
     project: &Project,

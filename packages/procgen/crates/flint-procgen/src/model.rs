@@ -346,7 +346,8 @@ mod tests {
 
     #[test]
     fn the_beetle_validates_the_same_from_disk() {
-        let spec = ProcGenSpec::parse(include_str!("../../../../../specs/beetle.procgen.toml")).unwrap();
+        let spec =
+            ProcGenSpec::parse(include_str!("../../../../../specs/beetle.procgen.toml")).unwrap();
         let output = crate::CreatureGenerator
             .generate(&spec, &mut SeededRng::new(7))
             .unwrap();

@@ -15,6 +15,12 @@ description = "Procedural generation subsystem for the Flint engine"
 # is its schema half; what only the field can say goes unsaid.
 default = ["living"]
 living = ["dep:flint-wooze"]
+# The package's part of the player (#1557, ADR 0137): its `PACKAGE`, the
+# asset maker the kernel calls at a scene's load and each frame, and the
+# upload of what a generator made (`src/player/`). flint-player's `procgen`
+# feature turns it on; the CLI's `gen` and the specs' own checks need none
+# of it.
+player = ["dep:flint-package", "dep:flint-render", "dep:flint-ecs", "dep:flint-asset", "dep:wgpu"]
 
 [dependencies]
 web-time = { workspace = true }
@@ -22,6 +28,11 @@ flint-core = { workspace = true }
 flint-wooze = { workspace = true, optional = true }
 flint-geometry = { workspace = true }
 flint-import = { workspace = true }
+flint-package = { workspace = true, optional = true }
+flint-render = { workspace = true, optional = true }
+flint-ecs = { workspace = true, optional = true }
+flint-asset = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
 # The scene tables living props own (`[living]`, `[wooze]`; #686) are read out
 # of a `SceneFile`, checked against their `[table.*]` schemas, and written back
 # through a `SceneDocument`.

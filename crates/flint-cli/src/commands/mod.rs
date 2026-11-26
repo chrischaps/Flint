@@ -27,28 +27,16 @@ pub mod examples;
 pub mod export;
 pub mod frame;
 pub mod frame_seq;
-// `flint gen`'s arguments are in every build; without procgen its run is
-// `gen_absent.rs`, which still draws a glyph set (#1543)
-#[cfg(feature = "procgen")]
-pub mod gen;
-#[cfg(not(feature = "procgen"))]
-#[path = "gen_absent.rs"]
+// `flint gen` is the kernel's in every build: a glyph set runs here, a
+// spec through the procgen package's point (#1543, #1557), which asks the
+// ai package's steps (`gen_ai`) and living's strip (`gen_strip`) by points
+// of its own
 pub mod gen;
 #[cfg(feature = "ai")]
 pub mod gen_ai;
 pub mod gen_args;
-#[cfg(feature = "procgen")]
-pub mod gen_catalog;
-#[cfg(feature = "procgen")]
-pub mod gen_preview;
-#[cfg(not(feature = "procgen"))]
-absent::stub!(gen_preview, GenPreviewArgs, "gen-preview", "procgen");
-#[cfg(feature = "procgen")]
-pub mod gen_preview_common;
 #[cfg(feature = "ai")]
 pub mod gen_refine;
-#[cfg(feature = "procgen")]
-pub mod gen_store;
 #[cfg(feature = "living")]
 pub mod gen_strip;
 pub mod gif_writer;
@@ -105,17 +93,14 @@ pub mod scene;
 pub mod schema;
 pub mod schema_export;
 pub mod script;
-#[cfg(feature = "procgen")]
-pub mod spec_save;
+// `gen-preview` / `tex-edit`: the kernel's hidden aliases of `flint edit`
+// on a spec, whose editors are the procgen package's (#1557)
+pub mod spec_edit;
 pub mod spline_edit;
 pub mod style;
 pub mod style_sheet;
 pub mod sweep;
 pub mod terrain_edit;
-#[cfg(feature = "procgen")]
-pub mod tex_edit;
-#[cfg(not(feature = "procgen"))]
-absent::stub!(tex_edit, TexEditArgs, "tex-edit", "procgen");
 pub(crate) mod trace;
 pub mod validate;
 #[cfg(feature = "music")]

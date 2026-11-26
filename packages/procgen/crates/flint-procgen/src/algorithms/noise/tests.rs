@@ -509,8 +509,8 @@ impl NoiseSource for WorleyFeature {
 /// for manual inspection. Not an assertion — a visual aid.
 #[test]
 fn noise_visual_debug_pngs() {
-    let dir =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../target/test-output/noise");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../target/test-output/noise");
     std::fs::create_dir_all(&dir).unwrap();
 
     let size = 256;

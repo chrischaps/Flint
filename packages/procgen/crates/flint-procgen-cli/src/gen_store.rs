@@ -211,7 +211,7 @@ impl Store {
             seed,
             // The CLI's own clock: the same ISO 8601 words as flint-asset-gen's, which
             // a build without the ai package doesn't link (#1333)
-            timestamp: super::frame::utc_now(),
+            timestamp: flint_package::cli::utc_now(),
             flint_version: env!("CARGO_PKG_VERSION").to_string(),
             files: recorded,
         };

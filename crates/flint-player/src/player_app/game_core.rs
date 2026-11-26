@@ -26,8 +26,6 @@ use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
-#[cfg(feature = "procgen")]
-use flint_procgen::ProcGenResolver;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::state::{ANIMATION, AUDIO, PARTICLES, PHYSICS, SCRIPTS};
 use flint_runtime::{
@@ -76,9 +74,10 @@ pub struct GameCore {
     /// last made from (#372).
     pub(crate) style_reader_generation: Option<u64>,
     /// The run's resources (ADR 0137 decision 2, #1550): what one package
-    /// lends another, which every subsystem context lends. With `procgen`,
-    /// the procgen resolver (the scene's specs and generators, and the frame
-    /// budget its queue lends the living props: [`Self::procgen_resolver`]);
+    /// lends another, which every subsystem context lends. What each listed
+    /// package puts in (`Registry::run_resources`: the procgen package's
+    /// resolver, with the scene's specs and generators and the frame budget
+    /// its queue lends the living props, `flint_procgen::player::resolver`);
     /// with `living`, the scene's living props (flint-living, #1024: added
     /// at load, before the living subsystem exists, and kept across scenes
     /// for their pose cache: [`Self::living_props`]); in the player with
@@ -115,10 +114,8 @@ pub struct GameCore {
 impl GameCore {
     /// A core for `world`, loaded from `scene_path`, with nothing started.
     pub fn new(world: FlintWorld, scene_path: String, project: Project) -> Self {
-        #[allow(unused_mut)] // without procgen nothing goes in
         let mut resources = flint_package::Resources::new();
-        #[cfg(feature = "procgen")]
-        resources.insert(ProcGenResolver::new());
+        crate::packages::registry().make_resources(&mut resources);
         #[cfg(feature = "living")]
         resources.insert(flint_living::LivingProps::default());
         Self {
@@ -177,17 +174,6 @@ impl GameCore {
         self.script.set_enabled_modules(modules);
     }
 
-    /// The procgen resolver, which [`GameCore::new`] puts in the resources.
-    #[cfg(feature = "procgen")]
-    pub(crate) fn procgen_resolver(&self) -> &ProcGenResolver {
-        resolver_of(&self.resources)
-    }
-
-    #[cfg(feature = "procgen")]
-    pub(crate) fn procgen_resolver_mut(&mut self) -> &mut ProcGenResolver {
-        resolver_mut_of(&mut self.resources)
-    }
-
     /// The scene's living props, which [`GameCore::new`] puts in the
     /// resources.
     #[cfg(feature = "living")]
@@ -206,28 +192,12 @@ impl GameCore {
 
     /// Whether the project's `[packages]` leaves `package` out (#1528). With
     /// no `[packages]` table nothing is left out.
-    #[cfg_attr(not(feature = "living"), allow(dead_code))] // living's gates ask it
+    #[cfg_attr(not(all(feature = "living", feature = "debug-hud")), allow(dead_code))] // the Living Props panel asks it
     pub(crate) fn leaves_out(&self, package: &str) -> bool {
         self.packages
             .as_ref()
             .is_some_and(|in_use| !in_use.is_on(package))
     }
-}
-
-/// The procgen resolver in `resources`, for a borrow of the resources field
-/// alone (beside the world, the subsystems).
-#[cfg(feature = "procgen")]
-pub(crate) fn resolver_of(resources: &flint_package::Resources) -> &ProcGenResolver {
-    resources
-        .get()
-        .expect("GameCore::new puts the procgen resolver in")
-}
-
-#[cfg(feature = "procgen")]
-pub(crate) fn resolver_mut_of(resources: &mut flint_package::Resources) -> &mut ProcGenResolver {
-    resources
-        .get_mut()
-        .expect("GameCore::new puts the procgen resolver in")
 }
 
 /// What a host lends the core for a stage of the frame.
@@ -491,12 +461,11 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     host.phase_done(Phase::AnimFx);
     run_stage(host, Stage::Animation, Some(config));
 
-    // The frame-budgeted procgen queue; living props move on after it, in
-    // what it left of the budget
-    #[cfg(feature = "procgen")]
+    // The asset makers' frame (procgen's budgeted queue); living props move
+    // on after it, in what it left of the budget
     {
         let (core, lent) = host.lend();
-        core.tick_procgen(lent);
+        core.tick_asset_makers(lent);
     }
     run_stage(host, Stage::Procgen, Some(config));
 
@@ -829,70 +798,81 @@ impl GameCore {
         }
     }
 
-    /// The frame-budgeted procgen queue: what it finished goes to the
-    /// renderer, when there is one. Living props move on after it, at
-    /// `Stage::Procgen`, in whatever it left of the budget.
-    #[cfg(feature = "procgen")]
-    pub(crate) fn tick_procgen(&mut self, lent: Lent<'_>) {
-        flint_core::scope!("tick_procgen");
-        use flint_core::frame_notes::{self, NoteKind};
-        // Whether the queue made anything is known only after: timed by
-        // hand, noted (#1077) when it did
-        let began = frame_notes::listening().then(web_time::Instant::now);
-        // A load's procgen stage too (#1092), forgotten when nothing came
-        let span =
-            flint_core::load_report::span(flint_core::load_report::Stage::Procgen, String::new);
-        let resolver = resolver_mut_of(&mut self.resources);
-        let completed = resolver.process_frame(lent.camera.position_array());
-        let failures = resolver.take_failures();
-        if completed.is_empty() && failures.is_empty() {
-            span.discard();
+    /// The scene's made assets, before the model loader (#32, #1557): each
+    /// asset maker the run registered makes the names it can (the procgen
+    /// package's specs, living's props through its load step), the rest
+    /// staying the file loader's. A run with no maker says (with
+    /// `say_unmade`) what a spec would have made.
+    pub(crate) fn make_scene_assets(
+        &mut self,
+        gpu: flint_package::assets::Gpu<'_>,
+        config: &flint_render::model_loader::ModelLoadConfig,
+        mode: flint_package::assets::MakeMode,
+        say_unmade: bool,
+    ) {
+        let registry = crate::packages::registry();
+        if registry.asset_makers().next().is_none() {
+            if !say_unmade {
+                return;
+            }
+            if let Some(line) =
+                super::missing_features::procgen_line(&self.world, &self.project, &self.scene_path)
+            {
+                tracing::warn!(target: "load", "{line}");
+            }
             return;
         }
-        let detail = began.map(|_| procgen_note(&completed, failures.len()));
-        if let (Some(renderer), Some((device, queue))) = (lent.renderer, lent.gpu) {
-            // Catalog names never reach the queue, so the file fallback
-            // needs only the scene's own search paths.
-            let config = flint_render::model_loader::ModelLoadConfig::in_project(
-                self.project.clone(),
-                &self.scene_path,
-            );
-            let mut gpu = super::procgen_assets::GpuSink {
+        for maker in registry.asset_makers() {
+            maker.scene(&mut flint_package::assets::MakeCtx {
+                world: &mut self.world,
+                scene_path: &self.scene_path,
+                config,
+                gpu: flint_package::assets::Gpu {
+                    renderer: &mut *gpu.renderer,
+                    device: gpu.device,
+                    queue: gpu.queue,
+                },
+                colliders: &mut self.collider_sources,
+                resources: &mut self.resources,
+                registry,
+                packages: self.packages.as_ref(),
+                mode,
+            });
+        }
+    }
+
+    /// Each asset maker's frame (#1557): the procgen package's budgeted
+    /// queue, whose finished assets go to the renderer when there is one.
+    /// Living props move on after it, at `Stage::Procgen`, in whatever it
+    /// left of the budget.
+    pub(crate) fn tick_asset_makers(&mut self, lent: Lent<'_>) {
+        let mut makers = crate::packages::registry().asset_makers().peekable();
+        if makers.peek().is_none() {
+            return;
+        }
+        let mut gpu = match (lent.renderer, lent.gpu) {
+            (Some(renderer), Some((device, queue))) => Some(flint_package::assets::Gpu {
                 renderer,
                 device,
                 queue,
-                config: &config,
-            };
-            // Each mesh's triangles kept for the colliders naming it (#1222)
-            let mut sink = super::collider_meshes::Recording {
-                sink: &mut gpu,
-                sources: &mut self.collider_sources,
-            };
-            super::procgen_assets::apply_completed(&completed, &mut sink);
-            super::procgen_assets::apply_failures(&failures, &mut sink);
-        }
-        if let (Some(began), Some(detail)) = (began, detail) {
-            let ms = began.elapsed().as_secs_f32() * 1000.0;
-            frame_notes::note(NoteKind::Procgen, || detail, Some(ms));
+            }),
+            _ => None,
+        };
+        for maker in makers {
+            maker.frame(&mut flint_package::assets::FrameMake {
+                resources: &mut self.resources,
+                camera: lent.camera.position_array(),
+                project: &self.project,
+                scene_path: &self.scene_path,
+                gpu: gpu.as_mut().map(|g| flint_package::assets::Gpu {
+                    renderer: &mut *g.renderer,
+                    device: g.device,
+                    queue: g.queue,
+                }),
+                colliders: &mut self.collider_sources,
+            });
         }
     }
-}
-
-/// `2 generated: oak_tree, stone_wall; 1 failed`, for a frame note.
-#[cfg(feature = "procgen")]
-fn procgen_note(completed: &[flint_procgen::CompletedAsset], failed: usize) -> String {
-    let mut line = String::new();
-    if !completed.is_empty() {
-        let names: Vec<&str> = completed.iter().map(|c| c.spec_name.as_str()).collect();
-        line = format!("{} generated: {}", completed.len(), names.join(", "));
-    }
-    if failed > 0 {
-        if !line.is_empty() {
-            line.push_str("; ");
-        }
-        line.push_str(&format!("{failed} failed"));
-    }
-    line
 }
 
 /// Carry out what the scripts have asked since the last drain (#697), in

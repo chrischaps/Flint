@@ -275,15 +275,17 @@ A game that carries the engine as a subtree doesn't edit `register_built_in_gene
 
 ```rust,ignore
 impl flint_player::PlayerExtension for CaveGame {
-    fn register_generators(&mut self, registry: &mut flint_procgen::GeneratorRegistry) {
-        registry.register(Box::new(rock::RockGenerator));
+    fn resources(&mut self, resources: &mut flint_package::Resources) {
+        if let Some(generators) = flint_procgen::player::generators_mut(resources) {
+            generators.register(Box::new(rock::RockGenerator));
+        }
     }
 }
 
 player.add_extension(Box::new(CaveGame)); // before the event loop starts
 ```
 
-The registry is the player's own, already holding the built-ins, so every spec in the game's `specs/` that names `rock_v1` resolves as a built-in's does: generated as its scene loads, cached in memory and on disk (the cache key holds `type_name` and `revision`, so bump the revision when the output changes), and uploaded before the model loader looks for a file. A generator registered under a built-in's name replaces it.
+The registry is the run's resolver's (this package's, in the player's resources since #1557), already holding the built-ins, so every spec in the game's `specs/` that names `rock_v1` resolves as a built-in's does: generated as its scene loads, cached in memory and on disk (the cache key holds `type_name` and `revision`, so bump the revision when the output changes), and uploaded before the model loader looks for a file. A generator registered under a built-in's name replaces it.
 
 `crates/flint-player/examples/cave_game/` is a whole game binary doing this (`cargo run -p flint-player --example cave_game`), and the book's [Player Extensions](../../../../docs/book/src/guides/player-extensions.md#procgen-generators) guide has the rest. Two limits, for now: only the player sees a game's generators (`flint gen`, `flint edit` and `flint render` build their registries from the built-ins), and the stock `flint-player` shows a placeholder for a spec naming one. Steps 5 and 6 still apply, in the game's crate: the crate-wide tests here only see the built-ins.
 

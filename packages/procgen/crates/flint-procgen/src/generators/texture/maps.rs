@@ -1109,7 +1109,8 @@ mod tests {
     #[test]
     #[ignore]
     fn map_debug_pngs() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../target/test-output");
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../target/test-output");
         std::fs::create_dir_all(&dir).unwrap();
         for (name, field, params) in real_fields(512) {
             let maps = derive_maps(&field, &params, &mut SeededRng::new(42));

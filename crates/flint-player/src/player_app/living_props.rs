@@ -27,16 +27,15 @@
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
 use flint_ecs::FlintWorld;
-use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
 use flint_living::{
     BlendFrame, LineageDone, LivingPropId, LivingPropRequest, LivingProps, LivingStats,
 };
-use flint_procgen::{AssetKind, LivingRig, ProcGenResolver, Stagger};
+use flint_procgen::{AssetKind, ProcGenResolver, Stagger};
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
 use flint_wooze::WoozeField;
 
-use super::procgen_assets::{AssetSink, ProcGenMode};
+use flint_procgen::player::{AssetSink, ProcGenMode};
 
 // A scene's `[living]` tables in the runtime's terms are flint-living's (#1025),
 // beside the layers they fill; these names stay for the player's callers.
@@ -352,81 +351,6 @@ pub fn apply_lineages(done: &[LineageDone], sink: &mut dyn AssetSink) {
             }
         }
     }
-}
-
-/// A rig's rest mesh as a model import, split by sub-mesh, so a procgen skeleton
-/// goes up the same path as a skinned GLB. Each part keeps only the vertices it
-/// uses, not the whole shared buffer: a tree has six parts.
-pub fn import_of(name: &str, rig: &LivingRig) -> ImportResult {
-    let mesh = &rig.mesh;
-    let mut result = ImportResult {
-        asset_meta: flint_asset::AssetMeta {
-            name: name.to_string(),
-            asset_type: flint_asset::AssetType::Mesh,
-            hash: String::new(),
-            source_path: None,
-            format: None,
-            properties: Default::default(),
-            tags: Vec::new(),
-        },
-        meshes: Vec::with_capacity(mesh.submeshes.len()),
-        textures: Vec::new(),
-        materials: Vec::with_capacity(mesh.submeshes.len()),
-        skeletons: Vec::new(),
-        skeletal_clips: Vec::new(),
-        node_clips: Vec::new(),
-        nodes: Vec::new(),
-        root_nodes: Vec::new(),
-    };
-    let fallback = flint_procgen::MaterialData::default();
-    for (i, sub) in mesh.submeshes.iter().enumerate() {
-        let start = (sub.index_start as usize).min(mesh.indices.len());
-        let end = (start + sub.index_count as usize).min(mesh.indices.len());
-        let indices = &mesh.indices[start..end];
-        let (Some(lo), Some(hi)) = (indices.iter().min(), indices.iter().max()) else {
-            continue;
-        };
-        let span = *lo as usize..=*hi as usize;
-        let vertices = &mesh.vertices[span.clone()];
-        let source = mesh.materials.get(sub.material_index).unwrap_or(&fallback);
-
-        let mut material = ImportedMaterial {
-            name: source.name.clone(),
-            base_color: source.base_color,
-            metallic: source.metallic,
-            roughness: source.roughness,
-            use_vertex_color: true,
-            alpha_mode: AlphaMode::Opaque,
-            alpha_cutoff: 0.5,
-            ..Default::default()
-        };
-        if let Some(normal) = &source.normal_map {
-            let texture = format!("part{i}_normal");
-            result.textures.push(ImportedTexture {
-                name: texture.clone(),
-                width: normal.width,
-                height: normal.height,
-                format: "rgba8".to_string(),
-                data: normal.pixels.clone(),
-            });
-            material.normal_texture = Some(texture);
-        }
-        result.materials.push(material);
-
-        result.meshes.push(ImportedMesh {
-            name: format!("{name}_part{i}"),
-            positions: vertices.iter().map(|v| v.position).collect(),
-            normals: vertices.iter().map(|v| v.normal).collect(),
-            uvs: vertices.iter().map(|v| v.uv).collect(),
-            indices: indices.iter().map(|ix| ix - lo).collect(),
-            material_index: Some(result.materials.len() - 1),
-            joint_indices: Some(span.clone().map(|v| rig.runtime_joints(v).0).collect()),
-            joint_weights: Some(span.map(|v| rig.runtime_joints(v).1).collect()),
-            skin_index: Some(0),
-            lod: None,
-        });
-    }
-    result
 }
 
 /// The `[living]` lines `--exit-after` prints, so a run can be read headlessly:

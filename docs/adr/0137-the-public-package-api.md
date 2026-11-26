@@ -524,8 +524,9 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   source names no package to do it. A match is the same `MissingPackage`
   as a stub's: exit 2, naming the package to list, with `package` in the
   `--json` error document. A stub (`absent::stub!`) is still how a package
-  whose commands live in flint-cli keeps them (music, rhythm, procgen). It
-  goes when its package's commands move to its crate (#1555, #1557).
+  whose commands live in flint-cli keeps them (music, rhythm; procgen's
+  went with #1557, below). It goes when its package's commands move to its
+  crate (#1555).
 - **Package flags on a command the package doesn't own** (ADR 0136
   section 7: `gen --ai-*`, `--max-cost`, `--cost-report`, `--style-guide`,
   `render --ai-refine`, `render --sweep wooze.*|living.*`, `asset resolve
@@ -548,6 +549,60 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   `asset generate --help` and a render line, as before. The derived
   `AiAssetCommands` builds its `Command` at run time, as `Cli`'s derive
   did, so nothing moved onto a deeper frame.
+
+## As built: procgen moves into its package (#1557)
+
+- **Its crates are in its folder:** `packages/procgen/crates/flint-procgen`
+  (moved whole, history kept) and a new `flint-procgen-cli`. The root
+  `Cargo.toml` lists both by path rather than by the `packages/*/crates/*`
+  glob, because the book's maps count `members` (#1568 can add the glob).
+  `package.toml` names them under `[rust]` (decision 10: `player =
+  "flint-procgen/player"`, `cli = "flint-procgen-cli"`), which
+  `flint_core::package` reads. Each binary's `build.rs` writes the
+  launcher's list from these lines and the Cargo features that are on.
+  The player's `moved()` sorts by the manifests' `[requires]` order, and
+  the CLI's `moved::cli()`. `src/` names no moved package. The hand-written
+  optional dependency and the `procgen` feature stay until #1568
+  generates them.
+- **The player's half is a registration point the kernel defines**,
+  `flint_package::assets::AssetMaker`, called at five moments: the run's
+  start (the disk tier), a scene's load before the model loader, spawned
+  entities, each frame before `Stage::Procgen`, and a teardown. It also
+  answers `pending(name)` for a model's collider. The kernel lends it a
+  `MakeCtx`: the world, the `ModelLoadConfig`, a `Gpu`, the colliders as
+  `&mut dyn MadeMeshes`, the resources, the registry and `[packages]`. A
+  package also registers `run_resources`, which put its resolver in each
+  core's `Resources`, and `point(value)`, its own registration points.
+  `Registry::point_mut` lets a later package add to them. That is how
+  living's props join procgen's load: a `LoadStep` pushed onto procgen's
+  `LoadSteps`, in `[requires]` order. This record's section 4 listed that
+  point as "procgen's resolve steps".
+- **`PlayerExtension::register_generators` became `resources(&mut
+  Resources)`.** It was the one hook that named a package's type, so it
+  couldn't stay without a `cfg`. A game finds the registry with
+  `flint_procgen::player::generators_mut`. Decision 7 keeps
+  `PlayerExtension` as it is apart from this; no game in the three repos
+  used the old hook.
+- **The CLI's commands stay the kernel's**, so `--help` is unchanged in
+  every build, and `flint gen x.glyphs.toml` stays the kernel's, as #1543
+  decided. The kernel's `flint gen`, `flint edit`, `gen-preview` and
+  `tex-edit` ask registration points on the command line,
+  `flint_package::cli::Points`. That is one typed map for the run, filled
+  before parsing by each `CliExtension::register` and then by the binary's
+  own parts. Procgen registers `SpecGen` (the run of a spec; `GenArgs`
+  moved into `flint_package::cli::gen` so the package can take it),
+  `flint_viewer::host::SpecEditors` (its two editors as `Box<dyn Editor>`)
+  and `SpecChecks` (parse, params, a terrain spec's issues). Procgen's own
+  `gen` declares two points of its own, `AiSteps` and `StripSheet`. The
+  binary fills them from its ai and living code under those features. That
+  is #1572's shape for `gen --ai-*`, built for `gen` alone. A missing point
+  is `MissingPackage` (moved to `flint_package::cli`), naming the package
+  whose manifest provides the command's words.
+- **Living's tables are living's in the CLI too.** The `[living]` and
+  `[wooze]` checks, the settle at load and the echo sweep check were
+  behind `procgen` only because flint-procgen holds their types. They are
+  behind `living` now. A procgen build without living no longer checks
+  tables its player never reads.
 
 ## Measured
 

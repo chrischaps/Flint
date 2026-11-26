@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use clap::Args;
 use flint_core::components as comp;
 use flint_core::Vec3;
 use flint_ecs::FlintWorld;
@@ -21,51 +20,12 @@ use flint_render::{
     Camera, DebugMode, OrbitCameraController, RendererConfig, SceneRenderer, Vertex as RenderVertex,
 };
 use flint_runtime::{DebugKey, DebugKeyGroup};
-use flint_viewer::host::{
-    self, Editor, Flow, Gpu, HostOptions, InitCx, StillOptions, Target, Tick,
-};
+use flint_viewer::host::{self, Editor, Flow, Gpu, InitCx, SpecEdit, StillOptions, Target, Tick};
 use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::Window;
 
 // ─── CLI args ───────────────────────────────────────────────────────────────
-
-#[derive(Args)]
-pub struct GenPreviewArgs {
-    /// Path to a .procgen.toml spec file
-    pub spec: String,
-
-    /// Override the spec's seed with a fixed value
-    #[arg(long)]
-    pub seed: Option<u64>,
-
-    /// Initial window width
-    #[arg(long, default_value = "1440")]
-    pub width: u32,
-
-    /// Initial window height
-    #[arg(long, default_value = "900")]
-    pub height: u32,
-
-    /// Disable the ground grid
-    #[arg(long)]
-    pub no_grid: bool,
-
-    /// Start with auto-orbit enabled
-    #[arg(long)]
-    pub auto_orbit: bool,
-}
-
-/// `flint gen-preview <spec>`: the previewer in a window.
-pub fn run(args: GenPreviewArgs) -> Result<()> {
-    let options = HostOptions {
-        width: args.width,
-        height: args.height,
-        camera: Default::default(),
-        auto_orbit: args.auto_orbit,
-    };
-    host::run(editor(args)?, options)
-}
 
 /// Whether the spec at `path` makes images (a texture generator) rather
 /// than a mesh: `flint edit` takes no camera flags for one (#712).
@@ -82,7 +42,7 @@ pub fn draws_images(path: &Path) -> Result<bool> {
 
 /// The procgen previewer for `args.spec`, for [`flint_viewer::host`] to
 /// open in a window or draw as a `--render` still.
-pub fn editor(args: GenPreviewArgs) -> Result<GenPreviewApp> {
+pub fn editor(args: SpecEdit) -> Result<GenPreviewApp> {
     let spec_path = PathBuf::from(&args.spec);
     let mut spec = ProcGenSpec::from_file(&spec_path)
         .with_context(|| format!("failed to load spec from {}", spec_path.display()))?;
@@ -200,7 +160,7 @@ pub struct GenPreviewApp {
     last_world: Option<FlintWorld>,
 
     // Window / GPU (the host's, #712)
-    args: GenPreviewArgs,
+    args: SpecEdit,
     window: Option<Arc<Window>>,
     render_context: Option<Gpu>,
     scene_renderer: Option<SceneRenderer>,
@@ -604,7 +564,7 @@ impl GenPreviewApp {
         }
 
         if has_mesh {
-            let dialog = crate::file_dialog::FileDialog::new()
+            let dialog = flint_viewer::file_dialog::FileDialog::new()
                 .set_title("Export GLB")
                 .add_filter("glTF Binary", &["glb"])
                 .set_file_name(format!("{base_name}.glb"));
@@ -619,7 +579,7 @@ impl GenPreviewApp {
             }
         } else if has_images {
             if self.last_images.len() == 1 {
-                let dialog = crate::file_dialog::FileDialog::new()
+                let dialog = flint_viewer::file_dialog::FileDialog::new()
                     .set_title("Export PNG")
                     .add_filter("PNG Image", &["png"])
                     .set_file_name(format!("{base_name}.png"));
@@ -634,7 +594,7 @@ impl GenPreviewApp {
                 }
             } else {
                 // Multiple images: pick a directory, save with suffixed names
-                let dialog = crate::file_dialog::FileDialog::new()
+                let dialog = flint_viewer::file_dialog::FileDialog::new()
                     .set_title("Export PNGs (select folder)")
                     .set_file_name(format!("{base_name}.png"));
                 let dialog = if let Some(parent) = self.spec_path.parent() {
@@ -719,7 +679,7 @@ impl GenPreviewApp {
     // ─── Save spec as ────────────────────────────────────────────────────
 
     fn save_spec_as(&mut self) {
-        let dialog = crate::file_dialog::FileDialog::new()
+        let dialog = flint_viewer::file_dialog::FileDialog::new()
             .set_title("Save Spec As")
             .add_filter("ProcGen Spec", &["toml"])
             .set_file_name(
@@ -1341,9 +1301,9 @@ impl Editor for GenPreviewApp {
 
 /// Build a minimal ECS world with one entity referencing the "procgen_preview" mesh.
 /// The asset a one-mesh [`build_mesh_world`] world draws.
-pub(super) const PREVIEW_ASSET: &str = "procgen_preview";
+pub const PREVIEW_ASSET: &str = "procgen_preview";
 
-pub(super) fn build_mesh_world(submesh_count: usize) -> FlintWorld {
+pub fn build_mesh_world(submesh_count: usize) -> FlintWorld {
     let mut world = FlintWorld::new();
 
     let count = submesh_count.max(1);
@@ -1463,7 +1423,7 @@ mod tests {
     /// example oak, move one slider, save; one line of the file changes.
     #[test]
     fn saving_one_slider_change_rewrites_one_line() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
         let src = root.join("specs/examples/oak_tree.procgen.toml");
         let dir = std::env::temp_dir().join(format!("flint-194-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

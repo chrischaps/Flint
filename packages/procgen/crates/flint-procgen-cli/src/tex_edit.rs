@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use clap::Args;
 use egui_snarl::ui::{PinInfo, SnarlPin, SnarlStyle, SnarlViewer};
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use flint_procgen::generators::texture::node_graph::{self, TextureNode};
@@ -20,9 +19,7 @@ use flint_procgen::{
     parse_param_schema, ImageData, ProcGenSpec, SeedConfig, SeedMode, SeededRng, TextureField,
     TextureMapParams,
 };
-use flint_viewer::host::{
-    self, Editor, Flow, Gpu, HostOptions, InitCx, StillOptions, Target, Tick,
-};
+use flint_viewer::host::{self, Editor, Flow, Gpu, InitCx, SpecEdit, StillOptions, Target, Tick};
 use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::Window;
@@ -31,38 +28,9 @@ use super::gen_preview_common::{self, random_seed};
 
 // ─── CLI args ───────────────────────────────────────────────────────────────
 
-#[derive(Args)]
-pub struct TexEditArgs {
-    /// Path to a .procgen.toml spec file (must use pattern = "pipeline")
-    pub spec: String,
-
-    /// Override the spec's seed with a fixed value
-    #[arg(long)]
-    pub seed: Option<u64>,
-
-    /// Window width
-    #[arg(long, default_value = "1600")]
-    pub width: u32,
-
-    /// Window height
-    #[arg(long, default_value = "1000")]
-    pub height: u32,
-}
-
-/// `flint tex-edit <spec>`: the node editor in a window.
-pub fn run(args: TexEditArgs) -> Result<()> {
-    let options = HostOptions {
-        width: args.width,
-        height: args.height,
-        camera: Default::default(),
-        auto_orbit: false,
-    };
-    host::run(editor(args)?, options)
-}
-
 /// The texture pipeline's node editor, for [`flint_viewer::host`] to open
 /// in a window or draw as a `--render` still (#712).
-pub fn editor(args: TexEditArgs) -> Result<TexEditApp> {
+pub fn editor(args: SpecEdit) -> Result<TexEditApp> {
     let spec_path = PathBuf::from(&args.spec);
     let mut spec = ProcGenSpec::from_file(&spec_path)
         .with_context(|| format!("failed to load spec from {}", spec_path.display()))?;

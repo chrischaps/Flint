@@ -1,8 +1,9 @@
 //! A game binary with a procgen generator of its own (#195, ADR 0119).
 //!
 //! The cave game's rocks come from `rock_v1` (rock.rs), which the engine
-//! doesn't ship. The game embeds `PlayerApp`, and its extension hands the
-//! generator to the player in `register_generators`; from then on a scene's
+//! doesn't ship. The game embeds `PlayerApp`, and its extension adds the
+//! generator to the procgen package's registry, which it finds in the run's
+//! resources (`PlayerExtension::resources`, #1557); from then on a scene's
 //! `*.procgen.toml` naming `generator = "rock_v1"` resolves like a tree.
 //!
 //! It also draws its own egui (ADR 0121): a survey of the stones in a side
@@ -21,7 +22,6 @@ mod rock;
 
 use anyhow::Context;
 use flint_player::{CaptureConfig, ExtensionCtx, PlayerApp, PlayerExtension};
-use flint_procgen::GeneratorRegistry;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 /// The game's extension: its generator, and its egui.
@@ -33,8 +33,10 @@ struct CaveGame {
 }
 
 impl PlayerExtension for CaveGame {
-    fn register_generators(&mut self, registry: &mut GeneratorRegistry) {
-        registry.register(Box::new(rock::RockGenerator));
+    fn resources(&mut self, resources: &mut flint_package::Resources) {
+        if let Some(generators) = flint_procgen::player::generators_mut(resources) {
+            generators.register(Box::new(rock::RockGenerator));
+        }
     }
 
     fn pre_update(&mut self, ctx: &mut ExtensionCtx) {

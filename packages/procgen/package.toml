@@ -13,8 +13,15 @@ engine = "^0.1"
 [build]
 features = ["procgen"]
 
+# Its Rust (ADR 0137 decision 10, #1557): the crate whose `PACKAGE` the
+# player's launcher lists (and the feature of it that holds that side), and
+# the crate whose `cli()` the CLI launcher lists.
+[rust]
+player = "flint-procgen/player"
+cli = "flint-procgen-cli"
+
 [provides]
-crates = ["flint-procgen"]
+crates = ["flint-procgen", "flint-procgen-cli"]
 # `flint edit` on a `.procgen.toml` opens its previewers, the two hidden
 # aliases below
 commands = ["gen", "gen-preview", "tex-edit"]

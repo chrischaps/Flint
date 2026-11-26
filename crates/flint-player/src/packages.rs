@@ -68,17 +68,14 @@ pub static ENGINE: Part = Part {
 };
 
 // The packages whose code is still in this crate, each behind its feature
-// until it moves into `packages/<name>/` (#1555-#1559). Those with nothing
-// to register yet (debug-hud, procgen) are listed all the same: the list
-// is what the binary was built with.
+// until it moves into `packages/<name>/` (#1555-#1559). One with nothing
+// to register yet (debug-hud) is listed all the same: the list is what the
+// binary was built with. A package that has moved (procgen, #1557) is its
+// own crate's `PACKAGE`, listed by `moved()`, which `build.rs` writes from
+// the manifests.
 #[cfg(feature = "debug-hud")]
 static DEBUG_HUD: Part = Part {
     name: "debug-hud",
-    register: |_| {},
-};
-#[cfg(feature = "procgen")]
-static PROCGEN: Part = Part {
-    name: "procgen",
     register: |_| {},
 };
 #[cfg(feature = "living")]
@@ -97,26 +94,48 @@ static RHYTHM: Part = Part {
     register: crate::player_app::subsystem::music::register_rhythm,
 };
 
-/// The names of the packages this crate has a part of, in any build: what
-/// a player can lack. A package with no part here (`ai`, the CLI's; a
-/// game's own) is not the player's to lack.
-pub const PLAYER_PACKAGES: &[&str] = &["debug-hud", "procgen", "living", "music", "rhythm"];
+/// What `build.rs` writes from `packages/*/package.toml` (#1557): `MOVED`,
+/// `moved()`, `ORDER` and `FEATURES`.
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/moved_packages.rs"));
+}
+
+/// The names of the packages this crate has a part of, in any build. A
+/// package with no part here (`ai`, the CLI's; a game's own) is not the
+/// player's to lack, and nor is one whose part is its own crate's
+/// ([`player_packages`] adds those).
+pub const PLAYER_PACKAGES: &[&str] = &["debug-hud", "living", "music", "rhythm"];
+
+/// What a player can lack: the packages this crate has a part of, and those
+/// whose `[rust] player` crate the stock launcher lists (procgen's), in any
+/// build.
+pub fn player_packages() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = PLAYER_PACKAGES.to_vec();
+    names.extend(generated::MOVED.iter().copied());
+    names
+}
 
 /// Every package this build has, each after the ones it `[requires]`: the
 /// stock launcher's list. A test build ends it with the toy package.
 #[allow(clippy::vec_init_then_push, unused_mut)] // a build with no package pushes none
 pub fn stock() -> Vec<&'static dyn Package> {
-    let mut list: Vec<&'static dyn Package> = Vec::new();
+    let mut list: Vec<&'static dyn Package> = generated::moved();
     #[cfg(feature = "debug-hud")]
     list.push(&DEBUG_HUD);
-    #[cfg(feature = "procgen")]
-    list.push(&PROCGEN);
     #[cfg(feature = "living")]
     list.push(&LIVING);
     #[cfg(feature = "music")]
     list.push(&MUSIC);
     #[cfg(feature = "rhythm")]
     list.push(&RHYTHM);
+    // Each after what it requires, as the manifests order them
+    let at = |p: &&dyn Package| {
+        generated::ORDER
+            .iter()
+            .position(|n| *n == p.name())
+            .unwrap_or(usize::MAX)
+    };
+    list.sort_by_key(at);
     #[cfg(test)]
     list.push(&crate::player_app::subsystem::toy::PACKAGE);
     list
@@ -163,7 +182,7 @@ pub fn registry() -> &'static Registry {
 /// Whether this player lacks `package`: one this crate has a part of, which
 /// the run's launcher didn't list (or the build compiled out).
 pub fn lacks(package: &str) -> bool {
-    PLAYER_PACKAGES.contains(&package) && !registry().has(package)
+    player_packages().contains(&package) && !registry().has(package)
 }
 
 /// The packages a project lists that a binary was built without.
@@ -368,7 +387,8 @@ mod tests {
         assert!(!lacks("engine"));
         assert!(!lacks("frame-history"), "a build option, not a package");
         assert_eq!(lacks("living"), !cfg!(feature = "living"));
-        assert_eq!(lacks("procgen"), !cfg!(feature = "procgen"));
+        let built = |f: &str| generated::FEATURES.iter().any(|(n, on)| *n == f && *on);
+        assert_eq!(lacks("procgen"), !built("procgen"));
     }
 
     /// The stock list is the build's packages, each a manifest's name,
@@ -396,21 +416,15 @@ mod tests {
                 );
             }
         }
-        for name in PLAYER_PACKAGES {
+        for name in player_packages() {
             assert!(manifests.get(name).is_some(), "{name}");
-            let on = manifests
-                .get(name)
-                .unwrap()
-                .features
-                .iter()
-                .all(|f| match f.as_str() {
-                    "debug-hud" => cfg!(feature = "debug-hud"),
-                    "procgen" => cfg!(feature = "procgen"),
-                    "living" => cfg!(feature = "living"),
-                    "music" => cfg!(feature = "music"),
-                    "rhythm" => cfg!(feature = "rhythm"),
-                    other => panic!("{name}'s feature {other} is no player feature"),
-                });
+            let on = manifests.get(name).unwrap().features.iter().all(|f| {
+                generated::FEATURES
+                    .iter()
+                    .find(|(n, _)| n == f)
+                    .unwrap_or_else(|| panic!("{name}'s feature {f} is no player feature"))
+                    .1
+            });
             assert_eq!(registry.has(name), on, "{name}");
         }
     }

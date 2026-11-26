@@ -257,7 +257,9 @@ fn id_to_color(id: u32) -> (u8, u8, u8) {
 pub(crate) fn debug_output_dir() -> std::path::PathBuf {
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../target"));
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../target")
+        });
     let dir = target.join("test-output");
     std::fs::create_dir_all(&dir).unwrap();
     dir

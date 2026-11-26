@@ -221,20 +221,16 @@ impl Stage {
 
         // Living props (#216), and the procgen assets their scene asks for, before the
         // model loader as in the player: catalog > procgen > file. A build
-        // without the procgen package (#1333) makes none: every name is a file.
-        #[cfg(feature = "procgen")]
+        // without the procgen package (#1333, #1557) has no asset maker and
+        // makes none: every name is a file.
         if wants_living || resolve_procgen {
-            game.resolve_procgen(
+            #[cfg(feature = "living")]
+            game.set_living_defaults(
                 flint_procgen::LivingTables::or_warn(&scene_file)
                     .living
                     .as_ref(),
-                GpuSink {
-                    renderer: &mut renderer,
-                    device: &ctx.device,
-                    queue: &ctx.queue,
-                    config: &config,
-                },
             );
+            game.make_assets(&mut renderer, &ctx.device, &ctx.queue, &config);
         }
         // A preset column names a preset file beside the scene before a built-in,
         // as the player's Load does (#249), and the file's [living] tables, species
@@ -243,8 +239,6 @@ impl Stage {
         // anything loaded (`check_wooze_sweep`), so its cells lay nothing
         #[cfg(feature = "living")]
         let (column_preset, column_knobs) = cell_knobs(args, grid, cell)?;
-        #[cfg(not(feature = "procgen"))]
-        let _ = resolve_procgen;
         #[cfg(not(feature = "living"))]
         let _ = (wants_living, grid, cell);
         #[cfg(feature = "living")]

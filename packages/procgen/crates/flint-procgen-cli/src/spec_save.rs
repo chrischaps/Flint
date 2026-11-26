@@ -362,8 +362,8 @@ mod tests {
         t.get_mut("params").unwrap().as_table_mut().unwrap()
     }
 
-    const OAK: &str = include_str!("../../../../specs/examples/oak_tree.procgen.toml");
-    const PLANK: &str = include_str!("../../../../specs/examples/wood_plank.procgen.toml");
+    const OAK: &str = include_str!("../../../../../specs/examples/oak_tree.procgen.toml");
+    const PLANK: &str = include_str!("../../../../../specs/examples/wood_plank.procgen.toml");
 
     #[test]
     fn unchanged_document_is_byte_identical() {

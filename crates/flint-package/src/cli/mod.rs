@@ -35,6 +35,15 @@ use clap::{ArgMatches, Command, Subcommand};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod clock;
+pub mod gen;
+mod missing;
+mod points;
+
+pub use clock::{random_seed, rfc3339, utc_now};
+pub use missing::{missing, MissingPackage, EXIT as MISSING_EXIT};
+pub use points::{points, points_or, Points, SpecChecks, SpecGen, SpecIssue};
+
 /// Subcommands a package or an embedding game adds to `flint`, given to
 /// flint-cli's `run_with`. The engine's own commands keep their names: an
 /// extension naming one at the same place is refused, as are two
@@ -57,6 +66,11 @@ pub trait CliExtension {
     /// its own matches, and the global flags (`json`, `project`) are on it
     /// too. `--project` is already applied: `Project::current()` returns it.
     fn run(&mut self, matches: &ArgMatches) -> Result<()>;
+
+    /// Fill in the run's registration points ([`Points`], #1557): what
+    /// another command asks this package for (procgen's [`SpecGen`] for the
+    /// kernel's `gen`). Called once, before parsing.
+    fn register(&self, _points: &mut Points) {}
 
     /// The chosen command opens a window (or plays sound, or reads a pad),
     /// which `--json` refuses, as it does `flint play`. No by default.
@@ -91,6 +105,7 @@ where
         run,
         window: None,
         under: &[],
+        points: None,
         _commands: std::marker::PhantomData,
     })
 }
@@ -101,6 +116,7 @@ pub struct Derived<S, F> {
     #[allow(clippy::type_complexity)]
     window: Option<Box<dyn Fn(&S) -> bool>>,
     under: &'static [&'static str],
+    points: Option<fn(&mut Points)>,
     _commands: std::marker::PhantomData<fn() -> S>,
 }
 
@@ -120,6 +136,13 @@ impl<S: Subcommand, F> Derived<S, F> {
         self.under = words;
         self
     }
+
+    /// What the extension puts in the run's registration points
+    /// ([`CliExtension::register`]).
+    pub fn registering(mut self: Box<Self>, points: fn(&mut Points)) -> Box<Self> {
+        self.points = Some(points);
+        self
+    }
 }
 
 impl<S, F> CliExtension for Derived<S, F>
@@ -136,6 +159,12 @@ where
 
     fn under(&self) -> &[&'static str] {
         self.under
+    }
+
+    fn register(&self, points: &mut Points) {
+        if let Some(register) = self.points {
+            register(points);
+        }
     }
 
     fn run(&mut self, matches: &ArgMatches) -> Result<()> {

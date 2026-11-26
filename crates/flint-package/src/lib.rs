@@ -18,6 +18,10 @@
 //!   debug keys once a run (#1552), so the kernel finds them by what was
 //!   registered, never by a package's name.
 //!
+//! - [`assets::AssetMaker`]: a package that makes assets by name (procgen's
+//!   specs) before the model loader looks for a file, asked at a scene's
+//!   load, for spawned entities and each frame (#1557).
+//!
 //! - [`cli::CliExtension`]: a package's commands on the `flint` command
 //!   line, and the one way a command answers (`--json`, #710), so a
 //!   package's CLI side never depends on flint-cli (#1553).
@@ -26,6 +30,7 @@
 //! from its own fields. This crate stays below 1.0 until Phase 5 (ADR 0136
 //! decision 5).
 
+pub mod assets;
 pub mod cli;
 mod context;
 pub mod note;
@@ -39,7 +44,7 @@ pub use context::{
     ReportCtx, SceneCtx, StageCtx,
 };
 pub use note::Note;
-pub use registry::{BuildForScene, LeftOutLine, Package, Registry};
+pub use registry::{BuildForScene, LeftOutLine, Package, Registry, RunResources};
 pub use resources::Resources;
 pub use stage::Stage;
 pub use subsystem::Subsystem;

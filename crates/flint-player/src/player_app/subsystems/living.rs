@@ -78,6 +78,30 @@ pub(crate) fn register(registry: &mut Registry) {
         .when_left_out(left_out)
         .script_modules(SCRIPT_MODULES)
         .debug_keys(DEBUG_KEYS);
+    // The props take their `living_prop` entities' names off procgen's
+    // plain path at a scene's load (procgen's load steps, #1557): the
+    // procgen package registers first, as living `[requires]` it
+    if let Some(steps) = registry.point_mut::<flint_procgen::player::LoadSteps>() {
+        steps.0.push(resolve_props);
+    }
+}
+
+/// Living's step of a scene's procgen load: the scene's `living_prop`
+/// entities become props, each pointed at its lineage's mesh, before
+/// procgen makes the other names. A project whose `[packages]` leaves
+/// `living` out grows none: each takes the plain path, a still model, as
+/// in a build without it (#1528).
+#[cfg(feature = "living")]
+fn resolve_props(
+    ctx: &mut flint_procgen::player::LoadCtx,
+    sink: &mut dyn flint_procgen::player::AssetSink,
+    mode: flint_package::assets::MakeMode,
+) {
+    if ctx.leaves_out("living") {
+        return;
+    }
+    let (props, resolver) = crate::player_app::living_subsystem::props_and_resolver(ctx.resources);
+    crate::player_app::living_props::resolve(ctx.world, ctx.config, resolver, props, sink, mode);
 }
 
 /// A build without the package: the kernel keeps its policy name and says

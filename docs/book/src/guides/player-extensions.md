@@ -107,7 +107,7 @@ flint-player = { path = "engine/crates/flint-player", default-features = false, 
 | `debug-hud` | The F3/F4 debug panels (`flint-debug-ui`), and with `living` the `debug` script module (the A/B and `commit_living`) | No debug surface: `compare_living` and the rest are "module not enabled" errors |
 | `music` | A `music_session`'s suite and `music_beat()` (`flint-music`) | The suite doesn't play and the beat reads -1 |
 | `rhythm` | A charted suite judged (`flint-rhythm`, the 1 kHz pad capture); turns on `music` | A charted suite plays as music |
-| `procgen` | Assets made from `*.procgen.toml` specs, and `register_generators` (`flint-procgen`) | Every model and texture name is a file's |
+| `procgen` | Assets made from `*.procgen.toml` specs, and a game's own generators (the procgen package's crate, `flint-procgen`) | Every model and texture name is a file's |
 | `living` | Living props, `[living]`, `[wooze]`, shallow wooze, woozy grass and the `wooze` and `living` script modules (and `debug` with `debug-hud`); turns on `procgen` | The grove stands still |
 | `profile` | Tracy's frame profiler (off by default) | The scopes compile to nothing |
 
@@ -119,7 +119,7 @@ A scene that uses a part the build left out prints one line when it's entered, n
 |---|---|---|
 | `register_script_api(&mut rhai::Engine)` | Once, inside `add_extension` | Native functions and types for scripts |
 | `declare_script_api(&mut ScriptApi)` | Once, inside `add_extension`, after `register_script_api` | Functions declared through Flint's API builder: listed with the engine's, integers taken for numbers |
-| `register_generators(&mut GeneratorRegistry)` | Once, inside `add_extension` | The game's own [procgen generators](#procgen-generators) ([ADR 0119](https://github.com/chrischaps/Flint/blob/main/docs/adr/0119-game-generators-through-player-extensions.md)) |
+| `resources(&mut Resources)` | Once, inside `add_extension` | What a package lets a game add to: the game's own [procgen generators](#procgen-generators) ([ADR 0119](https://github.com/chrischaps/Flint/blob/main/docs/adr/0119-game-generators-through-player-extensions.md)) |
 | `pre_update(&mut ExtensionCtx)` | Every frame, before the scripts' `on_update` | Writing the world, firing events, uploading meshes |
 | `update(Stage, &mut ExtensionCtx)` | Every frame, at each [stage](#stages), after the engine's own subsystems | Work that belongs after physics, after the scripts' UI, before the renderer's sync |
 | `scene_loaded(&mut ExtensionCtx)` / `scene_unloading(&mut ExtensionCtx)` | At the end of every scene's entry; before a transition tears the scene down | Per-scene state: what names the scene's entities |
@@ -163,19 +163,19 @@ A declared function is listed with its parameters and doc by `app.core.script.ap
 
 ### Procgen generators
 
-A game can bring generators the engine doesn't ship: a `rock_v1` for a cave game, a `rune_v1` for its signage. Write one as `packages/procgen/crates/flint-procgen/CONTRIBUTING.md` describes (a type implementing `flint_procgen::Generator`), then hand it to the player from `register_generators`:
+A game can bring generators the engine doesn't ship: a `rock_v1` for a cave game, a `rune_v1` for its signage. Write one as `packages/procgen/crates/flint-procgen/CONTRIBUTING.md` describes (a type implementing `flint_procgen::Generator`), then add it to the procgen package's registry, which the extension finds in the run's resources:
 
 ```rust
-use flint_procgen::GeneratorRegistry;
-
 impl PlayerExtension for CaveGame {
-    fn register_generators(&mut self, registry: &mut GeneratorRegistry) {
-        registry.register(Box::new(rock::RockGenerator));
+    fn resources(&mut self, resources: &mut flint_package::Resources) {
+        if let Some(generators) = flint_procgen::player::generators_mut(resources) {
+            generators.register(Box::new(rock::RockGenerator));
+        }
     }
 }
 ```
 
-The registry already holds the built-ins, and it's the one the player resolves every scene's `*.procgen.toml` specs through. A spec in the game's `specs/` with `generator = "rock_v1"` then resolves like a tree: generated as the scene loads (or queued, under `--procgen-defer`), cached in memory and on the disk, and uploaded before the model loader looks for a file of that name. A generator registered under a built-in's name replaces the built-in.
+The registry already holds the built-ins, and it's the one the player resolves every scene's `*.procgen.toml` specs through. A player whose launcher doesn't list the procgen package has none, and `generators_mut` answers `None`. Until the procgen package moved into its own folder (#1557) the hook was `register_generators(&mut GeneratorRegistry)`: a game that wrote it moves its body into `resources` as above. A spec in the game's `specs/` with `generator = "rock_v1"` then resolves like a tree: generated as the scene loads (or queued, under `--procgen-defer`), cached in memory and on the disk, and uploaded before the model loader looks for a file of that name. A generator registered under a built-in's name replaces the built-in.
 
 Add the extension before the event loop starts. The first scene's specs are resolved as it loads, and a spec resolved before its generator was registered has already fallen back to a file or a placeholder. Only the game's binary knows these generators. The stock `flint-player` shows a placeholder for such a spec, and `flint gen`, `flint edit` and `flint render` build their registries from the built-ins alone.
 

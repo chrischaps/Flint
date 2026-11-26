@@ -42,6 +42,8 @@ pub use extension::{
 pub use flint_audio::{Bus, Buses};
 pub use flint_core::quality::{GpuInfo, QualitySettings, QualityValue};
 pub use flint_geometry::ray_mesh::{RayHit, RayMesh, RayScene};
+#[cfg(feature = "living")]
+pub use flint_procgen::player::import_of as living_import;
 pub use flint_render::{
     river_points, GrassGround, GrassHeight, GroundFog, RiverPoint, WaterBodyLook, WaterBodyMesh,
     WaterVertex,
@@ -70,8 +72,6 @@ pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEve
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::inspect::InspectListener;
 #[cfg(feature = "living")]
-pub use player_app::living_props::import_of as living_import;
-#[cfg(feature = "living")]
 pub use player_app::living_props::{
     apply_preset as apply_living_preset, boil_at, species_problems, wanted_by as living_wanted,
     wooze_of_scene,
@@ -81,8 +81,6 @@ pub use player_app::playtest::{
     PlaytestReport, SaveReport as PlaytestSave, DEFAULT_STEP as PLAYTEST_STEP,
 };
 pub use player_app::playtest_warnings::warning_layer as playtest_warning_layer;
-#[cfg(feature = "procgen")]
-pub use player_app::procgen_assets::GpuSink;
 pub use player_app::render_scale::{RenderScaleSetting, WEB_DPR_CAP};
 pub use player_app::scene_loading::{
     load_scene_grass_ground, load_user_styles, post_process_config_from_def,

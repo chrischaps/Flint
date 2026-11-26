@@ -1,11 +1,12 @@
 //! Living props in the player, headless: the recording sink stands in for the
 //! renderer, as it does for the rest of procgen's resolution.
 
-use super::super::procgen_assets::tests::{Event, Recorder};
 use super::*;
 use flint_core::components as comp;
 use flint_core::EntityId;
-use flint_procgen::ProcGenSpec;
+use flint_procgen::player::import_of;
+use flint_procgen::player::recorder::{Event, Recorder};
+use flint_procgen::{LivingRig, ProcGenSpec};
 
 const SAPLING: &str = r#"
 generator = "tree_v1"

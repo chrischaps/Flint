@@ -728,7 +728,7 @@ fn parse_living(field: &str, values: &[String]) -> Result<SweepKey, String> {
 
 /// One `living.echoes.<knob>` value, held to what a spec's echoes take
 /// (`EchoConfig::check`).
-#[cfg(feature = "procgen")]
+#[cfg(feature = "living")]
 fn echo_value(knob: &str, value: &str) -> Result<(), String> {
     let mut echoes = flint_procgen::EchoConfig::default();
     if knob == "count" {
@@ -749,10 +749,10 @@ fn echo_value(knob: &str, value: &str) -> Result<(), String> {
         .map_err(|(_, why)| format!("--sweep living.echoes.{knob}={why}"))
 }
 
-/// Without the procgen package (#1543) there is no `EchoConfig` to hold the
-/// value to: it must read as a number, and the render then refuses the
-/// sweep, naming the living package, which draws the echoes.
-#[cfg(not(feature = "procgen"))]
+/// Without the living package (#1543, #1557), which draws the echoes,
+/// there is no `EchoConfig` to hold the value to: it must read as a
+/// number, and the render then refuses the sweep, naming the package.
+#[cfg(not(feature = "living"))]
 fn echo_value(knob: &str, value: &str) -> Result<(), String> {
     if knob == "count" {
         return value.parse::<u32>().map(|_| ()).map_err(|_| {

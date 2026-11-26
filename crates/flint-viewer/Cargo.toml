@@ -13,6 +13,10 @@ description = "egui-based validation viewer for Flint scenes"
 # drawn still, said once, and its `[living]` / `[wooze]` go unsettled.
 default = ["living"]
 living = ["dep:flint-wooze", "dep:flint-procgen", "flint-procgen/living"]
+# The editors' native file dialogs (`file_dialog`, #221): rfd. Off, the
+# Save As / Export / Browse buttons say no dialog opened (a headless build,
+# no D-Bus stack on Linux). flint-cli's `dialogs` turns it on.
+dialogs = ["dep:rfd"]
 
 [dependencies]
 flint-core = { workspace = true }
@@ -34,6 +38,7 @@ wgpu = { workspace = true }
 winit = { workspace = true }
 pollster = { workspace = true }
 anyhow = { workspace = true }
+rfd = { workspace = true, optional = true }
 notify = { workspace = true }
 notify-debouncer-mini = { workspace = true }
 egui = { workspace = true }

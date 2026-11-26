@@ -452,7 +452,7 @@ pub fn rgba_to_hex(rgba: &[u8; 4]) -> String {
 
 /// The editors' seed from the clock: `common_args`' since #1543, where the
 /// terrain editor (the kernel's) reaches it without the procgen package.
-pub use super::common_args::random_seed;
+pub use flint_package::cli::random_seed;
 
 /// Format a TOML value compactly for display in the object array UI.
 pub fn format_toml_value_compact(v: &toml::Value) -> String {

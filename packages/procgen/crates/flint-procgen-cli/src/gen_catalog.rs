@@ -60,7 +60,7 @@ pub fn list(registry: &GeneratorRegistry, as_json: bool) -> Result<()> {
     let generators = sorted(registry);
     if as_json {
         let list: Vec<Value> = generators.iter().map(|g| summary_json(*g)).collect();
-        crate::output::document(&json!({ "generators": list }));
+        flint_package::cli::document(&json!({ "generators": list }));
         return Ok(());
     }
     let width = generators
@@ -151,7 +151,7 @@ pub fn describe(registry: &GeneratorRegistry, name: &str, format: Format) -> Res
             if has_ops(generator) {
                 doc["ops"] = Value::Array(ALL_OP_TYPES.iter().map(|op| op_json(op)).collect());
             }
-            crate::output::document(&doc);
+            flint_package::cli::document(&doc);
         }
         Format::Markdown => {
             let mut out = format!(

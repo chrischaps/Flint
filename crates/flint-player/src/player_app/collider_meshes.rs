@@ -70,12 +70,10 @@ pub(crate) struct ColliderSources {
     warned: HashSet<EntityId>,
 }
 
-impl ColliderSources {
-    /// Keep a procgen mesh's triangles under its name.
-    #[cfg(feature = "procgen")]
-    pub(crate) fn made_mesh(&mut self, name: &str, mesh: &flint_procgen::MeshData) {
-        let positions = mesh.vertices.iter().map(|v| v.position).collect();
-        let triangles = mesh.indices.as_chunks::<3>().0.to_vec();
+/// What the asset makers (procgen's, #1557) tell the colliders: a mesh
+/// made under a name, or a name a placeholder or a file took back.
+impl flint_package::assets::MadeMeshes for ColliderSources {
+    fn made(&mut self, name: &str, positions: Vec<[f32; 3]>, triangles: Vec<[u32; 3]>) {
         self.made.insert(
             name.to_string(),
             Arc::new(ColliderMesh {
@@ -86,15 +84,14 @@ impl ColliderSources {
         self.made_generation += 1;
     }
 
-    /// Forget a procgen mesh: a placeholder or a file stands under the name
-    /// now.
-    #[cfg_attr(not(feature = "procgen"), allow(dead_code))]
-    pub(crate) fn forget(&mut self, name: &str) {
+    fn forget(&mut self, name: &str) {
         if self.made.remove(name).is_some() {
             self.made_generation += 1;
         }
     }
+}
 
+impl ColliderSources {
     /// The triangles a procgen spec made under `name`, if it made a mesh.
     pub(crate) fn made(&self, name: &str) -> Option<&Arc<ColliderMesh>> {
         self.made.get(name)
@@ -237,54 +234,6 @@ impl ColliderSources {
     }
 }
 
-/// An [`AssetSink`](super::procgen_assets::AssetSink) that keeps the
-/// triangles of each mesh it passes on in [`ColliderSources`], and forgets
-/// a name a placeholder or a file takes.
-#[cfg(feature = "procgen")]
-pub(crate) struct Recording<'s> {
-    pub sink: &'s mut dyn super::procgen_assets::AssetSink,
-    pub sources: &'s mut ColliderSources,
-}
-
-#[cfg(feature = "procgen")]
-impl super::procgen_assets::AssetSink for Recording<'_> {
-    fn has_mesh(&self, name: &str) -> bool {
-        self.sink.has_mesh(name)
-    }
-    fn has_file(&self, name: &str, kind: flint_procgen::AssetKind) -> bool {
-        self.sink.has_file(name, kind)
-    }
-    fn missing_file(&self, name: &str, kind: flint_procgen::AssetKind) -> Option<String> {
-        self.sink.missing_file(name, kind)
-    }
-    fn upload_mesh(&mut self, name: &str, mesh: &flint_procgen::MeshData) {
-        self.sources.made_mesh(name, mesh);
-        self.sink.upload_mesh(name, mesh);
-    }
-    fn upload_living(&mut self, name: &str, rig: &flint_procgen::LivingRig) {
-        self.sources.forget(name);
-        self.sink.upload_living(name, rig);
-    }
-    fn upload_bones(&mut self, entity: EntityId, name: &str, palette: &[[[f32; 4]; 4]]) {
-        self.sink.upload_bones(entity, name, palette);
-    }
-    fn upload_image(&mut self, name: &str, image: &flint_procgen::ImageData) {
-        self.sink.upload_image(name, image);
-    }
-    fn upload_placeholder(&mut self, name: &str, kind: flint_procgen::AssetKind) {
-        if kind == flint_procgen::AssetKind::Model {
-            self.sources.forget(name);
-        }
-        self.sink.upload_placeholder(name, kind);
-    }
-    fn load_file(&mut self, name: &str, kind: flint_procgen::AssetKind) -> bool {
-        if kind == flint_procgen::AssetKind::Model {
-            self.sources.forget(name);
-        }
-        self.sink.load_file(name, kind)
-    }
-}
-
 /// The triangles of each requested model, handed to `physics`: a procgen
 /// mesh of the name first (unless the catalog names a file for it), then
 /// the model's file. A model that isn't found is warned about with every
@@ -365,17 +314,18 @@ impl PlayerApp {
             &self.core.world,
             self.assets.of(&self.core.project),
         );
-        // A model still on the procgen queue (`ProcGenMode::Deferred`) has
-        // no triangles yet: they come when it's made, and physics waits for
-        // them quietly rather than warn or read a file in its place
-        #[cfg(feature = "procgen")]
+        // A model still being made (procgen's queue, `ProcGenMode::Deferred`)
+        // has no triangles yet: they come when it's made, and physics waits
+        // for them quietly rather than warn or read a file in its place
         let requests: Vec<(EntityId, String)> = {
-            let resolver = super::game_core::resolver_of(&self.core.resources);
+            let resources = &self.core.resources;
             let physics = &mut self.core.physics;
             requests
                 .iter()
                 .filter(|(entity, asset)| {
-                    let queued = resolver.is_pending(asset);
+                    let queued = crate::packages::registry()
+                        .asset_makers()
+                        .any(|maker| maker.pending(resources, asset));
                     if queued {
                         physics.expect_collider_mesh(*entity);
                     }

@@ -5,7 +5,9 @@
 //! a machine with no desktop has no use for, so a headless build leaves it
 //! out and gets this
 //! stand-in, the same builder with nothing behind it: every pick is a
-//! cancel, and it says once on stderr why no dialog opened.
+//! cancel, and it says once in the editors' log (target `viewer`, stderr) why
+//! no dialog opened. (flint-cli's, until #1557 moved it here, where the
+//! procgen package's editors reach it too.)
 
 #[cfg(feature = "dialogs")]
 pub use rfd::FileDialog;
@@ -54,7 +56,8 @@ mod stand_in {
     fn no_dialog() -> Option<PathBuf> {
         static SAID: Once = Once::new();
         SAID.call_once(|| {
-            eprintln!(
+            tracing::warn!(
+                target: "viewer",
                 "flint: no file dialog: this build left out the `dialogs` feature \
                  (rebuild flint-cli with default features to get one)"
             );

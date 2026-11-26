@@ -268,3 +268,36 @@ fn the_engines_manifests_read() {
     assert_eq!(read.packages[0].name, "engine");
     assert_eq!(read.packages[0].tier, Tier::Kernel);
 }
+
+/// `[rust]` (ADR 0137 decision 10, #1557): the crate whose `PACKAGE` the
+/// player's launcher lists and the one whose `cli()` the CLI's does, each
+/// `crate[/feature]`; anything else there is named.
+#[test]
+fn rust_names_a_packages_crates_for_the_launchers() {
+    let text = format!(
+        "{PROCGEN}[rust]\nplayer = \"flint-procgen/player\"\ncli = \"flint-procgen-cli\"\n"
+    );
+    let p = parse(&text, file()).unwrap();
+    assert_eq!(p.rust.player.as_deref(), Some("flint-procgen/player"));
+    assert_eq!(p.rust.cli.as_deref(), Some("flint-procgen-cli"));
+    assert_eq!(
+        Rust::split("flint-procgen/player"),
+        ("flint-procgen", Some("player"))
+    );
+    assert_eq!(
+        Rust::split("flint-procgen-cli"),
+        ("flint-procgen-cli", None)
+    );
+    assert_eq!(parse(PROCGEN, file()).unwrap().rust, Rust::default());
+    let bad = mistakes(&format!(
+        "{PROCGEN}[rust]\nplayr = \"x\"\ncli = \"Not A Crate\"\n"
+    ));
+    assert!(
+        bad.iter().any(|m| m.starts_with("rust.playr: unknown key")),
+        "{bad:?}"
+    );
+    assert!(
+        bad.iter().any(|m| m.starts_with("rust.cli: `Not A Crate`")),
+        "{bad:?}"
+    );
+}

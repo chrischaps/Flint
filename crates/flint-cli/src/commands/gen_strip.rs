@@ -28,22 +28,18 @@ use flint_procgen::{
 use flint_render::{Camera, HeadlessContext, RendererConfig, SceneRenderer};
 use image::{Rgb, RgbImage};
 
-use super::gen_preview::{build_mesh_world, PREVIEW_ASSET};
-use super::gen_store;
 use super::gif_writer;
 use super::render_plan;
+use flint_procgen_cli::{build_mesh_world, PREVIEW_ASSET};
 
-/// What `--strip` was asked for.
-#[derive(Debug, Clone, Copy)]
-pub struct StripOptions {
-    /// Frames to render.
-    pub frames: u32,
-    /// Frames per second of game time.
-    pub fps: f32,
-    /// Columns in the grid; `None` picks a 4:3 sheet.
-    pub columns: Option<u32>,
-    /// Each frame's width and height in pixels.
-    pub cell_size: u32,
+/// What `--strip` was asked for: frames, their rate, the grid's columns
+/// (`None` picks a 4:3 sheet) and each frame's size. Procgen's `gen`
+/// declares it, with the point (`StripSheet`) this fills.
+pub use flint_procgen_cli::StripOptions;
+
+/// Living's `--strip`, as procgen's `gen` asks for it (#1557).
+pub fn point() -> flint_procgen_cli::StripSheet {
+    flint_procgen_cli::StripSheet(run)
 }
 
 /// Where the camera sits: off to one side and a little above, low enough to
@@ -385,7 +381,10 @@ fn living_config<'a>(spec: &'a ProcGenSpec, label: &str) -> Result<&'a LivingCon
 fn output_path(spec: &ProcGenSpec, output: Option<&str>) -> Result<PathBuf> {
     let path = match output {
         Some(out) => PathBuf::from(out),
-        None => PathBuf::from(format!("{}_strip.png", gen_store::slug(&spec.meta.name))),
+        None => PathBuf::from(format!(
+            "{}_strip.png",
+            flint_procgen_cli::slug(&spec.meta.name)
+        )),
     };
     let is_png = path
         .extension()

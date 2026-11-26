@@ -19,6 +19,104 @@
 fn main() {
     main_thread_stack();
     package_manifests();
+    moved_packages();
+}
+
+/// What the CLI launcher lists and knows of the packages without naming
+/// one in `src/` (#1557):
+///
+/// - `OUT_DIR/moved_cli.rs`: `cli()`, the `cli()` of each package whose
+///   `[rust] cli` crate this build has (its `[build] features` all on);
+/// - `OUT_DIR/built_features.rs`: `BUILT_FEATURES`, each package feature
+///   (this crate's `packages` list, in its order) and device feature (the
+///   rest of `default`) with whether this build turns it on, after
+///   flint-player's `debug-hud` and `frame-history`, which are always on.
+#[allow(clippy::disallowed_methods)] // a build script, on the host: not the vfs's
+fn moved_packages() {
+    use std::fmt::Write as _;
+    let here = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).to_path_buf();
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let on = |feature: &str| {
+        let var = format!("CARGO_FEATURE_{}", feature.to_uppercase().replace('-', "_"));
+        std::env::var_os(var).is_some()
+    };
+    let strings = |table: &toml::Table, at: &str, key: &str| -> Vec<String> {
+        table
+            .get(at)
+            .and_then(|t| t.get(key))
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let mut manifests: Vec<(String, toml::Table)> = std::fs::read_dir(here.join("../../packages"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path().join("package.toml"))
+        .filter(|file| file.is_file())
+        .filter_map(|file| {
+            let table: toml::Table = std::fs::read_to_string(&file).ok()?.parse().ok()?;
+            let name = table.get("package")?.get("name")?.as_str()?.to_string();
+            Some((name, table))
+        })
+        .collect();
+    manifests.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut code = String::from(
+        "/// The moved packages' CLI extensions this build has (#1557).\n\
+         #[allow(clippy::vec_init_then_push, unused_mut)]\n\
+         pub(crate) fn cli() -> Vec<Box<dyn flint_package::cli::CliExtension>> {\n    \
+         let mut list: Vec<Box<dyn flint_package::cli::CliExtension>> = Vec::new();\n",
+    );
+    for (_, table) in &manifests {
+        let Some(cli) = table
+            .get("rust")
+            .and_then(|r| r.get("cli"))
+            .and_then(|c| c.as_str())
+        else {
+            continue;
+        };
+        let krate = cli.split('/').next().unwrap_or(cli).replace('-', "_");
+        let features = strings(table, "build", "features");
+        if !features.is_empty() && features.iter().all(|f| on(f)) {
+            writeln!(code, "    list.extend({krate}::cli());").unwrap();
+        }
+    }
+    code.push_str("    list\n}\n");
+    std::fs::write(out.join("moved_cli.rs"), code).unwrap();
+
+    let cargo: toml::Table = std::fs::read_to_string(here.join("Cargo.toml"))
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or_default();
+    let features = cargo.get("features").and_then(|f| f.as_table());
+    let list = |name: &str| -> Vec<String> {
+        features
+            .and_then(|f| f.get(name))
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let packages = list("packages");
+    let devices: Vec<String> = list("default")
+        .into_iter()
+        .filter(|f| f != "packages")
+        .collect();
+    let mut table =
+        String::from("&[\n    (\"debug-hud\", true),\n    (\"frame-history\", true),\n");
+    for feature in packages.iter().chain(&devices) {
+        writeln!(table, "    ({feature:?}, {}),", on(feature)).unwrap();
+    }
+    table.push(']');
+    std::fs::write(out.join("built_features.rs"), table).unwrap();
 }
 
 /// Every `packages/<name>/package.toml` of the tree this crate is built

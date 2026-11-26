@@ -24,6 +24,8 @@ pub mod model;
 mod output;
 pub mod param_ui;
 pub mod params;
+#[cfg(feature = "player")]
+pub mod player;
 mod queue;
 mod registry;
 pub mod resolver;
@@ -57,6 +59,8 @@ pub use living::{
 pub use living_knobs::wooze_knobs_of;
 pub use living_knobs::{species_def_of, species_keys, KnobType, KnobValue, LivingKnob};
 pub use output::{GeneratorOutput, OutputKind};
+#[cfg(feature = "player")]
+pub use player::PACKAGE;
 pub use queue::{
     AssetKind, CompletedAsset, FailedAsset, GenerationRequest, ProcGenQueue, QueueStats,
 };
