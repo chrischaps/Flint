@@ -13,12 +13,18 @@
 //!   one package lends state to another (procgen's resolver to living)
 //!   without the kernel naming either.
 //!
+//! - [`Package`] and [`Registry`]: a launcher lists its packages, and each
+//!   one registers its scene subsystems, policy names, script modules and
+//!   debug keys once a run (#1552), so the kernel finds them by what was
+//!   registered, never by a package's name.
+//!
 //! The player keeps the ordered list (`Subsystems`) and lends each context
-//! from its own fields. Registration (`Package`, `Registry`) comes with the
-//! launcher ticket (#1552). This crate stays below 1.0 until Phase 5 (ADR 0136 decision 5).
+//! from its own fields. This crate stays below 1.0 until Phase 5 (ADR 0136
+//! decision 5).
 
 mod context;
 pub mod note;
+mod registry;
 mod resources;
 mod stage;
 mod subsystem;
@@ -28,6 +34,7 @@ pub use context::{
     ReportCtx, SceneCtx, StageCtx,
 };
 pub use note::Note;
+pub use registry::{BuildForScene, LeftOutLine, Package, Registry};
 pub use resources::Resources;
 pub use stage::Stage;
 pub use subsystem::Subsystem;

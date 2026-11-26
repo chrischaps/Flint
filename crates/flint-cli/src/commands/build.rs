@@ -102,6 +102,9 @@ struct Plan {
     manifest: Option<PathBuf>,
     included: Vec<Included>,
     left_out: Vec<String>,
+    /// The packages the player's launcher hands the kernel (#1552): the
+    /// kernel, then each package in the build with a part in flint-player.
+    launcher: Vec<String>,
     /// Each crate's package features, then its build options.
     player: Features,
     cli: Features,
@@ -264,10 +267,15 @@ fn plan(
         .collect();
     let mut player = Features::default();
     let mut cli = Features::default();
+    let mut launcher = Vec::new();
     for inc in &included {
         let p = packages
             .get(&inc.name)
             .expect("included from the manifests");
+        // The kernel registers first, in every launcher
+        if p.tier == Tier::Kernel {
+            launcher.insert(0, p.name.clone());
+        }
         for f in &p.features {
             let on_player = has_feature(&player_toml, f);
             let on_cli = has_feature(&cli_toml, f);
@@ -280,6 +288,9 @@ fn plan(
             }
             if on_player && !player.packages.contains(f) {
                 player.packages.push(f.clone());
+            }
+            if on_player && !launcher.contains(&p.name) {
+                launcher.push(p.name.clone());
             }
             if on_cli && !cli.packages.contains(f) {
                 cli.packages.push(f.clone());
@@ -370,6 +381,7 @@ fn plan(
         manifest: in_use.map(|u| u.manifest),
         included,
         left_out,
+        launcher,
         player,
         cli,
         runs,
@@ -699,6 +711,10 @@ fn plan_text(plan: &Plan) -> String {
     if !plan.left_out.is_empty() {
         out.push_str(&format!("left out  {}\n", plan.left_out.join(", ")));
     }
+    out.push_str(&format!(
+        "launcher  {PLAYER}, its stock list from these features: {}\n",
+        plan.launcher.join(", ")
+    ));
     out.push_str(&format!("player    {}\n", features_line(&plan.player)));
     out.push_str(&format!("flint     {}\n", features_line(&plan.cli)));
     if let Some(why) = &plan.split {
@@ -758,6 +774,11 @@ fn answer(plan: &Plan, outcome: &Outcome) -> Answer {
             "why": i.why,
         })).collect::<Vec<_>>(),
         "left_out": plan.left_out,
+        "launcher": {
+            "binary": PLAYER,
+            "crate": format!("crates/{PLAYER}"),
+            "packages": plan.launcher,
+        },
         "features": {
             PLAYER: { "packages": plan.player.packages, "options": plan.player.options },
             CLI: { "packages": plan.cli.packages, "options": plan.cli.options },

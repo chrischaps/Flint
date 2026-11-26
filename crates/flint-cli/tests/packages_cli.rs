@@ -401,10 +401,45 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
         .map(|f| f.as_str().unwrap())
         .collect();
     assert_eq!(packages, ["debug-hud", "procgen"], "{doc:#}");
+    // The launcher (#1552): the kernel, then the packages with a part in
+    // the player (debug-hud is standard: in unless set false)
+    assert_eq!(
+        doc["launcher"]["packages"],
+        serde_json::json!(["engine", "debug-hud", "procgen"]),
+        "{doc:#}"
+    );
     for bin in ["flint-player", "flint"] {
         let path = doc["binaries"][bin].as_str().unwrap();
         assert!(path.contains("/debug/"), "{bin}: {path}");
     }
+}
+
+/// #1552's done-when: a project that lists only `procgen` (its standard
+/// package set false) is planned a player whose launcher holds only that
+/// package, after the kernel, and the plan says so in its text and JSON.
+#[test]
+fn build_dry_run_names_a_launcher_holding_only_the_listed_package() {
+    let game = game("build_launcher");
+    set_packages(&game, "procgen = \"*\"\ndebug-hud = false\n");
+    let o = flint(&game, &["build", "--dry-run"]);
+    assert!(o.status.success(), "{}", said(&o));
+    let text = stdout(&o);
+    assert!(
+        text.contains(
+            "launcher  flint-player, its stock list from these features: engine, procgen\n"
+        ),
+        "{text}"
+    );
+    let doc = json(&flint(&game, &["build", "--dry-run", "--json"]));
+    assert_eq!(doc["launcher"]["binary"], "flint-player", "{doc:#}");
+    assert_eq!(
+        doc["launcher"]["packages"],
+        serde_json::json!(["engine", "procgen"]),
+        "{doc:#}"
+    );
+    let line = doc["commands"][0].as_str().unwrap();
+    assert!(line.contains("flint-player/procgen"), "{line}");
+    assert!(!line.contains("debug-hud"), "{line}");
 }
 
 /// The default build has every package, so a project listing `living`

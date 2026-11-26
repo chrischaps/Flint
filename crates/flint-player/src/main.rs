@@ -27,6 +27,11 @@ use anyhow::Result;
 use clap::Parser;
 
 fn main() -> Result<()> {
+    // The launcher (ADR 0137 decision 5, #1552): this binary's packages,
+    // handed to the kernel before anything asks for one. The stock list is
+    // every package this build has; `flint build` makes a build whose
+    // stock is a game's `[packages]`
+    flint_player::packages::launch(&flint_player::packages::stock());
     // What `flint build` set aside last time (#1335), if it has stopped
     flint_player::packages::sweep_set_aside();
     let cli = flint_player::PlayerCli::parse();

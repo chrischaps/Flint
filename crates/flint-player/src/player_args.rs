@@ -555,13 +555,14 @@ impl PlayerArgs {
         for warning in schema_dirs.dropped_warnings() {
             tracing::warn!(target: "load", "{warning}");
         }
-        // A package the project lists that this build left out (#1335):
-        // its scenes would play without it, so stop and name `flint build`
-        if let Some(unbuilt) = crate::packages::unbuilt(
-            &schema_dirs,
-            &crate::packages::this_binary(),
-            crate::packages::lacks,
-        ) {
+        // A package the project lists that this binary's launcher didn't
+        // (#1335, #1552): its scenes would play without it, so stop and
+        // name `flint build`
+        if let Some(unbuilt) =
+            crate::packages::unbuilt(&schema_dirs, &crate::packages::this_binary(), |m| {
+                crate::packages::lacks(&m.name)
+            })
+        {
             return Err(unbuilt.into());
         }
         if schema_dirs.dirs.is_empty() {

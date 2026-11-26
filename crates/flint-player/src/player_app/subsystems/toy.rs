@@ -1,7 +1,8 @@
 #![cfg(test)]
-//! A toy subsystem, to hold #724's third box: adding a subsystem is one new
-//! file here and touches no other file in `player_app/`. `build.rs` lists this
-//! file's `for_scene`; a scene with a `[toy]` table gets one, which counts the
+//! A toy subsystem, to hold #724's third box: a subsystem is what its
+//! package registers (#1552: `PACKAGE`, which the test build's stock list
+//! ends with), and nothing in `player_app/` names it. A scene with a
+//! `[toy]` table gets one, which counts the
 //! frames it hears. A capture (`HeadlessGame`) builds it from the same list
 //! (#1252), unless its table says `window = true`: then it is the window's
 //! alone, and the capture names it in its notes.
@@ -14,18 +15,25 @@
 //! steps it has heard.
 
 use super::{FixedCtx, Lasts, SceneCtx, Stage, StageCtx, Subsystem};
-use flint_package::physics::rapier::math::Vector;
 use crate::player_app::PlayerApp;
 use flint_core::project::{SchemaDirs, SchemaSource};
 use flint_core::vfs::{self, MemorySource};
+use flint_package::physics::rapier::math::Vector;
 use std::sync::Arc;
 
-/// It reads no game-state policy.
-pub(crate) const POLICY: Option<&str> = None;
-
-/// Its script module, `toy` (#698): `toy_frames()` and `toy_steps()`,
-/// enabled in a scene with a toy.
-pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] = &[&ToyModule];
+/// The toy package, which a test build's stock list ends with
+/// (`packages::stock`): its builder, its script module `toy` (#698:
+/// `toy_frames()` and `toy_steps()`, enabled in a scene with a toy) and its
+/// key. It reads no game-state policy.
+pub(crate) static PACKAGE: crate::packages::Part = crate::packages::Part {
+    name: "toy",
+    register: |registry| {
+        registry
+            .scene_subsystem(for_scene)
+            .script_modules(&[&ToyModule])
+            .debug_keys(DEBUG_KEYS);
+    },
+};
 
 /// Its debug key (#717): F12 says how many frames it has heard, in a scene
 /// with a toy; anywhere else F12 is the game's.
@@ -173,14 +181,25 @@ fn the_toys_key_is_live_only_in_a_scene_with_a_toy() {
     use winit::keyboard::KeyCode;
     let mut files = MemorySource::new();
     files.insert("toys/flint.toml", "");
-    files.insert("toys/scenes/with.scene.toml", "[scene]\nname = \"With\"\n\n[toy]\n");
-    files.insert("toys/scenes/without.scene.toml", "[scene]\nname = \"Without\"\n");
+    files.insert(
+        "toys/scenes/with.scene.toml",
+        "[scene]\nname = \"With\"\n\n[toy]\n",
+    );
+    files.insert(
+        "toys/scenes/without.scene.toml",
+        "[scene]\nname = \"Without\"\n",
+    );
     vfs::scoped(Arc::new(files), || {
         let mut app = app_in("toys/scenes/with.scene.toml");
         app.tick();
         let live = |app: &PlayerApp| {
             let table = app.debug_key_table();
-            table.entries.iter().find(|e| e.action == "toy_frames").unwrap().live
+            table
+                .entries
+                .iter()
+                .find(|e| e.action == "toy_frames")
+                .unwrap()
+                .live
         };
         assert!(live(&app));
         assert!(app.handle_debug_key(KeyCode::F12), "the toy's");
@@ -508,7 +527,10 @@ fn the_toys_spring_lands_its_body_in_one_place_at_30_and_at_144_hz() {
     let common = e30.steps.min(e60.steps).min(e144.steps) & !1;
     for n in [16, 30, 60, 90, common] {
         let (a, b, c) = (x_after(&at_30, n), x_after(&at_60, n), x_after(&at_144, n));
-        assert!((a - c).abs() < 1e-6 && (a - b).abs() < 1e-6, "step {n}: {a} {b} {c}");
+        assert!(
+            (a - c).abs() < 1e-6 && (a - b).abs() < 1e-6,
+            "step {n}: {a} {b} {c}"
+        );
         let exact = (2.0 * n as f64 / 60.0).cos();
         assert!((a - exact).abs() < 0.05, "step {n}: {a} against {exact}");
     }
@@ -552,7 +574,9 @@ fn a_stiff_spring_once_a_frame_drifts_with_the_frame_rate_and_once_a_step_does_n
             .fold(0.0, f64::max)
     };
     let (hooked, framed) = (spread(&step), spread(&frame));
-    eprintln!("widest spread across 30/60/144 Hz: once a step {hooked:.6} m, once a frame {framed:.4} m");
+    eprintln!(
+        "widest spread across 30/60/144 Hz: once a step {hooked:.6} m, once a frame {framed:.4} m"
+    );
     assert!(hooked < 1e-5, "{hooked}");
     assert!(framed > 0.1, "{framed}");
 }
