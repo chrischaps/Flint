@@ -137,7 +137,10 @@ pub fn run(args: GenArgs) -> Result<()> {
     }
     #[cfg(feature = "ai")]
     if args.cost_report {
-        return super::ai_costs::cost_report(&super::ai_costs::ledger(), args.since.as_deref());
+        return flint_asset_gen::cli::costs::cost_report(
+            &flint_asset_gen::cli::costs::ledger(),
+            args.since.as_deref(),
+        );
     }
     if args
         .spec

@@ -1685,11 +1685,14 @@ dependencies = [
 name = "flint-asset-gen"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
  "dirs",
  "flint-ai-core",
  "flint-asset",
  "flint-core",
  "flint-import",
+ "flint-package",
  "flint-procgen",
  "image",
  "serde",
@@ -1758,6 +1761,7 @@ dependencies = [
  "flint-input-capture",
  "flint-living",
  "flint-music",
+ "flint-package",
  "flint-particles",
  "flint-physics",
  "flint-player",
@@ -1922,6 +1926,8 @@ dependencies = [
 name = "flint-package"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
  "egui",
  "flint-audio",
  "flint-core",
@@ -1930,6 +1936,7 @@ dependencies = [
  "flint-render",
  "flint-runtime",
  "flint-script",
+ "serde_json",
  "toml",
  "tracing",
  "wgpu",

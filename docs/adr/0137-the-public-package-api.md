@@ -483,6 +483,72 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   glob, `[rust]` in `package.toml`, `scripts/package-sync.py` and the
   generated blocks. They come with the first move (#1568).
 
+## As built: the CLI launcher (#1553)
+
+- `CliExtension`, `subcommands`/`Derived` and the output path (`set_json`,
+  `json`, `stdout_reserved`, `say`, `progress`, `Report`, `Answer`, `emit`,
+  `document`, `when_json`, `failed`) are `flint_package::cli`. The state
+  (`--json`, stdout reserved, a document printed) is one set of statics
+  there, so an engine command and a package's answer through the same
+  switches. flint-cli's `output` re-exports them and keeps the exit path
+  (`finish`, with `MissingPackage` and `Unbuilt`) and `refuse_interactive`.
+  `flint_cli::extension` re-exports the rest, so ADR 0133's game binaries
+  compile unchanged (`tests/cli_extension.rs`).
+- **A package's command can sit under a kernel command.** The ai package's
+  commands are subcommands of `asset`, so the trait gained
+  `under() -> &[&str]` (default empty: the top level, as ADR 0133 had it),
+  and `Derived::under(&["asset"])`. `extension::Added` checks names per
+  place (an extension under `asset` may not take `import`, but may take
+  `render`), adds each place's commands after that command's own, and
+  dispatches by path. `run` gets the matches of the command it sits under,
+  which is the root's for a top-level command, as before.
+- **A package's `cli()` returns a `Vec<Box<dyn CliExtension>>`**, not one,
+  so a package can add commands at two places. The ai package's is
+  `flint_asset_gen::cli::extensions()`, behind flint-asset-gen's `cli`
+  feature, which flint-cli's `ai` turns on. It holds the six `asset`
+  subcommands its manifest lists and the cost ledger (`cli::costs`, once
+  flint-cli's `ai_costs.rs`). Its test holds the commands it adds to the
+  manifest's `[provides] commands`.
+- **The launcher's list** is `flint_cli::stock()`, the extensions of each
+  package the build's features have, as `flint_player::packages::stock()`
+  is (#1552). `run_with(extensions)` is `stock()` and then the given ones,
+  so a game binary keeps the packages' commands, and the stock `flint` is
+  `run_with(Vec::new())`. The generated list replaces the `cfg` lines in
+  `stock()` with #1568.
+- **A left-out package's command is named from its manifest.** A build
+  without the package has none of its commands in the parser or in
+  `--help`. When clap refuses an unknown subcommand,
+  `absent::missing_command` matches the line's words against every
+  manifest's `[provides] commands`. `build.rs` compiles in
+  `packages/*/package.toml`, so a copied binary knows them too, and the
+  source names no package to do it. A match is the same `MissingPackage`
+  as a stub's: exit 2, naming the package to list, with `package` in the
+  `--json` error document. A stub (`absent::stub!`) is still how a package
+  whose commands live in flint-cli keeps them (music, rhythm, procgen). It
+  goes when its package's commands move to its crate (#1555, #1557).
+- **Package flags on a command the package doesn't own** (ADR 0136
+  section 7: `gen --ai-*`, `--max-cost`, `--cost-report`, `--style-guide`,
+  `render --ai-refine`, `render --sweep wooze.*|living.*`, `asset resolve
+  --strategy ai_*`): decided, not yet built (#1572). Each flag changes how the
+  owning command runs, at one point in its run. The owner declares that
+  point as a registration point (section 4's "Registration points of
+  another package" row): a trait object the flag's package registers. The
+  package also brings the flags, as a `clap::Args` group the extension
+  adds to the owner's command. The kernel's commands (`render`, `asset
+  resolve`) declare theirs in `flint_package::cli`. Procgen's `gen` declares
+  its own when `gen` moves to procgen's crate (#1557). Only then do the
+  points have a type outside flint-cli to take. Until then these flags stay
+  declared by the command, refused with exit 2 naming the package in a
+  build without it, as #1333 made them. `--help` is the same in every
+  build, and nothing an agent scripts changes. `gen --cost-report` is the
+  one flag that is a different answer (it is `asset costs`), not a step of
+  `gen`. It stays as it is, so the path keeps working.
+- Measured (`stack_tests`, debug, Windows): the parser with the stock
+  extensions fits Windows' default 1 MB for `--help`, `render --help`,
+  `asset generate --help` and a render line, as before. The derived
+  `AiAssetCommands` builds its `Command` at run time, as `Cli`'s derive
+  did, so nothing moved onto a deeper frame.
+
 ## Measured
 
 - **Cargo globs** (cargo 1.99.1, a scratch workspace, 2026-11-25): `members`

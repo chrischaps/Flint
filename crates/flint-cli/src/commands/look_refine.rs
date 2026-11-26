@@ -746,7 +746,7 @@ pub fn build_agent(
     model: Option<&str>,
     max_cost: Option<f64>,
 ) -> Result<(Box<dyn LookAgent>, Arc<CostMeter>)> {
-    let meter = Arc::new(super::ai_costs::meter(provider, max_cost)?);
+    let meter = Arc::new(flint_asset_gen::cli::costs::meter(provider, max_cost)?);
     let agent: Box<dyn LookAgent> = match provider {
         "mock" => Box::new(TuneWalker),
         "anthropic" => {

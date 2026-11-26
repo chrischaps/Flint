@@ -103,7 +103,7 @@ pub fn resolve_config(args: &GenArgs, project_file: &Path) -> Result<AgentConfig
 /// The meter every call of this run goes through: the project's ledger and
 /// prices, and the `--max-cost` ceiling if one was given.
 pub fn build_meter(config: &AgentConfig, args: &GenArgs) -> Result<Arc<CostMeter>> {
-    Ok(Arc::new(super::ai_costs::meter(
+    Ok(Arc::new(flint_asset_gen::cli::costs::meter(
         &config.provider,
         args.max_cost,
     )?))
@@ -399,7 +399,7 @@ pub fn cost_line(meter: &CostMeter) -> String {
 /// could cost, without sending anything. Lines, so the caller picks the stream
 /// (`--report json` keeps stdout for the report).
 pub fn plan_lines(config: &AgentConfig, steps: Steps, args: &GenArgs) -> Vec<String> {
-    let (price, priced_as) = super::ai_costs::prices()
+    let (price, priced_as) = flint_asset_gen::cli::costs::prices()
         .unwrap_or_else(|_| cost::PriceTable::builtin())
         .token_price(&config.provider, &config.model);
     let max_out = AnthropicAgent::DEFAULT_MAX_TOKENS;

@@ -228,20 +228,30 @@ enum Commands {
 /// extension's is refused before anything runs. A game binary links its own main-thread stack on Windows
 /// (book: guides/player-extensions.md); flint-cli's `build.rs` reaches only
 /// flint-cli's own targets.
+///
+/// The packages' commands come first: `run_with` is [`stock`]'s
+/// extensions, then `extensions`, so a game binary keeps every command the
+/// stock `flint` has.
 pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCode {
     // What `flint build` set aside last time (#1335), if it has stopped
     flint_player::packages::sweep_set_aside();
     let argv: Vec<OsString> = std::env::args_os().collect();
-    let mut added = match extension::Added::new(extensions, &Cli::command()) {
+    let mut all = stock();
+    all.extend(extensions);
+    let mut added = match extension::Added::new(all, &Cli::command()) {
         Ok(added) => added,
         Err(e) => {
             output::set_json(argv.iter().any(|a| a == "--json"));
             return output::finish(Err(e));
         }
     };
-    let matches = match added.augment(Cli::command()).try_get_matches_from(&argv) {
+    let matches = match parse_line(&added, &argv) {
         Ok(matches) => matches,
-        Err(e) => parse_failed(e, &argv),
+        Err(Refused::Clap(e)) => parse_failed(e, &argv),
+        Err(Refused::Missing(m)) => {
+            output::set_json(argv.iter().any(|a| a == "--json"));
+            return output::finish(Err(m.into()));
+        }
     };
     if added.owns(&matches) {
         default_logging();
@@ -295,6 +305,72 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
     }
     output::set_json(cli.json);
     output::finish(run(cli))
+}
+
+/// The CLI launcher's list (ADR 0137 section 4, #1553): the extension of
+/// every package this build has, each the package's own `cli()`. The stock
+/// `flint` is [`run_with`] over it and nothing else. A package that adds
+/// no command has nothing here; one left out of the build has nothing in
+/// the parser, and a line naming its command is told to add it
+/// ([`commands::absent::missing_command`]).
+pub fn stock() -> Vec<Box<dyn CliExtension>> {
+    #[allow(unused_mut)] // a build with no package that adds a command
+    let mut list: Vec<Box<dyn CliExtension>> = Vec::new();
+    #[cfg(feature = "ai")]
+    list.extend(flint_asset_gen::cli::extensions());
+    list
+}
+
+/// The stock `flint`'s whole command tree: the engine's commands with
+/// every [`stock`] extension's, as `flint --help` walks it.
+#[cfg(test)]
+pub(crate) fn stock_command() -> clap::Command {
+    extension::Added::new(stock(), &Cli::command())
+        .expect("the stock extensions name no engine command")
+        .augment(Cli::command())
+}
+
+/// `words` after `flint`, parsed and run as the launcher would with
+/// `extensions` (and no others): a command of a package missing from them
+/// is the [`commands::absent::MissingPackage`] error, as the binary's exit
+/// 2. Panics on any other line clap refuses.
+#[cfg(test)]
+pub(crate) fn run_line(extensions: Vec<Box<dyn CliExtension>>, words: &[&str]) -> Result<()> {
+    let argv: Vec<OsString> = std::iter::once("flint")
+        .chain(words.iter().copied())
+        .map(OsString::from)
+        .collect();
+    let mut added = extension::Added::new(extensions, &Cli::command())?;
+    let matches = match parse_line(&added, &argv) {
+        Ok(matches) => matches,
+        Err(Refused::Missing(missing)) => return Err(missing.into()),
+        Err(Refused::Clap(e)) => panic!("{words:?} doesn't parse: {e}"),
+    };
+    if added.owns(&matches) {
+        return added.run(&matches);
+    }
+    run(Cli::from_arg_matches(&matches)?)
+}
+
+/// Why a command line has no matches.
+enum Refused {
+    /// clap's own mistake, `--help` and `--version` too: printed as clap
+    /// prints it.
+    Clap(clap::Error),
+    /// A command of a package this build was built without (#1553).
+    Missing(commands::absent::MissingPackage),
+}
+
+/// The line's matches in the one parser: the engine's commands with every
+/// extension's.
+fn parse_line(added: &extension::Added, argv: &[OsString]) -> Result<clap::ArgMatches, Refused> {
+    let mut parser = added.augment(Cli::command());
+    parser.try_get_matches_from_mut(argv).map_err(|e| {
+        match commands::absent::missing_command(&e, argv, &parser) {
+            Some(missing) => Refused::Missing(missing),
+            None => Refused::Clap(e),
+        }
+    })
 }
 
 /// A command line clap refused, or `--help` / `--version`: printed, and the
@@ -478,8 +554,10 @@ mod stack_tests {
             .collect();
         std::thread::Builder::new()
             .stack_size(bytes)
-            .spawn(move || match Cli::try_parse_from(argv) {
-                Ok(cli) => format!("parsed ({} bytes)", std::mem::size_of_val(&cli)),
+            // The parser the binary builds: the engine's commands with the
+            // stock extensions' (#1553)
+            .spawn(move || match stock_command().try_get_matches_from(argv) {
+                Ok(m) => format!("parsed {:?}", m.subcommand_name()),
                 Err(e) => e.render().to_string(),
             })
             .unwrap()
@@ -502,6 +580,7 @@ mod stack_tests {
             "--help",
             "render --help",
             "render x.scene.toml --set post.exposure=2",
+            "asset generate --help",
         ] {
             let words: Vec<&str> = line.split_whitespace().collect();
             let out = parse_on_stack(&words, WINDOWS_DEFAULT_STACK);
@@ -542,6 +621,7 @@ mod stack_tests {
             "--help",
             "render --help",
             "render x.scene.toml --set post.exposure=2",
+            "asset generate --help",
         ] {
             let (mut lo, mut hi) = (16, 16384);
             assert!(fits(line, hi), "{line}: overflows {hi} KB");

@@ -8,7 +8,8 @@
 //! members, the script API the player declares (`flint_player::
 //! script_system()`, every module flint-cli's build has, which is all of
 //! them: it turns every player feature on), and the `flint` command tree
-//! (`Cli::command()`). A failure names the file, crate, module or command
+//! (`stock_command()`: the engine's and every package extension's this
+//! build has, #1553). A failure names the file, crate, module or command
 //! and the manifest key to put it under.
 //!
 //! In a lib test because the command tree is the crate's private `Cli`.
@@ -168,8 +169,7 @@ pub fn commands() -> Vec<Command> {
             })
             .collect()
     }
-    use clap::CommandFactory;
-    of(&crate::Cli::command(), "")
+    of(&crate::stock_command(), "")
 }
 
 impl Inventory {
@@ -361,8 +361,9 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
             };
             for item in p.provides.of(kind) {
                 // The script API is this build's: a package the binary was
-                // built without has no modules in it to find (#1333)
-                let unbuilt = kind == Kind::ScriptModule
+                // built without has no modules in it to find (#1333), nor
+                // commands, once it registers them itself (#1553)
+                let unbuilt = matches!(kind, Kind::ScriptModule | Kind::Command)
                     && !p
                         .features
                         .iter()

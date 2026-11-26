@@ -2,8 +2,11 @@
 //! the project's ledger (`.flint/ai_costs.jsonl` at its root), its prices
 //! (the built-in table under `.flint/prices.toml`), a meter with the run's
 //! `--max-cost`, and the report over the ledger that `flint gen
-//! --cost-report` and `flint asset costs` both print.
+//! --cost-report` and `flint asset costs` both print. The ai package's
+//! (#1553, once flint-cli's `commands/ai_costs.rs`): the kernel's `gen`
+//! and `render` reach it for their AI flags while those are still theirs.
 
+use flint_package::cli;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -75,17 +78,17 @@ pub fn cost_report(ledger: &CostLedger, since: Option<&str>) -> Result<()> {
         .map_err(|e| anyhow!("{e}"))?;
     let contents = ledger.read().map_err(|e| anyhow!("{e}"))?;
     if !contents.skipped.is_empty() {
-        crate::output::progress!(
+        cli::progress(format_args!(
             "warning: skipped {} unreadable ledger line(s): {}",
             contents.skipped.len(),
             contents.skipped.join(", ")
-        );
+        ));
     }
     let summary = CostSummary::from_entries(&contents.entries, since.as_deref());
     let ledger_path = ledger.path().display().to_string().replace('\\', "/");
     let mut document = serde_json::to_value(&summary)?;
     document["ledger"] = ledger_path.clone().into();
-    crate::output::emit(&crate::output::Answer::new(
+    cli::emit(&cli::Answer::new(
         format!("{}\nLedger: {ledger_path}", summary.render()),
         document,
     ))
