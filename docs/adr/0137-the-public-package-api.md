@@ -549,30 +549,62 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   `AiAssetCommands` builds its `Command` at run time, as `Cli`'s derive
   did, so nothing moved onto a deeper frame.
 
-## As built: the first move, music (#1555)
+## As built: the first move, ai (#1554)
 
-- **The crate is in the package's folder**: `packages/music/crates/flint-music`.
-  The root `Cargo.toml` takes `"packages/*/crates/*"` in `members` and
-  `default-members` (section 5), and `[workspace.dependencies]` names the
-  new path. Tools that read the members list expand the glob
-  (flint-cli's completeness test, `scripts/docs-check.py`,
-  flint-arch-analyzer), and count a package's crates as engine crates.
-- **A package crate's parts are features, found by convention** until
-  #1568 gives the manifest `[rust]`: a crate under
-  `packages/<name>/crates/` with a `player` feature has
-  `<crate>::player::PACKAGE`; one with a `cli` feature has
-  `<crate>::cli::extensions()`. Each launcher crate's feature named for
-  the package turns that feature on (`music = ["dep:flint-music",
-  "flint-music?/player"]`), so the Cargo features of ADR 0136 decision 2
-  are still the switch. `crates/flint-package/launch_list.rs`, which
-  flint-player's and flint-cli's build scripts include by `#[path]`,
-  reads the manifests and each package crate's `[features]`, and writes
-  `OUT_DIR/package_list.rs`: `moved()` (each part whose package's
-  `[build] features` are all on), the registration `ORDER` (requires first,
-  then tier, then name, which is the order the stock list had by hand),
-  and the feature tables (`PLAYER_PACKAGES`, `BUILT`, flint-cli's
-  `BUILT_FEATURES`). No `package-sync.py` and no generated Cargo block
-  yet: the dependency and feature lines were written by hand (#1568).
+- **The crates moved, and the glob joined.** `flint-asset-gen`,
+  `flint-procgen-ai` and `flint-ai-core` are at
+  `packages/ai/crates/<crate>/`. The root `Cargo.toml` names
+  `"packages/*/crates/*"` in `members` and `default-members` (section 5),
+  and the three member lines went. The workspace dependency paths point at
+  the new folders, so no crate that depends on them changed.
+- **`[rust] cli` in `package.toml`** names the package's crate whose
+  `cli::extensions()` the CLI launcher lists (`flint_core::package`: one of
+  `[provides] crates`, else a `bad-package` mistake). This is the `cli`
+  half of #1568's `[rust]` table. `player` comes with the first package
+  that registers a `Package` from its own crate (#1555).
+- **The CLI launcher's list is written by `build.rs`**, from the manifests
+  it already compiled in: `stock()` is `include!` of
+  `OUT_DIR/stock_extensions.rs`, and `absent::built_features()` reads
+  `OUT_DIR/package_features.rs`, so `crates/flint-cli/src` names the ai
+  package nowhere in either. flint-cli's `Cargo.toml` still declares the
+  `ai` feature and the three optional dependencies by hand. #1568's
+  `package-sync.py` generates that block. Until then a new package's crates
+  are one hand edit there.
+- **Not done: the flags.** `gen --ai-*`, `render --ai-refine` and `asset
+  resolve --strategy ai_*` are still declared by their commands, with their
+  code in flint-cli behind `feature = "ai"`: 39 lines in
+  `crates/flint-cli/src`, against 41 before (the two that went are
+  `stock()`'s and the built-features row). The code behind them (`gen_ai`,
+  `gen_refine` and `look_refine`, about 1,800 lines) calls flint-cli's
+  previews, look measures and sweeps, so it moves with the registration
+  points of the "As built: the CLI launcher" section (#1572), not here.
+- **Paths that walk the tree** take `packages/*/crates/*` too: the
+  arch-analyzer (members globs, the book's crate table), `docs-check.py`'s
+  crate and member counts, the env, schema and scene-table tests, the clippy
+  tool-crate list and the Play site's path filter.
+
+## As built: the second move, music (#1555)
+
+- **The crate is in the package's folder**: `packages/music/crates/flint-music`,
+  joined by #1554's members glob, its workspace dependency path pointed
+  there. Its two parts are features: `player` (`player::PACKAGE`) and
+  `cli` (`cli::extensions()`).
+- **`[rust] player`** joins #1554's `cli` in `package.toml`: the crate
+  whose `player::PACKAGE` the player launcher lists. Music's manifest names
+  `flint-music` for both. flint-player's feature named for the package
+  turns that crate's `player` feature on (`music = ["dep:flint-music",
+  "flint-music?/player"]`), as flint-cli's does `cli`, so the Cargo
+  features of ADR 0136 decision 2 are still the switch.
+  `crates/flint-player/launch_list.rs`, which flint-player's build script
+  includes by `#[path]`, reads the manifests and writes
+  `OUT_DIR/package_list.rs`: `moved()` (each `[rust] player` crate whose
+  package's `[build] features` are all on), the registration `ORDER`
+  (requires first, then tier, then name, which is the order the stock list
+  had by hand) and the feature tables (`PLAYER_PACKAGES`, `BUILT`). The
+  CLI's list is #1554's `stock_extensions.rs`, which lists music's
+  commands from its `[rust] cli`. No `package-sync.py` and no generated
+  Cargo block yet: the dependency and feature lines were written by hand
+  (#1568).
 - **Music's registration point for rhythm**: `Registry::insert_point`,
   `point_mut` and `point` (one value per type, `Send + Sync` so the run's
   registry stays a static), and `SceneCtx::registry`, so a builder reads a

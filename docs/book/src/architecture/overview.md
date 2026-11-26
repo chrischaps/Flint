@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 35-member Cargo workspace (34 crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 35-member Cargo workspace (34 crates, 30 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -8,11 +8,8 @@ Flint is structured as a 35-member Cargo workspace (34 crates under `crates/` pl
 flint/
 ├── crates/
 │   ├── flint-cli/          # CLI binary (clap). Entry point for all commands.
-│   ├── flint-asset-gen/    # AI asset generation: providers, style guides, batch resolution
 │   ├── flint-procgen/      # Procedural generation: Generator trait, registry, tree/texture/creature generators
 │   ├── flint-living/       # Living props at run time: pose rings on the frame budget, clocks, knobs, blending
-│   ├── flint-procgen-ai/   # AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
-│   ├── flint-ai-core/      # What every paid AI call goes through: transport, retry, prices, ledger, cost meter
 │   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation, scripting
 │   ├── flint-package/      # The Package API: the Subsystem trait, its contexts, the run's typed Resources
 │   ├── flint-android/      # Android entry point (NativeActivity, APK asset extraction)
@@ -40,9 +37,14 @@ flint/
 │   ├── flint-wooze/        # The wooze field
 │   ├── flint-geometry/     # Ocean waves, splines, ray meshes
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
-├── packages/               # One folder a package: package.toml, its schemas and, once moved, its crates
-│   └── music/crates/
-│       └── flint-music/    # Music: suite manifests, manifest-named buses, tempo maps, conductor, offline render
+├── packages/               # One folder a package: its package.toml, and its schemas/ and crates/
+│   ├── ai/crates/
+│   │   ├── flint-asset-gen/    # AI asset generation: providers, style guides, batch resolution
+│   │   ├── flint-procgen-ai/   # AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
+│   │   └── flint-ai-core/      # What every paid AI call goes through: transport, retry, prices, ledger, cost meter
+│   ├── music/crates/
+│   │   └── flint-music/    # Music: suite manifests, manifest-named buses, tempo maps, conductor, offline render
+│   └── <name>/             # living, rhythm, procgen, debug-hud, engine: manifests and schemas, for now
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
 │   └── arch-viewer/        # Static web page that renders that JSON as an interactive graph

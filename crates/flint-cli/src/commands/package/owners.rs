@@ -119,42 +119,15 @@ pub fn schema_files(schemas: &Path, prefix: &str) -> Vec<SchemaFile> {
 }
 
 /// The root manifest's `[workspace] members`, each with its package name.
-/// A member ending `*/crates/*` (`packages/*/crates/*`, #1555) is every
-/// folder it matches that holds a `Cargo.toml`, by name.
+/// A `*` segment (`packages/*/crates/*`, a package's crates, #1554) is
+/// every folder there that holds a `Cargo.toml`, as cargo reads it.
 pub fn workspace_crates(root: &Path) -> Vec<Member> {
     let text = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
     let manifest: toml::Table = text.parse().unwrap();
     let members = manifest["workspace"]["members"].as_array().unwrap();
-    let folders_of = |pattern: &str| -> Vec<String> {
-        let Some((base, rest)) = pattern.split_once("/*/") else {
-            return vec![pattern.to_string()];
-        };
-        let inner = rest
-            .strip_suffix("/*")
-            .expect("a glob is `<dir>/*/<dir>/*`");
-        let mut found = Vec::new();
-        let mut outer: Vec<_> = std::fs::read_dir(root.join(base))
-            .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
-            .unwrap_or_default();
-        outer.sort();
-        for name in outer {
-            let dir = format!("{base}/{}/{inner}", name.to_string_lossy());
-            let mut here: Vec<_> = std::fs::read_dir(root.join(&dir))
-                .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
-                .unwrap_or_default();
-            here.sort();
-            for krate in here {
-                let folder = format!("{dir}/{}", krate.to_string_lossy());
-                if root.join(&folder).join("Cargo.toml").is_file() {
-                    found.push(folder);
-                }
-            }
-        }
-        found
-    };
     members
         .iter()
-        .flat_map(|m| folders_of(m.as_str().unwrap()))
+        .flat_map(|m| member_folders(root, m.as_str().unwrap()))
         .map(|folder| {
             let file = format!("{folder}/Cargo.toml");
             let text =
@@ -166,6 +139,43 @@ pub fn workspace_crates(root: &Path) -> Vec<Member> {
             }
         })
         .collect()
+}
+
+/// A `members` entry's folders, `/`-separated from `root`: itself, or for
+/// a glob every folder its `*` segments match that holds a `Cargo.toml`.
+fn member_folders(root: &Path, member: &str) -> Vec<String> {
+    if !member.contains('*') {
+        return vec![member.to_string()];
+    }
+    let mut found = vec![String::new()];
+    for segment in member.split('/') {
+        found = found
+            .into_iter()
+            .flat_map(|at| {
+                let join = |s: &str| {
+                    if at.is_empty() {
+                        s.to_string()
+                    } else {
+                        format!("{at}/{s}")
+                    }
+                };
+                if segment != "*" {
+                    return vec![join(segment)];
+                }
+                let mut subs: Vec<String> = std::fs::read_dir(root.join(&at))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .map(|e| join(&e.file_name().to_string_lossy()))
+                    .collect();
+                subs.sort();
+                subs
+            })
+            .collect();
+    }
+    found.retain(|f| root.join(f).join("Cargo.toml").is_file());
+    found
 }
 
 /// Every module the script API declares, in declaration order.
@@ -747,9 +757,7 @@ fn flint_cli_has_each_packages_feature_and_forwards_it() {
     for p in &engine_packages().packages {
         for feature in &p.features {
             assert!(
-                crate::commands::absent::BUILT_FEATURES
-                    .iter()
-                    .any(|(f, _)| f == feature),
+                crate::commands::absent::built_features().any(|(f, _)| f == feature),
                 "absent::BUILT_FEATURES has no `{feature}`"
             );
             if ALWAYS.contains(&feature.as_str()) {

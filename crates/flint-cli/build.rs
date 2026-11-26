@@ -1,5 +1,6 @@
-//! Links `flint` with an 8 MB main-thread stack on Windows (#990), and
-//! compiles in the package manifests (#1553, [`package_manifests`]).
+//! Links `flint` with an 8 MB main-thread stack on Windows (#990),
+//! compiles in the package manifests (#1553, [`package_manifests`]) and
+//! writes the CLI launcher's list from them (#1554, [`launcher_list`]).
 //!
 //! Windows gives a program's main thread the stack its exe asks for, 1 MB
 //! unless the linker is told otherwise, where Linux and macOS shells give
@@ -18,54 +19,90 @@
 
 fn main() {
     main_thread_stack();
-    package_manifests();
-    package_list();
+    let manifests = package_manifests();
+    launcher_list(&manifests);
 }
 
-#[path = "../flint-package/launch_list.rs"]
-mod launch_list;
+/// A manifest's `[build] features` and `[rust] cli`, read as the build
+/// needs them (`flint_core::package` holds the rest of the format).
+struct Built {
+    features: Vec<String>,
+    cli: Option<String>,
+}
 
-/// `$OUT_DIR/package_list.rs` (#1555, ADR 0137 decision 5): the CLI
-/// launcher's list, so `src/` names no moved package.
+fn built(file: &std::path::Path) -> Built {
+    let text = std::fs::read_to_string(file).unwrap();
+    let table: toml::Table = text
+        .parse()
+        .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+    let strings = |v: Option<&toml::Value>| -> Vec<String> {
+        v.and_then(toml::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    Built {
+        features: strings(table.get("build").and_then(|b| b.get("features"))),
+        cli: table
+            .get("rust")
+            .and_then(|r| r.get("cli"))
+            .and_then(toml::Value::as_str)
+            .map(String::from),
+    }
+}
+
+/// Whether this build of flint-cli has Cargo feature `name`.
+fn has_feature(name: &str) -> bool {
+    let key = format!("CARGO_FEATURE_{}", name.to_uppercase().replace('-', "_"));
+    std::env::var_os(key).is_some()
+}
+
+/// The CLI launcher's list (ADR 0137 section 5, #1554), from the manifests,
+/// so flint-cli's source names no package to list one:
 ///
-/// - `BUILT_FEATURES`: every feature a package's `[build] features` names,
-///   and whether this build has it (flint-player's `debug-hud` and
-///   `frame-history` always: the CLI turns them on), then the device
-///   options `audio`, `gamepad` and `dialogs`.
-/// - `moved()`: the CLI part (`<crate>::cli::extensions()`) of each package
-///   in its own folder that this build has, in the order packages register.
-fn package_list() {
+/// - `OUT_DIR/stock_extensions.rs`: `stock()`'s body, the `cli::extensions()`
+///   of each package whose `[rust] cli` names a crate and whose
+///   `[build] features` this build has, by package folder.
+/// - `OUT_DIR/package_features.rs`: `(feature, on)` for each feature of
+///   this crate that a manifest's `[build] features` names, which is what
+///   `flint package list --built` reads.
+fn launcher_list(manifests: &[(String, std::path::PathBuf)]) {
     use std::fmt::Write as _;
-    let engine = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
-    let manifests = launch_list::in_order(launch_list::read(&engine));
-    launch_list::watch(&manifests);
-    const ALWAYS: [&str; 2] = ["debug-hud", "frame-history"];
-    const DEVICES: [&str; 3] = ["audio", "gamepad", "dialogs"];
-    let mut features: Vec<String> = ALWAYS.iter().map(|f| f.to_string()).collect();
-    for m in &manifests {
-        for f in &m.features {
-            if !features.contains(f) {
-                features.push(f.clone());
+    let own: toml::Table = std::fs::read_to_string("Cargo.toml")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let own_features = own.get("features").and_then(toml::Value::as_table);
+    let mut list = String::from(
+        "{\n    #[allow(unused_mut)] // a build with no package that adds a command\n    \
+         let mut list: Vec<Box<dyn CliExtension>> = Vec::new();\n",
+    );
+    let mut features = String::from("&[\n");
+    let mut seen: Vec<String> = Vec::new();
+    for (_, file) in manifests {
+        let b = built(file);
+        for f in &b.features {
+            let ours = own_features.is_some_and(|t| t.contains_key(f));
+            if ours && !seen.contains(f) {
+                seen.push(f.clone());
+                writeln!(features, "    ({f:?}, {}),", has_feature(f)).unwrap();
             }
         }
+        let on = !b.features.is_empty() && b.features.iter().all(|f| has_feature(f));
+        if let (Some(krate), true) = (&b.cli, on) {
+            let ident = krate.replace('-', "_");
+            writeln!(list, "    list.extend(::{ident}::cli::extensions());").unwrap();
+        }
     }
-    features.extend(DEVICES.iter().map(|f| f.to_string()));
-    let mut out = String::from("pub const BUILT_FEATURES: &[(&str, bool)] = &[\n");
-    for f in &features {
-        let on = ALWAYS.contains(&f.as_str()) || launch_list::built(std::slice::from_ref(f));
-        writeln!(out, "    ({f:?}, {on}),").unwrap();
-    }
-    out.push_str("];\n");
-    out.push_str(
-        "pub fn moved() -> Vec<Box<dyn flint_package::cli::CliExtension>> {\n    \
-         #[allow(unused_mut)]\n    let mut list: Vec<Box<dyn flint_package::cli::CliExtension>> = Vec::new();\n",
-    );
-    for (_, krate) in launch_list::parts(&manifests, "cli") {
-        writeln!(out, "    list.extend(::{krate}::cli::extensions());").unwrap();
-    }
-    out.push_str("    list\n}\n");
-    let dest = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("package_list.rs");
-    std::fs::write(dest, out).unwrap();
+    list.push_str("    list\n}\n");
+    features.push(']');
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    std::fs::write(out.join("stock_extensions.rs"), list).unwrap();
+    std::fs::write(out.join("package_features.rs"), features).unwrap();
+    println!("cargo:rerun-if-changed=Cargo.toml");
 }
 
 /// Every `packages/<name>/package.toml` of the tree this crate is built
@@ -74,7 +111,7 @@ fn package_list() {
 /// (`commands::absent::missing_command`), wherever the binary is copied,
 /// and flint-cli's source names no package to do it. Written into
 /// `OUT_DIR/package_manifests.rs` as `(file, text)` pairs, by name.
-fn package_manifests() {
+fn package_manifests() -> Vec<(String, std::path::PathBuf)> {
     use std::fmt::Write as _;
     let dir =
         std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../packages");
@@ -102,6 +139,7 @@ fn package_manifests() {
     code.push(']');
     let out = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("package_manifests.rs");
     std::fs::write(out, code).unwrap();
+    found
 }
 
 /// The stack `link.exe` (`/STACK`) or MinGW's `ld` (`--stack`) reserves for

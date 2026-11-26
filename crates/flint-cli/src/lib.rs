@@ -309,26 +309,24 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
 /// the parser, and a line naming its command is told to add it
 /// ([`commands::absent::missing_command`]).
 ///
-/// A package in its own folder (music, #1555) is listed by `build.rs` from
-/// the manifests (`generated::moved`), in the order packages register; the
-/// rhythm package's commands, still in this crate, go after it, under its
-/// `music`.
+/// `build.rs` writes the list from the manifests (#1554): each package
+/// whose `[rust] cli` names a crate, when this build has its
+/// `[build] features`, so the source names none (ai, and music since
+/// #1555). The rhythm package's commands, still in this crate, go after
+/// them, under music's `music`.
 pub fn stock() -> Vec<Box<dyn CliExtension>> {
-    #[allow(unused_mut)] // a build with no package that adds a command
-    let mut list: Vec<Box<dyn CliExtension>> = Vec::new();
-    #[cfg(feature = "ai")]
-    list.extend(flint_asset_gen::cli::extensions());
-    list.extend(generated::moved());
+    #[allow(unused_mut)] // a build without rhythm adds nothing after them
+    let mut list = package_extensions();
     #[cfg(feature = "rhythm")]
     list.extend(commands::music::extensions());
     list
 }
 
-/// What `build.rs` writes from the package manifests (#1555): `moved()`,
-/// the CLI parts of the packages in their own folders that this build has,
-/// and `BUILT_FEATURES`.
-pub(crate) mod generated {
-    include!(concat!(env!("OUT_DIR"), "/package_list.rs"));
+/// The extensions of the packages whose manifest names a `[rust] cli`
+/// crate, as `build.rs` lists them: [`stock`] less what this crate still
+/// holds of a package (rhythm's).
+pub(crate) fn package_extensions() -> Vec<Box<dyn CliExtension>> {
+    include!(concat!(env!("OUT_DIR"), "/stock_extensions.rs"))
 }
 
 /// The stock `flint`'s whole command tree: the engine's commands with

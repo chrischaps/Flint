@@ -30,7 +30,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 fn sources() -> Vec<(String, String)> {
     let mut files = Vec::new();
-    for top in ["crates", "tools"] {
+    for top in ["crates", "packages", "tools"] {
         rust_files(&repo().join(top), &mut files);
     }
     assert!(files.len() > 100, "found only {} Rust files", files.len());

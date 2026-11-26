@@ -198,7 +198,7 @@ fn engine_components() -> BTreeMap<String, String> {
     names
 }
 
-/// Every `.rs` under `crates/*/src`, with what only tests compile cut off:
+/// Every `.rs` under `crates/*/src` and `packages/*/crates/*/src`, with what only tests compile cut off:
 /// `*_tests.rs` and `tests.rs` files, `tests/` folders, and the inline
 /// `#[cfg(test)] mod tests {` that ends a file.
 fn engine_source() -> Vec<(String, String)> {
@@ -221,8 +221,16 @@ fn engine_source() -> Vec<(String, String)> {
         }
     }
     let mut out = Vec::new();
-    for krate in std::fs::read_dir(repo().join("crates")).unwrap().flatten() {
-        walk(&krate.path().join("src"), &mut out);
+    // A package's crates are engine source too, in `packages/*/crates/` (#1554)
+    let packages = std::fs::read_dir(repo().join("packages"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|p| p.path().join("crates"));
+    for dir in std::iter::once(repo().join("crates")).chain(packages) {
+        for krate in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            walk(&krate.path().join("src"), &mut out);
+        }
     }
     assert!(out.len() > 100, "crates/*/src not found");
     out
@@ -450,7 +458,7 @@ fn scene_entities() -> Vec<(String, String, toml::Table)> {
         .flatten()
         .map(|e| e.path())
         .filter(|d| d.join("flint.toml").is_file());
-    for dir in ["tests", "crates"]
+    for dir in ["tests", "crates", "packages"]
         .map(|d| root.join(d))
         .into_iter()
         .chain(games)

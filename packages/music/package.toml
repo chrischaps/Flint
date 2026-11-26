@@ -5,8 +5,9 @@
 #
 # Its crate is in this folder (#1555): crates/flint-music, whose `player`
 # feature is the scene subsystem (`flint_music::player::PACKAGE`) and `cli`
-# its commands (`flint_music::cli::extensions()`). The launchers' build
-# scripts list both from here, so flint-player and flint-cli name neither.
+# its commands (`flint_music::cli::extensions()`), named by `[rust]` below.
+# The launchers' build scripts list both from here, so flint-player and
+# flint-cli name neither.
 
 [package]
 name = "music"
@@ -17,6 +18,10 @@ engine = "^0.1"
 
 [build]
 features = ["music"]
+
+[rust]
+player = "flint-music"
+cli = "flint-music"
 
 [provides]
 crates = ["flint-music"]

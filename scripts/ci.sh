@@ -56,8 +56,11 @@ bash scripts/clippy-conf.sh --check
 echo "ci: every member takes [lints] workspace = true"
 members=$(awk '/^members *= *\[/{on=1; next} on && /^\]/{exit} on' Cargo.toml | tr -d '\r' | sed -n 's/^ *"\([^"]*\)".*/\1/p')
 bad_lints=""
+# Unquoted on purpose: `packages/*/crates/*` (a package's crates, #1554)
+# expands to each package crate, and a glob nothing matches is skipped
 for m in $members; do
     manifest="$m/Cargo.toml"
+    case "$m" in *'*'*) continue ;; esac
     if ! tr -d '\r' < "$manifest" | awk '/^\[lints\]/{l=1; next} /^\[/{l=0} l && /^workspace *= *true/{ok=1} END{exit !ok}'; then
         bad_lints="$bad_lints  $manifest: no \`[lints] workspace = true\`"$'\n'
     fi

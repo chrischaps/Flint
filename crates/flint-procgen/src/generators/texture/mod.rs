@@ -940,7 +940,7 @@ type = "derive_normal"
         for dir in [
             root.join("specs"),
             root.join("specs/examples"),
-            root.join("crates/flint-procgen-ai/templates"),
+            root.join("packages/ai/crates/flint-procgen-ai/templates"),
         ]
         .into_iter()
         .chain(games)

@@ -11,7 +11,6 @@ members = [
     "crates/flint-render",
     "crates/flint-constraint",
     "crates/flint-asset",
-    "crates/flint-asset-gen",
     "crates/flint-import",
     "crates/flint-pixels",
     "crates/flint-viewer",
@@ -30,15 +29,10 @@ members = [
     "crates/flint-debug-ui",
     "crates/flint-procgen",
     "crates/flint-living",
-    "crates/flint-procgen-ai",
-    "crates/flint-ai-core",
     "crates/flint-cli",
+    "packages/*/crates/*",
     "crates/flint-android",
     "tools/arch-analyzer",
-    # A package's own crates (ADR 0137 decision 5, #1555): a crate under
-    # packages/<name>/crates/ joins with no line here. A package folder with
-    # no crates/ matches nothing.
-    "packages/*/crates/*",
 ]
 # What plain `cargo build`, `cargo test` and `cargo clippy` cover: every
 # member but one (#758). flint-android depends on ndk-sys, which compiles only
@@ -57,7 +51,6 @@ default-members = [
     "crates/flint-render",
     "crates/flint-constraint",
     "crates/flint-asset",
-    "crates/flint-asset-gen",
     "crates/flint-import",
     "crates/flint-pixels",
     "crates/flint-viewer",
@@ -76,11 +69,9 @@ default-members = [
     "crates/flint-debug-ui",
     "crates/flint-procgen",
     "crates/flint-living",
-    "crates/flint-procgen-ai",
-    "crates/flint-ai-core",
     "crates/flint-cli",
-    "tools/arch-analyzer",
     "packages/*/crates/*",
+    "tools/arch-analyzer",
 ]
 
 [workspace.package]
@@ -248,15 +239,15 @@ flint-rhythm = { path = "crates/flint-rhythm", default-features = false }
 flint-input-capture = { path = "crates/flint-input-capture", default-features = false }
 flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
-flint-asset-gen = { path = "crates/flint-asset-gen" }
+flint-asset-gen = { path = "packages/ai/crates/flint-asset-gen" }
 flint-particles = { path = "crates/flint-particles" }
 flint-terrain = { path = "crates/flint-terrain" }
 # Its `living` feature (the [wooze] table's field and knob checks) is the
 # living package's to turn on (#1516)
 flint-procgen = { path = "crates/flint-procgen", default-features = false }
 flint-living = { path = "crates/flint-living" }
-flint-procgen-ai = { path = "crates/flint-procgen-ai" }
-flint-ai-core = { path = "crates/flint-ai-core" }
+flint-procgen-ai = { path = "packages/ai/crates/flint-procgen-ai" }
+flint-ai-core = { path = "packages/ai/crates/flint-ai-core" }
 flint-debug-ui = { path = "crates/flint-debug-ui", default-features = false }
 flint-player = { path = "crates/flint-player", default-features = false }
 flint-android = { path = "crates/flint-android" }

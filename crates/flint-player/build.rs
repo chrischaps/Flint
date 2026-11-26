@@ -23,7 +23,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-#[path = "../flint-package/launch_list.rs"]
+#[path = "launch_list.rs"]
 mod launch_list;
 
 /// `$OUT_DIR/package_list.rs` (#1555, ADR 0137 decision 5): the launcher's
@@ -34,7 +34,7 @@ mod launch_list;
 ///   `[build] features` are features of this crate, in that order.
 /// - `BUILT`: each of those features, and whether this build has it on.
 /// - `moved()`: the player part (`<crate>::player::PACKAGE`) of each
-///   package in its own folder that this build has.
+///   package whose manifest names `[rust] player`, when this build has it.
 #[allow(clippy::disallowed_methods)] // a build script reads the host's disk
 fn package_list(engine: &Path) {
     let manifests = launch_list::in_order(launch_list::read(engine));
@@ -93,7 +93,7 @@ fn package_list(engine: &Path) {
         "pub fn moved() -> Vec<&'static dyn flint_package::Package> {{\n    vec!["
     )
     .unwrap();
-    for (_, krate) in launch_list::parts(&manifests, "player") {
+    for krate in launch_list::players(&manifests) {
         writeln!(out, "        &::{krate}::player::PACKAGE,").unwrap();
     }
     writeln!(out, "    ]\n}}").unwrap();

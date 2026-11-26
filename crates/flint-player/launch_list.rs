@@ -1,25 +1,22 @@
-//! The launchers' list of package crates (ADR 0137 decision 5, #1555),
-//! shared by flint-player's and flint-cli's build scripts, which include
-//! this file by `#[path]`. Not a module of the crate: it runs on the host,
-//! at compile time.
+//! The player launcher's list of package crates (ADR 0137 decision 5,
+//! #1555), for flint-player's build script, which includes this file by
+//! `#[path]`. Not a module of the crate: it runs on the host, at compile
+//! time. flint-cli's build script lists the CLI's the same way from
+//! `[rust] cli` (#1554).
 //!
 //! A package that has moved into its folder brings its crates at
-//! `packages/<name>/crates/<crate>/`. A crate with a `player` feature has
-//! the package's player part at `<crate>::player::PACKAGE` (a
-//! `flint_package::Package`); one with a `cli` feature has its commands at
-//! `<crate>::cli::extensions()`. The launcher's crate turns that feature on
-//! through its own feature named for the package (`music =
-//! ["dep:flint-music", "flint-music/player"]`), so a package is in this
-//! binary when every one of its `[build] features` is on
-//! (`CARGO_FEATURE_<NAME>`), and the generated list names it only then: the
-//! launchers' source names no moved package (the epic's gate, #1560).
+//! `packages/<name>/crates/<crate>/`, and its manifest's `[rust] player`
+//! names the one whose `player::PACKAGE` (a `flint_package::Package`) is its
+//! player part. flint-player's feature named for the package turns that
+//! crate's `player` feature on (`music = ["dep:flint-music",
+//! "flint-music?/player"]`), so a package is in this binary when every one of
+//! its `[build] features` is on (`CARGO_FEATURE_<NAME>`), and the generated
+//! list names it only then: the player's source names no moved package (the
+//! epic's gate, #1560).
 //!
 //! The list is in the order packages register: each after the ones it
 //! `[requires]`, and otherwise by tier (kernel, standard, feature, game)
 //! and then by name, which is the order the stock list had by hand.
-//!
-//! Until #1568 gives the manifest a `[rust]` table, the convention above is
-//! the whole contract.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -30,11 +27,10 @@ pub struct Manifest {
     pub tier: u8,
     pub requires: Vec<String>,
     pub features: Vec<String>,
-    /// Its crates under `crates/`, each by its Rust name, with the parts
-    /// its features say it has (`player`, `cli`).
-    pub crates: Vec<(String, Vec<String>)>,
-    /// Every file read, for `cargo:rerun-if-changed`.
-    pub read: Vec<PathBuf>,
+    /// `[rust] player`: its crate's Rust name.
+    pub player: Option<String>,
+    /// The manifest, for `cargo:rerun-if-changed`.
+    pub file: PathBuf,
 }
 
 fn tier(name: &str) -> u8 {
@@ -79,43 +75,6 @@ pub fn read(engine: &Path) -> Vec<Manifest> {
         let Some(name) = head.and_then(|p| p.get("name")).and_then(|n| n.as_str()) else {
             continue;
         };
-        let mut read = vec![file.clone()];
-        let mut crates = Vec::new();
-        let crates_dir = dir.join("crates");
-        if crates_dir.is_dir() {
-            read.push(crates_dir.clone());
-            let mut found: Vec<PathBuf> = std::fs::read_dir(&crates_dir)
-                .map(|rd| {
-                    rd.filter_map(|e| Some(e.ok()?.path().join("Cargo.toml")))
-                        .collect()
-                })
-                .unwrap_or_default();
-            found.retain(|f| f.is_file());
-            found.sort();
-            for cargo in found {
-                let Ok(manifest) = std::fs::read_to_string(&cargo)
-                    .map_err(|_| ())
-                    .and_then(|t| t.parse::<toml::Table>().map_err(|_| ()))
-                else {
-                    continue;
-                };
-                let Some(krate) = manifest
-                    .get("package")
-                    .and_then(|p| p.get("name"))
-                    .and_then(|n| n.as_str())
-                else {
-                    continue;
-                };
-                let features = manifest.get("features").and_then(|f| f.as_table());
-                let parts: Vec<String> = ["player", "cli"]
-                    .into_iter()
-                    .filter(|part| features.is_some_and(|f| f.contains_key(*part)))
-                    .map(String::from)
-                    .collect();
-                read.push(cargo.clone());
-                crates.push((krate.replace('-', "_"), parts));
-            }
-        }
         out.push(Manifest {
             name: name.to_string(),
             tier: tier(
@@ -129,8 +88,12 @@ pub fn read(engine: &Path) -> Vec<Manifest> {
                 .map(|r| r.keys().cloned().collect())
                 .unwrap_or_default(),
             features: strings(table.get("build"), "features"),
-            crates,
-            read,
+            player: table
+                .get("rust")
+                .and_then(|r| r.get("player"))
+                .and_then(|p| p.as_str())
+                .map(|krate| krate.replace('-', "_")),
+            file,
         });
     }
     out
@@ -168,26 +131,19 @@ pub fn built(features: &[String]) -> bool {
         })
 }
 
-/// The Rust paths of `part` (`player`, `cli`) of every package this build
-/// has, in registration order, each with its package's name.
-pub fn parts(manifests: &[Manifest], part: &str) -> Vec<(String, String)> {
+/// The player crate of every package this build has that names one, in
+/// registration order.
+pub fn players(manifests: &[Manifest]) -> Vec<String> {
     manifests
         .iter()
         .filter(|m| built(&m.features))
-        .flat_map(|m| {
-            m.crates
-                .iter()
-                .filter(|(_, parts)| parts.iter().any(|p| p == part))
-                .map(|(krate, _)| (m.name.clone(), krate.clone()))
-        })
+        .filter_map(|m| m.player.clone())
         .collect()
 }
 
-/// `cargo:rerun-if-changed` for every file the list was read from.
+/// `cargo:rerun-if-changed` for every manifest the list was read from.
 pub fn watch(manifests: &[Manifest]) {
     for m in manifests {
-        for file in &m.read {
-            println!("cargo:rerun-if-changed={}", file.display());
-        }
+        println!("cargo:rerun-if-changed={}", m.file.display());
     }
 }
