@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 35-member Cargo workspace (34 crates, 31 under `crates/` and a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 35-member Cargo workspace (34 crates, 30 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -16,7 +16,6 @@ flint/
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
 │   ├── flint-debug-ui/     # DebugPanel trait + the F3/F4 panel roster (Rendering & Effects, ocean, sky, ...)
-│   ├── flint-music/        # Music: suite manifests, manifest-named buses, tempo maps, conductor, offline render
 │   ├── flint-rhythm/       # The rhythm layer over it: charts, judgment, coherence, ladder, seam, replay, haptics
 │   ├── flint-input-capture/# 1 kHz gamepad capture thread stamped against the audio clock
 │   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
@@ -43,7 +42,9 @@ flint/
 │   │   ├── flint-asset-gen/    # AI asset generation: providers, style guides, batch resolution
 │   │   ├── flint-procgen-ai/   # AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
 │   │   └── flint-ai-core/      # What every paid AI call goes through: transport, retry, prices, ledger, cost meter
-│   └── <name>/             # living, music, rhythm, procgen, debug-hud, engine: manifests and schemas, for now
+│   ├── music/crates/
+│   │   └── flint-music/    # Music: suite manifests, manifest-named buses, tempo maps, conductor, offline render
+│   └── <name>/             # living, rhythm, procgen, debug-hud, engine: manifests and schemas, for now
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
 │   └── arch-viewer/        # Static web page that renders that JSON as an interactive graph
@@ -271,7 +272,8 @@ Music for any game, with no game rules in it:
 - `SuiteSession`, `BusMixer`, `Scheduler` / `EventScript` --- stems sample-locked on one clock tick, per-bus gain, low-pass and detune, bus events on the musical grid
 - `latency` --- the newest output-latency measurement and tap calibration on record
 - `render_offline` / `write_wav` --- headless suite rendering behind `flint music render`
-- Depends only on `flint-core` plus kira, symphonia, hound, toml_edit
+- Depends only on `flint-core` and `flint-audio` plus kira, symphonia, hound, toml_edit
+- The `music` package's own crate, in its folder (`packages/music/crates/flint-music`, #1555): its `player` feature is the scene's music subsystem (`flint_music::player`, a `flint_package::Package` with a chart-judge registration point the rhythm package fills), its `cli` feature the `flint music validate|play|render` commands (`flint_music::cli`). The player's and the CLI's build scripts list both from the package folder, so neither names the crate
 
 ### flint-rhythm
 

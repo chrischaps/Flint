@@ -53,8 +53,10 @@ rhythm = ["music", "dep:flint-rhythm", "dep:flint-input-capture"]
 # A scene's music (#745, #754): a `music_session`'s stems on their buses and
 # the beat for `music_beat()` and the rest, through flint-music. Off, a scene
 # with one says so once at its entry and plays silent, its scripts reading
-# the beat as with no music (-1).
-music = ["dep:flint-music"]
+# the beat as with no music (-1). The package's own crate since #1555
+# (packages/music/crates/flint-music): its `player` part is the subsystem,
+# and the launcher's list names it from build.rs, so src/ names it nowhere.
+music = ["dep:flint-music", "flint-music?/player"]
 # Procgen at run time (#754): a `model.asset` or texture named by a
 # `*.procgen.toml` spec is generated at load (or on the frame queue), through
 # flint-procgen, and an extension may register generators. Off, every name is
@@ -130,7 +132,13 @@ image = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+[build-dependencies]
+# The package manifests the launcher's list is read from (#1555)
+toml = { workspace = true }
+
 [dev-dependencies]
+# The music session test writes its stems (tests/music_session.rs)
+hound = { workspace = true }
 # run_headless_frame: every test's egui frame clears its texture updates
 # (#944), whatever features the tests build with.
 flint-debug-ui = { workspace = true }

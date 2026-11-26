@@ -65,8 +65,24 @@ fn rust_cli_is_one_of_the_packages_crates() {
     );
     let found = mistakes(&with("cly = \"flint-living\""));
     assert!(
-        found[0].starts_with("rust.cly: unknown key `cly` in [rust] (the keys are cli)"),
+        found[0].starts_with("rust.cly: unknown key `cly` in [rust] (the keys are player, cli)"),
         "{found:#?}"
+    );
+}
+
+/// `[rust] player` names the crate the player launcher lists (#1555), held
+/// to the package's crates as `cli` is.
+#[test]
+fn rust_player_is_one_of_the_packages_crates() {
+    let with = |rust: &str| format!("{LIVING}[rust]\n{rust}\n");
+    let p = parse(&with("player = \"flint-living\""), file()).unwrap();
+    assert_eq!(
+        (p.player.as_deref(), p.cli.as_deref()),
+        (Some("flint-living"), None)
+    );
+    assert_eq!(
+        mistakes(&with("player = \"flint-core\"")),
+        ["rust.player: `flint-core` is no crate of this package: name one of [provides] crates"]
     );
 }
 

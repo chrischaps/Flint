@@ -96,7 +96,7 @@ mod load_timing;
 mod look_read_tests;
 #[cfg(not(target_arch = "wasm32"))]
 mod loopback;
-mod missing_features;
+pub(crate) mod missing_features;
 pub(crate) mod offscreen;
 mod pacing;
 mod perf;

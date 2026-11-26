@@ -244,27 +244,3 @@ fn no_packages_table_leaves_nothing_out() {
         assert!(!log.contains("unlisted-package"), "{log}");
     });
 }
-
-/// The line the music's builder says in a project that leaves `music` out.
-#[test]
-fn a_left_out_music_session_is_named_with_the_line_to_add() {
-    vfs::scoped(game(""), || {
-        let flags: &[&str] = &[];
-        let dirs = flint_core::project::schema_dirs(Some(SCENE.as_ref()), flags).unwrap();
-        let in_use = dirs.packages.expect("a [packages] list");
-        let mut world = flint_ecs::FlintWorld::new();
-        let id = world.spawn("band").unwrap();
-        world
-            .set_component(id, "music_session", toml::Value::Table(Default::default()))
-            .unwrap();
-        let line = super::music_left_out_line(&in_use, &world).unwrap();
-        assert_eq!(
-            line,
-            "[music] [packages] in flint.toml leaves out `music`: the scene's music_session \
-             doesn't play, and music_beat() reads -1 (add `music = \"*\"` under [packages] in \
-             game/flint.toml)"
-        );
-        let quiet = flint_ecs::FlintWorld::new();
-        assert_eq!(super::music_left_out_line(&in_use, &quiet), None);
-    });
-}

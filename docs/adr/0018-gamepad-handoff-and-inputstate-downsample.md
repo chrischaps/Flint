@@ -70,6 +70,6 @@ batching.
 - Vault: "Starchild F2 Player Integration Spike - 2026-08-16"
 - Code now: `crates/flint-player/src/player_app/music_session.rs`
   (`MusicSession::tick`), `crates/flint-player/src/player_app/frame.rs`
-  (`tick_music_session`), `crates/flint-music/src/chart_session.rs`
+  (`tick_music_session`), `packages/music/crates/flint-music/src/chart_session.rs`
   (`tick_with`), [Music Sessions](../book/src/concepts/music-sessions.md),
   "Lifecycle"

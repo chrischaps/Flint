@@ -4,7 +4,7 @@ Status: accepted, 2026-08-19 (commit
 [`48e48b6`](https://github.com/chrischaps/Flint/commit/48e48b6ad80a6a2432c83f3e9e8eccf73f71d771)).
 Backfilled 2026-11-12 (#374) from commit `48e48b6`, Vault note "2026-08-19
 Starchild hygiene pass — determinism as a refactoring tool", and
-`crates/flint-music/src/config_toml.rs`.
+`packages/music/crates/flint-music/src/config_toml.rs`.
 The original record was in the Starchild repo, which no longer exists; this
 is a reconstruction.
 
@@ -60,6 +60,6 @@ Star Child's pre-production hygiene pass (its records numbered 0038 to
   (ADR 0040)"
 - Vault: "2026-08-19 Starchild hygiene pass — determinism as a refactoring
   tool"
-- Code now: `crates/flint-music/src/config_toml.rs` (`VersionPolicy`,
-  `parse_versioned`), `crates/flint-music/src/chart_session.rs`
-  (`newest_toml`), `crates/flint-music/src/manifest.rs`
+- Code now: `packages/music/crates/flint-music/src/config_toml.rs` (`VersionPolicy`,
+  `parse_versioned`), `packages/music/crates/flint-music/src/chart_session.rs`
+  (`newest_toml`), `packages/music/crates/flint-music/src/manifest.rs`

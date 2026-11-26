@@ -85,7 +85,7 @@ F2: 0.000 ms stem skew across full runs with a spatial one-shot every 2 s
 - Vault: "Starchild F2 Player Integration Spike - 2026-08-16"; "Starchild F3 -
   Music Session in the Player - 2026-08-16"
 - Code now: `crates/flint-audio/src/engine.rs` (`AudioEngine::manager_mut`),
-  `crates/flint-music/src/chart_session.rs` (`ChartSession::open_shared`,
+  `packages/music/crates/flint-music/src/chart_session.rs` (`ChartSession::open_shared`,
   `stop_audio`, `max_stem_skew`),
   `crates/flint-player/src/player_app/state.rs` (`MusicState`),
   `crates/flint-player/src/player_app/transition.rs`,

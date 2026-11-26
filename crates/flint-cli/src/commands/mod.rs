@@ -12,8 +12,6 @@ pub mod build;
 pub mod bundle;
 #[cfg(feature = "rhythm")]
 pub mod calibrate;
-#[cfg(not(feature = "rhythm"))]
-absent::stub!(calibrate, CalibrateArgs, "music calibrate", "rhythm");
 pub mod capture;
 mod capture_compare;
 mod capture_disk;
@@ -60,20 +58,17 @@ pub mod look_measure;
 #[cfg(feature = "ai")]
 pub mod look_refine;
 pub mod mesh_seq;
+// The rhythm package's commands under the music package's `music`
+// (#1555; its own crate takes them, #1556)
+#[cfg(feature = "rhythm")]
 pub mod music;
 pub mod package;
 pub mod particle_edit;
 pub mod play;
 #[cfg(feature = "rhythm")]
 pub mod play_chart;
-#[cfg(not(feature = "rhythm"))]
-absent::stub!(play_chart, PlayChartArgs, "music chart play", "rhythm");
 #[cfg(feature = "rhythm")]
 pub mod play_chart_window;
-#[cfg(feature = "music")]
-pub mod play_suite;
-#[cfg(not(feature = "music"))]
-absent::stub!(play_suite, PlaySuiteArgs, "music play", "music");
 pub mod playtest;
 pub mod prefab;
 pub mod preview;
@@ -87,20 +82,9 @@ pub mod render_plan;
 pub mod render_post;
 pub mod render_report;
 pub mod render_retired;
-#[cfg(feature = "music")]
-pub mod render_suite;
-#[cfg(not(feature = "music"))]
-absent::stub!(render_suite, RenderSuiteArgs, "music render", "music");
 pub mod render_watch;
 #[cfg(feature = "rhythm")]
 pub mod replay_chart;
-#[cfg(not(feature = "rhythm"))]
-absent::stub!(
-    replay_chart,
-    ReplayChartArgs,
-    "music chart replay",
-    "rhythm"
-);
 pub mod scene;
 pub mod schema;
 pub mod schema_export;
@@ -118,10 +102,6 @@ pub mod tex_edit;
 absent::stub!(tex_edit, TexEditArgs, "tex-edit", "procgen");
 pub(crate) mod trace;
 pub mod validate;
-#[cfg(feature = "music")]
-pub mod validate_suite;
-#[cfg(not(feature = "music"))]
-absent::stub!(validate_suite, ValidateSuiteArgs, "music validate", "music");
 pub mod variants;
 
 /// Write a report into `<base_dir>/logs/latency/` as

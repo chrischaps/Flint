@@ -3,14 +3,14 @@
 //! readout (latency-compensated using the newest measurement in
 //! `logs/latency/`).
 
+use crate::session::RealtimePlayer;
+use crate::status::status_line;
+use crate::{validate_manifest, validate_manifest_assets, SuiteManifest};
 use anyhow::{bail, Context, Result};
-use flint_music::session::RealtimePlayer;
-use flint_music::status::status_line;
-use flint_music::{validate_manifest, validate_manifest_assets, SuiteManifest};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use flint_music::latency::latest_latency_ms;
+use crate::latency::latest_latency_ms;
 
 #[derive(clap::Args)]
 pub struct PlaySuiteArgs {

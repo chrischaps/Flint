@@ -38,6 +38,16 @@ pub mod status;
 pub mod tempo;
 pub mod validate;
 
+/// The `music` package's player part (#1555): the subsystem a scene with a
+/// `music_session` gets, and the package a launcher lists.
+#[cfg(feature = "player")]
+pub mod player;
+
+/// The `music` package's commands (#1555): `flint music validate`, `play`
+/// and `render`, as a `CliExtension`.
+#[cfg(feature = "cli")]
+pub mod cli;
+
 pub use clock_bridge::{BridgeStats, ClockBridge};
 pub use conductor::{Conductor, Grid, MusicalPosition};
 pub use event_script::EventScript;

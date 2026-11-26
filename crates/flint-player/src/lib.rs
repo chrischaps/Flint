@@ -10,8 +10,10 @@ pub mod hitch_args;
 pub mod load_args;
 // Everything the player says, through tracing, as text or JSON lines (#716)
 pub mod logging;
-#[cfg(feature = "music")]
-mod music;
+// The rhythm game, judging a charted music session (#745; the music is its
+// own package's crate since #1555, and #1556 moves this one to rhythm's)
+#[cfg(feature = "rhythm")]
+mod rhythm;
 // Whether this build has a project's packages, and `flint build`'s
 // set-aside binaries (#1335)
 pub mod packages;

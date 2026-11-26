@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-08-14 (a spike in the Starchild repo; no Flint commit).
 Backfilled 2026-11-12 (#374) from the Vault note "Star Child Phase 0 - Spikes
-Land, Latency Surprises" and a code comment in `crates/flint-music/src/mixer.rs`.
+Land, Latency Surprises" and a code comment in `packages/music/crates/flint-music/src/mixer.rs`.
 The original record was in the Starchild repo, which no longer exists; this is
 a reconstruction.
 
@@ -43,5 +43,5 @@ Stem misalignment in the spike: 0.0000 ms.
 ## Sources
 
 - Vault: "Star Child Phase 0 - Spikes Land, Latency Surprises" (2026-08-14)
-- Code now: `crates/flint-music/src/mixer.rs` (`StemBus::set_detune`),
-  `crates/flint-music/src/session.rs`
+- Code now: `packages/music/crates/flint-music/src/mixer.rs` (`StemBus::set_detune`),
+  `packages/music/crates/flint-music/src/session.rs`

@@ -46,5 +46,5 @@ Not recorded in the surviving text.
   scheduler, shared status readout"
 - Vault: "Star Child Phase 1 - The Clock That Refuses to Speak Music"
   (2026-08-15)
-- Code now: `crates/flint-music/src/session.rs` (`SuiteSession`,
+- Code now: `packages/music/crates/flint-music/src/session.rs` (`SuiteSession`,
   `RealtimePlayer`)

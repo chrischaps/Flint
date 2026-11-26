@@ -611,6 +611,29 @@ fn a_crate_no_package_owns_fails_naming_its_manifest() {
     assert_eq!(read[0].manifest, "crates/flint-zebra/Cargo.toml");
     assert_eq!(read[0].name, "flint-zebra");
     let _ = std::fs::remove_dir_all(&tmp);
+
+    // A package's crate joins through the glob (#1555), and a package
+    // folder with no crates/ adds nothing
+    let tmp = scratch("glob");
+    std::fs::create_dir_all(tmp.join("packages/zebra/crates/flint-zebra")).unwrap();
+    std::fs::create_dir_all(tmp.join("packages/quiet")).unwrap();
+    std::fs::write(
+        tmp.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"packages/*/crates/*\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("packages/zebra/crates/flint-zebra/Cargo.toml"),
+        "[package]\nname = \"flint-zebra\"\n",
+    )
+    .unwrap();
+    let read = workspace_crates(&tmp);
+    assert_eq!(read.len(), 1);
+    assert_eq!(
+        read[0].manifest,
+        "packages/zebra/crates/flint-zebra/Cargo.toml"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -653,11 +676,18 @@ fn an_item_two_packages_claim_or_one_the_tree_lacks_fails() {
     living.provides.commands.push("music".into());
     living.provides.crates.push("flint-gone".into());
     let found = problems(&packages, &Inventory::of_repo());
-    for want in [
+    let mut wanted = vec![
         "schemas/components/transform.toml: the component `transform` is provided by engine and living: an item has one owner",
-        "`flint music validate`: provided by `music`, and `flint music` above it by `living`: a command has one owner",
         "packages/living/package.toml: provides.crates lists `flint-gone`, and the tree has no crate of that name",
-    ] {
+    ];
+    // `flint music` is the music package's extension (#1555): a flint
+    // built without it has no such command to claim
+    if crate::commands::absent::built_with("music") {
+        wanted.push(
+            "`flint music validate`: provided by `music`, and `flint music` above it by `living`: a command has one owner",
+        );
+    }
+    for want in wanted {
         assert!(
             found.iter().any(|f| f.ends_with(want) || f == want),
             "missing {want:?} in {found:#?}"

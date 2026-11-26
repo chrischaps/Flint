@@ -52,9 +52,11 @@ impl Package for Part {
 }
 
 /// The kernel's own registration, `engine`'s: the `field` subsystem and
-/// module, and, for each package still in this crate that the build left
-/// out, the line a scene that uses it hears (and `living`'s policy name,
-/// which a game state may name in any build). It is always first.
+/// module, and, for each package the build left out, the line a scene that
+/// uses it hears (and `living`'s policy name, which a game state may name
+/// in any build). It is always first. Music's line asks the run's registry
+/// (`missing_features::unbuilt_music`), since the package is its own
+/// crate (#1555) and this one names no feature of it.
 pub static ENGINE: Part = Part {
     name: "engine",
     register: |registry| {
@@ -62,13 +64,19 @@ pub static ENGINE: Part = Part {
         subsystem::field::register(registry);
         #[cfg(not(feature = "living"))]
         subsystem::living::register_absent(registry);
-        #[cfg(not(feature = "music"))]
-        subsystem::music::register_absent(registry);
+        registry.scene_subsystem(crate::player_app::missing_features::unbuilt_music);
     },
 };
 
+/// What `build.rs` writes from the package manifests (#1555): `ORDER`,
+/// `PLAYER_PACKAGES`, `BUILT` and `moved()`, the player parts of the
+/// packages in their own folders that this build has.
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/package_list.rs"));
+}
+
 // The packages whose code is still in this crate, each behind its feature
-// until it moves into `packages/<name>/` (#1555-#1559). Those with nothing
+// until it moves into `packages/<name>/` (#1556-#1559). Those with nothing
 // to register yet (debug-hud, procgen) are listed all the same: the list
 // is what the binary was built with.
 #[cfg(feature = "debug-hud")]
@@ -86,37 +94,46 @@ static LIVING: Part = Part {
     name: "living",
     register: crate::player_app::subsystem::living::register,
 };
-#[cfg(feature = "music")]
-static MUSIC: Part = Part {
-    name: "music",
-    register: crate::player_app::subsystem::music::register,
-};
 #[cfg(feature = "rhythm")]
 static RHYTHM: Part = Part {
     name: "rhythm",
-    register: crate::player_app::subsystem::music::register_rhythm,
+    register: crate::player_app::subsystem::rhythm::register,
 };
 
 /// The names of the packages this crate has a part of, in any build: what
-/// a player can lack. A package with no part here (`ai`, the CLI's; a
-/// game's own) is not the player's to lack.
-pub const PLAYER_PACKAGES: &[&str] = &["debug-hud", "procgen", "living", "music", "rhythm"];
+/// a player can lack. Those whose `[build] features` are features of this
+/// crate, from the manifests (`build.rs`). A package with no part here
+/// (`ai`, the CLI's; a game's own) is not the player's to lack.
+pub const PLAYER_PACKAGES: &[&str] = generated::PLAYER_PACKAGES;
+
+/// Whether this build has the player feature `feature` on, for a feature a
+/// package's `[build] features` names.
+pub fn built_feature(feature: &str) -> bool {
+    generated::BUILT.iter().any(|(f, on)| *on && *f == feature)
+}
 
 /// Every package this build has, each after the ones it `[requires]`: the
-/// stock launcher's list. A test build ends it with the toy package.
+/// stock launcher's list, those still in this crate and those in their own
+/// folder (`generated::moved`), in the manifests' order. A test build ends
+/// it with the toy package.
 #[allow(clippy::vec_init_then_push, unused_mut)] // a build with no package pushes none
 pub fn stock() -> Vec<&'static dyn Package> {
-    let mut list: Vec<&'static dyn Package> = Vec::new();
+    let mut list: Vec<&'static dyn Package> = generated::moved();
     #[cfg(feature = "debug-hud")]
     list.push(&DEBUG_HUD);
     #[cfg(feature = "procgen")]
     list.push(&PROCGEN);
     #[cfg(feature = "living")]
     list.push(&LIVING);
-    #[cfg(feature = "music")]
-    list.push(&MUSIC);
     #[cfg(feature = "rhythm")]
     list.push(&RHYTHM);
+    let at = |p: &&dyn Package| {
+        generated::ORDER
+            .iter()
+            .position(|name| *name == p.name())
+            .unwrap_or(usize::MAX)
+    };
+    list.sort_by_key(at);
     #[cfg(test)]
     list.push(&crate::player_app::subsystem::toy::PACKAGE);
     list
@@ -404,15 +421,48 @@ mod tests {
                 .features
                 .iter()
                 .all(|f| match f.as_str() {
+                    // The packages still in this crate, by their gates
                     "debug-hud" => cfg!(feature = "debug-hud"),
                     "procgen" => cfg!(feature = "procgen"),
                     "living" => cfg!(feature = "living"),
-                    "music" => cfg!(feature = "music"),
                     "rhythm" => cfg!(feature = "rhythm"),
-                    other => panic!("{name}'s feature {other} is no player feature"),
+                    // A package in its own folder (music, #1555), as the
+                    // build script read the feature
+                    other => {
+                        assert!(
+                            generated::BUILT.iter().any(|(f, _)| *f == other),
+                            "{name}'s feature {other} is no player feature"
+                        );
+                        built_feature(other)
+                    }
                 });
             assert_eq!(registry.has(name), on, "{name}");
         }
+        // The order the stock list had by hand before the build script
+        // wrote it (#1555): a moved package registers where it always did,
+        // so its subsystem runs and tears down in the same place
+        let before = [
+            "engine",
+            "debug-hud",
+            "procgen",
+            "living",
+            "music",
+            "rhythm",
+            "toy",
+        ];
+        let kept: Vec<&str> = before.into_iter().filter(|p| registry.has(p)).collect();
+        assert_eq!(built, kept);
+    }
+
+    /// The default build has the music package through the generated list.
+    #[cfg(feature = "rhythm")]
+    #[test]
+    fn the_music_package_comes_from_its_own_crate() {
+        assert!(PLAYER_PACKAGES.contains(&"music"));
+        assert!(built_feature("music"));
+        let moved: Vec<&str> = generated::moved().iter().map(|p| p.name()).collect();
+        assert_eq!(moved, ["music"]);
+        assert!(registry().has("music"));
     }
 
     /// A launcher that lists fewer packages than the build has makes a

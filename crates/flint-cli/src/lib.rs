@@ -33,9 +33,9 @@ use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{
     asset, build, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples,
-    export, frame, gen, gen_preview, init, music, package, play, playtest, prefab, preview,
-    profile, query, render, render_goldens, scene, schema, script, spline_edit, style,
-    terrain_edit, tex_edit, validate,
+    export, frame, gen, gen_preview, init, package, play, playtest, prefab, preview, profile,
+    query, render, render_goldens, scene, schema, script, spline_edit, style, terrain_edit,
+    tex_edit, validate,
 };
 use std::ffi::OsString;
 
@@ -147,11 +147,6 @@ enum Commands {
     /// folder any static server plays it from
     #[command(subcommand)]
     Export(Box<export::ExportCommands>),
-
-    /// Music suites and rhythm charts: validate, play, render to WAV,
-    /// calibrate, chart play / chart replay
-    #[command(subcommand)]
-    Music(Box<music::MusicCommands>),
 
     /// Render a `.goldens.toml` of scenes and gate each against its golden
     /// PNG (`--bless` rewrites them)
@@ -316,8 +311,21 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
 ///
 /// `build.rs` writes the list from the manifests (#1554): each package
 /// whose `[rust] cli` names a crate, when this build has its
-/// `[build] features`, so the source names none.
+/// `[build] features`, so the source names none (ai, and music since
+/// #1555). The rhythm package's commands, still in this crate, go after
+/// them, under music's `music`.
 pub fn stock() -> Vec<Box<dyn CliExtension>> {
+    #[allow(unused_mut)] // a build without rhythm adds nothing after them
+    let mut list = package_extensions();
+    #[cfg(feature = "rhythm")]
+    list.extend(commands::music::extensions());
+    list
+}
+
+/// The extensions of the packages whose manifest names a `[rust] cli`
+/// crate, as `build.rs` lists them: [`stock`] less what this crate still
+/// holds of a package (rhythm's).
+pub(crate) fn package_extensions() -> Vec<Box<dyn CliExtension>> {
     include!(concat!(env!("OUT_DIR"), "/stock_extensions.rs"))
 }
 
@@ -452,7 +460,6 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Bundle(args) => bundle::run(*args),
         Commands::Export(cmd) => export::run(*cmd),
         Commands::Dxc(cmd) => dxc::run(*cmd),
-        Commands::Music(cmd) => music::run(*cmd),
         Commands::Goldens(args) => render_goldens::run_command(*args),
         Commands::Play(args) => play::run(*args),
         Commands::Playtest(args) => playtest::run(*args),
@@ -512,17 +519,6 @@ impl Commands {
         Some(match self {
             Commands::Serve { .. } => "serve",
             Commands::SplineEdit(_) => "spline-edit",
-            // A build without the package opens no window: its stand-in
-            // names the package, under --json too (#1333)
-            Commands::Music(cmd) => match &**cmd {
-                #[cfg(feature = "music")]
-                music::MusicCommands::Play(_) => "music play",
-                #[cfg(feature = "rhythm")]
-                music::MusicCommands::Calibrate(_) => "music calibrate",
-                #[cfg(feature = "rhythm")]
-                music::MusicCommands::Chart(music::ChartCommands::Play(_)) => "music chart play",
-                _ => return None,
-            },
             // `--list-keys` prints the debug-key table and exits (#717, #1184)
             Commands::Play(args) if !args.player.list_keys => "play",
             Commands::Preview(args) if args.render.is_none() => "preview",

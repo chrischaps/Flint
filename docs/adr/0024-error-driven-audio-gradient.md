@@ -4,7 +4,7 @@ Status: accepted, 2026-08-17 (commit
 [`27c5ff4`](https://github.com/chrischaps/Flint/commit/27c5ff449142539780c1cb1d471090d6c3777302)).
 Backfilled 2026-11-12 (#374) from commit `27c5ff4`, Vault note "2026-08-16
 Audio Gradient - Tuning by Wobble Not Offset", the module doc of
-`crates/flint-music/src/gradient.rs`, and the book.
+`packages/music/crates/flint-music/src/gradient.rs`, and the book.
 The original record was in the Starchild repo, which no longer exists; this
 is a reconstruction.
 
@@ -60,8 +60,8 @@ stays bounded, the precedent being the ladder's warble.
   audio gradient, haptics, depth-of-field"
 - Vault: "2026-08-16 Audio Gradient - Tuning by Wobble Not Offset"
 - Vault: "Starchild Prototype Retrospective - 2026-08-17"
-- Code now: `crates/flint-music/src/gradient.rs` (`GradientDriver`,
-  `TuneConfig`, `GradientOffsets`), `crates/flint-music/src/ladder.rs`
-  (`LadderDriver::apply`), `crates/flint-music/tests/gradient_driver.rs`,
+- Code now: `packages/music/crates/flint-music/src/gradient.rs` (`GradientDriver`,
+  `TuneConfig`, `GradientOffsets`), `packages/music/crates/flint-music/src/ladder.rs`
+  (`LadderDriver::apply`), `packages/music/crates/flint-music/tests/gradient_driver.rs`,
   [Music Sessions](../book/src/concepts/music-sessions.md), "Audio Gradient
   and Haptics"

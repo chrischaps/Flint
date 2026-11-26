@@ -8,7 +8,7 @@
 //!
 //! The lines are made here, in every build, so they are tested in the
 //! default one; each is printed only by a build that lacks its feature
-//! (`subsystems/music.rs`, `subsystems/living.rs`, `stage_scene`).
+//! ([`unbuilt_music`], `subsystems/living.rs`, `stage_scene`).
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -16,13 +16,19 @@ use std::path::Path;
 use flint_core::package::InUse;
 use flint_core::project::{AssetKind, Project};
 use flint_ecs::FlintWorld;
+use flint_package::{SceneCtx, Subsystem};
 use flint_terrain::GrassConfig;
+
+/// One wording of a left-out package's line, the kernel's and every
+/// package's (#1528): flint-package's since #1555.
+pub(crate) use flint_package::left_out_line;
 
 /// The components of the parts a build may leave out (#1330). Each one's
 /// crate owns its name (`flint_music::components`, `flint_living::components`,
 /// `flint_wooze::components`), and a build without the feature links none of
 /// them, so the names are written again here; `the_names_are_the_crates`
-/// holds them to the crates' in a build that has all three.
+/// holds them to the crates' (music's to its package's schema, since the
+/// player no longer names the crate, #1555).
 mod comp {
     pub(super) use flint_core::components::*;
     pub(super) const MUSIC_SESSION: &str = "music_session";
@@ -31,7 +37,6 @@ mod comp {
 }
 
 /// The line for a scene with a `music_session`, in a build without `music`.
-#[cfg_attr(feature = "music", allow(dead_code))]
 pub(crate) fn music_line(world: &FlintWorld) -> Option<String> {
     if world
         .entities_with_component(comp::MUSIC_SESSION)
@@ -44,6 +49,19 @@ pub(crate) fn music_line(world: &FlintWorld) -> Option<String> {
          music_session doesn't play, and music_beat() reads -1, as with no music"
             .to_string(),
     )
+}
+
+/// The kernel's builder for a run without the `music` package (its own
+/// crate since #1555): a scene with a `music_session` is told, once, that
+/// it plays silent. With the package registered it says nothing; the
+/// package's own builder plays the scene.
+pub(crate) fn unbuilt_music(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+    if !ctx.registry.has("music") {
+        if let Some(line) = music_line(ctx.world) {
+            tracing::warn!(target: "load", "{line}");
+        }
+    }
+    None
 }
 
 /// What of living props a scene uses, in the order the line names them.
@@ -90,27 +108,6 @@ pub(crate) fn living_line(
     })
 }
 
-/// The line for a scene whose `uses` are the parts of `package`, in a
-/// project whose `[packages]` leaves it out (#1528): the build has the
-/// package, the game doesn't, so the player runs none of it, as `flint
-/// check` calls each part `unlisted-package`. `None` when the scene uses
-/// none of it.
-pub(crate) fn left_out_line(
-    in_use: &InUse,
-    package: &str,
-    uses: &[&str],
-    and_so: &str,
-) -> Option<String> {
-    (!uses.is_empty()).then(|| {
-        format!(
-            "[{package}] [packages] in flint.toml leaves out `{package}`: the scene's {} {and_so} \
-             ({})",
-            uses.join(", "),
-            in_use.hint_for(package)
-        )
-    })
-}
-
 /// [`left_out_line`] of living props: what [`living_uses`] finds stands
 /// still.
 #[cfg_attr(not(feature = "living"), allow(dead_code))]
@@ -125,25 +122,6 @@ pub(crate) fn living_left_out_line(
         "living",
         &living_uses(world, tables, grass),
         "stand still",
-    )
-}
-
-/// [`left_out_line`] of the music: a `music_session` that doesn't play.
-#[cfg_attr(not(feature = "music"), allow(dead_code))]
-pub(crate) fn music_left_out_line(in_use: &InUse, world: &FlintWorld) -> Option<String> {
-    let uses: &[&str] = if world
-        .entities_with_component(comp::MUSIC_SESSION)
-        .is_empty()
-    {
-        &[]
-    } else {
-        &["music_session"]
-    };
-    left_out_line(
-        in_use,
-        "music",
-        uses,
-        "doesn't play, and music_beat() reads -1",
     )
 }
 
@@ -230,10 +208,20 @@ mod tests {
         world
     }
 
-    #[cfg(all(feature = "music", feature = "living"))]
+    /// The music package's schema declares the name.
+    #[test]
+    fn the_music_session_is_its_packages() {
+        let schema =
+            include_str!("../../../../packages/music/schemas/components/music_session.toml");
+        assert!(
+            schema.contains(&format!("[component.{}]", comp::MUSIC_SESSION)),
+            "packages/music/schemas/components/music_session.toml"
+        );
+    }
+
+    #[cfg(feature = "living")]
     #[test]
     fn the_names_are_the_crates() {
-        assert_eq!(comp::MUSIC_SESSION, flint_music::components::MUSIC_SESSION);
         assert_eq!(comp::LIVING_PROP, flint_living::components::LIVING_PROP);
         assert_eq!(comp::SHALLOW_WOOZE, flint_wooze::components::SHALLOW_WOOZE);
     }

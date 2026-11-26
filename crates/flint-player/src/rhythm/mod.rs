@@ -23,8 +23,8 @@ pub(crate) mod session;
 #[cfg(feature = "debug-hud")]
 pub(crate) mod timeline_panel;
 
-use crate::music::conducted::ConductedSnapshot;
 use crate::player_app::subsystem::{Pads, SceneCtx, Stage, StageCtx, Subsystem};
+use flint_music::player::conducted::ConductedSnapshot;
 use flint_script::MusicClock;
 use session::{LadderPostBase, MusicSession};
 use std::path::PathBuf;
@@ -336,7 +336,7 @@ const MANIFEST_MAP: &str = "manifest_map";
 const FORCE_FAIL: &str = "music_force_fail";
 
 /// A charted session's debug keys (#717; ADR 0035's debug surface), the
-/// `DEBUG_KEYS` of `player_app/subsystems/music.rs`.
+/// `DEBUG_KEYS` of `player_app/subsystems/rhythm.rs`.
 #[cfg(feature = "debug-hud")]
 pub(crate) const DEBUG_KEYS: &[flint_runtime::DebugKey] = &[
     flint_runtime::DebugKey {

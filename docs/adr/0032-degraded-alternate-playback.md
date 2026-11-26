@@ -56,10 +56,10 @@ Not recorded in the surviving text.
   alternates, cues, debug panels"
 - Vault: "Star Child World II - The Undertow - 2026-08-17"
 - Vault: "2026-08-17 Musicians Guide drafted (Starchild)"
-- Code now: `crates/flint-music/src/mixer.rs` (`AlternateVoice`,
-  `BusMixer::attach_alternate`), `crates/flint-music/src/ladder.rs`
+- Code now: `packages/music/crates/flint-music/src/mixer.rs` (`AlternateVoice`,
+  `BusMixer::attach_alternate`), `packages/music/crates/flint-music/src/ladder.rs`
   (`RungAudio::alternates`, `LadderDriver::apply`),
-  `crates/flint-music/src/session.rs` (`StemResolver::load_alternate`),
-  `crates/flint-music/src/reintegration.rs`,
+  `packages/music/crates/flint-music/src/session.rs` (`StemResolver::load_alternate`),
+  `packages/music/crates/flint-music/src/reintegration.rs`,
   [Music Sessions](../book/src/concepts/music-sessions.md), "Suite Manifest
   and Chart"

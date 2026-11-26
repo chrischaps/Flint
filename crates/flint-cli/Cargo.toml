@@ -25,8 +25,11 @@ path = "src/main.rs"
 # (`commands/absent.rs`); `flint package list --built` says which are in:
 #   living   the living props and wooze field `render` and `check` read,
 #            `gen --strip`, `render --sweep wooze.*|living.*`
-#   music    `music validate`, `music play`, `music render`
-#   rhythm   `music calibrate`, `music chart`, a suite's chart checks
+#   music    `music validate`, `music play`, `music render`: the package's
+#            own crate's `cli` part since #1555, so without it the parser
+#            has no `music` at all, and a line asking is told to add it
+#   rhythm   `music calibrate`, `music chart`, a suite's chart checks: an
+#            extension under music's `music` (#1555), with no stubs
 #   procgen  the player's procgen at load, `flint gen` and the spec editors
 #            (`flint edit x.procgen.toml`, `gen-preview`, `tex-edit`), check's
 #            spec passes, and `[living]` / `[wooze]` settled at load (#1543;
@@ -52,7 +55,7 @@ living = [
     "procgen", "flint-player/living", "flint-viewer/living", "flint-debug-ui/living",
     "flint-procgen/living", "dep:flint-living", "dep:flint-wooze",
 ]
-music = ["flint-player/music", "dep:flint-music"]
+music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm", "dep:flint-input-capture"]
 procgen = ["flint-player/procgen", "dep:flint-procgen"]
 ai = ["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli", "dep:flint-procgen-ai", "dep:flint-ai-core"]

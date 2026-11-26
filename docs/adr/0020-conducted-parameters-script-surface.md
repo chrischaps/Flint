@@ -71,7 +71,7 @@ coherence, musical position, judged pulses and the disintegration ramps.
 - Commit [`27be5c4`](https://github.com/chrischaps/Flint/commit/27be5c4fe45b0485402a384841aa98896f3e8fc2)
   "refactor(player_app): decompose tick into named steps"
 - Vault: "2026-08-16 Star Child F4 - Conducted Parameters"
-- Code now: `crates/flint-music/src/chart_session.rs` (`ConductedFrame`,
+- Code now: `packages/music/crates/flint-music/src/chart_session.rs` (`ConductedFrame`,
   `ChartCore::conducted_frame`), `crates/flint-script/src/context.rs`
   (`ConductedSnapshot`), `crates/flint-script/src/api/conducted.rs`,
   `crates/flint-player/src/player_app/frame.rs`,

@@ -4,7 +4,7 @@
 # labels, never opened. Lives in tests/data (crate-local), NOT fixtures/ —
 # the pinned fixtures are the validator contract and stay untouched.
 # The rhythm layer's copy: its six buses, pulse windows and seam table.
-# flint-music's own tests use crates/flint-music/tests/data's, which has
+# flint-music's own tests use packages/music/crates/flint-music/tests/data's, which has
 # none of them (#1041).
 schema_version = 0
 

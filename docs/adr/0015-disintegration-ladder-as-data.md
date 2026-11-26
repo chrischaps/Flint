@@ -73,6 +73,6 @@ arms. From the Phase 3 note: sustained neglect settles at 0.65-0.76 by meter.
   [`e66cd10`](https://github.com/chrischaps/Flint/commit/e66cd10c6bebc4da14625669702a852358fe19b2),
   [`2fc8606`](https://github.com/chrischaps/Flint/commit/2fc8606a013ef2b9c2ddb33ea41696ca075155bc)
 - Vault: "Starchild Phase 3 - Where the Signal Actually Lives (2026-08-15)"
-- Code now: `crates/flint-music/src/ladder.rs` (`Ladder`, `LadderConfig`,
+- Code now: `packages/music/crates/flint-music/src/ladder.rs` (`Ladder`, `LadderConfig`,
   `LadderParams`, `LadderDriver`, `FullFail`),
   [Music Sessions](../book/src/concepts/music-sessions.md), "The Ladder"
