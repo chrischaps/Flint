@@ -174,7 +174,6 @@ impl GameCore {
 
     /// Whether the project's `[packages]` leaves `package` out (#1528). With
     /// no `[packages]` table nothing is left out.
-    #[cfg_attr(not(feature = "debug-hud"), allow(dead_code))] // a package's scene panel asks it
     pub(crate) fn leaves_out(&self, package: &str) -> bool {
         self.packages
             .as_ref()

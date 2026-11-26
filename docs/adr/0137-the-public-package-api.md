@@ -817,6 +817,74 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   `--compare ,calm --split`). Their logs match too, once clock times are
   taken out.
 
+## As built: debug-hud moves into its package (#1559)
+
+The last of the six moves. flint-player had 137 `feature = "debug-hud"`
+lines on main (the epic counted 189 before living and rhythm took theirs);
+now it has none.
+
+- **Its crate is in its folder**: `packages/debug-hud/crates/flint-debug-ui`,
+  moved whole. Its new `player` feature is the package's part,
+  `flint_debug_ui::player::PACKAGE`, which the manifest names under `[rust]`
+  and flint-player's build script lists. The panels and the widgets stay in
+  every build of the crate, since flint-cli and flint-viewer draw the
+  widgets and the viewer the Rendering & Effects panel. So the CLI and the
+  viewer still link the package's crate, as they did; the player links it
+  only with `debug-hud`, which `scripts/headless-check.sh` holds.
+- **The panel vocabulary is the kernel's**: `flint_package::panels` holds
+  `DebugPanel`, `PanelLayout`, `PanelCtx`, `PanelHost`, `DebugPanels`,
+  `ScenePanel` and `ScenePanels`, moved from flint-debug-ui, which
+  re-exports them at their old paths. Section 2 and the subsystem table had
+  `DebugPanels` as debug-hud's type. It isn't, because two of the panels are
+  the kernel's own: a game's (`ExtensionPanel`, ADR 0107) and the
+  expression feed's (`expression_panel.rs`). Both stay in flint-player, and
+  the panel the table said would move with debug-hud stays with the feed
+  it reads, so no feed type is published as a resource. A package's panel
+  (living's, rhythm's) needs no flint-debug-ui for the trait. The run has a
+  `DebugPanels` only where it has a debug HUD, so `get_mut` is still `None`
+  without the package, as section 2 says.
+- **`DebugPanel::outlives_scene`** (default `false`) says which panels a
+  transition keeps: F4's and a game's. It replaces the name compare and
+  the downcast to the player's `ExtensionPanel`, which the package can't
+  name.
+- **The seam is `flint_package::hud::DebugHud`**, made once a run from
+  `Registry::debug_hud(MakeHud)` (`Registry::hud()`; one a run, and a
+  second warns). `PlayerApp::new` makes it and puts the run's `DebugPanels`
+  in at the same time, so a capture, which builds no `PlayerApp`, has
+  neither. Its hooks, and what each is lent, field by field:
+
+  | Hook | When | Lent |
+  |---|---|---|
+  | `scene_panels(panels, HudScene)` | `enter_scene`, after the renderer's share | world, scene path, `GrassPanel` (the grass `bind_scene` bound: `GrassConfig`, entity, component), the authored styles, the `AssetScope`, the looks and the one in use, the scene file Commit writes, the schemas, and the packages' scene panels, made by the kernel from `ScenePanels` |
+  | `look_changed(panels, authored, current)` | `fade_to_look` | the authored styles under the look, its name |
+  | `sync(panels, PanelCtx)` | `render`, before `prepare` | the same `PanelCtx` as before; the kernel reads `PanelHost` back (freeze, look, particles) and the HUD handles a committed style itself |
+  | `toggle(panels, Toggle)` | F3, F4 | which; `Some(open)` or `None` |
+  | `world_lines(panels, WorldView, out)` | after the scripts' lines are drained | world, clock time, camera eye and forward |
+  | `ui(HudUi)` | the HUD pass, after the subsystems' `ui` | egui, the panels, the view-projection, a drawer that draws a game's panel through its extension |
+  | `cards(ctx, Cards)` | the HUD pass, last | `ScriptErrors`, the `StyleRegistry`, the inset |
+  | `graph(ui, GraphView)` | inside F2's overlay | the frames and counters, the layout |
+
+  flint-package gained flint-particles (the `PanelCtx` it already lent) and
+  flint-terrain (`GrassConfig`). Both are kernel crates below it.
+- **The issue's risk, the hitch and frame-history panels**: the history
+  and the hitch detector stay the player's, and nothing of them is lent.
+  F2's graph is still the player's: `stats_view::StatsGraph` turns the
+  history into frames and counters as before. Those are
+  `flint_package::hud::{GraphFrame, Band, HitchCounters, GraphLayout}` now,
+  moved from the widget (flint-debug-ui re-exports them), and the HUD only
+  draws them, keeping the widget's ceiling and mesh in its own state. No
+  field had to become a kernel ticket.
+- **F3 and F4 stay the player's keys**, offered only when the registry has
+  a HUD (`debug_keys::player_keys()`: F2's text names the graph too). What
+  they toggle is the HUD's (`Toggle::Scene` is every panel but F4's).
+  `--list-keys` prints the same rows in the same order as before.
+- **`ScenePanels` is inserted by the kernel** (`packages::ENGINE`), so living
+  fills it in any order of registration, and the kernel makes the panels
+  only where there is a HUD.
+- **One change in behaviour**: closing F4 now catches the cursor only
+  when no other panel is open (the rule F3 and a subsystem's keys follow).
+  Before, it caught it even with F3's panels open.
+
 ## Measured
 
 - **Cargo globs** (cargo 1.99.1, a scratch workspace, 2026-11-25): `members`

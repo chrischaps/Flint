@@ -332,7 +332,6 @@ fn as_loaded_puts_it_all_back() {
     assert_eq!(app.living_knobs(), at_load);
 }
 
-#[cfg(feature = "debug-hud")]
 #[test]
 #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
@@ -521,7 +520,6 @@ fn a_sparse_echo_count_from_a_script_leaves_each_species_its_spread() {
     }
 }
 
-#[cfg(feature = "debug-hud")]
 mod panel_edits {
     use super::*;
     use flint_living::panel::{KnobFlags, LivingKnobs, LivingPanelAction, PanelScope};
@@ -990,7 +988,6 @@ fn a_preset_is_laid_over_the_scene_as_it_loaded() {
     assert_eq!(b.wooze.step, Some(0.5));
 }
 
-#[cfg(feature = "debug-hud")]
 #[test]
 fn the_panel_compares_flips_and_splits() {
     use flint_living::panel::{LivingPanelAction, LivingPropsDebugPanel};
@@ -1223,7 +1220,6 @@ fn a_scenes_species_table_reaches_the_player_with_bad_values_left_out() {
     assert_eq!(problems.len(), 2, "{problems:?}");
 }
 
-#[cfg(feature = "debug-hud")]
 mod species_panel {
     use super::*;
     use flint_living::panel::{KnobFlags, LivingKnobs, LivingPanelAction, PanelScope};
@@ -1264,7 +1260,6 @@ mod species_panel {
 
 // ---- Scopes on the panel (#247) ----
 
-#[cfg(feature = "debug-hud")]
 mod scopes {
     use super::*;
     use flint_living::panel::{
@@ -1585,7 +1580,6 @@ mod scopes {
 
 // ---- Picking a tree in the world (#248) ----
 
-#[cfg(feature = "debug-hud")]
 mod picks {
     use super::*;
     use flint_core::Vec3;

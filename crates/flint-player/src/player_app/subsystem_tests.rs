@@ -344,17 +344,19 @@ fn a_taken_port_ends_the_run_when_the_socket_would_open() {
 }
 
 /// The F3 Expression panel the feed added, if any (#525).
-#[cfg(feature = "debug-hud")]
 fn expression_panel(app: &mut PlayerApp) -> Option<&mut super::expression_panel::ExpressionPanel> {
     app.debug_panels_mut()
         .iter_mut()
         .find_map(|p| p.as_any_mut().downcast_mut())
 }
 
-#[cfg(feature = "debug-hud")]
+/// The panel goes in only where the run has a debug HUD (#1559).
 #[test]
 fn the_expression_panel_shows_each_state_the_frame_it_arrives() {
-    use flint_debug_ui::DebugPanel;
+    use flint_package::DebugPanel;
+    if crate::packages::lacks("debug-hud") {
+        return;
+    }
     vfs::scoped(Arc::new(game()), || {
         // No feed, no panel
         let mut app = started_in_a(None);
@@ -411,12 +413,15 @@ fn the_expression_panel_shows_each_state_the_frame_it_arrives() {
     });
 }
 
-#[cfg(all(feature = "debug-hud", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn a_malformed_socket_line_raises_the_panels_dropped_count() {
-    use flint_debug_ui::DebugPanel;
+    use flint_package::DebugPanel;
     use std::io::Write;
     use std::time::{Duration, Instant};
+    if crate::packages::lacks("debug-hud") {
+        return;
+    }
     vfs::scoped(Arc::new(game()), || {
         let feed = ExpressionFeed::open(None, Some("127.0.0.1:0"))
             .unwrap()

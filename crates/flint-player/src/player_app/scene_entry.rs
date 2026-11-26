@@ -76,10 +76,8 @@ impl PlayerApp {
         let collider_meshes = super::collider_meshes::requests(&self.core.world);
 
         let grass = self.stage_scene_in_renderer();
-        #[cfg(feature = "debug-hud")]
+        // The run's debug HUD makes the scene's panels (#1559)
         self.create_scene_debug_panels(grass);
-        #[cfg(not(feature = "debug-hud"))]
-        let _ = grass;
         self.apply_camera_tuning();
         // The terrain height callback for scripts
         self.update_terrain_height_fn();
@@ -311,36 +309,6 @@ impl PlayerApp {
             terrain_entity_name: grass.entity_name,
             component: grass.component,
         })
-    }
-
-    /// The scene's debug panels. The last scene's go (grass, ocean,
-    /// particles, styles...); Rendering & Effects (F4) and the game's own
-    /// belong to the player and are kept, open or closed as they were.
-    /// Before #268 a transition dropped them and never made them again.
-    #[cfg(feature = "debug-hud")]
-    fn create_scene_debug_panels(&mut self, grass: Option<LoadedGrassInfo>) {
-        self.drop_scene_debug_panels();
-        if let Some(info) = grass {
-            let panel = flint_debug_ui::GrassDebugPanel::new(
-                info.config,
-                std::path::PathBuf::from(&self.core.scene_path),
-                info.terrain_entity_name,
-            )
-            .with_component(info.component);
-            self.debug_panels_mut().push(Box::new(panel));
-        }
-        self.create_ocean_debug_panel();
-        // A game's controllers, from their schemas (#744)
-        self.create_component_panels();
-        self.create_camera_debug_panel();
-        self.create_particles_debug_panel();
-        // The packages' own (the Living Props panel, #218)
-        self.create_package_debug_panels();
-        self.create_styles_debug_panel();
-        // Rendering & Effects (ADR 0053): unconditional, F4 summons it
-        self.create_render_debug_panel();
-        // The game's own (ADR 0107), after the engine's.
-        self.create_extension_debug_panels();
     }
 
     /// Physics, audio, animation, particles and scripts, in that order. The

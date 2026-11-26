@@ -69,10 +69,10 @@ pub static ENGINE: Part = Part {
             .policy("living")
             .scene_subsystem(crate::player_app::missing_features::unbuilt_living);
         registry.scene_subsystem(crate::player_app::missing_features::unbuilt_music);
-        // Debug-hud's point for a package's scene panels (the Living Props
-        // panel, #1558), which the packages after the kernel fill
-        #[cfg(feature = "debug-hud")]
-        registry.insert_point(flint_debug_ui::ScenePanels::default());
+        // The point for a package's scene panels (the Living Props panel,
+        // #1558), which the packages after the kernel fill. A kernel type
+        // since #1559: the player makes them only where a debug HUD is
+        registry.insert_point(flint_package::panels::ScenePanels::default());
     },
 };
 
@@ -83,17 +83,9 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/package_list.rs"));
 }
 
-// The one package whose part is still this crate's, behind its feature
-// until it moves into `packages/<name>/` (#1559): debug-hud, which has
-// nothing to register yet and is listed all the same, since the list is
-// what the binary was built with. A package in its own folder (music,
-// #1555; procgen, #1557; rhythm, #1556; living, #1558) is its crate's
+// Every package is in its own folder (music, #1555; procgen, #1557;
+// rhythm, #1556; living, #1558; debug-hud, #1559): its crate's
 // `player::PACKAGE`, which `generated::moved` lists from the manifests.
-#[cfg(feature = "debug-hud")]
-static DEBUG_HUD: Part = Part {
-    name: "debug-hud",
-    register: |_| {},
-};
 
 /// The names of the packages this crate has a part of, in any build: what
 /// a player can lack. Those whose `[build] features` are features of this
@@ -114,8 +106,6 @@ pub fn built_feature(feature: &str) -> bool {
 #[allow(clippy::vec_init_then_push, unused_mut)] // a build with no package pushes none
 pub fn stock() -> Vec<&'static dyn Package> {
     let mut list: Vec<&'static dyn Package> = generated::moved();
-    #[cfg(feature = "debug-hud")]
-    list.push(&DEBUG_HUD);
     let at = |p: &&dyn Package| {
         generated::ORDER
             .iter()
@@ -405,25 +395,15 @@ mod tests {
         }
         for name in PLAYER_PACKAGES {
             assert!(manifests.get(name).is_some(), "{name}");
-            let on = manifests
-                .get(name)
-                .unwrap()
-                .features
-                .iter()
-                .all(|f| match f.as_str() {
-                    // The packages still in this crate, by their gates
-                    "debug-hud" => cfg!(feature = "debug-hud"),
-                    // A package in its own folder (music, #1555; procgen,
-                    // #1557; rhythm, #1556; living, #1558), as the build
-                    // script read the feature
-                    other => {
-                        assert!(
-                            generated::BUILT.iter().any(|(f, _)| *f == other),
-                            "{name}'s feature {other} is no player feature"
-                        );
-                        built_feature(other)
-                    }
-                });
+            let on = manifests.get(name).unwrap().features.iter().all(|f| {
+                // Every package is in its own folder (#1559), its
+                // feature as the build script read it
+                assert!(
+                    generated::BUILT.iter().any(|(b, _)| b == f),
+                    "{name}'s feature {f} is no player feature"
+                );
+                built_feature(f)
+            });
             assert_eq!(registry.has(name), on, "{name}");
         }
         // The order the stock list had by hand before the build script
@@ -452,12 +432,12 @@ mod tests {
         // In registration order: procgen (standard), then the feature
         // packages by name, rhythm after the music it requires; each in its
         // own folder when the build has it
-        let expected: Vec<&str> = ["procgen", "living", "music", "rhythm"]
+        let expected: Vec<&str> = ["debug-hud", "procgen", "living", "music", "rhythm"]
             .into_iter()
             .filter(|name| built_feature(name))
             .collect();
         assert_eq!(moved, expected);
-        for name in ["procgen", "living", "music", "rhythm"] {
+        for name in ["debug-hud", "procgen", "living", "music", "rhythm"] {
             assert!(PLAYER_PACKAGES.contains(&name), "{name}");
             assert_eq!(registry().has(name), built_feature(name), "{name}");
         }

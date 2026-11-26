@@ -21,105 +21,12 @@ use egui::emath::GuiRounding as _;
 use egui::{Color32, Mesh, Pos2, Rect, Shape, Stroke, Vec2};
 use std::sync::Arc;
 
-/// The bands a bar is split into, bottom up. A host maps its own phases
-/// onto these.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Band {
-    /// Scripts' callbacks, and the script UI
-    Scripts,
-    /// The fixed-step physics
-    Physics,
-    /// Everything else of the host's own work: input, animation, effects
-    Other,
-    /// Syncing the renderer with the world, drawing and submitting
-    Render,
-    /// The HUD pass, and handing the frame to the swapchain (the wait for
-    /// the display under vsync)
-    HudPresent,
-    /// The frame's time that no phase accounts for: the OS, the driver,
-    /// the compositor
-    Elsewhere,
-}
-
-/// How many bands a frame has.
-pub const BANDS: usize = Band::ALL.len();
-
-impl Band {
-    pub const ALL: [Band; 6] = [
-        Band::Scripts,
-        Band::Physics,
-        Band::Other,
-        Band::Render,
-        Band::HudPresent,
-        Band::Elsewhere,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Band::Scripts => "scripts",
-            Band::Physics => "physics",
-            Band::Other => "other",
-            Band::Render => "render",
-            Band::HudPresent => "hud/present",
-            Band::Elsewhere => "elsewhere",
-        }
-    }
-
-    /// The band's colour, from Okabe and Ito's palette (2008), which stays
-    /// apart under the common colour-vision deficiencies. Vermillion is
-    /// kept for the hitch mark alone.
-    pub fn color(self) -> Color32 {
-        match self {
-            Band::Scripts => Color32::from_rgb(230, 159, 0), // orange
-            Band::Physics => Color32::from_rgb(0, 158, 115), // bluish green
-            Band::Other => Color32::from_rgb(240, 228, 66),  // yellow
-            Band::Render => Color32::from_rgb(86, 180, 233), // sky blue
-            Band::HudPresent => Color32::from_rgb(204, 121, 167), // reddish purple
-            Band::Elsewhere => Color32::from_gray(150),
-        }
-    }
-}
+// The graph's data is the kernel's (#1559): the player fills it from its
+// frame history, and the debug-hud package draws it.
+pub use flint_package::hud::{Band, GraphFrame, GraphLayout, HitchCounters, BANDS};
 
 /// The hitch mark's colour: Okabe and Ito's vermillion.
 pub const HITCH_COLOR: Color32 = Color32::from_rgb(213, 94, 0);
-
-/// One frame, as the graph draws it. Times are ms unless named.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct GraphFrame {
-    /// When it began, seconds (any epoch, the same for every frame).
-    pub at: f64,
-    /// Its wall time: how much of the graph's width it takes.
-    pub wall_ms: f32,
-    /// The bar's height: how long it stood on screen (under vsync pacing,
-    /// whole refreshes; else the wall time).
-    pub ms: f32,
-    /// Its time in each band, indexed as [`Band::ALL`], stacked bottom
-    /// up. What runs past `ms` is cut off at the top of the bar.
-    pub bands: [f32; BANDS],
-    /// The frame was a hitch: it gets a mark.
-    pub hitch: bool,
-}
-
-impl GraphFrame {
-    /// When it ended, seconds.
-    pub fn end(&self) -> f64 {
-        self.at + self.wall_ms as f64 / 1000.0
-    }
-}
-
-/// How the graph is laid out.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GraphLayout {
-    /// The graph's size, points.
-    pub size: Vec2,
-    /// The seconds its width spans, up to the newest frame's end.
-    pub window_secs: f32,
-    /// The display's refresh period, ms: the budget line, and twice it.
-    pub budget_ms: f32,
-    /// Label the budget lines in ms and fps (the compact form leaves the
-    /// fps off).
-    pub fps_labels: bool,
-}
 
 /// A column's width, points. Each column is a slice of time, and shows
 /// the worst frame that falls in it: one frame a column at 60 Hz in a
@@ -417,24 +324,6 @@ fn loudness(frame: &GraphFrame, budget: f32) -> f32 {
     }
     let over = ((frame.ms / budget - 1.15) / 0.85).clamp(0.0, 1.0);
     QUIET + (1.0 - QUIET) * over
-}
-
-// What the counters under a graph say. Times are ms unless named.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct HitchCounters<'a> {
-    /// Hitches since the run began
-    pub hitches: u64,
-    /// Hitches a minute, over the run
-    pub per_minute: f64,
-    /// The worst frame judged
-    pub worst_ms: f32,
-    /// Seconds since the last hitch ended, if there was one
-    pub since_last_secs: Option<f64>,
-    /// The last hitch in one line: how long and whose time it was
-    pub last: Option<&'a str>,
-    /// Hitches of scene loads drawn behind a fade, counted apart from
-    /// `hitches` (flint-player's `loading`, #1125); shown when there are any
-    pub loading: u64,
 }
 
 /// How long the hitch count stays loud after a hitch, seconds, and how

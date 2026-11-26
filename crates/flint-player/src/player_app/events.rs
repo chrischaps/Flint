@@ -892,11 +892,7 @@ impl PlayerApp {
     /// Whether egui sees input before the game: whenever it can have
     /// interactive UI on screen, an open debug panel or an extension's ui().
     fn egui_sees_input(&self) -> bool {
-        #[cfg(feature = "debug-hud")]
-        let any_panel_open = self.debug_panels().iter().any(|p| p.is_open());
-        #[cfg(not(feature = "debug-hud"))]
-        let any_panel_open = false;
-        any_panel_open || !self.extensions.is_empty()
+        self.panels_open() > 0 || !self.extensions.is_empty()
     }
 
     /// An event from `--input-script`, routed as a real device's would be.
@@ -1076,14 +1072,9 @@ impl PlayerApp {
             physics_runs,
         ) && state == ElementState::Pressed
             && button == MouseButton::Left
+            && self.panels_open() == 0
         {
-            #[cfg(feature = "debug-hud")]
-            let panel_open = self.debug_panels().iter().any(|p| p.is_open());
-            #[cfg(not(feature = "debug-hud"))]
-            let panel_open = false;
-            if !panel_open {
-                self.capture_cursor();
-            }
+            self.capture_cursor();
         }
     }
 

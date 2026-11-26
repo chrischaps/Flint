@@ -70,7 +70,7 @@ impl ExpressionPanel {
     }
 }
 
-impl flint_debug_ui::DebugPanel for ExpressionPanel {
+impl flint_package::DebugPanel for ExpressionPanel {
     fn name(&self) -> &str {
         EXPRESSION_PANEL
     }
@@ -402,7 +402,7 @@ pub(crate) fn changes(arrival: &Arrival, before: Option<&Arrival>) -> String {
 mod tests {
     use super::super::expression_feed::{FeedRecord, SocketCounts};
     use super::*;
-    use flint_debug_ui::DebugPanel;
+    use flint_package::DebugPanel;
 
     fn arrival(at: f64, json: &str) -> Arrival {
         Arrival {

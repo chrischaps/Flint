@@ -243,7 +243,6 @@ pub struct FeedRecord {
     delivered: u64,
 }
 
-#[cfg_attr(not(feature = "debug-hud"), allow(dead_code))] // the panel's reads
 impl FeedRecord {
     pub fn push(&mut self, arrival: Arrival) {
         if self.recent.len() >= RECENT {
@@ -787,7 +786,6 @@ impl ExpressionSubsystem {
     }
 
     /// What the panel shows at game time `now`.
-    #[cfg_attr(not(feature = "debug-hud"), allow(dead_code))]
     pub(crate) fn view(&self, now: f64) -> FeedView {
         FeedView {
             now,
@@ -804,8 +802,7 @@ impl ExpressionSubsystem {
 
     /// Add the panel when the player has none (the first frame, or after a
     /// scene's panels went), and fill it while it's open.
-    #[cfg(feature = "debug-hud")]
-    fn feed_panel(&self, now: f64, panels: &mut Vec<Box<dyn flint_debug_ui::DebugPanel>>) {
+    fn feed_panel(&self, now: f64, panels: &mut flint_package::DebugPanels) {
         use super::expression_panel::{ExpressionPanel, EXPRESSION_PANEL};
         if !panels.iter().any(|p| p.as_any().is::<ExpressionPanel>()) {
             let times = self.feed.timeline.as_ref().map(|t| t.times());
@@ -815,7 +812,7 @@ impl ExpressionSubsystem {
         let panel = panels
             .iter_mut()
             .find_map(|p| p.as_any_mut().downcast_mut::<ExpressionPanel>());
-        if let Some(panel) = panel.filter(|p| flint_debug_ui::DebugPanel::is_open(*p)) {
+        if let Some(panel) = panel.filter(|p| flint_package::DebugPanel::is_open(*p)) {
             panel.set_view(self.view(now));
         }
     }
@@ -823,7 +820,6 @@ impl ExpressionSubsystem {
 
 /// The feed as the panel shows it: a copy, taken once a frame while open.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(feature = "debug-hud"), allow(dead_code))]
 pub struct FeedView {
     /// Game time now.
     pub now: f64,
@@ -906,9 +902,8 @@ impl Subsystem for ExpressionSubsystem {
                 state,
             });
         }
-        // The F3 panels, when the host has them (a capture has none)
-        #[cfg(feature = "debug-hud")]
-        if let Some(panels) = ctx.resources.get_mut::<flint_debug_ui::DebugPanels>() {
+        // The F3 panels, when the run has a debug HUD (a capture has none)
+        if let Some(panels) = ctx.resources.get_mut::<flint_package::DebugPanels>() {
             self.feed_panel(now, panels);
         }
     }

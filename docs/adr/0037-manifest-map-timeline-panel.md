@@ -60,5 +60,5 @@ where it had rewound.
 - Vault: "2026-08-17 Manifest Map timeline panel"
 - Code now: `packages/music/crates/flint-music/src/timeline.rs` (`TimelineMap`,
   `TimelineFrame`), `crates/flint-player/src/player_app/timeline_panel.rs`,
-  `crates/flint-debug-ui/src/lib.rs` (`DebugPanel::layout`),
+  `packages/debug-hud/crates/flint-debug-ui/src/lib.rs` (`DebugPanel::layout`),
   [Music Sessions](../book/src/concepts/music-sessions.md), "Debug Surfaces"

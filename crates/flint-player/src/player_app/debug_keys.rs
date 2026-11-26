@@ -14,9 +14,7 @@ const KEYS: &str = "keys";
 /// The action that shows the list, which the controls line names (#716)
 pub(super) const SHOW_KEYS_ACTION: &str = KEYS;
 const STATS: &str = "stats";
-#[cfg(feature = "debug-hud")]
 const PANELS: &str = "panels";
-#[cfg(feature = "debug-hud")]
 const RENDER_PANEL: &str = "render_panel";
 const FULLSCREEN: &str = "fullscreen";
 /// Capture the next frame for the frame debugger (#1086).
@@ -46,8 +44,9 @@ const SHOW_FULLSCREEN: DebugKey = DebugKey {
     does: "Fullscreen, or back to the window",
 };
 
-#[cfg(feature = "debug-hud")]
-const PLAYER_KEYS: &[DebugKey] = &[
+/// The player's keys with a debug HUD in the run (#1559): F2's graph, F3's
+/// and F4's panels.
+const HUD_KEYS: &[DebugKey] = &[
     SHOW_KEYS,
     DebugKey {
         action: STATS,
@@ -68,8 +67,8 @@ const PLAYER_KEYS: &[DebugKey] = &[
     },
     SHOW_FULLSCREEN,
 ];
-#[cfg(not(feature = "debug-hud"))]
-const PLAYER_KEYS: &[DebugKey] = &[
+/// The player's keys in a run without one.
+const PLAIN_KEYS: &[DebugKey] = &[
     SHOW_KEYS,
     DebugKey {
         action: STATS,
@@ -81,12 +80,22 @@ const PLAYER_KEYS: &[DebugKey] = &[
     SHOW_FULLSCREEN,
 ];
 
-/// The player's own debug keys: live in every scene.
-pub(crate) const PLAYER: DebugKeyGroup = DebugKeyGroup {
-    owner: "player",
-    when: "always",
-    keys: PLAYER_KEYS,
-};
+/// The player's own debug keys: live in every scene. F3 and F4 (and F2's
+/// graph) are offered only where the run's launcher lists a debug HUD.
+pub(crate) fn player_keys() -> DebugKeyGroup {
+    DebugKeyGroup {
+        owner: PLAYER_OWNER,
+        when: "always",
+        keys: if crate::packages::registry().hud().is_some() {
+            HUD_KEYS
+        } else {
+            PLAIN_KEYS
+        },
+    }
+}
+
+/// The owner the player's own keys are under.
+const PLAYER_OWNER: &str = "player";
 
 impl PlayerApp {
     /// The run's debug keys now: the player's, each subsystem file's (live
@@ -115,7 +124,7 @@ impl PlayerApp {
                 )
             })
             .collect();
-        let groups = std::iter::once((PLAYER, always))
+        let groups = std::iter::once((player_keys(), always))
             .chain(files.iter().map(|g| (*g, present)))
             .chain(unfiled.into_iter().map(|g| (g, always)));
         DebugKeyTable::build(groups, self.input.config())
@@ -131,21 +140,16 @@ impl PlayerApp {
             return false;
         };
         let (action, owner, key) = (entry.action, entry.owner, entry.key_label());
-        if owner == PLAYER.owner {
+        if owner == PLAYER_OWNER {
             self.player_debug_key(action, &key);
             return true;
         }
-        #[cfg(feature = "debug-hud")]
-        let open_before = self.debug_panels().iter().filter(|p| p.is_open()).count();
+        let open_before = self.panels_open();
         self.subsystems_debug_key(action, &key);
         // A subsystem's panel opened or closed: the cursor follows the
         // panels, as F3's do
-        #[cfg(feature = "debug-hud")]
-        {
-            let open = self.debug_panels().iter().filter(|p| p.is_open()).count();
-            if open != open_before {
-                self.cursor_follows_panels();
-            }
+        if self.panels_open() != open_before {
+            self.cursor_follows_panels();
         }
         true
     }
@@ -155,32 +159,20 @@ impl PlayerApp {
         match action {
             KEYS => self.hud.key_table_open = !self.hud.key_table_open,
             // Off, the full overlay, the graph alone, off (#1078)
-            STATS => self.set_stats_view(self.stats.view.next()),
+            STATS => self.set_stats_view(self.stats.view.next(self.hud.debug.is_some())),
             CAPTURE_FRAME => self.ask_frame_capture(super::frame_capture::Trigger::Key, key),
             SAVE_TRACE => self.ask_trace(key),
-            #[cfg(feature = "debug-hud")]
-            PANELS => {
-                // The scene-component panels (grass, ocean, ...), not the
-                // Rendering & Effects panel, which has its own key and
-                // would otherwise flip out of phase with it.
-                let mut any = false;
-                for panel in self.debug_panels_mut().iter_mut() {
-                    if panel.name() != flint_debug_ui::RENDER_DEBUG_PANEL {
-                        panel.toggle();
-                        any = true;
-                    }
-                }
-                if any {
-                    self.cursor_follows_panels();
-                } else {
-                    self.hud.key_note.say(key, "no debug panels in this scene");
-                }
-            }
+            // The scene's panels (grass, ocean, ...), not Rendering &
+            // Effects, which has its own key: the debug HUD's (#1559)
+            PANELS => self.toggle_panels(
+                flint_package::hud::Toggle::Scene,
+                key,
+                "no debug panels in this scene",
+            ),
             // Rendering & Effects (ADR 0053): the one home for every
             // render/post debug control and their non-binary params.
-            #[cfg(feature = "debug-hud")]
-            RENDER_PANEL => self.toggle_named_panel(
-                flint_debug_ui::RENDER_DEBUG_PANEL,
+            RENDER_PANEL => self.toggle_panels(
+                flint_package::hud::Toggle::Render,
                 key,
                 "no renderer active — nothing to tune",
             ),
@@ -194,17 +186,6 @@ impl PlayerApp {
                 }
             }
             _ => {}
-        }
-    }
-
-    /// The cursor follows the panels: let go while any is open (the render
-    /// panel too), captured again once none is, in a first-person scene.
-    #[cfg(feature = "debug-hud")]
-    fn cursor_follows_panels(&mut self) {
-        if self.debug_panels().iter().any(|p| p.is_open()) {
-            self.release_cursor();
-        } else if self.core.physics.has_player_entity() {
-            self.capture_cursor();
         }
     }
 
@@ -253,7 +234,7 @@ mod tests {
 
     #[test]
     fn every_declared_default_is_a_key() {
-        let mut groups = vec![PLAYER];
+        let mut groups = vec![player_keys()];
         groups.extend(crate::packages::registry().debug_key_groups());
         for g in groups {
             for k in g.keys {

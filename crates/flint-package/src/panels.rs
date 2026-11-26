@@ -1,31 +1,13 @@
-mod camera_panel;
-mod component_panel;
-mod grass_panel;
-mod headless_frame;
-mod ocean_panel;
-mod particles_panel;
-mod render_panel;
-mod script_errors;
-mod style_drops;
-mod style_errors;
-mod styles_panel;
-mod styles_ui;
-pub mod widgets;
-
-pub use camera_panel::{CameraDebugPanel, CameraPanelConfig};
-pub use component_panel::ComponentPanel;
-pub use grass_panel::GrassDebugPanel;
-pub use headless_frame::run_headless_frame;
-pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};
-pub use particles_panel::{
-    EmitterRow, ParticlePanelAction, ParticlesDebugPanel, PARTICLES_DEBUG_PANEL,
-};
-pub use render_panel::{RenderDebugPanel, RenderPanelFlags, RENDER_DEBUG_PANEL};
-pub use script_errors::{grouped, paint_script_errors, ScriptErrorRow};
-pub use style_drops::paint_style_drops;
-pub use style_errors::paint_style_errors;
-pub use styles_panel::{styled_entity_rows, StyledEntityRow, StylesDebugPanel, STYLES_DEBUG_PANEL};
-pub use styles_ui::{StylesEdit, StylesEditor};
+//! The F3/F4 panels' vocabulary (#1559): what a panel is, where the run
+//! keeps them, and what one is lent each frame. It is the kernel's, so a
+//! package (rhythm's guide, living's props) and the kernel itself (a
+//! game's panel, the expression feed's) can each add a panel without
+//! naming the debug-hud package. The debug-hud package makes the engine's
+//! panels, lays them out and drives F3 and F4 (`crate::hud::DebugHud`).
+//!
+//! The panels are the run's [`DebugPanels`] resource, which the player puts
+//! in only when its launcher lists a debug HUD: `None` in a build without
+//! the debug-hud package, and in a capture.
 
 /// Where the host should dock a panel when rendering it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -69,9 +51,9 @@ pub struct PanelHost {
 }
 
 /// The player's F3/F4 panels, in its run resources (ADR 0137 decision 2,
-/// #1550): the debug HUD's registration point, which a subsystem asks for
-/// with `resources.get_mut::<DebugPanels>()` to add its own panel. `None`
-/// in a build without the debug HUD and in a capture.
+/// #1550): the registration point a subsystem asks for with
+/// `resources.get_mut::<DebugPanels>()` to add its own panel. `None` in a
+/// build without the debug HUD and in a capture.
 #[derive(Default)]
 pub struct DebugPanels(pub Vec<Box<dyn DebugPanel>>);
 
@@ -110,6 +92,14 @@ pub trait DebugPanel {
         PanelLayout::default()
     }
 
+    /// Whether the panel is the player's, not the scene's: it outlives a
+    /// scene transition, open or closed as it was (#268). Rendering &
+    /// Effects (F4) and a game's panels (ADR 0107) are; the default is a
+    /// scene's panel, which the next scene's panels replace.
+    fn outlives_scene(&self) -> bool {
+        false
+    }
+
     /// Once a frame, before the panels draw: apply what the panel's widgets
     /// changed and read back what it shows. The default does nothing (a
     /// panel the host fills itself, a game's).
@@ -122,7 +112,7 @@ pub trait DebugPanel {
     fn paint_world(&mut self, _ctx: &egui::Context, _view_proj: &[[f32; 4]; 4]) {}
 
     /// About how many widget rows tall the panel is, for balancing the F3
-    /// columns ([`assign_columns`]).
+    /// columns.
     fn weight(&self) -> u32 {
         6
     }
@@ -142,75 +132,9 @@ pub trait DebugPanel {
 /// 4's "debug-hud's registration point"): `None` when the scene doesn't.
 pub type ScenePanel = fn(&flint_ecs::FlintWorld) -> Option<Box<dyn DebugPanel>>;
 
-/// The registration point packages add their scene panels to: the player
-/// inserts it, and makes each at a scene's panels, in the order added, with
-/// the package it belongs to (a project's `[packages]` that leaves the
-/// package out gets none). Living's Living Props panel is one.
+/// The registration point packages add their scene panels to: the kernel
+/// inserts it, and the player makes each at a scene's panels, in the order
+/// added, with the package it belongs to (a project's `[packages]` that
+/// leaves the package out gets none). Living's Living Props panel is one.
 #[derive(Default)]
 pub struct ScenePanels(pub Vec<(&'static str, ScenePanel)>);
-
-/// Distribute panels (by [`DebugPanel::weight`], in stable creation order)
-/// across up to `max_cols` columns via greedy lightest-bin assignment.
-/// Returns per-column index lists into the input slice. Deterministic; no
-/// empty columns for non-empty input.
-pub fn assign_columns(weights: &[u32], max_cols: usize) -> Vec<Vec<usize>> {
-    let n_cols = max_cols.max(1).min(weights.len().max(1));
-    let mut cols: Vec<Vec<usize>> = vec![Vec::new(); n_cols];
-    let mut loads = vec![0u32; n_cols];
-    for (i, weight) in weights.iter().enumerate() {
-        let c = (0..n_cols).min_by_key(|&c| (loads[c], c)).unwrap();
-        cols[c].push(i);
-        loads[c] += weight;
-    }
-    cols
-}
-
-#[cfg(test)]
-mod column_tests {
-    use super::assign_columns;
-
-    #[test]
-    fn single_panel_single_column() {
-        let cols = assign_columns(&[46], 3);
-        assert_eq!(cols, vec![vec![0]]);
-    }
-
-    #[test]
-    fn two_panels_two_columns() {
-        let cols = assign_columns(&[46, 6], 3);
-        assert_eq!(cols, vec![vec![0], vec![1]]);
-    }
-
-    #[test]
-    fn empty_input_no_empty_columns() {
-        let cols = assign_columns(&[], 3);
-        assert_eq!(cols.iter().filter(|c| !c.is_empty()).count(), 0);
-        assert!(cols.len() <= 1);
-    }
-
-    #[test]
-    fn max_cols_one_stacks_everything() {
-        let cols = assign_columns(&[46, 15, 6], 1);
-        assert_eq!(cols, vec![vec![0, 1, 2]]);
-    }
-
-    #[test]
-    fn full_roster_balances_three_columns() {
-        // A representative full roster in creation order, mixing engine
-        // panels with game-supplied ones (which take the default weight).
-        // Rendering & Effects, Ocean, then a game's component panels
-        // (Day / Time, Weather, Lantern, Fog Bank, Tide) and Camera.
-        let weights = [60, 46, 10, 15, 20, 5, 6, 6];
-        let cols = assign_columns(&weights, 3);
-        assert_eq!(cols.len(), 3);
-        assert!(cols.iter().all(|c| !c.is_empty()));
-        // Rendering & Effects (60 rows) is heavy enough to hold a column
-        // alone; Ocean (46 rows) anchors the second column.
-        assert_eq!(cols[0], vec![0]);
-        assert_eq!(cols[1].first(), Some(&1));
-        // Every panel lands in exactly one column.
-        let mut all: Vec<usize> = cols.iter().flatten().copied().collect();
-        all.sort_unstable();
-        assert_eq!(all, (0..weights.len()).collect::<Vec<_>>());
-    }
-}

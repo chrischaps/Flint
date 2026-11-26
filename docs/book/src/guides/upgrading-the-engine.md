@@ -168,7 +168,7 @@ It compiles, so `cargo check --all-targets` passes and only `cargo test` finds i
 
 ```toml
 [dev-dependencies]
-flint-debug-ui = { path = "engine/crates/flint-debug-ui" }
+flint-debug-ui = { path = "engine/packages/debug-hud/crates/flint-debug-ui" }
 ```
 
 Without it, clear them yourself: `ctx.run_ui(input, ..).textures_delta.clear()`.

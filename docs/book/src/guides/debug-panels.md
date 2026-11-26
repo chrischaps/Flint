@@ -1,6 +1,6 @@
 # Debug Panels
 
-Flint's runtime tuning surface is a set of egui **debug panels** that live in the `flint-debug-ui` crate and are hosted by the player and, for one of them, by the scene viewer. They exist so that a tuning session ends as a diff to the scene file rather than as notes: every panel edits live values, and most can write those values back into the scene TOML.
+Flint's runtime tuning surface is a set of egui **debug panels** that live in the `debug-hud` package's crate, `flint-debug-ui`, and are hosted by the player and, for one of them, by the scene viewer. They exist so that a tuning session ends as a diff to the scene file rather than as notes: every panel edits live values, and most can write those values back into the scene TOML.
 
 Panels are dev surface. They compile only when the player's `debug-hud` cargo feature is on (it is on by default), and a feature-off build carries zero panel code and must still compile.
 
@@ -277,7 +277,7 @@ They join the engine's panels after them: F3 opens and closes them with the rest
 
 ### Inside the engine
 
-An engine panel is any type implementing the `DebugPanel` trait from `flint-debug-ui`:
+An engine panel is any type implementing the `DebugPanel` trait, the kernel's `flint_package::panels::DebugPanel` (re-exported by `flint-debug-ui`), so a package adds its own without depending on the debug-hud package:
 
 ```rust
 pub trait DebugPanel {
@@ -286,6 +286,7 @@ pub trait DebugPanel {
     fn is_open(&self) -> bool;
     fn toggle(&mut self);
     fn layout(&self) -> PanelLayout { PanelLayout::SideRight }
+    fn outlives_scene(&self) -> bool { false } // F4's and a game's: true
     fn sync(&mut self, ctx: &mut PanelCtx) {} // apply edits, read state back
     fn weight(&self) -> u32 { 6 }           // rows tall, for the columns
     fn is_dirty(&self) -> bool;             // unapplied edits?
@@ -295,7 +296,7 @@ pub trait DebugPanel {
 }
 ```
 
-The player holds `Vec<Box<dyn DebugPanel>>` and renders them generically. Construction follows one pattern: look for the first entity carrying the driving component, build a config from that component, and push the panel with the scene path and entity name so Commit to File knows where to write. Each frame, before the panels draw, the player hands every panel one `PanelCtx` (the world, the renderer and its device, the camera, the particles, and a `PanelHost` for what a panel tells the player: F4's freeze switch and look, a style it committed, whether particles draw), and each panel's `sync` applies its own edits. The player never asks a panel its name to know what to do with it (#744). Nothing needs registering.
+The run's panels are its `DebugPanels` resource, there only when the launcher lists the debug-hud package, and the package's HUD (`flint_package::hud::DebugHud`) makes, syncs and draws them. Construction follows one pattern: look for the first entity carrying the driving component, build a config from that component, and push the panel with the scene path and entity name so Commit to File knows where to write. Each frame, before the panels draw, the HUD hands every panel one `PanelCtx` (the world, the renderer and its device, the camera, the particles, and a `PanelHost` for what a panel tells the player: F4's freeze switch and look, a style it committed, whether particles draw), and each panel's `sync` applies its own edits. The player never asks a panel its name to know what to do with it (#744). Nothing needs registering.
 
 The game's panels go through this trait too, on a small panel the player holds for each name, whose contents it draws by calling the extension.
 

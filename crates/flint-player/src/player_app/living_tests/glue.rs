@@ -4,7 +4,6 @@
 
 use crate::player_app::subsystem::stage_ctx;
 use crate::player_app::PlayerApp;
-#[cfg(feature = "debug-hud")]
 use flint_living::panel::{KnobFlags, LivingPanelAction, LivingPickedState, LivingSpeciesState};
 use flint_living::player::ab::AbState;
 use flint_living::player::props::species_of;
@@ -80,7 +79,6 @@ impl PlayerApp {
         flint_procgen::player::resolver_mut(&mut self.core.resources)
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn apply_living_action(&mut self, action: LivingPanelAction) {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -120,7 +118,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn drain_living_panel(&mut self) {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -163,7 +160,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn living_let_go(&mut self) -> bool {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -178,7 +174,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn living_mixed(&mut self) -> KnobFlags {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -186,7 +181,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn living_picked_state(&mut self, name: &str) -> Option<LivingPickedState> {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -208,7 +202,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn living_species(&mut self) -> Vec<String> {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -216,7 +209,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn living_species_states(
         &mut self,
         unsaved: &flint_living::player::tuning::Unsaved,
@@ -234,7 +226,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn living_takes_click(
         &mut self,
         state: winit::event::ElementState,
@@ -272,7 +263,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn pick_living(&mut self, name: Option<&str>) -> bool {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -280,7 +270,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn pick_living_at_centre(&mut self) -> bool {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -288,7 +277,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn pick_next_living(&mut self, forward: bool) -> bool {
         self.with_living(|living, ctx| {
             let _ = &ctx;
@@ -296,7 +284,6 @@ impl PlayerApp {
         })
     }
 
-    #[cfg(feature = "debug-hud")]
     pub(crate) fn picked_living(&mut self) -> Option<String> {
         self.with_living(|living, ctx| {
             let _ = &ctx;

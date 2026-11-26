@@ -80,7 +80,6 @@ pub fn scene_post_process_in(
 
 /// The grass a scene loaded, for its debug panel. The fields are only read
 /// by the `debug-hud` grass panel construction.
-#[cfg_attr(not(feature = "debug-hud"), allow(dead_code))]
 pub(super) struct LoadedGrassInfo {
     pub config: flint_terrain::GrassConfig,
     pub terrain_entity_name: String,

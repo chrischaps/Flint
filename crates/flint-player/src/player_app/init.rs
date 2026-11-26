@@ -141,13 +141,15 @@ impl PlayerApp {
         // Before the file source may be final (the web installs its bundle
         // later): `refresh_project` asks again when the scene loads.
         let project = flint_core::project::Project::for_scene(Path::new(&scene_path));
-        #[allow(unused_mut)] // the panels go in only with the debug HUD
         let mut core = super::GameCore::new(world, scene_path, project);
-        // The F3/F4 panels, lent to every subsystem through its context's
-        // resources (ADR 0137, #1550): a capture has none
-        #[cfg(feature = "debug-hud")]
-        core.resources
-            .insert(flint_debug_ui::DebugPanels::default());
+        // The run's debug HUD, when the launcher lists the package (#1559),
+        // and the F3/F4 panels with it, lent to every subsystem through its
+        // context's resources (ADR 0137, #1550): a capture has neither
+        let debug = crate::packages::registry().hud().map(|make| {
+            core.resources
+                .insert(flint_package::panels::DebugPanels::default());
+            make()
+        });
         Self {
             core,
             input: InputState::new(),
@@ -168,7 +170,10 @@ impl PlayerApp {
             quality: Default::default(),
             frame_pacer: None,
             skeletal_entity_assets: HashMap::new(),
-            hud: Default::default(),
+            hud: super::state::Hud {
+                debug,
+                ..Default::default()
+            },
             assets: AssetSources::default(),
             focus: Default::default(),
             post: Default::default(),
@@ -246,7 +251,6 @@ impl PlayerApp {
             self.refresh_project_fonts();
         }
         // And its debug panels, before the next scene load builds them again.
-        #[cfg(feature = "debug-hud")]
         self.create_extension_debug_panels();
     }
 
@@ -443,7 +447,6 @@ impl PlayerApp {
                 });
             }
         }
-        #[cfg(feature = "debug-hud")]
         self.refresh_style_panels_after_look();
         Ok(())
     }
