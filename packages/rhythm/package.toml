@@ -10,6 +10,11 @@
 # `[rust]` below. The `conducted` module is declared by music's crate, which
 # enables it neutral for a chart nothing judges; it is listed here because
 # rhythm is what fills it.
+#
+# `[provides] fields` (#1581) are the `music_session` fields only rhythm
+# reads: a scene that writes one uses rhythm, though the component is
+# music's, so `flint package used` names rhythm for it and `flint check`
+# says `unlisted-package` when [packages] leaves rhythm out.
 
 [package]
 name = "rhythm"
@@ -32,3 +37,16 @@ cli = "flint-rhythm-game"
 crates = ["flint-rhythm", "flint-input-capture", "flint-rhythm-game"]
 script_modules = ["conducted"]
 commands = ["music calibrate", "music chart"]
+fields = [
+    "music_session.chart",
+    "music_session.lean_mode",
+    "music_session.input_map",
+    "music_session.coherence_config",
+    "music_session.ladder_config",
+    "music_session.gradient_config",
+    "music_session.haptics_config",
+    "music_session.bars",
+    "music_session.quit_on_finish",
+    "music_session.tuning_config",
+    "music_session.bindings",
+]

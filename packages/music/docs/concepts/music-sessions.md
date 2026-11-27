@@ -163,6 +163,8 @@ quit_on_finish = false
 | `tuning_config` | string | | Parsed and logged, not yet read |
 | `bindings` | string | | Declarative only. The script named here must be loaded through an ordinary `script` component; the session warns if the file does not exist |
 
+The fields from `chart` down are the rhythm layer's, so a scene that sets one uses the `rhythm` package as well. The rhythm manifest lists them as its `[provides] fields`: `flint package used` names `rhythm` for a session with a `chart` (and `--write` lists it), and `flint check` in a game whose `[packages]` lists `music` alone reports an `unlisted-package` error with the hint to add `rhythm = "*"`.
+
 Paths are from the project root (the folder of the scene's `flint.toml`). A suite that fails flint-music's validation, or whose stems are missing, is reported on the console and doesn't play; the scene runs on without it.
 
 ## Lifecycle
