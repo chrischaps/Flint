@@ -482,7 +482,9 @@ impl PlayerApp {
     /// was, so the scene never loads with an empty registry.
     fn schemas_for_scene(&mut self, scene: &str) -> std::sync::Arc<flint_schema::SchemaRegistry> {
         match self.schema_dirs.for_scene(Path::new(scene)) {
-            Ok(dirs) => self.schema_dirs = dirs,
+            // A host list brings its engine's packages again: only those
+            // this player has (#1529)
+            Ok(dirs) => self.schema_dirs = crate::packages::built_schema_dirs(dirs),
             Err(e) => tracing::error!("{e}; keeping the schema directories already loaded"),
         }
         self.schemas

@@ -219,7 +219,11 @@ fn check_all(
     });
     let refused: &[&str] = parsed.as_ref().map_or(&[], |(_, _, refused)| refused);
     if !checks.schema {
-        found.retain(|d| stops_a_load(d) || refuses_a_table(d, refused));
+        // A package the project leaves out is a line to add, in a bundle too
+        // (#1529): its scene would play with the package's parts unread
+        found.retain(|d| {
+            stops_a_load(d) || refuses_a_table(d, refused) || d.code == codes::UNLISTED_PACKAGE
+        });
     }
     // This pass's own asset check asks the catalog and the specs first
     if checks.files {

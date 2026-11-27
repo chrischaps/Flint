@@ -191,6 +191,8 @@ fn load_schemas(
         log::error!("Schemas: {e}. Loading the packed engine and game schemas instead");
         project::host_schema_dirs(&packed, Some(scene))
     });
+    // Only the packages this player has (#1529)
+    let dirs = flint_player::packages::built_schema_dirs(dirs);
     log::info!(
         "Schemas ({}): {}",
         dirs.source.name(),

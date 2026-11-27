@@ -757,6 +757,17 @@ pub fn packed_schema_dirs(
 }
 
 impl SchemaDirs {
+    /// The list less every package schema directory (`<..>/packages/<name>/schemas`,
+    /// [`package_named_by`]) of a package `lacks` names: what a player that
+    /// was built or launched without a package reads (#1529), so it doesn't
+    /// know that package's components and tables, whatever the disk or a
+    /// bundle holds. The engine's own directories and the game's stay.
+    pub fn without_packages(mut self, lacks: impl Fn(&str) -> bool) -> Self {
+        self.dirs
+            .retain(|dir| package_named_by(dir).is_none_or(|name| !lacks(&name)));
+        self
+    }
+
     /// TEMPORARY, for one release (ADR 0114 decision 3, #765): one line for
     /// each directory in [`dropped`](Self::dropped), for a command that
     /// used to add it to its `--schemas` flags (play, render, validate, the
@@ -915,24 +926,7 @@ fn with_packages(
     list: Option<&crate::package::PackageList>,
 ) -> Result<(Vec<PathBuf>, Option<crate::package::InUse>), SchemaDirsError> {
     let game = dirs.iter().find_map(|d| game_packages_beside(d));
-    let in_use = match list {
-        None => None,
-        Some(list) => match dirs.iter().find_map(|d| engine_packages_of(d)) {
-            None => None,
-            Some(packages_dir) => {
-                let packages =
-                    crate::package::Packages::read_with_game(&packages_dir, game.as_deref());
-                Some(
-                    crate::package::InUse::resolve(list, &packages).map_err(|problems| {
-                        SchemaDirsError::Packages {
-                            file: list.file.clone(),
-                            problems,
-                        }
-                    })?,
-                )
-            }
-        },
-    };
+    let in_use = packages_in_use(list, &dirs)?;
     let wanted = |name: &str| in_use.as_ref().is_none_or(|u| u.is_on(name));
     let dirs: Vec<PathBuf> = dirs
         .into_iter()
@@ -963,6 +957,29 @@ fn with_packages(
     Ok((out, in_use))
 }
 
+/// What `list` (a project's `[packages]`) lets in, held to the manifests of
+/// the first engine among `dirs` ([`engine_packages_for`]): the answer every
+/// schema list is filtered by, and what `flint bundle` packs by (#1529).
+/// `None` with no list, or with no engine among `dirs` to read the
+/// manifests from; the list's mistakes are [`SchemaDirsError::Packages`].
+pub fn packages_in_use(
+    list: Option<&crate::package::PackageList>,
+    dirs: &[PathBuf],
+) -> Result<Option<crate::package::InUse>, SchemaDirsError> {
+    let (Some(list), Some(packages_dir)) = (list, engine_packages_for(dirs)) else {
+        return Ok(None);
+    };
+    // The engine's packages, then the game's own (#1562)
+    let game = dirs.iter().find_map(|d| game_packages_beside(d));
+    let packages = crate::package::Packages::read_with_game(&packages_dir, game.as_deref());
+    crate::package::InUse::resolve(list, &packages)
+        .map(Some)
+        .map_err(|problems| SchemaDirsError::Packages {
+            file: list.file.clone(),
+            problems,
+        })
+}
+
 /// The engine's package folder (`<engine>/packages`) of the first engine
 /// schema directory, or package schema directory, in `dirs`: where the
 /// manifests that hold a `[packages]` list are read (#1334).
@@ -984,6 +1001,26 @@ fn engine_packages_of(dir: &Path) -> Option<PathBuf> {
 /// in it.
 fn is_engine_packages(dir: &Path) -> bool {
     vfs::is_file(dir.join(KERNEL_PACKAGE).join(crate::package::MANIFEST_FILE))
+}
+
+/// The package whose schema directory `dir` is laid out as: `name` for
+/// `<..>/packages/<name>/schemas`, the place the engine's tree and a bundle
+/// both keep one (#1332). Unlike the resolver's own test it reads no
+/// manifest, since a bundle packs only the schemas: it is for a host that
+/// knows which packages it has and drops the rest
+/// ([`SchemaDirs::without_packages`]).
+pub fn package_named_by(dir: &Path) -> Option<String> {
+    if dir.file_name()? != PACKAGE_SCHEMAS_DIR {
+        return None;
+    }
+    let package = dir.parent()?;
+    (package.parent()?.file_name()? == crate::package::PACKAGES_DIR)
+        .then(|| {
+            package
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
+        .flatten()
 }
 
 /// `(<engine>/packages, name)` when `dir` is a package's schema directory,
@@ -2335,5 +2372,43 @@ save_version = 1.5
         assert!(p.root.is_absolute());
         assert!(here.starts_with(&p.root));
         assert_ne!(p.found, Found::Fallback);
+    }
+
+    /// A player without a package drops that package's schema folders
+    /// (#1529), spelled as the engine's tree keeps them or as a bundle packs
+    /// them (no manifests packed beside them), and nothing else.
+    #[test]
+    fn a_host_without_a_package_drops_its_schema_folders_only() {
+        assert_eq!(
+            package_named_by(Path::new("engine/packages/living/schemas")).as_deref(),
+            Some("living")
+        );
+        assert_eq!(
+            package_named_by(Path::new("C:/Flint/packages/music/schemas")).as_deref(),
+            Some("music")
+        );
+        assert_eq!(package_named_by(Path::new("engine/schemas")), None);
+        assert_eq!(package_named_by(Path::new("living/schemas")), None);
+        assert_eq!(package_named_by(Path::new("packages/living")), None);
+
+        let dirs = SchemaDirs {
+            dirs: [
+                "engine/schemas",
+                "engine/packages/living/schemas",
+                "engine/packages/music/schemas",
+                "schemas",
+            ]
+            .map(PathBuf::from)
+            .to_vec(),
+            source: SchemaSource::Host,
+            dropped: Vec::new(),
+            packages: None,
+        };
+        let kept = dirs.clone().without_packages(|p| p == "living");
+        assert_eq!(
+            paths(&kept),
+            ["engine/schemas", "engine/packages/music/schemas", "schemas"]
+        );
+        assert_eq!(dirs.clone().without_packages(|_| false), dirs);
     }
 }

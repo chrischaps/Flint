@@ -2,9 +2,13 @@
 //!
 //! A browser can't list a directory over HTTP, so the web player carries
 //! `schemas/components`, `schemas/archetypes` and `schemas/scene` (the
-//! scene-level tables, #686), and the same folders of every
-//! `packages/<name>/schemas` (#1332), in the binary (about 140 KB of text). A game bundle's own schemas (#98) load over them. Writes
-//! `$OUT_DIR/engine_schemas.rs`; the desktop player never includes it.
+//! scene-level tables, #686), and the same folders of the
+//! `packages/<name>/schemas` (#1332) of each package this build has
+//! (#1529: a build without `living` carries no `living_prop`), in the
+//! binary (about 140 KB of text), each file under its package's name so a
+//! launcher that leaves a package off loads none of it. A game bundle's own
+//! schemas (#98) load over them. Writes `$OUT_DIR/engine_schemas.rs`; the
+//! desktop player never includes it.
 //!
 //! (It no longer lists the player's scene subsystems: since #1552 each
 //! package registers its own through the run's `flint_package::Registry`,
@@ -129,24 +133,38 @@ fn package_list(engine: &Path) {
 fn main() {
     let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     // The engine's schemas, then each package's (`packages/<name>/schemas`,
-    // by name: the order the resolver brings them in, #1332)
+    // by name: the order the resolver brings them in, #1332), only of the
+    // packages this build has (#1529): one with no `[build] features` is
+    // in every build
     let packages = engine.join("packages");
     println!("cargo:rerun-if-changed={}", packages.display());
-    let mut package_dirs: Vec<PathBuf> = std::fs::read_dir(&packages)
+    let manifests = launch_list::read(&engine);
+    let built = |name: &str| {
+        manifests
+            .iter()
+            .find(|m| m.name == name)
+            .is_none_or(|m| m.features.is_empty() || launch_list::built(&m.features))
+    };
+    let mut package_dirs: Vec<(String, PathBuf)> = std::fs::read_dir(&packages)
         .map(|rd| {
-            rd.filter_map(|e| Some(e.ok()?.path().join("schemas")))
-                .collect()
+            rd.filter_map(|e| {
+                let path = e.ok()?.path();
+                let name = path.file_name()?.to_string_lossy().into_owned();
+                Some((name, path.join("schemas")))
+            })
+            .collect()
         })
         .unwrap_or_default();
-    package_dirs.retain(|d| d.is_dir());
+    package_dirs.retain(|(name, d)| d.is_dir() && built(name));
     package_dirs.sort();
-    let roots: Vec<PathBuf> = std::iter::once(engine.join("schemas"))
-        .chain(package_dirs)
-        .collect();
+    let roots: Vec<(String, PathBuf)> =
+        std::iter::once(("engine".to_string(), engine.join("schemas")))
+            .chain(package_dirs)
+            .collect();
     let mut out = String::new();
     for kind in ["components", "archetypes", "scene"] {
-        let mut files: Vec<PathBuf> = Vec::new();
-        for root in &roots {
+        let mut files: Vec<(&str, PathBuf)> = Vec::new();
+        for (package, root) in &roots {
             let dir = root.join(kind);
             // Only a folder that is there: cargo takes a watched path that
             // is missing as changed, so every build rebuilt this crate and
@@ -161,11 +179,22 @@ fn main() {
                 .unwrap_or_default();
             here.retain(|p| p.extension().is_some_and(|e| e == "toml"));
             here.sort();
-            files.extend(here);
+            files.extend(here.into_iter().map(|p| (package.as_str(), p)));
         }
-        writeln!(out, "pub const {}: &[&str] = &[", kind.to_uppercase()).unwrap();
-        for file in files {
-            writeln!(out, "    include_str!({:?}),", file.display().to_string()).unwrap();
+        // Each file with the package it is of
+        writeln!(
+            out,
+            "pub const {}: &[(&str, &str)] = &[",
+            kind.to_uppercase()
+        )
+        .unwrap();
+        for (package, file) in files {
+            writeln!(
+                out,
+                "    ({package:?}, include_str!({:?})),",
+                file.display().to_string()
+            )
+            .unwrap();
         }
         writeln!(out, "];").unwrap();
     }

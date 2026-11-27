@@ -218,5 +218,42 @@ fn a_package_outside_the_player_runs_from_the_launchers_list() {
         "{:#?}",
         report.warnings
     );
+
+    // A player without living doesn't know `living_prop` (#1529), though
+    // the engine's schemas on the disk bring living's folder: this run
+    // drops it, as a web player built without living carries none of it
+    let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+    let engine = engine.to_string_lossy().into_owned();
+    let dirs = flint_core::project::schema_dirs(None, std::slice::from_ref(&engine)).unwrap();
+    let living = |dirs: &flint_core::project::SchemaDirs| {
+        dirs.dirs
+            .iter()
+            .any(|d| d.ends_with("packages/living/schemas"))
+    };
+    assert!(living(&dirs), "the engine's tree brings it: {dirs:?}");
+    let built = flint_player::packages::built_schema_dirs(dirs);
+    assert!(!living(&built), "{built:?}");
+    assert!(built.dirs.iter().any(|d| d.ends_with("schemas")));
+
+    // Played against those schemas, the prop is a component it doesn't know
+    let scene = project_with(
+        &dir.join("unknown"),
+        "[entities.oak]\nliving_prop = { species = \"oak\" }\n",
+        STILL,
+    );
+    let mut options = flint_player::PlaytestOptions::new(scene);
+    options.schemas = vec![engine];
+    options.timeout = Some(5.0);
+    let report = flint_player::playtest(&options);
+    assert!(report.passed, "{:#?}", report.failures);
+    assert!(
+        report
+            .warnings
+            .messages
+            .iter()
+            .any(|w| w.message.contains("unknown-component") && w.message.contains("living_prop")),
+        "{:#?}",
+        report.warnings
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

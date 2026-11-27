@@ -260,16 +260,32 @@ fn package_key(at: &str, package: &str) -> String {
     )
 }
 
-/// Mounts each package's schemas beside every engine schema directory a game
+/// The package schema directories a game's bundle packs (#1332, #1529).
+#[derive(Default)]
+struct PackageSchemas {
+    /// For each engine schema directory's bundle path, the package
+    /// directories it brings, in order.
+    brought: BTreeMap<String, Vec<String>>,
+    /// The bundle paths of the package directories `[packages]` leaves out:
+    /// neither mounted nor listed, even when `bundle.toml` names one.
+    left_out: BTreeSet<String>,
+    /// What `[packages]` lets in, held to the packed engine's manifests;
+    /// `None` without the table (every package is in).
+    in_use: Option<flint_core::package::InUse>,
+}
+
+/// Mounts the packages' schemas beside every engine schema directory a game
 /// packs: a mount's, or one of `listed` in the game's own tree (a subtree's
-/// `engine/schemas`), and returns, for each such directory's bundle path,
-/// the package directories it brings, in order. A listed path outside the
-/// game (`../schemas`) isn't packed, so it brings nothing either.
+/// `engine/schemas`). A listed path outside the game (`../schemas`) isn't
+/// packed, so it brings nothing either. With a `[packages]` list (`list`)
+/// only the packages it lets in come (#1529), as `flint check` and the
+/// player read the same project; its mistakes refuse the bundle.
 fn mount_package_schemas(
     root: &Path,
     listed: &[String],
     mounts: &mut BTreeMap<String, PathBuf>,
-) -> BTreeMap<String, Vec<String>> {
+    list: Option<&flint_core::package::PackageList>,
+) -> Result<PackageSchemas> {
     let inside = |s: &&String| !s.starts_with("..") && !Path::new(s.as_str()).is_absolute();
     let engines: Vec<(String, PathBuf)> = mounts
         .iter()
@@ -282,15 +298,23 @@ fn mount_package_schemas(
                 .map(|s| (s.clone(), root.join(s))),
         )
         .collect();
-    let mut brought: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let dirs: Vec<PathBuf> = engines.iter().map(|(_, dir)| dir.clone()).collect();
+    let in_use =
+        flint_core::project::packages_in_use(list, &dirs).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut out = PackageSchemas::default();
     for (at, dir) in engines {
         for (package, from) in flint_core::project::package_schema_dirs(&dir) {
             let key = package_key(&at, &package);
+            if in_use.as_ref().is_some_and(|u| !u.is_on(&package)) {
+                out.left_out.insert(key);
+                continue;
+            }
             mounts.entry(key.clone()).or_insert(from);
-            brought.entry(at.clone()).or_default().push(key);
+            out.brought.entry(at.clone()).or_default().push(key);
         }
     }
-    brought
+    out.in_use = in_use;
+    Ok(out)
 }
 
 impl BundleConfig {
@@ -471,12 +495,17 @@ fn collect_under(root: &Path, rules: &Rules) -> Result<Vec<String>> {
 /// `flint.toml`'s `[project.diagnostics] allow` (#795) leaves out what it
 /// names, from the reference pass as from each scene's check (#1060), so
 /// a bundle refuses what `flint check` reports and nothing more.
-pub fn check_packed(files: &BTreeMap<String, Vec<u8>>, schemas: &[String]) -> check::Report {
+pub fn check_packed(
+    files: &BTreeMap<String, Vec<u8>>,
+    schemas: &[String],
+    packages: Option<&flint_core::package::InUse>,
+) -> check::Report {
     let source: MemorySource = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
     let mut subject = Subject::packed(
         files.keys().cloned().collect(),
         Schemas::Listed(schemas.to_vec()),
     );
+    subject.packages = packages.cloned();
     vfs::scoped(Arc::new(source), || {
         // A manifest that doesn't read was refused when the pack read its
         // name and start scene; with none packed, nothing is allowed
@@ -605,6 +634,9 @@ struct Gathered {
     out_dir: PathBuf,
     /// Files that stay in the main bundle whatever `[late]` says.
     main_only: BTreeSet<String>,
+    /// What the project's `[packages]` lets in (#1529): the check names a
+    /// left-out package's component or table by the line to add.
+    packages: Option<flint_core::package::InUse>,
 }
 
 pub fn pack(args: BundleArgs) -> Result<Packed> {
@@ -675,8 +707,9 @@ fn gather_game(args: &BundleArgs) -> Result<Gathered> {
     .map(|s| normalize(Path::new(&s)))
     .collect();
     // An engine schema directory brings its packages' schemas (#1332): each
-    // is packed beside it, where the engine's tree keeps it, and listed after it
-    let brought = mount_package_schemas(root, &listed, &mut mounts);
+    // is packed beside it, where the engine's tree keeps it, and listed
+    // after it; only those `[packages]` lets in (#1529)
+    let packages = mount_package_schemas(root, &listed, &mut mounts, project.packages.as_ref())?;
 
     let paths = collect(root, &rules, &mounts)?;
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
@@ -716,9 +749,9 @@ fn gather_game(args: &BundleArgs) -> Result<Gathered> {
     // the directories that were packed
     let mut schemas: Vec<String> = Vec::new();
     for dir in listed {
-        let packages = brought.get(&dir).cloned().unwrap_or_default();
-        for dir in std::iter::once(dir).chain(packages) {
-            if !schemas.contains(&dir) {
+        let brings = packages.brought.get(&dir).cloned().unwrap_or_default();
+        for dir in std::iter::once(dir).chain(brings) {
+            if !schemas.contains(&dir) && !packages.left_out.contains(&dir) {
                 schemas.push(dir);
             }
         }
@@ -733,6 +766,7 @@ fn gather_game(args: &BundleArgs) -> Result<Gathered> {
         rules,
         out_dir: args.out_dir.clone().unwrap_or_else(|| root.join("dist")),
         main_only: BTreeSet::new(),
+        packages: packages.in_use,
     })
 }
 
@@ -818,9 +852,11 @@ fn gather_scene(args: &BundleArgs) -> Result<Gathered> {
     paths.insert(scene.clone(), scene_path.to_path_buf());
 
     // The schemas the scene resolves by, at their place in the project
-    let dirs = flint_core::project::schema_dirs(Some(scene_path), &[] as &[&str])
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-        .dirs;
+    // (only the packages its `[packages]` lets in, #1529)
+    let resolved = flint_core::project::schema_dirs(Some(scene_path), &[] as &[&str])
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let dirs = resolved.dirs;
+    let mut in_use = resolved.packages;
     let mut mounts: BTreeMap<String, PathBuf> = BTreeMap::new();
     let mut schemas = Vec::new();
     // Each engine directory's packages (#1332): their directories on the
@@ -867,10 +903,16 @@ fn gather_scene(args: &BundleArgs) -> Result<Gathered> {
                 "{scene} resolves no schemas: packing the engine's, from {}",
                 dir.display()
             );
+            in_use = flint_core::project::packages_in_use(
+                project.packages.as_ref(),
+                std::slice::from_ref(&dir),
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             let packages = flint_core::project::package_schema_dirs(&dir);
             let at = "engine/schemas".to_string();
             let brought = packages
                 .into_iter()
+                .filter(|(package, _)| in_use.as_ref().is_none_or(|u| u.is_on(package)))
                 .map(|(package, from)| (package_key(&at, &package), from));
             for (at, dir) in std::iter::once((at.clone(), dir)).chain(brought) {
                 for rel in files_under(&dir)? {
@@ -1003,7 +1045,7 @@ fn gather_scene(args: &BundleArgs) -> Result<Gathered> {
         if grew {
             continue;
         }
-        let report = check_packed(&files, &schemas);
+        let report = check_packed(&files, &schemas, in_use.as_ref());
         for d in report.diagnostics.iter().filter(|d| d.is_error()) {
             let found = d.tried.iter().find_map(|tried| {
                 let key = normalize(tried);
@@ -1054,6 +1096,7 @@ fn gather_scene(args: &BundleArgs) -> Result<Gathered> {
         rules,
         out_dir,
         main_only,
+        packages: in_use,
     })
 }
 
@@ -1153,10 +1196,11 @@ fn write(gathered: Gathered, list: bool, dry_run: bool) -> Result<Packed> {
         rules,
         out_dir,
         main_only,
+        packages,
     } = gathered;
     // Check before writing: a bundle with a hole in it fails here. The
     // checks are `flint check`'s, over the packed files (#687).
-    let report = check_packed(&files, &schemas);
+    let report = check_packed(&files, &schemas, packages.as_ref());
     for warning in report.diagnostics.iter().filter(|d| !d.is_error()) {
         eprintln!("warning: {}", warning.one_line());
     }
@@ -1167,15 +1211,27 @@ fn write(gathered: Gathered, list: bool, dry_run: bool) -> Result<Packed> {
             .filter(|d| d.is_error())
             .cloned()
             .collect();
-        let mut msg = format!(
-            "{} unresolved reference(s); nothing written:\n",
-            errors.len()
-        );
+        let mut msg = format!("{} problem(s); nothing written:\n", errors.len());
+        let unlisted = errors
+            .iter()
+            .filter(|d| d.code == flint_core::diagnostic::codes::UNLISTED_PACKAGE)
+            .count();
+        let missing = errors.len() > unlisted;
+        let unlisted = unlisted > 0;
         msg.push_str(&check::text(&check::Report {
             diagnostics: errors,
             ..report
         }));
-        msg.push_str("Pack the missing files, or leave the file that names them out with `exclude` in bundle.toml.");
+        if missing {
+            msg.push_str("Pack the missing files, or leave the file that names them out with `exclude` in bundle.toml.");
+        }
+        if unlisted {
+            if missing {
+                msg.push('\n');
+            }
+            // #1529: the bundle packs only the packages flint.toml lists
+            msg.push_str("Add each package line a hint names under [packages] in flint.toml: the bundle packs only the packages listed there.");
+        }
         bail!(msg);
     }
     let mut files = files;
@@ -1348,7 +1404,7 @@ mod tests {
         schemas: &[&str],
     ) -> Vec<(String, &'static str, String)> {
         let schemas: Vec<String> = schemas.iter().map(|s| s.to_string()).collect();
-        check_packed(files, &schemas)
+        check_packed(files, &schemas, None)
             .diagnostics
             .into_iter()
             .filter(|d| d.is_error())
@@ -1531,7 +1587,7 @@ mod tests {
             ),
             ("levels/a.scene.toml", "[scene]\nname = \"a\"\n"),
         ]);
-        let report = check_packed(&files, &[]);
+        let report = check_packed(&files, &[], None);
         assert!(!report.has_errors(), "{:?}", report.diagnostics);
         let said: Vec<_> = report
             .diagnostics
@@ -1743,5 +1799,165 @@ mod tests {
         ]);
         let e = pack_guarded_modules(&mut files).unwrap_err().to_string();
         assert!(e.contains("styles/spin.guarded.wgsl"), "{e}");
+    }
+
+    /// A game beside this checkout, as `flint init --engine path` writes
+    /// one: `flint.toml` names the engine's schemas by path, `bundle.toml`
+    /// mounts them at `engine/schemas`, and `[packages]` holds `packages`
+    /// (no table at all for `None`). Its one scene holds `entities`.
+    fn package_game(name: &str, packages: Option<&str>, entities: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("flint-1529-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        std::fs::create_dir_all(dir.join("schemas/components")).unwrap();
+        // `CARGO_MANIFEST_DIR` is absolute: `normalize` folds its `..`
+        let engine = normalize(&engine_schemas().unwrap());
+        let table = packages.map_or(String::new(), |lines| format!("\n[packages]\n{lines}"));
+        std::fs::write(
+            dir.join("flint.toml"),
+            format!(
+                "[project]\nid = \"{name}\"\nschemas = [\"{engine}\", \"schemas\"]\n\
+                 scene = \"scenes/main.scene.toml\"\n{table}"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("bundle.toml"),
+            format!(
+                "schemas = [\"engine/schemas\", \"schemas\"]\n\n[mount]\n\"engine/schemas\" = \"{engine}\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("scenes/main.scene.toml"),
+            format!("[scene]\nname = \"{name}\"\n\n[entities.box]\ntransform = {{}}\n{entities}"),
+        )
+        .unwrap();
+        dir
+    }
+
+    fn args(game: &Path) -> BundleArgs {
+        BundleArgs {
+            game: game.to_path_buf(),
+            out_dir: Some(game.join("dist")),
+            scene: None,
+            name: None,
+            list: false,
+            dry_run: true,
+        }
+    }
+
+    const OAKS: &str =
+        "\n[wooze]\namplitude = 0.5\n\n[entities.oak]\nliving_prop = { lineage_seed = 3 }\n\n\
+                        [entities.elm]\nliving_prop = { lineage_seed = 4 }\n";
+    const LIVING: &str = "engine/packages/living/schemas";
+    const MUSIC: &str = "engine/packages/music/schemas";
+
+    fn packed_under(gathered: &Gathered, dir: &str) -> bool {
+        gathered
+            .files
+            .keys()
+            .any(|k| k.starts_with(&format!("{dir}/")))
+    }
+
+    /// #1529's first box: with `[packages]`, only the listed packages'
+    /// schema folders are mounted and listed, for a game and for one scene.
+    #[test]
+    fn a_bundle_packs_only_the_packages_flint_toml_lists() {
+        let listed = package_game("listed", Some("living = \"*\"\n"), "");
+        let gathered = gather_game(&args(&listed)).unwrap();
+        assert_eq!(gathered.schemas, ["engine/schemas", LIVING]);
+        assert!(packed_under(&gathered, LIVING));
+        assert!(!packed_under(&gathered, MUSIC), "music isn't listed");
+        assert!(gathered.packages.as_ref().unwrap().is_on("living"));
+
+        // An empty table: the feature packages are all out
+        let game = package_game("none_listed", Some(""), "");
+        let gathered = gather_game(&args(&game)).unwrap();
+        assert_eq!(gathered.schemas, ["engine/schemas"]);
+        assert!(!gathered
+            .files
+            .keys()
+            .any(|k| k.starts_with("engine/packages/")));
+
+        // A scene packed alone reads the same list
+        let mut one = args(&game);
+        one.game = game.join("scenes/main.scene.toml");
+        let gathered = gather_scene(&one).unwrap();
+        assert!(!gathered.files.keys().any(|k| k.contains("packages/")));
+        assert!(!gathered.schemas.iter().any(|s| s.contains("packages/")));
+        let _ = std::fs::remove_dir_all(&listed);
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    /// #1529's second box: a packed scene that uses a left-out package is
+    /// refused, naming the line to add, as `flint check` names it.
+    #[test]
+    fn a_bundle_refuses_a_scene_of_a_left_out_package_naming_the_line() {
+        let game = package_game("left_out", Some(""), OAKS);
+        let e = write(gather_game(&args(&game)).unwrap(), false, true)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(e.contains("error[unlisted-package]"), "{e}");
+        assert!(e.contains("component `living_prop`"), "{e}");
+        assert!(e.contains("(1 other entity too)"), "said once: {e}");
+        assert!(e.contains("[wooze]"), "{e}");
+        assert!(e.contains("add `living = \"*\"` under [packages]"), "{e}");
+        assert!(e.contains("Add each package line"), "{e}");
+        assert!(
+            !e.contains("Pack the missing files"),
+            "nothing is missing: {e}"
+        );
+
+        // One scene alone is refused the same way
+        let mut one = args(&game);
+        one.game = game.join("scenes/main.scene.toml");
+        let e = write(gather_scene(&one).unwrap(), false, true)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(e.contains("add `living = \"*\"` under [packages]"), "{e}");
+
+        // Listed, it packs
+        let game = package_game("left_out", Some("living = \"*\"\n"), OAKS);
+        write(gather_game(&args(&game)).unwrap(), false, true).unwrap();
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    /// A mistake in the list refuses the bundle as it refuses every command.
+    #[test]
+    fn a_bad_packages_line_refuses_the_bundle() {
+        let game = package_game("bad_line", Some("livng = \"*\"\n"), "");
+        let e = gather_game(&args(&game)).err().unwrap().to_string();
+        assert!(e.contains("packages.livng"), "{e}");
+        assert!(e.contains("living"), "did you mean: {e}");
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    /// #1529's third box: with no `[packages]` every package is in, so the
+    /// bundle is the one a list naming every package makes, file for file,
+    /// and lists every package's schemas as before.
+    #[test]
+    fn with_no_packages_table_a_bundle_packs_every_package() {
+        let all = "living = \"*\"\nmusic = \"*\"\nrhythm = \"*\"\nai = \"*\"\n";
+        let no_table = package_game("no_table", None, OAKS);
+        let every = package_game("every", Some(all), OAKS);
+        let none = gather_game(&args(&no_table)).unwrap();
+        let listed = gather_game(&args(&every)).unwrap();
+        assert_eq!(none.schemas, ["engine/schemas", LIVING, MUSIC]);
+        assert_eq!(none.schemas, listed.schemas);
+        assert!(none.packages.is_none());
+        let engine_files = |g: &Gathered| -> BTreeMap<String, Vec<u8>> {
+            g.files
+                .iter()
+                .filter(|(k, _)| k.starts_with("engine/"))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        };
+        assert_eq!(engine_files(&none), engine_files(&listed));
+        write(none, false, true).unwrap();
+        let _ = std::fs::remove_dir_all(&no_table);
+        let _ = std::fs::remove_dir_all(&every);
     }
 }
