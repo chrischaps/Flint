@@ -1,6 +1,6 @@
 # Debug Panels
 
-Flint's runtime tuning surface is a set of egui **debug panels** that live in the `debug-hud` package's crate, `flint-debug-ui`, and are hosted by the player and, for one of them, by the scene viewer. They exist so that a tuning session ends as a diff to the scene file rather than as notes: every panel edits live values, and most can write those values back into the scene TOML.
+Flint's runtime tuning surface is a set of egui **debug panels** that live in the `debug-hud` package's crate, `flint-debug-ui`, and are hosted by the player. One of them, F4's Rendering & Effects panel, is the kernel's (`flint-widgets`, with the widgets every panel draws with), so the scene viewer hosts it too without the package (#1583). They exist so that a tuning session ends as a diff to the scene file rather than as notes: every panel edits live values, and most can write those values back into the scene TOML.
 
 Panels are dev surface. They compile only when the player's `debug-hud` cargo feature is on (it is on by default), and a feature-off build carries zero panel code and must still compile.
 

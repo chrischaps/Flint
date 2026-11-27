@@ -122,7 +122,7 @@ fn committing_a_style_keeps_the_unsaved_bloom_and_fog_on_screen() {
 
     // Commit to scene, as the button does it, then what the viewer does
     // on the panel's styles_committed flag
-    let mut editor = flint_debug_ui::StylesEditor::default();
+    let mut editor = flint_widgets::StylesEditor::default();
     editor.set_scene_file(Some(path.clone()));
     let ascii = flint_render::stylize::builtin("ascii").unwrap();
     editor.commit(ascii, &mut tuned).unwrap();
@@ -202,7 +202,7 @@ fn a_commit_appends_its_keys_to_the_change_list() {
     let mut app = viewer(&path, device, queue);
     let mut tuned = tune(&mut app);
 
-    let mut editor = flint_debug_ui::StylesEditor::default();
+    let mut editor = flint_widgets::StylesEditor::default();
     editor.set_scene_file(Some(path.clone()));
     let ascii = flint_render::stylize::builtin("ascii").unwrap();
     editor.commit(ascii, &mut tuned).unwrap();

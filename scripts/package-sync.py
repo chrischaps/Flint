@@ -53,10 +53,6 @@ COMMAND = "python3 scripts/package-sync.py"
 PLAYER = "crates/flint-player/Cargo.toml"
 CLI = "crates/flint-cli/Cargo.toml"
 END = "# package-sync:end"
-# A package flint-cli has in every build, so no feature of its own: the CLI
-# links flint-debug-ui for its windows' widgets and turns the player's
-# `debug-hud` on in its dependency line (#1583).
-CLI_HAS_IN_EVERY_BUILD = {"debug-hud"}
 
 
 class Refused(Exception):
@@ -127,8 +123,7 @@ def plan(packages):
     def part(bin_file, p):
         if bin_file == PLAYER:
             return "player" in p["rust"]
-        if p["name"] in CLI_HAS_IN_EVERY_BUILD:
-            return False
+
         return "player" in p["rust"] or "cli" in p["rust"]
 
     generated = {f: [] for f in texts}

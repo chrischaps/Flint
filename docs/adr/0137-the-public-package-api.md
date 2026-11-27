@@ -935,6 +935,50 @@ CI holds both halves.
   method that isn't there failed the build. A toy with a `[with.*]` part
   failed the sync.
 
+## As built: the widgets are the kernel's (#1583)
+
+#1559 left flint-cli and flint-viewer linking flint-debug-ui, the debug-hud
+package's crate, for two things: the egui widgets their windows draw, and
+the viewer's Rendering & Effects panel (F4) with its style editor and
+style cards. So `debug-hud = false` still put the package in a game's
+`flint`, and the CLI turned on the player's `debug-hud` in its dependency
+line. That is the last of the CLI debug-hud leftovers in the sections
+above.
+
+- **A kernel crate, `crates/flint-widgets`**, holds what both the tools and
+  the HUD draw: the widgets (`section`, `mixed_slider`, the drag helpers,
+  the curve and gradient editors, `FrameGraph`), `run_headless_frame`, and
+  the renderer's controls: `RenderDebugPanel`, `StylesEditor`,
+  `paint_style_errors` and `paint_style_drops`. The engine manifest lists
+  it with the kernel. It depends on flint-package (the panel trait the
+  panel implements, the graph's data), flint-render, flint-scene and
+  flint-schema, nothing of a package. flint-debug-ui depends on it and
+  re-exports it at the old paths (`pub use flint_widgets as widgets`, and
+  each panel type at the crate root), so living's and rhythm's panels and
+  every test built unchanged.
+- **The viewer's F4 is the viewer's own, not a debug-hud part.** The issue
+  asked which it is. The panel is the renderer's controls, which the
+  engine manifest groups with the render features still inside
+  flint-render, and the viewer keeps its post settings in the panel itself
+  (`render_panel.pp` is what DoF-follow reads and writes), so a viewer
+  without it would need a second home for that state. A viewer part
+  behind a feature would also leave `flint edit` without its render
+  controls in any game that drops the HUD, when what a game drops is the
+  in-game overlay. The player's F4 is the same panel, which the debug HUD
+  shows; with debug-hud out the player shows none, as before.
+- **flint-cli's `debug-hud` is a hand-written package feature,
+  `["flint-player/debug-hud"]`**, in `packages` and so default-on. The
+  dependency line turns on only `frame-history`. `package-sync.py` lost
+  `CLI_HAS_IN_EVERY_BUILD`, `package-names-check.py` its #1583 exception,
+  and `absent::ALWAYS_ON` and the owners test their debug-hud rows.
+  `flint build` for a project with `debug-hud = false` is one cargo run
+  now: nothing the CLI forces on the player is a package's, so the split
+  stays only as the general rule.
+- **Held by `scripts/headless-check.sh`**: flint-debug-ui is in
+  `CLI_OPTIONAL`, and the no-feature viewer is held to no flint-debug-ui
+  beside flint-wooze and flint-procgen. `cargo tree -p flint-cli
+  --no-default-features -e normal` has no flint-debug-ui.
+
 ## Measured
 
 - **Cargo globs** (cargo 1.99.1, a scratch workspace, 2026-11-25): `members`

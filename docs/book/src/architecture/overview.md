@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 37-member Cargo workspace (36 crates, 24 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 38-member Cargo workspace (37 crates, 25 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -13,6 +13,7 @@ flint/
 │   ├── flint-android/      # Android entry point (NativeActivity, APK asset extraction)
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
+│   ├── flint-widgets/      # The kernel's egui: widgets, a headless frame, F4's Rendering & Effects panel
 
 │   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
 │   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
@@ -50,7 +51,7 @@ flint/
 │   │   ├── flint-living/       # Living props at run time, and the package's player, F3 panel and CLI parts
 │   │   └── flint-wooze/        # The wooze field
 │   ├── debug-hud/crates/
-│   │   └── flint-debug-ui/     # The F3/F4 panel roster (Rendering & Effects, ocean, sky, ...), the widgets, and the HUD the player asks
+│   │   └── flint-debug-ui/     # The F3 panel roster (ocean, sky, ...) and the HUD the player asks
 │   └── engine/             # The kernel's manifest and schemas
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
@@ -227,18 +228,26 @@ egui-based GUI inspector built on top of `flint-render`:
 - Component property editor
 - Constraint violation overlay
 - Hot-reload via file watching (`flint edit --watch`)
-- Hosts the `flint-debug-ui` panels, including the F4 Rendering & Effects menu
+- F4 is the Rendering & Effects menu, `flint-widgets`' panel; the viewer links no package for it (#1583)
+
+### flint-widgets
+
+The kernel's egui (#1583), drawn by the CLI's windows, the scene viewer and the debug HUD alike:
+- The shared widgets: the frame-time graph (`FrameGraph`, its bands and hitch counters), the curve and gradient editors, `section`, `mixed_slider` and the drag helpers
+- `run_headless_frame`, the one egui frame a test runs (#944)
+- The renderer's controls: the Rendering & Effects panel (`RenderDebugPanel`, `RENDER_DEBUG_PANEL`, ADR 0053), the style editor (`StylesEditor`) and the corner cards for styles that fail (`paint_style_errors`, `paint_style_drops`). The viewer's F4 is this panel, and the player's F4 is the same one, which the debug HUD shows
+- Depends on `flint-package` (the panel trait, the graph's data), `flint-render`, `flint-scene` and `flint-schema`. It was the debug-hud package's crate until #1583, which re-exports all of it at the old paths
 
 ### flint-debug-ui
 
-The `debug-hud` package's crate (`packages/debug-hud/crates/flint-debug-ui`, #1559): the summonable debug overlay shared by the viewer and the player:
+The `debug-hud` package's crate (`packages/debug-hud/crates/flint-debug-ui`, #1559): the player's summonable debug overlay:
 - The `DebugPanel` trait (`name`, `ui`, `sync(&mut PanelCtx)`, `weight`, `is_open`, `toggle`, `layout`, `outlives_scene`, dirty tracking), `PanelLayout::{SideRight, Bottom}`, `DebugPanels` and `ScenePanels`, re-exported from `flint_package::panels`: the vocabulary is the kernel's, so a package (the living package's Living Props panel, #1558) or the player adds a panel without naming this crate
 - `assign_columns()` balances open panels across three side columns by each panel's `weight()`
-- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4), Ocean, Camera, Grass, Particles, Styles, and `ComponentPanel`, drawn from any component schema whose fields say `panel = ...` (#744)
-- `widgets`: the shared egui widgets (the frame-time graph, the curve and gradient editors, sliders), which the CLI's editors and the viewer draw too
+- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4, `flint-widgets`' own), Ocean, Camera, Grass, Particles, Styles, and `ComponentPanel`, drawn from any component schema whose fields say `panel = ...` (#744)
+- `widgets`: `flint-widgets` re-exported, so a package's panel names either
 - `player` feature: `player::PACKAGE`, a `flint_package::Package` that registers the run's `DebugHud` (`flint_package::hud`): it makes the engine's panels at each scene, syncs them each frame, lays them out over the game, drives F3 and F4, paints the corner cards (scripts and styles that fail) and draws F2's graph from the frames the player hands it. flint-player's `debug-hud` feature turns it on and its build script lists it from the manifest's `[rust]`
-- Depends on `flint-package`, `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-particles`, `flint-schema`, `flint-terrain`, `flint-scene` and, with `player`, `flint-script`
-- A game drops it with `debug-hud = false`: the run has no panels, and F3, F4 and the graph are not offered
+- Depends on `flint-package`, `flint-widgets`, `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-particles`, `flint-schema`, `flint-terrain`, `flint-scene` and, with `player`, `flint-script`
+- A game drops it with `debug-hud = false`: the run has no panels, and F3, F4 and the graph are not offered. The game's `flint` leaves it out too (flint-cli's `debug-hud` feature, #1583), and its editors are the same without it
 
 ### flint-runtime
 

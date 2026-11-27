@@ -1,6 +1,6 @@
 //! The F2 overlay's frame history (#1110): the last few seconds of frames
 //! the host timed, judged for hitches, and drawn as the player's
-//! frame-time graph (`flint_debug_ui::widgets::FrameGraph`, #1078) above
+//! frame-time graph (`flint_widgets::FrameGraph`, #1078) above
 //! the rendering stats.
 //!
 //! The host times a frame only while the viewer asks
@@ -20,10 +20,10 @@
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 
-use flint_debug_ui::widgets::{
+use flint_runtime::GameClock;
+use flint_widgets::{
     band_legend_of, hitch_counters, Band, FrameGraph, GraphFrame, GraphLayout, HitchCounters, BANDS,
 };
-use flint_runtime::GameClock;
 
 use crate::host::FrameTimes;
 
@@ -424,7 +424,7 @@ mod tests {
         steady(&mut stats, 300, HZ60, Some(HZ60));
         let ctx = egui::Context::default();
         let mut drawn = None;
-        let out = flint_debug_ui::run_headless_frame(&ctx, Default::default(), |ui| {
+        let out = flint_widgets::run_headless_frame(&ctx, Default::default(), |ui| {
             stats.ui(ui);
             drawn = stats.graph.placed();
         });

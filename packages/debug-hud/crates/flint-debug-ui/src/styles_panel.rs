@@ -10,8 +10,8 @@
 //! dirty copies its `pp.styles` (and nothing else) back into the renderer's
 //! config, as the F4 panel does for the whole config (ADR 0053).
 
-use crate::styles_ui::{StylesEdit, StylesEditor};
 use crate::DebugPanel;
+use crate::{StylesEdit, StylesEditor};
 use flint_render::stylize::StyleSettings;
 use flint_render::PostProcessConfig;
 

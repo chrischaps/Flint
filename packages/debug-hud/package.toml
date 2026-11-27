@@ -1,18 +1,20 @@
 # The summonable debug panels (F3/F4, ADR 0035). Standard: what a developer
 # wants on every build, and a shipped game drops with `debug-hud = false`.
 #
-# Its crate is in this folder (#1559): crates/flint-debug-ui, the panels and
-# their shared widgets, whose `player` feature is the HUD the player asks
-# for them (`flint_debug_ui::player::PACKAGE`, named by `[rust]` below). The
-# panel trait is the kernel's (`flint_package::panels`), so a package adds
-# its own panel without naming this one; with debug-hud left out the run
-# has no panels for it to add to.
+# Its crate is in this folder (#1559): crates/flint-debug-ui, the F3 panels,
+# whose `player` feature is the HUD the player asks for them
+# (`flint_debug_ui::player::PACKAGE`, named by `[rust]` below). The panel
+# trait is the kernel's (`flint_package::panels`), so a package adds its own
+# panel without naming this one; with debug-hud left out the run has no
+# panels for it to add to. The widgets they draw with, F4's Rendering &
+# Effects panel and the style editor are the kernel's too (flint-widgets,
+# #1583), so `flint edit` and the CLI's windows are the same without it.
 
 [package]
 name = "debug-hud"
 version = "0.1.0"
 tier = "standard"
-summary = "The F3/F4 debug panels and their shared widgets"
+summary = "The F3/F4 debug panels, F2's graph and the corner cards in a game"
 engine = "^0.1"
 
 [build]

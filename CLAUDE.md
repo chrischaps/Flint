@@ -39,7 +39,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-36-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554). Every member but `flint-android` is a default member, so `cargo test` tests them all (#758):
+37-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554). Every member but `flint-android` is a default member, so `cargo test` tests them all (#758):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
@@ -54,11 +54,11 @@ flint-player        Standalone player: the game loop, the subsystems, egui HUD
   ├── flint-rhythm-game Rhythm's subsystem, `music chart`; on flint-rhythm (charts, judging)
   ├── flint-music    Music: suite manifests, buses, tempo maps, conductor, offline render
   ├── flint-input-capture 1 kHz pad capture
-  ├── flint-debug-ui F3/F4 debug panels and shared widgets
+  ├── flint-debug-ui F3/F4 debug panels
   ├── flint-package  Package API: Subsystem, its contexts
   ├── flint-script   Rhai scripting with hot-reload
-  ├── flint-living   Living props' runtime: pose rings, clocks, knobs
-  ├── flint-particles Particles: effects, curves, forces, bursts, sub-emitters
+  ├── flint-living   Living props' runtime
+  ├── flint-particles Particles: effects, curves, forces, bursts
   ├── flint-animation Property tween + skeletal animation
   ├── flint-audio    Kira spatial audio
   ├── flint-audio-worklet Kira in the browser's AudioWorklet
@@ -66,6 +66,7 @@ flint-player        Standalone player: the game loop, the subsystems, egui HUD
   ├── flint-physics  Rapier 3D (character controller, bodies, joints)
   ├── flint-runtime  GameClock, InputState, EventBus, GameStateMachine, PersistentStore, pads
   ├── flint-viewer   egui inspector: gizmos, undo/redo, TOML write-back
+  ├── flint-widgets  egui widgets, F4's render panel
   ├── flint-import   glTF model importer
   ├── flint-asset    Content-addressed asset catalog
   ├── flint-constraint Constraint evaluation + auto-fix

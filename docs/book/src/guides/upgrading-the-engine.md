@@ -158,17 +158,17 @@ Four changes in behaviour:
 
 #### Tests
 
-A test that runs egui frames runs them through `flint_debug_ui::run_headless_frame(ctx, input, |ui| ..)`, not a plain `ctx.run_ui`. Nothing uploads a test's textures, and egui 0.36 asserts, in a debug build, when a frame's output is dropped with texture updates in it. A context's first frame always uploads the font atlas, so a test that drops a plain `run_ui`'s output, `let _ =` included, panics (the count is how many updates were left):
+A test that runs egui frames runs them through `flint_widgets::run_headless_frame(ctx, input, |ui| ..)`, not a plain `ctx.run_ui`. Nothing uploads a test's textures, and egui 0.36 asserts, in a debug build, when a frame's output is dropped with texture updates in it. A context's first frame always uploads the font atlas, so a test that drops a plain `run_ui`'s output, `let _ =` included, panics (the count is how many updates were left):
 
 ```text
 Dropped TexturesDelta with 1 unapplied deltas. Deltas need to be handled. If you want to drop this intentionally call `clear` before dropping.
 ```
 
-It compiles, so `cargo check --all-targets` passes and only `cargo test` finds it: 115 of The Capitol's 560 tests panicked. `run_headless_frame` runs `run_ui`, clears the texture updates and returns the rest of the output as it was. A game whose tests call it names flint-debug-ui as a dev-dependency, beside the engine crates it already has (the path is from the crate's folder):
+It compiles, so `cargo check --all-targets` passes and only `cargo test` finds it: 115 of The Capitol's 560 tests panicked. `run_headless_frame` runs `run_ui`, clears the texture updates and returns the rest of the output as it was. A game whose tests call it names flint-widgets, a kernel crate, as a dev-dependency, beside the engine crates it already has (the path is from the crate's folder). Until #1583 it was flint-debug-ui's, which still re-exports it, so a game that names that crate needs no change:
 
 ```toml
 [dev-dependencies]
-flint-debug-ui = { path = "engine/packages/debug-hud/crates/flint-debug-ui" }
+flint-widgets = { path = "engine/crates/flint-widgets" }
 ```
 
 Without it, clear them yourself: `ctx.run_ui(input, ..).textures_delta.clear()`.
