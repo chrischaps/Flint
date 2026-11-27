@@ -454,6 +454,13 @@ impl ApplicationHandler for PlayerApp {
         // No window yet means first launch. (On the web the window exists
         // while the device is still on its way; don't start twice.)
         if self.window.is_none() && self.render_context.is_none() {
+            // A game's own binary that lacks a package its project lists
+            // stops here, naming `flint build`, as `flint-player` does in
+            // `prepare` (#1532)
+            if !self.hold_packages_to_the_build() {
+                event_loop.exit();
+                return;
+            }
             // Hot reload's polls are answered by a watcher thread from here
             // on, so none of them waits on the disk in a frame (#633); a
             // no-op after `--no-hot-reload` (`file_watch::disable`)
