@@ -266,11 +266,20 @@ pub fn unbuilt(
 ) -> Option<Unbuilt> {
     let in_use = dirs.packages.as_ref()?;
     let folder = flint_core::project::engine_packages_for(&dirs.dirs)?;
-    let manifests = Packages::read(&folder);
+    let game = dirs
+        .dirs
+        .iter()
+        .find_map(|d| flint_core::project::game_packages_beside(d));
+    let manifests = Packages::read_with_game(&folder, game.as_deref());
+    // A game's own package with a player part is in a binary whose
+    // launcher listed it: the one `flint build` writes (#1562)
+    let own = |m: &Manifest| {
+        m.tier == flint_core::package::Tier::Game && m.player.is_some() && !registry().has(&m.name)
+    };
     let packages: Vec<String> = in_use
         .on
         .iter()
-        .filter(|name| manifests.get(name).is_some_and(&lacks))
+        .filter(|name| manifests.get(name).is_some_and(|m| own(m) || lacks(m)))
         .cloned()
         .collect();
     (!packages.is_empty()).then(|| Unbuilt {

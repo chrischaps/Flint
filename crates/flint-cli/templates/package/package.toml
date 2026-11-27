@@ -1,0 +1,25 @@
+# The `{{package}}` package: this game's own (`flint init --package`). A game
+# package is out unless flint.toml lists it under [packages] (with no
+# [packages] table every package is in), and `flint build` builds its crate
+# into the game's flint-player and flint. Delete this folder and its
+# [packages] line to take it out again.
+[package]
+name = "{{package}}"
+version = "0.1.0"
+tier = "game"
+summary = "Turns each entity with a {{snake}}_spin about its up axis"
+engine = "^0.1"
+
+# Its crate's two parts: `player::PACKAGE` (the subsystem and the script
+# module) and `cli::extensions()` (the command)
+[rust]
+player = "{{crate}}"
+cli = "{{crate}}"
+
+# Everything it brings, so `flint check` can name the line to add when a
+# scene uses one of them and flint.toml doesn't list the package
+[provides]
+crates = ["{{crate}}"]
+components = ["{{snake}}_spin"]
+script_modules = ["{{snake}}"]
+commands = ["{{package}} spins"]

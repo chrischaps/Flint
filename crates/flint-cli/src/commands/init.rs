@@ -20,6 +20,13 @@
 //!   (a component is a table with or without a schema), but an engine
 //!   archetype resolves to nothing, so the output doesn't offer `play`.
 //!
+//! `--package <name>` (#1562) adds a package of the game's own to an
+//! existing project instead: `packages/<name>/` with its manifest
+//! (`tier = "game"`), a component's schema and a crate whose player part
+//! turns each entity with the component and declares a script module, and
+//! whose command lists them. It adds the `[packages]` line when flint.toml
+//! has the table. `flint build` then builds it into the game's binaries.
+//!
 //! Nothing is ever deleted or overwritten: a directory with files in it is
 //! refused unless `--force`, and with `--force` a file already there is kept.
 
@@ -30,8 +37,16 @@ use std::path::{Path, PathBuf};
 
 #[derive(clap::Args)]
 pub struct InitArgs {
-    /// The directory to create. Its last part is the project's name
-    pub name: String,
+    /// The directory to create. Its last part is the project's name. With
+    /// `--package`, the project to add the package to (default `.`)
+    #[arg(required_unless_present = "package")]
+    pub name: Option<String>,
+
+    /// Add a package of the game's own to the project instead:
+    /// `packages/<NAME>/` with a manifest, a component, a script module, a
+    /// command and the crate that holds them, which `flint build` builds in
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["template", "engine", "engine_path"])]
+    pub package: Option<String>,
 
     /// What the first scene is: `walk` (a first-person player in a lit
     /// 3D scene), `blank` (a lit ground, one box, no player) or `2d`
@@ -282,8 +297,18 @@ fn fill(text: &str, values: &[(&str, &str)]) -> String {
     out
 }
 
+impl InitArgs {
+    /// The project's directory, as given.
+    fn dir(&self) -> &str {
+        self.name.as_deref().unwrap_or(".")
+    }
+}
+
 pub fn run(args: InitArgs) -> Result<()> {
-    let dir = Path::new(&args.name);
+    if let Some(package) = &args.package {
+        return add_package(Path::new(args.dir()), package, args.force);
+    }
+    let dir = Path::new(args.dir());
     if args.engine_path.is_some() && args.engine != EngineMode::Path {
         bail!("--engine-path goes with --engine path");
     }
@@ -411,7 +436,7 @@ fn report(args: &InitArgs, name: &str, engine: Option<&str>, written: &[&str], k
     say!(
         "Created Flint project `{name}` ({} template) in {}",
         template.name(),
-        slashed(Path::new(&args.name))
+        slashed(Path::new(args.dir()))
     );
     say!();
     let mut paths: Vec<&str> = written.to_vec();
@@ -452,8 +477,8 @@ fn report(args: &InitArgs, name: &str, engine: Option<&str>, written: &[&str], k
     }
     say!();
     let mut next = Vec::new();
-    if Path::new(&args.name) != Path::new(".") {
-        let dir = slashed(Path::new(&args.name));
+    if Path::new(args.dir()) != Path::new(".") {
+        let dir = slashed(Path::new(args.dir()));
         if dir.contains(' ') {
             next.push(format!("cd \"{dir}\""));
         } else {
@@ -484,7 +509,7 @@ fn report(args: &InitArgs, name: &str, engine: Option<&str>, written: &[&str], k
     crate::output::when_json(|| {
         serde_json::json!({
             "name": name,
-            "dir": slashed(Path::new(&args.name)),
+            "dir": slashed(Path::new(args.dir())),
             "template": template.name(),
             "engine": {
                 "mode": match args.engine {
@@ -500,6 +525,165 @@ fn report(args: &InitArgs, name: &str, engine: Option<&str>, written: &[&str], k
             "guide": "CLAUDE.md",
         })
     });
+}
+
+/// A game package's files (#1562): where each goes under `packages/<name>/`
+/// (`{snake}` and `{crate}` filled in), and its text.
+const PACKAGE: &[File] = &[
+    ("package.toml", template!("package/package.toml")),
+    (
+        "schemas/components/{snake}_spin.toml",
+        template!("package/component.toml"),
+    ),
+    (
+        "crates/{crate}/Cargo.toml",
+        template!("package/Cargo.toml.in"),
+    ),
+    ("crates/{crate}/src/lib.rs", template!("package/lib.rs.in")),
+    (
+        "crates/{crate}/src/player.rs",
+        template!("package/player.rs.in"),
+    ),
+    ("crates/{crate}/src/cli.rs", template!("package/cli.rs.in")),
+];
+
+/// `flint init --package <name>`: the package's folder in the project at
+/// `dir`, and its line under an existing `[packages]`.
+fn add_package(dir: &Path, package: &str, force: bool) -> Result<()> {
+    if !flint_core::package::is_name(package) {
+        bail!(
+            "`{package}` is no package name: a lowercase letter, then lowercase letters, \
+             digits and `-`"
+        );
+    }
+    let manifest = dir.join(flint_core::project::MANIFEST_FILE);
+    if !manifest.is_file() {
+        bail!(
+            "{}: no flint.toml there. `flint init --package` adds a package to a project; \
+             `flint init <name>` makes one",
+            slashed(dir)
+        );
+    }
+    let project = flint_core::project::Project::at(dir)?;
+    if flint_core::project::is_engine_checkout(&project.root) {
+        bail!(
+            "{}: an engine checkout, whose packages are the engine's",
+            slashed(dir)
+        );
+    }
+    let (engine, _) = super::build::find_engine(&project, None)?;
+    let root = super::build::normal(&project.root);
+    // The engine's crates, from the package's crate: by a path inside the
+    // project (a subtree) when it is one, else by the engine's own
+    let engine_crates = match engine.strip_prefix(&root) {
+        Ok(inside) => format!("../../../../{}/crates", slashed(inside)),
+        Err(_) => format!("{}/crates", slashed(&engine)),
+    };
+    let snake = package.replace('-', "_");
+    let krate = format!("{package}-package");
+    let folder = dir.join(flint_core::package::PACKAGES_DIR).join(package);
+    // As typed from the project: `packages/toy`, not `./packages/toy`
+    let shown = slashed(&folder).trim_start_matches("./").to_string();
+    if has_files(&folder) && !force {
+        bail!(
+            "{} already holds files. Pick another name, or pass --force (a file already \
+             there is kept, never overwritten).",
+            shown
+        );
+    }
+    let values: &[(&str, &str)] = &[
+        ("engine_crates", &engine_crates),
+        ("package", package),
+        ("snake", &snake),
+        ("crate", &krate),
+    ];
+    let (mut written, mut kept) = (Vec::new(), Vec::new());
+    for (path, text) in PACKAGE {
+        let path = format!(
+            "packages/{package}/{}",
+            path.replace("{snake}", &snake).replace("{crate}", &krate)
+        );
+        let to = dir.join(&path);
+        if to.exists() {
+            kept.push(path);
+            continue;
+        }
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        fs::write(&to, fill(text, values)).with_context(|| format!("writing {}", to.display()))?;
+        written.push(path);
+    }
+    let listed = list_package(&manifest, package)?;
+
+    say!(
+        "Added the `{package}` package, the game's own, in {}:",
+        shown
+    );
+    for path in &written {
+        say!("  {path}");
+    }
+    for path in &kept {
+        say!("  {path}  (kept: it was already there)");
+    }
+    say!();
+    say!(
+        "{}",
+        match listed {
+            Some(true) => format!("flint.toml: added `{package} = \"*\"` under [packages]."),
+            Some(false) => "flint.toml: [packages] lists it already.".to_string(),
+            None => "flint.toml has no [packages] table, so every package is in, this one too."
+                .to_string(),
+        }
+    );
+    say!();
+    say!("A scene uses it with:");
+    say!("  [entities.<name>.{snake}_spin]");
+    say!("  speed = 90.0");
+    say!();
+    say!("`flint build` builds it into the game's flint-player and flint (the launcher");
+    say!(
+        "crate it writes is in {}),",
+        slashed(&engine.join("launch"))
+    );
+    say!(
+        "and that flint has `flint {package} spins <scene>`. Delete {} and its",
+        shown
+    );
+    say!("[packages] line to take it out again.");
+    crate::output::when_json(|| {
+        serde_json::json!({
+            "package": package,
+            "dir": shown,
+            "crate": krate,
+            "component": format!("{snake}_spin"),
+            "script_module": snake,
+            "command": format!("{package} spins"),
+            "written": written,
+            "kept": kept,
+            "listed": listed,
+        })
+    });
+    Ok(())
+}
+
+/// Add `package = "*"` under flint.toml's `[packages]`, keeping every
+/// other line: `Some(true)` when added, `Some(false)` when it was there,
+/// `None` with no table (which would change what an empty one builds).
+fn list_package(manifest: &Path, package: &str) -> Result<Option<bool>> {
+    let text = fs::read_to_string(manifest)?;
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .with_context(|| format!("reading {}", manifest.display()))?;
+    let Some(table) = doc.get_mut("packages").and_then(|t| t.as_table_like_mut()) else {
+        return Ok(None);
+    };
+    if table.contains_key(package) {
+        return Ok(Some(false));
+    }
+    table.insert(package, toml_edit::value("*"));
+    fs::write(manifest, doc.to_string())?;
+    Ok(Some(true))
 }
 
 #[cfg(test)]
@@ -540,6 +724,10 @@ mod tests {
             "schemas",
             "name",
             "id",
+            "engine_crates",
+            "package",
+            "snake",
+            "crate",
         ];
         let sections = [
             template!("shared/engine-path.md"),
@@ -552,6 +740,7 @@ mod tests {
         ];
         let files = SHARED
             .iter()
+            .chain(PACKAGE)
             .chain(Template::Walk.files())
             .chain(Template::Blank.files())
             .chain(Template::TwoD.files())

@@ -270,3 +270,55 @@ fn the_project_keeps_the_list_as_written() {
         assert_eq!(project.packages, None);
     });
 }
+
+/// A game's own package (#1562): listed, its schemas follow the game's;
+/// unlisted, it is left out and its component named; any tier but `game`
+/// in the game's folder is refused.
+#[test]
+fn a_games_own_package_is_listed_like_a_feature_package() {
+    let run = |list: &str, tier: &str| {
+        let mut files = game(&format!(
+            "{SCHEMAS}[packages]
+{list}"
+        ));
+        files.insert(
+            "packages/toy/package.toml",
+            manifest(
+                "toy",
+                tier,
+                "[provides]
+components = [\"toy_spin\"]
+",
+            ),
+        );
+        files.insert("packages/toy/schemas/components/toy_spin.toml", "");
+        vfs::scoped(Arc::new(files), || {
+            schema_dirs(Some(Path::new("scenes/a.scene.toml")), &[] as &[&Path])
+        })
+    };
+    let listed = run(
+        "toy = \"*\"
+",
+        "game",
+    )
+    .unwrap();
+    let dirs: Vec<String> = listed.dirs.iter().map(|d| vfs::normalize(d)).collect();
+    assert_eq!(dirs, ["engine/schemas", "schemas", "packages/toy/schemas"]);
+    let left = run("", "game").unwrap().packages.unwrap();
+    let mut found = vec![Diagnostic::error(codes::UNKNOWN_COMPONENT, "").component("toy_spin")];
+    left.name_unlisted(&mut found);
+    let hint = found[0].hint.clone().unwrap_or_default();
+    assert!(
+        hint.starts_with("add `toy = \"*\"` under [packages]"),
+        "{hint}"
+    );
+    assert!(
+        run(
+            "toy = \"*\"
+",
+            "feature"
+        )
+        .is_err(),
+        "a game's package is tier game"
+    );
+}

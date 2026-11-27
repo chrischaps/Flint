@@ -177,6 +177,8 @@ flint build --dry-run
 
 To leave a package out, delete its line, or set a standard one to `false` (`debug-hud = false`), and run `flint build` again. `flint check` names whatever still uses it.
 
+**The game's own packages.** `flint init --package <name>` writes a package of this game's in `packages/<name>/`: a manifest, a component, a script module, a command and the Rust crate that holds them, and its `[packages]` line. `flint build` builds its crate into this game's `flint` and `flint-player`. Delete the folder and its line to take it out.
+
 ## The engine
 
 {{engine_section}}

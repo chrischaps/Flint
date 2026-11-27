@@ -326,6 +326,10 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
     // Crates
     let mut crate_names: BTreeSet<&str> = BTreeSet::new();
     for member in &inv.crates {
+        // A game's launcher `flint build` wrote (#1562): gitignored, a game's
+        if member.manifest.starts_with("launch/") {
+            continue;
+        }
         crate_names.insert(&member.name);
         if NO_PACKAGE_CRATES.iter().any(|(n, _)| *n == member.name) {
             if !owners(Kind::Crate, &member.name).is_empty() {

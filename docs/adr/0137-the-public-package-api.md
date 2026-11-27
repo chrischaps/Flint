@@ -500,6 +500,31 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   (`PlayerApp::unbuilt_packages`), so a game's binary that lacks a listed
   package refuses to start, naming `flint build`.
 
+## As built: a game's own packages (#1562)
+
+- Decision 6 as recommended. A game's `packages/<name>/` (`tier = "game"`,
+  `Packages::read_with_game` refuses another tier there) is read beside the
+  engine's wherever a `[packages]` list is resolved, and its schemas follow
+  the game's own schema directory (`project::game_packages_beside`). It is
+  listed by name like a feature package; the table form stays refused.
+- When a listed game package has `[rust]`, `flint build` writes
+  `<engine>/launch/<id>/` (bins `flint-player` and `flint`: `stock()`, then
+  each game package's `player::PACKAGE`, launched before anything asks; the
+  CLI adds each `cli::extensions()`) and runs `cargo build -p
+  flint-launch-<id>` in the engine, then puts `Cargo.lock` back byte for
+  byte. `launch/*` is in `members` only, never `default-members`.
+- A launcher naming a crate that is gone fails every cargo command in the
+  engine, `cargo metadata --no-deps` included, so `flint build` removes its
+  own such launcher before planning, and any launcher it wrote once the game
+  lists no package with Rust.
+- Measured on a scratch game (debug, this machine): the first build 55.8 s,
+  with every engine crate below flint-package `Fresh`; after deleting the
+  package, the stock pair again in 13.4 s.
+- The stock binaries know a game package from its manifest only, so with one
+  listed they refuse with `unbuilt-package` (`packages::unbuilt`: a game
+  package with a player part the run's registry lacks). A game's own binary
+  (#1532) still links only the engine's packages.
+
 ## As built: the CLI launcher (#1553)
 
 - `CliExtension`, `subcommands`/`Derived` and the output path (`set_json`,

@@ -1,0 +1,15 @@
+//! The `{{package}}` package, this game's own (`flint init --package`):
+//! entities with a `{{snake}}_spin` turn about their up axis.
+//!
+//! - [`player`]: what the game's flint-player lists, [`player::PACKAGE`]: a
+//!   subsystem for a scene with any `{{snake}}_spin`, and the `{{snake}}`
+//!   script module (`{{snake}}_spinners()`).
+//! - [`cli`]: `flint {{package}} spins <scene>`, the spinners a scene declares.
+
+/// The component's name, as `schemas/components/{{snake}}_spin.toml` declares it.
+pub const SPIN: &str = "{{snake}}_spin";
+
+#[cfg(feature = "cli")]
+pub mod cli;
+#[cfg(feature = "player")]
+pub mod player;

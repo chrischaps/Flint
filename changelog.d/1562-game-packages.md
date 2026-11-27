@@ -1,0 +1,4 @@
+### A game writes packages of its own: `flint init --package`, built in by `flint build` (#1562)
+**Package.** engine
+**What changed.** A game's `packages/<name>/` with `tier = "game"` is a package like the engine's: its schemas load after the game's own, `[packages]` lists it by name, and `flint check` names the line to add when a scene uses it unlisted. `flint init --package <name>` writes one (a component, a script module, a command and their crate) and adds its `[packages]` line. When a listed game package has Rust, `flint build` writes the game's launcher into the engine (`launch/<game id>/`, gitignored) and builds the game's `flint-player` and `flint` from it; the stock binaries refuse such a project with `unbuilt-package`. Projects without a `packages/` folder build as before.
+**What to do.** Nothing. To move a `PlayerExtension` into a package, see "A game's own packages" in Building a Game Project.
