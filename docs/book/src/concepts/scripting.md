@@ -1534,7 +1534,7 @@ A pushdown automaton for managing game states (playing, paused, custom):
 | `replace_state(name: str)` | — | Replace the top state with another. |
 | `get_current_state()` | `str`: its name; "playing" without a state machine | The state on top of the stack. |
 | `get_state_stack()` | `array`: their names; \["playing"\] without a state machine | Every state on the stack, bottom first. |
-| `register_state(name: str, config: map)` | — | Make a state: a system's name (physics, scripts, animation, particles, audio, living) to "run" or "pause"; one left out runs. An unknown name is an error. |
+| `register_state(name: str, config: map)` | — | Make a state: a system's name (the kernel's physics, scripts, animation, particles and audio, or one a package adds) to "run" or "pause"; one left out runs. An unknown name is an error naming those there are. |
 
 <!-- script-api:end -->
 

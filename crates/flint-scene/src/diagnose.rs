@@ -340,6 +340,11 @@ fn diagnose_entities(
             );
         }
     }
+    // A field another package gives its meaning, which `[packages]` leaves
+    // out (#1581): the component loads, and nothing reads the field
+    if let Some(in_use) = registry.packages() {
+        found.extend(unlisted_fields(scene, in_use));
+    }
     // A loop of parents needs the whole scene to see, and no schema
     if lookup.is_some() {
         found.extend(parent_cycles(scene));
@@ -349,6 +354,53 @@ fn diagnose_entities(
     if let Some(file) = file {
         for d in &mut found {
             d.file = Some(file.to_path_buf());
+        }
+    }
+    found
+}
+
+/// Each field an entity writes that a package `in_use` leaves out provides
+/// (`[provides] fields`, #1581): `music_session.chart` is rhythm's, though
+/// `music_session` is music's, so a scene judged against a chart in a game
+/// that lists music alone is told the line to add. An `unlisted-package`
+/// error a written field, entities and components in name order;
+/// [`InUse::name_unlisted`](flint_core::package::InUse::name_unlisted)
+/// makes it one a file and field. Only what the scene writes counts: a
+/// schema's default is no use of the field.
+pub fn unlisted_fields(scene: &SceneFile, in_use: &flint_core::package::InUse) -> Vec<Diagnostic> {
+    use flint_core::package::Kind;
+    let mut found = Vec::new();
+    if !in_use
+        .left_out
+        .iter()
+        .any(|p| !p.provides.of(Kind::Field).is_empty())
+    {
+        return found;
+    }
+    let mut names: Vec<&String> = scene.entities.keys().collect();
+    names.sort_unstable();
+    for name in names {
+        let mut components: Vec<(&String, &toml::Value)> =
+            scene.entities[name].components.iter().collect();
+        components.sort_unstable_by_key(|(component, _)| *component);
+        for (component, data) in components {
+            let Some(table) = data.as_table() else {
+                continue;
+            };
+            let mut fields: Vec<&String> = table.keys().collect();
+            fields.sort_unstable();
+            for field in fields {
+                let item = format!("{component}.{field}");
+                if let Some(package) = in_use.left_out_owner(Kind::Field, &item) {
+                    found.push(
+                        in_use
+                            .unlisted(Kind::Field, &item, &package.name)
+                            .entity(name.as_str())
+                            .component(component.as_str())
+                            .field(field.as_str()),
+                    );
+                }
+            }
         }
     }
     found
