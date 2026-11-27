@@ -171,16 +171,6 @@ pub struct PlayerArgs {
     #[arg(long, value_name = "SECS")]
     pub screenshot_every: Option<f64>,
 
-    /// Compare two Living Props presets on the same grove from the start
-    /// (#238): A,B, each a preset's name, or nothing for the knobs as the scene
-    /// loaded them (",linklater"). F6 flips between them, F7 splits the view
-    #[arg(long, value_name = "A,B")]
-    pub compare: Option<String>,
-
-    /// With --compare: start split, A on the left and B on the right
-    #[arg(long, requires = "compare")]
-    pub split: bool,
-
     /// Exit the player once game time reaches this many seconds
     #[arg(long, value_name = "SECS")]
     pub exit_after: Option<f64>,
@@ -347,6 +337,14 @@ pub struct PlayerArgs {
     /// says, which its binary's `main` hands `logging::init` (#716)
     #[command(flatten)]
     pub log: crate::logging::LogArgs,
+
+    /// The packages' own flags (`Registry::player_args`, #1585: living's
+    /// `--compare` and `--split`), which the launchers add to the command
+    /// line from the run's registry ([`crate::packages::player_flags`]) and
+    /// read back here ([`crate::packages::read_player_flags`]); `prepare`
+    /// puts them in the run's resources. Empty from a plain `parse`.
+    #[arg(skip)]
+    pub packages: flint_package::PackageFlags,
 }
 
 /// `flint-player`'s command line: [`PlayerArgs`] and `--bundle`, the one
@@ -373,6 +371,20 @@ pub struct PlayerCli {
 }
 
 impl PlayerCli {
+    /// The process's command line, with the run's packages' flags
+    /// (living's `--compare`), as `flint-player`'s `main` parses it. A
+    /// mistake, `--help` and `--version` print and exit, as `parse` does.
+    pub fn parse_launched() -> Self {
+        use clap::{CommandFactory, FromArgMatches};
+        let mut command = crate::packages::player_flags(Self::command());
+        let matches = command.get_matches_mut();
+        let read = Self::from_arg_matches(&matches).and_then(|mut cli| {
+            cli.args.packages = crate::packages::read_player_flags(&matches)?;
+            Ok(cli)
+        });
+        read.unwrap_or_else(|e| e.format(&mut command).exit())
+    }
+
     /// Play what the command line names, from a bundle or the disk.
     pub fn run(mut self) -> Result<()> {
         self.args.json = self.json;
@@ -588,7 +600,6 @@ impl PlayerArgs {
         // What the flags the web and Android share mean, each value read
         // and a bad one refused here (#1142)
         let options = args.options()?;
-        let compare = args.compare.as_deref().map(parse_compare).transpose()?;
         let input_script = args
             .input_script
             .as_deref()
@@ -684,23 +695,9 @@ impl PlayerArgs {
             app.capture.show_stats = true;
             app.capture.stats_view = view;
         }
-        // `--compare` and `--split` are the living package's (#238): its
-        // builder reads them from the run's launch flags (#1558). A player
-        // without it has no grove to compare.
-        if let Some((a, b)) = compare {
-            if crate::packages::registry().has("living") {
-                let flags = app.launch_flags_mut();
-                flags.set("compare", format!("{a},{b}"));
-                if args.split {
-                    flags.set("split", "true");
-                }
-            } else {
-                tracing::warn!(
-                    target: "player",
-                    "[living] --compare {a},{b}: this player is built without the `living` package"
-                );
-            }
-        }
+        // The packages' own flags (living's `--compare`, #1585), each by its
+        // own type, for its builder to read when the first scene is built
+        args.packages.put_in(&mut app.core.resources);
 
         // The game's buses (#730), then the flags over them: each scales
         // the volume its bus starts at (`--music-volume 0` mutes it)
@@ -750,17 +747,6 @@ fn parse_safe_area(spec: &str) -> Result<[f32; 4]> {
         anyhow::bail!("--safe-area: insets are points, 0 or more");
     }
     Ok([l, t, r, b])
-}
-
-/// `--compare A,B`: two presets, A possibly empty (the scene's own knobs)
-fn parse_compare(spec: &str) -> Result<(String, String)> {
-    let (a, b) = spec
-        .split_once(',')
-        .ok_or_else(|| anyhow::anyhow!("--compare {spec}: two presets, as A,B"))?;
-    if b.trim().is_empty() {
-        anyhow::bail!("--compare {spec}: B needs a preset's name");
-    }
-    Ok((a.trim().to_owned(), b.trim().to_owned()))
 }
 
 /// Serve every read from a bundle, its start scene and schemas filling in

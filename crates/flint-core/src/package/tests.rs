@@ -350,3 +350,31 @@ fn the_engines_manifests_read() {
     assert_eq!(read.packages[0].name, "engine");
     assert_eq!(read.packages[0].tier, Tier::Kernel);
 }
+
+/// `[without]` (#1585): what a build without the package still says of it
+/// and the policy names a game state may give in every build. Its keys are
+/// named, and an empty `does` is a mistake.
+#[test]
+fn without_says_what_a_build_without_the_package_knows() {
+    let p = parse(LIVING, file()).unwrap();
+    assert_eq!(p.without, Without::default());
+    let with = |without: &str| format!("{LIVING}[without]\n{without}\n");
+    let p = parse(
+        &with("does = \"stand still\"\npolicies = [\"living\"]"),
+        file(),
+    )
+    .unwrap();
+    assert_eq!(p.without.does.as_deref(), Some("stand still"));
+    assert_eq!(p.without.policies, ["living"]);
+    let found = mistakes(&with("does = \" \"\npolicy = \"living\""));
+    assert!(
+        found.iter().any(|f| f.starts_with("without.does: empty")),
+        "{found:#?}"
+    );
+    assert!(
+        found.iter().any(|f| f.starts_with(
+            "without.policy: unknown key `policy` in [without] (the keys are does, policies)"
+        )),
+        "{found:#?}"
+    );
+}

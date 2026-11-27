@@ -6,6 +6,11 @@
 //! lists none of the stock packages, so the player lacks them though this
 //! test binary compiled them in.
 //!
+//! The run lacks living and music too, so it is also where the kernel's
+//! words for a package it lacks are heard (#1585): a scene with living's
+//! parts gets the one line its manifest writes, and a game state naming
+//! the `living` policy still registers.
+//!
 //! One test, one process: a run's packages are registered once.
 
 use flint_package::{Lasts, Package, Registry, SceneCtx, Stage, StageCtx, Subsystem};
@@ -94,11 +99,25 @@ fn on_update() {
 }
 "#;
 
+/// A scene of living's parts, played by a run without living: a state
+/// that pauses `living` registers all the same.
+const STILL: &str = r#"
+fn on_init() {
+    register_state("still", #{ living: "pause" });
+    test_log("still", true);
+}
+fn on_update() { test_pass(); }
+"#;
+
 fn project(dir: &Path, table: &str) -> String {
+    project_with(dir, table, SCRIPT)
+}
+
+fn project_with(dir: &Path, table: &str, script: &str) -> String {
     std::fs::create_dir_all(dir.join("scenes")).unwrap();
     std::fs::create_dir_all(dir.join("scripts")).unwrap();
     std::fs::write(dir.join("flint.toml"), "[project]\n").unwrap();
-    std::fs::write(dir.join("scripts/tick.rhai"), SCRIPT).unwrap();
+    std::fs::write(dir.join("scripts/tick.rhai"), script).unwrap();
     let scene = dir.join("scenes/main.scene.toml");
     std::fs::write(
         &scene,
@@ -112,6 +131,14 @@ fn project(dir: &Path, table: &str) -> String {
 
 #[test]
 fn a_package_outside_the_player_runs_from_the_launchers_list() {
+    // The playtest's warning count, as `flint playtest` installs it
+    {
+        use tracing_subscriber::layer::SubscriberExt as _;
+        use tracing_subscriber::util::SubscriberInitExt as _;
+        let _ = tracing_subscriber::registry()
+            .with(flint_player::playtest_warning_layer())
+            .try_init();
+    }
     assert!(
         flint_player::packages::launch(&[&TICKER]),
         "the first to ask registers"
@@ -160,6 +187,36 @@ fn a_package_outside_the_player_runs_from_the_launchers_list() {
             .any(|e| format!("{e:?}").contains("ticker")),
         "{:#?}",
         report.script_errors
+    );
+
+    // Living's parts, in a run without living (#1585): the one line the
+    // manifest writes, once, and a state pausing `living` registers
+    let scene = project_with(
+        &dir.join("grove"),
+        "[wooze]\namplitude = 0.5\n\n[entities.oak]\nliving_prop = { species = \"oak\" }\n",
+        STILL,
+    );
+    let mut options = flint_player::PlaytestOptions::new(scene);
+    options.timeout = Some(5.0);
+    let report = flint_player::playtest(&options);
+    assert!(report.passed, "{:#?}", report.failures);
+    assert_eq!(report.log["still"], serde_json::json!(true), "{report:#?}");
+    assert!(report.warnings.counted);
+    let lines: Vec<&str> = report
+        .warnings
+        .messages
+        .iter()
+        .map(|w| w.message.as_str())
+        .filter(|m| m.starts_with("[living] "))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "[living] this player is built without the `living` package: the scene's living_prop, \
+          [wooze] stand still"
+        ],
+        "{:#?}",
+        report.warnings
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

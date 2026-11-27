@@ -254,7 +254,7 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
         let project = matches.get_one::<std::path::PathBuf>("project");
         return output::finish(set_project(project).and_then(|()| added.run(&matches)));
     }
-    let cli = match Cli::from_arg_matches(&matches) {
+    let cli = match Cli::from_arg_matches(&matches).and_then(|cli| play_flags(cli, &matches)) {
         Ok(cli) => cli,
         Err(e) => parse_failed(e.format(&mut Cli::command()), &argv),
     };
@@ -350,9 +350,26 @@ fn procgen_editors() -> bool {
 /// every [`stock`] extension's, as `flint --help` walks it.
 #[cfg(test)]
 pub(crate) fn stock_command() -> clap::Command {
-    extension::Added::new(stock(), &Cli::command())
-        .expect("the stock extensions name no engine command")
-        .augment(Cli::command())
+    let added = extension::Added::new(stock(), &Cli::command())
+        .expect("the stock extensions name no engine command");
+    with_play_flags(added.augment(Cli::command()))
+}
+
+/// `flint play` with the run's packages' own player flags (living's
+/// `--compare` and `--split`, `Registry::player_args`, #1585), as
+/// `flint-player` has them: the player's registry adds them, so neither
+/// launcher names a package's flag.
+fn with_play_flags(command: clap::Command) -> clap::Command {
+    command.mut_subcommand("play", flint_player::packages::player_flags)
+}
+
+/// `cli` with `flint play`'s package flags read back from `matches`.
+fn play_flags(mut cli: Cli, matches: &clap::ArgMatches) -> Result<Cli, clap::Error> {
+    if let (Commands::Play(play), Some(m)) = (&mut cli.command, matches.subcommand_matches("play"))
+    {
+        play.player.packages = flint_player::packages::read_player_flags(m)?;
+    }
+    Ok(cli)
 }
 
 /// `words` after `flint`, parsed and run as the launcher would with
@@ -374,7 +391,7 @@ pub(crate) fn run_line(extensions: Vec<Box<dyn CliExtension>>, words: &[&str]) -
     if added.owns(&matches) {
         return added.run(&matches);
     }
-    run(Cli::from_arg_matches(&matches)?)
+    run(play_flags(Cli::from_arg_matches(&matches)?, &matches)?)
 }
 
 /// Why a command line has no matches.
@@ -389,7 +406,7 @@ enum Refused {
 /// The line's matches in the one parser: the engine's commands with every
 /// extension's.
 fn parse_line(added: &extension::Added, argv: &[OsString]) -> Result<clap::ArgMatches, Refused> {
-    let mut parser = added.augment(Cli::command());
+    let mut parser = with_play_flags(added.augment(Cli::command()));
     parser.try_get_matches_from_mut(argv).map_err(|e| {
         match commands::absent::missing_command(&e, argv, &parser) {
             Some(missing) => Refused::Missing(missing),

@@ -111,7 +111,7 @@ flint-player = { path = "engine/crates/flint-player", default-features = false, 
 | `living` | Living props, `[living]`, `[wooze]`, shallow wooze, woozy grass and the `wooze` and `living` script modules (and `debug` with `debug-hud`), from the living package's crate, `flint-living`; turns on `procgen` | The grove stands still |
 | `profile` | Tracy's frame profiler (off by default) | The scopes compile to nothing |
 
-A scene that uses a part the build left out prints one line when it's entered, naming what won't run, for example ``[living] this player is built without the `living` feature: the scene's living props, [wooze] stand still``. With every default off the player links neither `flint-music` nor `flint-procgen`.
+A scene that uses a part the build left out prints one line when it's entered, naming what won't run, for example ``[living] this player is built without the `living` package: the scene's living_prop, [wooze] stand still``. The kernel writes it from the package's manifest: the components and scene tables its `[provides]` lists that the scene uses, and what they do without it, its `[without] does`. A package's own flags go with it too: a player built without `living` has no `--compare` or `--split`. With every default off the player links neither `flint-music` nor `flint-procgen`.
 
 ## The Hooks
 

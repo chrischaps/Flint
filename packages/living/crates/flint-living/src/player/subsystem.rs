@@ -54,16 +54,15 @@ pub struct LivingStart {
 
 impl LivingStart {
     /// The run's, made from `--compare A,B` and `--split` the first time
-    /// (`flint_package::LaunchFlags`, which the player checked: two names,
-    /// B not empty).
+    /// (the [`CompareArgs`](super::CompareArgs) the launch put in the
+    /// resources, which clap checked: two names, B not empty).
     pub fn of(resources: &mut Resources) -> &mut Self {
         if resources.get::<Self>().is_none() {
-            let flags = resources.get::<flint_package::LaunchFlags>();
+            let flags = resources.get::<super::CompareArgs>();
             let compare = flags
-                .and_then(|flags| flags.get("compare"))
-                .and_then(|spec| spec.split_once(','))
-                .map(|(a, b)| (a.trim().to_string(), b.trim().to_string()));
-            let split = flags.is_some_and(|flags| flags.has("split"));
+                .and_then(|flags| flags.compare.clone())
+                .map(|presets| (presets.a, presets.b));
+            let split = flags.is_some_and(|flags| flags.split);
             resources.insert(Self {
                 compare_at_start: compare.is_some().then_some(split),
                 compare,

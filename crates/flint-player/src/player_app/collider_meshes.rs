@@ -185,7 +185,8 @@ impl ColliderSources {
         }
         tracing::debug!(target: "load", kind = "collider",
             "Collider mesh: {} '{name}' for {} ({} triangles)",
-            if runtime { "runtime mesh" } else { "procgen" },
+            // An asset maker's (procgen's, #1557): the kernel names none
+            if runtime { "runtime mesh" } else { "made mesh" },
             world.get_name(entity).unwrap_or("?"),
             mesh.triangles.len()
         );
@@ -249,7 +250,7 @@ pub(super) fn hand_over(
         if !config.overrides.contains_key(asset) {
             if let Some(mesh) = sources.made(asset) {
                 tracing::debug!(target: "load", kind = "collider",
-                    "Collider mesh: procgen '{asset}' ({} triangles)",
+                    "Collider mesh: made mesh '{asset}' ({} triangles)",
                     mesh.triangles.len()
                 );
                 physics.set_collider_mesh(*entity, mesh.clone());

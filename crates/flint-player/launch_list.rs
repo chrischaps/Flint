@@ -29,6 +29,14 @@ pub struct Manifest {
     pub features: Vec<String>,
     /// `[rust] player`: its crate's Rust name.
     pub player: Option<String>,
+    /// `[provides] components` and `scene_tables`: what a scene uses of it
+    /// (#1585).
+    pub components: Vec<String>,
+    pub scene_tables: Vec<String>,
+    /// `[without] does` and `policies`: what a build without it still says
+    /// and takes (#1585).
+    pub does: Option<String>,
+    pub policies: Vec<String>,
     /// The manifest, for `cargo:rerun-if-changed`.
     pub file: PathBuf,
 }
@@ -93,6 +101,14 @@ pub fn read(engine: &Path) -> Vec<Manifest> {
                 .and_then(|r| r.get("player"))
                 .and_then(|p| p.as_str())
                 .map(|krate| krate.replace('-', "_")),
+            components: strings(table.get("provides"), "components"),
+            scene_tables: strings(table.get("provides"), "scene_tables"),
+            does: table
+                .get("without")
+                .and_then(|w| w.get("does"))
+                .and_then(|d| d.as_str())
+                .map(String::from),
+            policies: strings(table.get("without"), "policies"),
             file,
         });
     }
