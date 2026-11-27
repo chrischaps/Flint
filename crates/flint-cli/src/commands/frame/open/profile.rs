@@ -20,9 +20,7 @@ use crate::commands::frame::open::timing::band_of;
 use crate::commands::trace::profile::{is_script, Profile, ScopeStat, StatSort};
 use crate::commands::trace::Trace;
 use egui::{Align, Color32, FontId, Key, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2};
-use flint_debug_ui::widgets::{
-    band_legend, Band, FrameGraph, GraphFrame, GraphLayout, HITCH_COLOR,
-};
+use flint_widgets::{band_legend, Band, FrameGraph, GraphFrame, GraphLayout, HITCH_COLOR};
 use std::ops::Range;
 
 /// Which frames the tab opens on.
@@ -1864,7 +1862,7 @@ mod tests {
             events: all,
             ..Default::default()
         };
-        flint_debug_ui::run_headless_frame(ctx, input, |ui| tab.ui(ui));
+        flint_widgets::run_headless_frame(ctx, input, |ui| tab.ui(ui));
     }
 
     fn key(k: Key, shift: bool) -> egui::Event {

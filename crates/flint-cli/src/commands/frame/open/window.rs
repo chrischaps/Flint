@@ -204,7 +204,7 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        flint_debug_ui::run_headless_frame(ctx, input, |ui| tabs.ui(ui));
+        flint_widgets::run_headless_frame(ctx, input, |ui| tabs.ui(ui));
     }
 
     fn tabs(capture: bool, trace: bool, on_profile: bool) -> Tabs {

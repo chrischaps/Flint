@@ -440,7 +440,7 @@ pub struct ViewerApp {
     // Rendering & Effects menu (F4, ADR 0053): the consolidated render/post
     // debug controls, shared with the player. `open` tracked viewer-side so
     // the egui Window can own a close button.
-    render_panel: flint_debug_ui::RenderDebugPanel,
+    render_panel: flint_widgets::RenderDebugPanel,
     render_panel_open: bool,
 
     /// `--style name[:key=value,...]` words (#328), written over the
@@ -734,7 +734,7 @@ impl ViewerApp {
             default_post_config: None,
             dof_follow: false,
             dof_focus_entity: None,
-            render_panel: flint_debug_ui::RenderDebugPanel::new(false),
+            render_panel: flint_widgets::RenderDebugPanel::new(false),
             render_panel_open: false,
             style_specs: Vec::new(),
             style_time: None,
@@ -1319,7 +1319,7 @@ impl ViewerApp {
     /// user made last frame (write-through), else mirror live renderer state
     /// into the widgets so the panel always displays the truth.
     fn sync_render_panel(&mut self) {
-        use flint_debug_ui::DebugPanel as _;
+        use flint_package::panels::DebugPanel as _;
         // Commit to scene (#364) writes the file, and the watcher reloads
         // it, which would drop entity edits not yet saved
         self.render_panel.set_commit_blocked(self.dirty.then(|| {
@@ -1544,9 +1544,9 @@ impl ViewerApp {
 
         {
             let ctx = &ui.ctx().clone();
-            let errors = flint_debug_ui::paint_style_errors(ctx, &style_errors, &styles, 0.0);
+            let errors = flint_widgets::paint_style_errors(ctx, &style_errors, &styles, 0.0);
             // What a style's cap left out since the scene loaded (#1246)
-            flint_debug_ui::paint_style_drops(
+            flint_widgets::paint_style_drops(
                 ctx,
                 &flint_render::stylize::variant_table::dropped(),
                 errors,

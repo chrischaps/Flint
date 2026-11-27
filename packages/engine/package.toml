@@ -22,7 +22,7 @@ crates = [
     "flint-asset", "flint-import", "flint-pixels", "flint-geometry",
     "flint-runtime", "flint-render", "flint-script", "flint-constraint",
     "flint-package", "flint-player", "flint-android", "flint-viewer",
-    "flint-cli",
+    "flint-widgets", "flint-cli",
     # physics
     "flint-physics",
     # audio

@@ -15,9 +15,9 @@
 //! player-only "freeze script post overrides" switch is on — the panel shows
 //! the truth about who owns a value rather than pretending to.
 
+use crate::section;
 use crate::styles_ui::StylesEditor;
-use crate::widgets::section;
-use crate::DebugPanel;
+use flint_package::panels::{DebugPanel, PanelCtx};
 use flint_render::style_mask::{legend, LegendEntry, StyleIds};
 use flint_render::stylize::StyleSettings;
 use flint_render::{DebugMode, LightingLevers, PostProcessConfig};
@@ -723,7 +723,7 @@ impl DebugPanel for RenderDebugPanel {
 
     /// Mirror the renderer while clean; while dirty, write the edits
     /// through, each group by its flag (the costly ones only when asked).
-    fn sync(&mut self, ctx: &mut crate::PanelCtx) {
+    fn sync(&mut self, ctx: &mut PanelCtx) {
         let renderer = &mut *ctx.renderer;
         ctx.host.freeze_scripts = Some(self.freeze_scripts);
         if self.dirty {

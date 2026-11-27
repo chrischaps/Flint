@@ -13,6 +13,7 @@ members = [
     "crates/flint-import",
     "crates/flint-pixels",
     "crates/flint-viewer",
+    "crates/flint-widgets",
     "crates/flint-runtime",
     "crates/flint-physics",
     "crates/flint-package",
@@ -47,6 +48,7 @@ default-members = [
     "crates/flint-import",
     "crates/flint-pixels",
     "crates/flint-viewer",
+    "crates/flint-widgets",
     "crates/flint-runtime",
     "crates/flint-physics",
     "crates/flint-package",
@@ -214,6 +216,7 @@ flint-pixels = { path = "crates/flint-pixels" }
 # Its `living` feature went with the living package's move (#1558): the field
 # clocks are the package's, through `field_clocks::SceneFields`
 flint-viewer = { path = "crates/flint-viewer", default-features = false }
+flint-widgets = { path = "crates/flint-widgets" }
 flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }
 flint-package = { path = "crates/flint-package" }

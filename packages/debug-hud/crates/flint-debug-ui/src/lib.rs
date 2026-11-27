@@ -1,33 +1,32 @@
 mod camera_panel;
 mod component_panel;
 mod grass_panel;
-mod headless_frame;
 mod ocean_panel;
 mod particles_panel;
 #[cfg(feature = "player")]
 pub mod player;
-mod render_panel;
 mod script_errors;
-mod style_drops;
-mod style_errors;
 mod styles_panel;
-mod styles_ui;
-pub mod widgets;
 
 pub use camera_panel::{CameraDebugPanel, CameraPanelConfig};
 pub use component_panel::ComponentPanel;
 pub use grass_panel::GrassDebugPanel;
-pub use headless_frame::run_headless_frame;
 pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};
 pub use particles_panel::{
     EmitterRow, ParticlePanelAction, ParticlesDebugPanel, PARTICLES_DEBUG_PANEL,
 };
-pub use render_panel::{RenderDebugPanel, RenderPanelFlags, RENDER_DEBUG_PANEL};
 pub use script_errors::{grouped, paint_script_errors, ScriptErrorRow};
-pub use style_drops::paint_style_drops;
-pub use style_errors::paint_style_errors;
 pub use styles_panel::{styled_entity_rows, StyledEntityRow, StylesDebugPanel, STYLES_DEBUG_PANEL};
-pub use styles_ui::{StylesEdit, StylesEditor};
+
+// The widgets, the headless frame and the renderer's controls (the
+// Rendering & Effects panel, the style editor, the style cards) are the
+// kernel's (`flint-widgets`, #1583), so the CLI and the viewer draw them
+// without this package; they are here at their old paths.
+pub use flint_widgets as widgets;
+pub use flint_widgets::{
+    paint_style_drops, paint_style_errors, run_headless_frame, RenderDebugPanel, RenderPanelFlags,
+    StylesEdit, StylesEditor, RENDER_DEBUG_PANEL,
+};
 
 // The panel vocabulary is the kernel's (#1559), so a package or the player
 // adds a panel without naming this crate; it is here at its old paths.

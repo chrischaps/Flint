@@ -13,7 +13,7 @@ use super::timing::{band_of, Timing};
 use super::viewer::{self, Side, ViewState, Wipe};
 use crate::commands::render::replay_host::Controls;
 use egui::{Align, Color32, FontId, Key, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2};
-use flint_debug_ui::widgets::{Band, FrameGraph, GraphLayout};
+use flint_widgets::{Band, FrameGraph, GraphLayout};
 use std::collections::HashMap;
 
 /// The window's colours: a warm dark ground, one teal for what is
@@ -2441,7 +2441,7 @@ mod app_tests {
                 .collect(),
             ..Default::default()
         };
-        flint_debug_ui::run_headless_frame(ctx, input, |ui| app.ui(ui));
+        flint_widgets::run_headless_frame(ctx, input, |ui| app.ui(ui));
     }
 
     fn shown_target(app: &App) -> Option<String> {

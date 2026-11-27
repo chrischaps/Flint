@@ -3,13 +3,13 @@
 //! directly and reports `changed`; `mod.rs` turns that into undo + re-sim.
 
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
-use flint_debug_ui::widgets::{
-    check, combo_str, drag_f32, drag_range_f32, drag_u32, drag_xyz, CurveEditor, GradientEditor,
-};
 use flint_particles::effect::{CountDef, ShapeField};
 use flint_particles::{
     BurstDef, Curve, CurveDef, EmitterDef, ForceDef, Interp, ParticleBlendMode, ParticleEffect,
     RangeDef, ShapeDef, SortMode, SubEmitterDef,
+};
+use flint_widgets::{
+    check, combo_str, drag_f32, drag_range_f32, drag_u32, drag_xyz, CurveEditor, GradientEditor,
 };
 
 use super::{presets, EmitterView, ParticleEditApp, UiActions};
