@@ -63,5 +63,5 @@ stays bounded, the precedent being the ladder's warble.
 - Code now: `packages/music/crates/flint-music/src/gradient.rs` (`GradientDriver`,
   `TuneConfig`, `GradientOffsets`), `packages/music/crates/flint-music/src/ladder.rs`
   (`LadderDriver::apply`), `packages/music/crates/flint-music/tests/gradient_driver.rs`,
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Audio Gradient
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Audio Gradient
   and Haptics"

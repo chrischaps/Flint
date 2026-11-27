@@ -83,3 +83,12 @@ arch-data.json
 
 # Python bytecode
 __pycache__/
+
+# book-collect:begin
+# The book's pages kept in a package's folder (#1563): scripts/book-collect.py
+# copies packages/<name>/docs/<path> to docs/book/src/<path> and writes this
+# list. Edit a page in its package's folder, never the copy.
+/docs/book/src/concepts/ai-generation.md
+/docs/book/src/concepts/music-sessions.md
+/docs/book/src/concepts/procgen.md
+# book-collect:end

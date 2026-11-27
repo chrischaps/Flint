@@ -58,4 +58,4 @@ Not recorded in the surviving text.
   `packages/music/crates/flint-music/src/chart_session.rs` (`ConductedFrame`),
   `crates/flint-script/src/api/conducted.rs` (`conducted_next_target`),
   [Scripting](../book/src/concepts/scripting.md),
-  [Music Sessions](../book/src/concepts/music-sessions.md)
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md)

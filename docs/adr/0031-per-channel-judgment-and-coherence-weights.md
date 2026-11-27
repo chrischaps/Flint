@@ -60,4 +60,4 @@ Not recorded in the surviving text.
 - Code now: `packages/music/crates/flint-music/src/judgment.rs` (`JudgmentRecord`, `Judge`),
   `packages/music/crates/flint-music/src/coherence.rs` (`CoherenceConfig`),
   `packages/music/crates/flint-music/tests/world2_milestone.rs`,
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Coherence"
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Coherence"

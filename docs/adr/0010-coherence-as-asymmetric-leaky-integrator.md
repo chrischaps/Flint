@@ -64,4 +64,4 @@ within two bars.
   Where the Signal Actually Lives (2026-08-15)"
 - Code now: `packages/music/crates/flint-music/src/coherence.rs` (`Coherence`,
   `CoherenceConfig`), `packages/music/crates/flint-music/tests/judgment_milestone2.rs`,
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Coherence"
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Coherence"

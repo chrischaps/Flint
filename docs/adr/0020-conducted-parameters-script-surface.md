@@ -76,4 +76,4 @@ coherence, musical position, judged pulses and the disintegration ramps.
   (`ConductedSnapshot`), `crates/flint-script/src/api/conducted.rs`,
   `crates/flint-player/src/player_app/frame.rs`,
   [Scripting](../book/src/concepts/scripting.md),
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Scripts"
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Scripts"
