@@ -112,6 +112,7 @@ pub fn missing_flag(
         Some(MissingPackage {
             what: format!("flint {line}"),
             package,
+            unsynced: unsynced(package),
         })
     })
 }
@@ -128,7 +129,9 @@ pub fn missing_served(line: &str) -> anyhow::Error {
         .map(|package| package.name)
         .unwrap_or_else(|| line.to_string());
     let package: &'static str = Box::leak(owner.into_boxed_str());
-    missing(format!("flint {line}"), package)
+    let mut e = missing(format!("flint {line}"), package);
+    judge(&mut e);
+    e
 }
 
 /// `what` needs whichever package's manifest provides the command `words`
