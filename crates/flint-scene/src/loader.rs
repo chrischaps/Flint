@@ -152,6 +152,7 @@ fn load_diagnostics(
     let project = Project::for_scene(path);
     let mut found = diagnose_scene_in(scene, path, registry, &project);
     name_unlisted(registry, &mut found);
+    leave_built_without(registry, &mut found);
     diagnostic::drop_allowed(&mut found, &project.allow);
     leave_user_style_components(&mut found, &project, path);
     crate::place_table_diagnostics(content, &mut found);
@@ -168,6 +169,22 @@ fn load_diagnostics(
 pub fn name_unlisted(registry: &SchemaRegistry, found: &mut Vec<Diagnostic>) {
     if let Some(in_use) = registry.packages() {
         in_use.name_unlisted(found);
+    }
+}
+
+/// Drop each `unknown-component` and `unknown-table` whose name a package
+/// the host was built without provides ([`SchemaRegistry::built_without`],
+/// #1601). Such a host doesn't read the package's schemas, so every one of
+/// its names is unknown here, and the hint is the one for a name nobody has
+/// heard of. The host says what they are itself, once a scene, with what
+/// to build: the player's `[living] this player is built without the
+/// `living` package: ...` line. Runs after [`name_unlisted`], so a package
+/// `[packages]` leaves out keeps its `unlisted-package` and the line to
+/// add. Not for a chunk: no line is said at a chunk's load.
+fn leave_built_without(registry: &SchemaRegistry, found: &mut Vec<Diagnostic>) {
+    let without = registry.built_without();
+    if !without.is_empty() {
+        found.retain(|d| !without.iter().any(|p| p.names(d)));
     }
 }
 
@@ -231,6 +248,7 @@ fn parse_scene(content: &str, path: Option<&Path>) -> Result<SceneFile> {
 fn log_string_diagnostics(scene_file: &SceneFile, registry: &SchemaRegistry) {
     let mut found = diagnose_scene(scene_file, None, registry);
     name_unlisted(registry, &mut found);
+    leave_built_without(registry, &mut found);
     diagnostic::log_summary(&format!("scene '{}'", scene_file.scene.name), &found);
 }
 
@@ -454,6 +472,45 @@ position = [5, 0, 0]
         let door_id = world.get_id("door1").unwrap();
         let room_id = world.get_id("room1").unwrap();
         assert_eq!(world.get_parent(door_id), Some(room_id));
+    }
+
+    /// A host built without a package names that package's components and
+    /// tables itself (#1601): the load's summary says no `unknown-*` of
+    /// them, and still says a name no package has.
+    #[test]
+    fn a_hosts_missing_package_is_left_to_its_own_line() {
+        let scene = "[scene]\nname = \"Grove\"\n\n[wooze]\namplitude = 0.5\n\n[breeze]\n\n\
+                     [entities.oak]\nliving_prop = { species = \"oak\" }\nmoss = {}\n";
+        let mut registry = SchemaRegistry::new();
+        registry
+            .load_component_string("[component.transform]\n[component.transform.fields]\n")
+            .unwrap();
+        registry
+            .load_table_string("[table.camera]\n[table.camera.fields]\n")
+            .unwrap();
+        let unknown = |registry: &SchemaRegistry| -> Vec<(&'static str, String)> {
+            let path = Path::new("grove.scene.toml");
+            let (_, _, found) = load_scene_text_diagnosed(scene, path, registry).unwrap();
+            found
+                .iter()
+                .filter(|d| d.code.starts_with("unknown-"))
+                .map(|d| (d.code, d.component.clone().or(d.table.clone()).unwrap()))
+                .collect()
+        };
+        let all = unknown(&registry);
+        assert_eq!(all.len(), 4, "{all:?}");
+        registry.set_built_without(vec![flint_core::package::BuiltWithout {
+            package: "living".into(),
+            components: vec!["living_prop".into(), "shallow_wooze".into()],
+            scene_tables: vec!["living".into(), "wooze".into()],
+        }]);
+        assert_eq!(
+            unknown(&registry),
+            [
+                (diagnostic::codes::UNKNOWN_TABLE, "breeze".to_string()),
+                (diagnostic::codes::UNKNOWN_COMPONENT, "moss".to_string()),
+            ]
+        );
     }
 
     /// Entities written out of name order, as a scene file often is

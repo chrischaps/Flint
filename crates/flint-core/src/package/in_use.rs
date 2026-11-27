@@ -378,6 +378,41 @@ impl InUse {
     }
 }
 
+/// A package the running binary was built without, by what a scene names
+/// of it: its `[provides]` components and scene tables (#1601).
+///
+/// A player that lacks a package doesn't read its schemas (#1529), so a
+/// scene's `living_prop` would be an `unknown-component` with the hint for
+/// a name nobody has heard of. The player says what it is instead, once,
+/// at the scene's entry: the package's line, with `flint build` as its
+/// hint. So it hands these to the registry it loads with
+/// (`SchemaRegistry::set_built_without`) and the load's summary leaves
+/// their names to that line ([`names`](Self::names)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltWithout {
+    /// Its `[package] name`.
+    pub package: String,
+    /// `[provides] components`.
+    pub components: Vec<String>,
+    /// `[provides] scene_tables`.
+    pub scene_tables: Vec<String>,
+}
+
+impl BuiltWithout {
+    /// Whether `d` is an `unknown-component` or `unknown-table` for a name
+    /// this package provides: the binary's line for the package says it.
+    pub fn names(&self, d: &Diagnostic) -> bool {
+        let has = |names: &[String], item: &Option<String>| {
+            item.as_ref().is_some_and(|i| names.contains(i))
+        };
+        match d.code {
+            codes::UNKNOWN_COMPONENT => has(&self.components, &d.component),
+            codes::UNKNOWN_TABLE => has(&self.scene_tables, &d.table),
+            _ => false,
+        }
+    }
+}
+
 /// `the component`, `the scene table`, `the script module`.
 fn article_noun(kind: Kind) -> String {
     format!("the {}", kind.noun())
