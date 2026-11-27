@@ -17,6 +17,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use flint_core::package::InUse;
 use flint_core::project::{AssetKind, Project};
 use flint_ecs::FlintWorld;
 use flint_package::{SceneCtx, Subsystem};
@@ -40,11 +41,26 @@ pub(crate) fn unbuilt(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
         if ctx.registry.has(without.package) {
             continue;
         }
-        if let Some(line) = unbuilt_line(without, ctx.world, ctx.tables) {
+        let left_out = ctx.leaves_out(without.package);
+        if let Some(line) = unbuilt_line(without, ctx.world, ctx.tables, left_out) {
             tracing::warn!(target: "load", "{line}");
         }
     }
     None
+}
+
+/// What brings a package the run lacks: a `flint build` of the project,
+/// whose list is then every package (no `[packages]`) or names it. A list
+/// that leaves it out is told the line to add first, as the load's
+/// `unlisted-package` says.
+pub(crate) fn build_hint(package: &str, left_out: Option<&InUse>) -> String {
+    match left_out {
+        Some(in_use) => format!(
+            "{}, then run `flint build` for a player with it",
+            in_use.hint_for(package)
+        ),
+        None => "run `flint build` in the project for a player with it".to_string(),
+    }
 }
 
 /// What of `without`'s package a scene uses, in the order the line names
@@ -66,19 +82,26 @@ pub(crate) fn uses(without: &Without, world: &FlintWorld, tables: &toml::Table) 
 
 /// The line for a scene that uses `without`'s package, in a run without it:
 /// `[living] this player is built without the `living` package: the
-/// scene's living_prop, [wooze] stand still`.
+/// scene's living_prop, [wooze] stand still; run `flint build` in the
+/// project for a player with it`. It is the one thing said of those names:
+/// the load's summary leaves their `unknown-component` and `unknown-table`
+/// to it (`packages::mark_built_without`, #1601). `left_out` is the list
+/// when the project's `[packages]` leaves the package out.
 pub(crate) fn unbuilt_line(
     without: &Without,
     world: &FlintWorld,
     tables: &toml::Table,
+    left_out: Option<&InUse>,
 ) -> Option<String> {
     let uses = uses(without, world, tables);
     (!uses.is_empty()).then(|| {
         let package = without.package;
         format!(
-            "[{package}] this player is built without the `{package}` package: the scene's {} {}",
+            "[{package}] this player is built without the `{package}` package: the scene's {} \
+             {}; {}",
             uses.join(", "),
-            without.does.unwrap_or(DOES)
+            without.does.unwrap_or(DOES),
+            build_hint(package, left_out)
         )
     })
 }
@@ -177,9 +200,15 @@ mod tests {
     #[test]
     fn a_scene_without_the_parts_hears_nothing() {
         let world = world_with(&[("model", "asset = \"crate\"")]);
-        assert_eq!(unbuilt_line(&GROVE, &world, &toml::Table::new()), None);
+        assert_eq!(
+            unbuilt_line(&GROVE, &world, &toml::Table::new(), None),
+            None
+        );
         for without in crate::packages::WITHOUT {
-            assert_eq!(unbuilt_line(without, &world, &toml::Table::new()), None);
+            assert_eq!(
+                unbuilt_line(without, &world, &toml::Table::new(), None),
+                None
+            );
         }
     }
 
@@ -194,17 +223,39 @@ mod tests {
             ["grove_tree", "grove_moss", "[breeze]"]
         );
         assert_eq!(
-            unbuilt_line(&GROVE, &world, &tables).unwrap(),
+            unbuilt_line(&GROVE, &world, &tables, None).unwrap(),
             "[grove] this player is built without the `grove` package: the scene's grove_tree, \
-             grove_moss, [breeze] stand still"
+             grove_moss, [breeze] stand still; run `flint build` in the project for a player \
+             with it"
         );
         let unsaid = Without {
             does: None,
             ..GROVE
         };
-        assert!(unbuilt_line(&unsaid, &world, &tables)
+        assert!(unbuilt_line(&unsaid, &world, &tables, None)
             .unwrap()
-            .ends_with(&format!("[breeze] {DOES}")));
+            .contains(&format!("[breeze] {DOES}; ")));
+    }
+
+    /// A list that leaves the package out is told the line to add before
+    /// `flint build`, which alone would build without it again.
+    #[test]
+    fn a_list_that_leaves_it_out_hears_the_line_to_add_first() {
+        let in_use = InUse {
+            manifest: "game/flint.toml".into(),
+            on: Default::default(),
+            left_out: Vec::new(),
+            off: Default::default(),
+        };
+        let world = world_with(&[("grove_tree", "")]);
+        let line = unbuilt_line(&GROVE, &world, &toml::Table::new(), Some(&in_use)).unwrap();
+        assert!(
+            line.ends_with(
+                "stand still; add `grove = \"*\"` under [packages] in game/flint.toml, then run \
+                 `flint build` for a player with it"
+            ),
+            "{line}"
+        );
     }
 
     /// The table is the manifests': every package this crate has a part

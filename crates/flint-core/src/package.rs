@@ -26,6 +26,9 @@
 //! player = "flint-living"    # the crate whose `player::PACKAGE` flint-player lists; one of `crates`
 //! cli = "flint-living"       # the crate whose `cli::extensions()` flint lists; one of `crates`
 //!
+//! [rust.devices]             # its crates' device features (#1568), as `crate/feature`: what
+//! # audio = ["flint-music/device"]   the launchers' `audio`, `gamepad` or `dialogs` turns on
+//!
 //! [provides]                 # what it owns; every item has exactly one owner
 //! crates = ["flint-living", "flint-wooze"]
 //! components = ["living_prop", "shallow_wooze"]
@@ -70,7 +73,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod in_use;
-pub use in_use::{InUse, ListError, Listed, PackageList, Wanted};
+pub use in_use::{BuiltWithout, InUse, ListError, Listed, PackageList, Wanted};
 
 /// A package's manifest file name, in the package's own folder.
 pub const MANIFEST_FILE: &str = "package.toml";
@@ -91,7 +94,7 @@ const PACKAGE_KEYS: [&str; 6] = ["name", "version", "tier", "summary", "engine",
 const BUILD_KEYS: [&str; 1] = ["features"];
 
 /// The keys `[rust]` may hold.
-const RUST_KEYS: [&str; 2] = ["player", "cli"];
+const RUST_KEYS: [&str; 3] = ["player", "cli", "devices"];
 
 /// The keys a `[with.<package>]` table may hold.
 const WITH_KEYS: [&str; 1] = ["features"];
@@ -309,6 +312,13 @@ pub struct Package {
     /// when the game lists both. Living's `debug` module and panel are its
     /// `[with.debug-hud]`.
     pub with: BTreeMap<String, Vec<String>>,
+    /// `[rust.devices]` (#1568): for each of the launchers' device features
+    /// (`audio`, `gamepad`, `dialogs`), the features of this package's
+    /// crates it turns on, as `crate/feature` (each crate one of
+    /// `provides.crates`): flint-music's `device` is the sound card.
+    /// `scripts/package-sync.py` checks which names a launcher has, and
+    /// writes them into the launchers' `packages-<device>` features.
+    pub devices: BTreeMap<String, Vec<String>>,
     pub provides: Provides,
     /// What a build without it still knows of it (`[without]`, #1585).
     pub without: Without,
@@ -357,6 +367,7 @@ pub fn parse(text: &str, file: &Path) -> Result<Package, Vec<Diagnostic>> {
     let features = p.features(&table);
     let provides = p.provides(&table);
     let (player, cli) = p.rust(&table, &provides);
+    let devices = p.devices(&table, &provides);
     let with = p.with(&table, package.as_ref().map(|(name, _)| name.as_str()));
     let without = p.without(&table);
     match package {
@@ -372,6 +383,7 @@ pub fn parse(text: &str, file: &Path) -> Result<Package, Vec<Diagnostic>> {
             player,
             cli,
             with,
+            devices,
             provides,
             without,
             file: file.to_path_buf(),
@@ -919,6 +931,58 @@ impl Parse<'_> {
             Some(krate)
         };
         (crate_of("player"), crate_of("cli"))
+    }
+
+    /// `[rust.devices]`: device names, each a list of `crate/feature`, the
+    /// crate one of the package's own.
+    fn devices(
+        &mut self,
+        table: &toml::Table,
+        provides: &Provides,
+    ) -> BTreeMap<String, Vec<String>> {
+        let mut out = BTreeMap::new();
+        let Some(value) = table
+            .get("rust")
+            .and_then(toml::Value::as_table)
+            .and_then(|rust| rust.get("devices"))
+        else {
+            return out;
+        };
+        let Some(devices) = value.as_table() else {
+            self.error(
+                "rust.devices",
+                format!("a table, not {}", a(value.type_str())),
+            );
+            return out;
+        };
+        for name in devices.keys() {
+            let field = format!("rust.devices.{name}");
+            if !is_name(name) {
+                self.error(
+                    field,
+                    format!("`{name}` is no feature name: [a-z][a-z0-9-]*"),
+                );
+                continue;
+            }
+            let features = self.strings(devices, "rust.devices", name);
+            for (i, f) in features.iter().enumerate() {
+                let mistake = match f.split_once('/') {
+                    Some((krate, feature)) if !feature.is_empty() && !feature.contains('/') => {
+                        (!provides.crates.iter().any(|c| c == krate)).then(|| {
+                            format!(
+                                "`{krate}` is no crate of this package: name one of [provides] crates"
+                            )
+                        })
+                    }
+                    _ => Some(format!("`{f}` is no crate's feature: write `crate/feature`")),
+                };
+                if let Some(message) = mistake {
+                    self.error(format!("{field}[{i}]"), message);
+                }
+            }
+            out.insert(name.clone(), features);
+        }
+        out
     }
 
     /// `[with.<package>]`: each a table of `features`, naming a package

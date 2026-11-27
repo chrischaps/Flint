@@ -20,6 +20,11 @@ features = ["procgen"]
 player = "flint-procgen"
 cli = "flint-procgen-cli"
 
+# The editors' Save As / Export buttons (#221, #1568): flint's `dialogs`
+# turns on the system's file dialog (rfd) in the spec editors.
+[rust.devices]
+dialogs = ["flint-procgen-cli/dialogs"]
+
 [provides]
 crates = ["flint-procgen", "flint-procgen-cli"]
 # `flint edit` on a `.procgen.toml` opens its previewers, the two hidden

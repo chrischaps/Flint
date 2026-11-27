@@ -380,6 +380,8 @@ mod web {
                 .load_directory(dir)
                 .map_err(|e| format!("schemas {}: {e}", dir.display()))?;
         }
+        // What it lacks is the player's line to name (#1601)
+        flint_player::packages::mark_built_without(&mut registry);
 
         status(&format!("loading {scene_path}"));
         let (world, mut scene_file) = flint_scene::load_scene(&scene_path, &registry)

@@ -56,5 +56,5 @@ rebuild stays open.
 - Code now: `crates/flint-player/src/extension.rs` (`debug_panels`,
   `debug_panel_ui`), `crates/flint-player/src/player_app/debug_panels.rs`,
   `crates/flint-player/src/player_app/scene_entry.rs`
-- Book: [Debug Panels](../book/src/guides/debug-panels.md), "Adding a panel
+- Book: [Debug Panels](../../packages/debug-hud/docs/guides/debug-panels.md), "Adding a panel
   from a game"; [Player Extensions](../book/src/guides/player-extensions.md)

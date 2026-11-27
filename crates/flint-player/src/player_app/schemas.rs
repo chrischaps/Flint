@@ -43,7 +43,9 @@ impl HeldSchemas {
     /// Hold `registry`, which the host read from `dirs` (possibly over
     /// schemas of its own, as the web player's compiled-in engine set), and
     /// say the game lints of it not said before.
-    pub(super) fn set(&mut self, registry: SchemaRegistry, dirs: &[PathBuf]) {
+    pub(super) fn set(&mut self, mut registry: SchemaRegistry, dirs: &[PathBuf]) {
+        // The packages this player lacks are its line's to name (#1601)
+        crate::packages::mark_built_without(&mut registry);
         let lints = self.unsaid(&registry);
         say(&lints);
         self.registry = Some(Arc::new(registry));
