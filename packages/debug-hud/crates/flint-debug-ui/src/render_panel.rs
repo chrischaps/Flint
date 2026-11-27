@@ -711,6 +711,12 @@ impl DebugPanel for RenderDebugPanel {
         self.ui_contents(ui);
     }
 
+    /// F4 is the player's, not the scene's: it outlives a transition, open
+    /// or closed as it was (#268).
+    fn outlives_scene(&self) -> bool {
+        true
+    }
+
     fn weight(&self) -> u32 {
         60
     }

@@ -1,0 +1,43 @@
+[package]
+name = "flint-debug-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The debug-hud package: the F3/F4 panels, their shared widgets, and the HUD the player asks for them"
+
+# The debug-hud package's crate (`packages/debug-hud/`, #1559). The panels and
+# widgets are in every build of it: flint-cli and flint-viewer draw the
+# widgets (the frame graph, the curve editor) and the viewer the Rendering &
+# Effects panel. The panel trait and the graph's data are the kernel's
+# (`flint_package::panels`, `flint_package::hud`), re-exported here.
+[features]
+# The package's part of the player (`src/player/`): `player::PACKAGE`, which
+# registers the HUD that makes the engine's panels at each scene, syncs and
+# lays them out, drives F3 and F4, paints the corner cards and draws F2's
+# graph. flint-player's `debug-hud` feature turns it on; its build script
+# lists `PACKAGE` from the manifest's `[rust]`.
+player = ["dep:flint-script"]
+
+[dependencies]
+# The panel trait, the HUD trait and the graph's data (#1559)
+flint-package = { workspace = true }
+# The script card's rows (`player::cards`)
+flint-script = { workspace = true, optional = true }
+flint-core = { workspace = true }
+flint-geometry = { workspace = true }
+flint-render = { workspace = true }
+flint-terrain = { workspace = true }
+flint-scene = { workspace = true }
+flint-ecs = { workspace = true }
+flint-particles = { workspace = true }
+flint-schema = { workspace = true }
+wgpu = { workspace = true }
+egui = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+
+# egui frames go through run_headless_frame in tests; the list is the
+# workspace clippy.toml (#944), denied workspace-wide (#979).
+[lints]
+workspace = true

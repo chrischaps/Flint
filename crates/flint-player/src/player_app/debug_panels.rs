@@ -1,72 +1,50 @@
-//! Debug-panel creation and toggling for `PlayerApp` — code-motion sibling
-//! of `mod.rs` (player_app decomposition; see the decomposition ADR).
-//! Panel *drain* stays with the frame loop; this file owns construction and
-//! the named-toggle plumbing, plus the ungated `camera_tuning` applier that
-//! shares the `CAMERA_TUNING_COMPONENT` convention with its panel.
+//! The F3/F4 panels, the player's side (#1559). The debug HUD the launcher
+//! registered (`flint_package::hud::DebugHud`, the debug-hud package's)
+//! makes the engine's panels, syncs them, lays them out and toggles them;
+//! this file hands it what a scene and a key lend, keeps the game's own
+//! panels (ADR 0107) and the packages' scene panels, and moves the cursor.
+//! Also here: the `camera_tuning` applier, which every build runs.
+//!
+//! The panels are the run's `DebugPanels` resource, there only when the
+//! run has a debug HUD: a build without the package has none, and every
+//! helper here is then a no-op.
 
 use super::{PlayerApp, CAMERA_TUNING_COMPONENT};
-#[cfg(feature = "debug-hud")]
-use flint_core::components as comp;
+use flint_package::hud::{GrassPanel, HudScene, Toggle};
+use flint_package::panels::{DebugPanel, DebugPanels};
 
-/// The F3/F4 panels in `resources`: the run's `DebugPanels` (#1550), which
-/// the player puts in at its start and lends every subsystem.
-#[cfg(feature = "debug-hud")]
-pub(super) fn panels_mut_of(
-    resources: &mut flint_package::Resources,
-) -> &mut Vec<Box<dyn flint_debug_ui::DebugPanel>> {
-    resources.get_or_insert_with(flint_debug_ui::DebugPanels::default)
-}
-
-/// The F3/F4 panels in `resources`, to read; none before the player put
-/// them in.
-#[cfg(feature = "debug-hud")]
-pub(super) fn panels_of(
-    resources: &flint_package::Resources,
-) -> &[Box<dyn flint_debug_ui::DebugPanel>] {
+/// The F3/F4 panels in `resources`, to read; none without a debug HUD.
+pub(super) fn panels_of(resources: &flint_package::Resources) -> &[Box<dyn DebugPanel>] {
     resources
-        .get::<flint_debug_ui::DebugPanels>()
+        .get::<DebugPanels>()
         .map_or(&[], |panels| panels.as_slice())
 }
 
+/// The F3/F4 panels in `resources`, to change; `None` without a debug HUD.
+pub(super) fn panels_mut_of(resources: &mut flint_package::Resources) -> Option<&mut DebugPanels> {
+    resources.get_mut::<DebugPanels>()
+}
+
 impl PlayerApp {
-    /// The F3/F4 panels, to read.
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn debug_panels(&self) -> &[Box<dyn flint_debug_ui::DebugPanel>] {
+    /// The F3/F4 panels, to read: none without a debug HUD.
+    pub(super) fn debug_panels(&self) -> &[Box<dyn DebugPanel>] {
         panels_of(&self.core.resources)
     }
 
-    /// The F3/F4 panels: the run's `DebugPanels` resource.
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn debug_panels_mut(&mut self) -> &mut Vec<Box<dyn flint_debug_ui::DebugPanel>> {
-        panels_mut_of(&mut self.core.resources)
+    /// The F3/F4 panels, made if the run has none: a test's.
+    #[cfg(test)]
+    pub(super) fn debug_panels_mut(&mut self) -> &mut DebugPanels {
+        self.core.resources.get_or_insert_with(DebugPanels::default)
     }
 
-    /// Create the Particles panel when the scene has any `particle_emitter`
-    /// or `particle_effect` entity (ADR 0068). Rows are refreshed each frame
-    /// by the drain in `frame.rs`.
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn create_particles_debug_panel(&mut self) {
-        let has_any = !self
-            .core
-            .world
-            .entities_with_component(comp::PARTICLE_EMITTER)
-            .is_empty()
-            || !self
-                .core
-                .world
-                .entities_with_component(comp::PARTICLE_EFFECT)
-                .is_empty();
-        if !has_any {
-            return;
-        }
-        self.debug_panels_mut()
-            .push(Box::new(flint_debug_ui::ParticlesDebugPanel::new()));
+    /// How many panels are open.
+    pub(super) fn panels_open(&self) -> usize {
+        self.debug_panels().iter().filter(|p| p.is_open()).count()
     }
 
     /// The style settings the scene authors (its `[post_process.styles]`;
     /// none when it has no `[post_process]` block), for the style editor's
     /// Authored button and markers (#268).
-    #[cfg(feature = "debug-hud")]
     pub(super) fn authored_styles(&self) -> flint_render::stylize::StyleSettings {
         self.scene
             .post_process
@@ -77,248 +55,103 @@ impl PlayerApp {
             .unwrap_or_default()
     }
 
-    /// The scene's project and folder, where the style editor finds the
-    /// palettes and glyph sets to offer (#322), by the one asset search.
-    #[cfg(feature = "debug-hud")]
-    fn styles_scene_dir(&self) -> Option<flint_core::project::AssetScope> {
-        Some(self.kept_asset_scope())
-    }
-
     /// The scene file the style editors' Commit to scene writes (#364):
     /// the scene's path, unless it came from a bundle (nothing on the disk
     /// to write) or the web.
-    #[cfg(feature = "debug-hud")]
     fn styles_scene_file(&self) -> Option<std::path::PathBuf> {
         self.launch
             .scene_file_writable
             .then(|| std::path::PathBuf::from(&self.core.scene_path))
     }
 
-    /// Create the Rendering & Effects panel (ADR 0053), or point the one
-    /// that survived a scene transition at the new scene's authored styles.
-    /// Every scene has a renderer to tune, so it is unconditional;
-    /// registered closed, F4 summons it. `show_freeze` is true because
-    /// player scripts drive post fields.
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn create_render_debug_panel(&mut self) {
+    /// The scene's debug panels, by the run's debug HUD: the last scene's
+    /// go (grass, ocean, particles, styles...); Rendering & Effects (F4)
+    /// and the game's own belong to the player and are kept, open or closed
+    /// as they were. Before #268 a transition dropped them and never made
+    /// them again. Then the game's panels (ADR 0107), after the engine's.
+    pub(super) fn create_scene_debug_panels(
+        &mut self,
+        grass: Option<super::scene_loading::LoadedGrassInfo>,
+    ) {
+        if self.hud.debug.is_none() || panels_mut_of(&mut self.core.resources).is_none() {
+            return;
+        }
         let authored = self.authored_styles();
-        let scene_dir = self.styles_scene_dir();
-        let looks = flint_render::look::list_in(&scene_dir.clone().unwrap_or_else(|| {
-            flint_core::project::AssetScope::new(self.core.project.clone(), self.scene_dir())
-        }));
+        let assets = self.kept_asset_scope();
+        let looks = flint_render::look::list_in(&assets);
         let current = self.current_look().map(str::to_string);
         let scene_file = self.styles_scene_file();
-        let existing = self
-            .debug_panels_mut()
-            .iter_mut()
-            .filter(|p| p.name() == flint_debug_ui::RENDER_DEBUG_PANEL)
-            .find_map(|p| {
-                p.as_any_mut()
-                    .downcast_mut::<flint_debug_ui::RenderDebugPanel>()
-            });
-        match existing {
-            Some(panel) => {
-                panel.set_authored_styles(Some(authored));
-                panel.set_asset_scope(scene_dir);
-                panel.set_looks(&looks, current.as_deref());
-                panel.set_scene_file(scene_file);
-            }
-            None => {
-                let mut panel = flint_debug_ui::RenderDebugPanel::new(true);
-                panel.set_authored_styles(Some(authored));
-                panel.set_asset_scope(scene_dir);
-                panel.set_looks(&looks, current.as_deref());
-                panel.set_scene_file(scene_file);
-                panel.offer_look_fade(true);
-                self.debug_panels_mut().push(Box::new(panel));
-            }
+        let schemas = self
+            .schemas
+            .held_or_read(&self.schema_dirs.dirs, self.schema_dirs.packages.as_ref());
+        let packages = self.package_debug_panels();
+        let scene = HudScene {
+            world: &self.core.world,
+            scene_path: &self.core.scene_path,
+            grass: grass.map(|info| GrassPanel {
+                config: info.config,
+                entity: info.terrain_entity_name,
+                component: info.component,
+            }),
+            authored,
+            assets,
+            looks,
+            current_look: current.as_deref(),
+            scene_file,
+            schemas: &schemas,
+            packages,
+        };
+        if let (Some(hud), Some(panels)) = (
+            self.hud.debug.as_mut(),
+            self.core.resources.get_mut::<DebugPanels>(),
+        ) {
+            hud.scene_panels(panels, scene);
         }
+        self.create_extension_debug_panels();
+    }
+
+    /// Each package's panel for this scene (#1558), in the order the
+    /// packages registered them (`flint_package::panels::ScenePanels`): the
+    /// Living Props panel in a scene with a `living_prop` (#218), whose
+    /// subsystem mirrors the grove into it. None of a package the project's
+    /// `[packages]` leaves out (#1528).
+    pub(super) fn package_debug_panels(&self) -> Vec<Box<dyn DebugPanel>> {
+        let Some(makers) =
+            crate::packages::registry().point::<flint_package::panels::ScenePanels>()
+        else {
+            return Vec::new();
+        };
+        makers
+            .0
+            .iter()
+            .filter(|(package, _)| !self.core.leaves_out(package))
+            .filter_map(|(_, make)| make(&self.core.world))
+            .collect()
+    }
+
+    /// The packages' panels for this scene, added to the run's (a test's
+    /// way to make them alone).
+    #[cfg(test)]
+    pub(super) fn create_package_debug_panels(&mut self) {
+        let made = self.package_debug_panels();
+        self.debug_panels_mut().extend(made);
     }
 
     /// After a look changes (#356): F4 shows it as the one in use, and the
     /// style editors' Authored button and markers follow the scene's keys
     /// under it, which is what the scene draws with now.
-    #[cfg(feature = "debug-hud")]
     pub(super) fn refresh_style_panels_after_look(&mut self) {
+        if self.hud.debug.is_none() {
+            return;
+        }
         let authored = self.authored_styles();
         let current = self.current_look().map(str::to_string);
-        for panel in self.debug_panels_mut().iter_mut() {
-            let any = panel.as_any_mut();
-            if let Some(rp) = any.downcast_mut::<flint_debug_ui::RenderDebugPanel>() {
-                rp.set_authored_styles(Some(authored.clone()));
-                rp.set_current_look(current.as_deref());
-            } else if let Some(sp) = any.downcast_mut::<flint_debug_ui::StylesDebugPanel>() {
-                sp.set_authored(Some(authored.clone()));
-            }
+        if let (Some(hud), Some(panels)) = (
+            self.hud.debug.as_mut(),
+            self.core.resources.get_mut::<DebugPanels>(),
+        ) {
+            hud.look_changed(panels, &authored, current.as_deref());
         }
-    }
-
-    /// Drop the panels that belong to the scene being left (grass, ocean,
-    /// particles, styles, ...), keeping the player's own: Rendering &
-    /// Effects (F4) and the game's (ADR 0107), open or closed as they were.
-    /// The `create_*` calls after the new scene loads make the rest again.
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn drop_scene_debug_panels(&mut self) {
-        self.debug_panels_mut().retain(|p| {
-            p.name() == flint_debug_ui::RENDER_DEBUG_PANEL || p.as_any().is::<ExtensionPanel>()
-        });
-    }
-
-    /// Create the F3 Styles panel (#268) when the scene uses a style: a
-    /// `[post_process.styles]` table, or an entity with a `style_mask`.
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn create_styles_debug_panel(&mut self) {
-        let authored = self.authored_styles();
-        let has_table = authored.iter().next().is_some();
-        let has_mask = !self
-            .core
-            .world
-            .entities_with_component(flint_render::style_mask::STYLE_MASK_COMPONENT)
-            .is_empty();
-        if !has_table && !has_mask {
-            return;
-        }
-        let panel = flint_debug_ui::StylesDebugPanel::new(Some(authored))
-            .with_asset_scope(self.styles_scene_dir())
-            .with_scene_file(self.styles_scene_file());
-        self.debug_panels_mut().push(Box::new(panel));
-    }
-
-    /// Each package's panel for this scene (#1558), in the order the
-    /// packages registered them (`flint_debug_ui::ScenePanels`): the Living
-    /// Props panel in a scene with a `living_prop` (#218), whose subsystem
-    /// mirrors the grove into it. None of a package the project's
-    /// `[packages]` leaves out (#1528).
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn create_package_debug_panels(&mut self) {
-        let Some(makers) = crate::packages::registry().point::<flint_debug_ui::ScenePanels>()
-        else {
-            return;
-        };
-        for (package, make) in &makers.0 {
-            if self.core.leaves_out(package) {
-                continue;
-            }
-            if let Some(panel) = make(&self.core.world) {
-                self.debug_panels_mut().push(panel);
-            }
-        }
-    }
-
-    /// Create the ocean tuning panel if the scene has an `ocean` component.
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn create_ocean_debug_panel(&mut self) {
-        let Some(&entity_id) = self
-            .core
-            .world
-            .entities_with_component(flint_geometry::components::OCEAN)
-            .iter()
-            .next()
-        else {
-            return;
-        };
-        let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
-            return;
-        };
-        let ocean = self
-            .core
-            .world
-            .view(entity_id, flint_geometry::components::OCEAN);
-        if !ocean.exists() {
-            return;
-        }
-        let config = flint_debug_ui::OceanPanelConfig::from_component(&ocean);
-        let panel = flint_debug_ui::OceanDebugPanel::new(
-            config,
-            std::path::PathBuf::from(&self.core.scene_path),
-            name,
-        );
-        self.debug_panels_mut().push(Box::new(panel));
-    }
-
-    /// A panel for each entity that carries a component whose schema puts
-    /// fields on one (#744): `panel = "status" | "tune" | "trigger"` in the
-    /// scene's own schema directories, so a game's script-driven controller
-    /// gets F3 controls with no Rust. In the order of the panels' titles,
-    /// then the entities' names; with several entities, each title names
-    /// its entity.
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn create_component_panels(&mut self) {
-        let registry = self
-            .schemas
-            .held_or_read(&self.schema_dirs.dirs, self.schema_dirs.packages.as_ref());
-        let mut marked: Vec<_> = registry
-            .components()
-            .into_iter()
-            .filter_map(|schema| Some((schema.name.as_str(), schema.panel.as_ref()?)))
-            .collect();
-        marked.sort_by(|a, b| a.1.title.cmp(&b.1.title).then(a.0.cmp(b.0)));
-        let scene_file = self.styles_scene_file();
-        for (component, spec) in marked {
-            let mut entities: Vec<(String, Option<toml::Value>)> = self
-                .core
-                .world
-                .entities_with_component(component)
-                .iter()
-                .filter_map(|&id| {
-                    let name = self.core.world.get_name(id)?.to_string();
-                    let table = self
-                        .core
-                        .world
-                        .get_components(id)
-                        .and_then(|c| c.get(component))
-                        .cloned();
-                    Some((name, table))
-                })
-                .collect();
-            entities.sort_by(|a, b| a.0.cmp(&b.0));
-            let several = entities.len() > 1;
-            for (entity, table) in entities {
-                let title = if several {
-                    format!("{} · {entity}", spec.title)
-                } else {
-                    spec.title.clone()
-                };
-                self.debug_panels_mut()
-                    .push(Box::new(flint_debug_ui::ComponentPanel::new(
-                        spec.clone(),
-                        component,
-                        &entity,
-                        title,
-                        table.as_ref(),
-                        scene_file.clone(),
-                    )));
-            }
-        }
-    }
-
-    /// Create the camera tuning panel if the scene has a `camera_tuning`
-    /// component.
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn create_camera_debug_panel(&mut self) {
-        let Some(&entity_id) = self
-            .core
-            .world
-            .entities_with_component(CAMERA_TUNING_COMPONENT)
-            .iter()
-            .next()
-        else {
-            return;
-        };
-        let Some(name) = self.core.world.get_name(entity_id).map(str::to_string) else {
-            return;
-        };
-        let tuning = self.core.world.view(entity_id, CAMERA_TUNING_COMPONENT);
-        if !tuning.exists() {
-            return;
-        }
-        let config = flint_debug_ui::CameraPanelConfig::from_component(&tuning);
-        let panel = flint_debug_ui::CameraDebugPanel::new(
-            config,
-            std::path::PathBuf::from(&self.core.scene_path),
-            name,
-        );
-        self.debug_panels_mut().push(Box::new(panel));
     }
 
     /// Apply the scene's `camera_tuning` component to the render camera.
@@ -344,38 +177,42 @@ impl PlayerApp {
         }
     }
 
-    /// Toggle a named debug panel, adjusting cursor capture to match its new
-    /// state; when no such panel is registered (no renderer),
-    /// `key` says `absent_msg` on screen and in the console (#367). One body
-    /// for the F4 key handler.
-    #[cfg(feature = "debug-hud")]
-    pub(super) fn toggle_named_panel(&mut self, name: &str, key: &str, absent_msg: &str) {
-        let mut opened = false;
-        let mut exists = false;
-        for panel in self.debug_panels_mut().iter_mut() {
-            if panel.name() == name {
-                exists = true;
-                panel.toggle();
-                opened = panel.is_open();
-            }
+    /// F3 or F4 through the debug HUD, the cursor following: let go while
+    /// a panel is open, caught again once none is, in a first-person scene.
+    /// With nothing to toggle, `key` says `absent` on screen and in the
+    /// console (#367).
+    pub(super) fn toggle_panels(&mut self, which: Toggle, key: &str, absent: &str) {
+        let toggled = match (
+            self.hud.debug.as_mut(),
+            self.core.resources.get_mut::<DebugPanels>(),
+        ) {
+            (Some(hud), Some(panels)) => hud.toggle(panels, which),
+            _ => None,
+        };
+        match toggled {
+            Some(_) => self.cursor_follows_panels(),
+            None => self.hud.key_note.say(key, absent),
         }
-        if exists {
-            if opened {
-                self.release_cursor();
-            } else if self.core.physics.has_player_entity() {
-                self.capture_cursor();
-            }
-        } else {
-            self.hud.key_note.say(key, absent_msg);
+    }
+
+    /// The cursor follows the panels: let go while any is open, captured
+    /// again once none is, in a first-person scene.
+    pub(super) fn cursor_follows_panels(&mut self) {
+        if self.panels_open() > 0 {
+            self.release_cursor();
+        } else if self.core.physics.has_player_entity() {
+            self.capture_cursor();
         }
     }
 
     /// Add the panels the extensions name (ADR 0107), after the engine's,
     /// replacing any added before. A panel that was open stays open.
-    #[cfg(feature = "debug-hud")]
     pub(super) fn create_extension_debug_panels(&mut self) {
+        let Some(panels) = panels_mut_of(&mut self.core.resources) else {
+            return;
+        };
         let mut open = Vec::new();
-        self.debug_panels_mut().retain(|panel| {
+        panels.retain(|panel| {
             let Some(ext) = panel.as_any().downcast_ref::<ExtensionPanel>() else {
                 return true;
             };
@@ -387,7 +224,7 @@ impl PlayerApp {
         for (extension, ext) in self.extensions.iter().enumerate() {
             for name in ext.debug_panels() {
                 let was_open = open.iter().any(|(e, n)| *e == extension && *n == name);
-                panels_mut_of(&mut self.core.resources).push(Box::new(ExtensionPanel {
+                panels.push(Box::new(ExtensionPanel {
                     extension,
                     name,
                     open: was_open,
@@ -397,37 +234,17 @@ impl PlayerApp {
     }
 }
 
-/// Give both style editors (F4's and F3's) the scene's authored style
-/// settings after one of them committed a style (#364), so neither marks
-/// the committed values as edits.
-#[cfg(feature = "debug-hud")]
-pub(super) fn set_panels_authored_styles(
-    panels: &mut [Box<dyn flint_debug_ui::DebugPanel>],
-    authored: &flint_render::stylize::StyleSettings,
-) {
-    for panel in panels {
-        let any = panel.as_any_mut();
-        if let Some(rp) = any.downcast_mut::<flint_debug_ui::RenderDebugPanel>() {
-            rp.set_authored_styles(Some(authored.clone()));
-        } else if let Some(sp) = any.downcast_mut::<flint_debug_ui::StylesDebugPanel>() {
-            sp.set_authored_styles(Some(authored.clone()));
-        }
-    }
-}
-
 /// A debug panel a game names through `PlayerExtension::debug_panels`. It
 /// holds only the panel's place and whether it's open: the frame draws its
 /// contents with the extension's `debug_panel_ui` (see [`draw_panel`]).
-#[cfg(feature = "debug-hud")]
 pub(super) struct ExtensionPanel {
     /// Index into `PlayerApp::extensions`.
-    extension: usize,
-    name: String,
-    open: bool,
+    pub(super) extension: usize,
+    pub(super) name: String,
+    pub(super) open: bool,
 }
 
-#[cfg(feature = "debug-hud")]
-impl flint_debug_ui::DebugPanel for ExtensionPanel {
+impl DebugPanel for ExtensionPanel {
     fn name(&self) -> &str {
         &self.name
     }
@@ -438,6 +255,10 @@ impl flint_debug_ui::DebugPanel for ExtensionPanel {
     }
     fn toggle(&mut self) {
         self.open = !self.open;
+    }
+    /// The game's, not the scene's (ADR 0107): kept across a transition.
+    fn outlives_scene(&self) -> bool {
+        true
     }
     fn is_dirty(&self) -> bool {
         false
@@ -453,9 +274,8 @@ impl flint_debug_ui::DebugPanel for ExtensionPanel {
 
 /// Draw one panel's contents: an engine panel draws itself, and a game's
 /// is drawn by the extension that named it.
-#[cfg(feature = "debug-hud")]
 pub(super) fn draw_panel(
-    panel: &mut dyn flint_debug_ui::DebugPanel,
+    panel: &mut dyn DebugPanel,
     extensions: &mut [Box<dyn crate::extension::PlayerExtension>],
     ui: &mut egui::Ui,
 ) {
@@ -468,161 +288,9 @@ pub(super) fn draw_panel(
     }
 }
 
-/// Side columns open this wide (the old `SidePanel` default). The grip on
-/// a column's left edge resizes it, down to the minimum and up to half the
-/// window.
-#[cfg(feature = "debug-hud")]
-const DEBUG_COLUMN_WIDTH: f32 = 300.0;
-#[cfg(feature = "debug-hud")]
-const DEBUG_COLUMN_MIN_WIDTH: f32 = 280.0;
-#[cfg(feature = "debug-hud")]
-const DEBUG_BOTTOM_HEIGHT: f32 = 112.0;
-
-/// Draw the open debug panels: full-width strips along the bottom (e.g. the
-/// timeline), then columns from the right edge above them, each panel's
-/// contents by `draw` (see [`draw_panel`]). Returns the width the columns
-/// take.
-///
-/// They float on egui's Foreground order rather than being egui
-/// `SidePanel`s, which always paint on the background layer. That keeps
-/// them above everything a game draws with egui (`PlayerExtension::ui`):
-/// its panels are background and its windows Middle. Popups the panels
-/// open (combo boxes, menus) are Foreground too and come up on top.
-#[cfg(feature = "debug-hud")]
-pub(super) fn show_debug_panels(
-    ctx: &egui::Context,
-    panels: &mut [Box<dyn flint_debug_ui::DebugPanel>],
-    draw: &mut dyn FnMut(&mut dyn flint_debug_ui::DebugPanel, &mut egui::Ui),
-) -> f32 {
-    use flint_debug_ui::PanelLayout;
-
-    // Logical points (screen_rect), never config.width (physical px).
-    let screen = ctx.content_rect();
-
-    // Bottom strips draw their own compact labels (a heading would eat the
-    // vertical budget).
-    let mut bottom = screen.max.y;
-    for panel in panels.iter_mut() {
-        if panel.is_open() && matches!(panel.layout(), PanelLayout::Bottom) {
-            let id = egui::Id::new(("debug_bottom", panel.name()));
-            let size = egui::vec2(screen.width(), DEBUG_BOTTOM_HEIGHT);
-            let top_right = egui::pos2(screen.max.x, bottom - DEBUG_BOTTOM_HEIGHT);
-            debug_area(ctx, id, top_right, size, |ui| draw(panel.as_mut(), ui));
-            bottom -= DEBUG_BOTTOM_HEIGHT;
-        }
-    }
-
-    // Open side-panel indices, in creation order.
-    let open: Vec<usize> = panels
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| p.is_open() && matches!(p.layout(), PanelLayout::SideRight))
-        .map(|(i, _)| i)
-        .collect();
-    if open.is_empty() {
-        return 0.0;
-    }
-
-    // Panels take at most ~half the window; fewer columns when narrow.
-    let max_cols = (((screen.width() * 0.5) / DEBUG_COLUMN_WIDTH).floor() as usize).clamp(1, 3);
-    let weights: Vec<u32> = open.iter().map(|&i| panels[i].weight()).collect();
-    let columns = flint_debug_ui::assign_columns(&weights, max_cols);
-    let max_width = (screen.width() * 0.5).max(DEBUG_COLUMN_MIN_WIDTH);
-
-    let mut right = screen.max.x;
-    for (col_idx, col) in columns.iter().enumerate() {
-        let id = egui::Id::new(("debug_col", col_idx));
-        let width_id = id.with("width");
-        let width = ctx
-            .data(|d| d.get_temp::<f32>(width_id))
-            .unwrap_or(DEBUG_COLUMN_WIDTH)
-            .clamp(DEBUG_COLUMN_MIN_WIDTH, max_width);
-        let size = egui::vec2(width, bottom - screen.min.y);
-        let top_right = egui::pos2(right, screen.min.y);
-
-        let rect = debug_area(ctx, id, top_right, size, |ui| {
-            // The column's outer rect (last frame's size): where the grip
-            // goes this frame.
-            let area = ui.max_rect() + egui::Frame::side_top_panel(ui.style()).inner_margin;
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for &slot in col {
-                        let panel = &mut panels[open[slot]];
-                        let name = panel.name().to_owned();
-                        egui::CollapsingHeader::new(egui::RichText::new(name).heading())
-                            .default_open(true)
-                            .show(ui, |ui| draw(panel.as_mut(), ui));
-                        ui.separator();
-                    }
-                });
-
-            // Resize grip along the left edge, registered last so it wins
-            // over the content under it.
-            let grip = egui::Rect::from_x_y_ranges(area.min.x..=area.min.x + 4.0, area.y_range());
-            let response = ui.interact(grip, id.with("grip"), egui::Sense::drag());
-            let active = response.hovered() || response.dragged();
-            if active {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-            }
-            // The width follows the pointer (as in a SidePanel), not summed
-            // deltas, which lose movement to the one-frame lag of `area`.
-            if let (true, Some(pointer)) = (response.dragged(), response.interact_pointer_pos()) {
-                let new_width = (top_right.x - pointer.x).clamp(DEBUG_COLUMN_MIN_WIDTH, max_width);
-                ui.ctx().data_mut(|d| d.insert_temp(width_id, new_width));
-            }
-            let visuals = ui.visuals();
-            let stroke = if active {
-                visuals.widgets.active.fg_stroke
-            } else {
-                visuals.widgets.noninteractive.bg_stroke
-            };
-            ui.painter().vline(area.min.x + 0.5, area.y_range(), stroke);
-        });
-        right = rect.min.x;
-    }
-    screen.max.x - right
-}
-
-/// One unmovable Foreground area of `size` with its top-right corner pinned
-/// at `top_right`, framed and filled like an egui side panel. Contents
-/// wider than the area are clipped, as in a `SidePanel` of the same width.
-/// Returns the area's rect.
-#[cfg(feature = "debug-hud")]
-fn debug_area(
-    ctx: &egui::Context,
-    id: egui::Id,
-    top_right: egui::Pos2,
-    size: egui::Vec2,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) -> egui::Rect {
-    egui::Area::new(id)
-        .order(egui::Order::Foreground)
-        .pivot(egui::Align2::RIGHT_TOP)
-        .fixed_pos(top_right)
-        .constrain(false)
-        .fade_in(false)
-        .show(ctx, |ui| {
-            let frame = egui::Frame::side_top_panel(ui.style());
-            let inner = (size - frame.total_margin().sum()).max(egui::Vec2::ZERO);
-            frame.show(ui, |ui| {
-                // Exactly `size`: contents that fill the available width
-                // (scroll areas, separators) would otherwise keep whatever
-                // width the area had last frame, starting with the
-                // screen-wide sizing pass.
-                ui.set_min_size(inner);
-                ui.set_max_size(inner);
-                add_contents(ui);
-            });
-        })
-        .response
-        .rect
-}
-
-#[cfg(all(test, feature = "debug-hud"))]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use flint_debug_ui::run_headless_frame;
 
     fn app() -> PlayerApp {
         PlayerApp::new(
@@ -638,148 +306,26 @@ mod tests {
         app.debug_panels().iter().map(|p| p.name()).collect()
     }
 
-    fn styled_scene() -> flint_scene::PostProcessDef {
-        let doc: toml::Table = "[post_process.styles.ascii]\ncell = 12\n".parse().unwrap();
-        doc["post_process"].clone().try_into().unwrap()
-    }
-
+    /// The player hands the HUD its scene: a styled one gets F3's Styles
+    /// panel beside F4, through the package (#1559). A launcher without
+    /// the debug HUD makes no panels at all, and so none for a style.
     #[test]
-    fn a_styled_scene_gets_the_f3_styles_panel_and_a_plain_one_does_not() {
-        let mut plain = app();
-        plain.create_styles_debug_panel();
-        assert!(names(&plain).is_empty(), "no style, no panel");
-
+    fn a_styled_scene_gets_the_styles_panel_from_the_debug_hud() {
         let mut styled = app();
-        styled.scene.post_process = Some(styled_scene());
+        let doc: toml::Table = "[post_process.styles.ascii]\ncell = 12\n".parse().unwrap();
+        styled.scene.post_process = Some(doc["post_process"].clone().try_into().unwrap());
         assert_eq!(styled.authored_styles().param("ascii", "cell"), Some(12.0));
-        styled.create_styles_debug_panel();
-        assert_eq!(names(&styled), [flint_debug_ui::STYLES_DEBUG_PANEL]);
-    }
-
-    #[test]
-    fn f4_and_the_games_panels_outlive_a_scene_transition() {
-        let mut app = app();
-        app.scene.post_process = Some(styled_scene());
-        app.debug_panels_mut().push(Box::new(Dummy));
-        app.create_styles_debug_panel();
-        app.create_render_debug_panel();
-        app.debug_panels_mut().push(Box::new(ExtensionPanel {
-            extension: 0,
-            name: "Net".into(),
-            open: true,
-        }));
-        // F4 is open going into the transition
-        for p in app.debug_panels_mut().iter_mut() {
-            if p.name() == flint_debug_ui::RENDER_DEBUG_PANEL {
-                p.toggle();
-            }
+        styled.create_scene_debug_panels(None);
+        if crate::packages::lacks("debug-hud") {
+            assert!(names(&styled).is_empty(), "no HUD, no panels");
+            return;
         }
-
-        app.drop_scene_debug_panels();
-        assert_eq!(names(&app), [flint_debug_ui::RENDER_DEBUG_PANEL, "Net"]);
-        // The new scene's creators don't make a second F4, and it stays open
-        app.scene.post_process = None;
-        app.create_styles_debug_panel();
-        app.create_render_debug_panel();
-        assert_eq!(names(&app), [flint_debug_ui::RENDER_DEBUG_PANEL, "Net"]);
-        assert!(app.debug_panels_mut()[0].is_open());
-    }
-
-    struct Dummy;
-    impl flint_debug_ui::DebugPanel for Dummy {
-        fn name(&self) -> &str {
-            "Dummy"
-        }
-        fn ui(&mut self, ui: &mut egui::Ui) {
-            ui.label("rows");
-        }
-        fn is_open(&self) -> bool {
-            true
-        }
-        fn toggle(&mut self) {}
-        fn is_dirty(&self) -> bool {
-            false
-        }
-        fn clear_dirty(&mut self) {}
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-            self
-        }
-    }
-
-    /// Run one frame at 1000x600 with `events`; returns the column width.
-    fn frame(
-        ctx: &egui::Context,
-        panels: &mut [Box<dyn flint_debug_ui::DebugPanel>],
-        events: Vec<egui::Event>,
-    ) -> f32 {
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1000.0, 600.0),
-            )),
-            events,
-            ..Default::default()
-        };
-        let mut width = 0.0;
-        let _ = run_headless_frame(ctx, input, |ui| {
-            let ctx = &ui.ctx().clone();
-            width = show_debug_panels(ctx, panels, &mut |panel, ui| panel.ui(ui))
-        });
-        width
-    }
-
-    fn pointer(pos: egui::Pos2, pressed: Option<bool>) -> Vec<egui::Event> {
-        let mut events = vec![egui::Event::PointerMoved(pos)];
-        if let Some(pressed) = pressed {
-            events.push(egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: Default::default(),
-            });
-        }
-        events
-    }
-
-    #[test]
-    fn column_keeps_its_width_and_the_grip_resizes_it() {
-        let ctx = egui::Context::default();
-        let mut panels: Vec<Box<dyn flint_debug_ui::DebugPanel>> = vec![Box::new(Dummy)];
-        for _ in 0..3 {
-            frame(&ctx, &mut panels, vec![]);
-        }
-        let width = frame(&ctx, &mut panels, vec![]);
         assert_eq!(
-            width, DEBUG_COLUMN_WIDTH,
-            "a column opens at its default width"
-        );
-
-        // Drag the left edge 80 points left.
-        let edge = 1000.0 - DEBUG_COLUMN_WIDTH + 1.0;
-        frame(&ctx, &mut panels, pointer(egui::pos2(edge, 300.0), None));
-        frame(
-            &ctx,
-            &mut panels,
-            pointer(egui::pos2(edge, 300.0), Some(true)),
-        );
-        // Big steps, one per frame: summing deltas against last frame's
-        // rect would lose some of them.
-        for step in 1..=4 {
-            let x = edge - 20.0 * step as f32;
-            frame(&ctx, &mut panels, pointer(egui::pos2(x, 300.0), None));
-        }
-        frame(
-            &ctx,
-            &mut panels,
-            pointer(egui::pos2(edge - 80.0, 300.0), Some(false)),
-        );
-        let width = frame(&ctx, &mut panels, vec![]);
-        assert!(
-            (width - (DEBUG_COLUMN_WIDTH + 80.0)).abs() < 2.0,
-            "dragging the grip widens the column: {width}"
+            names(&styled),
+            [
+                flint_debug_ui::STYLES_DEBUG_PANEL,
+                flint_debug_ui::RENDER_DEBUG_PANEL
+            ]
         );
     }
 }

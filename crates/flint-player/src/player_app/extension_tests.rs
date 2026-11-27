@@ -478,13 +478,11 @@ fn scripted_keys_reach_on_key_and_one_taken_stays_out_of_the_game() {
 }
 
 /// Names two debug panels and logs each draw (ADR 0107).
-#[cfg(feature = "debug-hud")]
 struct PanelGame {
     log: Log,
     frame: u32,
 }
 
-#[cfg(feature = "debug-hud")]
 impl PlayerExtension for PanelGame {
     fn ui(&mut self, _ui: &mut egui::Ui) {
         self.frame += 1;
@@ -501,9 +499,13 @@ impl PlayerExtension for PanelGame {
     }
 }
 
-#[cfg(feature = "debug-hud")]
+/// It runs where the launcher lists the debug HUD: without it the run has
+/// no panels for a game's to join (#1559).
 #[test]
 fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
+    if crate::packages::lacks("debug-hud") {
+        return;
+    }
     let log = Log::default();
     let mut app = headless_app();
     app.add_extension(Box::new(PanelGame {
@@ -533,7 +535,7 @@ fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
     let _ = run_headless_frame(&ctx, input, |ui| {
         let ctx = &ui.ctx().clone();
         crate::extension::draw_ui(&mut extensions, ui);
-        super::debug_panels::show_debug_panels(ctx, app.debug_panels_mut(), &mut |panel, ui| {
+        flint_debug_ui::player::show_debug_panels(ctx, app.debug_panels_mut(), &mut |panel, ui| {
             super::debug_panels::draw_panel(panel, &mut extensions, ui)
         });
     });

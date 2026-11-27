@@ -59,8 +59,8 @@ Not recorded in the surviving text.
 - Commit
   [`ec3f956`](https://github.com/chrischaps/Flint/commit/ec3f95635a0f3a63010738aa4403a1f627d9b2cb)
   "docs: bring the book up to date with engine changes since 2026-07-28"
-- Code now: `crates/flint-debug-ui/src/render_panel.rs`,
-  `crates/flint-debug-ui/src/styles_panel.rs`,
+- Code now: `packages/debug-hud/crates/flint-debug-ui/src/render_panel.rs`,
+  `packages/debug-hud/crates/flint-debug-ui/src/styles_panel.rs`,
   `crates/flint-player/src/player_app/frame.rs` (freeze switch),
   `crates/flint-viewer/src/app.rs`
 - Book: [Debug Panels](../book/src/guides/debug-panels.md);

@@ -71,6 +71,6 @@ In The Capitol at 1080p uncapped, 24 steps: frame times at dawn with the mist
   `crates/flint-render/src/composite_shader.wgsl`,
   `crates/flint-render/src/postprocess.rs`,
   `crates/flint-render/src/scene_renderer/mod.rs` (`set_ground_fog`),
-  `crates/flint-player/src/extension.rs`, `crates/flint-debug-ui/src/render_panel.rs`
+  `crates/flint-player/src/extension.rs`, `packages/debug-hud/crates/flint-debug-ui/src/render_panel.rs`
 - Book: [Post-processing](../book/src/concepts/post-processing.md), "Ground
   fog"; [Player Extensions](../book/src/guides/player-extensions.md)

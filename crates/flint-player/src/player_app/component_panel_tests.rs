@@ -2,10 +2,11 @@
 //! (#744). The game is a `MemorySource` with its own `flint.toml` and
 //! `schemas/`, read through the one schema resolver as `flint-player` reads
 //! it, so the panel comes from nothing but the schema's `panel` lines.
+//! The debug HUD makes it (#1559): a launcher without one makes no panel.
 
 use super::PlayerApp;
 use flint_core::vfs::{self, MemorySource};
-use flint_debug_ui::{ComponentPanel, DebugPanel};
+use flint_debug_ui::{ComponentPanel, DebugPanel, RENDER_DEBUG_PANEL};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -49,7 +50,7 @@ fn coast() -> MemorySource {
 
 /// The scene brought up as `flint-player` brings it up: the schemas the
 /// project's manifest names, the scene loaded against them, the scene's
-/// panels made.
+/// panels made by the run's debug HUD.
 fn harbour() -> PlayerApp {
     let (registry, dirs) =
         flint_schema::SchemaRegistry::resolve(Some(Path::new(SCENE)), &[] as &[&str])
@@ -58,8 +59,17 @@ fn harbour() -> PlayerApp {
     let mut app = PlayerApp::new(world, SCENE.into(), false, None, None);
     app.apply_scene_settings(&file);
     app.set_schemas(registry, dirs);
-    app.create_component_panels();
+    app.create_scene_debug_panels(None);
     app
+}
+
+/// The panels but F4's, which every scene has.
+fn scene_panels(app: &PlayerApp) -> Vec<&str> {
+    app.debug_panels()
+        .iter()
+        .map(|p| p.name())
+        .filter(|name| *name != RENDER_DEBUG_PANEL)
+        .collect()
 }
 
 fn beacon(app: &PlayerApp, field: &str) -> toml::Value {
@@ -75,10 +85,16 @@ fn beacon(app: &PlayerApp, field: &str) -> toml::Value {
 
 #[test]
 fn a_games_own_schema_gives_its_component_an_f3_panel() {
+    if crate::packages::lacks("debug-hud") {
+        return;
+    }
     vfs::scoped(Arc::new(coast()), || {
         let mut app = harbour();
-        let names: Vec<&str> = app.debug_panels().iter().map(|p| p.name()).collect();
-        assert_eq!(names, ["Lighthouse"], "one entity carries a beacon");
+        assert_eq!(
+            scene_panels(&app),
+            ["Lighthouse"],
+            "one entity carries a beacon"
+        );
 
         // F3 opens it; the status line is the live component. The panels
         // come out of the app for the test, as the frame's sync lends them
@@ -119,6 +135,6 @@ fn a_scene_with_no_marked_component_has_no_component_panel() {
     );
     vfs::scoped(Arc::new(files), || {
         let app = harbour();
-        assert!(app.debug_panels().is_empty());
+        assert!(scene_panels(&app).is_empty());
     });
 }

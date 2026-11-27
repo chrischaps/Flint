@@ -22,6 +22,11 @@
 //!   specs) before the model loader looks for a file, asked at a scene's
 //!   load, for spawned entities and each frame (#1557).
 //!
+//! - [`panels::DebugPanel`] and [`hud::DebugHud`]: a panel any package (or
+//!   the kernel) adds to F3, and the debug HUD the debug-hud package
+//!   brings, which makes the engine's panels, lays them out and drives F3
+//!   and F4 (#1559).
+//!
 //! - [`cli::CliExtension`]: a package's commands on the `flint` command
 //!   line, and the one way a command answers (`--json`, #710), so a
 //!   package's CLI side never depends on flint-cli (#1553).
@@ -33,8 +38,10 @@
 pub mod assets;
 pub mod cli;
 mod context;
+pub mod hud;
 mod launch;
 pub mod note;
+pub mod panels;
 mod registry;
 mod resources;
 mod stage;
@@ -44,8 +51,10 @@ pub use context::{
     find, find_mut, Button, Capture, CaptureGame, CaptureGameMut, EncodeCtx, ExitReport, FixedCtx,
     FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, StageCtx,
 };
+pub use hud::DebugHud;
 pub use launch::LaunchFlags;
 pub use note::Note;
+pub use panels::{DebugPanel, DebugPanels};
 pub use registry::{
     left_out_line, BuildForScene, LeftOutLine, Package, Registry, RunResources, SettleScene,
 };

@@ -292,14 +292,16 @@ fn the_living_modules_are_listed_with_when_they_are_enabled() {
 }
 
 /// In a scene with living props the subsystem enables `living` and `wooze`
-/// in every build, and `debug` (the panel's A/B and commit) only in a build
-/// with the `debug-hud` feature (#854): a shipped build's `compare_living`
-/// is the "not enabled" error naming the feature, and queues nothing.
+/// in every build, and `debug` (the panel's A/B and commit) only where the
+/// living crate has its `debug-hud` part (#854): a shipped build's
+/// `compare_living` is the "not enabled" error naming the feature, and
+/// queues nothing. This crate's tests link that part (the dev-dependency),
+/// so the second arm runs in the living crate's own build without it.
 #[test]
 fn the_debug_module_runs_only_in_a_build_with_the_debug_hud() {
     let enabled = flint_living::player::api::ENABLED;
     assert!(enabled.contains(&"living") && enabled.contains(&"wooze"));
-    assert_eq!(enabled.contains(&"debug"), cfg!(feature = "debug-hud"));
+    let debug = enabled.contains(&"debug");
 
     let mut system = crate::script_system();
     system.set_enabled_modules(enabled.to_vec());
@@ -314,7 +316,7 @@ fn the_debug_module_runs_only_in_a_build_with_the_debug_hud() {
             other => panic!("{other:?}"),
         })
         .collect();
-    if cfg!(feature = "debug-hud") {
+    if debug {
         ran.unwrap();
         assert_eq!(queued, ["tune_living", "compare_living"]);
     } else {

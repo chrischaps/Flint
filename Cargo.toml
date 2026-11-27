@@ -23,7 +23,6 @@ members = [
     "crates/flint-script",
     "crates/flint-particles",
     "crates/flint-terrain",
-    "crates/flint-debug-ui",
     "crates/flint-cli",
     "packages/*/crates/*",
     "crates/flint-android",
@@ -58,7 +57,6 @@ default-members = [
     "crates/flint-script",
     "crates/flint-particles",
     "crates/flint-terrain",
-    "crates/flint-debug-ui",
     "crates/flint-cli",
     "packages/*/crates/*",
     "tools/arch-analyzer",
@@ -244,7 +242,7 @@ flint-procgen-cli = { path = "packages/procgen/crates/flint-procgen-cli" }
 flint-living = { path = "packages/living/crates/flint-living" }
 flint-procgen-ai = { path = "packages/ai/crates/flint-procgen-ai" }
 flint-ai-core = { path = "packages/ai/crates/flint-ai-core" }
-flint-debug-ui = { path = "crates/flint-debug-ui", default-features = false }
+flint-debug-ui = { path = "packages/debug-hud/crates/flint-debug-ui", default-features = false }
 flint-player = { path = "crates/flint-player", default-features = false }
 flint-android = { path = "crates/flint-android" }
 

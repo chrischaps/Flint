@@ -71,10 +71,7 @@ impl PlayerApp {
         // stamp entirely so panel edits to contended fields stick; the
         // drained overrides are plain Options re-filled each tick, so nothing
         // piles up and un-freezing resumes on the next script write.
-        #[cfg(feature = "debug-hud")]
         let pp_stamp_frozen = self.post.debug_freeze;
-        #[cfg(not(feature = "debug-hud"))]
-        let pp_stamp_frozen = false;
         if let Some(renderer) = &mut self.scene_renderer {
             if !pp_stamp_frozen && self.post.any() {
                 let mut config = renderer.post_process_config().clone();
@@ -127,19 +124,18 @@ impl PlayerApp {
         let view = context.frame_view(&output.texture);
 
         // Every panel applies its edits and reads back what it shows (#744):
-        // one loop, no panel asked its name. What they tell the player comes
-        // back through `PanelHost`.
-        #[cfg(feature = "debug-hud")]
-        {
-            flint_core::scope!(
-                "sync_debug_panels",
-                super::debug_panels::panels_of(&self.core.resources).len()
-            );
-            let mut host = flint_debug_ui::PanelHost {
+        // one loop, no panel asked its name, by the run's debug HUD (#1559).
+        // What they tell the player comes back through `PanelHost`.
+        if let (Some(hud), Some(panels)) = (
+            self.hud.debug.as_mut(),
+            super::debug_panels::panels_mut_of(&mut self.core.resources),
+        ) {
+            flint_core::scope!("sync_debug_panels", panels.len());
+            let mut host = flint_package::panels::PanelHost {
                 particles_render: self.particles_render_enabled,
                 ..Default::default()
             };
-            let mut ctx = flint_debug_ui::PanelCtx {
+            let mut ctx = flint_package::panels::PanelCtx {
                 world: &mut self.core.world,
                 renderer: &mut *renderer,
                 device: &context.device,
@@ -147,9 +143,7 @@ impl PlayerApp {
                 particles: &mut self.core.particles.sync,
                 host: &mut host,
             };
-            for panel in super::debug_panels::panels_mut_of(&mut self.core.resources).iter_mut() {
-                panel.sync(&mut ctx);
-            }
+            hud.sync(panels, &mut ctx);
             if let Some(freeze) = host.freeze_scripts {
                 self.post.debug_freeze = freeze;
             }
@@ -157,15 +151,6 @@ impl PlayerApp {
                 self.style.pending_look = Some((look, host.look_seconds));
             }
             self.particles_render_enabled = host.particles_render;
-            // A style the F4 or F3 editor just wrote into the scene file
-            // (#364): the scene's authored settings after it, for the other
-            // editor too
-            if let Some(authored) = host.committed_styles {
-                super::debug_panels::set_panels_authored_styles(
-                    super::debug_panels::panels_mut_of(&mut self.core.resources),
-                    &authored,
-                );
-            }
         }
 
         // F2's stats show the GPU's time too (ADR 0108), as does the perf
@@ -853,10 +838,7 @@ impl PlayerApp {
         // Apply cursor capture request from scripts (skipped while a debug
         // panel is open — the panel needs the mouse).
         if let Some(capture) = self.core.script_requests.cursor_captured.take() {
-            #[cfg(feature = "debug-hud")]
-            let panel_open = self.debug_panels().iter().any(|p| p.is_open());
-            #[cfg(not(feature = "debug-hud"))]
-            let panel_open = false;
+            let panel_open = self.panels_open() > 0;
             if capture && !panel_open && !self.focus.cursor_captured {
                 self.capture_cursor();
             } else if !capture && self.focus.cursor_captured {
@@ -1111,10 +1093,10 @@ impl PlayerApp {
         let draw_commands = std::mem::take(&mut self.hud.draw_commands);
         let mut extensions = std::mem::take(&mut self.extensions);
         let mut subsystems = std::mem::take(&mut self.core.subsystems);
-        #[cfg(feature = "debug-hud")]
+        // The run's debug HUD and its panels, out for the pass (#1559)
+        let mut debug_hud = self.hud.debug.take();
         let mut debug_panels =
-            std::mem::take(super::debug_panels::panels_mut_of(&mut self.core.resources));
-        #[cfg(feature = "debug-hud")]
+            super::debug_panels::panels_mut_of(&mut self.core.resources).map(std::mem::take);
         let view_proj = self.camera.view_projection_matrix();
         let ui_textures = &self.hud.textures;
         let ui_fonts = &self.hud.fonts;
@@ -1193,40 +1175,26 @@ impl PlayerApp {
             _ => Vec::new(),
         };
         // The frame-time graph's frames and counters (#1078), while F2
-        // shows anything: nothing is read or allocated while it doesn't
-        #[cfg(feature = "debug-hud")]
+        // shows anything and the run has a debug HUD to draw it: nothing is
+        // read or allocated otherwise
         let clock = &self.core.clock;
-        #[cfg(feature = "debug-hud")]
-        let mut graph = self.stats.overlay_graph(|| {
-            // The display's refresh: the budget line
-            clock.vsync_period().or_else(|| {
-                let mhz = window?.current_monitor()?.refresh_rate_millihertz()?;
-                (mhz > 0).then(|| 1000.0 / mhz as f64)
+        let mut graph = if debug_hud.is_some() {
+            self.stats.overlay_graph(|| {
+                // The display's refresh: the budget line
+                clock.vsync_period().or_else(|| {
+                    let mhz = window?.current_monitor()?.refresh_rate_millihertz()?;
+                    (mhz > 0).then(|| 1000.0 / mhz as f64)
+                })
             })
-        });
-        #[cfg(not(feature = "debug-hud"))]
-        let mut graph: Option<OverlayGraph> = None;
-
-        // User styles that don't compile (#275) or don't load (#425), and
-        // built-in shaders read from FLINT_STYLE_SHADER_DIR that don't
-        // compile (#418): shown until they do
-        #[cfg(feature = "debug-hud")]
-        let style_errors = {
-            let mut errors = self.core.styles.errors();
-            errors.extend(flint_render::stylize::dev_shader::errors());
-            errors
+        } else {
+            None
         };
-        // The registry they came from, for the card's "doesn't load" (#742)
-        #[cfg(feature = "debug-hud")]
-        let style_registry = self.core.styles.clone();
-        // What a style's cap left out since the scene loaded (#740, #1246)
-        #[cfg(feature = "debug-hud")]
-        let style_drops = flint_render::stylize::variant_table::dropped();
-        // Scripts that fail (#693), each once with its count, until the
-        // file is saved again or the scene changes
-        #[cfg(feature = "debug-hud")]
-        let (script_errors, script_errors_unkept) =
-            super::script_error_card::rows(self.core.script.errors());
+
+        // What the corner cards show (the debug HUD's): the scripts that
+        // fail (#693), the styles that don't compile or load, from the
+        // registry they came from (#742)
+        let styles = &self.core.styles;
+        let script_errors = self.core.script.errors();
 
         // A real frame: its texture updates are uploaded below (#944)
         // egui's frame: script UI, the game's, the debug panels (#1096)
@@ -1276,37 +1244,42 @@ impl PlayerApp {
                 // props presets are compared, #238)
                 subsystems.ui(ui);
 
-                // What panels paint in the world, under every panel: the
-                // Living Props pose overlay (#218) and a picked tree's marks
-                // and window (#248).
-                #[cfg(feature = "debug-hud")]
-                for panel in debug_panels.iter_mut() {
-                    panel.paint_world(ctx, &view_proj);
-                }
-
-                #[cfg(feature = "debug-hud")]
-                let debug_width = super::debug_panels::show_debug_panels(
-                    ctx,
-                    &mut debug_panels,
-                    &mut |panel, ui| super::debug_panels::draw_panel(panel, &mut extensions, ui),
-                );
-                #[cfg(not(feature = "debug-hud"))]
-                let debug_width = 0.0;
-
-                match (stats_view, stats_data.as_ref()) {
-                    (super::StatsView::Full, Some(stats)) => render_stats_overlay(
+                // The debug HUD's panels (#1559): what they paint in the
+                // world (the Living Props pose overlay, #218), then the open
+                // ones in their columns, a game's drawn by its extension
+                let debug_width = match (debug_hud.as_mut(), debug_panels.as_mut()) {
+                    (Some(hud), Some(panels)) => hud.ui(flint_package::hud::HudUi {
                         ctx,
-                        stats,
-                        last_gpu_objects,
-                        &style_target_rows,
-                        &gpu_label,
-                        graph.as_mut(),
-                        debug_width,
-                    ),
-                    (super::StatsView::Graph, _) => {
-                        render_graph_overlay(ctx, graph.as_mut(), debug_width)
+                        panels,
+                        view_proj,
+                        draw: &mut |panel, ui| {
+                            super::debug_panels::draw_panel(panel, &mut extensions, ui)
+                        },
+                    }),
+                    _ => 0.0,
+                };
+
+                // F2's graph is the debug HUD's to draw
+                {
+                    let mut graph = match (graph.as_mut(), debug_hud.as_mut()) {
+                        (Some(graph), Some(hud)) => Some((graph, hud)),
+                        _ => None,
+                    };
+                    match (stats_view, stats_data.as_ref()) {
+                        (super::StatsView::Full, Some(stats)) => render_stats_overlay(
+                            ctx,
+                            stats,
+                            last_gpu_objects,
+                            &style_target_rows,
+                            &gpu_label,
+                            graph.as_mut(),
+                            debug_width,
+                        ),
+                        (super::StatsView::Graph, _) => {
+                            render_graph_overlay(ctx, graph.as_mut(), debug_width)
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
 
                 // On the web, above the page's wordmark in the same corner
@@ -1318,28 +1291,22 @@ impl PlayerApp {
                 }
                 key_note.paint(ctx, 16.0);
 
-                #[cfg(feature = "debug-hud")]
-                {
+                // The script card in the corner, the style card above it,
+                // and what a style's cap left out above that
+                if let Some(hud) = debug_hud.as_mut() {
                     let inset = if cfg!(target_arch = "wasm32") {
                         52.0
                     } else {
                         0.0
                     };
-                    // The script card in the corner, the style card above
-                    // it, and what a style's cap left out above that
-                    let scripts = flint_debug_ui::paint_script_errors(
+                    hud.cards(
                         ctx,
-                        &script_errors,
-                        script_errors_unkept,
-                        inset,
+                        &flint_package::hud::Cards {
+                            script_errors,
+                            styles,
+                            inset,
+                        },
                     );
-                    let styles = flint_debug_ui::paint_style_errors(
-                        ctx,
-                        &style_errors,
-                        &style_registry,
-                        inset + scripts,
-                    );
-                    flint_debug_ui::paint_style_drops(ctx, &style_drops, inset + scripts + styles);
                 }
             });
             full_output
@@ -1348,9 +1315,12 @@ impl PlayerApp {
         self.hud.draw_commands = draw_commands;
         self.extensions = extensions;
         self.core.subsystems = subsystems;
-        #[cfg(feature = "debug-hud")]
-        {
-            *super::debug_panels::panels_mut_of(&mut self.core.resources) = debug_panels;
+        self.hud.debug = debug_hud;
+        if let (Some(panels), Some(home)) = (
+            debug_panels,
+            super::debug_panels::panels_mut_of(&mut self.core.resources),
+        ) {
+            *home = panels;
         }
         // Fonts exist from here on; measure_text may now lay text out for real.
         self.hud
@@ -1468,37 +1438,24 @@ impl PlayerApp {
         self.hud.egui_renderer = Some(egui_renderer);
     }
 
-    /// The Ocean Debug panel's CPU/GPU parity probe, when its box is
-    /// ticked (#749): a cross pinned to the CPU's wave height ahead of the
-    /// camera, on the clock the renderer's waves run on.
-    #[cfg(feature = "debug-hud")]
-    fn add_ocean_probe_lines(&mut self) {
-        let time = self.core.clock.total_time;
-        let camera_pos = self.camera.position_array();
-        let forward = self.camera.forward_vector();
-        for panel in super::debug_panels::panels_mut_of(&mut self.core.resources).iter_mut() {
-            if panel.name() != "Ocean Debug" {
-                continue;
-            }
-            let Some(ocean_panel) = panel
-                .as_any_mut()
-                .downcast_mut::<flint_debug_ui::OceanDebugPanel>()
-            else {
-                continue;
-            };
-            if !ocean_panel.probe_shown() {
-                continue;
-            }
-            let Some(id) = self.core.world.get_id(ocean_panel.entity_name()) else {
-                continue;
-            };
-            let ocean = self.core.world.view(id, flint_geometry::components::OCEAN);
-            if !ocean.exists() {
-                continue;
-            }
-            let lines = ocean_panel.probe_lines(&ocean, time, camera_pos, forward);
-            self.hud.world_lines.extend(lines);
-        }
+    /// What the debug HUD's panels draw in the world this frame (#1559):
+    /// the Ocean Debug panel's CPU/GPU parity probe when its box is ticked
+    /// (#749), a cross pinned to the CPU's wave height ahead of the camera,
+    /// on the clock the renderer's waves run on.
+    fn add_panel_world_lines(&mut self) {
+        let (Some(hud), Some(panels)) = (
+            self.hud.debug.as_mut(),
+            super::debug_panels::panels_mut_of(&mut self.core.resources),
+        ) else {
+            return;
+        };
+        let view = flint_package::hud::WorldView {
+            world: &self.core.world,
+            time: self.core.clock.total_time,
+            eye: self.camera.position_array(),
+            forward: self.camera.forward_vector(),
+        };
+        hud.world_lines(panels, &view, &mut self.hud.world_lines);
     }
 }
 /// The player's part in the game's frame (ADR 0117 decision 4): what
@@ -1658,8 +1615,7 @@ impl super::game_core::FrameHost for PlayerApp {
         // The style field (#859), on_update's shapes and on_draw_ui's
         self.hud.style_field = self.core.script.drain_style_field();
         // The Ocean Debug panel's parity probe draws with them (#749)
-        #[cfg(feature = "debug-hud")]
-        self.add_ocean_probe_lines();
+        self.add_panel_world_lines();
         // World text (ADR 0104) is laid out in the HUD's egui pass.
         self.hud.world_texts = self.core.script.drain_world_texts();
     }
@@ -1742,10 +1698,14 @@ impl super::game_core::FrameHost for PlayerApp {
 use super::stats_view::OverlayGraph;
 
 /// The full overlay's graph and the compact one's, in points.
-#[cfg(feature = "debug-hud")]
 const GRAPH_FULL: egui::Vec2 = egui::vec2(360.0, 72.0);
-#[cfg(feature = "debug-hud")]
 const GRAPH_COMPACT: egui::Vec2 = egui::vec2(280.0, 40.0);
+
+/// F2's graph this frame, and the debug HUD that draws it.
+type GraphPart<'a, 'g> = (
+    &'a mut OverlayGraph<'g>,
+    &'a mut Box<dyn flint_package::DebugHud>,
+);
 
 /// The F2 overlay's panel: dark, a hairline edge, monospace.
 fn overlay_frame() -> egui::Frame {
@@ -1767,11 +1727,10 @@ fn overlay_area(id: &str, right_inset: f32) -> egui::Area {
         .interactable(false)
 }
 
-/// The graph, its counters and, in the full form, the bands' legend.
-#[cfg(feature = "debug-hud")]
-fn show_graph(ui: &mut egui::Ui, g: &mut OverlayGraph, full: bool) {
-    use flint_debug_ui::widgets::{band_legend, hitch_counters, GraphLayout};
-    let layout = GraphLayout {
+/// The graph, its counters and, in the full form, the bands' legend, as
+/// the debug HUD draws them from the player's frames (#1559).
+fn show_graph(ui: &mut egui::Ui, (g, hud): &mut GraphPart, full: bool) {
+    let layout = flint_package::hud::GraphLayout {
         size: if full { GRAPH_FULL } else { GRAPH_COMPACT },
         window_secs: if full {
             super::stats_view::GRAPH_SECS
@@ -1781,32 +1740,24 @@ fn show_graph(ui: &mut egui::Ui, g: &mut OverlayGraph, full: bool) {
         budget_ms: g.budget_ms,
         fps_labels: full,
     };
-    g.graph.widget.show(ui, &g.graph.frames, layout);
-    ui.add_space(3.0);
-    ui.scope(|ui| {
-        let size = if full { 10.0 } else { 9.5 };
-        ui.style_mut().override_font_id = Some(egui::FontId::monospace(size));
-        ui.set_max_width(layout.size.x);
-        hitch_counters(ui, &g.graph.counters(g.hitches), !full);
-        if full {
-            ui.style_mut().override_font_id = Some(egui::FontId::monospace(8.5));
-            band_legend(ui);
-        }
-    });
+    hud.graph(
+        ui,
+        &flint_package::hud::GraphView {
+            frames: &g.graph.frames,
+            counters: g.graph.counters(g.hitches),
+            layout,
+            full,
+        },
+    );
 }
 
 /// F2's compact form (`--stats=graph`): the graph and its counters alone.
-fn render_graph_overlay(ctx: &egui::Context, graph: Option<&mut OverlayGraph>, right_inset: f32) {
+fn render_graph_overlay(ctx: &egui::Context, graph: Option<&mut GraphPart>, right_inset: f32) {
     let Some(graph) = graph else { return };
     overlay_area("render_stats_graph", right_inset).show(ctx, |ui| {
         overlay_frame()
             .inner_margin(egui::Margin::same(7))
-            .show(ui, |ui| {
-                #[cfg(feature = "debug-hud")]
-                show_graph(ui, graph, false);
-                #[cfg(not(feature = "debug-hud"))]
-                let _ = (ui, graph);
-            });
+            .show(ui, |ui| show_graph(ui, graph, false));
     });
 }
 
@@ -1819,7 +1770,7 @@ fn render_stats_overlay(
     last_gpu_objects: Option<(f64, flint_render::gpu_counts::GpuCalls)>,
     style_targets: &[String],
     gpu: &str,
-    graph: Option<&mut OverlayGraph>,
+    graph: Option<&mut GraphPart>,
     right_inset: f32,
 ) {
     use flint_render::format_count;
@@ -1837,13 +1788,10 @@ fn render_stats_overlay(
             ui.separator();
 
             // Frame times, a bar a frame, and the hitches (#1078)
-            #[cfg(feature = "debug-hud")]
             if let Some(graph) = graph {
                 show_graph(ui, graph, true);
                 ui.separator();
             }
-            #[cfg(not(feature = "debug-hud"))]
-            let _ = graph;
 
             // Core metrics
             ui.horizontal(|ui| {

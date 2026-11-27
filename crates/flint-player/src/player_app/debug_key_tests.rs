@@ -47,7 +47,9 @@ fn scripted_f2_steps_the_stats_overlay() {
     );
     app.input.end_frame();
     app.tick();
-    let second = if cfg!(feature = "debug-hud") {
+    // The graph is the debug HUD's (#1559): a run without one has none
+    let hud = !crate::packages::lacks("debug-hud");
+    let second = if hud {
         StatsView::Graph
     } else {
         StatsView::Off
@@ -55,7 +57,7 @@ fn scripted_f2_steps_the_stats_overlay() {
     assert_eq!(app.stats.view, second, "the second tap: the graph alone");
     app.input.end_frame();
     app.tick();
-    if cfg!(feature = "debug-hud") {
+    if hud {
         assert_eq!(app.stats.view, StatsView::Off, "the third tap closes it");
         assert!(!app.core.script.timing());
     }
@@ -63,9 +65,12 @@ fn scripted_f2_steps_the_stats_overlay() {
 
 /// A debug key with nothing behind it says so where the person pressing it
 /// will see it (#367): it used to log at `info`, which the player never prints.
-#[cfg(feature = "debug-hud")]
+/// A run without the debug HUD offers neither key (#1559).
 #[test]
 fn f3_and_f4_with_nothing_to_toggle_say_so_on_screen() {
+    if crate::packages::lacks("debug-hud") {
+        return;
+    }
     let mut app = with_script("0 tap F3\n0.25 tap F4\n");
     app.core.clock.frame_step = Some(0.25);
     assert!(app.debug_panels().is_empty(), "a scene with no panels");
@@ -227,9 +232,11 @@ fn show_stats_opens_the_overlay_once() {
     assert_ne!(app.stats.view, super::StatsView::Full, "F2 still steps it");
 }
 
-#[cfg(feature = "debug-hud")]
 #[test]
 fn stats_graph_opens_the_graph_alone_and_f2_closes_it() {
+    if crate::packages::lacks("debug-hud") {
+        return; // the graph is the debug HUD's (#1559)
+    }
     let mut app = with_script("0.5 tap F2\n");
     app.core.clock.frame_step = Some(0.25);
     app.capture.show_stats = true;

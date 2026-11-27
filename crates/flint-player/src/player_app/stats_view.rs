@@ -1,6 +1,7 @@
 //! What F2 shows (#1078), and the frame-time graph's share of it: the
 //! frame history (`frame_history.rs`) and the hitch detector (`hitch.rs`)
-//! turned into what `flint_debug_ui::FrameGraph` draws.
+//! turned into the kernel's `flint_package::hud::GraphFrame`s, which the
+//! run's debug HUD draws (`DebugHud::graph`, #1559).
 //!
 //! F2 steps through [`StatsView`]: off, the full overlay (the graph, its
 //! counters and the rendering stats), the graph alone in a corner, small
@@ -31,35 +32,28 @@ impl StatsView {
         self != StatsView::Off
     }
 
-    /// The next view, for an F2 press. A build without the debug HUD has
-    /// no graph, so F2 there opens and closes the full overlay.
-    pub fn next(self) -> StatsView {
+    /// The next view, for an F2 press. `graph`: the run has a debug HUD to
+    /// draw the graph; without one F2 opens and closes the full overlay.
+    pub fn next(self, graph: bool) -> StatsView {
         match self {
             StatsView::Off => StatsView::Full,
-            StatsView::Full if cfg!(feature = "debug-hud") => StatsView::Graph,
+            StatsView::Full if graph => StatsView::Graph,
             StatsView::Full | StatsView::Graph => StatsView::Off,
         }
     }
 }
 
-#[cfg(feature = "debug-hud")]
 pub(crate) use graph::{StatsGraph, COMPACT_SECS, GRAPH_SECS};
 
 /// The frame-time graph's part of the F2 overlay, lent to the HUD pass
 /// for one frame. Without the debug HUD there is none.
 pub(crate) struct OverlayGraph<'a> {
-    #[cfg(feature = "debug-hud")]
     pub(crate) graph: &'a mut StatsGraph,
-    #[cfg(feature = "debug-hud")]
     pub(crate) hitches: &'a super::hitch::HitchDetector,
     /// The display's refresh period, ms: the graph's budget line.
-    #[cfg(feature = "debug-hud")]
     pub(crate) budget_ms: f32,
-    #[cfg(not(feature = "debug-hud"))]
-    _none: std::marker::PhantomData<&'a ()>,
 }
 
-#[cfg(feature = "debug-hud")]
 impl super::state::Stats {
     /// This frame's graph, while F2 shows anything: its frames filled in
     /// from the history, and the budget from `refresh` (the display's
@@ -86,24 +80,23 @@ impl super::PlayerApp {
     /// so a hitch in them names the callback (as under `--perf`).
     pub(super) fn set_stats_view(&mut self, view: StatsView) {
         self.stats.view = view;
+        let graph = self.hud.debug.is_some();
         let perf = &mut self.stats.perf;
         self.core.script.set_timing(view.is_open() || perf.readout);
         // The graph spans seconds, not frames: at a high refresh rate the
         // history's 600 frames are less, so it keeps the seconds too (it
         // grows once; the perf readout's ten seconds are more already)
-        #[cfg(feature = "debug-hud")]
-        if view.is_open() && !perf.readout {
+        if graph && view.is_open() && !perf.readout {
             perf.keep_secs(Some(graph::KEEP_SECS));
         }
     }
 }
 
-#[cfg(feature = "debug-hud")]
 mod graph {
     use super::super::frame_history::{Frame, FrameHistory};
     use super::super::hitch::{Hitch, HitchDetector};
     use super::super::perf::Phase;
-    use flint_debug_ui::widgets::{Band, FrameGraph, GraphFrame, HitchCounters, BANDS};
+    use flint_package::hud::{Band, GraphFrame, HitchCounters, BANDS};
     use std::fmt::Write as _;
 
     /// The seconds the full graph spans, and the compact one.
@@ -150,10 +143,10 @@ mod graph {
         }
     }
 
-    /// The graph's state, kept across frames; see the module docs.
+    /// The graph's state, kept across frames; see the module docs. The
+    /// widget that draws it (its ceiling and mesh) is the debug HUD's.
     #[derive(Default)]
     pub(crate) struct StatsGraph {
-        pub(crate) widget: FrameGraph,
         /// The frames handed to the widget, oldest first: the last
         /// [`GRAPH_SECS`]. The buffer grows to hold them once, then keeps
         /// its room.
@@ -520,40 +513,43 @@ mod tests {
         let mut v = StatsView::Off;
         let mut seen = vec![];
         for _ in 0..4 {
-            v = v.next();
+            v = v.next(true);
             seen.push(v);
         }
-        if cfg!(feature = "debug-hud") {
-            assert_eq!(
-                seen,
-                [
-                    StatsView::Full,
-                    StatsView::Graph,
-                    StatsView::Off,
-                    StatsView::Full
-                ]
-            );
-        } else {
-            assert_eq!(
-                seen,
-                [
-                    StatsView::Full,
-                    StatsView::Off,
-                    StatsView::Full,
-                    StatsView::Off
-                ]
-            );
+        assert_eq!(
+            seen,
+            [
+                StatsView::Full,
+                StatsView::Graph,
+                StatsView::Off,
+                StatsView::Full
+            ]
+        );
+        // With no debug HUD in the run there is no graph to step to
+        let mut v = StatsView::Off;
+        let mut seen = vec![];
+        for _ in 0..4 {
+            v = v.next(false);
+            seen.push(v);
         }
+        assert_eq!(
+            seen,
+            [
+                StatsView::Full,
+                StatsView::Off,
+                StatsView::Full,
+                StatsView::Off
+            ]
+        );
     }
 
-    #[cfg(feature = "debug-hud")]
     mod graph {
         use super::super::super::frame_history::{ClockSample, Frame, FrameHistory};
         use super::super::super::hitch::{Cause, Hitch, HitchDetector, HitchNote};
         use super::super::super::perf::Phase;
         use super::super::graph::*;
         use flint_core::frame_notes::{FrameNote, NoteKind};
-        use flint_debug_ui::widgets::Band;
+        use flint_package::hud::Band;
         use std::time::Duration;
 
         fn ms(n: f64) -> Duration {

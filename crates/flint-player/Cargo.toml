@@ -78,10 +78,18 @@ procgen = ["dep:flint-procgen", "flint-procgen?/player"]
 # the Living Props panel, F8 and the `debug` module's calls (#854). Off, a
 # scene with any of it says so once and stands still.
 living = ["procgen", "dep:flint-living", "flint-living?/player"]
-# Summonable debug overlay (Phase 4 F8, ADR 0035), and the `debug` script
-# module where living props run (#854). Feature-off builds carry zero debug
-# surface and must still compile.
-debug-hud = ["dep:flint-debug-ui", "flint-living?/debug-hud", "flint-rhythm-game?/debug-hud"]
+# The debug-hud package (ADR 0035, #1559): the F3/F4 panels, F2's graph and
+# the corner cards. Its code is the package's crate
+# (`packages/debug-hud/crates/flint-debug-ui`, its `player` part), which
+# registers the HUD the kernel asks (`flint_package::hud::DebugHud`); this
+# crate names none of it, and `build.rs` lists its `PACKAGE`. With living or
+# rhythm too, their `debug-hud` parts (each manifest's `[with.debug-hud]`):
+# the Living Props panel, F8 and the `debug` module (#854), the Music Guide.
+# Off, the run has no panels, and F3, F4 and the graph are not offered.
+debug-hud = [
+    "dep:flint-debug-ui", "flint-debug-ui?/player", "flint-living?/debug-hud",
+    "flint-rhythm-game?/debug-hud",
+]
 # The frame profiler (ADR 0109): the frame loop's and the renderer's scopes
 # (and wgpu's own) go to Tracy, and each frame is marked. Off, the scopes
 # compile to nothing. The client listens on loopback only (no firewall
@@ -146,8 +154,10 @@ toml = { workspace = true }
 # The music session test writes its stems (tests/music_session.rs)
 hound = { workspace = true }
 # run_headless_frame: every test's egui frame clears its texture updates
-# (#944), whatever features the tests build with.
-flint-debug-ui = { workspace = true }
+# (#944), whatever features the tests build with; and the debug-hud
+# package's player part, whose layout a game's panel test draws through
+# (it runs where the run's launcher lists debug-hud, #1559).
+flint-debug-ui = { workspace = true, features = ["player"] }
 # The browser's mixer, fed what a scene's scripts sent (#730's bus test).
 flint-audio-worklet = { workspace = true }
 # The procgen package's player part, named by the tests that make assets

@@ -519,7 +519,6 @@ pub(crate) struct HitchCounts {
     pub missed_refreshes: u64,
 }
 
-#[cfg_attr(not(any(test, feature = "debug-hud")), allow(dead_code))]
 impl HitchCounts {
     /// Hitches a minute over the span.
     pub(crate) fn per_minute(&self) -> f64 {
@@ -763,7 +762,6 @@ impl HitchDetector {
     }
 
     /// The newest hitch.
-    #[cfg_attr(not(any(test, feature = "debug-hud")), allow(dead_code))]
     pub(crate) fn last(&self) -> Option<&Hitch> {
         self.hitches.back()
     }

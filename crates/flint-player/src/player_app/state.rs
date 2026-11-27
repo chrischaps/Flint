@@ -345,7 +345,6 @@ pub(super) struct PostOverrides {
     /// (ADR 0053): while true the per-frame script/ladder override stamp is
     /// skipped so panel edits to contended post fields stick. Cached from
     /// the panel each frame (one-frame toggle lag, imperceptible).
-    #[cfg(feature = "debug-hud")]
     pub(super) debug_freeze: bool,
 }
 
@@ -442,6 +441,10 @@ pub(super) struct Hud {
     pub(super) key_note: super::key_note::KeyNote,
     /// The F1 card of the run's debug keys is showing (#717).
     pub(super) key_table_open: bool,
+    /// The run's debug HUD (#1559): what the debug-hud package registered
+    /// (`flint_package::hud`), made once a run with the run's panels.
+    /// `None` without the package: no panels, no F3, F4 or graph.
+    pub(super) debug: Option<Box<dyn flint_package::DebugHud>>,
 }
 
 impl Default for Hud {
@@ -466,6 +469,7 @@ impl Default for Hud {
             fonts_installed: false,
             key_note: Default::default(),
             key_table_open: false,
+            debug: None,
         }
     }
 }
@@ -478,8 +482,8 @@ pub(super) struct Stats {
     /// What the last HUD pass drew: a view drawn for the first frame since
     /// it changed leaves a note of what it cost (#1129)
     pub(super) drawn_view: super::StatsView,
-    /// The frame-time graph's buffers and ceiling, kept across frames
-    #[cfg(feature = "debug-hud")]
+    /// The frame-time graph's buffers, kept across frames (the debug HUD
+    /// draws them, and keeps the widget's ceiling)
     pub(super) graph: super::stats_view::StatsGraph,
     pub(super) frame_times: std::collections::VecDeque<f64>,
     /// The player turned the renderer's GPU timing on for the overlay
@@ -517,7 +521,6 @@ impl Default for Stats {
         Self {
             view: super::StatsView::Off,
             drawn_view: super::StatsView::Off,
-            #[cfg(feature = "debug-hud")]
             graph: Default::default(),
             frame_times: Default::default(),
             gpu_timing: false,

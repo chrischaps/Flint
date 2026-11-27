@@ -21,7 +21,7 @@ mod made_collider_mesh_tests;
 mod capture_gate_tests;
 #[cfg(test)]
 mod character_input_tests;
-#[cfg(all(test, feature = "debug-hud"))]
+#[cfg(test)]
 mod component_panel_tests;
 mod console;
 #[cfg(test)]
@@ -33,7 +33,6 @@ mod egui_input;
 mod event_bus_tests;
 mod events;
 pub mod expression_feed;
-#[cfg(feature = "debug-hud")]
 mod expression_panel;
 #[cfg(test)]
 mod extension_hooks_tests;
@@ -112,8 +111,6 @@ mod script_bus_tests;
 pub mod script_commands;
 #[cfg(test)]
 mod script_duck_tests;
-#[cfg(feature = "debug-hud")]
-mod script_error_card;
 #[cfg(test)]
 mod script_sound_tests;
 mod state;

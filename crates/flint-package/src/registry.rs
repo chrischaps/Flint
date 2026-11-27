@@ -59,6 +59,7 @@ pub struct Registry {
     run_resources: Vec<(&'static str, RunResources)>,
     settles: Vec<(&'static str, SettleScene)>,
     makers: Vec<(&'static str, &'static dyn AssetMaker)>,
+    hud: Option<(&'static str, crate::hud::MakeHud)>,
     /// Registration points, one value per Rust type (ADR 0137 section 4).
     points: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
@@ -167,6 +168,20 @@ impl Registry {
         self
     }
 
+    /// The run's debug HUD (#1559): what makes the F3/F4 panels, lays them
+    /// out and drives the keys. One a run: a second package's replaces the
+    /// first's, with a warning.
+    pub fn debug_hud(&mut self, make: crate::hud::MakeHud) -> &mut Self {
+        if let Some((before, _)) = self.hud {
+            tracing::warn!(
+                "package {} registers a debug HUD over {before}'s; the last one is used",
+                self.current
+            );
+        }
+        self.hud = Some((self.current, make));
+        self
+    }
+
     /// A registration point of this package: a value of its own type that
     /// a later package fills at its `register` ([`Registry::point_mut`]),
     /// and this package's builders read ([`Registry::point`]). Music's
@@ -228,6 +243,12 @@ impl Registry {
     /// Every registered script module, in order.
     pub fn modules(&self) -> impl Iterator<Item = &'static dyn ScriptModule> + '_ {
         self.modules.iter().map(|(_, m)| *m)
+    }
+
+    /// The debug HUD a package registered, to make once a run; `None` in a
+    /// build without the debug-hud package.
+    pub fn hud(&self) -> Option<crate::hud::MakeHud> {
+        self.hud.map(|(_, make)| make)
     }
 
     /// Every registered debug-key group, in order.
