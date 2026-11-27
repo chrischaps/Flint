@@ -1221,6 +1221,32 @@ went, as decisions 4 and 8 have it:
   line on a scene with no spec); a sweep `living.echoes.spread=0,0.9,1.8`
   draws the same sheet byte for byte.
 
+## As built: every kernel crate is held (#1591)
+
+- **The check reads the kernel from its manifest.** `package-names-check.py`
+  holds every crate `packages/engine/package.toml` lists under `[provides]
+  crates` (25 today) to all three rules, not the two launchers alone;
+  `STRING_LAUNCHERS` is gone. A crate the manifest names with no
+  `crates/<name>/src` fails the check, so it can't shrink unnoticed. Rules 1
+  and 2 found nothing new. Rule 3 found the patcher's `living` and five
+  other literals, each now an exception keyed to the issue that removes it:
+  flint-script's `music` module and flint-audio's built-in `music` bus go
+  with #1619 (audio and music become packages), and the `procgen` labels of
+  `Stage::Procgen`, `NoteKind::Procgen` and the load report's row go with
+  #1632.
+- **A scene table's layout is its package's.** `SceneEdit` carries two
+  rules the patcher used to special-case for living: `after`, the top-level
+  tables a new one is written after, first found wins, then `[scene]`, and
+  `drops_empty`, whether the edit's table goes when an edit empties it.
+  `flint_procgen::look_edits` sets them (`place`: after `[wooze]`, and a
+  species table drops when empty). An edit that sets neither
+  (`..Default::default()`) gets the kernel's plain behaviour. Living's
+  commit tests pass unchanged. With `place` made a no-op, exactly the two
+  tests for these rules fail.
+- **`register_state`'s doc names the kernel's systems** and says a package
+  may add one. The run's names come from the registry (`Registry::policies()`,
+  #1585), and an unknown name's error already lists them.
+
 ## Measured
 
 - **Cargo globs** (cargo 1.99.1, a scratch workspace, 2026-11-25): `members`

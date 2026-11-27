@@ -5,6 +5,9 @@
 //! What counts as a use, each mapped to its owner by the manifests:
 //!
 //! - an entity's component and archetype, in a scene, a chunk or a prefab;
+//! - a field it writes that a package other than the component's gives
+//!   its meaning (`[provides] fields`: `music_session.chart` is rhythm's,
+//!   #1581);
 //! - a scene's top-level table (`[living]`, `[wooze]`);
 //! - a script's call of a function in a package's script module (the
 //!   script checker's walk, so a comment or a string is no call);
@@ -149,7 +152,14 @@ fn scan(root: &Path, files: &[String], packages: &Packages) -> BTreeMap<String, 
                         ("archetype", toml::Value::String(a)) => {
                             add(Kind::Archetype, a, file, &mut found)
                         }
-                        (_, toml::Value::Table(_)) => add(Kind::Component, key, file, &mut found),
+                        (_, toml::Value::Table(fields)) => {
+                            add(Kind::Component, key, file, &mut found);
+                            // A field another package gives its meaning:
+                            // `music_session.chart` is rhythm's (#1581)
+                            for field in fields.keys() {
+                                add(Kind::Field, &format!("{key}.{field}"), file, &mut found);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -216,8 +226,8 @@ fn scan(root: &Path, files: &[String], packages: &Packages) -> BTreeMap<String, 
 const NOTHING_USES_IT: &str = "# nothing scanned uses it";
 
 /// Whether the scan can see `p` used: it provides a component, archetype,
-/// scene table, script module or spec file (procgen's, used by the specs
-/// a file names). A package of crates and commands alone (`debug-hud`,
+/// scene table, script module, spec file (procgen's, used by the specs
+/// a file names) or a field of another's component. A package of crates and commands alone (`debug-hud`,
 /// the F3/F4 panels) is used where no file says so.
 fn seen_by_scan(p: &Package) -> bool {
     [
@@ -226,6 +236,7 @@ fn seen_by_scan(p: &Package) -> bool {
         Kind::SceneTable,
         Kind::ScriptModule,
         Kind::Spec,
+        Kind::Field,
     ]
     .into_iter()
     .any(|k| !p.provides.of(k).is_empty())

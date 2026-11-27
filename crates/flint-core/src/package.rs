@@ -167,10 +167,14 @@ pub enum Kind {
     /// A kind of spec file the package makes assets from, as a pattern of
     /// its name (`*.procgen.toml`, #1595): a scene naming one uses it.
     Spec,
+    /// A field of a component another package owns, which this package
+    /// gives its meaning (`music_session.chart`, rhythm's, #1581): a scene
+    /// that writes it uses this package.
+    Field,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 8] = [
+    pub const ALL: [Kind; 9] = [
         Kind::Crate,
         Kind::Component,
         Kind::Archetype,
@@ -179,6 +183,7 @@ impl Kind {
         Kind::Command,
         Kind::Flag,
         Kind::Spec,
+        Kind::Field,
     ];
 
     /// Its key in `[provides]`: `scene_tables`.
@@ -192,6 +197,7 @@ impl Kind {
             Kind::Command => "commands",
             Kind::Flag => "flags",
             Kind::Spec => "specs",
+            Kind::Field => "fields",
         }
     }
 
@@ -206,6 +212,7 @@ impl Kind {
             Kind::Command => "command",
             Kind::Flag => "flag",
             Kind::Spec => "spec",
+            Kind::Field => "field",
         }
     }
 }
@@ -227,6 +234,10 @@ pub struct Provides {
     /// The spec files it makes assets from, each a pattern of a file's
     /// name, `*` and then its ending (`*.procgen.toml`), #1595.
     pub specs: Vec<String>,
+    /// Its fields of a component another package owns, each
+    /// `<component>.<field>` (`music_session.chart`, #1581): a scene that
+    /// writes one needs this package, though the component is the other's.
+    pub fields: Vec<String>,
 }
 
 impl Provides {
@@ -240,6 +251,7 @@ impl Provides {
             Kind::Command => &self.commands,
             Kind::Flag => &self.flags,
             Kind::Spec => &self.specs,
+            Kind::Field => &self.fields,
         }
     }
 
@@ -262,6 +274,7 @@ impl Provides {
             Kind::Command => &mut self.commands,
             Kind::Flag => &mut self.flags,
             Kind::Spec => &mut self.specs,
+            Kind::Field => &mut self.fields,
         }
     }
 }
@@ -994,8 +1007,27 @@ impl Parse<'_> {
                 );
             }
         }
+        for (i, field) in out.fields.clone().iter().enumerate() {
+            if field_of(field).is_none() {
+                self.error(
+                    format!("provides.fields[{i}]"),
+                    format!(
+                        "`{field}` is no field: a component's name, `.` and one of its \
+                         fields, as `music_session.chart`"
+                    ),
+                );
+            }
+        }
         out
     }
+}
+
+/// A `[provides] fields` entry read: `("music_session", "chart")` of
+/// `music_session.chart`. `None` unless it is two names one `.` apart.
+pub fn field_of(entry: &str) -> Option<(&str, &str)> {
+    let (component, field) = entry.split_once('.')?;
+    let name = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    (name(component) && name(field)).then_some((component, field))
 }
 
 /// A `[provides] specs` pattern's ending: `.procgen.toml` of

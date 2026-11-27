@@ -451,3 +451,135 @@ fn the_default_flint_has_every_package_a_project_lists() {
     let doc = json(&flint(&game, &["check", "--json"]));
     assert!(with_code(&doc, "unbuilt-package").is_empty(), "{doc:#}");
 }
+
+/// A `flint init` blank project with one scene of two `music_session`s,
+/// each the table `session` (#1581).
+fn music_game(name: &str, session: &str) -> PathBuf {
+    let dir = scratch(name);
+    let o = flint(&dir, &["init", "game", "--template", "blank"]);
+    assert!(o.status.success(), "{}", said(&o));
+    let game = dir.join("game");
+    std::fs::write(
+        game.join("scenes/main.scene.toml"),
+        format!(
+            "[scene]\nname = \"song\"\n\n[entities.music.music_session]\n{session}\n\n\
+             [entities.band.music_session]\n{session}\n"
+        ),
+    )
+    .unwrap();
+    game
+}
+
+const CHARTED: &str = "manifest = \"music/tempo_change.suite.toml\"\n\
+                       chart = \"music/tempo_change.chart.toml\"";
+
+/// The packages `flint package used --json` names, in order.
+fn used_names(doc: &serde_json::Value) -> Vec<String> {
+    doc["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// #1581's done-when: a `music_session` that sets `chart` uses rhythm,
+/// which the scan names with the field as the use and `--write` lists; a
+/// session with no chart uses music alone.
+#[test]
+fn package_used_names_rhythm_for_a_music_session_with_a_chart() {
+    let game = music_game("used_chart", CHARTED);
+    let doc = json(&flint(&game, &["package", "used", "--json"]));
+    assert_eq!(used_names(&doc), ["music", "rhythm"], "{doc:#}");
+    let rhythm = &doc["packages"][1];
+    assert_eq!(
+        rhythm["uses"],
+        serde_json::json!([{
+            "file": "scenes/main.scene.toml",
+            "kind": "field",
+            "item": "music_session.chart",
+        }]),
+        "{doc:#}"
+    );
+    assert_eq!(
+        doc["lines"],
+        serde_json::json!(["music = \"*\"", "rhythm = \"*\""])
+    );
+    let text = stdout(&flint(&game, &["package", "used"]));
+    assert!(
+        text.contains("field music_session.chart in scenes/main.scene.toml"),
+        "{text}"
+    );
+
+    let o = flint(&game, &["package", "used", "--write"]);
+    assert!(o.status.success(), "{}", said(&o));
+    let manifest = std::fs::read_to_string(game.join("flint.toml")).unwrap();
+    assert!(manifest.contains("music = \"*\""), "{manifest}");
+    assert!(manifest.contains("rhythm = \"*\""), "{manifest}");
+
+    let plain = music_game(
+        "used_no_chart",
+        "manifest = \"music/tempo_change.suite.toml\"",
+    );
+    let doc = json(&flint(&plain, &["package", "used", "--json"]));
+    assert_eq!(used_names(&doc), ["music"], "{doc:#}");
+}
+
+/// #1581's done-when: with only `music` listed, `flint check` says the
+/// chart is rhythm's, once for the file, with `rhythm = "*"` as the line
+/// to add; with rhythm listed, or with no chart, it says nothing of it.
+#[test]
+fn check_names_rhythm_for_a_chart_with_only_music_listed() {
+    let game = music_game("check_chart", CHARTED);
+    set_packages(&game, "music = \"*\"\n");
+    let o = flint(&game, &["check", "scenes/main.scene.toml", "--json"]);
+    assert_eq!(o.status.code(), Some(1), "{}", said(&o));
+    let doc = json(&o);
+    let unlisted = with_code(&doc, "unlisted-package");
+    assert_eq!(unlisted.len(), 1, "{doc:#}");
+    let chart = unlisted[0];
+    assert_eq!(chart["entity"], "band", "{chart:#}");
+    assert_eq!(chart["component"], "music_session");
+    assert_eq!(chart["field"], "chart");
+    assert_eq!(
+        chart["message"],
+        "the field `music_session.chart` is the `rhythm` package's, and [packages] doesn't \
+         list it (1 other entity too)"
+    );
+    assert!(
+        chart["hint"]
+            .as_str()
+            .unwrap()
+            .starts_with("add `rhythm = \"*\"` under [packages] in "),
+        "{chart:#}"
+    );
+    let text = stdout(&flint(&game, &["check", "scenes/main.scene.toml"]));
+    assert!(text.contains("error[unlisted-package]"), "{text}");
+    assert!(text.contains("rhythm = \"*\""), "{text}");
+
+    // `flint validate` says it too, from the same pass
+    let o = flint(
+        &game,
+        &["validate", "scenes/main.scene.toml", "--format", "json"],
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", said(&o));
+    assert!(stdout(&o).contains("`music_session.chart`"), "{}", said(&o));
+
+    set_packages(&game, "music = \"*\"\nrhythm = \"*\"\n");
+    let doc = json(&flint(
+        &game,
+        &["check", "scenes/main.scene.toml", "--json"],
+    ));
+    assert!(with_code(&doc, "unlisted-package").is_empty(), "{doc:#}");
+
+    let plain = music_game(
+        "check_no_chart",
+        "manifest = \"music/tempo_change.suite.toml\"",
+    );
+    set_packages(&plain, "music = \"*\"\n");
+    let doc = json(&flint(
+        &plain,
+        &["check", "scenes/main.scene.toml", "--json"],
+    ));
+    assert!(with_code(&doc, "unlisted-package").is_empty(), "{doc:#}");
+}

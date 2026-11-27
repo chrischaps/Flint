@@ -161,9 +161,11 @@ flags = ["render --sweep wooze.*", "render --sweep living.*"]
                            #   one value of one: "asset resolve --strategy ai_generate",
                            #   or the values past a prefix: "render --sweep wooze.*"
 specs = []                 # the spec files it makes assets from: procgen's "*.procgen.toml"
+fields = []                # its fields of a component another package owns:
+                           #   rhythm's "music_session.chart"
 ```
 
-Every crate, schema file, script module, command, flag and kind of spec file of the engine belongs to exactly one package. A test holds that: a new component, crate, script module, command or flag fails it, naming the file or item, until one manifest lists it.
+Every crate, schema file, script module, command, flag and kind of spec file of the engine belongs to exactly one package. A test holds that: a new component, crate, script module, command or flag fails it, naming the file or item, until one manifest lists it. A `fields` entry must be a field its component's schema declares, and the component must be the kernel's or a package's that this one requires: rhythm lists `music_session.chart` and the session's other rhythm fields, since rhythm requires music, whose component it is.
 
 ### Which packages a `flint` has
 

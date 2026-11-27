@@ -152,13 +152,16 @@ pub fn lacks(feature: &str) -> bool {
 
 /// The packages the project at `at` (a scene, or a project's flint.toml)
 /// lists that this flint was built without (#1335): what `flint render`
-/// refuses and `flint check` reports, naming `flint build`. `None` with no
-/// `[packages]` table, or schemas that don't resolve (that command says
-/// so itself).
+/// refuses and `flint check` reports, naming `flint build`, or the sync
+/// script first for one whose folder the launchers don't know yet (#1589).
+/// A `[build] features` entry this flint never heard of is one it lacks:
+/// it was built from launchers without it. `None` with no `[packages]`
+/// table, or schemas that don't resolve (that command says so itself).
 pub fn unbuilt_at(at: &Path, flags: &[String]) -> Option<flint_player::packages::Unbuilt> {
     let dirs = flint_core::project::schema_dirs(Some(at), flags).ok()?;
+    let known = |f: &str| crate::commands::absent::built_features().any(|(k, _)| *k == f);
     flint_player::packages::unbuilt(&dirs, &flint_player::packages::this_binary(), |m| {
-        m.features.iter().any(|f| lacks(f))
+        m.features.iter().any(|f| lacks(f) || !known(f))
     })
 }
 
@@ -482,6 +485,85 @@ schemas = [\"{schemas}\"]
         .unwrap();
         assert_eq!(unbuilt_at(&dir.join("flint.toml"), &[]), None);
         let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    /// #1589's done-when for `flint check` (and `flint render`, which ask
+    /// the same): a copy of this tree's engine with `buoy` dropped into its
+    /// `packages/` and the sync not run, listed by a game beside it. This
+    /// flint never heard of buoy's feature, so it lacks the package, and the
+    /// hint names the sync script before `flint build`; once both launchers
+    /// declare the feature, the same package is the plain `flint build`.
+    #[test]
+    fn a_listed_package_the_launchers_dont_know_names_the_sync_script() {
+        let real = built_from();
+        let root = std::env::temp_dir().join(format!("flint-unsynced-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let engine = root.join("engine");
+        std::fs::create_dir_all(engine.join("schemas")).unwrap();
+        for entry in std::fs::read_dir(real.join("packages")).unwrap() {
+            let file = entry.unwrap().path().join("package.toml");
+            if file.is_file() {
+                let to = engine
+                    .join("packages")
+                    .join(file.parent().unwrap().file_name().unwrap());
+                std::fs::create_dir_all(&to).unwrap();
+                std::fs::copy(&file, to.join("package.toml")).unwrap();
+            }
+        }
+        std::fs::create_dir_all(engine.join("packages/buoy")).unwrap();
+        std::fs::write(
+            engine.join("packages/buoy/package.toml"),
+            "[package]\nname = \"buoy\"\nversion = \"0.1.0\"\ntier = \"feature\"\n\
+             summary = \"A float on the water\"\nengine = \"^0.1\"\n\n\
+             [build]\nfeatures = [\"buoy\"]\n\n[rust]\nplayer = \"flint-buoy\"\n\n\
+             [provides]\ncrates = [\"flint-buoy\"]\ncomponents = [\"buoy\"]\n",
+        )
+        .unwrap();
+        let launchers = |synced: bool| {
+            for launcher in ["flint-player", "flint-cli"] {
+                let text =
+                    std::fs::read_to_string(real.join("crates").join(launcher).join("Cargo.toml"))
+                        .unwrap();
+                let text = if synced {
+                    text.replacen("[features]", "[features]\nbuoy = []", 1)
+                } else {
+                    text
+                };
+                let to = engine.join("crates").join(launcher);
+                std::fs::create_dir_all(&to).unwrap();
+                std::fs::write(to.join("Cargo.toml"), text).unwrap();
+            }
+        };
+        let game = root.join("game");
+        std::fs::create_dir_all(&game).unwrap();
+        let schemas = flint_core::project::shown(&engine.join("schemas"));
+        std::fs::write(
+            game.join("flint.toml"),
+            format!("[project]\nschemas = [\"{schemas}\"]\n\n[packages]\nbuoy = \"*\"\n"),
+        )
+        .unwrap();
+
+        launchers(false);
+        let found = unbuilt_at(&game.join("flint.toml"), &[]).expect("this flint lacks buoy");
+        assert_eq!(found.packages, ["buoy"]);
+        assert_eq!(found.unsynced, ["buoy"]);
+        let hint = found.hint();
+        assert!(
+            hint.contains("run `python3 scripts/package-sync.py` in "),
+            "{hint}"
+        );
+        assert!(hint.contains("then `flint build` in the project"), "{hint}");
+
+        launchers(true);
+        let found = unbuilt_at(&game.join("flint.toml"), &[]).expect("still not built in");
+        assert!(found.unsynced.is_empty(), "{found:?}");
+        let hint = found.hint();
+        assert!(
+            hint.starts_with("run `flint build` in the project"),
+            "{hint}"
+        );
+        assert!(!hint.contains("package-sync"), "{hint}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
