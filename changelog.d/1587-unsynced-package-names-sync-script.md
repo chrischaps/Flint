@@ -1,3 +1,0 @@
-### A new package's folder is told to run `scripts/package-sync.py` (#1587)
-**What changed.** When a package's folder is in `packages/` but `scripts/package-sync.py` hasn't written its feature into the launchers yet, a command the package provides (exit 2) and `flint build` both say to run `python3 scripts/package-sync.py` from the engine's root, then build again. Before, the first said to list the package under `[packages]` and run `flint build`, which then refused it without naming the script. Under `--json` the missing-package error document adds `hint` and `unsynced`. A package the launchers already have, which the game left out, still gets the `[packages]` / `flint build` line.
-**What to do.** Nothing.
