@@ -60,4 +60,4 @@ Not recorded in the surviving text.
 - Code now: `packages/rhythm/crates/flint-input-capture/src/lib.rs` (`VerbMap`),
   `packages/music/crates/flint-music/src/input_stream.rs` (`SwaySample`, `PressureSample`),
   `packages/rhythm/crates/flint-rhythm-game/src/cli/play_chart.rs` (`--input-map`),
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Verb Space"
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Verb Space"

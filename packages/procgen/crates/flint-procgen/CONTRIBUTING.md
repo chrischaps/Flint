@@ -311,7 +311,7 @@ cargo test -p flint-procgen pebbles              # just yours
 
 - Add a commented spec to `specs/examples/`, in the style of the others: a header that says what the asset is and how the generator thinks, a comment on every non-obvious key, and the `flint gen` line that makes it. `tests/examples.rs` generates every spec there with `--strict` semantics.
 - Regenerate the README catalog: `cargo run -p flint-procgen --example param_catalog`, pasted between the `catalog` markers. The test prints the difference if you forget.
-- Add a section to the book's [procgen page](../../../../docs/book/src/concepts/procgen.md), and check it builds: `mdbook build docs/book`.
+- Add a section to the book's [procgen page](../../docs/concepts/procgen.md), kept in this package's folder (#1563), and check it builds: `python scripts/book-collect.py`, then `mdbook build docs/book`.
 
 ## Style
 

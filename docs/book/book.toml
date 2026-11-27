@@ -7,6 +7,9 @@ src = "src"
 
 [build]
 build-dir = "book"
+# A page SUMMARY.md links that isn't there is an error, not an empty page:
+# a package's pages are copied in by scripts/book-collect.py (#1563)
+create-missing = false
 
 [output.html]
 default-theme = "coal"

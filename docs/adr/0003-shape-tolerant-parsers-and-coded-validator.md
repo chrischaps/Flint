@@ -58,4 +58,4 @@ Not recorded in the surviving text.
   `packages/music/crates/flint-music/src/validate.rs` (`Issue`),
   `packages/music/crates/flint-music/src/tempo.rs` (`TempoMap`),
   `packages/music/crates/flint-music/tests/common/mod.rs` (`fixtures_dir`),
-  [Music Sessions](../book/src/concepts/music-sessions.md)
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md)

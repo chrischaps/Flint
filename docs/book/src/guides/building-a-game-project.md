@@ -231,17 +231,30 @@ Would write (--dry-run built nothing):
 - The engine is `--engine-path <dir>`, else the project's `engine/` subtree, else the engine its schemas name, else the tree this `flint` was built from.
 - With no `[packages]` table every package is in: the same binaries as a plain `cargo build`.
 - A project that drops `debug-hud` is built in two cargo runs, the player alone and then the CLI. `flint-cli` turns on the player's debug panels (its windows draw them), and one run would give them back to the player.
-- Under `--json` it is one document: `packages` (each with `name`, `tier` and `why`), `left_out`, `features`, `commands`, `argv`, `binaries`, `dry_run`, and after a build `built`, `seconds` and `set_aside`.
+- Under `--json` it is one document: `packages` (each with `name`, `tier` and `why`), `left_out`, `features`, `games`, `commands`, `argv`, `runs` (each with `command`, `argv`, `dir` and `binaries`), `binaries`, `dry_run`, and after a build `built`, `seconds` and `set_aside`.
+
+#### A game's own binary
+
+A game that embeds `PlayerApp` in a crate of its own ([Player Extensions](player-extensions.md)) is built too. `flint build` asks `cargo metadata` for the crates at the project root, and each one that has a binary and depends on `flint-player` (or `flint-cli`) gets a run of its own after the engine's, in the project root. It uses the same features as the stock player (and as `flint`, for a crate that depends on `flint-cli`), plus the crate's own default features:
+
+```text
+game      lantern-game (C:/games/lantern-game/Cargo.toml): its own binary, on flint-player's features
+
+cargo build -p lantern-game --bin lantern-game --no-default-features --features flint-player/debug-hud,flint-player/procgen,flint-player/audio,flint-player/gamepad,flint-player/frame-history
+  in C:/games/lantern-game
+```
+
+The crate's dependency on the player has to leave the choice to `flint build`, so it says `default-features = false` and names no package in its `features` (`audio`, say, is fine). `flint build` refuses before anything builds, and names the line, when the dependency takes the player's default features (which are every package) or pins a package the list leaves out, or when a default feature of the game's own turns one on (`trees = ["flint-player/living"]`). The run reads the game's own Cargo.toml, `[patch]` lines and `build.rs` (the 8 MB stack), and writes into the game's `target/`.
 
 On Windows a running binary can't be overwritten, and the `flint.exe` running the build is one of the two it writes. So before Cargo runs, `flint build` renames each output binary that exists to `<name>.old.exe` beside it. Windows allows that while it runs. A failed build renames it back. A copy still running is deleted the next time that binary starts ([ADR 0136](https://github.com/chrischaps/Flint/blob/main/docs/adr/0136-the-package-model.md), decision 10).
 
-A binary built some other way can lack a package the list names. With a `[packages]` table, `flint play`, `flint-player` and `flint render` refuse to run then (exit 2 for `flint`), and `flint check` reports it as an `unbuilt-package` error:
+A binary built some other way can lack a package the list names. With a `[packages]` table, `flint play`, `flint-player` and `flint render` refuse to run then (exit 2 for `flint`), a game's own binary refuses to start before its window opens (`PlayerApp::run_failure()` says why), and `flint check` reports it as an `unbuilt-package` error:
 
 ```text
 $ flint check
 flint.toml: 1 error
   error[unbuilt-package]: this flint was built without the `living` package, which flint.toml uses
-      hint: run `flint build` in the project: it builds a flint and a flint-player with the packages flint.toml lists (`flint build --dry-run` shows the cargo command)
+      hint: run `flint build` in the project: it builds a flint, a flint-player and the game's own binary with the packages flint.toml lists (`flint build --dry-run` shows the cargo commands)
 ```
 ## Multi-Schema Layering
 
@@ -472,7 +485,10 @@ On a game with the engine of 2026-11-14 (examples and all) this took the working
 git log -1 --format=%cs -- engine                  # before the pull: e.g. 2026-11-02
 git subtree pull --prefix=engine flint-engine main --squash
 bash engine/scripts/changelog.sh since 2026-11-02   # newest first
+bash engine/scripts/changelog.sh since 2026-11-02 --package engine,living   # the kernel's and living's only
 ```
+
+Every entry belongs to a package: each day has a heading for the kernel's entries, which every game has (`## 2026-11-27`), and one for each package that changed (`## 2026-11-27 · living`). A package your game doesn't list under `[packages]` can't change it, so `--package` with the kernel, `engine`, and your packages leaves those out.
 
 The entries live one file a month in `engine/changelog/` (`engine/CHANGELOG.md` links them), and `since` also reads the ones not yet gathered into a month, in `engine/changelog.d/`. It prints every entry dated that day or later, so a pull made the same day may show an entry you already had. Then run your scenes through `flint validate` and play the game once, watching the log: several entries are new warnings for mistakes that used to pass in silence.
 

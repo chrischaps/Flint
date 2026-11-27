@@ -7,9 +7,13 @@
 # changelog/YYYY-MM.md, newest first, and deletes them. CHANGELOG.md stays a
 # short page that links the months.
 #
-#   scripts/changelog.sh new <issue> <slug>    write changelog.d/<issue>-<slug>.md to fill in
-#   scripts/changelog.sh since <YYYY-MM-DD>    every entry dated that day or later, newest
-#                                              first, fragments included (also --since <date>)
+#   scripts/changelog.sh new <issue> <slug> [--package <name>]
+#                                              write changelog.d/<issue>-<slug>.md to fill in,
+#                                              filed under a package (default engine, #1564)
+#   scripts/changelog.sh since <YYYY-MM-DD> [--package <name>[,<name>...]]
+#                                              every entry dated that day or later, newest
+#                                              first, fragments included (also --since <date>);
+#                                              with --package, only those packages' entries
 #   scripts/changelog.sh assemble [--dry-run]  move the fragments into their month files
 #   scripts/changelog.sh check                 the fragments are well formed
 #   scripts/changelog.sh count                 entries in the month files and the fragments
@@ -22,6 +26,14 @@
 # after its assembly, #994) is left out of `since` and `count`, and
 # `assemble` deletes it without adding it again. Plain bash, git and POSIX
 # awk, so a game can run it from engine/scripts/ on any machine that has git.
+#
+# Every entry belongs to a package, a folder of packages/ (#1564, ADR 0136).
+# A fragment names it on the line after its title, `**Package.** living`;
+# with no such line it is the kernel's, `engine`. Assembly moves the name
+# into the day's heading, `## 2026-11-27 · living`, one heading a day for
+# each package that has entries, the kernel's first and unnamed
+# (`## 2026-11-27`), so the entry's text and the fragment's file name are
+# what they always were and the dedupe above still holds.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -30,8 +42,24 @@ frag_dir=changelog.d
 month_dir=changelog
 tab=$(printf '\t')
 date_re='^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$'
+dot=$(printf '\302\267') # the middle dot between a heading's date and package
 
 die() { echo "changelog: $*" >&2; exit 2; }
+
+# The packages there are: the folders of packages/ that hold a package.toml.
+package_names() {
+    local f
+    for f in packages/*/package.toml; do
+        [ -e "$f" ] && basename "$(dirname "$f")"
+    done
+    return 0
+}
+
+# Refuses a name that isn't a package, naming the ones there are.
+known_package() { # what name
+    package_names | grep -qxF -- "$2" && return 0
+    die "$1: no package '$2'; the packages are: $(package_names | paste -sd, - | sed 's/,/, /g')"
+}
 
 # Every fragment, in name order (README.md explains the folder and isn't one).
 fragment_files() {
@@ -64,27 +92,36 @@ stamped_fragments() {
 }
 
 # Splits a file into entry records, one line each:
-#   <date> TAB <entry order> TAB <line no> TAB <text>
-# An entry runs from its "### " line to the next "### " or "## <date>" line,
-# trailing blank lines dropped. With fixed_date set (a fragment), date
-# headings aren't read and every entry takes that date. Text between a date
-# heading and its first entry would be lost, so it is an error.
+#   <date> TAB <package> TAB <entry order> TAB <line no> TAB <text>
+# The package is empty for the kernel's (engine), so it sorts first. An entry
+# runs from its "### " line to the next "### " or "## <date>" line, trailing
+# blank lines dropped. Its package is its heading's (`## <date> · <name>`),
+# or the `**Package.** <name>` line right after its title, which isn't kept
+# in its text. With fixed_date set (a fragment), date headings aren't read
+# and every entry takes that date. Text between a date heading and its first
+# entry would be lost, so it is an error.
 records() { # file base [fixed_date]
-    awk -v base="$2" -v fixed="${3:-}" -v file="$1" '
+    awk -v base="$2" -v fixed="${3:-}" -v file="$1" -v dot="$dot" '
         function flush(   i) {
             while (n > 0 && lines[n] ~ /^[ \t]*$/) n--
             for (i = 1; i <= n; i++)
-                printf "%s\t%07d\t%05d\t%s\n", date, base + e, i, lines[i]
+                printf "%s\t%s\t%07d\t%05d\t%s\n", date, pkg, base + e, i, lines[i]
             n = 0
         }
+        function kernel(p) { return p == "engine" ? "" : p }
         BEGIN { date = fixed }
         { sub(/\r$/, "") }
-        fixed == "" && /^## [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][ \t]*$/ {
-            flush(); inentry = 0; date = $2; next
+        fixed == "" && /^## / && $2 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ &&
+            (NF == 2 || (NF == 4 && $3 == dot)) {
+            flush(); inentry = 0; date = $2; hpkg = kernel($4); next
         }
         /^### / {
             if (date == "") { printf "changelog: %s:%d: an entry before any date heading\n", file, NR > "/dev/stderr"; bad = 1; exit }
-            flush(); e++; inentry = 1
+            flush(); e++; inentry = 1; pkg = hpkg
+        }
+        inentry && n == 1 && /^\*\*Package\.\*\*/ {
+            p = $0; sub(/^\*\*Package\.\*\*[ \t]*/, "", p); gsub(/[` \t]/, "", p)
+            pkg = kernel(p); next
         }
         inentry { lines[++n] = $0; next }
         date != "" && !/^[ \t]*$/ {
@@ -95,20 +132,25 @@ records() { # file base [fixed_date]
 }
 
 # Records, sorted newest first, back to markdown: a "## <date>" heading per
-# day, entries in their order, one blank line between.
+# day and package (the kernel's first, then by name), entries in their
+# order, one blank line between.
 emit() {
-    LC_ALL=C sort -t "$tab" -k1,1r -k2,2n -k3,3n | awk -F '\t' '
+    LC_ALL=C sort -t "$tab" -k1,1r -k2,2 -k3,3n -k4,4n | awk -F '\t' -v dot="$dot" '
         {
-            text = $0; sub(/^[^\t]*\t[^\t]*\t[^\t]*\t/, "", text)
-            if ($1 != d) { if (NR > 1) print ""; print "## " $1; print ""; d = $1; o = $2 }
-            else if ($2 != o) { print ""; o = $2 }
+            text = $0; sub(/^[^\t]*\t[^\t]*\t[^\t]*\t[^\t]*\t/, "", text)
+            if (NR == 1 || $1 != d || $2 != p) {
+                if (NR > 1) print ""
+                print "## " $1 ($2 == "" ? "" : " " dot " " $2); print ""
+                d = $1; p = $2; o = $3
+            }
+            else if ($3 != o) { print ""; o = $3 }
             print text
         }'
 }
 
 # The lines of a month file before its first date heading.
 month_header() {
-    awk '{ sub(/\r$/, "") } /^## [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][ \t]*$/ { exit } { print }' "$1" |
+    awk '{ sub(/\r$/, "") } /^## / && $2 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ { exit } { print }' "$1" |
         awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && l[n] ~ /^[ \t]*$/) n--; for (i = 1; i <= n; i++) print l[i] }'
 }
 
@@ -136,8 +178,9 @@ month_records() {
 }
 
 # Reads the month files' records (entry order 1000000 and up), then the
-# fragments', and prints the fragments' less every entry whose text, heading
-# to last line, a month file or an earlier fragment already holds. That is a
+# fragments', and prints the fragments' less every entry whose package and
+# text, heading to last line, a month file or an earlier fragment already
+# holds. That is a
 # fragment a merge brought back after it was assembled (#994): a branch
 # stacked on a sibling's, or one that merged main before the sibling's
 # assembly, adds it again when it is squashed onto main.
@@ -150,8 +193,8 @@ unassembled() {
             key = ""; text = ""; buf = ""
         }
         {
-            line = $0; sub(/^[^\t]*\t[^\t]*\t[^\t]*\t/, "", line)
-            if (($1 FS $2) != key) { end_entry(); key = $1 FS $2; assembled = ($2 + 0 >= 1000000) }
+            line = $0; sub(/^[^\t]*\t[^\t]*\t[^\t]*\t[^\t]*\t/, "", line)
+            if (($1 FS $3) != key) { end_entry(); key = $1 FS $3; assembled = ($3 + 0 >= 1000000); text = $2 "\n" }
             text = text line "\n"; buf = buf $0 "\n"
         }
         END { end_entry() }'
@@ -178,12 +221,26 @@ all_records() {
 }
 
 cmd_since() {
-    local since=${1:-}
+    local since="" pkgs="" p want=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --package) [ $# -ge 2 ] || die "since: --package takes a package's name"; pkgs="$pkgs,$2"; shift 2 ;;
+            --package=*) pkgs="$pkgs,${1#--package=}"; shift ;;
+            -*) die "since: no option $1 (it takes a date and --package)" ;;
+            *) [ -z "$since" ] || die "since: one date, please"; since=$1; shift ;;
+        esac
+    done
     [[ $since =~ $date_re ]] || die "since: give a date as YYYY-MM-DD (the day of your last engine pull)"
+    # The packages asked for, as ",a,b,"; a record names the kernel's as empty.
+    for p in ${pkgs//,/ }; do
+        known_package since "$p"
+        want="${want:-,}$p,"
+    done
     local out
-    out=$(all_records | awk -F '\t' -v s="$since" '$1 >= s' | emit)
+    out=$(all_records | awk -F '\t' -v s="$since" -v want="$want" \
+        '$1 >= s && (want == "" || index(want, "," ($2 == "" ? "engine" : $2) ","))' | emit)
     if [ -z "$out" ]; then
-        echo "changelog: no entries dated $since or later" >&2
+        echo "changelog: no entries dated $since or later${pkgs:+ in ${pkgs#,}}" >&2
         return 0
     fi
     printf '%s\n' "$out"
@@ -191,11 +248,11 @@ cmd_since() {
 }
 
 cmd_count() {
-    all_records | cut -f1,2 | LC_ALL=C sort -u | wc -l | tr -d ' '
+    all_records | cut -f1,3 | LC_ALL=C sort -u | wc -l | tr -d ' '
 }
 
 cmd_check() {
-    local f name bad=0 words
+    local f name bad=0 words line place
     while IFS= read -r f; do
         name=$(basename "$f")
         if ! [[ $name =~ ^[0-9]+-[a-z0-9][a-z0-9-]*\.md$ ]]; then
@@ -207,6 +264,17 @@ cmd_check() {
         if grep -q '^## ' "$f"; then
             echo "changelog: $f: no '## ' lines: the date heading is added when it is assembled" >&2; bad=1
         fi
+        # A package line: right after an entry's title, naming a package.
+        while IFS="$tab" read -r line place name; do
+            if [ "$place" != title ]; then
+                echo "changelog: $f:$line: put the '**Package.** <name>' line right after the entry's '### ' line" >&2; bad=1
+            elif ! package_names | grep -qxF -- "$name"; then
+                echo "changelog: $f:$line: no package '$name'; the packages are: $(package_names | paste -sd, - | sed 's/,/, /g')" >&2; bad=1
+            fi
+        done < <(awk '{ sub(/\r$/, "") }
+            /^\*\*Package\.\*\*/ { p = $0; sub(/^\*\*Package\.\*\*[ \t]*/, "", p); gsub(/[` \t]/, "", p)
+                printf "%d\t%s\t%s\n", NR, (prev ~ /^### /) ? "title" : "elsewhere", p }
+            { prev = $0 }' "$f")
         words=$(wc -w < "$f" | tr -d ' ')
         if [ "$words" -gt 250 ]; then
             echo "changelog: $f: $words words; an entry reads best under about 150 (see CHANGELOG.md, \"Adding an entry\")" >&2
@@ -276,7 +344,7 @@ cmd_assemble() {
     printf '%s\n' "$stamped" | while read -r t d f; do
         rm -f "$f"
         # Fragment i's entries are ordered i * 100 and up.
-        if printf '%s\n' "$fresh" | awk -F '\t' -v i="$i" 'NF && int($2 / 100) == i { found = 1 } END { exit !found }'; then
+        if printf '%s\n' "$fresh" | awk -F '\t' -v i="$i" 'NF && int($3 / 100) == i { found = 1 } END { exit !found }'; then
             echo "changelog: assembled $f ($d)"
         else
             echo "changelog: deleted $f: its entry is already in $month_dir/ (a merge brought it back)"
@@ -289,14 +357,24 @@ cmd_assemble() {
 }
 
 cmd_new() {
-    local issue=${1:-} slug=${2:-}
+    local issue="" slug="" pkg=engine
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --package) [ $# -ge 2 ] || die "new: --package takes a package's name"; pkg=$2; shift 2 ;;
+            --package=*) pkg=${1#--package=}; shift ;;
+            -*) die "new: no option $1 (it takes an issue, a slug and --package)" ;;
+            *) if [ -z "$issue" ]; then issue=$1; elif [ -z "$slug" ]; then slug=$1; else die "new: one issue and one slug"; fi; shift ;;
+        esac
+    done
     [[ $issue =~ ^[0-9]+$ && $slug =~ ^[a-z0-9][a-z0-9-]*$ ]] ||
-        die "new: give an issue number and a slug: scripts/changelog.sh new 788 changelog-by-month"
+        die "new: give an issue number and a slug: scripts/changelog.sh new 788 changelog-by-month [--package living]"
+    known_package new "$pkg"
     local f="$frag_dir/$issue-$slug.md"
     [ -e "$f" ] && die "new: $f exists"
     mkdir -p "$frag_dir"
     {
         echo "### <what a game author sees, naming the key, function or flag> (#$issue)"
+        echo "**Package.** $pkg"
         echo "**What changed.** <what is different, and what happens to old files and scripts>"
         echo "**What to do.** <the step to take, or \"Nothing.\">"
     } > "$f"

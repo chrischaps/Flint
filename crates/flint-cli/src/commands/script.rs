@@ -270,10 +270,18 @@ fn book_cmd(dir: &Path, check: bool) -> Result<()> {
             crate::output::say!("wrote {}", shown(path));
         }
     }
+    // Where a ghost's page is: a package's page in its folder (#1563)
+    let file_of = |g: &book::Ghost| {
+        outcome
+            .kept
+            .get(&g.file)
+            .cloned()
+            .unwrap_or_else(|| dir.join("src").join(&g.file))
+    };
     for g in &outcome.ghosts {
         eprintln!(
             "{}:{}: `{}(`: {}",
-            shown(&dir.join("src").join(&g.file)),
+            shown(&file_of(g)),
             g.line,
             g.name,
             g.problem
@@ -300,7 +308,7 @@ fn book_cmd(dir: &Path, check: bool) -> Result<()> {
             "check": check,
             "stale": outcome.stale.iter().map(|p| shown(p)).collect::<Vec<_>>(),
             "ghosts": outcome.ghosts.iter().map(|g| json!({
-                "file": shown(&dir.join("src").join(&g.file)),
+                "file": shown(&file_of(g)),
                 "line": g.line,
                 "name": g.name,
                 "problem": g.problem,

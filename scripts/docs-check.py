@@ -44,6 +44,15 @@ Three mechanical checks, the ones a page drifts on without anyone noticing:
           names) must be the kernel's, or a package's that a Package line
           over it names. A Package line under the title covers the page;
           one under another heading covers that heading's section.
+          A package's pages live in its folder (#1563): every file under
+          packages/<name>/docs/ is the book's page at the same path (what
+          scripts/book-collect.py copies into docs/book/src), read here from
+          its package's folder, never from the copy. Such a page's title
+          Package line names that package first; a book page in
+          docs/book/src whose title line names a package other than the
+          kernel belongs in that package's folder. And what book-collect.py
+          --check holds (no page with two homes, every page in SUMMARY.md,
+          the .gitignore list) is a `book` problem here too.
 
 Usage:
   python scripts/docs-check.py [--flint <path to flint binary>] [--examples <clone>] [--json]
@@ -55,6 +64,7 @@ invents to show the format) goes in docs/book/docs-check-allow.txt.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -67,7 +77,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BOOK = ROOT / "docs" / "book" / "src"
 ALLOW = ROOT / "docs" / "book" / "docs-check-allow.txt"
 
-COUNTS = {"flags": 0, "styles": 0, "images": 0, "maps": 0, "examples": 0, "packages": 0, "owners": 0}
+COUNTS = {"flags": 0, "styles": 0, "images": 0, "maps": 0, "examples": 0, "packages": 0, "owners": 0, "homes": 0}
 FLAG_RE = re.compile(r"^--[a-z0-9][a-z0-9-]*")
 HELP_FLAG_RE = re.compile(r"^\s+(?:-[A-Za-z0-9], )?(--[a-z0-9][a-z0-9-]*)")
 HELP_CMD_RE = re.compile(r"^  ([a-z][a-z0-9-]*)(?:\s|$)")
@@ -312,10 +322,56 @@ def rel(path):
     return path.relative_to(ROOT).as_posix()
 
 
-def book_page(path):
-    """A page's name in the allow file: its path under src/, else the repo's."""
+def collector():
+    """scripts/book-collect.py, which says where a package's pages go (#1563)."""
+    spec = importlib.util.spec_from_file_location("book_collect", ROOT / "scripts" / "book-collect.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_PACKAGE_PAGES = None
+
+
+def package_pages():
+    """{source path: (path in the book, package)} for every file under a
+    package's docs/ (#1563)."""
+    global _PACKAGE_PAGES
+    if _PACKAGE_PAGES is None:
+        _PACKAGE_PAGES = {src.resolve(): (book, pkg) for book, pkg, src in collector().pages(ROOT)}
+    return _PACKAGE_PAGES
+
+
+def in_book(path):
+    """Where a page sits in the book: a package's page at its book path under
+    src/ (#1563), any other path as it is."""
+    found = package_pages().get(path.resolve())
+    return BOOK / found[0] if found else path
+
+
+def home_of(path):
+    """The package whose folder holds a page, or None."""
+    found = package_pages().get(path.resolve())
+    return found[1] if found else None
+
+
+def exists_in_book(path):
+    """A file the built book has: on disk, or a package's file collected to
+    that path."""
+    if path.exists():
+        return True
     try:
-        return path.relative_to(BOOK).as_posix()
+        book = path.resolve().relative_to(BOOK.resolve()).as_posix()
+    except ValueError:
+        return False
+    return any(b == book for b, _ in package_pages().values())
+
+
+def book_page(path):
+    """A page's name in the allow file: its path under src/ (a package's page
+    by where it is collected to), else the repo's."""
+    try:
+        return in_book(path).relative_to(BOOK).as_posix()
     except ValueError:
         return rel(path)
 
@@ -593,6 +649,37 @@ def check_page_owners(path, lines, owners, problems, allow):
                                 f"or put a `> **Package:** `{actual}`` line under the heading of the section that documents it"))
 
 
+def check_home(path, lines, owners, problems, allow):
+    """Where a page lives against its title's Package line (#1563): a page in
+    packages/<name>/docs/ is `<name>`'s, and a page in docs/book/src that
+    says a package other than the kernel belongs in that package's folder."""
+    page = book_page(path)
+    home = home_of(path)
+    title = [s for s in package_scopes(lines) if s[0] == 1]
+    if not title:
+        if home is not None:
+            COUNTS["homes"] += 1
+            problems.append(problem("packages", (page, 1), f"the page lives in packages/{home}/docs/ but doesn't state its package",
+                                    f"a page in a package's folder is that package's: a `> **Package:** `{home}`` line under its title"))
+        return
+    _, _, n, text = title[0]
+    lead = re.match(r"^\s*`([a-z][a-z0-9-]*)`", text)
+    said = lead.group(1) if lead else None
+    if said is None or said not in owners.names:
+        return  # the packages check names a line with no package, or a name that isn't one
+    COUNTS["homes"] += 1
+    if allowed(allow, (page, n), said):
+        return
+    if home is not None and said != home:
+        where = f"docs/book/src/{page}" if said in owners.kernel else f"packages/{said}/docs/{page}"
+        problems.append(problem("packages", (page, n), f"the page lives in packages/{home}/docs/, but its Package line says `{said}`",
+                                f"a page is kept with the package it documents: move it to {where}, or name `{home}` first on the line"))
+    elif home is None and said not in owners.kernel:
+        problems.append(problem("packages", (page, n), f"the page's Package line says `{said}`, but it lives in docs/book/src",
+                                f"a package's page is kept in its folder (#1563): `git mv` it to packages/{said}/docs/{page} "
+                                f"and run `python scripts/book-collect.py`"))
+
+
 def self_test():
     """The owner check on made-up manifests and pages, with no binary
     (`--self-test`, in scripts/ci.sh): what a Package line gives to whom,
@@ -662,6 +749,35 @@ def self_test():
     ]:
         if got != want:
             failed.append(f"check_page_owners: got {got}, want {want}")
+    # Where a page lives (#1563): a music page whose title line says another
+    # package fails; so does a book page naming a feature package
+    global _PACKAGE_PAGES
+    kept = _PACKAGE_PAGES
+    music_page = ROOT / "packages" / "music" / "docs" / "concepts" / "t.md"
+    _PACKAGE_PAGES = {music_page.resolve(): ("concepts/t.md", "music")}
+
+    def home(path, text):
+        problems = []
+        check_home(path, text.splitlines(), o, problems, {})
+        return [(p["line"], p["message"]) for p in problems]
+
+    for got, want in [
+        (home(music_page, "# M\n\n> **Package:** " + music + "\n"), []),
+        (home(music_page, "# M\n\n> **Package:** " + procgen + "\n"),
+         [(3, "the page lives in packages/music/docs/, but its Package line says `procgen`")]),
+        (home(music_page, "# M\n\n> **Package:** `engine`, the kernel.\n"),
+         [(3, "the page lives in packages/music/docs/, but its Package line says `engine`")]),
+        (home(music_page, "# M\n\nNo line.\n"),
+         [(1, "the page lives in packages/music/docs/ but doesn't state its package")]),
+        # A section's line may name another package; only the title's says whose the page is
+        (home(music_page, "# M\n\n> **Package:** " + music + "\n\n## Props\n\n> **Package:** " + props + "\n"), []),
+        (home(BOOK / "concepts" / "t.md", "# M\n\n> **Package:** " + music + "\n"),
+         [(3, "the page's Package line says `music`, but it lives in docs/book/src")]),
+        (home(BOOK / "concepts" / "t.md", "# M\n\n> **Package:** `engine`, the kernel.\n"), []),
+    ]:
+        if got != want:
+            failed.append(f"check_home: got {got}, want {want}")
+    _PACKAGE_PAGES = kept
     for f in failed:
         print(f"docs-check --self-test: {f}")
     print(f"docs-check --self-test: {'ok' if not failed else f'{len(failed)} failed'}")
@@ -671,15 +787,19 @@ def self_test():
 def scan(path, flint, styles, ws, problems, allow, examples=None, source=None, packages=None, owners=None):
     text = path.read_text(encoding="utf-8")
     page = book_page(path)
-    in_book = path.is_relative_to(BOOK)
-    in_cli_ref = path.is_relative_to(BOOK / "cli-reference")
+    # A package's page is read where it sits in the book (#1563)
+    at = in_book(path)
+    is_book = at.is_relative_to(BOOK)
+    in_cli_ref = at.is_relative_to(BOOK / "cli-reference")
     lines = text.splitlines()
-    if packages is not None and path.parent == STATES_PACKAGE:
+    if packages is not None and at.parent == STATES_PACKAGE:
         if not any(PACKAGE_LINE_RE.match(l) for l in lines):
             problems.append(problem("packages", (page, 1), "the page doesn't state its package",
                                     "a concepts page says what it documents is whose: a `> **Package:** `engine`` line under its title"))
         elif owners is not None:
             check_page_owners(path, lines, owners, problems, allow)
+    if owners is not None and (is_book or home_of(path)):
+        check_home(path, lines, owners, problems, allow)
     fence = None
     shell_block = False
     toml_block = False
@@ -773,14 +893,14 @@ def scan(path, flint, styles, ws, problems, allow, examples=None, source=None, p
                 if fm:
                     check_command(flint, [*heading_cmd[1], fm.group(0)], where, problems, allow)
 
-        if in_book:
+        if is_book:
             for target in IMAGE_MD_RE.findall(line) + IMAGE_HTML_RE.findall(line):
                 if re.match(r"^[a-z]+:", target) or target.startswith("#"):
                     continue
                 target = target.split("#", 1)[0].split("?", 1)[0]
                 COUNTS["images"] += 1
-                if not (path.parent / target).exists() and not allowed(allow, where, target):
-                    problems.append(problem("images", where, f"image `{target}` does not exist", f"looked for {rel((path.parent / target).resolve())}"))
+                if not exists_in_book(at.parent / target) and not allowed(allow, where, target):
+                    problems.append(problem("images", where, f"image `{target}` does not exist", f"looked for {rel((at.parent / target).resolve())}"))
 
 
 def workspace():
@@ -881,7 +1001,10 @@ def check_crate_maps(ws, problems, allow):
 
 
 def sources():
-    files = sorted(BOOK.rglob("*.md")) + [ROOT / "README.md"]
+    # A package's pages from its folder, never their copies in src/ (#1563)
+    collected = {BOOK / book for book, _ in package_pages().values()}
+    kept = sorted(src for src, (book, _) in package_pages().items() if book.endswith(".md"))
+    files = sorted(p for p in BOOK.rglob("*.md") if p not in collected) + kept + [ROOT / "README.md"]
     listed = subprocess.run(["git", "ls-files", "*CLAUDE.md"], cwd=ROOT, capture_output=True, text=True)
     for name in listed.stdout.split():
         p = ROOT / name
@@ -926,6 +1049,14 @@ def main():
     for f in files:
         scan(f, flint, styles, ws, problems, allow, examples, source, packages, owners)
     check_crate_maps(ws, problems, allow)
+    # Where a package's pages go (#1563): what book-collect.py --check holds
+    for f, message, hint in collector().problems(ROOT):
+        problems.append(problem("book", (f, 1), message, hint))
+    # A package's page is named by the file to edit, in its folder; the allow
+    # file still keys it by its book path
+    kept = {book: rel(src) for src, (book, _) in package_pages().items()}
+    for p in problems:
+        p["file"] = kept.get(p["file"], p["file"])
 
     if args.json:
         print(json.dumps({"files": len(files), "commands": len(flint.cache), "styles": sorted(styles), "packages": sorted(packages), "checked": COUNTS, "problems": problems}, indent=2))
@@ -934,7 +1065,8 @@ def main():
             print(f"{p['file']}:{p['line']}: [{p['check']}] {p['message']}\n    {p['hint']}")
         print(f"docs-check: {len(files)} files; {COUNTS['flags']} flags on {len(flint.cache)} commands, "
               f"{COUNTS['styles']} style tables, {COUNTS['images']} images, {COUNTS['maps']} map entries, {COUNTS['examples']} example citations, "
-              f"{COUNTS['packages']} package names, {COUNTS['owners']} items held to their packages: "
+              f"{COUNTS['packages']} package names, {COUNTS['owners']} items held to their packages, "
+              f"{COUNTS['homes']} pages held to their folders: "
               + (f"{len(problems)} problem(s)" if problems else "clean"))
     return 1 if problems else 0
 

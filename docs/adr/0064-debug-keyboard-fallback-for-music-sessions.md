@@ -50,4 +50,4 @@ Not recorded in the surviving text.
 - Code now: `crates/flint-player/src/player_app/music_session.rs`
   (`DebugKeyInput`, `debug_force_fail`),
   `crates/flint-player/src/player_app/events.rs`
-- Book: [Music Sessions](../book/src/concepts/music-sessions.md)
+- Book: [Music Sessions](../../packages/music/docs/concepts/music-sessions.md)

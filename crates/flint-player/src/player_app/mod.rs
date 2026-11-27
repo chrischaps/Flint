@@ -460,6 +460,10 @@ pub struct PlayerApp {
     // Schema directories and where the list came from (ADR 0114), kept for
     // transitions and chunks
     schema_dirs: flint_core::project::SchemaDirs,
+    // Whether the project's `[packages]` was already held to this binary
+    // (`PlayerArgs::prepare` did, or a bundle, which never is): a game's own
+    // binary that built the app itself is held at its first resume (#1532)
+    pub(crate) packages_held: bool,
     // The registry itself, read once and kept (ADR 0115, #683): a chunk
     // uses it as it is, a transition re-reads only for other directories,
     // and a failed read keeps it

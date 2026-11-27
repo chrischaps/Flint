@@ -38,5 +38,5 @@ Not recorded in the surviving text.
   alternates, cues, debug panels"
 - Code now: `crates/flint-player/src/player_app/music_session.rs`
   (`MusicSession::quit_on_finish`), `crates/flint-player/src/player_app/frame.rs`,
-  [Music Sessions](../book/src/concepts/music-sessions.md), "The
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "The
   `music_session` Component"

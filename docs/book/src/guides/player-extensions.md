@@ -100,6 +100,8 @@ A debug build's frames are large: a stock `flint-player` playing a `flint init` 
 flint-player = { path = "engine/crates/flint-player", default-features = false, features = ["audio", "gamepad", "music"] }
 ```
 
+A game with a `[packages]` list lets `flint build` choose instead: it builds the game's crate with the player's features from the list ([A game's own binary](building-a-game-project.md#a-games-own-binary)). Then the dependency says `default-features = false` and names no package, and `flint build` refuses a dependency that takes the defaults or pins a package the list leaves out. However the binary was built, `PlayerApp` holds the list to it: when `flint.toml` lists a package the binary lacks, the player refuses to start before its window opens, and `PlayerApp::run_failure()` names the packages and `flint build`. It reads the list from the schemas handed over with `set_schemas`, or else from the scene's project. `PlayerApp::unbuilt_packages()` asks the same question, for a game that wants to say it earlier.
+
 | Feature | What it brings | Without it |
 |---|---|---|
 | `audio` | The sound card (kira's cpal backend) | The game runs silent |

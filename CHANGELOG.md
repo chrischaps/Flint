@@ -14,8 +14,10 @@ old files and scripts keep working.
 
 prints every entry dated that day or later, newest first, including ones not
 yet gathered into a month. Give it the day of your last engine pull
-(`git log -1 --format=%cs -- engine`, run before pulling). The months, which
-assembly lists here:
+(`git log -1 --format=%cs -- engine`, run before pulling). Each day is
+headed once for the kernel (`## 2026-11-27`) and once for each package with
+entries (`## 2026-11-27 · living`); `--package engine,living` prints only
+those. The months, which assembly lists here:
 
 <!-- months: written by scripts/changelog.sh assemble -->
 - [November 2026](changelog/2026-11.md)
@@ -26,13 +28,16 @@ assembly lists here:
 One file per pull request, holding its entry and nothing else, so two PRs
 never touch the same file:
 
-    bash scripts/changelog.sh new <issue> <slug>    # writes changelog.d/<issue>-<slug>.md
+    bash scripts/changelog.sh new <issue> <slug> [--package <name>]
 
-Fill it in and commit it with the change. After the merge the `Changelog`
+It writes `changelog.d/<issue>-<slug>.md`. Pass `--package` when only a game
+that lists that package can notice the change (its folder, `packages/<name>/`);
+without it the entry is the kernel's, `engine`. Fill it in and commit it with the change. After the merge the `Changelog`
 workflow moves it into this month's file under the merge's date and deletes
 it; don't edit `changelog/` or this page for a new entry. The format:
 
     ### `flint render --look` takes a path (#123)
+    **Package.** engine
     **What changed.** ...
     **What to do.** ...
 

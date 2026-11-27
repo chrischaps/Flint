@@ -11,7 +11,13 @@
 # brings back after its assembly is neither printed nor assembled twice, and
 # assembling it deletes it (#994), and the check fails a branch that carries
 # it before the merge, by its heading (#1006); the check fails a schema change
-# with no fragment and passes one with a fragment or a waiver.
+# with no fragment and passes one with a fragment or a waiver. Packages
+# (#1564): `new --package` writes the package line and refuses a name that
+# isn't a package; assembly files a day's entries under one heading per
+# package, the kernel's first, and a returned package fragment is still
+# assembled once; `since --package` prints only those packages' entries; the
+# check notes an entry filed under engine on a branch that changes only one
+# package's folder.
 set -euo pipefail
 
 src=$(cd "$(dirname "$0")/.." && pwd)
@@ -36,6 +42,10 @@ cp "$src/scripts/changelog.sh" "$src/scripts/changelog-check.sh" "$repo/scripts/
 cp -r "$src/changelog" "$repo/"
 cp "$src/CHANGELOG.md" "$src/changelog.d/README.md" "$repo/" 2>/dev/null || true
 mv "$repo/README.md" "$repo/changelog.d/README.md"
+for p in engine living music; do
+    mkdir -p "$repo/packages/$p"
+    printf '[package]\nname = "%s"\n' "$p" > "$repo/packages/$p/package.toml"
+done
 echo 'x = 1' > "$repo/schemas/a.toml"
 echo 'y = 1' > "$repo/schemas/b.toml"
 cd "$repo"
@@ -45,8 +55,12 @@ git add -A
 at 2026-11-20 commit -qm base
 start=$(bash scripts/changelog.sh count)
 
-entry() { # entry <issue> <title>
-    printf '### %s (#%s)\n**What changed.** %s changed.\n**What to do.** Nothing.\n' "$2" "$1" "$2" > "changelog.d/$1-t$1.md"
+entry() { # entry <issue> <title> [package]: no package line without one
+    {
+        printf '### %s (#%s)\n' "$2" "$1"
+        [ -z "${3:-}" ] || printf '**Package.** %s\n' "$3"
+        printf '**What changed.** %s changed.\n**What to do.** Nothing.\n' "$2"
+    } > "changelog.d/$1-t$1.md"
 }
 branch() { # branch <name> <issue> <schema file>: a schema change with its fragment
     git checkout -q -b "$1" main
@@ -219,6 +233,100 @@ merge s3 2026-12-09
 check "beside a new fragment, the returned one isn't added again" \
     "bash scripts/changelog.sh assemble >/dev/null && [ \"\$(grep -c '^### Stacked under two branches' changelog/2026-12.md)\" = 1 ]"
 check "and the new one is" "[ \"\$(grep -c '^### Change 908' changelog/2026-12.md)\" = 1 ] && [ \"\$(bash scripts/changelog.sh count)\" = $((count + 1)) ]"
+git add -A
+at 2026-12-09 commit -qm assemble
+
+# --- packages (#1564) ---
+check "new --package living writes a fragment naming living, after its title" \
+    "bash scripts/changelog.sh new 1 demo --package living >/dev/null && sed -n 2p changelog.d/1-demo.md | grep -qxF '**Package.** living'"
+said=$(bash scripts/changelog.sh new 2 demo --package nope 2>&1 && echo "exit=0" || echo "exit=$?")
+check "new --package nope is refused (exit 2), naming the packages there are" \
+    "printf '%s\n' \"\$said\" | grep -qF \"no package 'nope'; the packages are: engine, living, music\" && printf '%s\n' \"\$said\" | grep -qx 'exit=2' && [ ! -e changelog.d/2-demo.md ]"
+check "new with no --package files the entry under engine" \
+    "bash scripts/changelog.sh new 3 demo >/dev/null && sed -n 2p changelog.d/3-demo.md | grep -qxF '**Package.** engine'"
+check "check passes the two" "bash scripts/changelog.sh check >/dev/null 2>&1"
+rm changelog.d/1-demo.md changelog.d/3-demo.md
+entry 913 "Misnamed" nope
+check "check fails a package line naming no package" "! bash scripts/changelog.sh check >/dev/null 2>&1"
+printf '### Late (#914)\n**What changed.** Late.\n**Package.** living\n' > changelog.d/914-t914.md
+rm changelog.d/913-t913.md
+said=$(bash scripts/changelog.sh check 2>&1 && echo "exit=0" || echo "exit=$?")
+check "and one that isn't right after the title" \
+    "printf '%s\n' \"\$said\" | grep -qF '914-t914.md:3: put the' && printf '%s\n' \"\$said\" | grep -qx 'exit=1'"
+rm changelog.d/914-t914.md
+
+git checkout -q -b pk main
+echo 'x = 2' >> packages/living/package.toml
+entry 918 "Living's own"
+git add -A
+at 2026-12-10 commit -qm "a living change filed under engine"
+said=$(bash scripts/changelog-check.sh main 2>&1 || true)
+check "the check notes a fragment filed under engine on a branch that changes only packages/living/" \
+    "printf '%s\n' \"\$said\" | grep -qF 'changelog.d/918-t918.md is filed under engine, but this branch changes only packages/living/'"
+entry 918 "Living's own" living
+git add -A
+at 2026-12-10 commit -qm "filed under living"
+said=$(bash scripts/changelog-check.sh main 2>&1 || true)
+check "and doesn't once it is filed under living" "! printf '%s\n' \"\$said\" | grep -q 'note:'"
+echo 'y = 2' >> schemas/a.toml
+entry 918 "Living's own"
+git add -A
+at 2026-12-10 commit -qm "and a kernel change"
+said=$(bash scripts/changelog-check.sh main 2>&1 || true)
+check "nor when the branch changes the kernel too" \
+    "printf '%s\n' \"\$said\" | grep -q 'entry present' && ! printf '%s\n' \"\$said\" | grep -q 'note:'"
+git checkout -q main
+git branch -q -D pk
+
+entry 910 "Living 910" living
+entry 911 "Music 911" music
+entry 912 "Kernel 912"
+entry 915 "Kernel 915" engine
+git add -A
+at 2026-12-10 commit -qm "merge 910-915"
+before_since=$(bash scripts/changelog.sh since 2026-12-10 2>/dev/null)
+check "since --package living prints living's entry alone, under its heading" \
+    "[ \"\$(bash scripts/changelog.sh since 2026-12-10 --package living 2>/dev/null | grep -E '^##')\" = \"\$(printf '## 2026-12-10 \\302\\267 living\n### Living 910 (#910)')\" ]"
+check "since --package engine,music prints the kernel's two and music's" \
+    "[ \"\$(bash scripts/changelog.sh since 2026-12-10 --package engine,music 2>/dev/null | grep -c '^### ')\" = 3 ] && ! bash scripts/changelog.sh since 2026-12-10 --package engine --package music 2>/dev/null | grep -q Living"
+check "since --package nope is refused" "! bash scripts/changelog.sh since 2026-12-10 --package nope >/dev/null 2>&1"
+count=$(bash scripts/changelog.sh count)
+said=$(bash scripts/changelog.sh assemble)
+check "assembly says it assembled each of the four, none 'already in changelog/'" \
+    "[ \"\$(printf '%s\n' \"\$said\" | grep -c '^changelog: assembled changelog.d/91[0-5]-')\" = 4 ] && ! printf '%s\n' \"\$said\" | grep -q 'already in'"
+day=$(awk '/^## 2026-12-10/ { on = 1 } /^## 2026-12-0/ { on = 0 } on && /^##/' changelog/2026-12.md)
+check "assembly files each entry under its package: the kernel's unnamed and first, then by name" \
+    "[ \"\$day\" = \"\$(printf '## 2026-12-10\n### Kernel 912 (#912)\n### Kernel 915 (#915)\n## 2026-12-10 \\302\\267 living\n### Living 910 (#910)\n## 2026-12-10 \\302\\267 music\n### Music 911 (#911)')\" ]"
+check "and drops the package lines from the entries" "! grep -q '^\*\*Package' changelog/2026-12.md"
+check "and loses no entry" "[ \"\$(bash scripts/changelog.sh count)\" = $((count)) ]"
+check "since prints the same after assembly" "[ \"\$(bash scripts/changelog.sh since 2026-12-10 2>/dev/null)\" = \"\$before_since\" ]"
+git add -A
+at 2026-12-10 commit -qm assemble
+assembled=$(cat changelog/2026-12.md)
+git show HEAD~1:changelog.d/910-t910.md > changelog.d/910-t910.md
+git add -A
+at 2026-12-11 commit -qm "a squash brings 910 back"
+check "a returned package fragment is printed once" \
+    "[ \"\$(bash scripts/changelog.sh since 2026-12-10 2>/dev/null | grep -c '^### Living 910')\" = 1 ]"
+check "and assembling it leaves the month unchanged" \
+    "bash scripts/changelog.sh assemble >/dev/null && [ \"\$(cat changelog/2026-12.md)\" = \"\$assembled\" ] && [ \"\$(ls changelog.d)\" = README.md ]"
+git add -A
+at 2026-12-11 commit -qm assemble
+entry 916 "Living 916" living
+git add -A
+at 2026-12-10 commit -qm "merge 916, the same day"
+bash scripts/changelog.sh assemble >/dev/null
+check "a later entry of a package on an assembled day joins its heading, above the earlier" \
+    "[ \"\$(grep -c '^## 2026-12-10 ' changelog/2026-12.md)\" = 2 ] && awk '/^## 2026-12-10 [^ ]+ living/ { on = 1; next } /^## / { on = 0 } on && /^### /' changelog/2026-12.md | tr '\n' ' ' | grep -q '^### Living 916.*### Living 910'"
+nov_before=$(sed 's/\r$//' changelog/2026-11.md)
+git add -A
+at 2026-12-10 commit -qm assemble
+entry 917 "Living in November" living
+git add -A
+at 2026-11-28 commit -qm "merge 917, dated in November"
+bash scripts/changelog.sh assemble >/dev/null
+check "assembling into a month written before packages changes only what it adds" \
+    "[ \"\$(diff <(printf '%s\n' \"\$nov_before\") changelog/2026-11.md | grep -c '^<')\" = 0 ] && grep -q '^## 2026-11-28 [^ ]* living' changelog/2026-11.md"
 
 echo
 echo "$pass passed, $fail failed"

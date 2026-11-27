@@ -3,7 +3,8 @@
 #  Flint Documentation — Build & Publish
 # ============================================================
 #
-#  Builds mdBook guide + rustdoc API reference, merges them,
+#  Collects the packages' pages (scripts/book-collect.py, #1563),
+#  builds mdBook guide + rustdoc API reference, merges them,
 #  copies the result to the docs.chaps.dev repo, and optionally
 #  commits and pushes to publish.
 #
@@ -55,6 +56,13 @@ if ! command -v mdbook &>/dev/null; then
     echo "  mdbook not found. Install with: cargo install mdbook"
     exit 1
 fi
+
+# A package's pages live in its folder (#1563): copy them into the book
+# first, at the paths they have in it. Without this mdBook stops on the
+# first page SUMMARY.md links that isn't there (book.toml: create-missing).
+PY=python3
+"$PY" --version >/dev/null 2>&1 || PY=python
+"$PY" "${PROJECT_ROOT}/scripts/book-collect.py" | sed 's/^/  /'
 
 (cd "$PROJECT_ROOT" && mdbook build docs/book)
 echo "  mdBook built successfully."

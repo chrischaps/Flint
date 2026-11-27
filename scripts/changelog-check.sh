@@ -15,8 +15,9 @@
 # branch it also checks that the fragments are well formed, that CHANGELOG.md
 # stays a short page (the entries live in changelog/), and that no fragment the
 # branch adds has a heading a month file already holds: one a merge brought
-# back after its assembly (#1006). CI's `changelog` job runs this on every
-# pull request.
+# back after its assembly (#1006). A fragment filed under engine on a branch
+# that changes only one package's folder gets a note naming the package
+# (#1564). CI's `changelog` job runs this on every pull request.
 #
 # CLI flags, Cargo features, file formats and defaults aren't watched: no path
 # says reliably that one changed. They still belong in the changelog.
@@ -88,6 +89,28 @@ if [ -n "$fragments" ]; then
 fi
 
 changed=$(git diff --name-only "$base"...HEAD)
+
+# An entry is filed under a package (#1564): `**Package.** <name>` after its
+# title, else the kernel's, engine. A branch whose changes outside the
+# changelog are all in one package's folder, packages/<name>/, has a fragment
+# filed under engine: say so. A note, not a failure: a change there can be the
+# kernel's to tell (a manifest key every package reads).
+owner=$(printf '%s\n' "$changed" | awk -F/ '
+    $0 == "" || $1 == "changelog.d" || $1 == "changelog" { next }
+    $1 == "packages" && NF > 2 { print $2; next }
+    { print "-" }' | LC_ALL=C sort -u)
+if [ -n "$fragments" ] && [ -n "$owner" ] && [ "$(printf '%s\n' "$owner" | wc -l | tr -d ' ')" = 1 ] &&
+    [ "$owner" != - ] && [ "$owner" != engine ]; then
+    while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        if ! sed 's/\r$//' "$f" | grep -qE '^\*\*Package\.\*\* *`?[a-z0-9-]+`?$' ||
+            sed 's/\r$//' "$f" | grep -qE '^\*\*Package\.\*\* *`?engine`?$'; then
+            echo "changelog: note: $f is filed under engine, but this branch changes only packages/$owner/;"
+            echo "  if it is $owner's entry, its line after the title is: **Package.** $owner"
+        fi
+    done <<< "$fragments"
+fi
+
 hits=$(printf '%s\n' "$changed" | grep -E "$watched" || true)
 
 if [ -z "$hits" ]; then

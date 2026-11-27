@@ -3,7 +3,7 @@
 Status: accepted, 2026-11-23 (#1216). Follows
 [ADR 0127](0127-the-mixer-is-a-trait-and-buses-are-data.md) and
 [ADR 0017](0017-one-shared-audio-manager.md). Book:
-[Music Sessions](../book/src/concepts/music-sessions.md), Keeping Time.
+[Music Sessions](../../packages/music/docs/concepts/music-sessions.md), Keeping Time.
 
 ## Context
 

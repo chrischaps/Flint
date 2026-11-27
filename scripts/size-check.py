@@ -77,7 +77,8 @@ for _image in (
 # 158.0 MB.
 TREE_BYTES = 175 * MB
 # What a game's engine/ carries, by part. The first area whose prefix
-# matches a path takes it; "engine" is everything else.
+# matches a path takes it; "engine" is everything else. A package's book
+# pages (packages/<name>/docs/, #1563) are the book's, wherever they live.
 AREAS = [
     ("book", ("docs/",), 78 * MB),  # 70.2
     ("tests", ("tests/", "crates/flint-cli/tests/golden/"), 50 * MB),  # 45.7 (#984: the 19.2 MB the fixtures borrowed)
@@ -156,7 +157,15 @@ def glb_images(b: bytes):
             yield i, im.get("name", ""), binc[o : o + v["byteLength"]]
 
 
+def is_book(path: str) -> bool:
+    """docs/, and a package's book pages, kept in its folder (#1563)."""
+    parts = path.split("/")
+    return path.startswith("docs/") or (len(parts) > 3 and parts[0] == "packages" and parts[2] == "docs")
+
+
 def area_of(path: str) -> str:
+    if is_book(path):
+        return "book"
     for name, prefixes, _ in AREAS:
         if any(path.startswith(p) for p in prefixes):
             return name
@@ -181,12 +190,12 @@ def check(files: list[Path], names: set[str], report: bool) -> list[str]:
         data = f.read_bytes()
         by_hash[hashlib.sha256(data).hexdigest()].append(p)
         # colour type 4 or 6: grey or RGB with alpha
-        if p.startswith("docs/") and png_size(data) and data[25] in (4, 6) and p not in ALPHA_EXCEPTIONS:
+        if is_book(p) and png_size(data) and data[25] in (4, 6) and p not in ALPHA_EXCEPTIONS:
             problems.append(
                 f"{p}: a book PNG with an alpha channel; a render's is 255 everywhere, about 8% of the file "
                 f"(python tools/assets/pack_book_images.py {p}: same pixels; a needed alpha: ALPHA_EXCEPTIONS)"
             )
-        if p.startswith(NOT_TEXTURES):
+        if p.startswith(NOT_TEXTURES) or is_book(p):
             continue
         textures = []
         if ext in IMAGES:

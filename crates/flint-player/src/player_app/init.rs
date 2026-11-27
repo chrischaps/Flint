@@ -193,6 +193,7 @@ impl PlayerApp {
             saves: Default::default(),
             transition_phase: TransitionPhase::Idle,
             schema_dirs: Default::default(),
+            packages_held: false,
             schemas: Default::default(),
             terrain: None,
             scene_binding: None,
@@ -605,6 +606,41 @@ impl PlayerApp {
         self.schema_dirs =
             crate::packages::built_schema_dirs(flint_core::project::host_schema_dirs(&paths, None));
         self.schemas.forget();
+    }
+
+    /// The packages `[packages]` lists that this binary's launcher didn't
+    /// register (#1532): what `flint-player`'s `prepare` refuses, for a
+    /// game's own binary. The list handed over with
+    /// [`set_schemas`](Self::set_schemas), else the scene's project's.
+    /// The first resume refuses to start with it, before the window.
+    pub fn unbuilt_packages(&self) -> Option<crate::packages::Unbuilt> {
+        let lacks = |m: &flint_core::package::Package| crate::packages::lacks(&m.name);
+        let binary = crate::packages::this_binary();
+        if self.schema_dirs.packages.is_some() {
+            return crate::packages::unbuilt(&self.schema_dirs, &binary, lacks);
+        }
+        // A list that doesn't resolve is the scene load's to say
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let scene = Path::new(&self.core.scene_path);
+            let dirs = flint_core::project::schema_dirs(Some(scene), &[] as &[&Path]).ok()?;
+            crate::packages::unbuilt(&dirs, &binary, lacks)
+        }
+        #[cfg(target_arch = "wasm32")]
+        None
+    }
+
+    /// `false`, with the run's failure set, when it refuses to start.
+    pub(super) fn hold_packages_to_the_build(&mut self) -> bool {
+        if std::mem::replace(&mut self.packages_held, true) {
+            return true;
+        }
+        let Some(unbuilt) = self.unbuilt_packages() else {
+            return true;
+        };
+        tracing::error!("{unbuilt}");
+        self.outcome.init_error = Some(unbuilt.to_string());
+        false
     }
 
     /// Hand over the schema registry the first scene was loaded with, and

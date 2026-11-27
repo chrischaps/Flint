@@ -65,4 +65,4 @@ plumbing was deferred to Phase 4 on purpose, so Phase 2 stayed CLI-first.
 - Code now: `packages/rhythm/crates/flint-input-capture/src/lib.rs` (`VerbMap`,
   `measure_granularity`), `packages/music/crates/flint-music/src/input_stream.rs`
   (`InputEvent`), `packages/music/crates/flint-music/src/clock_bridge.rs` (`ClockBridge`),
-  [Music Sessions](../book/src/concepts/music-sessions.md)
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md)
