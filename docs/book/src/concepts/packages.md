@@ -42,6 +42,8 @@ debug-hud = false   # a standard package: in unless set to false
 
 The list decides what the game's schemas and script API hold. A scene, prefab or script that uses a package the list leaves out is an `unlisted-package` error in `flint check`, `flint validate` and `flint script check`, and its hint is the line to add. A name no package has, such as `livng = "*"`, is a `bad-manifest` error that says `did you mean `living`?`. The player agrees with `flint check` even when it was built with the package: `flint play` words the scene's load summary the same way, and runs none of a left-out package. Its props stand still, its script modules are "not enabled", and one line at the scene's entry names `[packages]` and the line to add. [Packages a game uses](../guides/building-a-game-project.md#packages-a-game-uses) has the rules in full and the commands' output.
 
+A web bundle follows the same list. `flint bundle` packs and lists only the schema folders of the packages the game has, so a game that doesn't list `living` ships no `living_prop` and no `[wooze]`. A packed scene that uses a left-out package is refused with the same `unlisted-package` error and hint `flint check` gives, and nothing is written. A game with no `[packages]` table bundles as it always did, with every package's schemas.
+
 ## Asking what is used
 
 You don't have to work the list out by hand. `flint package used` reads the project's scenes, chunks, prefabs and scripts and names the package of each component, archetype, scene table and script call it finds, and of each procgen spec a scene names. `--write` adds what it found to `[packages]`, and keeps every line already there:
@@ -77,6 +79,8 @@ Leaving a package out is the same in reverse. Remove its line, or set a standard
 ## A package is a folder
 
 An engine package lives in `packages/<name>/`: its `package.toml`, its crates under `crates/`, and its schemas under `schemas/`, laid out as the engine's are. Nothing outside that folder names it. The stock `flint-player` and `flint` read the manifests when they build. A manifest's `[rust]` table names the crate whose player part (`player::PACKAGE`) and commands (`cli::extensions()`) the launchers list, and the engine's schema folder brings every package's `schemas/` with it.
+
+A player knows only the schemas of the packages it has. One built or launched without `living` reads no `packages/living/schemas`, whether the engine's tree on the disk holds it or a bundle packed it, and the web player carries only the schema text of the packages it was built with. Its load summary calls a `living_prop` an `unknown-component`.
 
 What a player built without a package still says of it comes from the manifest too. A scene that uses the package's components or scene tables (its `[provides]`) hears one line when it's entered, ending in the manifest's `[without] does`: ``[living] this player is built without the `living` package: the scene's living_prop, [wooze] stand still``. The `[without] policies` names are game-state names a game may give in every build, so a state that pauses `living` still registers where living isn't built. A package's own command-line flags are its own as well: living registers `--compare` and `--split` through the Package API (`Registry::player_args`), and a player built without it has neither.
 
