@@ -90,7 +90,22 @@ does = "stand still"
 policies = ["living"]
 ```
 
-Cargo can't read a manifest, so one script writes the lines it needs. `scripts/package-sync.py` writes a generated block in `crates/flint-player/Cargo.toml` and `crates/flint-cli/Cargo.toml`: the `packages` feature (every package, which both binaries' defaults turn on), and for a new package its feature and an optional dependency on its crate. Adding a package is two steps:
+Cargo can't read a manifest, so one script writes the lines it needs. `scripts/package-sync.py` writes a generated block in `crates/flint-player/Cargo.toml` and `crates/flint-cli/Cargo.toml`: the `packages` feature (every package, which both binaries' defaults turn on), and for each package its feature and an optional dependency on its crate. Two more manifest tables become lines there. `[rust.devices]` names what the launchers' device features turn on in the package's crates, as `crate/feature`. The sound card, gamepads and the editors' file dialogs are the features `audio`, `gamepad` and `dialogs`, and a build without one has no such device library. `[with.<other>]` names a part that needs another package listed too, and it's turned on only when both are:
+
+```toml
+[rust]
+player = "flint-rhythm-game"
+cli = "flint-rhythm-game"
+
+[rust.devices]
+audio = ["flint-rhythm-game/device"]
+gamepad = ["flint-rhythm-game/gamepad"]
+
+[with.debug-hud]
+features = ["flint-rhythm-game/debug-hud"]
+```
+
+Adding a package is two steps:
 
 ```bash
 # 1. create packages/<name>/ (package.toml, crates/, schemas/)
@@ -100,7 +115,7 @@ python3 scripts/package-sync.py
 
 Until the script runs, the launchers have no feature for the new package, and both binaries name the script. A `flint` built from the tree reads the folder's manifest, so a command the package provides exits 2: the package's folder is in `packages/`, neither launcher has a feature for it yet, and the step is `python3 scripts/package-sync.py` from the engine's root, then a build. `flint build` for a game that lists the package is refused the same way: neither flint-player nor flint-cli has its feature, so run the script in the engine it names, then `flint build` again. A game that lists the package hears the same from the checks that hold a list to the binary: `flint check` reports `unbuilt-package`, and `flint play`, `flint-player` and `flint render` refuse to run, each naming the script and the engine first and `flint build` after. A package the launchers already have, which the game left out, still gets the advice above: list it under `[packages]` and run `flint build`.
 
-Removing one is deleting the folder and running the script again. Nothing else is edited by hand: no kernel crate's source names a package, the player's and the CLI's included (`scripts/package-names-check.py` holds every crate the engine's manifest lists, with a short list of exceptions, each waiting on the issue that removes it), and `scripts/ci.sh` fails on a stale block with `package-sync.py --check`, naming the command. The six packages above keep their features written by hand in the two `Cargo.toml` files for now, because they carry device features and flags that no manifest describes yet. The script leaves those lines alone.
+Removing one is deleting the folder and running the script again. Nothing else is edited by hand: no kernel crate's source names a package, the player's and the CLI's included (`scripts/package-names-check.py` holds every crate the engine's manifest lists, with a short list of exceptions, each waiting on the issue that removes it), and `scripts/ci.sh` fails on a stale block with `package-sync.py --check`, naming the command. The six packages above are written the same way: no package's feature is written by hand in either `Cargo.toml`, and the script refuses one that is.
 
 CI holds this on every pull request with a toy package (`tests/fixtures/packages/toy`). It has one component, a spring pulled in each fixed physics step, its own script module and a command, which is what a vehicle package needs. `scripts/package-toy.py` copies it into `packages/toy/`, runs the script, builds the stock binaries and plays a scene that uses it. Then it deletes the folder, builds again, and checks that the checkout is back byte for byte. A package that would need an edit anywhere else fails that build.
 
