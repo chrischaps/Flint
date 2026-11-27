@@ -28,7 +28,6 @@ pub mod frame_seq;
 // spec through the procgen package's point (#1543, #1557), which asks the
 // ai package's steps and living's strip by points of its own (#1572)
 pub mod gen;
-pub mod gen_args;
 /// The GIF writer, the Package API's since #1558 (living's `gen --strip`
 /// writes with it too)
 pub use flint_package::cli::gif as gif_writer;

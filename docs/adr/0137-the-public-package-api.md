@@ -1092,7 +1092,8 @@ went, as decisions 4 and 8 have it:
 - **A flag the owner declares and a package serves** stays declared by the
   owner, since its help heading is the owner's and its value runs at a
   point: `gen --ai-*`, `--cost-report`, `--style-guide` (procgen's
-  `GenArgs`, served through procgen's `AiPoint`) and `asset resolve
+  `GenArgs`, served through procgen's `AiPoint`, until #1592 brought
+  them) and `asset resolve
   --strategy ai_generate|human_task|ai_then_human` (the kernel's, served
   through `cli::asset::BatchResolve`). The package says so with
   `Points::serve(line)` in its `register`, and the owner refuses a line
@@ -1132,10 +1133,9 @@ went, as decisions 4 and 8 have it:
   exceptions (#1583 had taken its own; the one left is #1585's `music`
   log target, a string). flint-cli's `ai` feature is
   `["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli"]`: it names
-  no procgen-ai or ai-core crate. `gen`'s ai flags are still declared in
-  `GenArgs`, interleaved with procgen's under its headings; moving them
-  into the package's group would need slots between procgen's headings
-  (#1592).
+  no procgen-ai or ai-core crate. `gen`'s ai flags were still declared in
+  `GenArgs`, interleaved with procgen's under its headings; #1592 moved
+  them into the package's groups (next section).
 - Measured (debug, Windows): every `--help` page of the stock `flint`, 78
   of them, is byte-identical to main's. A mock `--ai-refine` (three rounds
   of three, `stylize_props` at 320x180, still and `--time 0.5`) writes the
@@ -1143,6 +1143,45 @@ went, as decisions 4 and 8 have it:
   --ai-create --ai-provider mock` the same GLB and spec. A build without
   ai has 133 lines of `render --help` against 149, and each of the
   package's flags exits 2 naming it.
+
+## As built: `gen`'s ai flags are brought (#1592)
+
+- **Three slots on one command.** `FlagPlace` gained `SLOT` (empty for a
+  command's one) and `Flags` a `slot`, `Flags::at::<P, A>()`. `GenArgs`
+  declares `ai` where "AI assistance" starts, `cost` where "Cost
+  tracking" does and `guide` between `--report` and the living props,
+  and the ai package brings `AiFlags`, `CostFlags` and `GuideFlags` to
+  them (`gen_ai::flags()`). A flint without the package has none of the
+  thirteen flags; clap's unknown argument names the package for each
+  (`[provides] flags` lists them all), as for `render --ai-refine`.
+  Nothing on `gen` is served now, so `gen_args::refuse_unserved` went;
+  `Points::serve` is `asset resolve --strategy`'s alone.
+- **The cross-references moved to the package's side.** `spec` was
+  `required_unless_present_any` four ids, two of them the package's; it
+  is now `required_unless_present = NO_SPEC`, a group of `GenArgs`'
+  (`--list-generators`, `--describe`) that `--ai-create` and
+  `--cost-report` join with `group = NO_SPEC`. The package declares the
+  conflicts with `--list-generators`, `--describe` and `--strip` (on
+  `ai_create`, `cost_report` and its `ai_step` group), which clap holds
+  both ways, and the kernel's lists lost the package's ids.
+- **`--cost-report` moved with the group**, though it is `asset costs`'s
+  answer rather than a step of `gen`: it sits under "Cost tracking"
+  between `--max-cost` and `--since`, so staying served would have split
+  the heading across two owners, and a flint without the package has no
+  ledger to report. Procgen's `AiSteps` asks the package
+  `answer(&args)` and `style_constraints(&args)`, which read the line
+  themselves.
+- **Procgen's own flags under the package's heading.** `--print-spec`
+  and `--save-spec` print and keep any spec (`--seed`, a terrain), so
+  they stay `GenArgs`'. Their `help_heading` is computed while the
+  command is built (`flags::brought::<GenAiPlace>()`): "AI assistance"
+  when that slot holds a group, the options otherwise. The spec's help
+  names `--ai-create, --cost-report` the same way.
+- **`PackageFlags::given()`**: a slot puts the arguments it added in a
+  group of its own, so the matches say which of the line's flags came
+  through it; `gen` of a glyph set refuses them by name with procgen's.
+- Measured (debug, Windows): all 78 `--help` pages of the stock `flint`,
+  and `gen -h`, byte-identical to main's.
 
 ## As built: the CLI names no package (#1595)
 
