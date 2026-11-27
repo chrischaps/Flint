@@ -545,7 +545,10 @@ schemas = [\"{schemas}\"]
 
         launchers(false);
         let found = unbuilt_at(&game.join("flint.toml"), &[]).expect("this flint lacks buoy");
-        assert_eq!(found.packages, ["buoy"]);
+        // Among others: a flint with no package (CI's headless job) also lacks
+        // the standard tier, which the game gets unlisted (#1645). Those the
+        // launchers declare, so only buoy is unsynced in every build.
+        assert!(found.packages.iter().any(|p| p == "buoy"), "{found:?}");
         assert_eq!(found.unsynced, ["buoy"]);
         let hint = found.hint();
         assert!(
