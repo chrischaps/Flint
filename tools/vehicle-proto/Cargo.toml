@@ -1,0 +1,15 @@
+[package]
+name = "vproto"
+version = "0.1.0"
+edition = "2021"
+
+# The vehicle ADR's prototype (Flint #1627): three kart models on Rapier 0.22,
+# the engine's version, driving FlintKart's Oval Plus under one autopilot.
+# Its own workspace: not a member of the engine's
+[workspace]
+
+[dependencies]
+rapier3d = "=0.22.0"
+
+[profile.release]
+debug = false
