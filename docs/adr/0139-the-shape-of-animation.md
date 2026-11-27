@@ -1,10 +1,10 @@
 # ADR 0139: The shape of animation: an `animation` core of clocks, keys and clips, with `flipbook` and `rig` built on it
 
-Status: proposed, 2026-11-27 (#1613). Epic #1611 (Modularity, Phase 3).
-Chris settled the shape in review on 2026-11-27 (decision 1, and the name
-`flipbook`). The first draft put the clock in the kernel; he moved it out
-(section 1 says why). The rest of the recommendations under "Decisions"
-still wait for him.
+Status: accepted, 2026-11-27 (proposed the same day, #1613). Epic #1611
+(Modularity, Phase 3). Chris settled the shape in review (decision 1, and
+the name `flipbook`): the first draft put the clock in the kernel, and he
+moved it out (section 1 says why). He then accepted every other
+recommendation under "Decisions".
 Builds on [ADR 0136](0136-the-package-model.md) (the package model; its
 section 7 row for `animation` is the one this record splits) and
 [ADR 0137](0137-the-public-package-api.md) (registration and stages). It sits
@@ -504,45 +504,45 @@ by way of #1664. None of them is Phase 3's.
 
 ## Decisions
 
-Each one is Chris's. Where he has decided, it says so; otherwise the
-recommendation is written first.
+Chris decided the shape (1) in review on 2026-11-27 and accepted every
+other recommendation below the same day. All thirteen are settled.
 
 1. **The shape** (section 1): the kernel keeps only `GameClock`; a standard
    `animation` core; `flipbook` and `rig` as standard packages that require
    it. **Decided by Chris, 2026-11-27**, with the name `flipbook`.
 2. **The sorting rule** (section 2): a property clip is the core's own
-   kind, a flipbook is `flipbook`'s, and a pose is `rig`'s. Recommended as
+   kind, a flipbook is `flipbook`'s, and a pose is `rig`'s. Accepted as
    written.
 3. **Every module's place** (section 3), with `flint-animation` keeping
    its name in `packages/animation/`, new crates `flint-flipbook` and
    `flint-rig`, and the four sprite clip functions moving to `flipbook`'s
-   script module under their current names. Recommended as written.
+   script module under their current names. Accepted as written.
 4. **How much of playback is the core's** (section 4): all of it.
-   Composing layers stays with the kind. Recommended as written.
+   Composing layers stays with the kind. Accepted as written.
 5. **One clock state and clip kinds** (section 5): the kind chosen by the
    entity's shape, today's frame order kept at fixed slots, seeking across
-   every kind, and a layer a kind can't compose reported once. Recommended
+   every kind, and a layer a kind can't compose reported once. Accepted
    as written.
 6. **Flipbooks as a clip kind** (section 6): seconds on the cursor,
    ping-pong as a fold, `loop` and the clip's mode together, a crossfade as
-   a cut, and `advance_frame`'s tests as the timing spec. Recommended as
+   a cut, and `advance_frame`'s tests as the timing spec. Accepted as
    written.
 7. **`sprite_animator` and `animator`**: merge, alias one to the other, or
-   keep both. Recommended: **merge**, with retired fields and an alias read
+   keep both. Accepted: **merge**, with retired fields and an alias read
    for one release, and the behaviour changes in section 7 in the
    changelog.
 8. **One event stream** (section 8): `on_animation_end` for every kind's
-   one-shot; clip events delivered by #1656. Recommended as written.
-9. **`tween`** moves to `animation` (section 9). Recommended as written.
+   one-shot; clip events delivered by #1656. Accepted as written.
+9. **`tween`** moves to `animation` (section 9). Accepted as written.
 10. **The cursor** starts in `animation` and moves to the kernel when a
     second, non-animation client appears (section 1); **keyframes** unify in
-    the core in #1664 (section 10). Recommended as written.
+    the core in #1664 (section 10). Accepted as written.
 11. **Skinning** stays inside `rig` until a second deform client exists, and
-    GPU skinning in `flint-render` until Phase 4 (section 11). Recommended
+    GPU skinning in `flint-render` until Phase 4 (section 11). Accepted
     as written.
 12. **Sprites** (section 12): drawing stays in the kernel until Phase 4,
     when #1665 makes it a standard package that `flipbook` requires.
-    Recommended as written.
+    Accepted as written.
 13. **2D rigs** (section 13): nothing 2D in `rig`; a `rig-2d` package that
     requires `rig`, for the importer and the 2D skin; the three gaps go to
-    #1625. Recommended as written.
+    #1625. Accepted as written.
