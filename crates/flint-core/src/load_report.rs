@@ -78,9 +78,10 @@ pub enum Stage {
     AudioDevice,
     /// The last scene torn down (a transition).
     Teardown,
-    /// Procedural assets made or found in the cache, less the models and
-    /// textures they loaded.
-    Procgen,
+    /// Assets a package's maker made by name or found in its cache
+    /// (`flint_package::assets`, #1632), less the models and textures they
+    /// loaded.
+    MadeAssets,
     /// glTF models read, decoded and uploaded, less their textures.
     Models,
     /// Texture files decoded and uploaded.
@@ -116,7 +117,7 @@ impl Stage {
         Stage::Hud,
         Stage::AudioDevice,
         Stage::Teardown,
-        Stage::Procgen,
+        Stage::MadeAssets,
         Stage::Models,
         Stage::Textures,
         Stage::Pipelines,
@@ -140,7 +141,7 @@ impl Stage {
             Stage::Hud => "hud",
             Stage::AudioDevice => "audio device",
             Stage::Teardown => "teardown",
-            Stage::Procgen => "procgen",
+            Stage::MadeAssets => "made assets",
             Stage::Models => "models",
             Stage::Textures => "textures",
             Stage::Pipelines => "pipelines",
@@ -164,7 +165,7 @@ impl Stage {
             Stage::Styles => "style",
             Stage::Scripts => "script",
             Stage::Audio => "sound",
-            Stage::Procgen => "procgen asset",
+            Stage::MadeAssets => "made asset",
             other => other.label(),
         }
     }
@@ -179,7 +180,7 @@ impl Stage {
             NoteKind::PipelineBuild => Stage::Pipelines,
             NoteKind::StyleBuild => Stage::Styles,
             NoteKind::ScriptLoad | NoteKind::ScriptReload => Stage::Scripts,
-            NoteKind::Procgen => Stage::Procgen,
+            NoteKind::MadeAssets => Stage::MadeAssets,
             NoteKind::AudioDecode | NoteKind::AudioLoad => Stage::Audio,
             NoteKind::SceneRead => Stage::SceneRead,
             NoteKind::SceneTeardown => Stage::Teardown,
@@ -696,14 +697,14 @@ mod tests {
     #[test]
     fn a_discarded_span_leaves_its_time_to_its_parent() {
         begin(LoadKind::Chunk, "cave");
-        timed(Stage::Procgen, String::new, || {
+        timed(Stage::MadeAssets, String::new, || {
             let nothing = span(Stage::Models, || "x.glb".into());
             busy(5);
             nothing.discard();
         });
         let report = finish().unwrap();
         assert!(report.row(Stage::Models).is_none());
-        assert!(report.row(Stage::Procgen).unwrap().ms >= 5.0);
+        assert!(report.row(Stage::MadeAssets).unwrap().ms >= 5.0);
     }
 
     #[test]

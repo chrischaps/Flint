@@ -150,7 +150,7 @@ pub struct StageCtx<'a> {
     pub note: &'a mut Note,
     /// What scripts asked of the frame, before the host applies it: a
     /// subsystem may fill what they left (the rhythm ladder's post values,
-    /// at [`Stage::Procgen`](crate::Stage::Procgen), before the renderer's
+    /// at [`Stage::MadeAssets`](crate::Stage::MadeAssets), before the renderer's
     /// sync).
     pub requests: &'a mut FrameRequests,
     /// The sound, when the host has it.

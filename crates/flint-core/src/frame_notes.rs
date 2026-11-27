@@ -55,8 +55,9 @@ pub enum NoteKind {
     ScriptReload,
     /// The hot-reload poll itself, when it took a while.
     ReloadPoll,
-    /// Procedural assets generated (`detail`: how many, which).
-    Procgen,
+    /// Assets a package's maker made by name (`flint_package::assets`,
+    /// #1632; `detail`: how many, which).
+    MadeAssets,
     /// Sound decoded on the frame (`detail`: the sounds).
     AudioDecode,
     /// A scene file read, parsed and settled: prefabs, schemas (#1092;
@@ -115,7 +116,7 @@ impl NoteKind {
         NoteKind::ScriptLoad,
         NoteKind::ScriptReload,
         NoteKind::ReloadPoll,
-        NoteKind::Procgen,
+        NoteKind::MadeAssets,
         NoteKind::AudioDecode,
         NoteKind::SceneRead,
         NoteKind::SceneTeardown,
@@ -147,7 +148,7 @@ impl NoteKind {
             NoteKind::ScriptLoad => "script load",
             NoteKind::ScriptReload => "script reload",
             NoteKind::ReloadPoll => "reload poll",
-            NoteKind::Procgen => "procgen",
+            NoteKind::MadeAssets => "made assets",
             NoteKind::AudioDecode => "audio decode",
             NoteKind::SceneRead => "scene read",
             NoteKind::SceneTeardown => "scene teardown",
@@ -534,7 +535,7 @@ mod tests {
     #[test]
     fn stopping_forgets_what_was_kept() {
         listen(true);
-        note(NoteKind::Procgen, || "1 asset".into(), None);
+        note(NoteKind::MadeAssets, || "1 asset".into(), None);
         listen(false);
         listen(true);
         assert!(taken().0.is_empty());

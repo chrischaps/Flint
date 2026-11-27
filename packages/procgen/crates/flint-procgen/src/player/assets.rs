@@ -192,9 +192,10 @@ pub fn resolve(
     let mut outcomes = Vec::with_capacity(requests.len());
     for req in requests {
         // Each asset by name in a load report (#1092)
-        let _span = flint_core::load_report::span(flint_core::load_report::Stage::Procgen, || {
-            req.name.clone()
-        });
+        let _span =
+            flint_core::load_report::span(flint_core::load_report::Stage::MadeAssets, || {
+                req.name.clone()
+            });
         let outcome = resolve_one(req, resolver, sink, mode);
         log_outcome(req, &outcome);
         outcomes.push((req.clone(), outcome));

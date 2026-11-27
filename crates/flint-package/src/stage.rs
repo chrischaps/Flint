@@ -36,8 +36,10 @@ pub enum Stage {
     ScriptUi,
     /// After audio triggers, animation and particles.
     Animation,
-    /// After the procgen queue and living props.
-    Procgen,
+    /// After the asset makers' frame (`flint_package::assets`: the procgen
+    /// queue) and what moves on with it (living props). Named for what the
+    /// kernel does there, not for a package (#1632).
+    MadeAssets,
     /// After the renderer's sync, the frame's post overrides and a
     /// script's quality settings; before the frame's input is cleared.
     Sync,
@@ -62,7 +64,7 @@ impl Stage {
             Stage::PostPhysics => "post_physics",
             Stage::ScriptUi => "script_ui",
             Stage::Animation => "animation",
-            Stage::Procgen => "procgen",
+            Stage::MadeAssets => "made_assets",
             Stage::Sync => "sync",
             Stage::PreRender => "pre_render",
         }
@@ -79,7 +81,7 @@ impl Stage {
         Stage::PostPhysics,
         Stage::ScriptUi,
         Stage::Animation,
-        Stage::Procgen,
+        Stage::MadeAssets,
         Stage::Sync,
     ];
 }
