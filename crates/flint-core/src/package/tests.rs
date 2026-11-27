@@ -65,7 +65,9 @@ fn rust_cli_is_one_of_the_packages_crates() {
     );
     let found = mistakes(&with("cly = \"flint-living\""));
     assert!(
-        found[0].starts_with("rust.cly: unknown key `cly` in [rust] (the keys are player, cli)"),
+        found[0].starts_with(
+            "rust.cly: unknown key `cly` in [rust] (the keys are player, cli, devices)"
+        ),
         "{found:#?}"
     );
 }
@@ -83,6 +85,30 @@ fn rust_player_is_one_of_the_packages_crates() {
     assert_eq!(
         mistakes(&with("player = \"flint-core\"")),
         ["rust.player: `flint-core` is no crate of this package: name one of [provides] crates"]
+    );
+}
+
+/// `[rust.devices]` (#1568): for a launcher's device feature, the package's
+/// crates' features it turns on, each `crate/feature` of a crate of its own.
+#[test]
+fn rust_devices_name_features_of_the_packages_crates() {
+    let with = |devices: &str| format!("{LIVING}[rust.devices]\n{devices}\n");
+    let p = parse(&with("audio = [\"flint-living/device\"]"), file()).unwrap();
+    assert_eq!(
+        p.devices.get("audio").map(Vec::as_slice),
+        Some(&["flint-living/device".to_string()][..])
+    );
+    assert!(parse(LIVING, file()).unwrap().devices.is_empty());
+    assert_eq!(
+        mistakes(&with("audio = [\"flint-core/device\", \"flint-living\"]")),
+        [
+            "rust.devices.audio[0]: `flint-core` is no crate of this package: name one of [provides] crates",
+            "rust.devices.audio[1]: `flint-living` is no crate's feature: write `crate/feature`",
+        ]
+    );
+    assert_eq!(
+        mistakes(&format!("{LIVING}[rust]\ndevices = \"audio\"\n")),
+        ["rust.devices: a table, not a string"]
     );
 }
 

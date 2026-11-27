@@ -129,6 +129,8 @@ echo "ci: scripts/claude-md-check.py"
 # `feature = "<package>"` gate, or a path through a package's crate)
 echo "ci: scripts/package-sync.py --check"
 "$py" scripts/package-sync.py --check
+echo "ci: scripts/package-sync.py --self-test"
+"$py" scripts/package-sync.py --self-test
 echo "ci: scripts/package-names-check.py"
 "$py" scripts/package-names-check.py
 

@@ -23,6 +23,12 @@ features = ["music"]
 player = "flint-music"
 cli = "flint-music"
 
+# The sound card (#221, #1568): the launchers' `audio` turns on the crate's
+# `device` (kira's cpal backend), so a build without `audio` plays silent.
+# `scripts/package-sync.py` writes it into their `packages-audio`.
+[rust.devices]
+audio = ["flint-music/device"]
+
 [provides]
 crates = ["flint-music"]
 components = ["music_session"]

@@ -32,12 +32,27 @@ path = "src/bin/flint_web.rs"
 [features]
 default = ["packages", "audio", "gamepad", "frame-history"]
 # Written by `scripts/package-sync.py` from packages/*/package.toml (ADR 0137
-# section 5, #1560): `packages` is every package this crate has a part of,
-# and a package whose feature isn't written by hand below gets its feature
-# here (and its crate among the dependencies). Don't edit between the
-# markers: add or delete a package folder and run the script.
+# section 5, #1560, #1568): `packages` is every package this crate has a
+# part of; each package's feature turns on its crate's `player` part (the
+# `[rust] player` crate, among the dependencies below), the features of the
+# packages it requires, and the `[with.<it>]` parts of the others (living's
+# and rhythm's `debug-hud` parts on `debug-hud`); `packages-<device>` is the
+# packages' share of a device feature (`[rust.devices]`). `build.rs` lists
+# each package's `player::PACKAGE`, so `src/` names none. What each one does
+# is its manifest's to say (packages/<name>/package.toml). Don't edit
+# between the markers: add or delete a package folder and run the script.
 # package-sync:features
 packages = ["debug-hud", "living", "music", "procgen", "rhythm"]
+packages-audio = ["flint-music?/device", "flint-rhythm-game?/device"]
+packages-gamepad = ["flint-rhythm-game?/gamepad"]
+debug-hud = [
+    "dep:flint-debug-ui", "flint-debug-ui?/player", "flint-living?/debug-hud",
+    "flint-rhythm-game?/debug-hud",
+]
+living = ["procgen", "dep:flint-living", "flint-living?/player"]
+music = ["dep:flint-music", "flint-music?/player"]
+procgen = ["dep:flint-procgen", "flint-procgen?/player"]
+rhythm = ["music", "dep:flint-rhythm-game", "flint-rhythm-game?/player"]
 # package-sync:end
 # The always-on frame history (#1076): every frame's phases, clock, present,
 # physics steps and GPU time kept for the last 600 frames, and each judged
@@ -49,55 +64,10 @@ frame-history = []
 # The sound card (kira's cpal backend: ALSA on Linux). Off, the player runs
 # silent and a music session's stems don't play, as on a machine without a
 # device (its beat still counts, on the game clock).
-audio = ["flint-audio/device", "flint-music?/device", "flint-rhythm-game?/device"]
+audio = ["flint-audio/device", "packages-audio"]
 # Gamepads (gilrs: libudev on Linux). Off, no pad is ever seen; keyboard,
 # mouse, touch and --input-script's pad still work (#221).
-gamepad = ["flint-runtime/gamepad", "flint-rhythm-game?/gamepad"]
-# The rhythm game (ADR 0117 decision 2, #745): a `music_session` with a
-# `chart` is judged by flint-rhythm (coherence, the ladder, reintegration,
-# the 1 kHz pad capture of flint-input-capture). Off, the player links none
-# of it, and a charted suite plays as music, its chart not judged. The
-# package's own crates since #1556 (packages/rhythm/crates): the `player`
-# part of flint-rhythm-game is its subsystem, which build.rs lists, so src/
-# names it nowhere.
-rhythm = ["music", "dep:flint-rhythm-game", "flint-rhythm-game?/player"]
-# A scene's music (#745, #754): a `music_session`'s stems on their buses and
-# the beat for `music_beat()` and the rest, through flint-music. Off, a scene
-# with one says so once at its entry and plays silent, its scripts reading
-# the beat as with no music (-1). The package's own crate since #1555
-# (packages/music/crates/flint-music): its `player` part is the subsystem,
-# and the launcher's list names it from build.rs, so src/ names it nowhere.
-music = ["dep:flint-music", "flint-music?/player"]
-# The procgen package (#754, #1557): a `model.asset` or texture named by a
-# `*.procgen.toml` spec is generated at load (or on the frame queue). Its
-# code is the package's crate (`packages/procgen/crates/flint-procgen`, its
-# `player` part), which registers an asset maker with the kernel; this crate
-# names none of it, and `build.rs` lists its `PACKAGE` in the stock
-# launcher. Off, every name is the file loader's, and a scene whose names a
-# spec would have made says so once.
-procgen = ["dep:flint-procgen", "flint-procgen?/player"]
-# Living props and the wooze field (#211-#252): props that hold and glide,
-# the `[living]` / `[wooze]` tables, shallow wooze, woozy grass, the A/B
-# compare, the `wooze` and `living` script modules. Needs procgen, which
-# makes the props' poses. The package's own crate since #1558
-# (`packages/living/crates/flint-living`, its `player` part), which
-# `build.rs` lists from the manifest, so `src/` names none of it. With
-# `debug-hud` too, its `debug-hud` part (the manifest's `[with.debug-hud]`):
-# the Living Props panel, F8 and the `debug` module's calls (#854). Off, a
-# scene with any of it says so once and stands still.
-living = ["procgen", "dep:flint-living", "flint-living?/player"]
-# The debug-hud package (ADR 0035, #1559): the F3/F4 panels, F2's graph and
-# the corner cards. Its code is the package's crate
-# (`packages/debug-hud/crates/flint-debug-ui`, its `player` part), which
-# registers the HUD the kernel asks (`flint_package::hud::DebugHud`); this
-# crate names none of it, and `build.rs` lists its `PACKAGE`. With living or
-# rhythm too, their `debug-hud` parts (each manifest's `[with.debug-hud]`):
-# the Living Props panel, F8 and the `debug` module (#854), the Music Guide.
-# Off, the run has no panels, and F3, F4 and the graph are not offered.
-debug-hud = [
-    "dep:flint-debug-ui", "flint-debug-ui?/player", "flint-living?/debug-hud",
-    "flint-rhythm-game?/debug-hud",
-]
+gamepad = ["flint-runtime/gamepad", "packages-gamepad"]
 # The frame profiler (ADR 0109): the frame loop's and the renderer's scopes
 # (and wgpu's own) go to Tracy, and each frame is marked. Off, the scopes
 # compile to nothing. The client listens on loopback only (no firewall
@@ -125,8 +95,6 @@ flint-physics = { workspace = true }
 flint-package = { workspace = true }
 flint-import = { workspace = true }
 flint-audio = { workspace = true }
-flint-music = { workspace = true, optional = true }
-flint-rhythm-game = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 skrifa = { workspace = true }
@@ -137,10 +105,6 @@ flint-script = { workspace = true }
 rhai = { workspace = true }
 profiling = { workspace = true }
 tracy-client = { workspace = true, optional = true, features = ["only-localhost", "ondemand"] }
-flint-procgen = { workspace = true, optional = true }
-# The living package's player part (#1558)
-flint-living = { workspace = true, optional = true }
-flint-debug-ui = { workspace = true, optional = true }
 bytemuck = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
@@ -153,8 +117,14 @@ egui-wgpu = { workspace = true }
 image = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-# The crates of the packages `scripts/package-sync.py` generates (#1560)
+# Each package's `[rust] player` crate, written by `scripts/package-sync.py`
+# (#1560, #1568)
 # package-sync:dependencies
+flint-debug-ui = { workspace = true, optional = true }
+flint-living = { workspace = true, optional = true }
+flint-music = { workspace = true, optional = true }
+flint-procgen = { workspace = true, optional = true }
+flint-rhythm-game = { workspace = true, optional = true }
 # package-sync:end
 
 [build-dependencies]
