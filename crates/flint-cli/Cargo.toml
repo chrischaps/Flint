@@ -52,7 +52,14 @@ path = "src/main.rs"
 # module with no device crate.
 [features]
 default = ["audio", "gamepad", "dialogs", "packages"]
-packages = ["living", "music", "rhythm", "procgen", "ai"]
+# Written by `scripts/package-sync.py` from packages/*/package.toml (ADR 0137
+# section 5, #1560): `packages` is every package this crate has a feature
+# for, and a package whose feature isn't written by hand below gets its
+# feature here (and its crate among the dependencies). Don't edit between
+# the markers: add or delete a package folder and run the script.
+# package-sync:features
+packages = ["ai", "living", "music", "procgen", "rhythm"]
+# package-sync:end
 audio = ["flint-player/audio", "flint-music?/device", "flint-rhythm-game?/device"]
 gamepad = ["flint-player/gamepad", "flint-rhythm-game?/gamepad"]
 dialogs = ["flint-viewer/dialogs", "flint-procgen-cli?/dialogs"]
@@ -125,6 +132,9 @@ bytemuck = { workspace = true }
 egui-snarl = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+# The crates of the packages `scripts/package-sync.py` generates (#1560)
+# package-sync:dependencies
+# package-sync:end
 
 # `flint capture` asks the disk under `out` for its free space (#1196): std
 # has no call for it. Both already in the tree, these features included.

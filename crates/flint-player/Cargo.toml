@@ -30,7 +30,15 @@ name = "flint-web"
 path = "src/bin/flint_web.rs"
 
 [features]
-default = ["debug-hud", "audio", "gamepad", "music", "rhythm", "living", "frame-history"]
+default = ["packages", "audio", "gamepad", "frame-history"]
+# Written by `scripts/package-sync.py` from packages/*/package.toml (ADR 0137
+# section 5, #1560): `packages` is every package this crate has a part of,
+# and a package whose feature isn't written by hand below gets its feature
+# here (and its crate among the dependencies). Don't edit between the
+# markers: add or delete a package folder and run the script.
+# package-sync:features
+packages = ["debug-hud", "living", "music", "procgen", "rhythm"]
+# package-sync:end
 # The always-on frame history (#1076): every frame's phases, clock, present,
 # physics steps and GPU time kept for the last 600 frames, and each judged
 # for a hitch, about 0.65 us a frame. Off (a shipped game that wants none of
@@ -145,6 +153,9 @@ egui-wgpu = { workspace = true }
 image = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+# The crates of the packages `scripts/package-sync.py` generates (#1560)
+# package-sync:dependencies
+# package-sync:end
 
 [build-dependencies]
 # The package manifests the launcher's list is read from (#1555)

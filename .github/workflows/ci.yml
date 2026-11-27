@@ -195,10 +195,20 @@ jobs:
   # this job installs the headers the clippy job does. Its own job, so the
   # real build runs beside the matrix's checks, not after them.
   # Run it locally with `python3 scripts/package-done-when.py`.
+  #
+  # Then epic #1548's gate (#1560): the toy package
+  # (tests/fixtures/packages/toy) is copied to packages/toy/ and
+  # scripts/package-sync.py run, which may change only its generated blocks
+  # in the two launchers' Cargo.toml; the stock flint-player and flint build,
+  # and the flint built lists toy, checks its game clean, plays its spring
+  # (a component, a fixed-step hook, a script module) and runs its command.
+  # Then the folder is deleted, the script run again, both build again, and
+  # the checkout must be byte for byte as before. A toy that needs any other
+  # edit fails to build. Run it locally with `python3 scripts/package-toy.py`.
   package-done-when:
     name: package done-when
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -215,6 +225,9 @@ jobs:
 
       - name: scripts/package-done-when.py
         run: python3 scripts/package-done-when.py
+
+      - name: scripts/package-toy.py
+        run: python3 scripts/package-toy.py
 
   # The GPU tests and render goldens (#314) on WARP, the software DX12
   # adapter every Windows ships. A runner has no GPU, and these tests skip

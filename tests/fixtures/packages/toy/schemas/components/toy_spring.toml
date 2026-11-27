@@ -1,0 +1,9 @@
+# The toy package's one component (#1560): a spring that pulls its entity's
+# rigid body towards `anchor`, evaluated and applied once a fixed physics
+# step, as a suspension's force is.
+[component.toy_spring]
+description = "A spring on this entity's body, pulled once a fixed physics step (the toy package)"
+
+[component.toy_spring.fields]
+k = { type = "f32", default = 40.0, min = 0.0, description = "Stiffness, in newtons a metre" }
+anchor = { type = "vec3", default = [0.0, 0.0, 0.0], description = "Where the spring pulls towards, in world space" }
