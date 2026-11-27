@@ -396,12 +396,14 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
     }
     let scene = options.scene.clone();
     let scene_path = Path::new(&scene);
-    let (registry, schema_dirs) =
-        match flint_schema::SchemaRegistry::resolve(Some(scene_path), &options.schemas) {
-            Ok(loaded) => loaded,
-            Err(flint_core::FlintError::SchemaDirs(e)) => return Err(e.into()),
-            Err(e) => return Err(e).context("Failed to load schemas"),
-        };
+    // Only the packages this player has bring their schemas (#1529)
+    let schema_dirs = crate::packages::built_schema_dirs(flint_core::project::schema_dirs(
+        Some(scene_path),
+        &options.schemas,
+    )?);
+    let mut registry = flint_schema::SchemaRegistry::load_from_directories(&schema_dirs.dirs)
+        .context("Failed to load schemas")?;
+    registry.set_packages(schema_dirs.packages.clone());
     for script in &options.test_scripts {
         if !flint_core::vfs::exists(script) {
             anyhow::bail!(

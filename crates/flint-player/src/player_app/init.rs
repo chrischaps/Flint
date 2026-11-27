@@ -602,7 +602,8 @@ impl PlayerApp {
     /// answer to [`set_schemas`](Self::set_schemas) instead. The
     /// directories are read once, at the first transition or chunk.
     pub fn set_schema_paths(&mut self, paths: Vec<String>) {
-        self.schema_dirs = flint_core::project::host_schema_dirs(&paths, None);
+        self.schema_dirs =
+            crate::packages::built_schema_dirs(flint_core::project::host_schema_dirs(&paths, None));
         self.schemas.forget();
     }
 
@@ -650,7 +651,7 @@ impl PlayerApp {
     /// With no registry handed over ([`set_schemas`](Self::set_schemas)),
     /// they are read once, at the first transition or chunk.
     pub fn set_schema_dirs(&mut self, dirs: flint_core::project::SchemaDirs) {
-        self.schema_dirs = dirs;
+        self.schema_dirs = crate::packages::built_schema_dirs(dirs);
         self.schemas.forget();
     }
 

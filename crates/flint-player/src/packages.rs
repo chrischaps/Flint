@@ -197,6 +197,16 @@ pub fn lacks(package: &str) -> bool {
     PLAYER_PACKAGES.contains(&package) && !registry().has(package)
 }
 
+/// `dirs` less the schema directories of every package this player
+/// [`lacks`] (#1529): a player built or launched without `living` doesn't
+/// know `living_prop`, whether the engine's tree on the disk or a bundle
+/// holds its schemas. Every host settles its list through it: a launch
+/// (`prepare`, a playtest, the web), a transition, an embedding game's
+/// `set_schema_dirs`.
+pub fn built_schema_dirs(dirs: SchemaDirs) -> SchemaDirs {
+    dirs.without_packages(lacks)
+}
+
 /// The packages a project lists that a binary was built without.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unbuilt {

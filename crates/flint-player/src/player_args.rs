@@ -550,19 +550,17 @@ impl PlayerArgs {
         // discovery. A bundle settled its list when it was packed
         // (`args.schemas` holds it by now), plus what lies beside the scene.
         let scene_path = Path::new(&scene);
-        let (registry, schema_dirs) = if from_bundle {
-            let dirs = flint_core::project::host_schema_dirs(&args.schemas, Some(scene_path));
-            let registry = SchemaRegistry::load_from_directories(&dirs.dirs)
-                .context("Failed to load schemas")?;
-            (registry, dirs)
+        // Only the packages this player has bring their schemas (#1529)
+        let schema_dirs = if from_bundle {
+            flint_core::project::host_schema_dirs(&args.schemas, Some(scene_path))
         } else {
-            match SchemaRegistry::resolve(Some(scene_path), &args.schemas) {
-                Ok(loaded) => loaded,
-                // Says which directory and who named it: nothing to add
-                Err(flint_core::FlintError::SchemaDirs(e)) => return Err(e.into()),
-                Err(e) => return Err(e).context("Failed to load schemas"),
-            }
+            // Says which directory and who named it: nothing to add
+            flint_core::project::schema_dirs(Some(scene_path), &args.schemas)?
         };
+        let schema_dirs = crate::packages::built_schema_dirs(schema_dirs);
+        let mut registry = SchemaRegistry::load_from_directories(&schema_dirs.dirs)
+            .context("Failed to load schemas")?;
+        registry.set_packages(schema_dirs.packages.clone());
         // TEMPORARY, for one release (ADR 0114 decision 3, #765)
         for warning in schema_dirs.dropped_warnings() {
             tracing::warn!(target: "load", "{warning}");

@@ -368,10 +368,13 @@ mod web {
         // The engine's schemas are compiled in; the bundle's own (its engine
         // subtree's, then the game's) load over them, as `--schemas` does.
         let mut registry = engine_registry()?;
-        let schemas = flint_core::project::host_schema_dirs(
-            &manifest.schemas,
-            Some(std::path::Path::new(&scene_path)),
-        );
+        // Only the packages this player has (#1529): a bundle may pack
+        // one the build or the launcher left out
+        let schemas =
+            flint_player::packages::built_schema_dirs(flint_core::project::host_schema_dirs(
+                &manifest.schemas,
+                Some(std::path::Path::new(&scene_path)),
+            ));
         for dir in &schemas.dirs {
             registry
                 .load_directory(dir)
@@ -459,17 +462,20 @@ mod web {
 
     fn engine_registry() -> Result<SchemaRegistry, String> {
         let mut registry = SchemaRegistry::new();
-        for toml in engine_schemas::COMPONENTS {
+        // The kernel's, then each package's the run has (#1529): the build
+        // carries only its packages', and a launcher may list fewer
+        let ours = |package: &&(&str, &str)| !flint_player::packages::lacks(package.0);
+        for (_, toml) in engine_schemas::COMPONENTS.iter().filter(ours) {
             registry
                 .load_component_string(toml)
                 .map_err(|e| format!("engine component schema: {e}"))?;
         }
-        for toml in engine_schemas::ARCHETYPES {
+        for (_, toml) in engine_schemas::ARCHETYPES.iter().filter(ours) {
             registry
                 .load_archetype_string(toml)
                 .map_err(|e| format!("engine archetype schema: {e}"))?;
         }
-        for toml in engine_schemas::SCENE {
+        for (_, toml) in engine_schemas::SCENE.iter().filter(ours) {
             registry
                 .load_table_string(toml)
                 .map_err(|e| format!("engine scene-table schema: {e}"))?;

@@ -263,6 +263,12 @@ pub struct Subject {
     /// found outside a scene's own check (its scripts, the files it names).
     /// Each scene's check applies its own project's list.
     pub allow: Vec<Allow>,
+    /// What `[packages]` lets in, for schemas the host listed
+    /// ([`Schemas::Listed`]): a bundle's, whose packer resolved the list
+    /// against the engine it packed (#1529). A left-out package's component
+    /// or table is then `unlisted-package`, as `flint check` names it.
+    /// `Schemas::Resolve` finds its own.
+    pub packages: Option<flint_core::package::InUse>,
 }
 
 impl Subject {
@@ -283,6 +289,7 @@ impl Subject {
             preliminary: Vec::new(),
             script_api: None,
             allow: Vec::new(),
+            packages: None,
         }
     }
 
@@ -495,7 +502,12 @@ pub fn run(subject: &Subject, checks: Checks) -> Report {
             None => {
                 let schemas = match &subject.schemas {
                     Schemas::Resolve(flags) => SceneSchemas::resolve(Some(&path), flags),
-                    Schemas::Listed(listed) => SceneSchemas::listed(listed, &path),
+                    Schemas::Listed(listed) => {
+                        SceneSchemas::listed(listed, &path).map(|mut schemas| {
+                            schemas.dirs.packages = subject.packages.clone();
+                            schemas
+                        })
+                    }
                 };
                 let schemas = Rc::new(schemas.unwrap_or_else(|e| {
                     match package_problems(&e) {
