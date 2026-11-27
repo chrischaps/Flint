@@ -396,12 +396,9 @@ pub(super) fn render(
     say!("Entities: {}", world.entity_count());
     // An echoes column with nothing to echo would draw the same picture
     // in every column (#531)
-    if let Some(grid) = grid.as_ref().filter(|g| g.is_living()) {
+    if let Some(grid) = grid.as_ref().filter(|g| g.writes_tables()) {
         if stages().is_none() {
-            return Err(super::absent::missing(
-                format!("flint render --sweep {}", grid.name()),
-                "living",
-            ));
+            return Err(undrawn_sweep(grid));
         }
         if !living_wanted(&world) {
             anyhow::bail!(
@@ -525,6 +522,20 @@ pub(super) fn stages() -> Option<&'static dyn flint_package::cli::render::StageP
     crate::points()
         .get::<flint_package::cli::Stages>()
         .map(|stages| stages.0)
+}
+
+/// A sweep of a key a package draws (a scene's field or tables), in a
+/// render with no part to draw it: the package whose manifest lists
+/// `render --sweep <key>` (`[provides] flags`), named from the manifests,
+/// so the render names none (#1333, #1595).
+pub(super) fn undrawn_sweep(grid: &crate::commands::sweep::SweepGrid) -> anyhow::Error {
+    let key = grid.package_key().unwrap_or_else(|| grid.name());
+    super::absent::missing_value(
+        &["render"],
+        "--sweep",
+        &key,
+        format!("flint render --sweep {}", grid.name()),
+    )
 }
 
 /// Whether the scene grows living props, as the player's load asks. Built

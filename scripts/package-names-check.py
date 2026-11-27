@@ -12,11 +12,12 @@ never by name. This fails on either way the source can name one:
      flint_music`), for any crate a manifest's `[provides] crates` lists,
      outside test code. Tests may name a package's crate: they run where a
      launcher lists it (the dev-dependencies, #1558, #1559);
-  3. in the player (`STRING_LAUNCHERS`), a string literal that is a
-     package's name, `"living"`, outside test code (#1585): it builds
-     without the package, but it is still the kernel knowing one by name
-     (`registry.has("living")`, a policy, a flag's owner). What the kernel
-     says or takes of a package comes from its manifest instead.
+  3. in either launcher (`STRING_LAUNCHERS`), a string literal that is a
+     package's name, `"living"`, outside test code (#1585, the CLI's since
+     #1595): it builds without the package, but it is still the kernel
+     knowing one by name (`registry.has("living")`, a policy, a flag's
+     owner, the package a scan credits). What the kernel says or takes of
+     a package comes from its manifest instead.
 
 Comments are not read, nor are string literals for (2). A word inside a
 longer string (`"[procgen] ..."`) is not (3): only a literal that is the
@@ -40,10 +41,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 LAUNCHERS = {"flint-player": "crates/flint-player/src", "flint-cli": "crates/flint-cli/src"}
 
-# The launchers whose string literals are held to (3): the CLI's commands
-# and help name packages as words a user types (`flint package list`), so
-# only the player's kernel is held.
-STRING_LAUNCHERS = {"flint-player"}
+# The launchers whose string literals are held to (3). Both, since #1595:
+# the CLI's help names packages only as words inside longer strings
+# (`flint package list`), which (3) never reads, so holding it found the
+# kernel logic alone (render --sweep's owner, the scan's procgen).
+STRING_LAUNCHERS = {"flint-player", "flint-cli"}
 
 # (launcher, "feature" | "crate" | "string", name): why it is still there.
 # A "string" exception may name a file, (launcher, "string", name, file):

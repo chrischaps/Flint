@@ -22,7 +22,8 @@
     "scene_tables": "array",
     "script_modules": "array",
     "commands": "array",
-    "flags": "array"
+    "flags": "array",
+    "specs": "array"
   },
   "packages": [
     ["engine", "kernel"],

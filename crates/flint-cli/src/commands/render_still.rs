@@ -846,12 +846,14 @@ impl flint_package::cli::look::RefineHost for LookHost<'_> {
     }
 
     fn current(&self, table: &toml::Table, key: &str) -> Option<toml::Value> {
-        // A key as `Sweep::name` spells it: `post.<field>`, `<style>.<key>`,
-        // or a scene's (`look`, `wooze.*`, `living.*`), which no block holds
-        match key.split_once('.')? {
-            ("post", field) => table.get(field).cloned(),
-            ("wooze" | "living", _) => None,
-            (style, key) => table.get("styles")?.get(style)?.get(key).cloned(),
+        // A key as `Sweep::name` spells it, read by its family's spelling:
+        // `post.<field>`, `<style>.<key>`, or `look` and a scene's keys,
+        // which no block holds
+        use crate::commands::sweep::Family;
+        match Family::of(key) {
+            Family::Post(field) => table.get(field).cloned(),
+            Family::Style(style, key) => table.get("styles")?.get(style)?.get(key).cloned(),
+            _ => None,
         }
     }
 

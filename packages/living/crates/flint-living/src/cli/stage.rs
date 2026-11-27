@@ -9,7 +9,8 @@ use flint_core::field_frame::BoilFrame;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_package::cli::render::{
-    PoseReport, PropReport, ReportValue, StageClock, StagePart, ValueReport, WoozeAxes, WoozeReport,
+    PoseReport, PropReport, ReportValue, StageClock, StagePart, TableAxes, ValueReport, WoozeAxes,
+    WoozeReport,
 };
 use flint_package::{CaptureGame, CaptureGameMut, Resources};
 use flint_render::{PostProcessConfig, SceneRenderer};
@@ -40,6 +41,10 @@ impl StagePart for Stages {
 
     fn check_echo(&self, knob: &str, value: &str) -> Result<(), String> {
         echo_value(knob, value)
+    }
+
+    fn lay_tables(&self, tables: &mut toml::Table, axes: TableAxes) {
+        lay_tables(tables, axes)
     }
 
     fn stage(
@@ -216,6 +221,38 @@ fn preset_wooze_table(knobs: &flint_procgen::WoozeKnobs) -> toml::Table {
     table
 }
 
+/// A cell's `living.echoes.<knob>` values written into its scene's
+/// `[living] echoes` (#531, the kernel's until #1595), as a scene would
+/// write them: `count` an integer, the others floats. The table and its
+/// `echoes` are made when the scene has none; a `[living]` that isn't a
+/// table was refused when the scene settled, and is passed over.
+fn lay_tables(tables: &mut toml::Table, axes: TableAxes) {
+    'axes: for &(key, text) in axes {
+        let mut path: Vec<&str> = key.split('.').collect();
+        let Some(field) = path.pop() else {
+            continue;
+        };
+        let value = match field {
+            "count" => text.parse().map(toml::Value::Integer).ok(),
+            _ => text.parse().map(toml::Value::Float).ok(),
+        };
+        let Some(value) = value else {
+            continue;
+        };
+        let mut at: &mut toml::Table = tables;
+        for part in path {
+            let entry = at
+                .entry(part)
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            match entry.as_table_mut() {
+                Some(table) => at = table,
+                None => continue 'axes,
+            }
+        }
+        at.insert(field.to_string(), value);
+    }
+}
+
 /// One `living.echoes.<knob>` value, held to what a spec's echoes take
 /// (`EchoConfig::check`).
 fn echo_value(knob: &str, value: &str) -> Result<(), String> {
@@ -378,6 +415,43 @@ mod tests {
         assert_eq!(table["glide"], toml::Value::Float(0.5));
         assert_eq!(table["preset"].as_str(), Some("calm"));
         assert_eq!(cell_knobs(Path::new("x"), &[]).unwrap().1, None);
+    }
+
+    /// #531: an echoes cell is written into the scene's `[living] echoes`
+    /// as a scene would write it, over what the scene wrote and beside it.
+    #[test]
+    fn a_cells_echoes_are_written_into_the_living_table() {
+        let mut tables: toml::Table = toml::from_str(
+            "[living]\nstagger = \"none\"\nsoftness = 0.3\nechoes = { count = 2, spread = 0.2 }",
+        )
+        .unwrap();
+        lay_tables(&mut tables, &[("living.echoes.spread", "0.9")]);
+        let expected: toml::Table = toml::from_str(
+            "[living]\nstagger = \"none\"\nsoftness = 0.3\nechoes = { count = 2, spread = 0.9 }",
+        )
+        .unwrap();
+        assert_eq!(tables, expected);
+
+        // A scene with no [living] gets one holding only the field
+        let mut bare = toml::Table::new();
+        lay_tables(&mut bare, &[("living.echoes.spread", "1.8")]);
+        let expected: toml::Table = toml::from_str("[living]\nechoes = { spread = 1.8 }").unwrap();
+        assert_eq!(bare, expected);
+
+        // Both axes of a grid, count a whole number
+        let mut both = toml::Table::new();
+        lay_tables(
+            &mut both,
+            &[("living.echoes.alpha", "0.4"), ("living.echoes.count", "6")],
+        );
+        let expected: toml::Table =
+            toml::from_str("[living]\nechoes = { alpha = 0.4, count = 6 }").unwrap();
+        assert_eq!(both, expected);
+
+        // A [living] that isn't a table is left as it is
+        let mut odd: toml::Table = toml::from_str("living = 3").unwrap();
+        lay_tables(&mut odd, &[("living.echoes.spread", "0.9")]);
+        assert_eq!(odd["living"], toml::Value::Integer(3));
     }
 
     #[test]

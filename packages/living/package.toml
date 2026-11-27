@@ -35,6 +35,12 @@ crates = ["flint-living", "flint-wooze"]
 components = ["living_prop", "shallow_wooze"]
 scene_tables = ["living", "wooze"]
 script_modules = ["living", "wooze", "debug"]
+# Its axes of `render --sweep` (#1595): a wooze knob laid over the stage's
+# field, a `[living] echoes` field written into each cell's scene. The
+# kernel declares the flag; its render part (`StagePart`) parses, checks
+# and lays these, and a render without it refuses one, naming this package
+# from the lines here. `gen --strip` is procgen's `StripSheet` point.
+flags = ["render --sweep wooze.*", "render --sweep living.*"]
 
 # What a player built without it still knows (ADR 0137 decision 8, #1585):
 # a scene with the components or tables above hears once that they `does`,

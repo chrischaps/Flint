@@ -126,7 +126,7 @@ living     feature   0.1.0  Props that hold and glide, and the wooze field
 
 `engine` is the engine API range a package builds against, `requires` the packages that come with it, and `features` the Cargo features of `flint-player` and `flint-cli` that build it. The folder read is the project's engine: `engine/packages` in a game that carries the engine as a subtree, `packages/` in an engine checkout, else the tree this `flint` was built from.
 
-Under `--json` it is one document: `dir`, `valid`, `packages` (each with `name`, `tier`, `version`, `summary`, `engine`, `api`, `requires`, `features`, `file`, and the lists `crates`, `components`, `archetypes`, `scene_tables`, `script_modules`, `commands` under the manifest's own keys) and `problems`. A manifest with a mistake is left out of the list and named among the problems as a `bad-package` diagnostic with its file and key, and the command exits 1:
+Under `--json` it is one document: `dir`, `valid`, `packages` (each with `name`, `tier`, `version`, `summary`, `engine`, `api`, `requires`, `features`, `file`, and the lists `crates`, `components`, `archetypes`, `scene_tables`, `script_modules`, `commands`, `flags`, `specs` under the manifest's own keys) and `problems`. A manifest with a mistake is left out of the list and named among the problems as a `bad-package` diagnostic with its file and key, and the command exits 1:
 
 ```text
 living/package.toml: error[bad-package] field 'package.tier': `feture` is no tier (the tiers are kernel, standard, feature, game) (did you mean `feature`?)
@@ -156,11 +156,14 @@ components = ["living_prop", "shallow_wooze"]
 scene_tables = ["living", "wooze"]
 script_modules = ["living", "wooze", "debug"]
 commands = []              # paths below `flint`: "music chart", "asset generate"
-flags = []                 # its flags on a command it doesn't own: "render --ai-refine",
-                           #   or one value of one: "asset resolve --strategy ai_generate"
+flags = ["render --sweep wooze.*", "render --sweep living.*"]
+                           # its flags on a command it doesn't own: "render --ai-refine",
+                           #   one value of one: "asset resolve --strategy ai_generate",
+                           #   or the values past a prefix: "render --sweep wooze.*"
+specs = []                 # the spec files it makes assets from: procgen's "*.procgen.toml"
 ```
 
-Every crate, schema file, script module, command and flag of the engine belongs to exactly one package. A test holds that: a new component, crate, script module, command or flag fails it, naming the file or item, until one manifest lists it.
+Every crate, schema file, script module, command, flag and kind of spec file of the engine belongs to exactly one package. A test holds that: a new component, crate, script module, command or flag fails it, naming the file or item, until one manifest lists it.
 
 ### Which packages a `flint` has
 
@@ -171,7 +174,7 @@ $ flint music chart play x
 Error: flint music chart play needs the `rhythm` package, and this flint was built without it: list `rhythm = "*"` under [packages] in flint.toml and run `flint build` (`flint package list --built` names the packages this one has)
 ```
 
-`flint gen` and `flint edit` on a `.procgen.toml` need `procgen` (a glyph set, `flint gen <set>.glyphs.toml`, and the terrain editor are every build's). The same goes for a flag that needs one: `gen --ai-create` and the other AI steps and `asset resolve --strategy ai_generate` need `ai`; `gen --strip` and a `render --sweep` of `wooze.*` or `living.echoes.*` need `living`; `music validate --chart` needs `rhythm`. A package can also bring flags of its own to a command it doesn't own: `render`'s "Refine a look" group (`--ai-refine`, `--refine-rounds` and the rest) is the ai package's, so a build without it has none of them in `flint render --help`, and a line using one is named from the manifest's `[provides] flags` all the same:
+`flint gen` and `flint edit` on a `.procgen.toml` need `procgen` (a glyph set, `flint gen <set>.glyphs.toml`, and the terrain editor are every build's). The same goes for a flag that needs one: `gen --ai-create` and the other AI steps and `asset resolve --strategy ai_generate` need `ai`; `gen --strip` and a `render --sweep` of `wooze.*` or `living.echoes.*` need `living` (named from the manifest's `render --sweep wooze.*` and `render --sweep living.*` lines); `music validate --chart` needs `rhythm`. A package can also bring flags of its own to a command it doesn't own: `render`'s "Refine a look" group (`--ai-refine`, `--refine-rounds` and the rest) is the ai package's, so a build without it has none of them in `flint render --help`, and a line using one is named from the manifest's `[provides] flags` all the same:
 
 ```text
 $ flint render scene.toml --look ascii_noir --reference ref.png --ai-refine

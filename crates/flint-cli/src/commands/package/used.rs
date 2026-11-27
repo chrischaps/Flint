@@ -8,8 +8,10 @@
 //! - a scene's top-level table (`[living]`, `[wooze]`);
 //! - a script's call of a function in a package's script module (the
 //!   script checker's walk, so a comment or a string is no call);
-//! - a model or texture named by a procgen spec (a string that names one
-//!   of the project's specs, or a `*.procgen.toml` path): `procgen`'s.
+//! - a model or texture named by a spec (a string that names one of the
+//!   project's spec files, or a path one of them is spelled by): the
+//!   package whose `[provides] specs` names the file (`*.procgen.toml`,
+//!   #1595).
 //!
 //! Then what those packages require comes along, said as `required by`. The
 //! kernel is every game's and is never listed.
@@ -25,7 +27,7 @@
 use super::{packages_dir_for, Packages};
 use crate::output::{self, Answer};
 use anyhow::{Context, Result};
-use flint_core::package::{Kind, Package, PackageList, Tier, Wanted};
+use flint_core::package::{spec_ending, Kind, Package, PackageList, Tier, Wanted};
 use flint_core::project::{shown, Project};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -96,29 +98,31 @@ fn scan(root: &Path, files: &[String], packages: &Packages) -> BTreeMap<String, 
         });
     };
 
-    // The project's procgen specs, by the name each states, else its stem
-    let specs: BTreeSet<String> = files
+    // The package a spec file's assets are made by: the one whose
+    // `[provides] specs` names the file (#1595)
+    let spec_owner = |file: &str| packages.spec_owner(file).filter(|p| p.tier != Tier::Kernel);
+    // The project's spec files, by the name each states, else its stem,
+    // each with its package
+    let specs: BTreeMap<String, String> = files
         .iter()
-        .filter(|f| f.ends_with(".procgen.toml"))
         .filter_map(|f| {
+            let owner = spec_owner(f)?;
+            let ending = owner
+                .provides
+                .specs
+                .iter()
+                .filter_map(|s| spec_ending(s))
+                .find(|e| f.ends_with(e))?;
             let text = std::fs::read_to_string(root.join(f)).ok()?;
             let stated = text
                 .parse::<toml::Table>()
                 .ok()
                 .and_then(|t| t.get("meta")?.get("name")?.as_str().map(str::to_string));
-            let stem = Path::new(f)
-                .file_name()?
-                .to_string_lossy()
-                .trim_end_matches(".procgen.toml")
-                .to_string();
-            Some(stated.unwrap_or(stem))
+            let name = Path::new(f).file_name()?.to_string_lossy().to_string();
+            let stem = name.strip_suffix(ending)?.to_string();
+            Some((stated.unwrap_or(stem), owner.name.clone()))
         })
         .collect();
-    let procgen = packages
-        .packages
-        .iter()
-        .find(|p| p.name == PROCGEN && p.tier != Tier::Kernel)
-        .map(|p| p.name.clone());
 
     for file in files {
         let is_scene = file.ends_with(".scene.toml") || file.ends_with(".chunk.toml");
@@ -151,20 +155,22 @@ fn scan(root: &Path, files: &[String], packages: &Packages) -> BTreeMap<String, 
                 }
             }
         }
-        if let Some(procgen) = &procgen {
-            let mut named = BTreeSet::new();
-            strings(&toml::Value::Table(doc), &mut |s| {
-                if s.ends_with(".procgen.toml") || specs.contains(s) {
-                    named.insert(s.to_string());
-                }
-            });
-            for spec in named {
-                found.entry(procgen.clone()).or_default().uses.insert(Use {
-                    file: file.clone(),
-                    kind: "spec",
-                    item: spec,
-                });
+        // A string naming a spec: a path of one, or a name one states
+        let mut named = BTreeMap::new();
+        strings(&toml::Value::Table(doc), &mut |s| {
+            let owner = spec_owner(s)
+                .map(|p| p.name.clone())
+                .or_else(|| specs.get(s).cloned());
+            if let Some(owner) = owner {
+                named.insert(s.to_string(), owner);
             }
+        });
+        for (spec, owner) in named {
+            found.entry(owner).or_default().uses.insert(Use {
+                file: file.clone(),
+                kind: Kind::Spec.noun(),
+                item: spec,
+            });
         }
     }
 
@@ -206,26 +212,23 @@ fn scan(root: &Path, files: &[String], packages: &Packages) -> BTreeMap<String, 
     found
 }
 
-/// The package whose uses are the procgen specs a file names.
-const PROCGEN: &str = "procgen";
-
 /// The comment a line that leaves a package out ends with.
 const NOTHING_USES_IT: &str = "# nothing scanned uses it";
 
 /// Whether the scan can see `p` used: it provides a component, archetype,
-/// scene table or script module, or it is procgen, used by the specs a
-/// file names. A package of crates and commands alone (`debug-hud`, the
-/// F3/F4 panels) is used where no file says so.
+/// scene table, script module or spec file (procgen's, used by the specs
+/// a file names). A package of crates and commands alone (`debug-hud`,
+/// the F3/F4 panels) is used where no file says so.
 fn seen_by_scan(p: &Package) -> bool {
-    p.name == PROCGEN
-        || [
-            Kind::Component,
-            Kind::Archetype,
-            Kind::SceneTable,
-            Kind::ScriptModule,
-        ]
-        .into_iter()
-        .any(|k| !p.provides.of(k).is_empty())
+    [
+        Kind::Component,
+        Kind::Archetype,
+        Kind::SceneTable,
+        Kind::ScriptModule,
+        Kind::Spec,
+    ]
+    .into_iter()
+    .any(|k| !p.provides.of(k).is_empty())
 }
 
 /// The standard packages nothing scanned uses that the scan could have

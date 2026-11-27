@@ -1102,6 +1102,44 @@ went, as decisions 4 and 8 have it:
   ai has 133 lines of `render --help` against 149, and each of the
   package's flags exits 2 naming it.
 
+## As built: the CLI names no package (#1595)
+
+- **The rule holds both launchers.** `package-names-check.py`'s
+  `STRING_LAUNCHERS` is `flint-player` and `flint-cli`. Holding the CLI's
+  strings found five literals and no help text (a word inside a longer
+  string is never a hit), each the kernel knowing a package: the owner
+  `render --sweep wooze.*|living.*` was refused for, the `[living]` table a
+  sweep cell wrote, the refine host's list of a scene's keys and the
+  used-package scan's `procgen`.
+- **A flag line may name values by a prefix.** `[provides] flags`' value
+  `wooze.*` names every value past `wooze.` (`FlagLine::names_value`).
+  Living lists `render --sweep wooze.*` and `render --sweep living.*`;
+  `render` declares `--sweep` and parses every family's keys as before, and
+  a render with no `StagePart` refuses a key a package draws
+  (`SweepGrid::package_key`) through `absent::missing_value`, which names
+  the package whose line's value names the key. The completeness test
+  holds the line to `render`'s `--sweep`, as for any flag.
+- **The cell's tables are the part's to write.** `StagePart::lay_tables`
+  takes the cell's own copy of the scene's top-level tables and each table
+  axis's key and value as the line wrote them (`SweepGrid::table_axes`:
+  `("living.echoes.spread", "0.9")`); living's walks the key's path and
+  types the value as a scene would (`count` an integer). The kernel's
+  sweep keeps the keys' grammar (what `--sweep` takes is its help) and
+  hands the rest over. The refine host asks `sweep::Family::of(key)` which
+  keys a `[post_process]` block holds, the one place the prefixes are read.
+- **A new `[provides]` kind, `specs`** (`Kind::Spec`): patterns of the spec
+  files a package makes assets from, `*` then the ending. Procgen lists
+  `*.procgen.toml`; `flint package used` credits a scene naming one (a
+  path, or the name a spec states) to `Packages::spec_owner(file)`, and
+  `seen_by_scan` counts a package with specs as one the scan can see used.
+  A kind and not a `[without]`-style table, because a spec file is an item
+  a scene uses, which is what `[provides]` lists. The completeness test
+  holds each pattern to a file of the tree (the frozen scenes' specs).
+- Measured: `flint package used` on the frozen Woozy Grove gives the same
+  text and JSON as main's (procgen used by `grove_oak`, the same left-out
+  line on a scene with no spec); a sweep `living.echoes.spread=0,0.9,1.8`
+  draws the same sheet byte for byte.
+
 ## Measured
 
 - **Cargo globs** (cargo 1.99.1, a scratch workspace, 2026-11-25): `members`

@@ -88,10 +88,14 @@ pub(super) fn run_stages(
         scenes.push(load_settled(&args.scene, registry)?);
     }
     // An echoes column is its scene with the column's [living] echoes (#531),
-    // written before anything reads the table
-    if let Some(grid) = grid.filter(|g| g.is_living()) {
+    // written by the package that draws them (#1595) before anything reads
+    // the table. A render without it refused the sweep before its scene
+    // loaded.
+    if let (Some(grid), Some(stages)) = (grid.filter(|g| g.writes_tables()), super::stages()) {
         for ((_, scene_file), &(column, row)) in scenes.iter_mut().zip(&cells) {
-            grid.lay_living(column, row, &mut scene_file.tables);
+            let axes = grid.table_axes(column, row);
+            let axes: Vec<(&str, &str)> = axes.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+            stages.lay_tables(&mut scene_file.tables, &axes);
         }
     }
     let scene_name = scenes[0].1.scene.name.clone();
@@ -744,18 +748,15 @@ fn stage_sheet(
 
 /// Try every cell of a sweep that turns a wooze knob on a field of its own,
 /// before anything is loaded. A preset may be a file beside the scene (#249),
-/// which has to read. A build without the living package runs no field,
-/// so it refuses the sweep, naming the package (#1333); with it, the
-/// package's render part holds each cell (#1558).
+/// which has to read. A build without the package that runs the field
+/// refuses the sweep, naming it from its manifest (#1333, #1595); with it,
+/// the package's render part holds each cell (#1558).
 pub(super) fn check_wooze_sweep(
     args: &RenderArgs,
     grid: &crate::commands::sweep::SweepGrid,
 ) -> Result<()> {
     let Some(stages) = super::stages() else {
-        return Err(crate::commands::absent::missing(
-            format!("flint render --sweep {}", grid.name()),
-            "living",
-        ));
+        return Err(super::undrawn_sweep(grid));
     };
     for (column, row) in grid.cells() {
         let axes = wooze_axes(Some(grid), (column, row));
