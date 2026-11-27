@@ -11,11 +11,16 @@ never by name. This fails on either way the source can name one:
   2. a path through a package's crate (`flint_living::...`, `use
      flint_music`), for any crate a manifest's `[provides] crates` lists,
      outside test code. Tests may name a package's crate: they run where a
-     launcher lists it (the dev-dependencies, #1558, #1559).
+     launcher lists it (the dev-dependencies, #1558, #1559);
+  3. in the player (`STRING_LAUNCHERS`), a string literal that is a
+     package's name, `"living"`, outside test code (#1585): it builds
+     without the package, but it is still the kernel knowing one by name
+     (`registry.has("living")`, a policy, a flag's owner). What the kernel
+     says or takes of a package comes from its manifest instead.
 
-Comments are not read, nor are string literals for (2). A plain word
-(`music`, a bus) isn't a package name here: a string that names a package
-at run time, such as `registry.has("living")`, builds without it.
+Comments are not read, nor are string literals for (2). A word inside a
+longer string (`"[procgen] ..."`) is not (3): only a literal that is the
+name. The kernel's own name, `engine`, is its own.
 
 The packages are read from packages/*/package.toml, so a new package is
 held with no edit here. What is still named on purpose is EXCEPTIONS, each
@@ -35,8 +40,18 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 LAUNCHERS = {"flint-player": "crates/flint-player/src", "flint-cli": "crates/flint-cli/src"}
 
-# (launcher, "feature" | "crate", name): why it is still there
+# The launchers whose string literals are held to (3): the CLI's commands
+# and help name packages as words a user types (`flint package list`), so
+# only the player's kernel is held.
+STRING_LAUNCHERS = {"flint-player"}
+
+# (launcher, "feature" | "crate" | "string", name): why it is still there.
+# A "string" exception may name a file, (launcher, "string", name, file):
+# only that file's literal is excused.
 EXCEPTIONS = {
+    ("flint-player", "string", "music", "crates/flint-player/src/logging.rs"): "a log "
+    "target the engine's warnings are counted under (`flint_target`), as `load` and "
+    "`perf` are: the music package logs as `music`, and so did the player before it",
     ("flint-cli", "feature", "ai"): "#1572: gen --ai-*, render --ai-refine and resolve "
     "--strategy ai_* are still declared by their commands",
     ("flint-cli", "crate", "flint-asset-gen"): "#1572: the ai flags' code",
@@ -48,7 +63,7 @@ EXCEPTIONS = {
 
 
 def manifests():
-    features, crates = {}, {}
+    features, crates, names = {}, {}, set()
     for file in sorted((REPO / "packages").glob("*/package.toml")):
         with open(file, "rb") as f:
             table = tomllib.load(f)
@@ -57,9 +72,10 @@ def manifests():
             features[feature] = name
         if table["package"].get("tier") == "kernel":
             continue
+        names.add(name)
         for krate in table.get("provides", {}).get("crates", []):
             crates[krate] = name
-    return features, crates
+    return features, crates, names
 
 
 # --- reading Rust well enough --------------------------------------------
@@ -205,8 +221,8 @@ def test_files(src):
 
 
 def main():
-    features, crates = manifests()
-    found = {}  # (launcher, kind, name) -> [file:line]
+    features, crates, names = manifests()
+    found = {}  # (launcher, kind, name[, file]) -> [file:line]
     for launcher, src in LAUNCHERS.items():
         src = REPO / src
         tests = test_files(src)
@@ -229,14 +245,29 @@ def main():
                         continue
                     key = (launcher, "crate", krate)
                     found.setdefault(key, []).append(f"{shown}:{line(m.start())}")
+            if launcher not in STRING_LAUNCHERS or whole_test:
+                continue
+            for m in re.finditer(r'(?<![\w#])"([a-z][a-z0-9-]*)"', code):
+                if m.group(1) not in names:
+                    continue
+                if any(a <= m.start() < b for a, b in regions):
+                    continue
+                key = (launcher, "string", m.group(1), shown)
+                if key not in EXCEPTIONS:
+                    key = (launcher, "string", m.group(1))
+                found.setdefault(key, []).append(f"{shown}:{line(m.start())}")
 
     failures = []
     for key, places in sorted(found.items()):
         if key in EXCEPTIONS:
             continue
-        launcher, kind, name = key
-        package = features[name] if kind == "feature" else crates[name]
-        what = f'`feature = "{name}"`' if kind == "feature" else f"the crate {name}"
+        launcher, kind, name = key[:3]
+        package = {"feature": features, "crate": crates}.get(kind, {}).get(name, name)
+        what = {
+            "feature": f'`feature = "{name}"`',
+            "crate": f"the crate {name}",
+            "string": f'the string "{name}"',
+        }[kind]
         failures.append(
             f"{LAUNCHERS[launcher]} names the `{package}` package: {what} at "
             + ", ".join(places[:5])
@@ -244,7 +275,7 @@ def main():
         )
     for key, why in EXCEPTIONS.items():
         if key not in found:
-            launcher, kind, name = key
+            launcher, kind, name = key[:3]
             failures.append(
                 f"the exception for {kind} `{name}` in {launcher} matches nothing now "
                 f"({why}): take it out of EXCEPTIONS in scripts/package-names-check.py"
@@ -262,7 +293,8 @@ def main():
     held = sum(1 for k in EXCEPTIONS)
     print(
         f"package-names-check: no package named in {', '.join(LAUNCHERS.values())} "
-        f"({len(features)} features, {len(crates)} crates; {held} exceptions, each an issue)"
+        f"({len(features)} features, {len(crates)} crates, {len(names)} names; "
+        f"{held} exceptions, each with its reason)"
     )
     return 0
 

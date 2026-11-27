@@ -342,15 +342,6 @@ impl PlayerApp {
     /// (#435) over them. A look that can't be found is warned about and the
     /// block drawn without it. Call after the scene's user styles are
     /// loaded (a look may name one).
-    /// The flags the command line gave a package (`--compare`, `--split`:
-    /// living's, #238), which its builder reads from the run's resources
-    /// (#1558). Set them before the first scene is entered.
-    pub fn launch_flags_mut(&mut self) -> &mut flint_package::LaunchFlags {
-        self.core
-            .resources
-            .get_or_insert_with(flint_package::LaunchFlags::default)
-    }
-
     pub fn set_scene_post_process(&mut self, def: Option<flint_scene::PostProcessDef>) {
         let scope = self.asset_scope();
         self.scene.post_process = super::scene_loading::scene_post_process_in(

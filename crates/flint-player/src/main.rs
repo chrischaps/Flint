@@ -24,7 +24,6 @@
 //! for verifying script-driven UI and live gameplay state.
 
 use anyhow::Result;
-use clap::Parser;
 
 fn main() -> Result<()> {
     // The launcher (ADR 0137 decision 5, #1552): this binary's packages,
@@ -34,7 +33,8 @@ fn main() -> Result<()> {
     flint_player::packages::launch(&flint_player::packages::stock());
     // What `flint build` set aside last time (#1335), if it has stopped
     flint_player::packages::sweep_set_aside();
-    let cli = flint_player::PlayerCli::parse();
+    // With the run's packages' own flags (living's `--compare`, #1585)
+    let cli = flint_player::PlayerCli::parse_launched();
     // Everything the player says, to stderr, as `--log-format` and
     // `--quiet` ask (#716)
     flint_player::logging::init(&cli.args.log);

@@ -236,7 +236,7 @@ The hidden side made almost none of its poses: 2,363 of 2,363 came from the scen
 
 A flip writes every bone of the side it shows once, since the buffers held the other's. A split draws the frame twice, in two submissions: the bones and the boil reach the GPU through the queue's writes, and one submission would show the second side's to both. While split, both sides write every bone every frame, since the buffers change hands twice a frame.
 
-From a script: [`compare_living`](../concepts/scripting.md#living-props-api) and the rest. From the command line, `flint-player <scene> --compare A,B` starts with a comparison and `--split` with it split. `--compare ,linklater` is the knobs as the scene loaded them against `linklater`. With `--exit-after`, the report adds the hidden side's rings and blending.
+From a script: [`compare_living`](../concepts/scripting.md#living-props-api) and the rest. From the command line, `flint-player <scene> --compare A,B` starts with a comparison and `--split` with it split (both are the living package's flags, listed under "Living props" in `flint-player --help` and `flint play --help`, and only in a build with the package). `--compare ,linklater` is the knobs as the scene loaded them against `linklater`. With `--exit-after`, the report adds the hidden side's rings and blending.
 
 ## Live Mirror and Write-Through
 

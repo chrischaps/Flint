@@ -78,6 +78,14 @@ Leaving a package out is the same in reverse. Remove its line, or set a standard
 
 An engine package lives in `packages/<name>/`: its `package.toml`, its crates under `crates/`, and its schemas under `schemas/`, laid out as the engine's are. Nothing outside that folder names it. The stock `flint-player` and `flint` read the manifests when they build. A manifest's `[rust]` table names the crate whose player part (`player::PACKAGE`) and commands (`cli::extensions()`) the launchers list, and the engine's schema folder brings every package's `schemas/` with it.
 
+What a player built without a package still says of it comes from the manifest too. A scene that uses the package's components or scene tables (its `[provides]`) hears one line when it's entered, ending in the manifest's `[without] does`: ``[living] this player is built without the `living` package: the scene's living_prop, [wooze] stand still``. The `[without] policies` names are game-state names a game may give in every build, so a state that pauses `living` still registers where living isn't built. A package's own command-line flags are its own as well: living registers `--compare` and `--split` through the Package API (`Registry::player_args`), and a player built without it has neither.
+
+```toml
+[without]
+does = "stand still"
+policies = ["living"]
+```
+
 Cargo can't read a manifest, so one script writes the lines it needs. `scripts/package-sync.py` writes a generated block in `crates/flint-player/Cargo.toml` and `crates/flint-cli/Cargo.toml`: the `packages` feature (every package, which both binaries' defaults turn on), and for a new package its feature and an optional dependency on its crate. Adding a package is two steps:
 
 ```bash

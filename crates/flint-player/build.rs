@@ -35,6 +35,10 @@ mod launch_list;
 /// - `BUILT`: each of those features, and whether this build has it on.
 /// - `moved()`: the player part (`<crate>::player::PACKAGE`) of each
 ///   package whose manifest names `[rust] player`, when this build has it.
+/// - `WITHOUT`: what the kernel knows of each of `PLAYER_PACKAGES` in any
+///   build (#1585): its `[provides]` components and scene tables, and its
+///   `[without]` words and policy names, so the "built without" line and
+///   the policy are the manifest's, not the source's.
 #[allow(clippy::disallowed_methods)] // a build script reads the host's disk
 fn package_list(engine: &Path) {
     let manifests = launch_list::in_order(launch_list::read(engine));
@@ -97,6 +101,24 @@ fn package_list(engine: &Path) {
         writeln!(out, "        &::{krate}::player::PACKAGE,").unwrap();
     }
     writeln!(out, "    ]\n}}").unwrap();
+    let list = |items: &[String]| {
+        let quoted: Vec<String> = items.iter().map(|i| format!("{i:?}")).collect();
+        format!("&[{}]", quoted.join(", "))
+    };
+    writeln!(out, "pub const WITHOUT: &[crate::packages::Without] = &[").unwrap();
+    for m in manifests.iter().filter(|m| ours(m)) {
+        writeln!(
+            out,
+            "    crate::packages::Without {{ package: {:?}, components: {}, scene_tables: {}, does: {:?}, policies: {} }},",
+            m.name,
+            list(&m.components),
+            list(&m.scene_tables),
+            m.does,
+            list(&m.policies),
+        )
+        .unwrap();
+    }
+    writeln!(out, "];").unwrap();
     let dest = Path::new(&std::env::var("OUT_DIR").unwrap()).join("package_list.rs");
     std::fs::write(dest, out).unwrap();
 }

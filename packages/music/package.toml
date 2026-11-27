@@ -28,3 +28,8 @@ crates = ["flint-music"]
 components = ["music_session"]
 script_modules = ["music"]
 commands = ["music validate", "music play", "music render"]
+
+# What a player built without it says of a scene with a `music_session`
+# (ADR 0137 decision 8, #1585), from the kernel, which names no package.
+[without]
+does = "plays silent, and music_beat() reads -1, as with no music"

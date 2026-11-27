@@ -1,14 +1,18 @@
-//! What a scene asks of a feature this player was built without (#754).
+//! What a scene asks of a package this player was built without (#754).
 //!
-//! The music, procgen at run time and living props are Cargo features of
-//! flint-player. A build without one links none of it, and a scene that
-//! uses it is told so in one line at its entry, rather than playing on with
-//! a part silently missing: a suite that doesn't sound, a tree that isn't
-//! there, a grove that stands still.
+//! The music, procgen at run time and living props are packages, each a
+//! Cargo feature of flint-player. A build without one links none of it,
+//! and a scene that uses it is told so in one line at its entry, rather
+//! than playing on with a part silently missing: a suite that doesn't
+//! sound, a tree that isn't there, a grove that stands still.
 //!
-//! The lines are made here, in every build, so they are tested in the
-//! default one; each is printed only by a build that lacks its feature
-//! ([`unbuilt_music`], `subsystems/living.rs`, `stage_scene`).
+//! The line is the kernel's, written from the package's manifest (ADR 0137
+//! decision 8, #1585): its `[provides]` components and scene tables,
+//! counted in the scene, and its `[without] does` ([`unbuilt`], over
+//! `packages::WITHOUT`), so this file names no package. Procgen's line
+//! counts what its specs would make (`stage_scene`, [`procgen_line`]).
+//! Each is made in every build, so it is tested in the default one, and
+//! printed only by a run that lacks its package.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -16,103 +20,65 @@ use std::path::Path;
 use flint_core::project::{AssetKind, Project};
 use flint_ecs::FlintWorld;
 use flint_package::{SceneCtx, Subsystem};
-use flint_terrain::GrassConfig;
 
-/// The components of the parts a build may leave out (#1330). Each one's
-/// crate owns its name (`flint_music::components`, `flint_living::components`,
-/// `flint_wooze::components`), and a build without the feature links none of
-/// them, so the names are written again here; `the_names_are_the_crates`
-/// holds them to the crates' (music's to its package's schema, since the
-/// player no longer names the crate, #1555).
+use crate::packages::Without;
+
 mod comp {
     pub(super) use flint_core::components::*;
-    pub(super) const MUSIC_SESSION: &str = "music_session";
-    pub(super) const LIVING_PROP: &str = "living_prop";
-    pub(super) const SHALLOW_WOOZE: &str = "shallow_wooze";
 }
 
-/// The line for a scene with a `music_session`, in a build without `music`.
-pub(crate) fn music_line(world: &FlintWorld) -> Option<String> {
-    if world
-        .entities_with_component(comp::MUSIC_SESSION)
-        .is_empty()
-    {
-        return None;
-    }
-    Some(
-        "[music] this player is built without the `music` feature: the scene's \
-         music_session doesn't play, and music_beat() reads -1, as with no music"
-            .to_string(),
-    )
-}
+/// What the kernel says the scene's parts of a package do in a build
+/// without it, when its manifest's `[without]` doesn't say.
+pub(crate) const DOES: &str = "do nothing in this build";
 
-/// The kernel's builder for a run without the `living` package (its own
-/// crate since #1558): a scene that uses living props, `[living]` or
-/// `[wooze]` hears, once, that they stand still. With the package
-/// registered it says nothing; the package's own builder runs them.
-pub(crate) fn unbuilt_living(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
-    if !ctx.registry.has("living") {
-        let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
-        if let Some(line) = living_line(ctx.world, ctx.tables, grass) {
+/// The kernel's builder for each package the run lacks (one it has a part
+/// of, which the launcher didn't register): a scene that uses one hears,
+/// once, what it uses of it and what that does here. With the package
+/// registered it says nothing; the package's own builder runs the scene.
+pub(crate) fn unbuilt(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+    for without in crate::packages::WITHOUT {
+        if ctx.registry.has(without.package) {
+            continue;
+        }
+        if let Some(line) = unbuilt_line(without, ctx.world, ctx.tables) {
             tracing::warn!(target: "load", "{line}");
         }
     }
     None
 }
 
-/// The kernel's builder for a run without the `music` package (its own
-/// crate since #1555): a scene with a `music_session` is told, once, that
-/// it plays silent. With the package registered it says nothing; the
-/// package's own builder plays the scene.
-pub(crate) fn unbuilt_music(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
-    if !ctx.registry.has("music") {
-        if let Some(line) = music_line(ctx.world) {
-            tracing::warn!(target: "load", "{line}");
-        }
-    }
-    None
+/// What of `without`'s package a scene uses, in the order the line names
+/// them: each of its components some entity carries, then each of its
+/// scene tables the scene writes (`[wooze]`).
+pub(crate) fn uses(without: &Without, world: &FlintWorld, tables: &toml::Table) -> Vec<String> {
+    let components = without
+        .components
+        .iter()
+        .filter(|c| !world.entities_with_component(c).is_empty())
+        .map(|c| c.to_string());
+    let scene_tables = without
+        .scene_tables
+        .iter()
+        .filter(|t| tables.contains_key(**t))
+        .map(|t| format!("[{t}]"));
+    components.chain(scene_tables).collect()
 }
 
-/// What of living props a scene uses, in the order the line names them
-/// (the living package's left-out line says the same, from its own copy:
-/// `flint_living::player::uses`, which `the_names_are_the_crates` holds).
-pub(crate) fn living_uses(
+/// The line for a scene that uses `without`'s package, in a run without it:
+/// `[living] this player is built without the `living` package: the
+/// scene's living_prop, [wooze] stand still`.
+pub(crate) fn unbuilt_line(
+    without: &Without,
     world: &FlintWorld,
     tables: &toml::Table,
-    grass: Option<&GrassConfig>,
-) -> Vec<&'static str> {
-    let has = |name: &str| !world.entities_with_component(name).is_empty();
-    let mut uses = Vec::new();
-    if has(comp::LIVING_PROP) {
-        uses.push("living props");
-    }
-    if tables.contains_key("living") {
-        uses.push("[living]");
-    }
-    if tables.contains_key("wooze") {
-        uses.push("[wooze]");
-    }
-    if has(comp::SHALLOW_WOOZE) {
-        uses.push("shallow_wooze meshes");
-    }
-    if grass.and_then(GrassConfig::wooze_comb).is_some() {
-        uses.push("woozy grass");
-    }
-    uses
-}
-
-/// The line for a scene that uses living props, in a build without `living`.
-pub(crate) fn living_line(
-    world: &FlintWorld,
-    tables: &toml::Table,
-    grass: Option<&GrassConfig>,
 ) -> Option<String> {
-    let uses = living_uses(world, tables, grass);
+    let uses = uses(without, world, tables);
     (!uses.is_empty()).then(|| {
+        let package = without.package;
         format!(
-            "[living] this player is built without the `living` feature: the scene's {} \
-             stand still",
-            uses.join(", ")
+            "[{package}] this player is built without the `{package}` package: the scene's {} {}",
+            uses.join(", "),
+            without.does.unwrap_or(DOES)
         )
     })
 }
@@ -198,69 +164,65 @@ mod tests {
         world
     }
 
-    /// The music package's schema declares the name.
-    #[test]
-    fn the_music_session_is_its_packages() {
-        let schema =
-            include_str!("../../../../packages/music/schemas/components/music_session.toml");
-        assert!(
-            schema.contains(&format!("[component.{}]", comp::MUSIC_SESSION)),
-            "packages/music/schemas/components/music_session.toml"
-        );
-    }
-
-    /// The names are the living package's crates', and so is what its own
-    /// left-out line says the scene uses (flint-living is a dev-dependency).
-    #[test]
-    fn the_names_are_the_crates() {
-        assert_eq!(comp::LIVING_PROP, flint_living::components::LIVING_PROP);
-        assert_eq!(comp::SHALLOW_WOOZE, flint_wooze::components::SHALLOW_WOOZE);
-        let world = world_with(&[("living_prop", "species = \"oak\""), ("shallow_wooze", "")]);
-        let tables: toml::Table = "[wooze]\namplitude = 1.0\n".parse().unwrap();
-        assert_eq!(
-            living_uses(&world, &tables, None),
-            flint_living::player::uses(&world, &tables, None)
-        );
-    }
+    /// A package with components and scene tables, as a manifest's
+    /// `[provides]` and `[without]` would give it.
+    const GROVE: Without = Without {
+        package: "grove",
+        components: &["grove_tree", "grove_moss"],
+        scene_tables: &["grove", "breeze"],
+        does: Some("stand still"),
+        policies: &["grove"],
+    };
 
     #[test]
     fn a_scene_without_the_parts_hears_nothing() {
         let world = world_with(&[("model", "asset = \"crate\"")]);
-        assert_eq!(music_line(&world), None);
-        assert_eq!(living_line(&world, &toml::Table::new(), None), None);
+        assert_eq!(unbuilt_line(&GROVE, &world, &toml::Table::new()), None);
+        for without in crate::packages::WITHOUT {
+            assert_eq!(unbuilt_line(without, &world, &toml::Table::new()), None);
+        }
     }
 
+    /// Each component the scene's entities carry, then each table it
+    /// writes, in the manifest's order, then what they do.
     #[test]
-    fn a_music_session_is_named() {
-        let world = world_with(&[("music_session", "manifest = \"suite.toml\"")]);
-        let line = music_line(&world).unwrap();
-        assert!(line.starts_with("[music] "), "{line}");
-        assert!(line.contains("`music` feature"), "{line}");
-    }
-
-    #[test]
-    fn living_names_each_part_the_scene_uses() {
-        let world = world_with(&[("living_prop", "species = \"oak\""), ("shallow_wooze", "")]);
-        let tables: toml::Table = "[wooze]\namplitude = 1.0\n".parse().unwrap();
-        let grass = GrassConfig {
-            enabled: true,
-            wooze: true,
-            ..Default::default()
-        };
+    fn the_line_names_each_part_the_scene_uses() {
+        let world = world_with(&[("grove_moss", ""), ("grove_tree", "species = \"oak\"")]);
+        let tables: toml::Table = "[breeze]\nstrength = 1.0\n".parse().unwrap();
         assert_eq!(
-            living_uses(&world, &tables, Some(&grass)),
-            [
-                "living props",
-                "[wooze]",
-                "shallow_wooze meshes",
-                "woozy grass"
-            ]
+            uses(&GROVE, &world, &tables),
+            ["grove_tree", "grove_moss", "[breeze]"]
         );
-        let line = living_line(&world, &tables, Some(&grass)).unwrap();
-        assert!(
-            line.contains("living props, [wooze], shallow_wooze meshes, woozy grass stand still"),
-            "{line}"
+        assert_eq!(
+            unbuilt_line(&GROVE, &world, &tables).unwrap(),
+            "[grove] this player is built without the `grove` package: the scene's grove_tree, \
+             grove_moss, [breeze] stand still"
         );
+        let unsaid = Without {
+            does: None,
+            ..GROVE
+        };
+        assert!(unbuilt_line(&unsaid, &world, &tables)
+            .unwrap()
+            .ends_with(&format!("[breeze] {DOES}")));
+    }
+
+    /// The table is the manifests': every package this crate has a part
+    /// of, each with its `[provides]` and `[without]`, read again here
+    /// through flint-core's parser.
+    #[test]
+    fn the_table_is_the_manifests() {
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+        let manifests = flint_core::package::Packages::read(&folder);
+        let names: Vec<&str> = crate::packages::WITHOUT.iter().map(|w| w.package).collect();
+        assert_eq!(names, crate::packages::PLAYER_PACKAGES);
+        for without in crate::packages::WITHOUT {
+            let m = manifests.get(without.package).unwrap();
+            assert_eq!(without.components, m.provides.components);
+            assert_eq!(without.scene_tables, m.provides.scene_tables);
+            assert_eq!(without.does, m.without.does.as_deref());
+            assert_eq!(without.policies, m.without.policies);
+        }
     }
 
     #[test]

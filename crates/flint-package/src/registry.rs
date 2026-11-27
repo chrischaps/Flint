@@ -5,7 +5,7 @@
 //! the debug keys here, never by a package's name.
 
 use crate::assets::AssetMaker;
-use crate::{Resources, SceneCtx, Subsystem};
+use crate::{PackageFlags, Resources, SceneCtx, Subsystem};
 use flint_core::package::InUse;
 use flint_runtime::DebugKeyGroup;
 use flint_script::ScriptModule;
@@ -42,6 +42,24 @@ pub type RunResources = fn(&mut Resources);
 /// path finds a file a table names.
 pub type SettleScene = fn(&mut flint_scene::SceneFile, &std::path::Path) -> flint_core::Result<()>;
 
+/// A package's flags on the player's command line (ADR 0137 section 4,
+/// #1585): its `clap::Args` group added to the kernel's command, and the
+/// group read back from the matches into [`PackageFlags`].
+#[derive(Clone, Copy)]
+struct FlagGroup {
+    augment: fn(clap::Command) -> clap::Command,
+    read: fn(&'static str, &clap::ArgMatches, &mut PackageFlags) -> Result<(), clap::Error>,
+}
+
+fn read_group<A: clap::FromArgMatches + Clone + Send + Sync + 'static>(
+    package: &'static str,
+    matches: &clap::ArgMatches,
+    flags: &mut PackageFlags,
+) -> Result<(), clap::Error> {
+    flags.add(package, A::from_arg_matches(matches)?);
+    Ok(())
+}
+
 /// Everything the listed packages registered, in the order they did.
 ///
 /// A builder belongs to the package whose `register` added it, so the
@@ -60,6 +78,7 @@ pub struct Registry {
     settles: Vec<(&'static str, SettleScene)>,
     makers: Vec<(&'static str, &'static dyn AssetMaker)>,
     hud: Option<(&'static str, crate::hud::MakeHud)>,
+    player_args: Vec<(&'static str, FlagGroup)>,
     /// Registration points, one value per Rust type (ADR 0137 section 4).
     points: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
@@ -208,7 +227,46 @@ impl Registry {
             .and_then(|value| value.downcast_ref::<T>())
     }
 
+    /// This package's flags on `flint-player` and `flint play` (ADR 0137
+    /// section 4, #1585): the group `A` joins the player's command line in
+    /// a build that has the package, and its parsed value is put in each
+    /// run's resources, where the package's builder reads it as `A`
+    /// (`resources.get::<A>()`). Living's `--compare` and `--split`. A flag
+    /// named as one of the kernel's, or another package's, is a clap
+    /// panic at the first parse: `packages::tests` parses the stock list.
+    pub fn player_args<A: clap::Args + Clone + Send + Sync + 'static>(&mut self) -> &mut Self {
+        self.player_args.push((
+            self.current,
+            FlagGroup {
+                augment: A::augment_args,
+                read: read_group::<A>,
+            },
+        ));
+        self
+    }
+
     // ── What the kernel reads ─────────────────────────────────────────
+
+    /// `command` with every package's player flags added, in registration
+    /// order: what `flint-player` and `flint play` parse.
+    pub fn augment_player_args(&self, command: clap::Command) -> clap::Command {
+        self.player_args
+            .iter()
+            .fold(command, |command, (_, args)| (args.augment)(command))
+    }
+
+    /// Each package's player flags, read back from `matches` (of a
+    /// command [`augment_player_args`](Registry::augment_player_args) made).
+    pub fn read_player_args(
+        &self,
+        matches: &clap::ArgMatches,
+    ) -> Result<PackageFlags, clap::Error> {
+        let mut flags = PackageFlags::default();
+        for (package, args) in &self.player_args {
+            (args.read)(package, matches, &mut flags)?;
+        }
+        Ok(flags)
+    }
 
     /// The packages whose `register` ran, in order: what this binary was
     /// built with.

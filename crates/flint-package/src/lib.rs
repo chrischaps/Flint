@@ -52,7 +52,7 @@ pub use context::{
     FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, StageCtx,
 };
 pub use hud::DebugHud;
-pub use launch::LaunchFlags;
+pub use launch::PackageFlags;
 pub use note::Note;
 pub use panels::{DebugPanel, DebugPanels};
 pub use registry::{
