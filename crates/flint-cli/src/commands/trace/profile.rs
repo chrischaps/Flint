@@ -26,7 +26,7 @@
 use super::stats::{normal_frames, quantile, Normal};
 use super::{Scope, Trace, ROOT};
 use crate::commands::frame::open::timing::band_of;
-use flint_debug_ui::widgets::{Band, BANDS};
+use flint_widgets::{Band, BANDS};
 use std::collections::HashMap;
 use std::ops::Range;
 

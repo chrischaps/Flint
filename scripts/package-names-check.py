@@ -58,7 +58,7 @@ EXCEPTIONS = {
     ("flint-cli", "crate", "flint-procgen-ai"): "#1572: the ai flags' code",
     ("flint-cli", "crate", "flint-procgen"): "#1572: gen --ai-*'s code reads procgen's specs",
     ("flint-cli", "crate", "flint-procgen-cli"): "#1572: gen --ai-*'s point in procgen's gen",
-    ("flint-cli", "crate", "flint-debug-ui"): "#1583: the CLI's windows draw debug-hud's widgets",
+
 }
 
 

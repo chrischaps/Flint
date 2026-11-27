@@ -464,7 +464,10 @@ living = \"*\"
             let found = found.expect("a flint without living lacks it");
             assert!(found.packages.contains(&"living".to_string()), "{found:?}");
             let said = found.to_string();
-            assert!(said.contains("without the `living`"), "{said}");
+            // The no-package build lacks the standard ones too (`debug-hud`
+            // first since #1583), so `living` is somewhere in the list
+            assert!(said.contains("built without the `"), "{said}");
+            assert!(said.contains("`living`"), "{said}");
             assert!(said.contains("run `flint build`"), "{said}");
         }
         // With no list there is nothing to hold the build to

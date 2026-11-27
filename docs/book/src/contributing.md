@@ -84,9 +84,9 @@ Changelog: none (reason)
 
 ## Architecture
 
-The project is a 37-member Cargo workspace: 24 crates under `crates/`, 12 in their packages' folders (`packages/<name>/crates/`: ai's three, music's one, procgen's two, rhythm's three, living's two, debug-hud's one), and the `tools/arch-analyzer` static analyzer. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
+The project is a 38-member Cargo workspace: 25 crates under `crates/`, 12 in their packages' folders (`packages/<name>/crates/`: ai's three, music's one, procgen's two, rhythm's three, living's two, debug-hud's one), and the `tools/arch-analyzer` static analyzer. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
 
 - Dependencies flow in one direction (binary crates at the top, `flint-core` at the bottom)
 - Components are dynamic `toml::Value`, not Rust types --- schemas are runtime data
 - Two entry points: `flint-cli` (scene authoring and rhythm tooling) and `flint-player` (interactive gameplay), with the CLI embedding the player
-- Debug surfaces (F3 scene panels, F4 Rendering & Effects) are the `debug-hud` package's (`flint-debug-ui`), which the player reaches through `flint_package::hud::DebugHud` and names nowhere; builds without it must still compile
+- Debug surfaces (F3 scene panels, the F4 menu in a game) are the `debug-hud` package's (`flint-debug-ui`), which the player reaches through `flint_package::hud::DebugHud` and names nowhere; builds without it must still compile. The widgets and the F4 Rendering & Effects panel itself are the kernel's `flint-widgets`, which the CLI and the viewer draw with (#1583)

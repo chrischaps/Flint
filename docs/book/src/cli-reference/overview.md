@@ -162,20 +162,19 @@ Every crate, schema file, script module and command of the engine belongs to exa
 
 ### Which packages a `flint` has
 
-`flint-cli` has a Cargo feature for each package with a switch: `living`, `music`, `rhythm`, `procgen` and `ai` (and `packages`, all five). They are on by default; a build without one links none of that package's crates. Its commands stay in `flint --help`, so every build parses the same command lines, but running one exits 2 and names the package:
+`flint-cli` has a Cargo feature for each package with a switch: `living`, `music`, `rhythm`, `procgen`, `ai` and `debug-hud` (and `packages`, all six). They are on by default; a build without one links none of that package's crates. Its commands stay in `flint --help`, so every build parses the same command lines, but running one exits 2 and names the package:
 
 ```text
 $ flint music chart play x
 Error: flint music chart play needs the `rhythm` package, and this flint was built without it: list `rhythm = "*"` under [packages] in flint.toml and run `flint build` (`flint package list --built` names the packages this one has)
 ```
 
-`flint gen` and `flint edit` on a `.procgen.toml` need `procgen` (a glyph set, `flint gen <set>.glyphs.toml`, and the terrain editor are every build's). The same goes for a flag that needs one: `gen --ai-create` and the other AI steps, `render --ai-refine` and `asset resolve --strategy ai_generate` need `ai`; `gen --strip` and a `render --sweep` of `wooze.*` or `living.echoes.*` need `living`; `music validate --chart` needs `rhythm`. Under `--json` the error document carries `package`. `flint package list --built` lists what this binary has, each package whose `[build] features` it was compiled with. A `flint-cli --no-default-features` build has only the kernel and the debug panels:
+`flint gen` and `flint edit` on a `.procgen.toml` need `procgen` (a glyph set, `flint gen <set>.glyphs.toml`, and the terrain editor are every build's). The same goes for a flag that needs one: `gen --ai-create` and the other AI steps, `render --ai-refine` and `asset resolve --strategy ai_generate` need `ai`; `gen --strip` and a `render --sweep` of `wooze.*` or `living.echoes.*` need `living`; `music validate --chart` needs `rhythm`. Under `--json` the error document carries `package`. `flint package list --built` lists what this binary has, each package whose `[build] features` it was compiled with. A `flint-cli --no-default-features` build has only the kernel. Without `debug-hud`, `flint play` has no F3 or F4 panels, but `flint edit` and `flint frame open` (a capture or a trace) look the same: their widgets and the viewer's F4 are the kernel's (`flint-widgets`, #1583):
 
 ```text
 $ flint package list --built
-engine     kernel    0.1.0  The kernel, with the standard packages and render features that have no switch yet
-debug-hud  standard  0.1.0  The F3/F4 debug panels and their shared widgets
-2 of 7 packages built into this flint (features: debug-hud, frame-history)
+engine  kernel    0.1.0  The kernel, with the standard packages and render features that have no switch yet
+1 of 7 packages built into this flint (features: frame-history)
 ```
 
 Under `--json` it is the list's document with `built: true` and `features`, the Cargo features the binary has. A build without `living` still renders a scene with living props: everything else in it draws as before, and the props, whose models are `[living]` specs only that package grows, are left out, with one warning at the load. `flint check` still reads the scene's `[living]` table.

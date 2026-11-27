@@ -139,8 +139,9 @@ fn command_words(argv: &[OsString]) -> Vec<String> {
     words
 }
 
-/// flint-player's features the CLI always has.
-const ALWAYS_ON: &[(&str, bool)] = &[("debug-hud", true), ("frame-history", true)];
+/// flint-player's features the CLI always has. `debug-hud` is a package
+/// feature of this crate's own since #1583, so it is in `PACKAGE_FEATURES`.
+const ALWAYS_ON: &[(&str, bool)] = &[("frame-history", true)];
 
 /// This crate's features that a package's `[build] features` names, each
 /// with whether this build has it: `build.rs` writes it from the manifests
@@ -156,8 +157,8 @@ const DEVICE_FEATURES: &[(&str, bool)] = &[
 ];
 
 /// What a feature this binary was built with brings, each with whether it
-/// is in: flint-player's `debug-hud` and `frame-history` (always on in the
-/// CLI), the package features (`[build] features` of
+/// is in: flint-player's `frame-history` (always on in the CLI), the
+/// package features (`[build] features` of
 /// `packages/<name>/package.toml`), then the device features.
 pub fn built_features() -> impl Iterator<Item = &'static (&'static str, bool)> {
     ALWAYS_ON
@@ -252,9 +253,14 @@ mod tests {
         assert!(!unsynced("no-such-package"));
     }
 
+    /// #1583: the debug panels are a package feature like the others, known
+    /// in every build and in only those built with it; the frame history
+    /// is in every build.
     #[test]
-    fn every_build_has_the_debug_panels() {
-        assert!(built_with("debug-hud"));
+    fn the_debug_panels_are_a_package_feature_and_the_history_always_on() {
+        assert!(PACKAGE_FEATURES.iter().any(|(f, _)| *f == "debug-hud"));
+        assert!(!ALWAYS_ON.iter().any(|(f, _)| *f == "debug-hud"));
+        assert!(built_with("frame-history"));
         assert!(!built_with("no-such-feature"));
     }
 
