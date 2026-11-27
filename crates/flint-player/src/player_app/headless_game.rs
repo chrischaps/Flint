@@ -217,6 +217,17 @@ impl HeadlessGame {
         }
     }
 
+    /// The packages the project's `[packages]` lets in (#1528, #1578), as
+    /// the scene's schema registry was read under them
+    /// (`SchemaRegistry::packages`): a package it leaves out makes no asset
+    /// and builds no subsystem in the capture, as in the player. Set it
+    /// before [`make_assets`](Self::make_assets) and
+    /// [`start_subsystems`](Self::start_subsystems). `None`, the default:
+    /// every package this build has is in.
+    pub fn set_packages(&mut self, packages: Option<flint_core::package::InUse>) {
+        self.core.packages = packages;
+    }
+
     /// What the last step's HUD draws: `on_draw_ui`'s draw calls, then the
     /// UI documents, in points. Empty before the first step.
     pub fn hud(&self) -> &[flint_script::context::DrawItem] {
@@ -271,7 +282,8 @@ impl HeadlessGame {
     /// with the living package every living prop's lineage built and ring
     /// full, from the scene's `[living]` in `tables`, the scene file's
     /// top-level tables as settled). A run with no asset maker makes
-    /// nothing, and every name is a file.
+    /// nothing, and every name is a file; so does one whose makers'
+    /// packages [`set_packages`](Self::set_packages) leaves out (#1578).
     pub fn make_assets(
         &mut self,
         tables: &toml::Table,

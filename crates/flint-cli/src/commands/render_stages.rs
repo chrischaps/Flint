@@ -149,6 +149,7 @@ pub(super) fn run_stages(
                 look: stage_look(args, grid, (column, row), scene_pp),
                 timeline: timeline.clone(),
                 resolve_procgen: false,
+                packages: registry.packages().cloned(),
             },
         )?);
     }

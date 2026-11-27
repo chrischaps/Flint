@@ -17,6 +17,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use flint_core::package::InUse;
 use flint_core::project::{AssetKind, Project};
 use flint_ecs::FlintWorld;
 use flint_package::{SceneCtx, Subsystem};
@@ -92,6 +93,18 @@ pub(crate) fn names_a_spec_would_make(
     project: &Project,
     scene_path: &str,
 ) -> Vec<String> {
+    names_made_from(world, project, scene_path, |_| true)
+}
+
+/// [`names_a_spec_would_make`], of the spec files `made_from` takes (a
+/// package's `[provides] specs`, #1578): the names one package's specs
+/// would have made.
+pub(crate) fn names_made_from(
+    world: &FlintWorld,
+    project: &Project,
+    scene_path: &str,
+    made_from: impl Fn(&str) -> bool,
+) -> Vec<String> {
     let mut asked: BTreeSet<String> = BTreeSet::new();
     for entity in world.all_entities() {
         // Through the typed view (ADR 0115): a wrong type is reported once
@@ -111,6 +124,7 @@ pub(crate) fn names_a_spec_would_make(
     let mut made: Vec<String> = project
         .list(AssetKind::Specs, scene_dir)
         .into_iter()
+        .filter(|listed| made_from(&listed.path.to_string_lossy()))
         .filter_map(|listed| {
             let text = flint_core::vfs::read_to_string(&listed.path).ok()?;
             let spec = text.parse::<toml::Table>().ok()?;
@@ -132,16 +146,48 @@ pub(crate) fn procgen_line(
 ) -> Option<String> {
     let names = names_a_spec_would_make(world, project, scene_path);
     (!names.is_empty()).then(|| {
-        let count = match names.len() {
-            1 => "1 asset".to_string(),
-            n => format!("{n} assets"),
-        };
         format!(
-            "[procgen] this player is built without the `procgen` feature: {count} named by a \
-             spec ({}) load from files, where there are any",
-            names.join(", ")
+            "[procgen] this player is built without the `procgen` feature: {} {UNMADE}",
+            made_by_a_spec(&names)
         )
     })
+}
+
+/// What a name a spec would have made does when nothing makes it.
+const UNMADE: &str = "load from files, where there are any";
+
+/// `2 assets named by a spec (oak, rock)`.
+fn made_by_a_spec(names: &[String]) -> String {
+    let count = match names.len() {
+        1 => "1 asset".to_string(),
+        n => format!("{n} assets"),
+    };
+    format!("{count} named by a spec ({})", names.join(", "))
+}
+
+/// The line for a scene that names assets a spec of `package` would make,
+/// when the project's `[packages]` leaves `package` out and so its asset
+/// maker makes nothing (#1578): `[procgen] [packages] in flint.toml leaves
+/// out `procgen`: the scene's 1 asset named by a spec (rock) load from
+/// files, where there are any (remove `procgen = false` ...)`. The spec
+/// files are those the package's manifest says it makes from
+/// (`[provides] specs`); `None` when the scene names none of them.
+pub(crate) fn left_out_maker_line(
+    in_use: &InUse,
+    package: &str,
+    world: &FlintWorld,
+    project: &Project,
+    scene_path: &str,
+) -> Option<String> {
+    let manifest = in_use.left_out.iter().find(|p| p.name == package)?;
+    let names = names_made_from(world, project, scene_path, |file| {
+        manifest.provides.makes_from(file)
+    });
+    if names.is_empty() {
+        return None;
+    }
+    let uses = made_by_a_spec(&names);
+    flint_package::left_out_line(in_use, package, &[uses.as_str()], UNMADE)
 }
 
 #[cfg(test)]

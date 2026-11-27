@@ -133,7 +133,7 @@ impl PlayerApp {
 
         // The asset makers before the file (procgen, for the names it has a
         // spec of), each mesh's triangles kept for the colliders naming it
-        for maker in crate::packages::registry().asset_makers() {
+        for maker in self.core.asset_makers() {
             maker.spawned(
                 &mut flint_package::assets::MakeCtx {
                     world: &mut self.core.world,

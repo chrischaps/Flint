@@ -319,14 +319,13 @@ impl PlayerApp {
         // has no triangles yet: they come when it's made, and physics waits
         // for them quietly rather than warn or read a file in its place
         let requests: Vec<(EntityId, String)> = {
+            let makers = self.core.asset_makers();
             let resources = &self.core.resources;
             let physics = &mut self.core.physics;
             requests
                 .iter()
                 .filter(|(entity, asset)| {
-                    let queued = crate::packages::registry()
-                        .asset_makers()
-                        .any(|maker| maker.pending(resources, asset));
+                    let queued = makers.iter().any(|maker| maker.pending(resources, asset));
                     if queued {
                         physics.expect_collider_mesh(*entity);
                     }
