@@ -207,6 +207,30 @@ pub fn built_schema_dirs(dirs: SchemaDirs) -> SchemaDirs {
     dirs.without_packages(lacks)
 }
 
+/// Every package this player [`lacks`], by what a scene names of it (its
+/// manifest's `[provides]` components and scene tables, [`WITHOUT`]).
+pub fn built_without() -> Vec<flint_core::package::BuiltWithout> {
+    WITHOUT
+        .iter()
+        .filter(|w| lacks(w.package))
+        .map(|w| flint_core::package::BuiltWithout {
+            package: w.package.to_string(),
+            components: w.components.iter().map(|c| c.to_string()).collect(),
+            scene_tables: w.scene_tables.iter().map(|t| t.to_string()).collect(),
+        })
+        .collect()
+}
+
+/// Tell `registry`, which this player loads scenes with, the packages it
+/// [`lacks`] (#1601). Their schemas aren't read ([`built_schema_dirs`]),
+/// so a scene's `living_prop` would be an `unknown-component` in the load's
+/// summary. The player names them at the scene's entry instead, in the
+/// package's one line with `flint build` as its hint
+/// (`missing_features::unbuilt`), and the summary leaves them to it.
+pub fn mark_built_without(registry: &mut flint_schema::SchemaRegistry) {
+    registry.set_built_without(built_without());
+}
+
 /// The packages a project lists that a binary was built without.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unbuilt {
@@ -216,16 +240,82 @@ pub struct Unbuilt {
     pub packages: Vec<String>,
     /// The `flint.toml` whose `[packages]` lists them.
     pub manifest: PathBuf,
+    /// Those of [`packages`](Self::packages) whose folder is newer than the
+    /// engine's launchers (#1589): a `[build] features` entry that neither
+    /// `crates/flint-player/Cargo.toml` nor `crates/flint-cli/Cargo.toml`
+    /// declares, so `flint build` would refuse them too until
+    /// [`SYNC`](flint_package::cli::SYNC) writes it. The question
+    /// `flint build` asks, of the same two files.
+    pub unsynced: Vec<String>,
+    /// The engine those launchers are in, where the sync runs.
+    pub engine: PathBuf,
 }
 
 impl Unbuilt {
-    /// What to do about it, the one wording every caller gives.
+    /// What to do about it, the one wording every caller gives: the sync
+    /// first when a package's folder is newer than the launchers, then
+    /// `flint build`.
     pub fn hint(&self) -> String {
-        "run `flint build` in the project: it builds a flint, a flint-player and \
-         the game's own binary with the packages flint.toml lists (`flint build \
-         --dry-run` shows the cargo commands)"
-            .to_string()
+        let build = "run `flint build` in the project: it builds a flint, a flint-player and \
+             the game's own binary with the packages flint.toml lists (`flint build \
+             --dry-run` shows the cargo commands)";
+        if self.unsynced.is_empty() {
+            return build.to_string();
+        }
+        let (list, them) = match self.unsynced.as_slice() {
+            [one] => (format!("`{one}`'s folder is"), "it"),
+            many => (
+                format!(
+                    "the folders of {} are",
+                    many.iter()
+                        .map(|p| format!("`{p}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                "them",
+            ),
+        };
+        format!(
+            "{list} in {}, but neither launcher has a feature for {them} yet: run `{}` in {}, \
+             then `flint build` in the project",
+            shown_from_here(&self.engine.join(flint_core::package::PACKAGES_DIR)),
+            flint_package::cli::SYNC,
+            shown_from_here(&self.engine),
+        )
     }
+}
+
+/// The two launchers of the engine at `engine`: whose `[features]` a
+/// package's `[build] features` must be among for `flint build` to build it.
+const LAUNCHERS: [&str; 2] = [
+    "crates/flint-player/Cargo.toml",
+    "crates/flint-cli/Cargo.toml",
+];
+
+/// Every feature the engine's two launchers declare, read from their
+/// `Cargo.toml` as `flint build` reads them. `None` when either doesn't
+/// read (a bundle, an engine with no crates): then nothing is judged
+/// unsynced, and `flint build` says what it finds.
+fn launcher_features(engine: &Path) -> Option<std::collections::BTreeSet<String>> {
+    let mut features = std::collections::BTreeSet::new();
+    for launcher in LAUNCHERS {
+        let text = flint_core::vfs::read_to_string(engine.join(launcher)).ok()?;
+        let table: toml::Table = text.parse().ok()?;
+        if let Some(declared) = table.get("features").and_then(|f| f.as_table()) {
+            features.extend(declared.keys().cloned());
+        }
+    }
+    Some(features)
+}
+
+/// Whether `m`'s player part was registered in this run: a package with a
+/// `[rust] player` that the run's registry doesn't have is one this binary
+/// lacks, whatever its features. It covers a game's own package (a binary
+/// whose launcher didn't list it, #1562) and an engine package whose folder
+/// is newer than this build's features (#1589), which no feature test can
+/// see: the binary never heard of the feature.
+fn unregistered(m: &Manifest) -> bool {
+    m.player.is_some() && !registry().has(&m.name)
 }
 
 impl Unbuilt {
@@ -257,8 +347,11 @@ impl std::error::Error for Unbuilt {}
 /// The packages `dirs` let in (its `[packages]` resolved, #1334) that a
 /// binary lacks, by `lacks` of each one's manifest: the player asks
 /// [`lacks`] of its name (the launcher's list), the CLI of its `[build]
-/// features`. `None` with no `[packages]` table, with no engine package
-/// folder to read the manifests from, or when the binary has them all.
+/// features`. A package with a player part the run didn't register is
+/// lacking too, whatever `lacks` says (a game's own, or one whose folder is
+/// newer than this build, #1589). `None` with no `[packages]` table, with no
+/// engine package folder to read the manifests from, or when the binary has
+/// them all.
 pub fn unbuilt(
     dirs: &SchemaDirs,
     binary: &str,
@@ -271,21 +364,40 @@ pub fn unbuilt(
         .iter()
         .find_map(|d| flint_core::project::game_packages_beside(d));
     let manifests = Packages::read_with_game(&folder, game.as_deref());
-    // A game's own package with a player part is in a binary whose
-    // launcher listed it: the one `flint build` writes (#1562)
-    let own = |m: &Manifest| {
-        m.tier == flint_core::package::Tier::Game && m.player.is_some() && !registry().has(&m.name)
-    };
     let packages: Vec<String> = in_use
         .on
         .iter()
-        .filter(|name| manifests.get(name).is_some_and(|m| own(m) || lacks(m)))
+        .filter(|name| {
+            manifests
+                .get(name)
+                .is_some_and(|m| unregistered(m) || lacks(m))
+        })
         .cloned()
         .collect();
-    (!packages.is_empty()).then(|| Unbuilt {
+    if packages.is_empty() {
+        return None;
+    }
+    // Asked only once something is missing: whether the engine's launchers
+    // know each one's features yet (#1589)
+    let engine = folder.parent().map(Path::to_path_buf).unwrap_or_default();
+    let unsynced = match launcher_features(&engine) {
+        Some(known) => packages
+            .iter()
+            .filter(|name| {
+                manifests
+                    .get(name)
+                    .is_some_and(|m| m.features.iter().any(|f| !known.contains(f)))
+            })
+            .cloned()
+            .collect(),
+        None => Vec::new(),
+    };
+    Some(Unbuilt {
         binary: binary.to_string(),
         packages,
         manifest: in_use.manifest.clone(),
+        unsynced,
+        engine,
     })
 }
 
@@ -397,6 +509,8 @@ mod tests {
             binary: "flint".into(),
             packages: vec!["living".into()],
             manifest: PathBuf::from("game/flint.toml"),
+            unsynced: Vec::new(),
+            engine: PathBuf::from("engine"),
         };
         let one = u.to_string();
         assert!(
@@ -410,6 +524,122 @@ mod tests {
                 .contains("without the `living`, `music` and `rhythm` packages"),
             "{u}"
         );
+    }
+
+    /// A copy of this tree's engine as far as [`unbuilt`] reads it: its
+    /// package manifests, the two launchers' `Cargo.toml` and an empty
+    /// `schemas/`, plus `buoy` (#1589), a feature package with a player
+    /// part that no build of this tree knows. With `synced` its feature is
+    /// written into both launchers' `[features]`, as the sync script would.
+    /// The game beside it lists `listed`.
+    #[allow(clippy::disallowed_methods)] // a test's engine copy on the disk
+    fn engine_with_buoy(name: &str, synced: bool, listed: &str) -> (PathBuf, SchemaDirs) {
+        let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = std::env::temp_dir()
+            .join(format!("flint-unsynced-{}", std::process::id()))
+            .join(name);
+        let _ = std::fs::remove_dir_all(&root);
+        let engine = root.join("engine");
+        std::fs::create_dir_all(engine.join("schemas")).unwrap();
+        let folder = real.join("packages");
+        for entry in std::fs::read_dir(&folder).unwrap() {
+            let file = entry.unwrap().path().join("package.toml");
+            if file.is_file() {
+                let to = engine
+                    .join("packages")
+                    .join(file.parent().unwrap().file_name().unwrap());
+                std::fs::create_dir_all(&to).unwrap();
+                std::fs::copy(&file, to.join("package.toml")).unwrap();
+            }
+        }
+        std::fs::create_dir_all(engine.join("packages/buoy")).unwrap();
+        std::fs::write(
+            engine.join("packages/buoy/package.toml"),
+            "[package]\nname = \"buoy\"\nversion = \"0.1.0\"\ntier = \"feature\"\n\
+             summary = \"A float on the water\"\nengine = \"^0.1\"\n\n\
+             [build]\nfeatures = [\"buoy\"]\n\n[rust]\nplayer = \"flint-buoy\"\n\n\
+             [provides]\ncrates = [\"flint-buoy\"]\ncomponents = [\"buoy\"]\n",
+        )
+        .unwrap();
+        for launcher in ["flint-player", "flint-cli"] {
+            let text =
+                std::fs::read_to_string(real.join("crates").join(launcher).join("Cargo.toml"))
+                    .unwrap();
+            let text = if synced {
+                // The header alone: a CRLF checkout has `[features]\r\n`
+                text.replacen("[features]", "[features]\nbuoy = []", 1)
+            } else {
+                text
+            };
+            let to = engine.join("crates").join(launcher);
+            std::fs::create_dir_all(&to).unwrap();
+            std::fs::write(to.join("Cargo.toml"), text).unwrap();
+        }
+        let game = root.join("game");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(
+            game.join("flint.toml"),
+            format!(
+                "[project]\nschemas = [\"{}\"]\n\n[packages]\n{listed} = \"*\"\n",
+                shown(&engine.join("schemas"))
+            ),
+        )
+        .unwrap();
+        let dirs =
+            flint_core::project::schema_dirs(Some(&game.join("flint.toml")), &[] as &[&Path])
+                .expect("the copy's schemas resolve");
+        (root, dirs)
+    }
+
+    fn player_lacks(m: &Manifest) -> bool {
+        lacks(&m.name)
+    }
+
+    /// #1589: a listed package whose folder is newer than the launchers'
+    /// features is one this player lacks (it can't have been built with a
+    /// feature no launcher has), and the hint names the sync script before
+    /// `flint build`.
+    #[test]
+    fn a_listed_package_the_launchers_dont_know_names_the_sync_script() {
+        let (root, dirs) = engine_with_buoy("unsynced", false, "buoy");
+        let found = unbuilt(&dirs, "flint-player", player_lacks)
+            .expect("a player that never heard of buoy lacks it");
+        assert_eq!(found.packages, ["buoy"]);
+        assert_eq!(found.unsynced, ["buoy"]);
+        let said = found.to_string();
+        assert!(
+            said.contains("run `python3 scripts/package-sync.py` in "),
+            "{said}"
+        );
+        assert!(said.contains(&shown(&root.join("engine"))), "{said}");
+        assert!(said.contains("then `flint build` in the project"), "{said}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Once synced, the same package this binary was built without is the
+    /// plain `flint build` hint: the sync has nothing left to write.
+    #[test]
+    fn a_synced_package_this_player_lacks_names_flint_build() {
+        let (root, dirs) = engine_with_buoy("synced", true, "buoy");
+        let found = unbuilt(&dirs, "flint-player", player_lacks).expect("still not built in");
+        assert_eq!(found.packages, ["buoy"]);
+        assert!(found.unsynced.is_empty(), "{found:?}");
+        let said = found.to_string();
+        assert!(said.contains("run `flint build` in the project"), "{said}");
+        assert!(!said.contains("package-sync"), "{said}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A listed package this build has passes, buoy's folder beside it or not.
+    #[test]
+    fn a_listed_package_the_player_has_is_not_unbuilt() {
+        let has = PLAYER_PACKAGES.iter().find(|p| registry().has(p));
+        let Some(has) = has else {
+            return; // the build with no package
+        };
+        let (root, dirs) = engine_with_buoy("has", false, has);
+        assert_eq!(unbuilt(&dirs, "flint-player", player_lacks), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

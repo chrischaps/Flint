@@ -1092,7 +1092,8 @@ went, as decisions 4 and 8 have it:
 - **A flag the owner declares and a package serves** stays declared by the
   owner, since its help heading is the owner's and its value runs at a
   point: `gen --ai-*`, `--cost-report`, `--style-guide` (procgen's
-  `GenArgs`, served through procgen's `AiPoint`) and `asset resolve
+  `GenArgs`, served through procgen's `AiPoint`, until #1592 brought
+  them) and `asset resolve
   --strategy ai_generate|human_task|ai_then_human` (the kernel's, served
   through `cli::asset::BatchResolve`). The package says so with
   `Points::serve(line)` in its `register`, and the owner refuses a line
@@ -1132,10 +1133,9 @@ went, as decisions 4 and 8 have it:
   exceptions (#1583 had taken its own; the one left is #1585's `music`
   log target, a string). flint-cli's `ai` feature is
   `["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli"]`: it names
-  no procgen-ai or ai-core crate. `gen`'s ai flags are still declared in
-  `GenArgs`, interleaved with procgen's under its headings; moving them
-  into the package's group would need slots between procgen's headings
-  (#1592).
+  no procgen-ai or ai-core crate. `gen`'s ai flags were still declared in
+  `GenArgs`, interleaved with procgen's under its headings; #1592 moved
+  them into the package's groups (next section).
 - Measured (debug, Windows): every `--help` page of the stock `flint`, 78
   of them, is byte-identical to main's. A mock `--ai-refine` (three rounds
   of three, `stylize_props` at 320x180, still and `--time 0.5`) writes the
@@ -1143,6 +1143,45 @@ went, as decisions 4 and 8 have it:
   --ai-create --ai-provider mock` the same GLB and spec. A build without
   ai has 133 lines of `render --help` against 149, and each of the
   package's flags exits 2 naming it.
+
+## As built: `gen`'s ai flags are brought (#1592)
+
+- **Three slots on one command.** `FlagPlace` gained `SLOT` (empty for a
+  command's one) and `Flags` a `slot`, `Flags::at::<P, A>()`. `GenArgs`
+  declares `ai` where "AI assistance" starts, `cost` where "Cost
+  tracking" does and `guide` between `--report` and the living props,
+  and the ai package brings `AiFlags`, `CostFlags` and `GuideFlags` to
+  them (`gen_ai::flags()`). A flint without the package has none of the
+  thirteen flags; clap's unknown argument names the package for each
+  (`[provides] flags` lists them all), as for `render --ai-refine`.
+  Nothing on `gen` is served now, so `gen_args::refuse_unserved` went;
+  `Points::serve` is `asset resolve --strategy`'s alone.
+- **The cross-references moved to the package's side.** `spec` was
+  `required_unless_present_any` four ids, two of them the package's; it
+  is now `required_unless_present = NO_SPEC`, a group of `GenArgs`'
+  (`--list-generators`, `--describe`) that `--ai-create` and
+  `--cost-report` join with `group = NO_SPEC`. The package declares the
+  conflicts with `--list-generators`, `--describe` and `--strip` (on
+  `ai_create`, `cost_report` and its `ai_step` group), which clap holds
+  both ways, and the kernel's lists lost the package's ids.
+- **`--cost-report` moved with the group**, though it is `asset costs`'s
+  answer rather than a step of `gen`: it sits under "Cost tracking"
+  between `--max-cost` and `--since`, so staying served would have split
+  the heading across two owners, and a flint without the package has no
+  ledger to report. Procgen's `AiSteps` asks the package
+  `answer(&args)` and `style_constraints(&args)`, which read the line
+  themselves.
+- **Procgen's own flags under the package's heading.** `--print-spec`
+  and `--save-spec` print and keep any spec (`--seed`, a terrain), so
+  they stay `GenArgs`'. Their `help_heading` is computed while the
+  command is built (`flags::brought::<GenAiPlace>()`): "AI assistance"
+  when that slot holds a group, the options otherwise. The spec's help
+  names `--ai-create, --cost-report` the same way.
+- **`PackageFlags::given()`**: a slot puts the arguments it added in a
+  group of its own, so the matches say which of the line's flags came
+  through it; `gen` of a glyph set refuses them by name with procgen's.
+- Measured (debug, Windows): all 78 `--help` pages of the stock `flint`,
+  and `gen -h`, byte-identical to main's.
 
 ## As built: the CLI names no package (#1595)
 
@@ -1207,6 +1246,62 @@ went, as decisions 4 and 8 have it:
 - **`register_state`'s doc names the kernel's systems** and says a package
   may add one. The run's names come from the registry (`Registry::policies()`,
   #1585), and an unknown name's error already lists them.
+
+## As built: every package's lines are generated (#1568)
+
+#1560 left the six moved packages' features and dependencies written by
+hand in the two launchers, because three things they carry were in no
+manifest. Each is a manifest line now, and `scripts/package-sync.py`
+writes every package's lines. Neither `Cargo.toml` holds a package's
+feature outside its generated block, and the script refuses one that does.
+
+- **Device features are `[rust.devices]`**, a table in `[rust]`: for each
+  of the launchers' device features, the package's crates' features it
+  turns on, as `crate/feature` (music: `audio = ["flint-music/device"]`;
+  rhythm: `audio` and `gamepad`; procgen: `dialogs =
+  ["flint-procgen-cli/dialogs"]`). `flint_core::package::Package::devices`
+  holds each crate to `[provides] crates`. Cargo can't give one feature two
+  lines, and a device feature such as `audio` also turns on kernel crates,
+  so it stays hand-written, with its comment, and turns on a generated
+  `packages-audio` (`packages-gamepad`, `packages-dialogs`) that holds the
+  packages' share as weak lines (`flint-music?/device`). A device reaches a
+  package's crate only where the package is built, as before. The script
+  refuses a device name neither launcher has and a device feature that
+  doesn't turn on its `packages-<device>`.
+- **`[with.<other>] features` are generated** onto the other package's
+  feature, weakly (`flint-living?/debug-hud` on `debug-hud`), so the part is
+  on when the game lists both. Rhythm's Music Guide panels were a
+  `flint-rhythm-game?/debug-hud` line with no manifest behind it, so
+  rhythm's manifest has a `[with.debug-hud]` now too.
+- **The ai flags' crates and the CLI's debug-hud needed nothing.** #1572
+  made flint-asset-gen's `cli` part bring flint-procgen-ai and
+  flint-ai-core, and #1583 made the CLI's `debug-hud` the plain forward
+  (`["flint-player/debug-hud"]`), so both were already the generated rule.
+  flint-cli's `procgen` turned on an optional flint-procgen that its source
+  doesn't use (the player's `procgen` brings it), so that dependency went.
+  flint-procgen-cli gained an empty `cli` feature, so every package's
+  commands are turned on as `<crate>?/cli`.
+- **A line flint-player already turns on isn't written again in
+  flint-cli.** The CLI's package and device features forward to the
+  player's, which link the same crate (one package in the graph), so the
+  CLI's `packages-audio` is empty and its `packages-dialogs` holds only
+  flint-procgen-cli's, a crate the player doesn't link.
+- **A dependency line is `{ workspace = true, optional = true }`** when the
+  root's `[workspace.dependencies]` declares the crate, so its
+  `default-features = false` (flint-music's `default` is `device`) still
+  decides, and the `path` form otherwise (a new package's crate).
+- **Measured**: `cargo tree -e normal -f '{p} [{f}]'` gives the same crates
+  with the same features as main's hand-written lines in thirteen
+  configurations (both binaries by default, the CLI with no features, and
+  device and package mixes such as `audio,music`, `gamepad,rhythm,debug-hud`
+  and `dialogs,procgen`), apart from the new names, `packages-*` and
+  flint-procgen-cli's `cli`, which turn on nothing else.
+  `scripts/package-check.sh` and `scripts/headless-check.sh` pass
+  unchanged.
+- **`package-sync.py --self-test`** (in `scripts/ci.sh`) runs the generator
+  over a scratch copy of the tree with a made-up package that has a device
+  line, a CLI-only device and a `[with.debug-hud]` part, and holds each
+  refusal. Before this, a toy with a `[with]` part failed the sync.
 
 ## Measured
 

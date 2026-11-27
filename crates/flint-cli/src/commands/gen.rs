@@ -3,13 +3,14 @@
 //! and runs here; anything else (a spec, the AI's spec,
 //! `--list-generators`, `--describe`, `--cost-report`) is the procgen
 //! package's, run by the [`SpecGen`] it registered. A flint without the
-//! package has none, and names it (exit 2). The AI flags name the ai
-//! package first in a build without it, since ai needs procgen anyway.
+//! package has none, and names it (exit 2). The AI flags are the ai
+//! package's own groups (#1592): a build without it has none, and the
+//! launcher names the package for one.
 
 use anyhow::Result;
 use flint_package::cli::{Points, SpecGen};
 
-pub use super::gen_args::GenArgs;
+pub use flint_package::cli::gen::GenArgs;
 
 pub fn run(args: GenArgs) -> Result<()> {
     run_in(args, crate::points())
@@ -17,7 +18,6 @@ pub fn run(args: GenArgs) -> Result<()> {
 
 /// [`run`] against `points`, for a test's own.
 pub(crate) fn run_in(args: GenArgs, points: &Points) -> Result<()> {
-    super::gen_args::refuse_unserved(&args, points)?;
     if args
         .spec
         .as_deref()

@@ -33,6 +33,17 @@ features = ["rhythm"]
 player = "flint-rhythm-game"
 cli = "flint-rhythm-game"
 
+# Sound and pads (#221, #1568): the launchers' `audio` and `gamepad` turn on
+# the crate's `device` and `gamepad`, the 1 kHz capture's devices.
+[rust.devices]
+audio = ["flint-rhythm-game/device"]
+gamepad = ["flint-rhythm-game/gamepad"]
+
+# With the debug-hud package listed too (ADR 0137 decision 9): the Music
+# Guide and Manifest Map panels and the session's debug keys.
+[with.debug-hud]
+features = ["flint-rhythm-game/debug-hud"]
+
 [provides]
 crates = ["flint-rhythm", "flint-input-capture", "flint-rhythm-game"]
 script_modules = ["conducted"]

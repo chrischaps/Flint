@@ -27,9 +27,9 @@ use super::gen_store::{self, WrittenFile};
 /// The ai package's steps of `flint gen` (#1557): `--ai-create`,
 /// `--ai-assist`, `--ai-refine`, `--cost-report` and `--style-guide`. A
 /// point this command declares, which the ai package registers as an
-/// [`AiPoint`]. The flags are [`GenArgs`]', which the package serves
-/// (`Points::serve`, #1572): a run that doesn't serve one refuses it,
-/// naming the package, before this runs.
+/// [`AiPoint`]. The flags are the package's own groups, in the slots
+/// [`GenArgs`] declares (#1592), so a flint without the package has none
+/// of them, and each method reads them from the line itself.
 pub trait AiSteps: Send + Sync {
     /// Whether the line asks for an AI step.
     fn any(&self, args: &GenArgs) -> bool;
@@ -40,10 +40,12 @@ pub trait AiSteps: Send + Sync {
         loaded: Option<ProcGenSpec>,
         stdout_reserved: bool,
     ) -> Result<Option<ProcGenSpec>>;
-    /// `--cost-report`: the ledger summed (= `flint asset costs`).
-    fn cost_report(&self, since: Option<&str>) -> Result<()>;
-    /// `--style-guide`: the guide's half of the validation constraints.
-    fn style_constraints(&self, path: &Path) -> Result<ValidationConstraints, String>;
+    /// The line's answer in place of a generation, when it asks for one:
+    /// `--cost-report`, the ledger summed (= `flint asset costs`).
+    fn answer(&self, args: &GenArgs) -> Option<Result<()>>;
+    /// `--style-guide`: the guide's half of the validation constraints,
+    /// when the line gave one.
+    fn style_constraints(&self, args: &GenArgs) -> Option<Result<ValidationConstraints>>;
 }
 
 /// [`AiSteps`] as the run's points hold it.
@@ -106,11 +108,8 @@ pub fn run(args: GenArgs) -> Result<()> {
         };
         return gen_catalog::describe(&GeneratorRegistry::with_built_ins(), name, format);
     }
-    if args.cost_report {
-        return match ai() {
-            Some(ai) => ai.cost_report(args.since.as_deref()),
-            None => Err(output::missing("flint gen --cost-report", "ai")),
-        };
+    if let Some(answer) = ai().and_then(|ai| ai.answer(&args)) {
+        return answer;
     }
     // `--report json` is a JSON line a variant; the global --json is one
     // document for the run, with each variant's report in it
@@ -462,13 +461,7 @@ pub fn run(args: GenArgs) -> Result<()> {
         }
 
         if args.validate {
-            let (report, passed) = run_validation(
-                &output,
-                &files,
-                &seed_spec,
-                args.style_guide.as_deref(),
-                args.strict,
-            )?;
+            let (report, passed) = run_validation(&output, &files, &seed_spec, &args)?;
             let line = VariantReport {
                 spec: &spec.meta.name,
                 seed,
@@ -1039,21 +1032,11 @@ fn run_validation(
     output: &GeneratorOutput,
     files: &[WrittenFile],
     spec: &ProcGenSpec,
-    style_guide_path: Option<&str>,
-    strict: bool,
+    args: &GenArgs,
 ) -> Result<(ValidationReport, bool)> {
-    let style_guide = if let Some(path) = style_guide_path {
-        let Some(ai) = ai() else {
-            return Err(output::missing("flint gen --style-guide", "ai"));
-        };
-        Some(
-            ai.style_constraints(Path::new(path))
-                .map_err(|e| anyhow::anyhow!("{}", e))
-                .with_context(|| format!("failed to load style guide from {path}"))?,
-        )
-    } else {
-        None
-    };
+    let strict = args.strict;
+    // Only the ai package's parser has --style-guide
+    let style_guide = ai().and_then(|ai| ai.style_constraints(args)).transpose()?;
 
     let constraints = build_validation_constraints(spec, style_guide);
     let report = validate_written(output, files, spec, &constraints)?;

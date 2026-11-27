@@ -561,6 +561,7 @@ impl PlayerArgs {
         let mut registry = SchemaRegistry::load_from_directories(&schema_dirs.dirs)
             .context("Failed to load schemas")?;
         registry.set_packages(schema_dirs.packages.clone());
+        crate::packages::mark_built_without(&mut registry);
         // TEMPORARY, for one release (ADR 0114 decision 3, #765)
         for warning in schema_dirs.dropped_warnings() {
             tracing::warn!(target: "load", "{warning}");

@@ -14,6 +14,10 @@ description = "The procgen package's commands: flint gen for a spec, its preview
 # flint-cli's `procgen` feature turns it on, and its `build.rs` lists
 # `cli()` from `packages/procgen/package.toml`'s `[rust] cli`.
 [features]
+# The package's `cli` part, which is the whole crate: here so that flint-cli
+# turns every package's commands on the one way, `<crate>?/cli`, which
+# `scripts/package-sync.py` writes (#1568).
+cli = []
 # The editors' Save As / Export buttons open the system's dialog (rfd);
 # off, they say so (flint-cli's `dialogs` turns this on).
 dialogs = ["flint-viewer/dialogs"]

@@ -189,36 +189,6 @@ fn a_package_outside_the_player_runs_from_the_launchers_list() {
         report.script_errors
     );
 
-    // Living's parts, in a run without living (#1585): the one line the
-    // manifest writes, once, and a state pausing `living` registers
-    let scene = project_with(
-        &dir.join("grove"),
-        "[wooze]\namplitude = 0.5\n\n[entities.oak]\nliving_prop = { species = \"oak\" }\n",
-        STILL,
-    );
-    let mut options = flint_player::PlaytestOptions::new(scene);
-    options.timeout = Some(5.0);
-    let report = flint_player::playtest(&options);
-    assert!(report.passed, "{:#?}", report.failures);
-    assert_eq!(report.log["still"], serde_json::json!(true), "{report:#?}");
-    assert!(report.warnings.counted);
-    let lines: Vec<&str> = report
-        .warnings
-        .messages
-        .iter()
-        .map(|w| w.message.as_str())
-        .filter(|m| m.starts_with("[living] "))
-        .collect();
-    assert_eq!(
-        lines,
-        [
-            "[living] this player is built without the `living` package: the scene's living_prop, \
-          [wooze] stand still"
-        ],
-        "{:#?}",
-        report.warnings
-    );
-
     // A player without living doesn't know `living_prop` (#1529), though
     // the engine's schemas on the disk bring living's folder: this run
     // drops it, as a web player built without living carries none of it
@@ -235,10 +205,14 @@ fn a_package_outside_the_player_runs_from_the_launchers_list() {
     assert!(!living(&built), "{built:?}");
     assert!(built.dirs.iter().any(|d| d.ends_with("schemas")));
 
-    // Played against those schemas, the prop is a component it doesn't know
+    // Living's parts, played against those schemas in a run without living
+    // (#1585, #1601): the one line the manifest writes, once, with what to
+    // build, and nothing else at the load. The summary used to add an
+    // `unknown-component` for the prop and an `unknown-table` for the
+    // field. A state pausing `living` registers all the same
     let scene = project_with(
-        &dir.join("unknown"),
-        "[entities.oak]\nliving_prop = { species = \"oak\" }\n",
+        &dir.join("grove"),
+        "[wooze]\namplitude = 0.5\n\n[entities.oak]\nliving_prop = { species = \"oak\" }\n",
         STILL,
     );
     let mut options = flint_player::PlaytestOptions::new(scene);
@@ -246,14 +220,23 @@ fn a_package_outside_the_player_runs_from_the_launchers_list() {
     options.timeout = Some(5.0);
     let report = flint_player::playtest(&options);
     assert!(report.passed, "{:#?}", report.failures);
-    assert!(
-        report
-            .warnings
-            .messages
-            .iter()
-            .any(|w| w.message.contains("unknown-component") && w.message.contains("living_prop")),
+    assert_eq!(report.log["still"], serde_json::json!(true), "{report:#?}");
+    assert!(report.warnings.counted);
+    let said: Vec<&str> = report
+        .warnings
+        .messages
+        .iter()
+        .map(|w| w.message.as_str())
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "[living] this player is built without the `living` package: the scene's living_prop, \
+             [wooze] stand still; run `flint build` in the project for a player with it"
+        ],
         "{:#?}",
         report.warnings
     );
+    assert_eq!(report.warnings.at_load, 1, "{:#?}", report.warnings);
     let _ = std::fs::remove_dir_all(&dir);
 }

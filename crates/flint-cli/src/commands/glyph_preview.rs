@@ -92,9 +92,9 @@ pub fn run(args: &GenArgs) -> Result<()> {
 /// The flags that only mean something to a procgen spec, refused by name
 /// rather than ignored.
 fn refuse_procgen_flags(args: &GenArgs) -> Result<()> {
-    let used: Vec<&str> = [
-        (args.ai_assist, "--ai-assist"),
-        (args.ai_refine, "--ai-refine"),
+    // A package's flags in gen's slots (the ai package's) are all a spec's
+    let packages = [args.ai.given(), args.cost.given(), args.guide.given()].concat();
+    let kernel = [
         (args.seed.is_some(), "--seed"),
         (args.format.is_some(), "--format"),
         (args.batch.is_some(), "--batch"),
@@ -103,12 +103,11 @@ fn refuse_procgen_flags(args: &GenArgs) -> Result<()> {
         (args.strip, "--strip"),
         (args.print_spec, "--print-spec"),
         (args.save_spec.is_some(), "--save-spec"),
-        (args.style_guide.is_some(), "--style-guide"),
         (args.validate || args.report.is_some(), "--validate"),
     ]
     .into_iter()
-    .filter_map(|(on, flag)| on.then_some(flag))
-    .collect();
+    .filter_map(|(on, flag)| on.then_some(flag));
+    let used: Vec<&str> = packages.iter().map(String::as_str).chain(kernel).collect();
     if !used.is_empty() {
         bail!(
             "{} {} for .procgen.toml specs; a .glyphs.toml takes -o and --dry-run",

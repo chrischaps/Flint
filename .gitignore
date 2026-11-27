@@ -92,7 +92,25 @@ __pycache__/
 # The book's pages kept in a package's folder (#1563): scripts/book-collect.py
 # copies packages/<name>/docs/<path> to docs/book/src/<path> and writes this
 # list. Edit a page in its package's folder, never the copy.
+/docs/book/src/cli-reference/music.md
 /docs/book/src/concepts/ai-generation.md
 /docs/book/src/concepts/music-sessions.md
 /docs/book/src/concepts/procgen.md
+/docs/book/src/guides/debug-panels.md
+/docs/book/src/images/debug-keys-f1.png
+/docs/book/src/images/linklater-slit.png
+/docs/book/src/images/linklater-strip.png
+/docs/book/src/images/living-ab-split.png
+/docs/book/src/images/living-compare.png
+/docs/book/src/images/living-echoes.png
+/docs/book/src/images/living-panel-species.png
+/docs/book/src/images/living-panel.png
+/docs/book/src/images/living-pick.png
+/docs/book/src/images/living-softness.png
+/docs/book/src/images/living-strip.png
+/docs/book/src/images/procgen-examples.png
+/docs/book/src/images/procgen-refine-oak.png
+/docs/book/src/images/sweep-coil.png
+/docs/book/src/images/woozy-grove-grass.png
+/docs/book/src/images/woozy-grove.png
 # book-collect:end

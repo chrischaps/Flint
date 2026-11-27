@@ -9,7 +9,7 @@ use crate::component::{
 };
 use crate::lint::SchemaKind;
 use flint_core::diagnostic::Diagnostic;
-use flint_core::package::InUse;
+use flint_core::package::{BuiltWithout, InUse};
 use flint_core::project::SchemaDirs;
 use flint_core::vfs;
 use flint_core::{FlintError, Result};
@@ -242,6 +242,9 @@ pub struct SchemaRegistry {
     /// were read (#1334), so a load names a left-out package's component
     /// as `flint check` does (#1528). `None`: every package is in.
     packages: Option<InUse>,
+    /// The packages the host was built without (#1601): it names their
+    /// components and tables itself, so a load's summary leaves them out.
+    built_without: Vec<BuiltWithout>,
 }
 
 impl SchemaRegistry {
@@ -279,6 +282,21 @@ impl SchemaRegistry {
     /// directories itself hands over its `SchemaDirs::packages`.
     pub fn set_packages(&mut self, packages: Option<InUse>) {
         self.packages = packages;
+    }
+
+    /// The packages the host loading with this registry was built without,
+    /// which [`set_built_without`](Self::set_built_without) sets: a scene
+    /// load's summary says no `unknown-component` or `unknown-table` for
+    /// what they provide (#1601). Empty (the default): it says them all.
+    pub fn built_without(&self) -> &[BuiltWithout] {
+        &self.built_without
+    }
+
+    /// Set what [`built_without`](Self::built_without) answers. Only a host
+    /// that says the package's own line for those names sets it, as the
+    /// player does at a scene's entry (`flint_player::packages::mark_built_without`).
+    pub fn set_built_without(&mut self, packages: Vec<BuiltWithout>) {
+        self.built_without = packages;
     }
 
     /// Load schemas from multiple directories, merging them in order.
