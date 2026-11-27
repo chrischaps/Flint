@@ -65,5 +65,5 @@ Not recorded in the surviving text.
   `crates/flint-render/src/composite_shader.wgsl`,
   `crates/flint-script/src/api/post_process.rs` (`set_desaturation`),
   [Post-Processing](../book/src/concepts/post-processing.md),
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Post-Processing
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Post-Processing
   Integration"

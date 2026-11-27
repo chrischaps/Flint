@@ -71,5 +71,5 @@ zero.
   (`MUSIC_SESSION`, `MusicSession`),
   `crates/flint-player/src/player_app/script_commands.rs`,
   `crates/flint-player/src/player_app/state.rs` (`MusicState`),
-  [Music Sessions](../book/src/concepts/music-sessions.md), "The
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "The
   `music_session` Component"

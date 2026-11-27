@@ -73,4 +73,4 @@ spread of about 36 ms.
   loop), `packages/rhythm/crates/flint-input-capture/examples/spike_rumble.rs` (the spike,
   `flint spike-rumble` until #709 and its alias until #1141),
   `crates/flint-runtime/src/rumble.rs` (`PadRumble`),
-  [Music Sessions](../book/src/concepts/music-sessions.md)
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md)

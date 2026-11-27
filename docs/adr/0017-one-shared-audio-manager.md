@@ -91,4 +91,4 @@ F2: 0.000 ms stem skew across full runs with a spatial one-shot every 2 s
   `crates/flint-player/src/player_app/transition.rs`,
   [ADR 0117](0117-player-subsystems-and-one-game-step.md),
   [Audio](../book/src/concepts/audio.md),
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Lifecycle"
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Lifecycle"

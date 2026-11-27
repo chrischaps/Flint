@@ -52,4 +52,4 @@ Synthetic perfect play on the re-authored chart: 92/92, coherence 1.00.
   `JudgmentConfig::arrival_half_beats`),
   `packages/music/crates/flint-music/src/chart_session.rs` (`parse_lean_mode`),
   `crates/flint-player/src/player_app/music_session.rs`,
-  [Music Sessions](../book/src/concepts/music-sessions.md)
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md)

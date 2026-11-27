@@ -61,5 +61,5 @@ Not recorded in the surviving text.
   (`RungAudio::alternates`, `LadderDriver::apply`),
   `packages/music/crates/flint-music/src/session.rs` (`StemResolver::load_alternate`),
   `packages/music/crates/flint-music/src/reintegration.rs`,
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Suite Manifest
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Suite Manifest
   and Chart"

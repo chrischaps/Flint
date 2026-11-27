@@ -74,5 +74,5 @@ Not recorded in the surviving text.
 - Code now: `packages/music/crates/flint-music/src/haptics.rs` (`HapticsDriver`,
   `HapticsConfig`), `packages/rhythm/crates/flint-input-capture/src/rumble.rs`
   (`RumbleEngine`, `haptic_sink`), `packages/music/crates/flint-music/tests/haptics_driver.rs`,
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Audio Gradient
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Audio Gradient
   and Haptics"

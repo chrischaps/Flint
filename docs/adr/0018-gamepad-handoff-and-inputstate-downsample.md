@@ -71,5 +71,5 @@ batching.
 - Code now: `crates/flint-player/src/player_app/music_session.rs`
   (`MusicSession::tick`), `crates/flint-player/src/player_app/frame.rs`
   (`tick_music_session`), `packages/music/crates/flint-music/src/chart_session.rs`
-  (`tick_with`), [Music Sessions](../book/src/concepts/music-sessions.md),
+  (`tick_with`), [Music Sessions](../../packages/music/docs/concepts/music-sessions.md),
   "Lifecycle"

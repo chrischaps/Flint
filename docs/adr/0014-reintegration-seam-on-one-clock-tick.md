@@ -71,5 +71,5 @@ skew, no click, a single backwards jump, bit-identical renders.
 - Code now: `packages/music/crates/flint-music/src/reintegration.rs` (`Reintegrator`,
   `SeqPhase`), `packages/music/crates/flint-music/src/mixer.rs` (`StemBus`),
   `packages/music/crates/flint-music/src/chart_session.rs`,
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Full Fail and
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Full Fail and
   Reintegration"

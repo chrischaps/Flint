@@ -18,6 +18,11 @@
 //!   an arity it is declared at, a callback, a Rhai built-in, a function the
 //!   book defines with `fn`, or a name in `script-api-allow.txt` beside
 //!   `src/`. A row's `name(a, b[, c])` claims both arities.
+//!
+//! A package's pages live in its folder (#1563): `packages/<name>/docs/<path>`
+//! is the book's `<path>` (`package_pages`). Both are read and written there,
+//! by their book path, and the copies `scripts/book-collect.py` puts in
+//! `src/` are never read.
 
 use flint_core::package::{Kind, Package, Packages, Tier};
 use flint_script::api::registry::{ApiEntry, ApiListing, CallbackSpec, CONVENTIONS};
@@ -908,12 +913,55 @@ fn relative(src: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// The engine tree's manifests, beside the book's `docs/`, or `None` for a
+/// book with none there (a game's).
+fn packages_dir(book: &Path) -> Option<PathBuf> {
+    use std::path::Component::Normal;
+    // `docs/book` -> `packages`, spelled without `..` where it can be, since
+    // a page's path from here is what a ghost's line prints
+    let tail: Vec<_> = book.components().rev().take(2).collect();
+    let up = match (tail.as_slice(), book.parent().and_then(Path::parent)) {
+        ([Normal(_), Normal(_)], Some(up)) => up.to_path_buf(),
+        _ => book.join("..").join(".."),
+    };
+    let dir = up.join(flint_core::package::PACKAGES_DIR);
+    dir.join("engine")
+        .join("package.toml")
+        .is_file()
+        .then_some(dir)
+}
+
+/// A package's book pages (#1563): every `.md` under
+/// `<packages>/<name>/docs/`, as (its path in the book, with `/`; the file),
+/// sorted by the first. `scripts/book-collect.py` copies each to `src/<path>`
+/// before mdBook builds; this is where they're read and written.
+pub fn package_pages(book: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    let Some(dir) = packages_dir(book) else {
+        return Ok(Vec::new());
+    };
+    let err = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(&dir).map_err(|e| err(&dir, e))? {
+        let docs = entry.map_err(|e| err(&dir, e))?.path().join("docs");
+        if docs.is_dir() {
+            for p in pages(&docs).map_err(|e| err(&docs, e))? {
+                out.push((relative(&docs, &p), p));
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
 /// What `--book` or `--check-book` found.
 pub struct Outcome {
     /// Pages whose generated text differs from what's on disk (written
     /// when not checking).
     pub stale: Vec<PathBuf>,
     pub ghosts: Vec<Ghost>,
+    /// The file a page was read from, by its path under `src/`, for a page
+    /// that lives in a package's folder (#1563).
+    pub kept: BTreeMap<String, PathBuf>,
 }
 
 /// Regenerate (or, with `check`, compare) every generated page and region
@@ -936,7 +984,17 @@ pub fn run(
     let reference = book.join(REFERENCE);
     let mut stale = Vec::new();
     let mut texts = Vec::new();
-    for path in pages(&src).map_err(|e| format!("{}: {e}", src.display()))? {
+    // A package's pages from its folder, in place of their copies (#1563)
+    let kept: BTreeMap<String, PathBuf> = package_pages(book)?.into_iter().collect();
+    let mut all: Vec<(String, PathBuf)> = pages(&src)
+        .map_err(|e| format!("{}: {e}", src.display()))?
+        .into_iter()
+        .map(|p| (relative(&src, &p), p))
+        .filter(|(name, _)| !kept.contains_key(name))
+        .chain(kept.iter().map(|(n, p)| (n.clone(), p.clone())))
+        .collect();
+    all.sort();
+    for (name, path) in all {
         // A Windows checkout may have CRLF; compare and write in LF
         let old = read(&path)?.replace("\r\n", "\n");
         let new = if path == reference {
@@ -952,7 +1010,7 @@ pub fn run(
                 std::fs::write(&path, &new).map_err(|e| format!("{}: {e}", path.display()))?;
             }
         }
-        texts.push((relative(&src, &path), new));
+        texts.push((name, new));
     }
     // The reference page is the engine book's: a book whose contents
     // don't link it (a game's) gets only its regions and the ghost check
@@ -961,15 +1019,9 @@ pub fn run(
     if wanted {
         // The engine tree's manifests, beside the book's `docs/`: a book
         // with none there gets the flat list
-        let dir = book
-            .join("..")
-            .join("..")
-            .join(flint_core::package::PACKAGES_DIR);
-        let packages = if dir.join("engine").join("package.toml").is_file() {
-            Packages::read(&dir)
-        } else {
-            Packages::default()
-        };
+        let packages = packages_dir(book)
+            .map(|dir| Packages::read(&dir))
+            .unwrap_or_default();
         let page = reference_page(listing, &packages);
         let old = std::fs::read_to_string(&reference)
             .map(|s| s.replace("\r\n", "\n"))
@@ -987,7 +1039,11 @@ pub fn run(
         texts.push((relative(&src, &reference), page));
     }
     let ghosts = ghosts(&texts, &known);
-    Ok(Outcome { stale, ghosts })
+    Ok(Outcome {
+        stale,
+        ghosts,
+        kept,
+    })
 }
 
 #[cfg(test)]
@@ -1169,6 +1225,51 @@ mod tests {
             .ghosts
             .is_empty());
         let _ = std::fs::remove_dir_all(&book);
+    }
+
+    #[test]
+    fn a_packages_page_is_read_and_written_in_its_folder_never_its_copy() {
+        let mut system = flint_player::script_system();
+        let listing = system.api_listing();
+        let engine = system.rhai_engine_mut();
+        let packages = package_signatures(
+            engine.gen_fn_signatures(true),
+            engine.gen_fn_signatures(false),
+        );
+        let root = std::env::temp_dir().join(format!("flint-book-kept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let book = root.join("docs/book");
+        let copy = book.join("src/concepts/beat.md");
+        let home = root.join("packages/music/docs/concepts/beat.md");
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(home.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(root.join("packages/engine")).unwrap();
+        std::fs::write(root.join("packages/engine/package.toml"), "").unwrap();
+        let page = format!(
+            "# Beat\n\n<!-- script-api:begin module:time -->\nold\n{END}\n\nUse `mouse_position()`.\n"
+        );
+        std::fs::write(&home, &page).unwrap();
+        // A copy from an earlier collection, with a ghost of its own
+        let stale_copy = "# Beat\n\nUse `copy_only_ghost()`.\n";
+        std::fs::write(&copy, stale_copy).unwrap();
+
+        let kept = package_pages(&book).unwrap();
+        assert_eq!(kept, vec![("concepts/beat.md".to_string(), home.clone())]);
+        let out = run(&book, &listing, &packages, true).unwrap();
+        assert_eq!(out.stale, vec![home.clone()]);
+        let names: Vec<(&str, &str)> = out
+            .ghosts
+            .iter()
+            .map(|g| (g.file.as_str(), g.name.as_str()))
+            .collect();
+        assert_eq!(names, vec![("concepts/beat.md", "mouse_position")]);
+        assert_eq!(out.kept.get("concepts/beat.md"), Some(&home));
+
+        run(&book, &listing, &packages, false).unwrap();
+        let written = std::fs::read_to_string(&home).unwrap();
+        assert!(written.contains("| `delta_time()` | `num`"), "{written}");
+        assert_eq!(std::fs::read_to_string(&copy).unwrap(), stale_copy);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

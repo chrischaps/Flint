@@ -141,6 +141,11 @@ cargo run --locked -q -p flint-arch-analyzer -- --check-book
 echo "ci: scripts/docs-check.py --self-test"
 "$py" scripts/docs-check.py --self-test
 
+# A package's book pages live in its folder (#1563): none with two homes,
+# each linked from SUMMARY.md, and the .gitignore list of their copies current
+echo "ci: scripts/book-collect.py --check"
+"$py" scripts/book-collect.py --check
+
 if [ "${1:-}" = "--full" ]; then
     echo "ci: cargo clippy --all-targets"
     cargo clippy --all-targets --keep-going

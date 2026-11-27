@@ -61,5 +61,5 @@ Not recorded in the surviving text.
 - Code now: `packages/music/crates/flint-music/src/replay.rs` (`SessionWriter`,
   `read_session_raw`, `synthesize`, `SyntheticProfile`),
   `packages/rhythm/crates/flint-rhythm-game/src/cli/replay_chart.rs`,
-  [Music Sessions](../book/src/concepts/music-sessions.md), "Recording,
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md), "Recording,
   Replay and Offline Render"

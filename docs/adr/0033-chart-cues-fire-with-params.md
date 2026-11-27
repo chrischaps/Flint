@@ -53,5 +53,5 @@ Not recorded in the surviving text.
   `crates/flint-script/src/context.rs` (`CueParam`, `ConductedCue`),
   `crates/flint-script/src/api/conducted.rs` (`conducted_cues`),
   `crates/flint-player/src/player_app/music_session.rs`,
-  [Music Sessions](../book/src/concepts/music-sessions.md),
+  [Music Sessions](../../packages/music/docs/concepts/music-sessions.md),
   [Scripting](../book/src/concepts/scripting.md)
