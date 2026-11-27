@@ -1,0 +1,49 @@
+# The test track's bindings (#1629): the vehicle package's default actions
+# (accelerate, brake, steering, drift; `vehicle.actions` renames them), on
+# the keyboard and a pad. The playtest steers with the left stick
+# (`axis LeftStickX` in playtests/lap.input), so its turns can be part-lock.
+
+version = 1
+game_id = "vehicle-test-track"
+
+[actions.accelerate]
+kind = "button"
+[[actions.accelerate.bindings]]
+type = "key"
+code = "KeyW"
+[[actions.accelerate.bindings]]
+type = "gamepad_button"
+button = "RightTrigger2"
+
+[actions.brake]
+kind = "button"
+[[actions.brake.bindings]]
+type = "key"
+code = "KeyS"
+[[actions.brake.bindings]]
+type = "gamepad_button"
+button = "LeftTrigger2"
+
+[actions.steering]
+kind = "axis1d"
+[[actions.steering.bindings]]
+type = "key"
+code = "KeyD"
+scale = 1.0
+[[actions.steering.bindings]]
+type = "key"
+code = "KeyA"
+scale = -1.0
+[[actions.steering.bindings]]
+type = "gamepad_axis"
+axis = "LeftStickX"
+deadzone = 0.05
+
+[actions.drift]
+kind = "button"
+[[actions.drift.bindings]]
+type = "key"
+code = "Space"
+[[actions.drift.bindings]]
+type = "gamepad_button"
+button = "RightTrigger"

@@ -1,0 +1,103 @@
+# One lap of the test track (#1629), as the pad plays it: the left stick
+# steers (`axis`, -1 full left), the right trigger is the throttle and the
+# left the brake (`pull`, 0 to 1). playtests/referee.rhai judges it.
+#
+# Recorded by playtests/pilot.rhai, a closed-loop driver, and replayed here
+# open-loop: record it again when a change to the handling is meant to move
+# the lap (pilot.rhai says how). Every change is at 0.08, 0.18, ... s, 20 ms
+# before a 1/30 s frame, so it lands on the same fixed step at 1/30, 1/60
+# and 1/144 s frames (crates/flint-player/tests/vehicle.rs says why).
+#
+# Measured 2026-11-27 (Windows, RTX 4070 box; the run needs no GPU): the lap
+# is 12.09 s at 1/60 s frames, 12.10 at 1/30 and 12.09 at 1/144, the kart at
+# most 0.84 m off the centre line, 0.67 s in the air off the ramp.
+
+# Launch: full throttle down the start straight
+0.08  axis  LeftStickX    0.0
+0.08  pull  RightTrigger2 1.0
+0.08  pull  LeftTrigger2  0.0
+2.98  pull  RightTrigger2 0.9
+3.18  pull  RightTrigger2 0.8
+3.28  pull  RightTrigger2 0.5
+
+# The hairpin: brake from 23 m/s to 12.5, turn in, full lock round it
+3.38  pull  RightTrigger2 0.0
+3.38  pull  LeftTrigger2  0.4
+3.48  pull  LeftTrigger2  0.3
+3.58  pull  RightTrigger2 0.5
+3.58  pull  LeftTrigger2  0.0
+3.68  pull  RightTrigger2 0.0
+3.68  pull  LeftTrigger2  0.4
+3.78  axis  LeftStickX    -0.145
+3.78  pull  LeftTrigger2  0.5
+3.88  axis  LeftStickX    -0.193
+3.88  pull  LeftTrigger2  0.4
+3.98  axis  LeftStickX    -0.288
+3.98  pull  LeftTrigger2  0.3
+4.08  axis  LeftStickX    -0.382
+4.08  pull  RightTrigger2 0.7
+4.08  pull  LeftTrigger2  0.0
+4.18  axis  LeftStickX    -0.668
+4.18  pull  RightTrigger2 0.6
+4.28  axis  LeftStickX    -0.715
+4.38  pull  RightTrigger2 0.5
+4.48  axis  LeftStickX    -0.905
+4.68  axis  LeftStickX    -0.858
+4.68  pull  RightTrigger2 0.6
+4.78  axis  LeftStickX    -1.0
+
+# Unwind onto the back straight, full throttle
+5.58  axis  LeftStickX    -0.858
+5.58  pull  RightTrigger2 1.0
+5.68  axis  LeftStickX    -0.668
+5.78  axis  LeftStickX    -0.477
+5.88  axis  LeftStickX    -0.335
+5.98  axis  LeftStickX    -0.24
+6.08  axis  LeftStickX    -0.193
+6.18  axis  LeftStickX    -0.145
+6.28  axis  LeftStickX    -0.098
+6.38  axis  LeftStickX    0.0
+
+# Straight on over the ramp (its lip at 7.5 s) and onto the sand at 8.9 s
+6.88  axis  LeftStickX    0.098
+7.08  axis  LeftStickX    0.0
+7.28  axis  LeftStickX    0.098
+7.38  axis  LeftStickX    0.0
+
+# The closing turn, off the sand, then back over the line at 12.1 s
+9.38  pull  RightTrigger2 0.6
+9.48  axis  LeftStickX    -0.145
+9.48  pull  RightTrigger2 0.5
+9.58  axis  LeftStickX    -0.335
+9.58  pull  RightTrigger2 0.0
+9.58  pull  LeftTrigger2  0.4
+9.68  axis  LeftStickX    -0.43
+9.68  pull  RightTrigger2 0.6
+9.68  pull  LeftTrigger2  0.0
+9.78  axis  LeftStickX    -0.335
+9.78  pull  RightTrigger2 0.9
+9.88  axis  LeftStickX    -0.62
+9.88  pull  RightTrigger2 0.8
+9.98  axis  LeftStickX    -0.905
+9.98  pull  RightTrigger2 0.6
+10.08 pull  RightTrigger2 0.5
+10.18 axis  LeftStickX    -1.0
+10.18 pull  RightTrigger2 0.6
+10.38 axis  LeftStickX    -0.953
+10.48 axis  LeftStickX    -1.0
+10.68 axis  LeftStickX    -0.953
+10.78 axis  LeftStickX    -1.0
+10.98 axis  LeftStickX    -0.953
+11.08 axis  LeftStickX    -1.0
+11.18 axis  LeftStickX    -0.858
+11.28 axis  LeftStickX    -0.668
+11.28 pull  RightTrigger2 1.0
+11.38 axis  LeftStickX    -0.525
+11.48 axis  LeftStickX    -0.382
+11.58 axis  LeftStickX    -0.288
+11.68 axis  LeftStickX    -0.193
+11.78 axis  LeftStickX    -0.145
+11.98 axis  LeftStickX    -0.098
+12.08 axis  LeftStickX    0.0
+12.48 axis  LeftStickX    0.098
+12.58 axis  LeftStickX    0.0

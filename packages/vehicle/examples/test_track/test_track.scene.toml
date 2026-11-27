@@ -1,0 +1,451 @@
+# The vehicle package's test track (#1629, epic #1626): one small lap that
+# a playtest drives, and that keeps `vehicle` honest without a game's art,
+# items or race logic. A start straight north (-Z), a hairpin, a back
+# straight with a ramp on it, a patch of sand, and a closing turn.
+#
+#   flint play packages/vehicle/examples/test_track/test_track.scene.toml
+#   flint playtest packages/vehicle/examples/test_track/test_track.scene.toml \
+#     --input-script packages/vehicle/examples/test_track/playtests/lap.input \
+#     --test-script packages/vehicle/examples/test_track/playtests/referee.rhai
+#
+# W / S or a pad's triggers drive, A / D or the left stick steer, Space is
+# the handbrake. Every piece a wheel stands on is a static box whose top is
+# at y = 0 (the ramp rises from it); the runoff around it is 5 cm lower, and
+# a wheel on it has left the track. The pieces after the kart were written
+# by a script, two boxes a 15 degree step of each turn: the road and, on
+# the inside, its kerb, which has no collider.
+
+[scene]
+name = "Vehicle Test Track"
+version = "1.0"
+description = "The vehicle package's example: a lap with a straight, a hairpin, a ramp and a change of surface"
+input_config = "input.toml"
+
+# The whole lap from above the closing turn; scripts/chase_camera.rhai
+# follows the kart once the game runs.
+[camera]
+position = [18.0, 34.0, 38.0]
+target = [-7.0, 0.0, -24.0]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.04
+exposure = 1.1
+vignette_enabled = true
+vignette_intensity = 0.2
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.6
+
+# Late afternoon
+[entities.sky]
+sky = { zenith_color = [0.20, 0.36, 0.62, 1.0], horizon_color = [0.92, 0.74, 0.52, 1.0], haze_color = [0.96, 0.82, 0.62, 0.2], cloud_coverage = 0.25, sun_glow = 1.2 }
+
+[entities.sun]
+transform = { position = [0.0, 50.0, 0.0] }
+light = { type = "directional", direction = [-0.55, 0.45, 0.7], color = [1.0, 0.88, 0.70], intensity = 2.6 }
+
+[entities.fill]
+transform = { position = [0.0, 30.0, 0.0] }
+light = { type = "directional", direction = [0.5, 0.8, -0.3], color = [0.55, 0.65, 0.85], intensity = 0.35 }
+
+# What isn't track: a wheel on it has left the track (playtests/referee.rhai)
+[entities.runoff]
+transform = { position = [-7.0, -0.25, -25.0] }
+bounds = { min = [-60.0, -0.2, -70.0], max = [60.0, 0.2, 70.0] }
+material = { color = [0.30, 0.45, 0.22, 1.0], roughness = 0.95 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [120.0, 0.4, 140.0], friction = 0.8 }
+
+# The start and finish line, painted on the start straight (no collider)
+[entities.start_line]
+transform = { position = [0.0, 0.005, 0.0] }
+bounds = { min = [-3.5, -0.005, -0.3], max = [3.5, 0.005, 0.3] }
+material = { color = [0.95, 0.94, 0.90, 1.0], roughness = 0.5 }
+
+# The kart: ADR 0140's prototype, player-driven, 4 m behind the line facing
+# north. Its children are its wheels (posed by the package) and two boxes
+# that ride on the chassis: a seat back and a nose.
+[entities.kart]
+transform = { position = [0.0, 0.7, 4.0] }
+bounds = { min = [-0.6, -0.25, -1.0], max = [0.6, 0.25, 1.0] }
+material = { color = [0.08, 0.58, 0.62, 1.0], roughness = 0.35, metallic = 0.2 }
+rigidbody = { body_type = "dynamic", gravity_scale = 2.04 }
+collider = { shape = "box", size = [1.2, 0.5, 2.0], friction = 0.3 }
+vehicle = { top_speed = 24.0 }
+vehicle_input = {}
+
+[entities.kart_seat]
+parent = "kart"
+transform = { position = [0.0, 0.45, 0.45] }
+bounds = { min = [-0.35, -0.2, -0.12], max = [0.35, 0.2, 0.12] }
+material = { color = [0.95, 0.93, 0.88, 1.0], roughness = 0.5 }
+
+[entities.kart_nose]
+parent = "kart"
+transform = { position = [0.0, 0.0, -1.15] }
+bounds = { min = [-0.7, -0.12, -0.15], max = [0.7, 0.12, 0.15] }
+material = { color = [0.95, 0.42, 0.16, 1.0], roughness = 0.4 }
+
+[entities.wheel_fl]
+parent = "kart"
+transform = { position = [-0.55, 0.0, -0.75] }
+bounds = { min = [-0.12, -0.275, -0.275], max = [0.12, 0.275, 0.275] }
+material = { color = [0.06, 0.06, 0.07, 1.0], roughness = 0.8 }
+vehicle_wheel = { steer = true }
+
+[entities.wheel_fr]
+parent = "kart"
+transform = { position = [0.55, 0.0, -0.75] }
+bounds = { min = [-0.12, -0.275, -0.275], max = [0.12, 0.275, 0.275] }
+material = { color = [0.06, 0.06, 0.07, 1.0], roughness = 0.8 }
+vehicle_wheel = { steer = true }
+
+[entities.wheel_rl]
+parent = "kart"
+transform = { position = [-0.55, 0.0, 0.7] }
+bounds = { min = [-0.12, -0.275, -0.275], max = [0.12, 0.275, 0.275] }
+material = { color = [0.06, 0.06, 0.07, 1.0], roughness = 0.8 }
+vehicle_wheel = { drive = true, handbrake = true }
+
+[entities.wheel_rr]
+parent = "kart"
+transform = { position = [0.55, 0.0, 0.7] }
+bounds = { min = [-0.12, -0.275, -0.275], max = [0.12, 0.275, 0.275] }
+material = { color = [0.06, 0.06, 0.07, 1.0], roughness = 0.8 }
+vehicle_wheel = { drive = true, handbrake = true }
+
+# The game's own logic: the sand's grip and speed (scripts/surfaces.rhai)
+# and the chase camera (scripts/chase_camera.rhai)
+[entities.track_rules]
+script = { source = "surfaces.rhai" }
+
+[entities.chase_camera]
+script = { source = "chase_camera.rhai" }
+
+# ---------------------------------------------------------------- the track
+
+# The start straight, 70 m north (-Z)
+[entities.start_straight]
+transform = { position = [0.0, -0.2, -25.0] }
+bounds = { min = [-3.5, -0.2, -35.0], max = [3.5, 0.2, 35.0] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 70.0] }
+
+# The hairpin: 180 degrees left on a 7 m radius
+
+[entities.hairpin_00]
+transform = { position = [-0.0599, -0.2, -60.9137], rotation = [0.0, 7.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_00]
+transform = { position = [-3.1829, 0.005, -60.5025], rotation = [0.0, 7.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.hairpin_01]
+transform = { position = [-0.5328, -0.2, -62.6788], rotation = [0.0, 22.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_01]
+transform = { position = [-3.4431, 0.005, -61.4733], rotation = [0.0, 22.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+[entities.hairpin_02]
+transform = { position = [-1.4465, -0.2, -64.2613], rotation = [0.0, 37.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_02]
+transform = { position = [-3.9456, 0.005, -62.3437], rotation = [0.0, 37.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.hairpin_03]
+transform = { position = [-2.7387, -0.2, -65.5535], rotation = [0.0, 52.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_03]
+transform = { position = [-4.6563, 0.005, -63.0544], rotation = [0.0, 52.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+[entities.hairpin_04]
+transform = { position = [-4.3212, -0.2, -66.4672], rotation = [0.0, 67.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_04]
+transform = { position = [-5.5267, 0.005, -63.5569], rotation = [0.0, 67.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.hairpin_05]
+transform = { position = [-6.0863, -0.2, -66.9401], rotation = [0.0, 82.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_05]
+transform = { position = [-6.4975, 0.005, -63.8171], rotation = [0.0, 82.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+[entities.hairpin_06]
+transform = { position = [-7.9137, -0.2, -66.9401], rotation = [0.0, 97.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_06]
+transform = { position = [-7.5025, 0.005, -63.8171], rotation = [0.0, 97.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.hairpin_07]
+transform = { position = [-9.6788, -0.2, -66.4672], rotation = [0.0, 112.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_07]
+transform = { position = [-8.4733, 0.005, -63.5569], rotation = [0.0, 112.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+[entities.hairpin_08]
+transform = { position = [-11.2613, -0.2, -65.5535], rotation = [0.0, 127.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_08]
+transform = { position = [-9.3437, 0.005, -63.0544], rotation = [0.0, 127.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.hairpin_09]
+transform = { position = [-12.5535, -0.2, -64.2613], rotation = [0.0, 142.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_09]
+transform = { position = [-10.0544, 0.005, -62.3437], rotation = [0.0, 142.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+[entities.hairpin_10]
+transform = { position = [-13.4672, -0.2, -62.6788], rotation = [0.0, 157.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_10]
+transform = { position = [-10.5569, 0.005, -61.4733], rotation = [0.0, 157.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.hairpin_11]
+transform = { position = [-13.9401, -0.2, -60.9137], rotation = [0.0, 172.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.hairpin_kerb_11]
+transform = { position = [-10.8171, 0.005, -60.5025], rotation = [0.0, 172.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+# The back straight, south (+Z), the ramp on it
+[entities.back_straight]
+transform = { position = [-14.0, -0.2, -32.5] }
+bounds = { min = [-3.5, -0.2, -27.5], max = [3.5, 0.2, 27.5] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 55.0] }
+
+# The change of surface: sand, whose grip and top speed tracks/surfaces.rhai scales down
+[entities.sand]
+transform = { position = [-14.0, -0.2, 2.5] }
+bounds = { min = [-3.5, -0.2, -7.5], max = [3.5, 0.2, 7.5] }
+material = { color = [0.8, 0.66, 0.42, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 15.0] }
+
+# The closing turn: 180 degrees left back onto the start straight
+
+[entities.turn2_00]
+transform = { position = [-13.9401, -0.2, 10.9137], rotation = [0.0, -172.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_00]
+transform = { position = [-10.8171, 0.005, 10.5025], rotation = [0.0, -172.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.turn2_01]
+transform = { position = [-13.4672, -0.2, 12.6788], rotation = [0.0, -157.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_01]
+transform = { position = [-10.5569, 0.005, 11.4733], rotation = [0.0, -157.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+[entities.turn2_02]
+transform = { position = [-12.5535, -0.2, 14.2613], rotation = [0.0, -142.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_02]
+transform = { position = [-10.0544, 0.005, 12.3437], rotation = [0.0, -142.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.turn2_03]
+transform = { position = [-11.2613, -0.2, 15.5535], rotation = [0.0, -127.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_03]
+transform = { position = [-9.3437, 0.005, 13.0544], rotation = [0.0, -127.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+[entities.turn2_04]
+transform = { position = [-9.6788, -0.2, 16.4672], rotation = [0.0, -112.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_04]
+transform = { position = [-8.4733, 0.005, 13.5569], rotation = [0.0, -112.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.turn2_05]
+transform = { position = [-7.9137, -0.2, 16.9401], rotation = [0.0, -97.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_05]
+transform = { position = [-7.5025, 0.005, 13.8171], rotation = [0.0, -97.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+[entities.turn2_06]
+transform = { position = [-6.0863, -0.2, 16.9401], rotation = [0.0, -82.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_06]
+transform = { position = [-6.4975, 0.005, 13.8171], rotation = [0.0, -82.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.turn2_07]
+transform = { position = [-4.3212, -0.2, 16.4672], rotation = [0.0, -67.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_07]
+transform = { position = [-5.5267, 0.005, 13.5569], rotation = [0.0, -67.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+[entities.turn2_08]
+transform = { position = [-2.7387, -0.2, 15.5535], rotation = [0.0, -52.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_08]
+transform = { position = [-4.6563, 0.005, 13.0544], rotation = [0.0, -52.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.turn2_09]
+transform = { position = [-1.4465, -0.2, 14.2613], rotation = [0.0, -37.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_09]
+transform = { position = [-3.9456, 0.005, 12.3437], rotation = [0.0, -37.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+[entities.turn2_10]
+transform = { position = [-0.5328, -0.2, 12.6788], rotation = [0.0, -22.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_10]
+transform = { position = [-3.4431, 0.005, 11.4733], rotation = [0.0, -22.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.78, 0.16, 0.12, 1.0], roughness = 0.6 }
+
+[entities.turn2_11]
+transform = { position = [-0.0599, -0.2, 10.9137], rotation = [0.0, -7.5, 0.0] }
+bounds = { min = [-3.5, -0.2, -1.5324], max = [3.5, 0.2, 1.5324] }
+material = { color = [0.17, 0.17, 0.19, 1.0], roughness = 0.9 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 3.0647] }
+
+[entities.turn2_kerb_11]
+transform = { position = [-3.1829, 0.005, 10.5025], rotation = [0.0, -7.5, 0.0] }
+bounds = { min = [-0.35, -0.005, -0.5169], max = [0.35, 0.005, 0.5169] }
+material = { color = [0.92, 0.9, 0.86, 1.0], roughness = 0.6 }
+
+# The ramp: a 12 degree kicker, 1.25 m high at its lip
+[entities.ramp]
+transform = { position = [-14.0, 0.4281, -30.024], rotation = [-12.0, 0.0, 0.0] }
+bounds = { min = [-3.5, -0.2, -3.0], max = [3.5, 0.2, 3.0] }
+material = { color = [0.92, 0.55, 0.12, 1.0], roughness = 0.7 }
+rigidbody = { body_type = "static" }
+collider = { shape = "box", size = [7.0, 0.4, 6.0] }
