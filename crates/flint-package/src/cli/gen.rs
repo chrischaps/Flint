@@ -28,7 +28,7 @@ pub struct GenAiPlace;
 
 impl FlagPlace for GenAiPlace {
     const PATH: &'static [&'static str] = &["gen"];
-    const SLOT: &'static str = "ai";
+    const SLOT: &'static str = "assist";
 }
 
 /// The ai package's "Cost tracking" slot of `gen`.
