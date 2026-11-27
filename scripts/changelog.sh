@@ -344,7 +344,7 @@ cmd_assemble() {
     printf '%s\n' "$stamped" | while read -r t d f; do
         rm -f "$f"
         # Fragment i's entries are ordered i * 100 and up.
-        if printf '%s\n' "$fresh" | awk -F '\t' -v i="$i" 'NF && int($2 / 100) == i { found = 1 } END { exit !found }'; then
+        if printf '%s\n' "$fresh" | awk -F '\t' -v i="$i" 'NF && int($3 / 100) == i { found = 1 } END { exit !found }'; then
             echo "changelog: assembled $f ($d)"
         else
             echo "changelog: deleted $f: its entry is already in $month_dir/ (a merge brought it back)"

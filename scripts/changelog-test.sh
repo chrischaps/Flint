@@ -291,7 +291,9 @@ check "since --package engine,music prints the kernel's two and music's" \
     "[ \"\$(bash scripts/changelog.sh since 2026-12-10 --package engine,music 2>/dev/null | grep -c '^### ')\" = 3 ] && ! bash scripts/changelog.sh since 2026-12-10 --package engine --package music 2>/dev/null | grep -q Living"
 check "since --package nope is refused" "! bash scripts/changelog.sh since 2026-12-10 --package nope >/dev/null 2>&1"
 count=$(bash scripts/changelog.sh count)
-bash scripts/changelog.sh assemble >/dev/null
+said=$(bash scripts/changelog.sh assemble)
+check "assembly says it assembled each of the four, none 'already in changelog/'" \
+    "[ \"\$(printf '%s\n' \"\$said\" | grep -c '^changelog: assembled changelog.d/91[0-5]-')\" = 4 ] && ! printf '%s\n' \"\$said\" | grep -q 'already in'"
 day=$(awk '/^## 2026-12-10/ { on = 1 } /^## 2026-12-0/ { on = 0 } on && /^##/' changelog/2026-12.md)
 check "assembly files each entry under its package: the kernel's unnamed and first, then by name" \
     "[ \"\$day\" = \"\$(printf '## 2026-12-10\n### Kernel 912 (#912)\n### Kernel 915 (#915)\n## 2026-12-10 \\302\\267 living\n### Living 910 (#910)\n## 2026-12-10 \\302\\267 music\n### Music 911 (#911)')\" ]"
