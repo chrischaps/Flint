@@ -202,11 +202,13 @@ fn load_schemas(
             .collect::<Vec<_>>()
             .join(", ")
     );
-    let registry =
-        flint_schema::SchemaRegistry::load_from_directories(&dirs.dirs).unwrap_or_else(|e| {
+    let mut registry = flint_schema::SchemaRegistry::load_from_directories(&dirs.dirs)
+        .unwrap_or_else(|e| {
             log::warn!("Failed to load schemas: {e}");
             flint_schema::SchemaRegistry::new()
         });
+    // What it lacks is the player's line to name (#1601)
+    flint_player::packages::mark_built_without(&mut registry);
     (registry, dirs)
 }
 

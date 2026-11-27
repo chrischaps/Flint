@@ -70,7 +70,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod in_use;
-pub use in_use::{InUse, ListError, Listed, PackageList, Wanted};
+pub use in_use::{BuiltWithout, InUse, ListError, Listed, PackageList, Wanted};
 
 /// A package's manifest file name, in the package's own folder.
 pub const MANIFEST_FILE: &str = "package.toml";

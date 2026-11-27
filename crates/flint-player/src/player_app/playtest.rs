@@ -404,6 +404,7 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
     let mut registry = flint_schema::SchemaRegistry::load_from_directories(&schema_dirs.dirs)
         .context("Failed to load schemas")?;
     registry.set_packages(schema_dirs.packages.clone());
+    crate::packages::mark_built_without(&mut registry);
     for script in &options.test_scripts {
         if !flint_core::vfs::exists(script) {
             anyhow::bail!(

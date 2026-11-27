@@ -207,6 +207,30 @@ pub fn built_schema_dirs(dirs: SchemaDirs) -> SchemaDirs {
     dirs.without_packages(lacks)
 }
 
+/// Every package this player [`lacks`], by what a scene names of it (its
+/// manifest's `[provides]` components and scene tables, [`WITHOUT`]).
+pub fn built_without() -> Vec<flint_core::package::BuiltWithout> {
+    WITHOUT
+        .iter()
+        .filter(|w| lacks(w.package))
+        .map(|w| flint_core::package::BuiltWithout {
+            package: w.package.to_string(),
+            components: w.components.iter().map(|c| c.to_string()).collect(),
+            scene_tables: w.scene_tables.iter().map(|t| t.to_string()).collect(),
+        })
+        .collect()
+}
+
+/// Tell `registry`, which this player loads scenes with, the packages it
+/// [`lacks`] (#1601). Their schemas aren't read ([`built_schema_dirs`]),
+/// so a scene's `living_prop` would be an `unknown-component` in the load's
+/// summary. The player names them at the scene's entry instead, in the
+/// package's one line with `flint build` as its hint
+/// (`missing_features::unbuilt`), and the summary leaves them to it.
+pub fn mark_built_without(registry: &mut flint_schema::SchemaRegistry) {
+    registry.set_built_without(built_without());
+}
+
 /// The packages a project lists that a binary was built without.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unbuilt {

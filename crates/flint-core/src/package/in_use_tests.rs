@@ -3,6 +3,28 @@ use crate::project::{schema_dirs, Project, SchemaDirsError};
 use crate::vfs::{self, MemorySource};
 use std::sync::Arc;
 
+/// A package a binary was built without names its own components and
+/// tables as unknown, and nothing else (#1601).
+#[test]
+fn built_without_names_only_its_own_unknowns() {
+    let living = BuiltWithout {
+        package: "living".into(),
+        components: vec!["living_prop".into()],
+        scene_tables: vec!["wooze".into()],
+    };
+    let unknown = |name: &str| Diagnostic::error(codes::UNKNOWN_COMPONENT, "").component(name);
+    let table = |name: &str| Diagnostic::warning(codes::UNKNOWN_TABLE, "").table(name);
+    assert!(living.names(&unknown("living_prop")));
+    assert!(living.names(&table("wooze")));
+    assert!(!living.names(&unknown("moss")));
+    assert!(
+        !living.names(&table("living_prop")),
+        "a table is no component"
+    );
+    let bad_field = Diagnostic::error(codes::BAD_TYPE, "").component("living_prop");
+    assert!(!living.names(&bad_field), "only a name it doesn't know");
+}
+
 fn manifest(name: &str, tier: &str, extra: &str) -> String {
     let range = if tier == "kernel" {
         "api = \"0.1.0\""
