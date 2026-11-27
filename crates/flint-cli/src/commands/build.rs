@@ -279,11 +279,15 @@ fn plan(
         for f in &p.features {
             let on_player = has_feature(&player_toml, f);
             let on_cli = has_feature(&cli_toml, f);
+            // A folder newer than the launchers' generated features (#1587)
             if !on_player && !on_cli {
                 bail!(
                     "{}'s [build] features names `{f}`, which neither flint-player nor \
-                     flint-cli has",
-                    project::shown(&p.file)
+                     flint-cli has: the package's folder is newer than the launchers' \
+                     features. Run `{}` in {}, then `flint build` again",
+                    project::shown(&p.file),
+                    flint_package::cli::SYNC,
+                    project::shown(&engine)
                 );
             }
             if on_player && !player.packages.contains(f) {
@@ -940,6 +944,58 @@ mod tests {
         let e = format!("{e:#}");
         assert!(e.contains("packages.livng"), "{e}");
         assert!(e.contains("living"), "{e}");
+    }
+
+    /// #1587: a package folder newer than the launchers' features (the toy
+    /// fixture dropped into a copy of the engine's manifests, the sync not
+    /// run) is refused naming the sync script and the engine to run it in.
+    #[test]
+    fn a_package_the_launchers_dont_know_yet_names_the_sync_script() {
+        let real = engine();
+        let copy = std::env::temp_dir()
+            .join(format!("flint-build-{}", std::process::id()))
+            .join("unsynced-engine");
+        let _ = std::fs::remove_dir_all(&copy);
+        for name in [PLAYER, CLI] {
+            let to = copy.join("crates").join(name);
+            std::fs::create_dir_all(&to).unwrap();
+            std::fs::copy(
+                real.join("crates").join(name).join("Cargo.toml"),
+                to.join("Cargo.toml"),
+            )
+            .unwrap();
+        }
+        let packages = real.join(flint_core::package::PACKAGES_DIR);
+        for folder in std::fs::read_dir(&packages).unwrap() {
+            let folder = folder.unwrap().path();
+            let file = folder.join(flint_core::package::MANIFEST_FILE);
+            if file.is_file() {
+                let to = copy.join("packages").join(folder.file_name().unwrap());
+                std::fs::create_dir_all(&to).unwrap();
+                std::fs::copy(&file, to.join(flint_core::package::MANIFEST_FILE)).unwrap();
+            }
+        }
+        let toy = copy.join("packages/toy");
+        std::fs::create_dir_all(&toy).unwrap();
+        std::fs::copy(
+            real.join("tests/fixtures/packages/toy/package.toml"),
+            toy.join(flint_core::package::MANIFEST_FILE),
+        )
+        .unwrap();
+
+        let project = project_with("unsynced", Some("toy = \"*\""));
+        let e = plan(&project, copy.clone(), "test", &args()).unwrap_err();
+        let e = format!("{e:#}");
+        assert!(e.contains("names `toy`, which neither flint-player"), "{e}");
+        assert!(
+            e.contains("Run `python3 scripts/package-sync.py` in"),
+            "{e}"
+        );
+        assert!(e.contains(&project::shown(&copy)), "{e}");
+        // A package the launchers have still plans as before
+        let project = project_with("synced", Some("procgen = \"*\""));
+        assert!(plan(&project, copy.clone(), "test", &args()).is_ok());
+        let _ = std::fs::remove_dir_all(&copy);
     }
 
     #[test]

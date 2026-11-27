@@ -73,11 +73,16 @@ pub fn finish(result: anyhow::Result<()>) -> ExitCode {
         Err(e) if e.downcast_ref::<Failed>().is_some() => ExitCode::FAILURE,
         // A command this build left out (#1333): exit 2, as a command line
         // clap can't take, and the document names the package
-        Err(e) if e.downcast_ref::<MissingPackage>().is_some() => {
+        Err(mut e) if e.downcast_ref::<MissingPackage>().is_some() => {
+            // A package's own `missing` can't tell a folder the launchers
+            // don't know yet (#1587); the manifests compiled in can
+            crate::commands::absent::judge(&mut e);
             if json() && !emitted() {
                 let mut doc = error_document(&e);
                 if let Some(m) = e.downcast_ref::<MissingPackage>() {
                     doc["error"]["package"] = json!(m.package);
+                    doc["error"]["hint"] = json!(m.hint());
+                    doc["error"]["unsynced"] = json!(m.unsynced);
                 }
                 document(&doc);
             }

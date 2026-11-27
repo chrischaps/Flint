@@ -66,6 +66,7 @@ pub fn missing_command(
         Some(MissingPackage {
             what: format!("flint {provided}"),
             package,
+            unsynced: unsynced(package),
         })
     })
 }
@@ -82,7 +83,40 @@ pub fn missing_owned(what: impl Into<String>, words: &[&str]) -> anyhow::Error {
         .unwrap_or(command);
     // Once a run, on its way out
     let package: &'static str = Box::leak(owner.into_boxed_str());
-    missing(what, package)
+    let mut e = missing(what, package);
+    judge(&mut e);
+    e
+}
+
+/// Whether `package`'s folder was in the tree this flint was built from
+/// while the launchers had no feature for it (#1587): a `[build] features`
+/// entry that is none of this crate's features, built or not, so
+/// `scripts/package-sync.py` hadn't written it. Listing the package and
+/// running `flint build` can't help then: the build refuses it too.
+pub fn unsynced(package: &str) -> bool {
+    unsynced_among(&manifests(), package)
+}
+
+/// [`unsynced`] over `manifests`: `package`'s has a `[build] features`
+/// entry that isn't among [`built_features`]' names.
+fn unsynced_among(manifests: &[flint_core::package::Package], package: &str) -> bool {
+    manifests
+        .iter()
+        .find(|p| p.name == package)
+        .is_some_and(|p| {
+            p.features
+                .iter()
+                .any(|f| !built_features().any(|(known, _)| known == f))
+        })
+}
+
+/// Sets a [`MissingPackage`] error's `unsynced` from the manifests compiled
+/// in: a package's own command names one with `missing`, which can't know.
+/// Any other error is left as it is.
+pub fn judge(e: &mut anyhow::Error) {
+    if let Some(m) = e.downcast_mut::<MissingPackage>() {
+        m.unsynced = m.unsynced || unsynced(m.package);
+    }
 }
 
 /// The leading subcommand words of a command line: `asset generate` of
@@ -162,6 +196,60 @@ mod tests {
         );
         assert!(text.contains("run `flint build`"), "{text}");
         assert!(e.downcast_ref::<MissingPackage>().is_some());
+    }
+
+    /// The toy package's manifest (#1560's fixture): a folder whose
+    /// feature no launcher has until `scripts/package-sync.py` runs.
+    fn toy() -> flint_core::package::Package {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/packages/toy/package.toml");
+        flint_core::package::read(&file).unwrap()
+    }
+
+    /// #1587: a package whose folder is in the tree and whose feature
+    /// neither launcher has is told to run the sync script, not to list it
+    /// and `flint build` (which refuses it too).
+    #[test]
+    fn a_package_the_launchers_dont_know_yet_names_the_sync_script() {
+        let mut manifests = manifests();
+        manifests.push(toy());
+        assert!(unsynced_among(&manifests, "toy"));
+        let e = MissingPackage {
+            what: "flint toy springs".into(),
+            package: "toy",
+            unsynced: unsynced_among(&manifests, "toy"),
+        };
+        let text = e.to_string();
+        assert!(
+            text.starts_with("flint toy springs needs the `toy` package"),
+            "{text}"
+        );
+        assert!(
+            text.contains("run `python3 scripts/package-sync.py`"),
+            "{text}"
+        );
+        assert!(!text.contains("[packages]"), "{text}");
+    }
+
+    /// Every package of the tree this flint was built from has its feature
+    /// in the launchers, so each keeps the `[packages]` / `flint build`
+    /// line, whether this build has it or not: the sync script is only for
+    /// a folder the launchers don't know.
+    #[test]
+    fn a_package_the_launchers_have_keeps_the_packages_line() {
+        let all = manifests();
+        assert!(all.len() >= 7, "{} manifests", all.len());
+        for p in &all {
+            assert!(!unsynced(&p.name), "{} reads as unsynced", p.name);
+            let mut e = missing("flint x", Box::leak(p.name.clone().into_boxed_str()));
+            judge(&mut e);
+            let text = e.to_string();
+            assert!(text.contains("under [packages]"), "{text}");
+            assert!(!text.contains("package-sync"), "{text}");
+        }
+        // A name no manifest has (a package's own `missing` of a typo'd
+        // name) isn't judged unsynced either
+        assert!(!unsynced("no-such-package"));
     }
 
     #[test]
