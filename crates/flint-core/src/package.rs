@@ -80,7 +80,9 @@ pub const MANIFEST_FILE: &str = "package.toml";
 pub const PACKAGES_DIR: &str = "packages";
 
 /// The tables a manifest may hold.
-const TABLES: [&str; 6] = ["package", "requires", "build", "rust", "with", "provides"];
+const TABLES: [&str; 7] = [
+    "package", "requires", "build", "rust", "with", "provides", "without",
+];
 
 /// The keys `[package]` may hold.
 const PACKAGE_KEYS: [&str; 6] = ["name", "version", "tier", "summary", "engine", "api"];
@@ -93,6 +95,26 @@ const RUST_KEYS: [&str; 2] = ["player", "cli"];
 
 /// The keys a `[with.<package>]` table may hold.
 const WITH_KEYS: [&str; 1] = ["features"];
+
+/// The keys `[without]` may hold.
+const WITHOUT_KEYS: [&str; 2] = ["does", "policies"];
+
+/// What a player built without the package still knows of it (`[without]`,
+/// ADR 0137 decision 8, #1585), so the kernel names no package: the line a
+/// scene that uses it hears is written from `[provides]`' components and
+/// scene tables and [`does`](Without::does), and each of
+/// [`policies`](Without::policies) is a name a game state may give in every
+/// build.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Without {
+    /// What the scene's parts do in a build without the package, after
+    /// "the scene's <parts>": `stand still`. `None`: the kernel's words.
+    pub does: Option<String>,
+    /// The names a game state's policy may pause this package's subsystem
+    /// by (#727): `living`. A state naming one registers in a build
+    /// without the package too, and does nothing there.
+    pub policies: Vec<String>,
+}
 
 /// A package's tier (ADR 0136 decision 3): who has it without asking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -255,6 +277,8 @@ pub struct Package {
     /// `[with.debug-hud]`.
     pub with: BTreeMap<String, Vec<String>>,
     pub provides: Provides,
+    /// What a build without it still knows of it (`[without]`, #1585).
+    pub without: Without,
     /// The manifest it was read from.
     pub file: PathBuf,
 }
@@ -301,6 +325,7 @@ pub fn parse(text: &str, file: &Path) -> Result<Package, Vec<Diagnostic>> {
     let provides = p.provides(&table);
     let (player, cli) = p.rust(&table, &provides);
     let with = p.with(&table, package.as_ref().map(|(name, _)| name.as_str()));
+    let without = p.without(&table);
     match package {
         Some((name, head)) if p.problems.is_empty() => Ok(Package {
             name,
@@ -315,6 +340,7 @@ pub fn parse(text: &str, file: &Path) -> Result<Package, Vec<Diagnostic>> {
             cli,
             with,
             provides,
+            without,
             file: file.to_path_buf(),
         }),
         _ => Err(p.problems),
@@ -561,7 +587,7 @@ impl Parse<'_> {
                 self.error(
                     key.clone(),
                     format!(
-                        "unknown table `[{key}]` (the tables are [package], [requires], [build], [rust], [provides])"
+                        "unknown table `[{key}]` (the tables are [package], [requires], [build], [rust], [with], [provides], [without])"
                     ),
                 )
                 .hint = hint;
@@ -858,6 +884,25 @@ impl Parse<'_> {
             out.insert(name.clone(), self.strings(part, &field, "features"));
         }
         out
+    }
+
+    /// `[without]`: `does`, a phrase, and `policies`, names.
+    fn without(&mut self, table: &toml::Table) -> Without {
+        let Some(without) = self.sub(table, "without") else {
+            return Without::default();
+        };
+        self.unknown_keys(without, "without", &WITHOUT_KEYS);
+        let does = self.string(without, "without", "does");
+        if does.as_deref().is_some_and(|d| d.trim().is_empty()) {
+            self.error(
+                "without.does",
+                "empty: say what the parts do, or leave the key out",
+            );
+        }
+        Without {
+            does,
+            policies: self.strings(without, "without", "policies"),
+        }
     }
 
     fn provides(&mut self, table: &toml::Table) -> Provides {

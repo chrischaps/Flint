@@ -771,8 +771,8 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   don't change. Their values reach the package as `flint_package::LaunchFlags`
   (by long name, in the run's resources, `PlayerApp::launch_flags_mut`).
   Living's `LivingStart::of` reads them the first time a scene is built.
-  `LaunchOptions::{compare, compare_at_start}` went. A package bringing its
-  own `clap::Args` is #1572's work.
+  `LaunchOptions::{compare, compare_at_start}` went. (#1585 made them
+  living's `player_args`; see its section.)
 - **A capture's living state**: `CaptureStart::wooze` and `HeadlessGame`'s
   living methods went. The render declares `flint_package::cli::render::StagePart`,
   and living's CLI part fills it (`flint_package::cli::Stages`). It puts the
@@ -981,6 +981,53 @@ above.
   beside flint-wooze and flint-procgen. `cargo tree -p flint-cli
   --no-default-features -e normal` has no flint-debug-ui.
 
+## As built: the kernel names no package (#1585)
+
+#1560's check held the player to no package name in the build's sense. It
+still named living and music as strings, which build without them. Those
+went, as decisions 4 and 8 have it:
+
+- **The "built without" line is the manifest's** (decision 8).
+  `missing_features::unbuilt` is one kernel builder, registered by
+  `ENGINE`. For each package flint-player has a part of that the run's
+  registry lacks, it counts the package's `[provides]` components among
+  the scene's entities and its scene tables among the scene's tables. A
+  scene that uses any of them hears `[<p>] this player is built without the
+  `<p>` package: the scene's <parts> <does>` once. `<does>` is a new
+  manifest table, `[without] does` (living: `stand still`; music: `plays
+  silent, and music_beat() reads -1, as with no music`). `build.rs` writes
+  the table (`packages::WITHOUT`) from the manifests, as it writes
+  `PLAYER_PACKAGES`, so it works in the browser too. `unbuilt_living`,
+  `unbuilt_music`, `living_uses` and `music_line` went. "Woozy grass"
+  dropped out of the line: `grass.wooze` is a field of the kernel's
+  `terrain` and `grass_ground`, not something the package provides, and
+  woozy grass needs a `[wooze]` table, which the line names.
+- **Policy names are the manifest's too.** `[without] policies =
+  ["living"]`. `ENGINE` registers each one, so a game state naming `living`
+  registers in every build (#727). Living still registers its own when
+  it is there, and a name is registered once.
+- **`--compare` and `--split` are living's `player_args`** (section 4's
+  row). `Registry::player_args::<A: clap::Args + Clone + Send + Sync>()`
+  records `A::augment_args` and a reader. `Registry::augment_player_args`
+  adds every package's group to a command, and `read_player_args` reads
+  them back into a `flint_package::PackageFlags`. `flint-player`
+  (`PlayerCli::parse_launched`) and `flint play` (flint-cli's
+  `with_play_flags` on the `play` subcommand) parse with them, and
+  `prepare` puts each group in the run's resources by its own type. Living's
+  group is `flint_living::player::CompareArgs` (under a "Living props" help
+  heading, with clap checking `A,B` and `--split`'s `requires`), and
+  `LivingStart::of` reads it. `flint_package::LaunchFlags` and
+  `PlayerApp::launch_flags_mut` went. A build without living has no
+  `--compare`: clap refuses it as any unknown flag, where the player used
+  to warn and play on. `PlayerArgs` lost two flags (#990's count).
+- **`scripts/package-names-check.py` holds strings too**: in
+  `crates/flint-player/src`, outside test code, a string literal that is a
+  package's name fails (rule 3). One exception is recorded by file: the
+  `music` log target in `logging.rs`, which the music package logs under.
+  The player's two "procgen" debug labels for an asset maker's collider
+  mesh now read "made mesh". The CLI isn't held to it: its commands and
+  help name packages as words a user types.
+
 ## As built: a package's flags on another's command (#1572)
 
 - **A flag slot** (`flint_package::cli::flags`). A command that takes a
@@ -1040,7 +1087,8 @@ above.
   it (the ai crate is a dev-dependency of flint-cli, as living's is).
 - **What this leaves**: `git grep 'feature = "ai"' crates/flint-cli/src`
   finds nothing, and `scripts/package-names-check.py` lost its five #1572
-  exceptions (#1583 had taken its own: none is left). flint-cli's `ai` feature is
+  exceptions (#1583 had taken its own; the one left is #1585's `music`
+  log target, a string). flint-cli's `ai` feature is
   `["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli"]`: it names
   no procgen-ai or ai-core crate. `gen`'s ai flags are still declared in
   `GenArgs`, interleaved with procgen's under its headings; moving them

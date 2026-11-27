@@ -35,3 +35,11 @@ crates = ["flint-living", "flint-wooze"]
 components = ["living_prop", "shallow_wooze"]
 scene_tables = ["living", "wooze"]
 script_modules = ["living", "wooze", "debug"]
+
+# What a player built without it still knows (ADR 0137 decision 8, #1585):
+# a scene with the components or tables above hears once that they `does`,
+# and a game state may name the `living` policy in any build (#727). The
+# player's kernel reads both from here, so it names no package.
+[without]
+does = "stand still"
+policies = ["living"]

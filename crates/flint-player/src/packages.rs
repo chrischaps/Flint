@@ -51,24 +51,44 @@ impl Package for Part {
     }
 }
 
+/// What the kernel knows of a package this crate has a part of, in any
+/// build, from its manifest (`build.rs`'s `WITHOUT`, #1585): what a scene
+/// uses of it (`[provides]` components and scene tables) and what a build
+/// without it still says and takes (`[without]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Without {
+    /// Its `[package] name`.
+    pub package: &'static str,
+    /// `[provides] components`.
+    pub components: &'static [&'static str],
+    /// `[provides] scene_tables`.
+    pub scene_tables: &'static [&'static str],
+    /// `[without] does`: what the scene's parts do in a build without it.
+    pub does: Option<&'static str>,
+    /// `[without] policies`: names a game state may give in every build.
+    pub policies: &'static [&'static str],
+}
+
+/// [`Without`] of every package in [`PLAYER_PACKAGES`], in that order.
+pub const WITHOUT: &[Without] = generated::WITHOUT;
+
 /// The kernel's own registration, `engine`'s: the `field` subsystem and
-/// module, and, for each package the build left out, the line a scene that
-/// uses it hears (and `living`'s policy name, which a game state may name
-/// in any build). It is always first. Music's line asks the run's registry
-/// (`missing_features::unbuilt_music`), since the package is its own
-/// crate (#1555) and this one names no feature of it.
+/// module, the policy names the manifests' `[without]` give (a game state
+/// may name them in any build, #727), and the line a scene that uses a
+/// package the run lacks hears, written from that package's manifest
+/// (`missing_features::unbuilt`, ADR 0137 decision 8, #1585), so the
+/// kernel names no package. It is always first.
 pub static ENGINE: Part = Part {
     name: "engine",
     register: |registry| {
         use crate::player_app::subsystem;
         subsystem::field::register(registry);
-        // A game state may name `living` in any build (#727), and a scene
-        // that uses living props in a build without the package hears so
-        // once (its own crate since #1558)
-        registry
-            .policy("living")
-            .scene_subsystem(crate::player_app::missing_features::unbuilt_living);
-        registry.scene_subsystem(crate::player_app::missing_features::unbuilt_music);
+        for without in WITHOUT {
+            for policy in without.policies {
+                registry.policy(policy);
+            }
+        }
+        registry.scene_subsystem(crate::player_app::missing_features::unbuilt);
         // The point for a package's scene panels (the Living Props panel,
         // #1558), which the packages after the kernel fill. A kernel type
         // since #1559: the player makes them only where a debug HUD is
@@ -154,6 +174,21 @@ pub fn launch(packages: &[&dyn Package]) -> bool {
 /// named one.
 pub fn registry() -> &'static Registry {
     RUN.get_or_init(|| compose(&stock()))
+}
+
+/// `command` with the run's packages' own flags (living's `--compare` and
+/// `--split`, `Registry::player_args`, #1585): what `flint-player` and
+/// `flint play` parse.
+pub fn player_flags(command: clap::Command) -> clap::Command {
+    registry().augment_player_args(command)
+}
+
+/// The packages' flags, read back from the matches of a command
+/// [`player_flags`] made, for [`PlayerArgs::packages`](crate::PlayerArgs::packages).
+pub fn read_player_flags(
+    matches: &clap::ArgMatches,
+) -> Result<flint_package::PackageFlags, clap::Error> {
+    registry().read_player_args(matches)
 }
 
 /// Whether this player lacks `package`: one this crate has a part of, which
@@ -441,6 +476,67 @@ mod tests {
             assert!(PLAYER_PACKAGES.contains(&name), "{name}");
             assert_eq!(registry().has(name), built_feature(name), "{name}");
         }
+    }
+
+    /// The packages' own player flags join `flint-player`'s command line
+    /// with no clash against the kernel's (clap's debug checks run on the
+    /// whole command), and in a build with living, `--compare ,calm
+    /// --split` is living's start; a launcher without living has no
+    /// `--compare` (#1585).
+    #[test]
+    fn the_packages_flags_join_the_player_command_line() {
+        use clap::{CommandFactory, FromArgMatches};
+        let parse = |registry: &Registry, line: &[&str]| {
+            let matches = registry
+                .augment_player_args(crate::PlayerCli::command())
+                .try_get_matches_from(line)?;
+            let mut cli = crate::PlayerCli::from_arg_matches(&matches)?;
+            cli.args.packages = registry.read_player_args(&matches)?;
+            Ok::<_, clap::Error>(cli)
+        };
+        player_flags(crate::PlayerCli::command()).debug_assert();
+        let line = [
+            "flint-player",
+            "grove.scene.toml",
+            "--compare",
+            ",calm",
+            "--split",
+        ];
+        let bare = compose(&[]);
+        let refused = parse(&bare, &line).unwrap_err();
+        assert_eq!(refused.kind(), clap::error::ErrorKind::UnknownArgument);
+        if !registry().has("living") {
+            return;
+        }
+        let cli = parse(registry(), &line).unwrap();
+        assert_eq!(cli.args.scene, "grove.scene.toml");
+        assert!(cli.args.packages.packages().any(|p| p == "living"));
+        let mut resources = flint_package::Resources::default();
+        cli.args.packages.put_in(&mut resources);
+        let start = flint_living::player::subsystem::LivingStart::of(&mut resources);
+        assert_eq!(start.compare, Some((String::new(), "calm".to_string())));
+        assert_eq!(start.compare_at_start, Some(true));
+        // Living's own check of the two names, as clap's refusal
+        let one = parse(registry(), &["flint-player", "--compare", "calm"]).unwrap_err();
+        assert!(one.to_string().contains("two presets, as A,B"), "{one}");
+        let split_alone = parse(registry(), &["flint-player", "--split"]).unwrap_err();
+        assert_eq!(
+            split_alone.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    /// Every policy name a manifest's `[without]` gives registers in any
+    /// run, even one whose launcher lists no package (#727, #1585).
+    #[test]
+    fn the_manifests_policies_register_in_every_run() {
+        let bare = compose(&[]);
+        for without in WITHOUT {
+            for policy in without.policies {
+                assert!(bare.policies().contains(policy), "{policy}");
+            }
+        }
+        assert!(WITHOUT.iter().any(|w| !w.policies.is_empty()));
     }
 
     /// A launcher that lists fewer packages than the build has makes a

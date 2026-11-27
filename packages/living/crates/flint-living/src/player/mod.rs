@@ -10,8 +10,10 @@
 //!   of procgen's load (the props, [`props::resolve`]). With the debug HUD
 //!   (this crate's `debug-hud` feature, the manifest's `[with.debug-hud]`)
 //!   the Living Props panel joins the scene's F3 panels.
-//! - `--compare A,B` and `--split` stay the player's flags; their values
-//!   reach the builder as `flint_package::LaunchFlags`.
+//! - `--compare A,B` and `--split` are its own flags ([`CompareArgs`]),
+//!   which the launchers add to `flint-player` and `flint play` from the
+//!   registry (`Registry::player_args`, #1585); their value reaches the
+//!   builder in the run's resources.
 
 pub mod ab;
 pub mod api;
@@ -79,6 +81,47 @@ const KEYS: &[flint_runtime::DebugKey] = &[
 #[cfg(not(feature = "debug-hud"))]
 const KEYS: &[flint_runtime::DebugKey] = &A_B;
 
+/// Living's flags on the player's command line (#238): what `--compare`
+/// and `--split` asked, in the run's resources (`Registry::player_args`,
+/// #1585). A build without the package has neither flag. A game binary
+/// that compares from the start inserts one into `app.core.resources`
+/// before the first scene.
+#[derive(clap::Args, Clone, Debug, Default, PartialEq, Eq)]
+#[command(next_help_heading = "Living props")]
+pub struct CompareArgs {
+    /// Compare two Living Props presets on the same grove from the start
+    /// (#238): A,B, each a preset's name, or nothing for the knobs as the scene
+    /// loaded them (",linklater"). F6 flips between them, F7 splits the view
+    #[arg(long, value_name = "A,B", value_parser = parse_compare)]
+    pub compare: Option<Presets>,
+
+    /// With --compare: start split, A on the left and B on the right
+    #[arg(long, requires = "compare")]
+    pub split: bool,
+}
+
+/// The two presets `--compare A,B` names: A may be empty (the scene's own
+/// knobs), B is a preset's name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Presets {
+    pub a: String,
+    pub b: String,
+}
+
+/// `--compare A,B`, checked: two names, B not empty.
+pub fn parse_compare(spec: &str) -> Result<Presets, String> {
+    let (a, b) = spec
+        .split_once(',')
+        .ok_or_else(|| format!("{spec}: two presets, as A,B"))?;
+    if b.trim().is_empty() {
+        return Err(format!("{spec}: B needs a preset's name"));
+    }
+    Ok(Presets {
+        a: a.trim().to_owned(),
+        b: b.trim().to_owned(),
+    })
+}
+
 /// The living package, as a launcher lists it.
 pub static PACKAGE: Living = Living;
 
@@ -97,6 +140,7 @@ impl Package for Living {
             .when_left_out(left_out)
             .script_modules(SCRIPT_MODULES)
             .debug_keys(DEBUG_KEYS)
+            .player_args::<CompareArgs>()
             .run_resources(|resources| {
                 resources.insert(crate::LivingProps::default());
             })

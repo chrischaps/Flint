@@ -23,7 +23,7 @@ description = "Living props at run time: rings of poses on a frame budget, their
 player = [
     "dep:flint-package", "dep:flint-render", "dep:flint-ecs", "dep:flint-script",
     "dep:flint-runtime", "dep:flint-scene", "dep:flint-terrain", "dep:egui", "dep:wgpu",
-    "dep:toml", "dep:rhai", "flint-procgen/player",
+    "dep:toml", "dep:rhai", "dep:clap", "flint-procgen/player",
 ]
 # With the debug-hud package too (the manifest's `[with.debug-hud]`, ADR 0137
 # decision 9): the Living Props panel, its pick keys (F8, Shift+F8) and the
