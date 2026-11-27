@@ -125,6 +125,19 @@ pub fn load_scene_grass_ground(
         .is_some()
 }
 
+/// What a model's not-found warning says was asked before its files when
+/// an asset maker runs: the procgen package's specs (#32).
+pub(super) const SPECS_FIRST: &str = "a procgen spec of the same name (specs/<name>.procgen.toml)";
+
+/// Keep [`SPECS_FIRST`] in `config`'s not-found note only when an asset
+/// maker runs (`makers`): in a build without one, or where the project's
+/// `[packages]` leaves its package out (#1578), no spec was asked.
+pub(super) fn say_makers_asked(config: &mut ModelLoadConfig, makers: bool) {
+    if !makers {
+        config.asked_first.retain(|asked| *asked != SPECS_FIRST);
+    }
+}
+
 /// Build a ModelLoadConfig with catalog-resolved path overrides: `held` is
 /// the project's catalog and store (`AssetSources::of`, #1065), the same
 /// `flint validate` and `flint check` ask.
@@ -150,9 +163,7 @@ pub(super) fn build_model_load_config_of(
     let mut config = ModelLoadConfig::in_project(project.clone(), scene_path);
     // The player asks procgen for every name before its file (#32), and the
     // catalog before that: a not-found warning says so beside the paths.
-    config
-        .asked_first
-        .push("a procgen spec of the same name (specs/<name>.procgen.toml)");
+    config.asked_first.push(SPECS_FIRST);
 
     let Some(held) = held else {
         return config;

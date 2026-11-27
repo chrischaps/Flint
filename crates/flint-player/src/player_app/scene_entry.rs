@@ -187,12 +187,13 @@ impl PlayerApp {
         // extension added since the binding was made is in it
         renderer.set_styles(self.core.styles.clone());
 
-        let config = build_model_load_config(
+        let mut config = build_model_load_config(
             &self.core.project,
             &self.core.scene_path,
             &self.core.world,
             self.assets.of(&self.core.project),
         );
+        super::scene_loading::say_makers_asked(&mut config, !self.core.asset_makers().is_empty());
 
         // The asset makers before the model loader: catalog > procgen >
         // file (#32). A run with none (#754, #1557) says what it won't make.

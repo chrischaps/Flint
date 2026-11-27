@@ -311,6 +311,50 @@ fn package_used_on_the_woozy_grove_reports_living_and_procgen() {
     assert!(with_code(&doc, "unlisted-package").is_empty(), "{doc:#}");
 }
 
+/// #1578's render box: `flint render` of the Woozy Grove in a project with
+/// `procgen = false` makes nothing from a spec (no `[procgen]` load line, no
+/// grown prop) and builds no living subsystem, as the player does: each
+/// prop is drawn as a still model and living's left-out line is said once.
+/// Before, a capture had no `[packages]` and grew the whole grove.
+#[test]
+fn render_of_a_project_that_leaves_procgen_out_makes_no_spec_asset() {
+    let game = grove("render_off");
+    set_packages(&game, "procgen = false\n");
+    let o = flint(
+        &game,
+        &[
+            "render",
+            "scenes/woozy_grove/woozy_grove.scene.toml",
+            "-o",
+            "grove.png",
+            "--width",
+            "160",
+            "--height",
+            "90",
+            "--report",
+            "json",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    if !o.status.success() && stderr.contains("headless render context") {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    }
+    assert!(o.status.success(), "{}", said(&o));
+    assert!(
+        !stderr.lines().any(|l| l.contains("[procgen] ")),
+        "no spec is made: {stderr}"
+    );
+    let left_out: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("[living] [packages] in flint.toml leaves out `living`"))
+        .collect();
+    assert_eq!(left_out.len(), 1, "{stderr}");
+    let doc = json(&o);
+    let still = doc["still_props"].as_array().expect("still_props");
+    assert_eq!(still.len(), 38, "every prop stands still: {doc:#}");
+}
+
 /// #1536's done-when: on a project whose files name no procgen spec, `flint
 /// package used` names `procgen = false` as a line to add, never
 /// `debug-hud`, and `--write` writes no `= false` line.

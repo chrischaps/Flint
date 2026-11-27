@@ -309,12 +309,13 @@ impl PlayerApp {
         if requests.is_empty() {
             return;
         }
-        let config = build_model_load_config(
+        let mut config = build_model_load_config(
             &self.core.project,
             &self.core.scene_path,
             &self.core.world,
             self.assets.of(&self.core.project),
         );
+        super::scene_loading::say_makers_asked(&mut config, !self.core.asset_makers().is_empty());
         // A model still being made (procgen's queue, `ProcGenMode::Deferred`)
         // has no triangles yet: they come when it's made, and physics waits
         // for them quietly rather than warn or read a file in its place
