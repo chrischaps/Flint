@@ -372,16 +372,45 @@ pub struct MissingPackage {
     pub what: String,
     /// The package (and the flint-cli feature) it needs.
     pub package: &'static str,
+    /// The package's folder is in the tree, but the launchers have no
+    /// feature for it yet: [`SYNC`] hasn't run since it was added (#1587),
+    /// so `flint build` would refuse it too. The CLI's exit path sets it
+    /// from the manifests it was built with; [`missing`] leaves it off.
+    pub unsynced: bool,
+}
+
+/// The one command that writes a new package's features into the two
+/// launchers' `Cargo.toml` from its folder (#1560), run from the engine's
+/// root.
+pub const SYNC: &str = "python3 scripts/package-sync.py";
+
+impl MissingPackage {
+    /// What to do about it: [`SYNC`] then a build for a package the
+    /// launchers don't know yet, else list it and `flint build`.
+    pub fn hint(&self) -> String {
+        if self.unsynced {
+            format!(
+                "its folder is in packages/, but neither launcher has a feature for it \
+                 yet: run `{SYNC}` from the engine's root, then build again"
+            )
+        } else {
+            format!(
+                "list `{} = \"*\"` under [packages] in flint.toml and run `flint build`",
+                self.package
+            )
+        }
+    }
 }
 
 impl std::fmt::Display for MissingPackage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} needs the `{}` package, and this flint was built without it: \
-             list `{} = \"*\"` under [packages] in flint.toml and run `flint build` \
+            "{} needs the `{}` package, and this flint was built without it: {} \
              (`flint package list --built` names the packages this one has)",
-            self.what, self.package, self.package
+            self.what,
+            self.package,
+            self.hint()
         )
     }
 }
@@ -394,6 +423,7 @@ pub fn missing(what: impl Into<String>, package: &'static str) -> anyhow::Error 
     MissingPackage {
         what: what.into(),
         package,
+        unsynced: false,
     }
     .into()
 }
