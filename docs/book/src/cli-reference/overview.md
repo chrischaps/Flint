@@ -156,9 +156,11 @@ components = ["living_prop", "shallow_wooze"]
 scene_tables = ["living", "wooze"]
 script_modules = ["living", "wooze", "debug"]
 commands = []              # paths below `flint`: "music chart", "asset generate"
+flags = []                 # its flags on a command it doesn't own: "render --ai-refine",
+                           #   or one value of one: "asset resolve --strategy ai_generate"
 ```
 
-Every crate, schema file, script module and command of the engine belongs to exactly one package. A test holds that: a new component, crate, script module or command fails it, naming the file or item, until one manifest lists it.
+Every crate, schema file, script module, command and flag of the engine belongs to exactly one package. A test holds that: a new component, crate, script module, command or flag fails it, naming the file or item, until one manifest lists it.
 
 ### Which packages a `flint` has
 
@@ -169,7 +171,14 @@ $ flint music chart play x
 Error: flint music chart play needs the `rhythm` package, and this flint was built without it: list `rhythm = "*"` under [packages] in flint.toml and run `flint build` (`flint package list --built` names the packages this one has)
 ```
 
-`flint gen` and `flint edit` on a `.procgen.toml` need `procgen` (a glyph set, `flint gen <set>.glyphs.toml`, and the terrain editor are every build's). The same goes for a flag that needs one: `gen --ai-create` and the other AI steps, `render --ai-refine` and `asset resolve --strategy ai_generate` need `ai`; `gen --strip` and a `render --sweep` of `wooze.*` or `living.echoes.*` need `living`; `music validate --chart` needs `rhythm`. Under `--json` the error document carries `package`. `flint package list --built` lists what this binary has, each package whose `[build] features` it was compiled with. A `flint-cli --no-default-features` build has only the kernel and the debug panels:
+`flint gen` and `flint edit` on a `.procgen.toml` need `procgen` (a glyph set, `flint gen <set>.glyphs.toml`, and the terrain editor are every build's). The same goes for a flag that needs one: `gen --ai-create` and the other AI steps and `asset resolve --strategy ai_generate` need `ai`; `gen --strip` and a `render --sweep` of `wooze.*` or `living.echoes.*` need `living`; `music validate --chart` needs `rhythm`. A package can also bring flags of its own to a command it doesn't own: `render`'s "Refine a look" group (`--ai-refine`, `--refine-rounds` and the rest) is the ai package's, so a build without it has none of them in `flint render --help`, and a line using one is named from the manifest's `[provides] flags` all the same:
+
+```text
+$ flint render scene.toml --look ascii_noir --reference ref.png --ai-refine
+Error: flint render --ai-refine needs the `ai` package, and this flint was built without it: list `ai = "*"` under [packages] in flint.toml and run `flint build` (`flint package list --built` names the packages this one has)
+```
+
+Under `--json` the error document carries `package`. `flint package list --built` lists what this binary has, each package whose `[build] features` it was compiled with. A `flint-cli --no-default-features` build has only the kernel and the debug panels:
 
 ```text
 $ flint package list --built

@@ -26,14 +26,9 @@ pub mod frame;
 pub mod frame_seq;
 // `flint gen` is the kernel's in every build: a glyph set runs here, a
 // spec through the procgen package's point (#1543, #1557), which asks the
-// ai package's steps (`gen_ai`) and living's strip (`gen_strip`) by points
-// of its own
+// ai package's steps and living's strip by points of its own (#1572)
 pub mod gen;
-#[cfg(feature = "ai")]
-pub mod gen_ai;
 pub mod gen_args;
-#[cfg(feature = "ai")]
-pub mod gen_refine;
 /// The GIF writer, the Package API's since #1558 (living's `gen --strip`
 /// writes with it too)
 pub use flint_package::cli::gif as gif_writer;
@@ -42,8 +37,6 @@ pub mod golden_sheet;
 pub mod init;
 pub mod look;
 pub mod look_measure;
-#[cfg(feature = "ai")]
-pub mod look_refine;
 pub mod mesh_seq;
 pub mod package;
 pub mod particle_edit;

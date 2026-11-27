@@ -708,7 +708,6 @@ impl Stage {
     /// Draw the moment `t` again under `config` (an `--ai-refine` candidate,
     /// #596): the clocks stay where they are, and the style history starts
     /// over, as the one-renderer path draws each candidate as a first frame.
-    #[cfg(feature = "ai")]
     pub(super) fn redraw(
         &mut self,
         args: &RenderArgs,

@@ -15,7 +15,6 @@ const TIME: &str = "Time";
 const SEQUENCE: &str = "Sequences";
 const SWEEP: &str = "Sweep and variants";
 const MEASURE: &str = "Measure and report";
-const REFINE: &str = "Refine a look";
 const DEBUG_LISTS: &str = "Debug, lists, GPU and schemas";
 
 /// Every `flint render` flag. Each help heading is its own flattened struct,
@@ -107,8 +106,11 @@ pub struct RenderArgs {
     #[command(flatten)]
     pub measure: MeasureArgs,
 
+    /// The flags packages add to `render` (#1572): the ai package's
+    /// `--ai-refine` group, here so its heading keeps its place in `--help`
+    /// (`flint_package::cli::flags`). A build without the package has none.
     #[command(flatten)]
-    pub refine: RefineArgs,
+    pub packages: flint_package::cli::render::RenderFlags,
 
     #[command(flatten)]
     pub debug: DebugArgs,
@@ -147,7 +149,7 @@ pub struct OutputArgs {
     /// else loads the scene again on the same GPU. One line a render, with
     /// its time and any style error. Ctrl-C stops it
     #[arg(long,
-          conflicts_with_all = ["ai_refine", "list_gpus", "list_styles", "list_effects"])]
+          conflicts_with_all = ["list_gpus", "list_styles", "list_effects"])]
     pub watch: bool,
 }
 
@@ -340,7 +342,7 @@ pub struct StripArgs {
     /// tile drawn as a first frame, so a tile is the pixels of --time
     /// <its t> rendered alone at the tile's size. Tiles default to 640x360
     #[arg(long, requires = "clock",
-          conflicts_with_all = ["sweep", "frames", "mesh", "variant", "variants", "ai_refine"])]
+          conflicts_with_all = ["sweep", "frames", "mesh", "variant", "variants"])]
     pub strip: bool,
 
     /// With --strip and a span: seconds of game time from one tile to the
@@ -490,13 +492,13 @@ pub struct SweepArgs {
     /// in one process on one GPU device
     #[arg(long, value_parser = super::variants::parse_variant,
           action = clap::ArgAction::Append, allow_hyphen_values = true,
-          conflicts_with_all = ["ai_refine", "frames", "mesh"])]
+          conflicts_with_all = ["frames", "mesh"])]
     pub variant: Vec<super::variants::Variant>,
 
     /// A file of variants (#291): `[[variant]]` tables of `label` and
     /// `flags` (a line, or an array of words), with an optional `title` and
     /// `zoom = ["X0,Y0,X1,Y1@N"]`. Its variants come before any --variant
-    #[arg(long, value_name = "FILE.toml", conflicts_with_all = ["ai_refine", "frames", "mesh"],
+    #[arg(long, value_name = "FILE.toml", conflicts_with_all = ["frames", "mesh"],
           help_heading = SWEEP)]
     pub variants: Option<String>,
 
@@ -582,46 +584,6 @@ pub struct MeasureArgs {
     /// `--gpu-time`, a repeated part's row grows N-fold
     #[command(flatten)]
     pub pass_knobs: flint_player::PassKnobArgs,
-}
-
-/// `--ai-refine`: a look refined toward a reference.
-#[derive(clap::Args)]
-#[command(next_help_heading = REFINE)]
-pub struct RefineArgs {
-    /// Refine --look toward --reference (#357): an agent proposes edits,
-    /// each is rendered and measured, the best is kept while the distance
-    /// falls. Writes the refined look (--refine-out), a JSON log beside it
-    /// and a sheet of the rounds (-o). Calls go through the cost meter and
-    /// ledger (.flint/procgen_costs.json)
-    #[arg(long, requires_all = ["look", "reference"],
-          conflicts_with_all = ["sweep", "frames", "mesh"])]
-    pub ai_refine: bool,
-
-    /// Most refine rounds
-    #[arg(long, default_value_t = 4)]
-    pub refine_rounds: u32,
-
-    /// Candidates rendered a round
-    #[arg(long, default_value_t = 4)]
-    pub refine_candidates: usize,
-
-    /// Where the refined look goes [default: <look>_refined.look.toml
-    /// beside -o]; its log is the same path with .json
-    #[arg(long, value_name = "FILE.look.toml")]
-    pub refine_out: Option<String>,
-
-    /// Who proposes refine edits: `anthropic` (Claude; ANTHROPIC_API_KEY)
-    /// or `mock` (free, offline: walks the look's tune sweeps)
-    #[arg(long, default_value = "anthropic")]
-    pub ai_provider: String,
-
-    /// The Claude model for --ai-refine
-    #[arg(long)]
-    pub ai_model: Option<String>,
-
-    /// Refuse any call that could take the run's spend past this (USD)
-    #[arg(long)]
-    pub max_cost: Option<f64>,
 }
 
 /// Debug views, the lists, the GPU and the schemas.

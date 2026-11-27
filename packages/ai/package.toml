@@ -11,11 +11,15 @@
 # flint without the package has none of them, and the launcher names this
 # package for one from the list below.
 #
-# Its flags on the procgen and kernel commands (`gen --ai-*`, `--max-cost`,
-# `--cost-report`, `--style-guide`, `render --ai-refine`, `asset resolve
-# --strategy ai_*`) are its too, still declared by those commands: flint-cli's
-# `ai` feature (#1333) gates them, and without it each exits 2 naming this
-# package. They become registration points with #1572.
+# Its flags on commands it doesn't own are `[provides] flags` (#1572).
+# `render`'s refine group is its own, a `clap::Args` its extension adds at
+# the slot `render` declares (`flint_package::cli::flags`), so a flint
+# without the package has none of them, and the launcher names this
+# package for one from the list below. `gen --ai-*` and `asset resolve
+# --strategy ai_*` are declared by their command (procgen's `gen` args, the
+# kernel's `resolve`) and run through points this package registers
+# (procgen's `AiPoint`, the kernel's `BatchResolve`); a run without it
+# refuses them, naming this package from the same list.
 
 [package]
 name = "ai"
@@ -38,4 +42,12 @@ crates = ["flint-asset-gen", "flint-procgen-ai", "flint-ai-core"]
 commands = [
     "asset generate", "asset regenerate", "asset validate", "asset manifest",
     "asset costs", "asset job",
+]
+flags = [
+    "render --ai-refine", "render --refine-rounds", "render --refine-candidates",
+    "render --refine-out", "render --ai-provider", "render --ai-model", "render --max-cost",
+    "gen --ai-create", "gen --ai-assist", "gen --ai-refine", "gen --cost-report",
+    "gen --style-guide",
+    "asset resolve --strategy ai_generate", "asset resolve --strategy human_task",
+    "asset resolve --strategy ai_then_human",
 ]

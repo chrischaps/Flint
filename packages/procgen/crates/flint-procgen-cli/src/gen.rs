@@ -26,9 +26,10 @@ use super::gen_store::{self, WrittenFile};
 
 /// The ai package's steps of `flint gen` (#1557): `--ai-create`,
 /// `--ai-assist`, `--ai-refine`, `--cost-report` and `--style-guide`. A
-/// point this command declares, which a flint with the ai package
-/// registers as an [`AiPoint`] (the flags stay the kernel's until #1572,
-/// refused in a build without the package before this runs).
+/// point this command declares, which the ai package registers as an
+/// [`AiPoint`]. The flags are [`GenArgs`]', which the package serves
+/// (`Points::serve`, #1572): a run that doesn't serve one refuses it,
+/// naming the package, before this runs.
 pub trait AiSteps: Send + Sync {
     /// Whether the line asks for an AI step.
     fn any(&self, args: &GenArgs) -> bool;

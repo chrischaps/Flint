@@ -1,5 +1,8 @@
 //! The AI half of `flint gen`: build an agent, let it create, interpret or
 //! refine a spec before generation, and keep account of what it costs.
+//! The package's steps of procgen's `gen` ([`Ai`], registered as procgen's
+//! `AiPoint` by this package's extension; in flint-cli behind its `ai`
+//! feature until #1572).
 //!
 //! Everything the agent says goes to stderr, so stdout stays free for the
 //! generation summary or, with `--print-spec`, for the spec alone.
@@ -13,7 +16,8 @@ use flint_procgen_ai::cost::{self, CostMeter};
 use flint_procgen_ai::{AgentConfig, AnthropicAgent, Distance, MockAgent, ProcGenAgent, Report};
 use serde::Deserialize;
 
-use super::gen_args::GenArgs;
+use flint_package::cli::gen::GenArgs;
+
 use super::gen_refine::{MeshRenderPreviewer, PREVIEW_SIZE};
 
 /// Project defaults for the agent, read from this file when it exists.
@@ -34,8 +38,8 @@ struct ProjectConfig {
     effort: Option<String>,
 }
 
-/// The ai package's steps of procgen's `flint gen` (#1557): what the
-/// binary registers as its `AiPoint`, which procgen's `gen` asks.
+/// The ai package's steps of procgen's `flint gen` (#1557): what this
+/// package registers as procgen's `AiPoint`, which procgen's `gen` asks.
 pub struct Ai;
 
 impl flint_procgen_cli::AiSteps for Ai {
@@ -64,7 +68,7 @@ impl flint_procgen_cli::AiSteps for Ai {
                     println!("{line}");
                 }
             }
-            crate::output::when_json(|| serde_json::json!({ "dry_run": true, "plan": plan }));
+            flint_package::cli::when_json(|| serde_json::json!({ "dry_run": true, "plan": plan }));
             return Ok(None);
         }
         let meter = build_meter(&config, args)?;
@@ -73,14 +77,14 @@ impl flint_procgen_cli::AiSteps for Ai {
     }
 
     fn cost_report(&self, since: Option<&str>) -> Result<()> {
-        flint_asset_gen::cli::costs::cost_report(&flint_asset_gen::cli::costs::ledger(), since)
+        super::costs::cost_report(&super::costs::ledger(), since)
     }
 
     fn style_constraints(
         &self,
         path: &Path,
     ) -> std::result::Result<flint_procgen::ValidationConstraints, String> {
-        flint_asset_gen::StyleGuide::load(path)
+        crate::StyleGuide::load(path)
             .map(|guide| guide.validation_constraints())
             .map_err(|e| e.to_string())
     }
@@ -155,7 +159,7 @@ pub fn resolve_config(args: &GenArgs, project_file: &Path) -> Result<AgentConfig
 /// The meter every call of this run goes through: the project's ledger and
 /// prices, and the `--max-cost` ceiling if one was given.
 pub fn build_meter(config: &AgentConfig, args: &GenArgs) -> Result<Arc<CostMeter>> {
-    Ok(Arc::new(flint_asset_gen::cli::costs::meter(
+    Ok(Arc::new(super::costs::meter(
         &config.provider,
         args.max_cost,
     )?))
@@ -451,7 +455,7 @@ pub fn cost_line(meter: &CostMeter) -> String {
 /// could cost, without sending anything. Lines, so the caller picks the stream
 /// (`--report json` keeps stdout for the report).
 pub fn plan_lines(config: &AgentConfig, steps: Steps, args: &GenArgs) -> Vec<String> {
-    let (price, priced_as) = flint_asset_gen::cli::costs::prices()
+    let (price, priced_as) = super::costs::prices()
         .unwrap_or_else(|_| cost::PriceTable::builtin())
         .token_price(&config.provider, &config.model);
     let max_out = AnthropicAgent::DEFAULT_MAX_TOKENS;

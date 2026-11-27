@@ -22,6 +22,18 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// Where `render`'s package flags go ([`RenderFlags`]).
+pub struct RenderPlace;
+
+impl super::flags::FlagPlace for RenderPlace {
+    const PATH: &'static [&'static str] = &["render"];
+}
+
+/// `render`'s slot for the flags a package adds to it (#1572): the ai
+/// package's `--ai-refine` group, at the place its help heading has always
+/// had.
+pub type RenderFlags = super::flags::PackageFlags<RenderPlace>;
+
 /// The wooze values one sweep cell turns: each axis of it that names a
 /// `wooze.<knob>`, as `(knob, value)` the line wrote them (`("glide",
 /// "0.5")`, `("preset", "linklater")`).

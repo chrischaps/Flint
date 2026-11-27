@@ -21,7 +21,8 @@
     "archetypes": "array",
     "scene_tables": "array",
     "script_modules": "array",
-    "commands": "array"
+    "commands": "array",
+    "flags": "array"
   },
   "packages": [
     ["engine", "kernel"],

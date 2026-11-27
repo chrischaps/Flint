@@ -530,7 +530,8 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
 - **Package flags on a command the package doesn't own** (ADR 0136
   section 7: `gen --ai-*`, `--max-cost`, `--cost-report`, `--style-guide`,
   `render --ai-refine`, `render --sweep wooze.*|living.*`, `asset resolve
-  --strategy ai_*`): decided, not yet built (#1572). Each flag changes how the
+  --strategy ai_*`): decided here, built by #1572 (its own as-built section
+  below says where the decision moved). Each flag changes how the
   owning command runs, at one point in its run. The owner declares that
   point as a registration point (section 4's "Registration points of
   another package" row): a trait object the flag's package registers. The
@@ -579,6 +580,7 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   `gen_refine` and `look_refine`, about 1,800 lines) calls flint-cli's
   previews, look measures and sweeps, so it moves with the registration
   points of the "As built: the CLI launcher" section (#1572), not here.
+  Moved since: "As built: a package's flags on another's command" below.
 - **Paths that walk the tree** take `packages/*/crates/*` too: the
   arch-analyzer (members globs, the book's crate table), `docs-check.py`'s
   crate and member counts, the env, schema and scene-table tests, the clippy
@@ -934,6 +936,79 @@ CI holds both halves.
   files and the lock to their bytes before. A toy calling a Package API
   method that isn't there failed the build. A toy with a `[with.*]` part
   failed the sync.
+
+## As built: a package's flags on another's command (#1572)
+
+- **A flag slot** (`flint_package::cli::flags`). A command that takes a
+  package's flags declares where they go: a `PackageFlags<P>` field in its
+  derived `Args`, `P` naming the command's words. Its `augment_args` adds
+  each registered `Flags` group of that place (a derived `clap::Args` of
+  the package's, through its `augment_args`), and its value is the
+  command's `ArgMatches`, from which the package reads its own group
+  (`flags::parsed`). The slot sits where the group's help heading always
+  sat, so `--help` reads as it did: clap orders headings by their first
+  argument, and a group added after the derive would have moved "Refine a
+  look" below "Debug, lists, GPU and schemas". `render` is the one slot
+  (`cli::render::RenderFlags`, the field `packages` in place of `refine`).
+- **`CliExtension::flags()`** returns the groups (default none).
+  `extension::Added` checks each group's command is in the tree and holds
+  them; `Added::parser` builds the engine's tree with them in its slots,
+  and `run_with` sets them for the run (`flags::set_run_flags`) so every
+  later parse, a `--variant`'s words included, has them. A test builds
+  with another list through `flags::with_flags`, a thread's scope.
+- **A flag the owner declares and a package serves** stays declared by the
+  owner, since its help heading is the owner's and its value runs at a
+  point: `gen --ai-*`, `--cost-report`, `--style-guide` (procgen's
+  `GenArgs`, served through procgen's `AiPoint`) and `asset resolve
+  --strategy ai_generate|human_task|ai_then_human` (the kernel's, served
+  through `cli::asset::BatchResolve`). The package says so with
+  `Points::serve(line)` in its `register`, and the owner refuses a line
+  nobody serves before anything else runs (`gen_args::refuse_unserved`,
+  `asset::batch_of`).
+- **`[provides] flags`** (`flint_core::package::Kind::Flag`, `FlagLine`):
+  each flag as a line spells it, the command's words, the flag and at most
+  one value (`render --ai-refine`, `asset resolve --strategy ai_generate`).
+  It is how a binary without the package names it. clap's unknown argument
+  on a command whose words and flag a manifest lists is
+  `absent::missing_flag`'s `MissingPackage`; a served line nobody serves is
+  `absent::missing_served(line)`. Both exit 2, `package` in the `--json`
+  error, from the manifests `build.rs` compiles in. The ai crate's test
+  holds its list to what its extensions add and serve; the completeness
+  test holds every line to a flag of the stock tree.
+- **The points the moved code asks**: `cli::look` (`LookRefines`, a
+  `LookRefine` that reads its flags and runs; `RefineHost`, what the render
+  lends: the look, the reference, a draw of a candidate block scored
+  against it, `--sweep`'s check of an edit and its tune sweeps, the
+  measures and the sheet) with the report types it logs (`DistanceReport`,
+  `ImageMeasures`, `Metric`, moved from flint-cli's `look_measure`, which
+  re-exports them, so the log is byte for byte as before);
+  `cli::gen::ModelStill` (the kernel's model still, which the ai package's
+  `gen --ai-refine` previewer draws with; flint-cli registers it in every
+  build); `cli::asset::BatchResolve` (the scene's missing references,
+  handed over as `MissingAsset`s).
+- **Where the code went**: `gen_ai`, `gen_refine` and `look_refine` are
+  `flint_asset_gen::cli`, with `resolve` (the batch half of `asset
+  resolve`). The package's second extension (`Steps`) adds no command:
+  its `register` fills procgen's `AiPoint`, `LookRefines` and
+  `BatchResolve` and serves the gen and resolve lines, and its flags are
+  `RefineArgs` on `render`. `RefineHost`'s implementation is
+  `render_still.rs`'s `LookHost`, whose tests run the package's loop over
+  it (the ai crate is a dev-dependency of flint-cli, as living's is).
+- **What this leaves**: `git grep 'feature = "ai"' crates/flint-cli/src`
+  finds nothing, and `scripts/package-names-check.py` lost its five #1572
+  exceptions (one is left, #1583's). flint-cli's `ai` feature is
+  `["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli"]`: it names
+  no procgen-ai or ai-core crate. `gen`'s ai flags are still declared in
+  `GenArgs`, interleaved with procgen's under its headings; moving them
+  into the package's group would need slots between procgen's headings
+  (#1592).
+- Measured (debug, Windows): every `--help` page of the stock `flint`, 78
+  of them, is byte-identical to main's. A mock `--ai-refine` (three rounds
+  of three, `stylize_props` at 320x180, still and `--time 0.5`) writes the
+  same sheet, refined look and JSON log as main's, paths aside; `gen
+  --ai-create --ai-provider mock` the same GLB and spec. A build without
+  ai has 133 lines of `render --help` against 149, and each of the
+  package's flags exits 2 naming it.
 
 ## Measured
 

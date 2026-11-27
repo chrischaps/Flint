@@ -26,27 +26,17 @@ use flint_import::measure::{distance_rgb, Distance};
 use image::{RgbImage, RgbaImage};
 use serde::Serialize;
 
+/// What a frame's measures and a distance are, the Package API's (#1572):
+/// a package's refine loop (`--ai-refine`, the ai package's) logs them as
+/// `--report` writes them.
+pub use flint_package::cli::look::{DistanceReport, GlyphDistance, ImageMeasures, Metric, Term};
+
 /// Luma at or under this (0..255) is near black.
 pub const NEAR_BLACK: f64 = 24.0;
 /// Luma at or over this (0..255) is near white.
 pub const NEAR_WHITE: f64 = 232.0;
 /// A luma step (0..255) past which a pixel counts as an edge.
 pub const EDGE_STEP: f64 = 24.0;
-
-/// One frame's image measures.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct ImageMeasures {
-    /// Mean luma, 0..1.
-    pub mean_luminance: f64,
-    /// Share of pixels with luma <= [`NEAR_BLACK`].
-    pub near_black: f64,
-    /// Share of pixels with luma >= [`NEAR_WHITE`].
-    pub near_white: f64,
-    /// Share of pixels whose right + down luma step passes [`EDGE_STEP`].
-    pub edge_density: f64,
-    /// Mean sRGB colour.
-    pub mean_rgb: [u8; 3],
-}
 
 fn luma(p: [u8; 3]) -> f64 {
     0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])
@@ -338,14 +328,12 @@ impl InkGrid {
     }
 
     /// Share of cells that are blank.
-    #[cfg_attr(not(feature = "ai"), allow(dead_code))] // --ai-refine reads it (#1333)
     pub fn blank_share(&self) -> f64 {
         let n = self.ink.len().max(1) as f64;
         self.ink.iter().filter(|&&i| i <= 0.0).count() as f64 / n
     }
 
     /// Mean ink over the frame.
-    #[cfg_attr(not(feature = "ai"), allow(dead_code))] // --ai-refine reads it (#1333)
     pub fn mean_ink(&self) -> f64 {
         let n = self.ink.len().max(1) as f64;
         self.ink.iter().map(|&i| f64::from(i)).sum::<f64>() / n
@@ -397,7 +385,6 @@ impl InkGrid {
 
     /// One line for an agent or the terminal: blank share, mean ink and
     /// the commonest glyphs.
-    #[cfg_attr(not(feature = "ai"), allow(dead_code))] // --ai-refine reads it (#1333)
     pub fn summary(&self) -> String {
         let n = self.ink.len().max(1) as f64;
         let top: Vec<String> = self
@@ -416,15 +403,6 @@ impl InkGrid {
             top.join(", ")
         )
     }
-}
-
-/// How far one glyph grid is from another, each term 0..1.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct GlyphDistance {
-    /// Earth mover's distance between the cells' ink distributions.
-    pub coverage: f64,
-    /// Mean ink difference over [`GLYPH_LAYOUT`]² regions.
-    pub layout: f64,
 }
 
 /// The distance from `current`'s glyphs to `reference`'s.
@@ -466,108 +444,45 @@ pub fn glyph_distance(reference: &InkGrid, current: &InkGrid) -> GlyphDistance {
     GlyphDistance { coverage, layout }
 }
 
-/// Which terms a score is the mean of.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Metric {
-    /// #183's: mean colour, luminance histogram, luminance layout.
-    Pixels,
-    /// Both frames are glyph grids (#495): mean colour, glyph coverage,
-    /// glyph layout. The pixel histogram and layout are still reported.
-    Glyphs,
-}
-
-impl Metric {
-    pub fn name(self) -> &'static str {
-        match self {
-            Metric::Pixels => "pixels",
-            Metric::Glyphs => "glyphs",
-        }
-    }
-}
-
-/// One term's part of a score.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct Term {
-    pub term: &'static str,
-    /// The term itself, 0..1.
-    pub distance: f64,
-    /// What it adds to the score, in points of 100; a score's terms sum to it.
-    pub points: f64,
-}
-
-/// A distance to the reference, as written in a report: the score, the
-/// terms it is made of, and the pixel terms whichever metric was used.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct DistanceReport {
-    /// Out of 100; 0 is the reference itself.
-    pub score: f64,
-    pub metric: Metric,
-    /// The terms the score is the mean of, each with its points.
-    pub terms: Vec<Term>,
-    /// sRGB units, 0..441.7.
-    pub mean_colour: f64,
-    pub histogram: f64,
-    pub layout: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub glyph: Option<GlyphDistance>,
-}
-
-impl DistanceReport {
-    /// The pixel distance alone, or with both grids, the glyph metric.
-    pub fn new(d: Distance, glyph: Option<GlyphDistance>) -> Self {
-        let colour = d.mean_colour / MAX_RGB_DISTANCE;
-        let (metric, parts) = match glyph {
-            None => (
-                Metric::Pixels,
-                vec![
-                    ("mean colour", colour),
-                    ("histogram", d.histogram),
-                    ("layout", d.layout),
-                ],
-            ),
-            Some(g) => (
-                Metric::Glyphs,
-                vec![
-                    ("mean colour", colour),
-                    ("glyph coverage", g.coverage),
-                    ("glyph layout", g.layout),
-                ],
-            ),
-        };
-        let n = parts.len() as f64;
-        let terms: Vec<Term> = parts
-            .into_iter()
-            .map(|(term, distance)| Term {
-                term,
-                distance,
-                points: distance / n * 100.0,
-            })
-            .collect();
-        Self {
-            score: terms.iter().map(|t| t.points).sum(),
-            metric,
-            terms,
-            mean_colour: d.mean_colour,
-            histogram: d.histogram,
-            layout: d.layout,
-            glyph,
-        }
-    }
-
-    /// The terms as `colour 4.1 + glyph coverage 6.0 + ...`, in points.
-    pub fn terms_line(&self) -> String {
-        self.terms
-            .iter()
-            .map(|t| format!("{} {:.2}", t.term, t.points))
-            .collect::<Vec<_>>()
-            .join(" + ")
-    }
-}
-
-impl From<Distance> for DistanceReport {
-    fn from(d: Distance) -> Self {
-        Self::new(d, None)
+/// The report of a distance: the pixel distance alone, or with both grids,
+/// the glyph metric.
+pub fn distance_report(d: Distance, glyph: Option<GlyphDistance>) -> DistanceReport {
+    let colour = d.mean_colour / MAX_RGB_DISTANCE;
+    let (metric, parts) = match glyph {
+        None => (
+            Metric::Pixels,
+            vec![
+                ("mean colour", colour),
+                ("histogram", d.histogram),
+                ("layout", d.layout),
+            ],
+        ),
+        Some(g) => (
+            Metric::Glyphs,
+            vec![
+                ("mean colour", colour),
+                ("glyph coverage", g.coverage),
+                ("glyph layout", g.layout),
+            ],
+        ),
+    };
+    let n = parts.len() as f64;
+    let terms: Vec<Term> = parts
+        .into_iter()
+        .map(|(term, distance)| Term {
+            term,
+            distance,
+            points: distance / n * 100.0,
+        })
+        .collect();
+    DistanceReport {
+        score: terms.iter().map(|t| t.points).sum(),
+        metric,
+        terms,
+        mean_colour: d.mean_colour,
+        histogram: d.histogram,
+        layout: d.layout,
+        glyph,
     }
 }
 
@@ -597,7 +512,7 @@ impl Reference {
             Some(c) => glyph_distance(r, c),
             None => glyph_distance(r, &InkGrid::blank(r.cols, r.rows)),
         });
-        DistanceReport::new(d, glyph)
+        distance_report(d, glyph)
     }
 }
 
@@ -839,7 +754,7 @@ mod tests {
         let a = RgbImage::from_pixel(8, 8, image::Rgb([200, 40, 40]));
         let b = RgbaImage::from_pixel(8, 8, Rgba([20, 40, 90, 255]));
         let pixels = distance_to(&a, &b);
-        let report = DistanceReport::from(pixels);
+        let report = distance_report(pixels, None);
         assert_eq!(report.metric, Metric::Pixels);
         assert!((report.score - pixels.score).abs() < 1e-9);
         let sum: f64 = report.terms.iter().map(|t| t.points).sum();

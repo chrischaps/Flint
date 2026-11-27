@@ -22,7 +22,7 @@ use clap::{ArgMatches, Command};
 use std::collections::BTreeMap;
 
 pub use flint_package::cli::{
-    document, emit, failed, json, say, subcommands, Answer, CliExtension, Derived, Report,
+    document, emit, failed, json, say, subcommands, Answer, CliExtension, Derived, Flags, Report,
 };
 
 /// The extensions of one run, their names checked against the engine's
@@ -35,6 +35,9 @@ pub(crate) struct Added {
     /// Each added command's path (`asset generate`, an alias's too) to the
     /// extension it is.
     owner: BTreeMap<String, usize>,
+    /// Every extension's flags on a command it doesn't own (#1572), in the
+    /// order given: the slots of the commands they name add them.
+    flags: Vec<Flags>,
 }
 
 /// The engine's command at `words` below `root`.
@@ -65,6 +68,7 @@ impl Added {
         let mut taken: BTreeMap<String, String> = BTreeMap::new();
         let mut places: Vec<(Vec<String>, Vec<Command>)> = Vec::new();
         let mut owner = BTreeMap::new();
+        let mut flags = Vec::new();
         // The engine's tree with each earlier extension's commands added
         let mut tree = builtin.clone();
         for (index, extension) in extensions.iter().enumerate() {
@@ -113,12 +117,35 @@ impl Added {
                 places[at].1.push(command.clone());
             }
             tree = add_at(tree, &words, &commands);
+            for group in extension.flags() {
+                let on: Vec<String> = group.on.iter().map(|w| w.to_string()).collect();
+                if on.is_empty() || find(&tree, &on).is_none() {
+                    anyhow::bail!(
+                        "extension {index} adds flags to `flint {}`, which is no command of flint's",
+                        on.join(" ")
+                    );
+                }
+                flags.push(group);
+            }
         }
         Ok(Self {
             extensions,
             places,
             owner,
+            flags,
         })
+    }
+
+    /// Every extension's flags on a command it doesn't own.
+    pub(crate) fn flags(&self) -> &[Flags] {
+        &self.flags
+    }
+
+    /// The whole parser: `builtin` (the engine's tree, built with these
+    /// extensions' flags in its commands' slots) with every extension's
+    /// subcommands added.
+    pub(crate) fn parser(&self, builtin: impl FnOnce() -> Command) -> Command {
+        flint_package::cli::flags::with_flags(&self.flags, || self.augment(builtin()))
     }
 
     /// The engine's command with every extension's subcommands beside its

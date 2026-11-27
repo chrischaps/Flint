@@ -335,7 +335,6 @@ impl Written {
             args.measure.gpu_time_json.as_deref(),
             args.measure.frame_dump.as_deref(),
             args.seq.flip_json.as_deref(),
-            args.refine.refine_out.as_deref(),
         ]
         .into_iter()
         .flatten()

@@ -33,6 +33,8 @@
 //! scene_tables = ["living", "wooze"]
 //! script_modules = ["living", "wooze", "debug"]
 //! commands = []              # paths below `flint`: "music chart", "asset generate"
+//! flags = []                 # its flags on a command it doesn't own: "render --ai-refine",
+//!                            #   or one value of one: "asset resolve --strategy ai_generate"
 //! ```
 //!
 //! Every read goes through the [`vfs`]. A mistake is a [`Diagnostic`]
@@ -138,16 +140,19 @@ pub enum Kind {
     SceneTable,
     ScriptModule,
     Command,
+    /// A flag on a command another package (or the kernel) owns (#1572).
+    Flag,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [
+    pub const ALL: [Kind; 7] = [
         Kind::Crate,
         Kind::Component,
         Kind::Archetype,
         Kind::SceneTable,
         Kind::ScriptModule,
         Kind::Command,
+        Kind::Flag,
     ];
 
     /// Its key in `[provides]`: `scene_tables`.
@@ -159,6 +164,7 @@ impl Kind {
             Kind::SceneTable => "scene_tables",
             Kind::ScriptModule => "script_modules",
             Kind::Command => "commands",
+            Kind::Flag => "flags",
         }
     }
 
@@ -171,6 +177,7 @@ impl Kind {
             Kind::SceneTable => "scene table",
             Kind::ScriptModule => "script module",
             Kind::Command => "command",
+            Kind::Flag => "flag",
         }
     }
 }
@@ -185,6 +192,10 @@ pub struct Provides {
     pub script_modules: Vec<String>,
     /// Paths below `flint`, words split by one space: `music chart`.
     pub commands: Vec<String>,
+    /// Its flags on a command it doesn't own, as a line spells them: the
+    /// command's path, the flag and at most one value of it (`render
+    /// --ai-refine`, `asset resolve --strategy ai_generate`), #1572.
+    pub flags: Vec<String>,
 }
 
 impl Provides {
@@ -196,6 +207,7 @@ impl Provides {
             Kind::SceneTable => &self.scene_tables,
             Kind::ScriptModule => &self.script_modules,
             Kind::Command => &self.commands,
+            Kind::Flag => &self.flags,
         }
     }
 
@@ -207,6 +219,7 @@ impl Provides {
             Kind::SceneTable => &mut self.scene_tables,
             Kind::ScriptModule => &mut self.script_modules,
             Kind::Command => &mut self.commands,
+            Kind::Flag => &mut self.flags,
         }
     }
 }
@@ -866,7 +879,50 @@ impl Parse<'_> {
                 );
             }
         }
+        for (i, flag) in out.flags.clone().iter().enumerate() {
+            if FlagLine::parse(flag).is_none() {
+                self.error(
+                    format!("provides.flags[{i}]"),
+                    format!(
+                        "`{flag}` is no flag line: a command's words below `flint`, then `--flag`, \
+                         then at most one value, one space apart"
+                    ),
+                );
+            }
+        }
         out
+    }
+}
+
+/// A `[provides] flags` line read: `asset resolve --strategy ai_generate`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagLine<'a> {
+    /// The command's words below `flint`: `["asset", "resolve"]`.
+    pub command: Vec<&'a str>,
+    /// The flag as written, dashes and all: `--strategy`.
+    pub flag: &'a str,
+    /// One value of it, when the line names one: `ai_generate`.
+    pub value: Option<&'a str>,
+}
+
+impl<'a> FlagLine<'a> {
+    /// The line, or `None` when it isn't one.
+    pub fn parse(line: &'a str) -> Option<Self> {
+        let words: Vec<&str> = line.split(' ').collect();
+        let at = words.iter().position(|w| w.starts_with("--"))?;
+        let (command, rest) = words.split_at(at);
+        let named = |w: &&str| !w.is_empty() && !w.starts_with('-');
+        let flag = rest[0];
+        let ok = !command.is_empty()
+            && command.iter().all(named)
+            && flag.len() > 2
+            && rest.len() <= 2
+            && rest[1..].iter().all(named);
+        ok.then(|| Self {
+            command: command.to_vec(),
+            flag,
+            value: rest.get(1).copied(),
+        })
     }
 }
 

@@ -70,6 +70,66 @@ pub fn missing_command(
     })
 }
 
+/// A command line `parser` refused with an unknown argument, when the
+/// argument is a flag a package adds to that command (its manifest's
+/// `[provides] flags`: `render --ai-refine`) that this parser lacks: the
+/// package left out, named as for a command (#1572). `None` for any other
+/// mistake.
+pub fn missing_flag(
+    error: &clap::Error,
+    argv: &[OsString],
+    parser: &clap::Command,
+) -> Option<MissingPackage> {
+    use clap::error::{ContextKind, ContextValue};
+    if error.kind() != clap::error::ErrorKind::UnknownArgument {
+        return None;
+    }
+    let Some(ContextValue::String(given)) = error.get(ContextKind::InvalidArg) else {
+        return None;
+    };
+    let flag = given.split('=').next().unwrap_or(given);
+    // The command the flag was given to: as many of the words as this
+    // parser knows as commands
+    let mut command = Vec::new();
+    let mut at = parser;
+    for word in command_words(argv) {
+        match at.find_subcommand(&word) {
+            Some(below) => {
+                at = below;
+                command.push(word);
+            }
+            None => break,
+        }
+    }
+    manifests().into_iter().find_map(|package| {
+        let line = package.provides.flags.iter().find(|line| {
+            flint_core::package::FlagLine::parse(line).is_some_and(|l| {
+                l.flag == flag && l.value.is_none() && l.command == command.as_slice()
+            })
+        })?;
+        let package: &'static str = Box::leak(package.name.into_boxed_str());
+        Some(MissingPackage {
+            what: format!("flint {line}"),
+            package,
+        })
+    })
+}
+
+/// A flag the owning command declares and a package serves (`gen
+/// --ai-create`, `asset resolve --strategy ai_generate`: `line` as the
+/// manifest's `[provides] flags` spells it), given in a run whose packages
+/// don't serve it: the package that lists it, named from the manifests, as
+/// [`missing_owned`] names a command's (#1572).
+pub fn missing_served(line: &str) -> anyhow::Error {
+    let owner = manifests()
+        .into_iter()
+        .find(|package| package.provides.flags.iter().any(|l| l == line))
+        .map(|package| package.name)
+        .unwrap_or_else(|| line.to_string());
+    let package: &'static str = Box::leak(owner.into_boxed_str());
+    missing(format!("flint {line}"), package)
+}
+
 /// `what` needs whichever package's manifest provides the command `words`
 /// (`["gen"]`: procgen's), named from the manifests compiled in, so the
 /// source names no package to say it (#1557).
@@ -260,9 +320,11 @@ mod tests {
 
     /// The stock `flint` of a build with ai has its commands where they
     /// always were.
-    #[cfg(feature = "ai")]
     #[test]
     fn with_ai_the_asset_commands_are_its_extensions() {
+        if !built_with("ai") {
+            return; // a build without it has none (above)
+        }
         let tree = crate::stock_command();
         let asset = tree.find_subcommand("asset").unwrap();
         for name in [
@@ -400,27 +462,149 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "ai"))]
+    /// The stock list less the ai package's extensions: its `asset`
+    /// commands and its steps of other commands (the one extension with
+    /// flags on a command it doesn't own).
+    fn without_ai() -> Vec<Box<dyn crate::extension::CliExtension>> {
+        crate::stock()
+            .into_iter()
+            .filter(|e| {
+                e.flags().is_empty() && !e.commands().iter().any(|c| c.get_name() == "generate")
+            })
+            .collect()
+    }
+
+    /// The done-when of #1572 (and #1333's paid calls), in every build: a
+    /// launcher without the ai package has no `--ai-refine` on `render`,
+    /// and each of the package's flags, on a command it adds them to or one
+    /// whose owner declares them, exits 2 naming the package, from the
+    /// manifest compiled in.
     #[test]
-    fn without_ai_the_paid_calls_name_it() {
+    fn without_ai_the_paid_calls_and_their_flags_name_it() {
+        use clap::{CommandFactory as _, Parser as _};
+        let launcher = crate::extension::Added::new(without_ai(), &crate::Cli::command()).unwrap();
+        let tree = launcher.parser(crate::Cli::command);
+        let render = tree.find_subcommand("render").unwrap();
+        for gone in ["ai_refine", "refine_rounds", "refine_out", "ai_provider"] {
+            assert!(
+                render.get_arguments().all(|a| a.get_id() != gone),
+                "render {gone}"
+            );
+        }
+        let named = |words: &[&str]| {
+            let e = crate::run_line(without_ai(), words).expect_err("no ai, no paid call");
+            let missing = e
+                .downcast_ref::<MissingPackage>()
+                .unwrap_or_else(|| panic!("{words:?}: {e:#}"));
+            (missing.what.clone(), missing.package)
+        };
+        let refine = [
+            "render",
+            "x.scene.toml",
+            "--look",
+            "noir",
+            "--reference",
+            "r.png",
+        ];
         assert_eq!(
-            wanted(&["asset", "generate", "texture", "-d", "moss"]),
+            named(&[&refine[..], &["--ai-refine"]].concat()),
+            ("flint render --ai-refine".to_string(), "ai")
+        );
+        assert_eq!(
+            named(&["--json", "render", "x.scene.toml", "--refine-rounds=3"]),
+            ("flint render --refine-rounds".to_string(), "ai")
+        );
+        assert_eq!(
+            named(&["asset", "generate", "texture", "-d", "moss"]).1,
             "ai"
         );
-        assert_eq!(wanted(&["asset", "costs"]), "ai");
-        assert_eq!(wanted(&["asset", "job", "list"]), "ai");
-        assert_eq!(
-            wanted(&[
-                "asset",
-                "resolve",
-                "x.scene.toml",
-                "--strategy",
-                "ai_generate"
-            ]),
-            "ai"
+        assert_eq!(named(&["asset", "costs"]).1, "ai");
+        assert_eq!(named(&["asset", "job", "list"]).1, "ai");
+        let text = crate::run_line(without_ai(), &[&refine[..], &["--ai-refine"]].concat())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            text.starts_with("flint render --ai-refine needs the `ai` package"),
+            "{text}"
         );
-        assert_eq!(wanted(&["gen", "--cost-report"]), "ai");
-        assert_eq!(wanted(&["gen", "--ai-create", "a dead tree"]), "ai");
+        // A flag the owner declares and the package serves: refused by the
+        // owner, before procgen's point is asked
+        let points = crate::points_of(&without_ai());
+        let gen = |words: &[&str]| {
+            let line = ["flint", "gen"].into_iter().chain(words.iter().copied());
+            let crate::Cli { command, .. } = crate::Cli::parse_from(line);
+            let crate::Commands::Gen(args) = command else {
+                unreachable!()
+            };
+            let e = super::super::gen::run_in(*args, &points).expect_err("not served");
+            let missing = e.downcast_ref::<MissingPackage>().unwrap();
+            (missing.what.clone(), missing.package)
+        };
+        assert_eq!(
+            gen(&["--cost-report"]),
+            ("flint gen --cost-report".to_string(), "ai")
+        );
+        assert_eq!(gen(&["--ai-create", "a dead tree"]).1, "ai");
+        assert_eq!(
+            gen(&["specs/oak.procgen.toml", "--ai-assist"]),
+            ("flint gen --ai-assist".to_string(), "ai")
+        );
+        let e = super::super::asset::batch_of(&points, "ai_generate").expect_err("no batch");
+        let missing = e.downcast_ref::<MissingPackage>().unwrap();
+        assert_eq!(
+            (missing.what.as_str(), missing.package),
+            ("flint asset resolve --strategy ai_generate", "ai")
+        );
+    }
+
+    /// A flag no package adds is clap's own mistake, not a package's.
+    #[test]
+    fn an_unknown_flag_is_not_a_missing_package() {
+        use clap::CommandFactory as _;
+        let parser = crate::extension::Added::new(Vec::new(), &crate::Cli::command())
+            .unwrap()
+            .parser(crate::Cli::command);
+        for words in [
+            &["render", "x", "--ai-refin"][..],
+            &["check", "--ai-refine"],
+            &["render", "x", "--nope"],
+        ] {
+            let argv: Vec<OsString> = std::iter::once("flint")
+                .chain(words.iter().copied())
+                .map(OsString::from)
+                .collect();
+            let e = parser.clone().try_get_matches_from(&argv).unwrap_err();
+            assert!(missing_flag(&e, &argv, &parser).is_none(), "{words:?}");
+        }
+    }
+
+    /// The stock `flint` of a build with ai has `render`'s refine group
+    /// where its heading always was: after the measures, before the
+    /// debug views (#1572).
+    #[test]
+    fn with_ai_the_refine_flags_keep_their_place_in_render_help() {
+        if !built_with("ai") {
+            return;
+        }
+        let mut tree = crate::stock_command();
+        let help = tree
+            .find_subcommand_mut("render")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        // The line a heading or an option starts (other flags' help names
+        // `--ai-refine` in prose)
+        let lines: Vec<&str> = help.lines().map(str::trim).collect();
+        let at = |line: &str| {
+            lines
+                .iter()
+                .position(|l| *l == line)
+                .unwrap_or_else(|| panic!("no line {line} in render --help"))
+        };
+        assert!(at("Measure and report:") < at("Refine a look:"));
+        assert!(at("Refine a look:") < at("--ai-refine"));
+        assert!(at("--ai-refine") < at("--max-cost <MAX_COST>"));
+        assert!(at("--max-cost <MAX_COST>") < at("Debug, lists, GPU and schemas:"));
     }
 
     /// The done-when of #1543, in every build since #1557: a launcher

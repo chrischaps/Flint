@@ -5,15 +5,16 @@
 //! `flint-procgen-ai` can't draw a mesh (it depends on `flint-procgen`
 //! only), so this module draws for it: generate the spec, export a GLB, and
 //! render it with the same headless model render as
-//! `flint edit model.glb --render`. `gen_ai::build_agent` attaches it.
+//! `flint edit model.glb --render`, the kernel's
+//! [`ModelStill`](flint_package::cli::gen::ModelStill) point.
+//! `gen_ai::build_agent` attaches it.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use flint_package::cli::gen::ModelStill;
 use flint_procgen::{export_glb, GeneratorOutput, GeneratorRegistry, ProcGenSpec};
 use flint_procgen_ai::Previewer;
-
-use super::preview;
 
 /// Side of the square render Claude sees and the loop measures. Small
 /// enough to be cheap in tokens, big enough to show a silhouette.
@@ -51,7 +52,10 @@ impl MeshRenderPreviewer {
             unique()
         ));
         std::fs::write(&path, glb)?;
-        let rendered = preview::render_model(&path, self.size, self.size);
+        let rendered = match flint_package::cli::points().get::<ModelStill>() {
+            Some(ModelStill(still)) => still(&path, self.size, self.size),
+            None => Err(anyhow::anyhow!("this flint draws no model stills")),
+        };
         let _ = std::fs::remove_file(&path);
         let mut png = std::io::Cursor::new(Vec::new());
         rendered?.write_to(&mut png, image::ImageFormat::Png)?;

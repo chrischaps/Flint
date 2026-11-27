@@ -25,9 +25,19 @@ tracing = { workspace = true }
 flint-package = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
+# Its steps of commands it doesn't own (#1572): procgen's `gen --ai-*`
+# (procgen-cli's `AiPoint`, procgen-ai's agents) and `render --ai-refine`
+# (a look's keys: the built-in styles and the [post_process] fields)
+flint-procgen-ai = { workspace = true, optional = true }
+flint-procgen-cli = { workspace = true, optional = true }
+flint-render = { workspace = true, optional = true }
+flint-scene = { workspace = true, optional = true }
 
 [features]
-cli = ["dep:flint-package", "dep:clap", "dep:anyhow"]
+cli = [
+    "dep:flint-package", "dep:clap", "dep:anyhow", "dep:flint-procgen-ai",
+    "dep:flint-procgen-cli", "dep:flint-render", "dep:flint-scene",
+]
 
 [dev-dependencies]
 uuid = { workspace = true }

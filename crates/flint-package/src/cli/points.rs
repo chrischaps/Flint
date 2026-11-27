@@ -14,7 +14,7 @@
 //! says which package to list.
 
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -22,6 +22,10 @@ use std::sync::OnceLock;
 #[derive(Default)]
 pub struct Points {
     map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    /// The flags (and flag values) an owning command declares that a
+    /// package serves, as its manifest's `[provides] flags` spells them
+    /// (`gen --ai-create`), #1572.
+    served: BTreeSet<&'static str>,
 }
 
 impl Points {
@@ -39,6 +43,25 @@ impl Points {
         self.map
             .get(&TypeId::of::<T>())
             .and_then(|value| value.downcast_ref::<T>())
+    }
+
+    /// Say that this run's packages serve `flag`, a flag the owning
+    /// command declares and runs through a point (`gen --ai-create`,
+    /// `asset resolve --strategy ai_generate`). The owner refuses a served
+    /// flag nobody registered, naming the package from the manifest.
+    pub fn serve(&mut self, flag: &'static str) -> &mut Self {
+        self.served.insert(flag);
+        self
+    }
+
+    /// Whether a package of this run serves `flag`.
+    pub fn serves(&self, flag: &str) -> bool {
+        self.served.contains(flag)
+    }
+
+    /// Every flag served, in order.
+    pub fn served(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.served.iter().copied()
     }
 
     pub fn len(&self) -> usize {
