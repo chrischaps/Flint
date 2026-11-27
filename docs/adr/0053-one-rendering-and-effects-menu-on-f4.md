@@ -63,5 +63,5 @@ Not recorded in the surviving text.
   `packages/debug-hud/crates/flint-debug-ui/src/styles_panel.rs`,
   `crates/flint-player/src/player_app/frame.rs` (freeze switch),
   `crates/flint-viewer/src/app.rs`
-- Book: [Debug Panels](../book/src/guides/debug-panels.md);
+- Book: [Debug Panels](../../packages/debug-hud/docs/guides/debug-panels.md);
   [Post-Processing](../book/src/concepts/post-processing.md)

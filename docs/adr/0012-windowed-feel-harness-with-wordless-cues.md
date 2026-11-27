@@ -52,4 +52,4 @@ Not recorded in the surviving text.
   "Harden play-chart stdin against gamepad-to-keyboard mappers"
 - Code now: `packages/rhythm/crates/flint-rhythm-game/src/cli/play_chart_window.rs`
   (`run_windowed`), `packages/rhythm/crates/flint-rhythm-game/src/cli/play_chart.rs`,
-  [Music CLI](../book/src/cli-reference/music.md)
+  [Music CLI](../../packages/music/docs/cli-reference/music.md)

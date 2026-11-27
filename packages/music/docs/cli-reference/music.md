@@ -1,5 +1,7 @@
 # Music Commands
 
+> **Package:** `music`, a feature package: a game's `flint` has `flint music validate`, `play` and `render` only when its `[packages]` lists `music = "*"`. `flint music calibrate`, `flint music chart` and `validate`'s rhythm contract (`--chart`, `--rhythm`, a suite with `[reintegration]`; refused, naming rhythm, in a build without it) are the `rhythm` package's, which brings `music` with it ([Packages](../concepts/packages.md)).
+
 `flint music` and its subcommands drive the rhythm system described in [Music Sessions](../concepts/music-sessions.md). They work on a **suite manifest** (`*.suite.toml`), a **chart** (`*.chart.toml`) and the optional tuning files under `config/`; see [File Formats: Music Session Files](../formats/overview.md#music-session-files) for the file grammar.
 
 The usual order is: validate the suite, play it raw to hear the stems, calibrate the player's latency, play the chart live, replay the recording headless to reproduce judgment, and render a scripted session to WAV for listening or CI.

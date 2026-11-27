@@ -74,4 +74,4 @@ into its 480-sample ramp; two renders bit-identical.
   `render_offline_with`), `packages/music/crates/flint-music/src/analysis.rs`,
   `crates/flint-cli/src/commands/render_suite.rs`,
   `packages/rhythm/crates/flint-rhythm-game/src/cli/replay_chart.rs`,
-  [Music CLI](../book/src/cli-reference/music.md)
+  [Music CLI](../../packages/music/docs/cli-reference/music.md)
