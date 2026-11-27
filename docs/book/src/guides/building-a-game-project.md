@@ -485,7 +485,10 @@ On a game with the engine of 2026-11-14 (examples and all) this took the working
 git log -1 --format=%cs -- engine                  # before the pull: e.g. 2026-11-02
 git subtree pull --prefix=engine flint-engine main --squash
 bash engine/scripts/changelog.sh since 2026-11-02   # newest first
+bash engine/scripts/changelog.sh since 2026-11-02 --package engine,living   # the kernel's and living's only
 ```
+
+Every entry belongs to a package: each day has a heading for the kernel's entries, which every game has (`## 2026-11-27`), and one for each package that changed (`## 2026-11-27 · living`). A package your game doesn't list under `[packages]` can't change it, so `--package` with the kernel, `engine`, and your packages leaves those out.
 
 The entries live one file a month in `engine/changelog/` (`engine/CHANGELOG.md` links them), and `since` also reads the ones not yet gathered into a month, in `engine/changelog.d/`. It prints every entry dated that day or later, so a pull made the same day may show an entry you already had. Then run your scenes through `flint validate` and play the game once, watching the log: several entries are new warnings for mistakes that used to pass in silence.
 
