@@ -1219,7 +1219,10 @@ mod tests {
         // The build options are kept, the `packages` bundle is not one
         assert_eq!(plan.player.options, ["audio", "gamepad", "frame-history"]);
         assert_eq!(plan.cli.options, ["audio", "gamepad", "dialogs"]);
-        assert_eq!(plan.left_out, ["ai", "living", "music", "rhythm"]);
+        assert_eq!(
+            plan.left_out,
+            ["ai", "living", "music", "rhythm", "vehicle"]
+        );
     }
 
     /// A scratch game (#1532): `flint.toml` listing `packages`, and a crate
@@ -1333,13 +1336,28 @@ mod tests {
         player.sort();
         assert_eq!(
             player,
-            ["debug-hud", "living", "music", "procgen", "rhythm"]
+            [
+                "debug-hud",
+                "living",
+                "music",
+                "procgen",
+                "rhythm",
+                "vehicle"
+            ]
         );
         let mut cli = plan.cli.packages.clone();
         cli.sort();
         assert_eq!(
             cli,
-            ["ai", "debug-hud", "living", "music", "procgen", "rhythm"]
+            [
+                "ai",
+                "debug-hud",
+                "living",
+                "music",
+                "procgen",
+                "rhythm",
+                "vehicle"
+            ]
         );
         assert!(plan.split.is_none());
     }

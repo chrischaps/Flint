@@ -1,0 +1,39 @@
+# Vehicles (ADR 0140, #1628, epic #1626): a dynamic body on Rapier's
+# raycast wheels, with arcade assists as tuning, driven once a fixed physics
+# step. A feature: off unless a game lists `vehicle = "*"`. The first genre
+# package, and the first written against the public Package API rather than
+# moved onto it: its crate builds on flint-package (and, through it, the
+# kernel's physics) alone.
+#
+# Its crate is in this folder: crates/flint-vehicle, whose `player` feature
+# is the subsystem (`flint_vehicle::player::PACKAGE`, named by `[rust]`
+# below), the `vehicle` script module and the Vehicles panel, which the
+# player makes only where it has the debug HUD (the kernel's `ScenePanels`
+# point), so it needs no `[with.debug-hud]` part.
+#
+# `[requires] physics` waits for physics to be a package (Phase 3, #1611):
+# until then physics is the kernel's, and every game has it.
+
+[package]
+name = "vehicle"
+version = "0.1.0"
+tier = "feature"
+summary = "Raycast-wheel vehicles on a Rapier body, with arcade assists, stepped at the fixed rate"
+engine = "^0.1"
+
+[build]
+features = ["vehicle"]
+
+[rust]
+player = "flint-vehicle"
+
+[provides]
+crates = ["flint-vehicle"]
+components = ["vehicle", "vehicle_wheel", "vehicle_input", "vehicle_state"]
+script_modules = ["vehicle"]
+
+# What a player built without it still knows (ADR 0137 decision 8): a
+# scene with the components above hears once that they sit undriven (the
+# body is still physics', so it falls and rests where it lands).
+[without]
+does = "sit undriven"

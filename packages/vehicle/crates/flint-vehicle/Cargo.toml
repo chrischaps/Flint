@@ -1,0 +1,33 @@
+[package]
+name = "flint-vehicle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The vehicle package (ADR 0140, #1628): raycast-wheel vehicles on a Rapier body with arcade assists, driven each fixed step on the Package API alone"
+publish = false
+
+[features]
+default = []
+# Its player part (`player::PACKAGE`): the vehicles' subsystem, the
+# `vehicle` script module and the Vehicles panel. flint-player's generated
+# `vehicle` feature turns it on.
+player = [
+    "dep:flint-package", "dep:flint-ecs", "dep:flint-runtime", "dep:flint-script",
+    "dep:rhai", "dep:toml", "dep:tracing",
+]
+
+# The kernel and its physics only (#1624's rule, ADR 0140 Consequences):
+# flint-package is the Package API, and lends the physics and egui it
+# builds against (`flint_package::physics`, `flint_package::egui`).
+[dependencies]
+flint-core = { workspace = true }
+flint-package = { workspace = true, optional = true }
+flint-ecs = { workspace = true, optional = true }
+flint-runtime = { workspace = true, optional = true }
+flint-script = { workspace = true, optional = true }
+rhai = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+
+[lints]
+workspace = true

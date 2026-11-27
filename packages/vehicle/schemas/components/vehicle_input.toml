@@ -1,0 +1,31 @@
+# What drives a vehicle (ADR 0140 section 2, #1628), read once each fixed
+# step. A player's bindings (`vehicle.driver = "player"`) and an AI's script
+# write the same fields, so the two share one path. A script's `set_field`
+# lands at once, so a value written in `on_update` reaches the same frame's
+# steps; every step of a frame holds the same input.
+#
+# The modifiers are how a game shapes the drive without forking it (a
+# drift, a boost, offroad): the package puts them back to neutral after
+# each frame's steps, so a game writes them every frame it wants them.
+# `push` is applied by the next step, once, and zeroed.
+
+[component.vehicle_input]
+description = "A vehicle's input for the next fixed steps: driving, modifiers and a one-shot push (the vehicle package)"
+
+[component.vehicle_input.fields]
+# Driving (the package's from the actions when vehicle.driver = "player")
+throttle = { type = "f32", default = 0.0, min = -1.0, max = 1.0, description = "Drive, -1 to 1: below 0 reverses" }
+brake = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "Brake, 0 to 1: at a near standstill it reverses instead" }
+steer = { type = "f32", default = 0.0, min = -1.0, max = 1.0, description = "Steering, -1 to 1, positive right" }
+handbrake = { type = "bool", default = false, description = "The handbrake wheels lock and slide" }
+hold = { type = "bool", default = false, description = "Brakes on and the rest ignored (a countdown, a finish)" }
+# Modifiers, neutral again after each frame's steps
+grip_scale = { type = "f32", default = 1.0, min = 0.0, description = "Times the grip assist (a drift's lower grip, offroad)" }
+turn_scale = { type = "f32", default = 1.0, min = 0.0, description = "Times the turn-rate curve" }
+speed_scale = { type = "f32", default = 1.0, min = 0.0, description = "Times the speed cap (offroad)" }
+speed_bonus = { type = "f32", default = 0.0, description = "Added to the speed cap, m/s (a boost, the slipstream)" }
+accel_bonus = { type = "f32", default = 0.0, description = "Added drive, m/s² while grounded; negative bleeds speed" }
+slip_target = { type = "f32", default = 0.0, description = "Degrees the yaw assist holds the nose off the travel heading, positive right (a drift)" }
+spin = { type = "f32", default = 0.0, description = "A yaw rate, degrees a second, positive left, that replaces the yaw assist's target while not 0 (a spinout)" }
+# One-shot
+push = { type = "vec3", default = [0.0, 0.0, 0.0], description = "A velocity change in the body's frame, m/s (x right, y up, z forward), applied by the next step once and zeroed (a hop, a boost's kick)" }

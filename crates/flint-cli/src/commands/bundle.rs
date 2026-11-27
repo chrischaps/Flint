@@ -1852,6 +1852,7 @@ mod tests {
                         [entities.elm]\nliving_prop = { lineage_seed = 4 }\n";
     const LIVING: &str = "engine/packages/living/schemas";
     const MUSIC: &str = "engine/packages/music/schemas";
+    const VEHICLE: &str = "engine/packages/vehicle/schemas";
 
     fn packed_under(gathered: &Gathered, dir: &str) -> bool {
         gathered
@@ -1940,12 +1941,12 @@ mod tests {
     /// and lists every package's schemas as before.
     #[test]
     fn with_no_packages_table_a_bundle_packs_every_package() {
-        let all = "living = \"*\"\nmusic = \"*\"\nrhythm = \"*\"\nai = \"*\"\n";
+        let all = "living = \"*\"\nmusic = \"*\"\nrhythm = \"*\"\nai = \"*\"\nvehicle = \"*\"\n";
         let no_table = package_game("no_table", None, OAKS);
         let every = package_game("every", Some(all), OAKS);
         let none = gather_game(&args(&no_table)).unwrap();
         let listed = gather_game(&args(&every)).unwrap();
-        assert_eq!(none.schemas, ["engine/schemas", LIVING, MUSIC]);
+        assert_eq!(none.schemas, ["engine/schemas", LIVING, MUSIC, VEHICLE]);
         assert_eq!(none.schemas, listed.schemas);
         assert!(none.packages.is_none());
         let engine_files = |g: &Gathered| -> BTreeMap<String, Vec<u8>> {

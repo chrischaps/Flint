@@ -1,0 +1,44 @@
+# A vehicle (ADR 0140 section 4, #1628): the entity's dynamic `rigidbody`
+# and `collider` are its chassis, its children with `vehicle_wheel` its
+# wheels. The vehicle package drives it once a fixed physics step: Rapier's
+# raycast wheels carry and drive the body, and the assists below pull it
+# toward arcade handling. Every assist at 0 is a plain raycast car.
+#
+# Read every step, so an inspector edit, the Vehicles panel's sliders or a
+# script's `set_field` takes effect on the next step. Each default is the
+# value the reader falls back to. Where a field carries over from
+# FlintKart's `kart_physics` it keeps that field's meaning (`top_speed` is
+# its `max_speed`, `accel` its `acceleration`, `brake` its `brake_decel`).
+
+[component.vehicle]
+description = "A raycast-wheel vehicle on this entity's dynamic body, driven each fixed step (the vehicle package)"
+
+[component.vehicle.fields]
+# Drive
+top_speed = { type = "f32", default = 30.0, min = 0.0, description = "The speed cap, m/s: the engine stops pushing past it, and speed above it eases back at overspeed_decay" }
+accel = { type = "f32", default = 15.0, min = 0.0, description = "Full-throttle acceleration, m/s²; with drag it also sets the top speed (accel / drag)" }
+brake = { type = "f32", default = 25.0, min = 0.0, description = "Full-brake deceleration, m/s²" }
+reverse = { type = "f32", default = 0.3, min = 0.0, max = 1.0, description = "Reverse speed and drive, as a fraction of top_speed and accel" }
+drag = { type = "f32", default = 0.5, min = 0.0, description = "Speed lost each second, as a fraction of speed" }
+overspeed_decay = { type = "f32", default = 2.5, min = 0.0, description = "How fast speed above the cap eases back, per second" }
+mass = { type = "f32", default = 150.0, min = 0.1, description = "The chassis mass, kg (replaces the rigidbody's mass; the inertia is the collider's box at this mass)" }
+center_of_mass = { type = "vec3", default = [0.0, -0.25, 0.0], description = "The centre of mass in the body's frame, m: low keeps it on its wheels" }
+# Steering
+turn_rate_low = { type = "f32", default = 180.0, min = 0.0, description = "The turn rate at standstill, degrees a second, eased to turn_rate_high at top speed" }
+turn_rate_high = { type = "f32", default = 60.0, min = 0.0, description = "The turn rate at top speed, degrees a second" }
+min_turn_radius = { type = "f32", default = 2.6, min = 0.1, description = "The tightest circle the turn rate allows, m" }
+steer_response = { type = "f32", default = 7.0, min = 0.0, description = "How fast the wheel follows the input, full locks a second (0: at once)" }
+steer_curve = { type = "f32", default = 1.0, min = 0.1, description = "A player's stick shaped as |x|^curve (1: linear; above 1 is finer near the centre)" }
+# Assists (0 turns each off)
+grip = { type = "f32", default = 9.0, min = 0.0, description = "Sideways speed scrubbed each second, of the travel heading: the arcade grip" }
+yaw_assist = { type = "f32", default = 10.0, min = 0.0, description = "How fast the yaw rate is pulled toward the turn-rate curve, per second" }
+upright = { type = "f32", default = 60.0, min = 0.0, description = "The torque turning the body's up toward the ground's, per second squared" }
+scrub = { type = "f32", default = 0.0, min = 0.0, description = "Forward speed lost each second per radian of slip, for a vehicle that slows when thrown into a corner" }
+# Tyres and suspension
+tyre_grip = { type = "f32", default = 1.8, min = 0.0, description = "Each tyre's friction (Rapier's friction_slip)" }
+suspension_stiffness = { type = "f32", default = 40.0, min = 0.0, description = "The springs' stiffness, per metre of compression" }
+suspension_damping = { type = "f32", default = 3.5, min = 0.0, description = "The springs' damping (rebound; compression takes 0.7 of it)" }
+suspension_travel = { type = "f32", default = 0.3, min = 0.0, description = "How far each spring travels from its rest length either way, m" }
+# Control
+driver = { type = "enum", values = ["player", "script"], default = "player", description = "Who fills vehicle_input's driving fields: the package from the player's actions, or a script (an AI, a replay)" }
+actions = { type = "table", description = "The player's actions by role: { throttle, brake, steer, handbrake }; unsaid roles are accelerate, brake, steering and drift" }

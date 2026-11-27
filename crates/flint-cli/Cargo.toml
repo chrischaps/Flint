@@ -67,7 +67,7 @@ default = ["audio", "gamepad", "dialogs", "packages"]
 # (`[rust.devices]`) that flint-player's doesn't already turn on. Don't edit
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
-packages = ["ai", "debug-hud", "living", "music", "procgen", "rhythm"]
+packages = ["ai", "debug-hud", "living", "music", "procgen", "rhythm", "vehicle"]
 packages-audio = []
 packages-dialogs = ["flint-procgen-cli?/dialogs"]
 packages-gamepad = []
@@ -77,6 +77,7 @@ living = ["procgen", "flint-player/living", "dep:flint-living", "flint-living?/c
 music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
 procgen = ["flint-player/procgen", "dep:flint-procgen-cli", "flint-procgen-cli?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
+vehicle = ["flint-player/vehicle"]
 # package-sync:end
 audio = ["flint-player/audio", "packages-audio"]
 gamepad = ["flint-player/gamepad", "packages-gamepad"]
