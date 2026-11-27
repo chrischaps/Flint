@@ -164,10 +164,13 @@ pub enum Kind {
     Command,
     /// A flag on a command another package (or the kernel) owns (#1572).
     Flag,
+    /// A kind of spec file the package makes assets from, as a pattern of
+    /// its name (`*.procgen.toml`, #1595): a scene naming one uses it.
+    Spec,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 7] = [
+    pub const ALL: [Kind; 8] = [
         Kind::Crate,
         Kind::Component,
         Kind::Archetype,
@@ -175,6 +178,7 @@ impl Kind {
         Kind::ScriptModule,
         Kind::Command,
         Kind::Flag,
+        Kind::Spec,
     ];
 
     /// Its key in `[provides]`: `scene_tables`.
@@ -187,6 +191,7 @@ impl Kind {
             Kind::ScriptModule => "script_modules",
             Kind::Command => "commands",
             Kind::Flag => "flags",
+            Kind::Spec => "specs",
         }
     }
 
@@ -200,6 +205,7 @@ impl Kind {
             Kind::ScriptModule => "script module",
             Kind::Command => "command",
             Kind::Flag => "flag",
+            Kind::Spec => "spec",
         }
     }
 }
@@ -218,6 +224,9 @@ pub struct Provides {
     /// command's path, the flag and at most one value of it (`render
     /// --ai-refine`, `asset resolve --strategy ai_generate`), #1572.
     pub flags: Vec<String>,
+    /// The spec files it makes assets from, each a pattern of a file's
+    /// name, `*` and then its ending (`*.procgen.toml`), #1595.
+    pub specs: Vec<String>,
 }
 
 impl Provides {
@@ -230,7 +239,17 @@ impl Provides {
             Kind::ScriptModule => &self.script_modules,
             Kind::Command => &self.commands,
             Kind::Flag => &self.flags,
+            Kind::Spec => &self.specs,
         }
+    }
+
+    /// Whether `file` (a path, or a file's name) is a spec file one of
+    /// [`Provides::specs`]' patterns names.
+    pub fn makes_from(&self, file: &str) -> bool {
+        self.specs
+            .iter()
+            .filter_map(|p| spec_ending(p))
+            .any(|ending| file.len() > ending.len() && file.ends_with(ending))
     }
 
     fn of_mut(&mut self, kind: Kind) -> &mut Vec<String> {
@@ -242,6 +261,7 @@ impl Provides {
             Kind::ScriptModule => &mut self.script_modules,
             Kind::Command => &mut self.commands,
             Kind::Flag => &mut self.flags,
+            Kind::Spec => &mut self.specs,
         }
     }
 }
@@ -417,6 +437,12 @@ impl Packages {
 
     pub fn get(&self, name: &str) -> Option<&Package> {
         self.packages.iter().find(|p| p.name == name)
+    }
+
+    /// The package whose `[provides] specs` names `file` (a path, or a
+    /// file's name) as one of its spec files, if one does (#1595).
+    pub fn spec_owner(&self, file: &str) -> Option<&Package> {
+        self.packages.iter().find(|p| p.provides.makes_from(file))
     }
 
     /// The package that provides `item` of `kind`, if one does.
@@ -935,8 +961,28 @@ impl Parse<'_> {
                 );
             }
         }
+        for (i, spec) in out.specs.clone().iter().enumerate() {
+            if spec_ending(spec).is_none() {
+                self.error(
+                    format!("provides.specs[{i}]"),
+                    format!(
+                        "`{spec}` is no spec pattern: `*` and then the files' ending, as \
+                         `*.procgen.toml`"
+                    ),
+                );
+            }
+        }
         out
     }
+}
+
+/// A `[provides] specs` pattern's ending: `.procgen.toml` of
+/// `*.procgen.toml`. `None` for anything else: the one `*` comes first, then
+/// a `.`, and no folder.
+pub fn spec_ending(pattern: &str) -> Option<&str> {
+    pattern
+        .strip_prefix('*')
+        .filter(|e| e.len() > 1 && e.starts_with('.') && !e.contains(['*', '/', '\\', ' ']))
 }
 
 /// A `[provides] flags` line read: `asset resolve --strategy ai_generate`.
@@ -968,6 +1014,19 @@ impl<'a> FlagLine<'a> {
             flag,
             value: rest.get(1).copied(),
         })
+    }
+
+    /// Whether the line's value names `given`: the same word, or for a
+    /// value ending `.*` (`render --sweep wooze.*`, #1595) any word that
+    /// starts with what comes before the `*`, more after it.
+    pub fn names_value(&self, given: &str) -> bool {
+        match self.value {
+            Some(value) => match value.strip_suffix('*').filter(|p| p.ends_with('.')) {
+                Some(prefix) => given.len() > prefix.len() && given.starts_with(prefix),
+                None => value == given,
+            },
+            None => false,
+        }
     }
 }
 

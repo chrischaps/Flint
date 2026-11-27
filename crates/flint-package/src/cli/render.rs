@@ -39,6 +39,11 @@ pub type RenderFlags = super::flags::PackageFlags<RenderPlace>;
 /// "0.5")`, `("preset", "linklater")`).
 pub type WoozeAxes<'a> = &'a [(&'a str, &'a str)];
 
+/// The scene-table values one sweep cell turns: each axis of it whose key
+/// is a table's field, as `(key, value)` the line wrote them
+/// (`("living.echoes.spread", "0.9")`, #1595).
+pub type TableAxes<'a> = &'a [(&'a str, &'a str)];
+
 /// What a render stage asks of the package that clocks a scene.
 pub trait StagePart: Send + Sync {
     /// Whether `world` grows props (an entity this package's props grow
@@ -52,6 +57,14 @@ pub trait StagePart: Send + Sync {
 
     /// A `living.echoes.<knob>` value, held to what a spec's echoes take.
     fn check_echo(&self, knob: &str, value: &str) -> Result<(), String>;
+
+    /// Write a sweep cell's table values into its own copy of the scene's
+    /// top-level tables (#531, #1595), right after the cell's scene
+    /// settles and before anything reads them: each key's field, its
+    /// tables made when the scene has none, every other field left as the
+    /// scene wrote it. The cell then draws what a scene with those tables
+    /// draws.
+    fn lay_tables(&self, tables: &mut toml::Table, axes: TableAxes);
 
     /// The stage's cell, after its assets are made and before its
     /// subsystems are built: lay a preset column over the props `grows`,

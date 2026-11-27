@@ -18,9 +18,11 @@
 //! its value over the scene's `[wooze]` (the living package's render part,
 //! #1558), and so draws through
 //! `render.rs`'s stages, a world and renderer a column (#487); an echoes column
-//! is written into its own copy of the scene's `[living]` table
-//! ([`SweepGrid::lay_living`]) before its stage loads, so it draws what a scene
-//! with that table draws. The sheet the
+//! is written into its own copy of the scene's `[living]` table by the same
+//! part ([`SweepGrid::table_axes`], `StagePart::lay_tables`, #1595) before its
+//! stage loads, so it draws what a scene with that table draws. A render
+//! without the part refuses either, naming the package whose manifest lists
+//! `render --sweep <key>` ([`SweepGrid::package_key`]). The sheet the
 //! columns land on is [`super::style_sheet::compose`] for every family.
 
 use super::look::{did_you_mean, find, overlay, Look};
@@ -70,6 +72,41 @@ pub fn parse_sweep(spec: &str) -> Result<Sweep, String> {
     Sweep::parse(spec)
 }
 
+/// Which family a key is, by its spelling alone: the one place the
+/// prefixes are read, before [`Sweep::parse`] checks the rest.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Family<'a> {
+    Look,
+    /// `post.<field>`
+    Post(&'a str),
+    /// `wooze.<knob>`: a scene's, laid over its field
+    Wooze(&'a str),
+    /// `living.<field>`: a scene's, written into its table
+    Living(&'a str),
+    /// `<style>.<key>`
+    Style(&'a str, &'a str),
+    /// None of them
+    Unknown,
+}
+
+impl<'a> Family<'a> {
+    pub fn of(key: &'a str) -> Self {
+        if key == "look" {
+            Family::Look
+        } else if let Some(field) = key.strip_prefix("post.") {
+            Family::Post(field)
+        } else if let Some(knob) = key.strip_prefix("wooze.") {
+            Family::Wooze(knob)
+        } else if let Some(field) = key.strip_prefix("living.") {
+            Family::Living(field)
+        } else if let Some((style, k)) = key.split_once('.') {
+            Family::Style(style, k)
+        } else {
+            Family::Unknown
+        }
+    }
+}
+
 impl Sweep {
     /// Parse `key=v1,v2,...`. Values split on `|` instead when one appears,
     /// so a vector can be swept: `post.fog_color=0,0,0|0.7,0.75,0.82`.
@@ -101,21 +138,18 @@ impl Sweep {
                 values.len()
             ));
         }
-        let key = if key == "look" {
-            SweepKey::Look
-        } else if let Some(field) = key.strip_prefix("post.") {
-            parse_post(field, &values)?
-        } else if let Some(knob) = key.strip_prefix("wooze.") {
-            parse_wooze(knob, &values)?
-        } else if let Some(field) = key.strip_prefix("living.") {
-            parse_living(field, &values)?
-        } else if let Some((style, k)) = key.split_once('.') {
-            parse_style(key, style, k, &values)?
-        } else {
-            return Err(format!(
-                "--sweep: '{key}' is not look, post.<field>, <style>.<key>, wooze.<knob> or \
-                 living.echoes.<knob> (e.g. ascii.cell; `--style help` lists the keys)"
-            ));
+        let key = match Family::of(key) {
+            Family::Look => SweepKey::Look,
+            Family::Post(field) => parse_post(field, &values)?,
+            Family::Wooze(knob) => parse_wooze(knob, &values)?,
+            Family::Living(field) => parse_living(field, &values)?,
+            Family::Style(style, k) => parse_style(key, style, k, &values)?,
+            Family::Unknown => {
+                return Err(format!(
+                    "--sweep: '{key}' is not look, post.<field>, <style>.<key>, wooze.<knob> or \
+                     living.echoes.<knob> (e.g. ascii.cell; `--style help` lists the keys)"
+                ))
+            }
         };
         Ok(Self { key, values })
     }
@@ -174,19 +208,10 @@ impl Sweep {
         }
     }
 
-    /// The `[living] echoes` field column `i` of an echoes sweep sets, and its
-    /// value as a scene would write it: `count` an integer, the others floats.
-    /// `None` for a sweep of anything else.
-    pub fn echoes_field(&self, i: usize) -> Option<(&str, toml::Value)> {
-        let SweepKey::Echoes { knob } = &self.key else {
-            return None;
-        };
-        let text = &self.values[i];
-        let value = match knob.as_str() {
-            "count" => toml::Value::Integer(text.parse().ok()?),
-            _ => toml::Value::Float(text.parse().ok()?),
-        };
-        Some((knob, value))
+    /// Whether the sweep turns a scene's field or tables: what the package
+    /// that clocks a scene draws (its render part), not the kernel.
+    pub fn is_scenes(&self) -> bool {
+        matches!(self.key, SweepKey::Wooze { .. } | SweepKey::Echoes { .. })
     }
 
     /// Said when columns `i` and `i + 1` came out the same, pixel for pixel: the
@@ -380,37 +405,33 @@ impl SweepGrid {
             .join(", ")
     }
 
-    /// Whether either axis turns a field of the scene's `[living]` table.
-    pub fn is_living(&self) -> bool {
+    /// Whether either axis turns a field of a scene's tables (`[living]
+    /// echoes`), which each cell's scene is given before it loads.
+    pub fn writes_tables(&self) -> bool {
         self.axes(0, 0)
             .iter()
             .any(|(s, _)| matches!(s.key, SweepKey::Echoes { .. }))
     }
 
-    /// Write the cell's `[living]` values into a scene's tables (#531): each
-    /// echoes axis's field into `[living] echoes`, the table and its `echoes`
-    /// made when the scene has none, every other field left as the scene
-    /// wrote it. The cell then draws what a scene with that table draws,
-    /// since everything downstream reads `[living]` from these tables.
-    pub fn lay_living(&self, column: usize, row: usize, tables: &mut toml::Table) {
-        for (sweep, i) in self.axes(column, row) {
-            let Some((knob, value)) = sweep.echoes_field(i) else {
-                continue;
-            };
-            let living = tables
-                .entry("living")
-                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-            // A [living] that isn't a table was refused when the scene settled
-            let Some(living) = living.as_table_mut() else {
-                continue;
-            };
-            let echoes = living
-                .entry("echoes")
-                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-            if let Some(echoes) = echoes.as_table_mut() {
-                echoes.insert(knob.to_string(), value);
-            }
-        }
+    /// The cell's table values, `(key, value)` an axis as the line wrote
+    /// them (`living.echoes.spread`, `0.9`): what the package's render part
+    /// writes into the cell's scene (`StagePart::lay_tables`, #1595).
+    pub fn table_axes(&self, column: usize, row: usize) -> Vec<(String, &str)> {
+        self.axes(column, row)
+            .into_iter()
+            .filter(|(s, _)| matches!(s.key, SweepKey::Echoes { .. }))
+            .map(|(s, i)| (s.name(), s.values[i].as_str()))
+            .collect()
+    }
+
+    /// The first key either axis turns that a package draws (a scene's
+    /// field or tables): what a render without that package is refused
+    /// for, by the manifest that lists `render --sweep <key>` (#1595).
+    pub fn package_key(&self) -> Option<String> {
+        self.axes(0, 0)
+            .into_iter()
+            .find(|(s, _)| s.is_scenes())
+            .map(|(s, _)| s.name())
     }
 
     /// The first wooze knob either axis turns.
@@ -864,57 +885,78 @@ mod tests {
             .contains("'dreamy'"));
     }
 
-    /// #531: an echoes field parses, labels like a wooze knob and is written
-    /// into the scene's `[living] echoes` as a scene would write it.
+    /// #531: an echoes field parses and labels like a wooze knob, and each
+    /// cell hands its values, as written, to the package that writes them
+    /// into the scene's `[living] echoes` (its test: flint-living's
+    /// `a_cells_echoes_are_written_into_the_living_table`, #1595).
     #[test]
-    fn an_echoes_sweep_is_written_into_the_living_table() {
+    fn an_echoes_sweep_hands_each_cell_its_table_values() {
         let spread = parse_sweep("living.echoes.spread=0,0.9,1.8").unwrap();
         assert_eq!(spread.name(), "living.echoes.spread");
         assert_eq!(spread.label(1), "spread 0.9");
         assert_eq!(spread.wooze_knob(), None, "no wooze knob");
         assert_eq!(spread.column_style(0), None, "and no style");
-        let count = parse_sweep("living.echoes.count=0,3").unwrap();
-        assert_eq!(
-            count.echoes_field(1),
-            Some(("count", toml::Value::Integer(3)))
-        );
 
-        // Over a scene's table: the column's field, the scene's others kept
         let grid = SweepGrid::new(&[spread]).unwrap().unwrap();
-        assert!(grid.is_living());
-        let mut tables: toml::Table = toml::from_str(
-            "[living]\nstagger = \"none\"\nsoftness = 0.3\nechoes = { count = 2, spread = 0.2 }",
-        )
-        .unwrap();
-        grid.lay_living(1, 0, &mut tables);
-        let scene: toml::Table = toml::from_str(
-            "[living]\nstagger = \"none\"\nsoftness = 0.3\nechoes = { count = 2, spread = 0.9 }",
-        )
-        .unwrap();
-        assert_eq!(tables, scene, "what a scene with spread = 0.9 says");
+        assert!(grid.writes_tables());
+        assert_eq!(
+            grid.table_axes(1, 0),
+            [("living.echoes.spread".to_string(), "0.9")]
+        );
+        assert_eq!(grid.package_key().as_deref(), Some("living.echoes.spread"));
 
-        // A scene with no [living] gets one holding only the field
-        let mut bare = toml::Table::new();
-        grid.lay_living(2, 0, &mut bare);
-        let expected: toml::Table = toml::from_str("[living]\nechoes = { spread = 1.8 }").unwrap();
-        assert_eq!(bare, expected);
-
-        // In a grid, each axis writes its own field
+        // In a grid, each axis hands its own field
         let grid = SweepGrid::new(&[
             parse_sweep("living.echoes.alpha=0.1,0.4").unwrap(),
             parse_sweep("living.echoes.count=1,6").unwrap(),
         ])
         .unwrap()
         .unwrap();
-        let mut both = toml::Table::new();
-        grid.lay_living(1, 1, &mut both);
-        let expected: toml::Table =
-            toml::from_str("[living]\nechoes = { alpha = 0.4, count = 6 }").unwrap();
-        assert_eq!(both, expected);
-        assert!(!SweepGrid::new(&[parse_sweep("wooze.glide=0,1").unwrap()])
+        assert_eq!(
+            grid.table_axes(1, 1),
+            [
+                ("living.echoes.alpha".to_string(), "0.4"),
+                ("living.echoes.count".to_string(), "6")
+            ]
+        );
+
+        // A wooze sweep writes no table, and is still a package's key; a
+        // style axis is the kernel's, so a grid names its other axis
+        let wooze = SweepGrid::new(&[parse_sweep("wooze.glide=0,1").unwrap()])
             .unwrap()
-            .unwrap()
-            .is_living());
+            .unwrap();
+        assert!(!wooze.writes_tables());
+        assert!(wooze.table_axes(0, 0).is_empty());
+        assert_eq!(wooze.package_key().as_deref(), Some("wooze.glide"));
+        let grid = SweepGrid::new(&[
+            parse_sweep("ascii.cell=6,8").unwrap(),
+            parse_sweep("wooze.glide=0,1").unwrap(),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(grid.package_key().as_deref(), Some("wooze.glide"));
+        assert_eq!(
+            SweepGrid::new(&[parse_sweep("ascii.cell=6,8").unwrap()])
+                .unwrap()
+                .unwrap()
+                .package_key(),
+            None
+        );
+    }
+
+    /// The families by spelling alone, the one place the prefixes are read
+    /// (the refine host asks it which keys are a scene's, #1595).
+    #[test]
+    fn a_keys_family_is_its_spelling() {
+        assert_eq!(Family::of("look"), Family::Look);
+        assert_eq!(Family::of("post.exposure"), Family::Post("exposure"));
+        assert_eq!(Family::of("wooze.glide"), Family::Wooze("glide"));
+        assert_eq!(
+            Family::of("living.echoes.count"),
+            Family::Living("echoes.count")
+        );
+        assert_eq!(Family::of("ascii.cell"), Family::Style("ascii", "cell"));
+        assert_eq!(Family::of("cell"), Family::Unknown);
     }
 
     #[test]

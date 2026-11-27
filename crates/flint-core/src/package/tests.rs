@@ -380,3 +380,62 @@ fn without_says_what_a_build_without_the_package_knows() {
         "{found:#?}"
     );
 }
+
+/// `[provides] specs` (#1595): a pattern of the spec files a package makes
+/// assets from, `*` and then their ending, which names a file by its path
+/// or its name and nothing shorter; anything else is a mistake.
+#[test]
+fn specs_name_the_spec_files_a_package_makes_assets_from() {
+    let text = format!("{PROCGEN}specs = [\"*.procgen.toml\"]\n");
+    let p = parse(&text, Path::new("packages/procgen/package.toml")).unwrap();
+    assert_eq!(p.provides.of(Kind::Spec), ["*.procgen.toml"]);
+    assert!(p.provides.makes_from("specs/oak.procgen.toml"));
+    assert!(p.provides.makes_from("oak.procgen.toml"));
+    assert!(!p.provides.makes_from(".procgen.toml"));
+    assert!(!p.provides.makes_from("oak.procgen.toml.bak"));
+    assert!(!p.provides.makes_from("oak.scene.toml"));
+    let packages = Packages {
+        dir: Path::new("packages").to_path_buf(),
+        packages: vec![p],
+        problems: Vec::new(),
+    };
+    assert_eq!(
+        packages
+            .spec_owner("woozy/grove_oak.procgen.toml")
+            .map(|p| p.name.as_str()),
+        Some("procgen")
+    );
+    assert!(packages.spec_owner("grove.scene.toml").is_none());
+
+    let found = mistakes(&format!(
+        "{LIVING}specs = [\"procgen.toml\", \"*\", \"*.a*b\", \"*specs/x.toml\"]\n"
+    ));
+    for i in 0..4 {
+        let want = format!("provides.specs[{i}]: `");
+        assert!(
+            found
+                .iter()
+                .any(|f| f.starts_with(&want) && f.contains("is no spec pattern")),
+            "{found:#?}"
+        );
+    }
+}
+
+/// A flag line's value (#1595): one word, or `<prefix>.*` for every word
+/// past the prefix (`render --sweep wooze.*`).
+#[test]
+fn a_flag_lines_value_names_its_word_or_every_word_past_its_prefix() {
+    let sweep = FlagLine::parse("render --sweep wooze.*").unwrap();
+    assert_eq!(sweep.value, Some("wooze.*"));
+    assert!(sweep.names_value("wooze.glide"));
+    assert!(sweep.names_value("wooze.preset"));
+    assert!(!sweep.names_value("wooze."));
+    assert!(!sweep.names_value("woozey.glide"));
+    assert!(!sweep.names_value("ascii.cell"));
+    let strategy = FlagLine::parse("asset resolve --strategy ai_generate").unwrap();
+    assert!(strategy.names_value("ai_generate"));
+    assert!(!strategy.names_value("ai_generate_more"));
+    assert!(!FlagLine::parse("render --ai-refine")
+        .unwrap()
+        .names_value("x"));
+}

@@ -406,6 +406,16 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
         let long = line.flag.trim_start_matches("--");
         command.get_arguments().any(|a| a.get_long() == Some(long))
     };
+    // A spec pattern names files the tree holds (#1595): the frozen scenes'
+    // specs, the packages' own
+    let has_spec = |pattern: &str| {
+        let Some(ending) = flint_core::package::spec_ending(pattern) else {
+            return false;
+        };
+        ["tests/fixtures", "packages"]
+            .iter()
+            .any(|dir| holds_file_ending(&repo().join(dir), ending))
+    };
     for p in &packages.packages {
         let file = flint_core::project::shown(&p.file);
         for kind in Kind::ALL {
@@ -414,6 +424,7 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
                 Kind::ScriptModule => &|i| modules.contains(i),
                 Kind::Command => &|i| paths.contains(i),
                 Kind::Flag => &has_flag,
+                Kind::Spec => &has_spec,
                 _ => &|i| declared.get(&kind).is_some_and(|s| s.contains(i)),
             };
             for item in p.provides.of(kind) {
@@ -436,6 +447,21 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
         }
     }
     out
+}
+
+/// Whether a file under `dir`, at any depth, is named with `ending`.
+fn holds_file_ending(dir: &Path, ending: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        let path = e.path();
+        if path.is_dir() {
+            holds_file_ending(&path, ending)
+        } else {
+            e.file_name().to_string_lossy().ends_with(ending)
+        }
+    })
 }
 
 /// The `[features]` names of a crate's manifest, by its folder.

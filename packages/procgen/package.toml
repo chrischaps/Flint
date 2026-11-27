@@ -25,3 +25,7 @@ crates = ["flint-procgen", "flint-procgen-cli"]
 # `flint edit` on a `.procgen.toml` opens its previewers, the two hidden
 # aliases below
 commands = ["gen", "gen-preview", "tex-edit"]
+# The spec files it makes models and textures from (#1595): a scene, chunk
+# or prefab naming one (a path, or the name a spec states) uses this
+# package, which is how `flint package used` sees it.
+specs = ["*.procgen.toml"]

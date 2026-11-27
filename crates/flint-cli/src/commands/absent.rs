@@ -134,6 +134,45 @@ pub fn missing_served(line: &str) -> anyhow::Error {
     e
 }
 
+/// A value of a flag the owning command declares (`render --sweep
+/// wooze.glide`), in a run whose packages don't draw it: the package whose
+/// manifest's `[provides] flags` has a line for the command and flag whose
+/// value names `given` (`render --sweep wooze.*`, `FlagLine::names_value`),
+/// named from the manifests, as [`missing_served`] names a whole line's
+/// (#1595). `what` is what the error says needs it.
+pub fn missing_value(
+    command: &[&str],
+    flag: &str,
+    given: &str,
+    what: impl Into<String>,
+) -> anyhow::Error {
+    let owner = owner_of_value(&manifests(), command, flag, given)
+        .unwrap_or_else(|| format!("{} {flag} {given}", command.join(" ")));
+    let package: &'static str = Box::leak(owner.into_boxed_str());
+    let mut e = missing(what, package);
+    judge(&mut e);
+    e
+}
+
+/// The package among `manifests` whose flag line names `given` as a value
+/// of `command`'s `flag`.
+fn owner_of_value(
+    manifests: &[flint_core::package::Package],
+    command: &[&str],
+    flag: &str,
+    given: &str,
+) -> Option<String> {
+    manifests
+        .iter()
+        .find(|package| {
+            package.provides.flags.iter().any(|line| {
+                flint_core::package::FlagLine::parse(line)
+                    .is_some_and(|l| l.command == command && l.flag == flag && l.names_value(given))
+            })
+        })
+        .map(|package| package.name.clone())
+}
+
 /// `what` needs whichever package's manifest provides the command `words`
 /// (`["gen"]`: procgen's), named from the manifests compiled in, so the
 /// source names no package to say it (#1557).
@@ -776,6 +815,49 @@ mod tests {
         assert!(
             glyphs.downcast_ref::<MissingPackage>().is_none(),
             "{glyphs:#}"
+        );
+    }
+
+    /// #1595: a `render --sweep` key a package draws names that package
+    /// from its manifest's `[provides] flags` (`render --sweep wooze.*`), in
+    /// every build, so the render's source names none; a key no line names
+    /// is no package's.
+    #[test]
+    fn a_sweep_key_a_package_draws_names_it_from_its_manifest() {
+        let all = manifests();
+        let owner = |key: &str| owner_of_value(&all, &["render"], "--sweep", key);
+        assert_eq!(owner("wooze.glide").as_deref(), Some("living"));
+        assert_eq!(owner("wooze.preset").as_deref(), Some("living"));
+        assert_eq!(owner("living.echoes.spread").as_deref(), Some("living"));
+        assert_eq!(owner("ascii.cell"), None);
+        assert_eq!(owner("post.exposure"), None);
+        assert_eq!(
+            owner_of_value(&all, &["gen"], "--sweep", "wooze.glide"),
+            None
+        );
+
+        let e = missing_value(
+            &["render"],
+            "--sweep",
+            "wooze.glide",
+            "flint render --sweep wooze.glide",
+        );
+        let missing = e
+            .downcast_ref::<MissingPackage>()
+            .expect("a missing package");
+        assert_eq!(
+            (missing.what.as_str(), missing.package),
+            ("flint render --sweep wooze.glide", "living")
+        );
+        assert!(
+            e.to_string()
+                .starts_with("flint render --sweep wooze.glide needs the `living` package"),
+            "{e}"
+        );
+        let code = crate::output::finish(Err(e));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", std::process::ExitCode::from(EXIT))
         );
     }
 
