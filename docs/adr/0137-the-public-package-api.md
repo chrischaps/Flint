@@ -483,6 +483,23 @@ control row (`scripts/perf-compare.py`), as #1549's risk table asks.
   glob, `[rust]` in `package.toml`, `scripts/package-sync.py` and the
   generated blocks. They come with the first move (#1568).
 
+## As built: a game's own binary (#1532)
+
+- Before any generated launcher, a game that embeds `PlayerApp` in a crate
+  of its own at its root is built by `flint build` as it is: `cargo build
+  -p <game> --no-default-features --features flint-player/<f>,...` in the
+  game's root, from the same plan as the stock player. That run is the
+  game's own workspace, so it shares no compiled crate with the engine's
+  (decision 6's measurement); `engine/launch/<id>/` (#1562) is what
+  removes the second build.
+- A launcher dependency that would bring a left-out package back is
+  refused before anything builds: one that takes flint-player's default
+  features, or names a left-out package in `features`.
+- `PlayerApp` holds the project's list to its run's registry at its first
+  resume, as `PlayerArgs::prepare` does for the stock player
+  (`PlayerApp::unbuilt_packages`), so a game's binary that lacks a listed
+  package refuses to start, naming `flint build`.
+
 ## As built: the CLI launcher (#1553)
 
 - `CliExtension`, `subcommands`/`Derived` and the output path (`set_json`,

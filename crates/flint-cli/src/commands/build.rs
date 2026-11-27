@@ -24,6 +24,17 @@
 //! first, then the CLI. `debug-hud` was one until #1583; it is a package
 //! feature of both crates now, so `debug-hud = false` is one run.
 //!
+//! **A game's own binary** (#1532). A game that embeds `PlayerApp` in a
+//! crate of its own (a `[package]`, or a workspace's member, at the project
+//! root that depends on flint-player or flint-cli) gets one more cargo run,
+//! in the project root: `cargo build -p <game> --no-default-features
+//! --features flint-player/<f>,...` with the stock player's features from
+//! the same plan (and flint-cli's, when it depends on that too), plus the
+//! game's own defaults. `cargo metadata` finds the crate. What would bring a
+//! left-out package back is refused before anything builds, naming the
+//! line: a launcher dependency taking its defaults (every package) or
+//! pinning one in `features`, or a default feature of the game's that does.
+//!
 //! **A binary that is running.** Windows refuses to overwrite a running
 //! `.exe` (`flint.exe` doing this build, a `flint-player.exe` the game is
 //! open in), but lets it be renamed in its folder. So before cargo runs,
@@ -88,8 +99,33 @@ struct Included {
 struct Run {
     /// The words after `cargo`.
     args: Vec<String>,
-    /// The output binaries' names (`flint-player`, `flint`).
-    bins: Vec<&'static str>,
+    /// Where cargo runs: the engine workspace, or a game's root.
+    dir: PathBuf,
+    /// The output binaries.
+    bins: Vec<Bin>,
+}
+
+/// A binary a run writes, by its target name, and where it lands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Bin {
+    name: String,
+    path: PathBuf,
+}
+
+/// A game's own binary crate at the project root (#1532).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Game {
+    /// Its `[package] name`.
+    package: String,
+    /// Its Cargo.toml.
+    manifest: PathBuf,
+    /// Its bin targets.
+    bins: Vec<String>,
+    /// The launcher crates it depends on (`flint-player`, `flint-cli`), each
+    /// with the name its Cargo.toml gives the dependency.
+    launchers: Vec<(&'static str, String)>,
+    /// Every `--features` word its run passes, its own defaults last.
+    features: Vec<String>,
 }
 
 /// What `flint build` does, worked out before anything runs.
@@ -109,10 +145,12 @@ struct Plan {
     /// Each crate's package features, then its build options.
     player: Features,
     cli: Features,
+    /// The game's own binary crates at the project root, each built in a
+    /// run of its own after the engine's (#1532).
+    games: Vec<Game>,
     runs: Vec<Run>,
     /// Why the player builds in a run of its own, when it does.
     split: Option<String>,
-    out_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -331,53 +369,76 @@ fn plan(
     let qualified = |krate: &str, f: &Features| -> Vec<String> {
         f.all().iter().map(|f| format!("{krate}/{f}")).collect()
     };
-    let words = |crates: &[(&str, &str)], features: Vec<String>| -> Vec<String> {
+    let words = |crates: &[(&str, Vec<String>)], features: Vec<String>| -> Vec<String> {
         let mut run = vec!["build".to_string()];
         for (krate, _) in crates {
             run.push("-p".into());
             run.push(krate.to_string());
         }
-        for (_, bin) in crates {
-            run.push("--bin".into());
-            run.push(bin.to_string());
+        for (_, bins) in crates {
+            for bin in bins {
+                run.push("--bin".into());
+                run.push(bin.clone());
+            }
         }
         run.push("--no-default-features".into());
         if !features.is_empty() {
             run.push("--features".into());
             run.push(features.join(","));
         }
+        tail(&mut run);
         run
     };
+    let engine_out = out_dir(&target_dir(&engine), args);
+    let bins_in = |dir: &Path, names: &[&str]| -> Vec<Bin> {
+        names
+            .iter()
+            .map(|name| Bin {
+                name: name.to_string(),
+                path: dir.join(exe_name(name, args.target.as_deref())),
+            })
+            .collect()
+    };
+    let one = |names: &[&str]| -> Vec<String> { names.iter().map(|n| n.to_string()).collect() };
     let mut runs = Vec::new();
     if split.is_some() {
-        let mut a = words(&[(PLAYER, PLAYER)], qualified(PLAYER, &player));
-        tail(&mut a);
         runs.push(Run {
-            args: a,
-            bins: vec![PLAYER],
+            args: words(&[(PLAYER, one(&[PLAYER]))], qualified(PLAYER, &player)),
+            dir: engine.clone(),
+            bins: bins_in(&engine_out, &[PLAYER]),
         });
-        let mut b = words(&[(CLI, CLI_BIN)], qualified(CLI, &cli));
-        tail(&mut b);
         runs.push(Run {
-            args: b,
-            bins: vec![CLI_BIN],
+            args: words(&[(CLI, one(&[CLI_BIN]))], qualified(CLI, &cli)),
+            dir: engine.clone(),
+            bins: bins_in(&engine_out, &[CLI_BIN]),
         });
     } else {
         let mut features = qualified(PLAYER, &player);
         features.extend(qualified(CLI, &cli));
-        let mut a = words(&[(PLAYER, PLAYER), (CLI, CLI_BIN)], features);
-        tail(&mut a);
         runs.push(Run {
-            args: a,
-            bins: vec![PLAYER, CLI_BIN],
+            args: words(
+                &[(PLAYER, one(&[PLAYER])), (CLI, one(&[CLI_BIN]))],
+                features,
+            ),
+            dir: engine.clone(),
+            bins: bins_in(&engine_out, &[PLAYER, CLI_BIN]),
         });
     }
 
-    let mut out_dir = target_dir(&engine);
-    if let Some(t) = &args.target {
-        out_dir.push(t);
+    // The game's own binaries, each from the same features (#1532)
+    let launchers = [(PLAYER, &player_toml, &player), (CLI, &cli_toml, &cli)];
+    let (games, game_target) = games(&project.root, &engine, &launchers, &package_features)?;
+    if let Some(target) = game_target {
+        let game_out = out_dir(&target, args);
+        for game in &games {
+            let names: Vec<&str> = game.bins.iter().map(String::as_str).collect();
+            runs.push(Run {
+                args: words(&[(&game.package, game.bins.clone())], game.features.clone()),
+                dir: project.root.clone(),
+                bins: bins_in(&game_out, &names),
+            });
+        }
     }
-    out_dir.push(if args.release { "release" } else { "debug" });
 
     Ok(Plan {
         project: project.root.clone(),
@@ -389,10 +450,193 @@ fn plan(
         launcher,
         player,
         cli,
+        games,
         runs,
         split,
-        out_dir,
     })
+}
+
+/// `target` with `--target`'s triple and the profile's folder.
+fn out_dir(target: &Path, args: &BuildArgs) -> PathBuf {
+    let mut dir = target.to_path_buf();
+    if let Some(t) = &args.target {
+        dir.push(t);
+    }
+    dir.push(if args.release { "release" } else { "debug" });
+    dir
+}
+
+/// A binary's file name for `target` (this machine's without one).
+fn exe_name(bin: &str, target: Option<&str>) -> String {
+    let windows = match target {
+        Some(t) => t.contains("windows"),
+        None => cfg!(windows),
+    };
+    format!("{bin}{}", if windows { ".exe" } else { "" })
+}
+
+// ── A game's own binary (#1532) ──────────────────────────────────────
+
+/// The launcher crates a game's binary may depend on, each with its
+/// Cargo.toml and the plan's features for it.
+type Launchers<'a> = [(&'static str, &'a toml::Table, &'a Features); 2];
+
+/// The game's own binary crates at `root`, planned, and the target folder
+/// cargo writes them into. None at a root with no Cargo.toml, or one that is
+/// the engine's own workspace. Refused when a crate's launcher dependency
+/// would bring a left-out package back in.
+fn games(
+    root: &Path,
+    engine: &Path,
+    launchers: &Launchers,
+    package_features: &BTreeSet<String>,
+) -> Result<(Vec<Game>, Option<PathBuf>)> {
+    let root = normal(root);
+    if !root.join("Cargo.toml").is_file() || root == *engine || is_engine_workspace(&root) {
+        return Ok((Vec::new(), None));
+    }
+    let meta = metadata(&root)?;
+    let members: BTreeSet<&str> = strs(&meta["workspace_members"]).collect();
+    let mut games = Vec::new();
+    for package in arr(&meta["packages"]) {
+        let manifest = normal(Path::new(package["manifest_path"].as_str().unwrap_or("")));
+        // The game's crates, not the engine's (a subtree a workspace counts in)
+        let ours = manifest.starts_with(&root) && !manifest.starts_with(engine);
+        if ours
+            && package["id"]
+                .as_str()
+                .is_some_and(|id| members.contains(id))
+        {
+            games.extend(game_of(package, manifest, launchers, package_features)?);
+        }
+    }
+    let target = meta["target_directory"].as_str().map(PathBuf::from);
+    Ok((games, target.or_else(|| Some(root.join("target")))))
+}
+
+/// `cargo metadata --no-deps` of the workspace at `root`.
+fn metadata(root: &Path) -> Result<Value> {
+    let out = Command::new(cargo())
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--offline",
+        ])
+        .current_dir(root)
+        .output()
+        .with_context(|| format!("running cargo metadata in {}", project::shown(root)))?;
+    if !out.status.success() {
+        bail!(
+            "{}'s Cargo.toml doesn't read, so its own binary can't be planned \
+             (cargo metadata says: {})",
+            project::shown(root),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    serde_json::from_slice(&out.stdout).context("reading cargo metadata's answer")
+}
+
+/// One workspace package, as a game binary to build: `None` when it is no
+/// binary or depends on no launcher.
+fn game_of(
+    package: &Value,
+    manifest: PathBuf,
+    launchers: &Launchers,
+    package_features: &BTreeSet<String>,
+) -> Result<Option<Game>> {
+    let bins: Vec<String> = arr(&package["targets"])
+        .filter(|t| strs(&t["kind"]).any(|k| k == "bin"))
+        .filter_map(|t| t["name"].as_str().map(str::to_string))
+        .collect();
+    let shown = project::shown(&manifest);
+    let mut found = Vec::new();
+    let mut features = Vec::new();
+    // Each launcher by the name the game gives it, with what it would build
+    // in that the list leaves out
+    let mut off_by_name = Vec::new();
+    for (krate, toml, plan) in launchers {
+        let Some(dep) =
+            arr(&package["dependencies"]).find(|d| d["kind"].is_null() && d["name"] == *krate)
+        else {
+            continue;
+        };
+        let named = dep["rename"].as_str().unwrap_or(krate).to_string();
+        let off = |f: &str| -> Option<String> {
+            closure(toml, &[f.to_string()]).into_iter().find(|p| {
+                package_features.contains(p) && has_feature(toml, p) && !plan.packages.contains(p)
+            })
+        };
+        if dep["uses_default_features"].as_bool().unwrap_or(true) {
+            bail!(
+                "{shown}: its `{krate}` dependency takes the crate's default features, \
+                 which build in every package whatever flint.toml lists. Add \
+                 `default-features = false` to it (on the `[workspace.dependencies]` \
+                 entry when it says `workspace = true`): `flint build` turns on the \
+                 packages flint.toml lists"
+            );
+        }
+        if let Some((pin, p)) = strs(&dep["features"]).find_map(|f| Some((f, off(f)?))) {
+            bail!(
+                "{shown}: its `{krate}` dependency pins `features = [\"{pin}\"]`, which \
+                 builds in `{p}`, a package flint.toml leaves out. Take `{pin}` out of \
+                 that list: `flint build` turns on each listed package itself"
+            );
+        }
+        features.extend(plan.all().iter().map(|f| format!("{named}/{f}")));
+        off_by_name.push((named.clone(), off));
+        found.push((*krate, named));
+    }
+    if found.is_empty() || bins.is_empty() {
+        return Ok(None);
+    }
+    // The game's own default features, refused like a pin when one turns
+    // on a left-out package (`trees = ["flint-player/living"]`)
+    let own = &package["features"];
+    for f in strs(&own["default"]) {
+        let mut queue = vec![f];
+        let mut seen = BTreeSet::new();
+        while let Some(g) = queue.pop() {
+            if !seen.insert(g) {
+                continue;
+            }
+            let Some((dep, feat)) = g.split_once('/') else {
+                queue.extend(strs(&own[g]));
+                continue;
+            };
+            let dep = dep.trim_end_matches('?');
+            if let Some(p) = off_by_name
+                .iter()
+                .find(|(n, _)| n == dep)
+                .and_then(|(_, off)| off(feat))
+            {
+                bail!(
+                    "{shown}: its default feature `{f}` turns on `{g}`, which builds in \
+                     `{p}`, a package flint.toml leaves out. Take `{f}` out of \
+                     `default`, or list `{p}` in flint.toml"
+                );
+            }
+        }
+        features.push(f.to_string());
+    }
+    Ok(Some(Game {
+        package: package["name"].as_str().unwrap_or_default().to_string(),
+        manifest,
+        bins,
+        launchers: found,
+        features,
+    }))
+}
+
+/// A JSON array's items (none for anything else).
+fn arr(v: &Value) -> impl Iterator<Item = &Value> {
+    v.as_array().into_iter().flatten()
+}
+
+/// A JSON array's strings.
+fn strs(v: &Value) -> impl Iterator<Item = &str> {
+    arr(v).filter_map(Value::as_str)
 }
 
 /// The packages in the build, each with why, and the names left out.
@@ -539,29 +783,11 @@ fn forced_player_features(cli: &toml::Table, cli_features: &[String]) -> BTreeSe
 
 /// Where cargo writes the engine's builds: `cargo metadata`'s answer (so
 /// `CARGO_TARGET_DIR` and a `.cargo/config.toml` count), else `target/`.
-fn target_dir(engine: &Path) -> PathBuf {
-    let asked = Command::new(cargo())
-        .args([
-            "metadata",
-            "--format-version",
-            "1",
-            "--no-deps",
-            "--offline",
-        ])
-        .current_dir(engine)
-        .stderr(Stdio::null())
-        .output();
-    if let Ok(out) = asked {
-        if out.status.success() {
-            if let Some(dir) = serde_json::from_slice::<Value>(&out.stdout)
-                .ok()
-                .and_then(|v| v["target_directory"].as_str().map(PathBuf::from))
-            {
-                return dir;
-            }
-        }
-    }
-    engine.join("target")
+fn target_dir(dir: &Path) -> PathBuf {
+    metadata(dir)
+        .ok()
+        .and_then(|v| v["target_directory"].as_str().map(PathBuf::from))
+        .unwrap_or_else(|| dir.join("target"))
 }
 
 /// The cargo to run: the one running this flint (`cargo run` sets
@@ -572,23 +798,17 @@ fn cargo() -> std::ffi::OsString {
 
 impl Plan {
     /// Where `bin` lands.
+    #[cfg(test)]
     fn binary(&self, bin: &str) -> PathBuf {
-        let windows = match &self.runs_target() {
-            Some(t) => t.contains("windows"),
-            None => cfg!(windows),
-        };
-        self.out_dir
-            .join(format!("{bin}{}", if windows { ".exe" } else { "" }))
+        self.bins()
+            .into_iter()
+            .find(|b| b.name == bin)
+            .map(|b| b.path.clone())
+            .expect("a binary the plan writes")
     }
 
-    fn runs_target(&self) -> Option<String> {
-        let args = &self.runs.first()?.args;
-        let at = args.iter().position(|a| a == "--target")?;
-        args.get(at + 1).cloned()
-    }
-
-    fn bins(&self) -> Vec<&'static str> {
-        self.runs.iter().flat_map(|r| r.bins.clone()).collect()
+    fn bins(&self) -> Vec<&Bin> {
+        self.runs.iter().flat_map(|r| &r.bins).collect()
     }
 }
 
@@ -603,7 +823,7 @@ fn build(plan: &Plan) -> Result<Vec<PathBuf>> {
         let aside: Vec<(PathBuf, PathBuf)> = if cfg!(windows) {
             run.bins
                 .iter()
-                .map(|bin| plan.binary(bin))
+                .map(|bin| bin.path.clone())
                 .filter(|path| path.is_file())
                 .map(|path| set_aside(&path).map(|old| (path, old)))
                 .collect::<Result<_>>()?
@@ -611,7 +831,7 @@ fn build(plan: &Plan) -> Result<Vec<PathBuf>> {
             Vec::new()
         };
         let mut cmd = Command::new(cargo());
-        cmd.args(&run.args).current_dir(&plan.engine);
+        cmd.args(&run.args).current_dir(&run.dir);
         if output::json() {
             // stdout is the document's (#710)
             cmd.stdout(Stdio::from(std::io::stderr()));
@@ -722,22 +942,40 @@ fn plan_text(plan: &Plan) -> String {
     ));
     out.push_str(&format!("player    {}\n", features_line(&plan.player)));
     out.push_str(&format!("flint     {}\n", features_line(&plan.cli)));
+    for game in &plan.games {
+        let on: Vec<&str> = game.launchers.iter().map(|(k, _)| *k).collect();
+        out.push_str(&format!(
+            "game      {} ({}): {} on {}'s features",
+            game.bins.join(", "),
+            project::shown(&game.manifest),
+            if game.bins.len() == 1 {
+                "its own binary,"
+            } else {
+                "its own binaries,"
+            },
+            on.join(" and ")
+        ));
+        out.push('\n');
+    }
     if let Some(why) = &plan.split {
         out.push_str(&format!("\nTwo runs: {why}.\n"));
     }
     out.push('\n');
     for run in &plan.runs {
-        out.push_str(&format!("{}\n", command_line(&run.args)));
+        out.push_str(&format!(
+            "{}\n  in {}\n",
+            command_line(&run.args),
+            project::shown(&run.dir)
+        ));
     }
-    out.push_str(&format!("  in {}\n", project::shown(&plan.engine)));
     out
 }
 
 fn binaries_text(plan: &Plan) -> String {
-    let width = plan.bins().iter().map(|b| b.len()).max().unwrap_or(0);
+    let width = plan.bins().iter().map(|b| b.name.len()).max().unwrap_or(0);
     plan.bins()
         .iter()
-        .map(|b| format!("  {b:width$}  {}\n", project::shown(&plan.binary(b))))
+        .map(|b| format!("  {:width$}  {}\n", b.name, project::shown(&b.path)))
         .collect()
 }
 
@@ -766,8 +1004,13 @@ fn answer(plan: &Plan, outcome: &Outcome) -> Answer {
     let binaries: serde_json::Map<String, Value> = plan
         .bins()
         .iter()
-        .map(|b| (b.to_string(), json!(project::shown(&plan.binary(b)))))
+        .map(|b| (b.name.clone(), json!(project::shown(&b.path))))
         .collect();
+    let argv = |r: &Run| {
+        let mut words = vec!["cargo".to_string()];
+        words.extend(r.args.iter().cloned());
+        words
+    };
     let mut doc = json!({
         "project": project::shown(&plan.project),
         "engine": project::shown(&plan.engine),
@@ -788,13 +1031,22 @@ fn answer(plan: &Plan, outcome: &Outcome) -> Answer {
             PLAYER: { "packages": plan.player.packages, "options": plan.player.options },
             CLI: { "packages": plan.cli.packages, "options": plan.cli.options },
         },
+        "games": plan.games.iter().map(|g| json!({
+            "package": g.package,
+            "manifest": project::shown(&g.manifest),
+            "bins": g.bins,
+            "launchers": g.launchers.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            "features": g.features,
+        })).collect::<Vec<_>>(),
         "split": plan.split,
         "commands": plan.runs.iter().map(|r| command_line(&r.args)).collect::<Vec<_>>(),
-        "argv": plan.runs.iter().map(|r| {
-            let mut words = vec!["cargo".to_string()];
-            words.extend(r.args.iter().cloned());
-            words
-        }).collect::<Vec<_>>(),
+        "argv": plan.runs.iter().map(argv).collect::<Vec<_>>(),
+        "runs": plan.runs.iter().map(|r| json!({
+            "command": command_line(&r.args),
+            "argv": argv(r),
+            "dir": project::shown(&r.dir),
+            "binaries": r.bins.iter().map(|b| b.name.clone()).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
         "dir": project::shown(&plan.engine),
         "binaries": binaries,
         "dry_run": matches!(outcome, Outcome::DryRun),
@@ -873,6 +1125,109 @@ mod tests {
         assert_eq!(plan.player.options, ["audio", "gamepad", "frame-history"]);
         assert_eq!(plan.cli.options, ["audio", "gamepad", "dialogs"]);
         assert_eq!(plan.left_out, ["ai", "living", "music", "rhythm"]);
+    }
+
+    /// A scratch game (#1532): `flint.toml` listing `packages`, and a crate
+    /// of its own at the root whose flint-player dependency adds `dep`
+    /// after its path, with `extra` lines after the dependencies.
+    fn game_with(name: &str, packages: &str, dep: &str, extra: &str) -> Project {
+        let project = project_with(name, Some(packages));
+        let player = engine().join("crates").join(PLAYER);
+        let player = player.to_string_lossy().replace('\\', "/");
+        std::fs::write(
+            project.root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"scratch-game\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+                 [workspace]\n\n[dependencies]\nflint-player = {{ path = \"{player}\"{dep} }}\n{extra}"
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(project.root.join("src")).unwrap();
+        std::fs::write(project.root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        project
+    }
+
+    fn game_plan(name: &str, packages: &str, dep: &str, extra: &str) -> Result<Plan> {
+        plan(
+            &game_with(name, packages, dep, extra),
+            engine(),
+            "test",
+            &args(),
+        )
+    }
+
+    const NO_DEFAULTS: &str = ", default-features = false";
+
+    /// #1532's first box: a game with its own binary and `procgen = "*"`
+    /// gets a run naming its binary with none of the other packages.
+    #[test]
+    fn a_games_own_binary_with_procgen_alone_builds_none_of_the_others() {
+        let extra = "[features]\ndefault = [\"hud\"]\nhud = []\n";
+        let plan = game_plan("game_procgen", "procgen = \"*\"", NO_DEFAULTS, extra).unwrap();
+        assert_eq!(plan.games[0].bins, ["scratch-game"], "{plan:#?}");
+        let run = plan.runs.last().unwrap();
+        assert_eq!(run.dir, plan.project);
+        let line = command_line(&run.args);
+        let head = "cargo build -p scratch-game --bin scratch-game --no-default-features";
+        assert!(line.starts_with(head) && line.ends_with(",hud"), "{line}");
+        for left in ["living", "music", "rhythm", "flint-cli/"] {
+            assert!(!line.contains(left), "{left} in {line}");
+        }
+        // The stock player's features, by the same plan
+        for f in plan.player.all() {
+            assert!(line.contains(&format!("flint-player/{f}")), "{f}: {line}");
+        }
+        let bin = plan.binary("scratch-game");
+        assert!(
+            bin.starts_with(plan.project.join("target/debug")),
+            "{bin:?}"
+        );
+        assert!(plan_text(&plan).contains("game      scratch-game ("));
+        let doc = answer(&plan, &Outcome::DryRun).json;
+        assert_eq!(doc["runs"][1]["binaries"][0], "scratch-game");
+    }
+
+    /// What would bring a left-out package back is refused naming the line:
+    /// the player's defaults, a pin, a default feature of the game's own. A
+    /// pin of a listed package or a build option is no pin.
+    #[test]
+    fn a_game_that_would_build_in_a_left_out_package_is_refused() {
+        let refused = |name, dep, extra| {
+            let e = game_plan(name, "procgen = \"*\"", dep, extra).unwrap_err();
+            format!("{e:#}")
+        };
+        let e = refused("game_defaults", "", "");
+        assert!(
+            e.contains("Cargo.toml: its `flint-player` dependency takes"),
+            "{e}"
+        );
+        assert!(e.contains("Add `default-features = false`"), "{e}");
+        let e = refused(
+            "game_pin",
+            ", default-features = false, features = [\"living\"]",
+            "",
+        );
+        assert!(
+            e.contains("pins `features = [\"living\"]`, which builds in `living`"),
+            "{e}"
+        );
+        let trees = "[features]\ndefault = [\"trees\"]\ntrees = [\"flint-player/living\"]\n";
+        let e = refused("game_own", NO_DEFAULTS, trees);
+        assert!(
+            e.contains("default feature `trees` turns on `flint-player/living`"),
+            "{e}"
+        );
+        let ok = ", default-features = false, features = [\"procgen\", \"audio\"]";
+        assert!(game_plan("game_pin_ok", "procgen = \"*\"", ok, "").is_ok());
+    }
+
+    /// The engine checkout is no game: its own crates depend on the player.
+    #[test]
+    fn the_engine_checkout_has_no_game_binary() {
+        let (none, f) = (toml::Table::new(), Features::default());
+        let launchers = [(PLAYER, &none, &f), (CLI, &none, &f)];
+        let (games, _) = games(&engine(), &engine(), &launchers, &BTreeSet::new()).unwrap();
+        assert!(games.is_empty());
     }
 
     #[test]

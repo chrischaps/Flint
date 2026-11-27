@@ -211,9 +211,9 @@ pub struct Unbuilt {
 impl Unbuilt {
     /// What to do about it, the one wording every caller gives.
     pub fn hint(&self) -> String {
-        "run `flint build` in the project: it builds a flint and a flint-player \
-         with the packages flint.toml lists (`flint build --dry-run` shows the \
-         cargo command)"
+        "run `flint build` in the project: it builds a flint, a flint-player and \
+         the game's own binary with the packages flint.toml lists (`flint build \
+         --dry-run` shows the cargo commands)"
             .to_string()
     }
 }

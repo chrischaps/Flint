@@ -712,6 +712,8 @@ impl PlayerArgs {
 
         // The registry and its directories, kept for transitions and chunks
         app.set_schemas(registry, schema_dirs);
+        // Held to the build above (a bundle's list never is)
+        app.packages_held = true;
         Ok(Prepared { app, late_bundles })
     }
 }
