@@ -679,7 +679,9 @@ impl SceneDocument {
     /// `edit.key` the path inside it, through inline tables, as
     /// `echoes.count`. Only that value's text changes: a value that already says
     /// the same is left as written, and one that's replaced keeps its comment.
-    /// A species table left with nothing in it goes.
+    /// A new top-level table goes where `edit.after` says, and a table left with
+    /// nothing in it goes when `edit.drops_empty` says so: the table's package
+    /// knows its tables, the kernel none of them (#1591).
     pub fn apply_edit(&mut self, edit: &crate::edit::SceneEdit) -> Result<(), String> {
         let (leaf, inside) = edit
             .key
@@ -690,7 +692,7 @@ impl SceneDocument {
         {
             return Ok(());
         }
-        let anchor = self.new_table_position(&edit.table[0]);
+        let anchor = self.new_table_position(&edit.table[0], &edit.after);
         let table = header_table(self.doc.as_table_mut(), &edit.table, anchor)?;
 
         // The inline tables on the way, made only to set something.
@@ -728,14 +730,15 @@ impl SceneDocument {
             }
         }
         if edit.value.is_none() {
-            self.drop_empty(&edit.table, inside);
+            self.drop_empty(edit, inside);
         }
         Ok(())
     }
 
     /// After taking a value out: an inline table it leaves empty goes, and so does
-    /// a species table.
-    fn drop_empty(&mut self, table: &[String], inside: &[String]) {
+    /// the edit's table when it `drops_empty`.
+    fn drop_empty(&mut self, edit: &crate::edit::SceneEdit, inside: &[String]) {
+        let table = &edit.table;
         let Ok(header) = header_table(self.doc.as_table_mut(), table, None) else {
             return;
         };
@@ -748,27 +751,33 @@ impl SceneDocument {
                 header.remove(container);
             }
         }
-        let is_species = table.len() == 3 && table[0] == "living" && table[1] == "species";
-        if is_species && header.is_empty() {
-            let species = (self.doc.get_mut("living"))
-                .and_then(|item| item.as_table_like_mut())
-                .and_then(|living| living.get_mut("species"))
-                .and_then(|item| item.as_table_like_mut());
-            if let Some(species) = species {
-                species.remove(&table[2]);
+        let Some((name, above)) = table.split_last() else {
+            return;
+        };
+        if edit.drops_empty && header.is_empty() {
+            let root: &mut dyn toml_edit::TableLike = self.doc.as_table_mut();
+            let mut parent = Some(root);
+            for segment in above {
+                parent = parent
+                    .and_then(|at| at.get_mut(segment))
+                    .and_then(|item| item.as_table_like_mut());
+            }
+            if let Some(parent) = parent {
+                parent.remove(name);
             }
         }
     }
 
-    /// Where a new top-level table goes: after the tables of `[wooze]`, its zones
-    /// included, or after `[scene]`'s, so that `[living]` sits with the scene's
-    /// other settings rather than after its last entity. `None` if `name` is
-    /// already there.
-    fn new_table_position(&self, name: &str) -> Option<usize> {
+    /// Where a new top-level table goes: after the tables of the first of
+    /// `after` the file has (a `[wooze]` with its zones, say), else after
+    /// `[scene]`'s, so that a new table sits with the scene's other settings
+    /// rather than after its last entity. `None` if `name` is already there.
+    fn new_table_position(&self, name: &str, after: &[String]) -> Option<usize> {
         if self.doc.get(name).is_some() {
             return None;
         }
-        ["wooze", "scene"].iter().find_map(|anchor| {
+        let mut anchors = after.iter().map(String::as_str).chain(["scene"]);
+        anchors.find_map(|anchor| {
             let item = self.doc.get(anchor)?;
             let mut last = None;
             last_position(item, &mut last);
@@ -1671,5 +1680,49 @@ archetype = "floor"
             "{both}"
         );
         assert_eq!(doc.to_string(), PROPS);
+    }
+
+    fn set(table: &[&str], key: &str, value: Option<i64>) -> crate::edit::SceneEdit {
+        crate::edit::SceneEdit {
+            table: table.iter().map(|s| s.to_string()).collect(),
+            key: vec![key.to_string()],
+            value: value.map(crate::edit::SceneScalar::Int),
+            ..Default::default()
+        }
+    }
+
+    /// The kernel knows no package's tables (#1591): where a new one goes and
+    /// whether an emptied one goes are the edit's to say, here for tables no
+    /// package has.
+    #[test]
+    fn an_edits_own_rules_place_its_table_and_drop_it_empty() {
+        let text = "[scene]\nname = \"s\"\n\n[weather]\nrain = 1\n\n[[weather.front]]\nat = 2\n\n[entities.a]\narchetype = \"x\"\n";
+
+        // Saying nothing: a new table after [scene]'s, an emptied one kept
+        let mut doc = SceneDocument::from_str(text).unwrap();
+        doc.apply_edit(&set(&["flock", "kind", "crow"], "count", Some(3)))
+            .unwrap();
+        let after = doc.to_string();
+        let flock = after.find("[flock.kind.crow]").expect(&after);
+        assert!(flock < after.find("[weather]").unwrap(), "{after}");
+        assert!(!after.contains("[flock]\n"), "{after}");
+        doc.apply_edit(&set(&["flock", "kind", "crow"], "count", None))
+            .unwrap();
+        assert!(doc.to_string().contains("[flock.kind.crow]"), "kept");
+
+        // Saying both: after [weather] and its fronts, and gone once empty
+        let mut doc = SceneDocument::from_str(text).unwrap();
+        let mut edit = set(&["flock", "kind", "crow"], "count", Some(3));
+        edit.after = vec!["nowhere".into(), "weather".into()];
+        edit.drops_empty = true;
+        doc.apply_edit(&edit).unwrap();
+        let after = doc.to_string();
+        let flock = after.find("[flock.kind.crow]").expect(&after);
+        assert!(flock > after.find("[[weather.front]]").unwrap(), "{after}");
+        assert!(flock < after.find("[entities.a]").unwrap(), "{after}");
+        edit.value = None;
+        doc.apply_edit(&edit).unwrap();
+        assert!(!doc.to_string().contains("crow"), "{}", doc.to_string());
+        kept_lines(text, &doc.to_string(), &[]);
     }
 }

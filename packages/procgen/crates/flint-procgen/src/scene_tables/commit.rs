@@ -151,12 +151,25 @@ pub fn look_edits(base: &WoozePreset, now: &WoozePreset) -> Vec<SceneEdit> {
     places
         .into_iter()
         .filter(|key| was.get(key) != is.get(key))
-        .map(|key| SceneEdit {
-            table: key.0.clone(),
-            key: key.1.clone(),
-            value: is.get(key).cloned(),
+        .map(|key| {
+            place(SceneEdit {
+                table: key.0.clone(),
+                key: key.1.clone(),
+                value: is.get(key).cloned(),
+                ..Default::default()
+            })
         })
         .collect()
+}
+
+/// Where living's tables sit in a scene file, which the kernel's patcher
+/// doesn't know (#1591): a new `[living]` goes after `[wooze]` (else after
+/// `[scene]`), and a species table left empty goes, since an empty
+/// `[living.species.<name>]` says nothing.
+fn place(mut edit: SceneEdit) -> SceneEdit {
+    edit.after = vec!["wooze".to_string()];
+    edit.drops_empty = edit_species(&edit).is_some();
+    edit
 }
 
 /// Fit `edits` to the file `doc` holds, returning whether boil values were

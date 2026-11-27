@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""No package named in the launchers' source (epic #1548's gate, #1560).
+"""No package named in the kernel's source (epic #1548's gate, #1560).
 
-`crates/flint-player/src` and `crates/flint-cli/src` are the kernel's
-launchers: a package joins them through its manifest (ADR 0137 section 5),
-never by name. This fails on either way the source can name one:
+The kernel is every crate `packages/engine/package.toml` lists under
+`[provides] crates` (#1591; the launchers, `crates/flint-player/src` and
+`crates/flint-cli/src`, alone before it): a package joins it through its
+manifest (ADR 0137 section 5) or a point the kernel declares, never by
+name. This fails on each way the source can name one:
 
   1. a Cargo feature gate, `feature = "<f>"` for any `<f>` a manifest's
      `[build] features` lists, in code or test code (a `cfg`, a `cfg_attr`,
@@ -12,12 +14,12 @@ never by name. This fails on either way the source can name one:
      flint_music`), for any crate a manifest's `[provides] crates` lists,
      outside test code. Tests may name a package's crate: they run where a
      launcher lists it (the dev-dependencies, #1558, #1559);
-  3. in either launcher (`STRING_LAUNCHERS`), a string literal that is a
-     package's name, `"living"`, outside test code (#1585, the CLI's since
-     #1595): it builds without the package, but it is still the kernel
-     knowing one by name (`registry.has("living")`, a policy, a flag's
-     owner, the package a scan credits). What the kernel says or takes of
-     a package comes from its manifest instead.
+  3. a string literal that is a package's name, `"living"`, outside test
+     code (#1585 in the player, #1595 the CLI, #1591 every kernel crate):
+     it builds without the package, but it is still the kernel knowing one
+     by name (`registry.has("living")`, a policy, a flag's owner, the
+     package a scan credits, a scene table's rule). What the kernel says or
+     takes of a package comes from its manifest or its registration.
 
 Comments are not read, nor are string literals for (2). A word inside a
 longer string (`"[procgen] ..."`) is not (3): only a literal that is the
@@ -39,21 +41,37 @@ import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-LAUNCHERS = {"flint-player": "crates/flint-player/src", "flint-cli": "crates/flint-cli/src"}
 
-# The launchers whose string literals are held to (3). Both, since #1595:
-# the CLI's help names packages only as words inside longer strings
-# (`flint package list`), which (3) never reads, so holding it found the
-# kernel logic alone (render --sweep's owner, the scan's procgen).
-STRING_LAUNCHERS = {"flint-player", "flint-cli"}
 
-# (launcher, "feature" | "crate" | "string", name): why it is still there.
-# A "string" exception may name a file, (launcher, "string", name, file):
+def kernel_crates():
+    """Each crate the engine manifest provides, by name: its `src/`. A crate
+    the manifest names that has no `crates/<name>/src` fails, so the check
+    never shrinks in silence."""
+    with open(REPO / "packages/engine/package.toml", "rb") as f:
+        listed = tomllib.load(f)["provides"]["crates"]
+    return {name: f"crates/{name}/src" for name in listed}
+
+
+# (crate, "feature" | "crate" | "string", name): why it is still there.
+# A "string" exception may name a file, (crate, "string", name, file):
 # only that file's literal is excused.
 EXCEPTIONS = {
     ("flint-player", "string", "music", "crates/flint-player/src/logging.rs"): "a log "
     "target the engine's warnings are counted under (`flint_target`), as `load` and "
     "`perf` are: the music package logs as `music`, and so did the player before it",
+    ("flint-script", "string", "music", "crates/flint-script/src/api/music.rs"): "the "
+    "`music` script module, declared here until Phase 3 (the music manifest says so): "
+    "#1619 moves it to the music package",
+    ("flint-audio", "string", "music", "crates/flint-audio/src/bus.rs"): "the built-in "
+    "`music` bus, which every game's audio has: #1619 makes flint-audio the audio "
+    "package's, out of the kernel",
+    ("flint-core", "string", "procgen", "crates/flint-core/src/frame_notes.rs"): "the "
+    "`Procgen` frame note's label: #1632 names the made-assets note for the kernel's "
+    "point",
+    ("flint-core", "string", "procgen", "crates/flint-core/src/load_report.rs"): "the "
+    "`Procgen` load stage's label: #1632",
+    ("flint-package", "string", "procgen", "crates/flint-package/src/stage.rs"): "the "
+    "`Stage::Procgen` frame stage's label: #1632",
 }
 
 
@@ -217,9 +235,16 @@ def test_files(src):
 
 def main():
     features, crates, names = manifests()
-    found = {}  # (launcher, kind, name[, file]) -> [file:line]
-    for launcher, src in LAUNCHERS.items():
+    kernel = kernel_crates()
+    found = {}  # (crate, kind, name[, file]) -> [file:line]
+    failures = []
+    for launcher, src in kernel.items():
         src = REPO / src
+        if not src.is_dir():
+            failures.append(
+                f"packages/engine/package.toml lists {launcher}, which has no {kernel[launcher]}"
+            )
+            continue
         tests = test_files(src)
         for file in sorted(src.rglob("*.rs")):
             text = file.read_text(encoding="utf-8")
@@ -240,7 +265,7 @@ def main():
                         continue
                     key = (launcher, "crate", krate)
                     found.setdefault(key, []).append(f"{shown}:{line(m.start())}")
-            if launcher not in STRING_LAUNCHERS or whole_test:
+            if whole_test:
                 continue
             for m in re.finditer(r'(?<![\w#])"([a-z][a-z0-9-]*)"', code):
                 if m.group(1) not in names:
@@ -252,7 +277,6 @@ def main():
                     key = (launcher, "string", m.group(1))
                 found.setdefault(key, []).append(f"{shown}:{line(m.start())}")
 
-    failures = []
     for key, places in sorted(found.items()):
         if key in EXCEPTIONS:
             continue
@@ -264,7 +288,7 @@ def main():
             "string": f'the string "{name}"',
         }[kind]
         failures.append(
-            f"{LAUNCHERS[launcher]} names the `{package}` package: {what} at "
+            f"{kernel[launcher]} names the `{package}` package: {what} at "
             + ", ".join(places[:5])
             + (f" and {len(places) - 5} more" if len(places) > 5 else "")
         )
@@ -279,7 +303,7 @@ def main():
         for f in failures:
             print(f"package-names-check: {f}", file=sys.stderr)
         print(
-            "package-names-check: a package joins the launchers through its manifest "
+            "package-names-check: a package joins the kernel through its manifest "
             "(ADR 0137 section 5): move the code into the package's crate, behind a "
             "point the kernel declares",
             file=sys.stderr,
@@ -287,7 +311,7 @@ def main():
         return 1
     held = sum(1 for k in EXCEPTIONS)
     print(
-        f"package-names-check: no package named in {', '.join(LAUNCHERS.values())} "
+        f"package-names-check: no package named in the {len(kernel)} kernel crates' src/ "
         f"({len(features)} features, {len(crates)} crates, {len(names)} names; "
         f"{held} exceptions, each with its reason)"
     )

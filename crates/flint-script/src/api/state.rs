@@ -86,7 +86,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "register_state",
-        "Make a state: a system's name (physics, scripts, animation, particles, audio, living) to \"run\" or \"pause\"; one left out runs. An unknown name is an error.",
+        "Make a state: a system's name (the kernel's physics, scripts, animation, particles and audio, or one a package adds) to \"run\" or \"pause\"; one left out runs. An unknown name is an error naming those there are.",
     )
     .arg("name", Str)
     .arg("config", Map)

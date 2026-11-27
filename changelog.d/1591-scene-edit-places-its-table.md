@@ -1,0 +1,4 @@
+### `SceneEdit` says where its table goes: `after` and `drops_empty` (#1591)
+**Package.** engine
+**What changed.** `flint_scene::SceneEdit` has two new fields, and it derives `Default`. `after` lists the top-level tables that a new table is written after (the first one the file has wins, then `[scene]`). `drops_empty` says whether the edit's table is removed when taking the value out leaves it empty. `SceneDocument::apply_edit` used to apply these two rules to `[living]` alone, by name. Now living's `look_edits` sets them, so committing a tuned look writes the same file as before. An edit that sets neither puts a new table after `[scene]` and keeps a table it empties.
+**What to do.** If your Rust builds a `SceneEdit { table, key, value }` literal, add `..Default::default()`, or set the two fields for your own table.

@@ -33,7 +33,8 @@
 #                          debug `flint` most worktrees have already).
 #   Both run the package gate's quick half: the generated Cargo blocks match
 #   the manifests (scripts/package-sync.py --check) and no package is named
-#   in the launchers' source (scripts/package-names-check.py, #1560).
+#   in the kernel's source (scripts/package-names-check.py, #1560; every
+#   crate the engine manifest lists since #1591).
 #
 # Formatting is rustfmt's defaults at edition 2021 (rustfmt.toml). Fix a failure
 # with `cargo fmt --all`; one file alone is `rustfmt <file>`.
@@ -125,8 +126,9 @@ echo "ci: scripts/claude-md-check.py"
 "$py" scripts/claude-md-check.py
 
 # Epic #1548's gate (#1560): the launchers' generated Cargo blocks match the
-# package manifests, and neither launcher's source names a package (a
-# `feature = "<package>"` gate, or a path through a package's crate)
+# package manifests, and no kernel crate's source names a package (a
+# `feature = "<package>"` gate, a path through a package's crate, or its
+# name as a string; every crate the engine manifest lists since #1591)
 echo "ci: scripts/package-sync.py --check"
 "$py" scripts/package-sync.py --check
 echo "ci: scripts/package-names-check.py"
