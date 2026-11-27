@@ -192,7 +192,8 @@ fn every_mistake_is_reported_at_once() {
     let text =
         "[package]\nname = \"Living\"\nversion = \"1\"\ntier = \"feture\"\nsummary = \"a\\nb\"\n\
         engine = \"not a range\"\n[requires]\nmusic = 3\n[provides]\ncrates = [\"a\", \"a\", 4]\n\
-        commands = [\"music --chart\"]\nflags = [\"--ai-refine\", \"render --ai-refine a b\"]\n";
+        commands = [\"music --chart\"]\nflags = [\"--ai-refine\", \"render --ai-refine a b\"]\n\
+        fields = [\"chart\", \"music_session.lean.mode\", \"music_session.chart\"]\n";
     let found = mistakes(text);
     for want in [
         "package.name: `Living` is no package name",
@@ -206,11 +207,35 @@ fn every_mistake_is_reported_at_once() {
         "provides.commands[0]: `music --chart` is no command path",
         "provides.flags[0]: `--ai-refine` is no flag line",
         "provides.flags[1]: `render --ai-refine a b` is no flag line",
+        "provides.fields[0]: `chart` is no field",
+        "provides.fields[1]: `music_session.lean.mode` is no field",
     ] {
         assert!(
             found.iter().any(|f| f.starts_with(want)),
             "missing {want:?} in {found:#?}"
         );
+    }
+    assert!(
+        !found.iter().any(|f| f.starts_with("provides.fields[2]")),
+        "{found:#?}"
+    );
+}
+
+/// #1581: a `[provides] fields` entry is a component and one field.
+#[test]
+fn a_field_entry_is_a_component_and_one_of_its_fields() {
+    assert_eq!(
+        field_of("music_session.chart"),
+        Some(("music_session", "chart"))
+    );
+    for bad in [
+        "chart",
+        ".chart",
+        "music_session.",
+        "a.b.c",
+        "music session.chart",
+    ] {
+        assert_eq!(field_of(bad), None, "{bad}");
     }
 }
 

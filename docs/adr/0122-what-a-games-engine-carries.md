@@ -1,6 +1,6 @@
 # ADR 0122: What a game's `engine/` carries: one tree under a budget, no binary twice
 
-Status: accepted, 2026-11-14 (#759). Decision 1's split was made on 2026-11-20 (#984, [ADR 0131](0131-the-examples-are-a-project-of-their-own.md)): see "The examples leave" under Measured. The engine area's budget moved on 2026-11-20 (#1303): see "The engine area grows by its code".
+Status: accepted, 2026-11-14 (#759). Decision 1's split was made on 2026-11-20 (#984, [ADR 0131](0131-the-examples-are-a-project-of-their-own.md)): see "The examples leave" under Measured. The engine area's budget moved on 2026-11-20 (#1303): see "The engine area grows by its code"; and again on 2026-11-27 (#1599), when the check began sizing files as git stores them: see "Measured as git stores it".
 
 ## Context
 
@@ -48,7 +48,7 @@ carries, with a decision on moving the heavy part out of the subtree.
    | the book (`docs/`) | 78 MB | 70.2 MB |
    | tests (`tests/`, the golden PNGs) | 27 MB, 50 since #984 | 23.4 MB; 45.7 at #984 |
    | `showcase_game/` | 16 MB, 18 since #984 | 13.8 MB; 16.2 at #984 |
-   | the engine proper (crates, schemas, styles, scripts, tools) | 20 MB, 23 since #1303 | 16.1 MB; 20.5 at #1303 |
+   | the engine proper (crates, schemas, styles, scripts, tools) | 20 MB, 23 since #1303, 25 since #1599 | 16.1 MB; 20.5 at #1303; 23.1 at #1599 |
    | one file | 8 MB | `MetalRoughSpheres.glb` excepted (11 MB of Khronos geometry) |
    | one texture, loose or in a `.glb` | 2048 texels a side, 3 MB | |
 
@@ -140,8 +140,8 @@ carries, with a decision on moving the heavy part out of the subtree.
 
 "Before" is main at the merge (#760 had just added the showcase's sounds);
 the Context's 390 MB and 115 MB are the same tree a few commits earlier.
-`size-check.py` measures files on disk, so its 168.8 MB counts a Windows
-checkout's line endings. The game numbers are a throwaway repository with the engine added as a
+`size-check.py` measured files on disk then, so its 168.8 MB counts a Windows
+checkout's line endings (since #1599 it sizes them as git stores them). The game numbers are a throwaway repository with the engine added as a
 squashed subtree from this checkout, before and after.
 
 ### The first breach (#1276, 2026-11-18)
@@ -200,3 +200,35 @@ whole-tree budget (175 MB, 158.2 measured) has room for it. At the rate
 measured here that is a week or two of work, so the next breach is expected
 soon; when it comes, the question to argue is whether source code needs
 a byte budget at all, rather than another tenth.
+
+### Measured as git stores it (#1599, 2026-11-27)
+
+The engine area crossed 23 MB on main at #1532 (8136d914, 23.019 MB) and was
+23.116 MB by ac3efde6, so every PR and every push to main failed CI's
+`rustfmt` job (which runs `scripts/ci.sh`) at size-check, and nothing after
+it in `ci.sh` ran there for the day. It grew 0.43 MB in the 25 hours before
+(22.683 MB at 219fbac5), spread over the packages work (epics #1548, #1561),
+no single merge more than 52 KB (procgen's move to its package folder).
+
+Two changes. **The check sizes each file as git stores it**: an unchanged
+file is its index blob, whose size git already knows, and a changed one its
+bytes on disk, less one a CRLF when git stores it LF. Before, it summed
+`stat()` sizes, so a Windows checkout (`* text=auto`, 1,942 text files written
+CRLF) read the engine area 0.58 MB high: 23.7 MB to CI's 23.1. Every land
+from a Windows worktree since #1335 needed a `--verify` wrapper that passed
+only that one line, and the wrapper hid a real breach until CI found it.
+Measured on 3d2151cc, the area totals by the new check equal `git cat-file`
+sums of the index blobs to the byte, in every area. It takes 0.7 s here, where
+the `stat()` sum took 0.46.
+
+**The budget moves by the decision's own rule**, the measurement and about a
+tenth: **25 MB**. #1303 asked whether source code needs a byte budget at all;
+the answer for now is that it keeps one, as a tripwire rather than a
+constraint. Size is not what the modularity work is held to (Chris,
+2026-11-27): its gates are dependency rules, which crate may name which and
+that each package's subset builds. What a budget still catches is bulk that
+isn't code, a generated file or a vendored tree committed in passing, which
+the per-file and texture caps don't when it comes as many small files. At
+the last day's rate this is a week or two of room again, so the next breach
+should ask the question afresh: an engine-area budget that only ever moves
+is a chore, and the tree's own 175 MB budget would still catch the bulk.

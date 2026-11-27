@@ -285,6 +285,13 @@ flint.toml: 1 error
   error[unbuilt-package]: this flint was built without the `living` package, which flint.toml uses
       hint: run `flint build` in the project: it builds a flint, a flint-player and the game's own binary with the packages flint.toml lists (`flint build --dry-run` shows the cargo commands)
 ```
+
+When the package's folder is in the engine's `packages/` but `scripts/package-sync.py` hasn't run since it was added, `flint build` can't build it either, so the hint names the script first ([A package is a folder](../concepts/packages.md#a-package-is-a-folder)):
+
+```text
+  error[unbuilt-package]: this flint was built without the `buoy` package, which flint.toml uses
+      hint: `buoy`'s folder is in ../engine/packages, but neither launcher has a feature for it yet: run `python3 scripts/package-sync.py` in ../engine, then `flint build` in the project
+```
 ## Multi-Schema Layering
 
 A game loads two schema directories, in order, with the later one overriding the earlier:
