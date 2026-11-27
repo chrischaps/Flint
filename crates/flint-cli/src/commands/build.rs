@@ -18,10 +18,11 @@
 //! `[packages]` table every package is in, which is the default build.
 //!
 //! **One cargo run, or two.** Cargo unifies a crate's features across what
-//! one run builds, and flint-cli turns on flint-player's `debug-hud` and
-//! `frame-history` (its windows draw the panels). A project that drops one
-//! of those (`debug-hud = false`) would get it back in a shared run, so its
-//! player is built alone first, then the CLI.
+//! one run builds, and flint-cli turns on flint-player's `frame-history`
+//! in every build. A project whose player leaves out a feature the CLI
+//! forces would get it back in a shared run, so its player is built alone
+//! first, then the CLI. `debug-hud` was one until #1583; it is a package
+//! feature of both crates now, so `debug-hud = false` is one run.
 //!
 //! **A binary that is running.** Windows refuses to overwrite a running
 //! `.exe` (`flint.exe` doing this build, a `flint-player.exe` the game is
@@ -886,7 +887,10 @@ mod tests {
         );
         let mut cli = plan.cli.packages.clone();
         cli.sort();
-        assert_eq!(cli, ["ai", "living", "music", "procgen", "rhythm"]);
+        assert_eq!(
+            cli,
+            ["ai", "debug-hud", "living", "music", "procgen", "rhythm"]
+        );
         assert!(plan.split.is_none());
     }
 
@@ -898,23 +902,20 @@ mod tests {
         assert!(plan.player.packages.contains(&"music".to_string()));
     }
 
+    /// #1583: the CLI's `debug-hud` is its own feature, so a project that
+    /// leaves the package out builds it out of both binaries in one run.
     #[test]
-    fn a_player_without_the_debug_hud_is_built_in_a_run_of_its_own() {
+    fn a_project_without_the_debug_hud_leaves_it_out_of_both_in_one_run() {
         let plan = plan_for(Some("debug-hud = false"), "no_hud");
-        assert_eq!(plan.runs.len(), 2, "{plan:#?}");
-        let player = command_line(&plan.runs[0].args);
+        assert_eq!(plan.runs.len(), 1, "{plan:#?}");
+        assert!(plan.split.is_none(), "{plan:#?}");
+        let line = command_line(&plan.runs[0].args);
         assert!(
-            player.starts_with("cargo build -p flint-player --bin flint-player"),
-            "{player}"
+            line.starts_with("cargo build -p flint-player -p flint-cli"),
+            "{line}"
         );
-        assert!(!player.contains("debug-hud"), "{player}");
-        assert!(!player.contains("flint-cli"), "{player}");
-        let cli = command_line(&plan.runs[1].args);
-        assert!(
-            cli.starts_with("cargo build -p flint-cli --bin flint"),
-            "{cli}"
-        );
-        assert!(plan.split.as_deref().unwrap().contains("`debug-hud`"));
+        assert!(!line.contains("debug-hud"), "{line}");
+        assert!(!plan.cli.packages.contains(&"debug-hud".to_string()));
     }
 
     #[test]

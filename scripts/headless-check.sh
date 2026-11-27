@@ -47,7 +47,7 @@ echo "headless flint-cli tree for Linux: no device crates" \
 
 # The packages' crates (packages/<name>/package.toml) a flint-cli with no
 # package feature leaves out
-CLI_OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-rhythm-game|flint-living|flint-wooze|flint-procgen|flint-procgen-cli|flint-asset-gen|flint-procgen-ai|flint-ai-core) v'
+CLI_OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-rhythm-game|flint-living|flint-wooze|flint-procgen|flint-procgen-cli|flint-asset-gen|flint-procgen-ai|flint-ai-core|flint-debug-ui) v'
 found=$(printf '%s\n' "$tree" | grep -E "$CLI_OPTIONAL" | sort -u || true)
 if [ -n "$found" ]; then
     echo "flint-cli with no default features links a package's crate:" >&2
@@ -56,18 +56,22 @@ if [ -n "$found" ]; then
     cargo tree -p flint-cli --no-default-features -e normal,features -i "$first" >&2 || true
     exit 1
 fi
-echo "smallest flint-cli: none of music, rhythm, living, procgen, ai, wooze"
+echo "smallest flint-cli: none of music, rhythm, living, procgen, ai, wooze, debug-hud"
 
 # The viewer's [living] and [wooze] are the living package's, through a point
-# its CLI part registers (#1558): the viewer links neither flint-procgen nor
-# flint-wooze in any build
-if cargo tree -p flint-viewer --no-default-features -e normal --prefix none \
-    | grep -qE '^(flint-wooze|flint-procgen) v'; then
-    echo "flint-viewer links flint-wooze or flint-procgen:" >&2
-    cargo tree -p flint-viewer --no-default-features -e normal,features -i flint-wooze >&2 || true
+# its CLI part registers (#1558), and its widgets and F4 are the kernel's
+# flint-widgets (#1583): the viewer links none of flint-procgen, flint-wooze
+# and flint-debug-ui in any build
+viewer=$(cargo tree -p flint-viewer --no-default-features -e normal --prefix none)
+found=$(printf '%s\n' "$viewer" | grep -E '^(flint-wooze|flint-procgen|flint-debug-ui) v' | sort -u || true)
+if [ -n "$found" ]; then
+    echo "flint-viewer links a package's crate:" >&2
+    printf '%s\n' "$found" | sed 's/^/  /' >&2
+    first=$(printf '%s\n' "$found" | head -n1 | cut -d' ' -f1)
+    cargo tree -p flint-viewer --no-default-features -e normal,features -i "$first" >&2 || true
     exit 1
 fi
-echo "smallest flint-viewer: no flint-wooze, no flint-procgen"
+echo "smallest flint-viewer: no flint-wooze, no flint-procgen, no flint-debug-ui"
 
 OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-rhythm-game|flint-procgen|flint-living|flint-wooze|flint-debug-ui) v'
 player=$(cargo tree -p flint-player --no-default-features -e normal --prefix none)

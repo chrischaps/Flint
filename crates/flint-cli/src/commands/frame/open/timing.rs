@@ -3,8 +3,8 @@
 //! passes, and the frame history around the captured frame as the F2
 //! overlay's graph.
 
-use flint_debug_ui::widgets::{Band, GraphFrame, BANDS};
 use flint_render::frame_capture::{CpuFrame, FrameDescription};
+use flint_widgets::{Band, GraphFrame, BANDS};
 
 /// The player's phases in the order a frame runs them
 /// (`flint_player::perf::Phase`'s labels); a phase not listed goes after.

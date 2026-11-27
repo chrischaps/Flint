@@ -1756,7 +1756,6 @@ dependencies = [
  "flint-audio",
  "flint-constraint",
  "flint-core",
- "flint-debug-ui",
  "flint-ecs",
  "flint-geometry",
  "flint-import",
@@ -1778,6 +1777,7 @@ dependencies = [
  "flint-script",
  "flint-terrain",
  "flint-viewer",
+ "flint-widgets",
  "glam",
  "hound",
  "image",
@@ -1839,6 +1839,7 @@ dependencies = [
  "flint-schema",
  "flint-script",
  "flint-terrain",
+ "flint-widgets",
  "toml",
  "tracing",
  "wgpu",
@@ -2326,7 +2327,6 @@ dependencies = [
  "egui-winit",
  "flint-constraint",
  "flint-core",
- "flint-debug-ui",
  "flint-ecs",
  "flint-geometry",
  "flint-import",
@@ -2336,6 +2336,7 @@ dependencies = [
  "flint-runtime",
  "flint-scene",
  "flint-schema",
+ "flint-widgets",
  "image",
  "notify",
  "notify-debouncer-mini",
@@ -2346,6 +2347,20 @@ dependencies = [
  "tracing",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "flint-widgets"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "flint-core",
+ "flint-package",
+ "flint-render",
+ "flint-scene",
+ "flint-schema",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

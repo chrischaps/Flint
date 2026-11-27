@@ -762,11 +762,10 @@ fn the_build_features_are_the_players_and_bring_what_they_require() {
 /// flint-cli builds each package the manifests name (#1333): its own
 /// feature of that name turns flint-player's on, every crate the package
 /// provides that flint-cli names is optional and turned on by it, and
-/// `flint package list --built` knows the feature. `debug-hud` is the one
-/// the CLI always has.
+/// `flint package list --built` knows the feature. No package is in every
+/// build: `debug-hud` was, until its widgets moved to the kernel (#1583).
 #[test]
 fn flint_cli_has_each_packages_feature_and_forwards_it() {
-    const ALWAYS: &[&str] = &["debug-hud"];
     let player = features_of("flint-player");
     let cli = features_of("flint-cli");
     let manifest: toml::Table = std::fs::read_to_string(repo().join("crates/flint-cli/Cargo.toml"))
@@ -780,10 +779,7 @@ fn flint_cli_has_each_packages_feature_and_forwards_it() {
                 crate::commands::absent::built_features().any(|(f, _)| f == feature),
                 "absent::BUILT_FEATURES has no `{feature}`"
             );
-            if ALWAYS.contains(&feature.as_str()) {
-                assert!(crate::commands::absent::built_with(feature));
-                continue;
-            }
+
             let on = cli
                 .get(feature)
                 .unwrap_or_else(|| panic!("flint-cli has no `{feature}` feature"));

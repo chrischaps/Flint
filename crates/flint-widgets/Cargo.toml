@@ -1,0 +1,30 @@
+[package]
+name = "flint-widgets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The kernel's egui: shared widgets, a headless test frame, and the renderer's Rendering & Effects panel and style editor"
+
+# A kernel crate (#1583): flint-cli and flint-viewer draw these, and the
+# debug-hud package's crate (flint-debug-ui) re-exports them at their old
+# paths, so neither tool links the package for its widgets. Nothing here is
+# a package's: it is egui over the renderer's own settings.
+[dependencies]
+# The panel trait the Rendering & Effects panel implements, and the frame
+# graph's data (`flint_package::panels`, `flint_package::hud`, #1559)
+flint-package = { workspace = true }
+flint-core = { workspace = true }
+flint-render = { workspace = true }
+# The style editor's Commit to scene (`SceneDocument::set_style_table`)
+flint-scene = { workspace = true }
+# The post effects' parameter table the panel draws its rows from
+flint-schema = { workspace = true }
+egui = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+
+# egui frames go through run_headless_frame in tests; the list is the
+# workspace clippy.toml (#944), denied workspace-wide (#979).
+[lints]
+workspace = true

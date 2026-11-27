@@ -6,11 +6,12 @@ license.workspace = true
 authors.workspace = true
 description = "The debug-hud package: the F3/F4 panels, their shared widgets, and the HUD the player asks for them"
 
-# The debug-hud package's crate (`packages/debug-hud/`, #1559). The panels and
-# widgets are in every build of it: flint-cli and flint-viewer draw the
-# widgets (the frame graph, the curve editor) and the viewer the Rendering &
-# Effects panel. The panel trait and the graph's data are the kernel's
-# (`flint_package::panels`, `flint_package::hud`), re-exported here.
+# The debug-hud package's crate (`packages/debug-hud/`, #1559): the player's
+# F3 panels, and with `player` the HUD that shows them. The widgets, the
+# Rendering & Effects panel and the style editor are the kernel's
+# (flint-widgets, #1583), as are the panel trait and the graph's data
+# (`flint_package::panels`, `flint_package::hud`); all are re-exported here
+# at their old paths. flint-cli and flint-viewer name none of this crate.
 [features]
 # The package's part of the player (`src/player/`): `player::PACKAGE`, which
 # registers the HUD that makes the engine's panels at each scene, syncs and
@@ -22,6 +23,8 @@ player = ["dep:flint-script"]
 [dependencies]
 # The panel trait, the HUD trait and the graph's data (#1559)
 flint-package = { workspace = true }
+# The widgets and the renderer's controls the panels draw with (#1583)
+flint-widgets = { workspace = true }
 # The script card's rows (`player::cards`)
 flint-script = { workspace = true, optional = true }
 flint-core = { workspace = true }

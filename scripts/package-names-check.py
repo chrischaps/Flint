@@ -37,7 +37,6 @@ LAUNCHERS = {"flint-player": "crates/flint-player/src", "flint-cli": "crates/fli
 
 # (launcher, "feature" | "crate", name): why it is still there
 EXCEPTIONS = {
-    ("flint-cli", "crate", "flint-debug-ui"): "#1583: the CLI's windows draw debug-hud's widgets",
 }
 
 

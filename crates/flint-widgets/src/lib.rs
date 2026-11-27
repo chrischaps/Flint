@@ -1,4 +1,22 @@
-//! Shared egui widgets for debug panels and editors.
+//! The kernel's egui (#1583): the widgets every window draws with, a test's
+//! headless frame, and the renderer's own controls.
+//!
+//! - **The widgets**: the helpers below, the curve and gradient editors
+//!   ([`curve`]) and the frame-time graph ([`frame_graph`]). `flint frame
+//!   open` (its frame and profiler tabs), the particle editor, the viewer's F2
+//!   and the debug HUD's panels all draw with them.
+//! - **[`run_headless_frame`]**: one egui frame with nothing to paint it,
+//!   which every test that runs a frame goes through (#944).
+//! - **The renderer's controls**: the Rendering & Effects panel
+//!   ([`RenderDebugPanel`], ADR 0053), the style editor ([`StylesEditor`])
+//!   and the corner cards for styles that fail ([`paint_style_errors`],
+//!   [`paint_style_drops`]). The scene viewer's F4 is this panel, and the
+//!   player's F4 is the same one, shown by the debug-hud package.
+//!
+//! They were the debug-hud package's crate until #1583 (flint-debug-ui,
+//! which re-exports them at their old paths), so a game that leaves the
+//! package out still linked it into its `flint` and its editors. Now the CLI
+//! and the viewer name no package for them.
 //!
 //! Every helper returns `true` when the value changed, so callers can
 //! compose them into a single `dirty` flag. The panels used to carry their
@@ -6,12 +24,22 @@
 
 pub mod curve;
 pub mod frame_graph;
+mod headless_frame;
+mod render_panel;
+mod style_drops;
+mod style_errors;
+mod styles_ui;
 
 pub use curve::{CurveEditor, CurveResponse, GradientEditor};
 pub use frame_graph::{
     band_legend, band_legend_of, hitch_counters, Band, FrameGraph, GraphFrame, GraphLayout,
     HitchCounters, Placed, BANDS, HITCH_COLOR,
 };
+pub use headless_frame::run_headless_frame;
+pub use render_panel::{RenderDebugPanel, RenderPanelFlags, RENDER_DEBUG_PANEL};
+pub use style_drops::paint_style_drops;
+pub use style_errors::paint_style_errors;
+pub use styles_ui::{StylesEdit, StylesEditor};
 
 /// Single labeled drag value. Returns true if the value changed.
 pub fn drag_f32(
