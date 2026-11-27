@@ -4,8 +4,76 @@
 //! it: flint-cli runs a glyph set (the kernel's) and hands anything else to
 //! the [`SpecGen`](super::SpecGen) the procgen package registered, or
 //! names the package when none did.
+//!
+//! The ai package's flags are its own groups (#1592): `GenArgs` declares
+//! three slots where their headings have always been ([`GenAiFlags`] for
+//! "AI assistance", [`GenCostFlags`] for "Cost tracking", [`GenGuideFlags`]
+//! for `--style-guide`), so a flint without the package has none of them
+//! and `flint gen --help` of the stock build reads as it did. What ties
+//! them to procgen's flags is on the package's side: a flag that makes a
+//! spec needless joins the [`NO_SPEC`] group, and its conflicts with
+//! `--list-generators`, `--describe` and `--strip` are its own (clap's
+//! conflicts are two-way).
 
+use super::flags::{brought, FlagPlace, PackageFlags};
 use clap::{ArgGroup, Args, ValueEnum};
+
+/// The group of `gen`'s flags that make the spec needless:
+/// `--list-generators`, `--describe`, and a package's that join it (the ai
+/// package's `--ai-create` and `--cost-report`).
+pub const NO_SPEC: &str = "no_spec";
+
+/// The ai package's "AI assistance" slot of `gen`.
+pub struct GenAiPlace;
+
+impl FlagPlace for GenAiPlace {
+    const PATH: &'static [&'static str] = &["gen"];
+    const SLOT: &'static str = "ai";
+}
+
+/// The ai package's "Cost tracking" slot of `gen`.
+pub struct GenCostPlace;
+
+impl FlagPlace for GenCostPlace {
+    const PATH: &'static [&'static str] = &["gen"];
+    const SLOT: &'static str = "cost";
+}
+
+/// The slot of `gen`'s validation flags a package adds (the ai package's
+/// `--style-guide`, whose guide its crate reads).
+pub struct GenGuidePlace;
+
+impl FlagPlace for GenGuidePlace {
+    const PATH: &'static [&'static str] = &["gen"];
+    const SLOT: &'static str = "guide";
+}
+
+pub type GenAiFlags = PackageFlags<GenAiPlace>;
+pub type GenCostFlags = PackageFlags<GenCostPlace>;
+pub type GenGuideFlags = PackageFlags<GenGuidePlace>;
+
+/// The heading of `--print-spec` and `--save-spec`, procgen's own: under
+/// "AI assistance" beside the AI's flags, since what they keep is the
+/// AI's spec as often as not; among the options in a flint without them.
+fn spec_heading() -> Option<&'static str> {
+    brought::<GenAiPlace>().then_some("AI assistance")
+}
+
+/// The spec's help, which names the package's flags that make it needless
+/// only in a flint that has them.
+fn spec_help() -> String {
+    let needless = if brought::<GenAiPlace>() && brought::<GenCostPlace>() {
+        "--ai-create, --cost-report, --list-generators or --describe"
+    } else {
+        "--list-generators or --describe"
+    };
+    format!(
+        "Path to a .procgen.toml spec file (not needed with {needless}), or a .glyphs.toml \
+         glyph set to preview: its atlas, ramps and a specimen as one sheet (-o x.png) or every \
+         piece (-o dir/), or a .terrain.toml, which is a terrain_v1 spec: its 16-bit heightmap \
+         and splat map, x_height.png and x_splat.png for -o x.png"
+    )
+}
 
 /// How `--validate` reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -19,25 +87,19 @@ pub enum ReportFormat {
 
 #[derive(Args)]
 #[command(group(
-    ArgGroup::new("ai_step")
-        .args(["ai_assist", "ai_refine", "ai_create"])
+    ArgGroup::new(NO_SPEC)
+        .args(["list_generators", "describe"])
         .multiple(true)
 ))]
 pub struct GenArgs {
-    /// Path to a .procgen.toml spec file (not needed with --ai-create,
-    /// --cost-report, --list-generators or --describe), or a .glyphs.toml
-    /// glyph set to preview: its atlas, ramps and a specimen as one sheet
-    /// (-o x.png) or every piece (-o dir/), or a .terrain.toml, which is a
-    /// terrain_v1 spec: its 16-bit heightmap and splat map, x_height.png and
-    /// x_splat.png for -o x.png
-    #[arg(required_unless_present_any = ["ai_create", "cost_report", "list_generators", "describe"])]
+    #[arg(required_unless_present = NO_SPEC, help = spec_help())]
     pub spec: Option<String>,
 
     /// List every generator a spec's `generator` may name: its output, its
     /// revision, how many parameters it takes and whether it can live
     #[arg(
         long,
-        conflicts_with_all = ["spec", "ai_create", "cost_report", "describe"],
+        conflicts_with_all = ["spec", "describe"],
         help_heading = "Generators"
     )]
     pub list_generators: bool,
@@ -48,7 +110,7 @@ pub struct GenArgs {
     #[arg(
         long,
         value_name = "GENERATOR",
-        conflicts_with_all = ["spec", "ai_create", "cost_report"],
+        conflicts_with = "spec",
         help_heading = "Generators"
     )]
     pub describe: Option<String>,
@@ -60,103 +122,24 @@ pub struct GenArgs {
     #[arg(long, requires = "describe", help_heading = "Generators")]
     pub markdown: bool,
 
-    /// Ask the AI agent to review the spec (interpret) and then improve it
-    /// (refine) before generating; suggestions are printed to stderr
-    #[arg(long, help_heading = "AI assistance")]
-    pub ai_assist: bool,
-
-    /// Create a new spec from a description, then generate it
-    #[arg(
-        long,
-        value_name = "DESCRIPTION",
-        conflicts_with = "spec",
-        help_heading = "AI assistance"
-    )]
-    pub ai_create: Option<String>,
-
-    /// Refine the spec against the --reference image before generating
-    #[arg(long, requires = "reference", help_heading = "AI assistance")]
-    pub ai_refine: bool,
-
-    /// Reference image (PNG, JPEG, GIF or WebP) for the refine step
-    #[arg(
-        long,
-        value_name = "IMAGE",
-        requires = "ai_step",
-        help_heading = "AI assistance"
-    )]
-    pub reference: Option<String>,
-
-    /// With --ai-create: the generator to write for (tree_v1, texture_v1,
-    /// creature_v1). Guessed from the description when omitted
-    #[arg(
-        long,
-        value_name = "NAME",
-        requires = "ai_create",
-        help_heading = "AI assistance"
-    )]
-    pub ai_generator: Option<String>,
-
-    /// AI provider: anthropic or mock [default: anthropic, or
-    /// .flint/procgen_ai.toml's provider]
-    #[arg(long, value_name = "PROVIDER", help_heading = "AI assistance")]
-    pub ai_provider: Option<String>,
-
-    /// Model to ask [default: .flint/procgen_ai.toml's model, else the
-    /// provider's default]
-    #[arg(long, value_name = "MODEL", help_heading = "AI assistance")]
-    pub ai_model: Option<String>,
-
-    /// Most rounds per AI step before the agent gives up [default: 3]
-    #[arg(
-        long,
-        value_name = "N",
-        value_parser = clap::value_parser!(u32).range(1..=20),
-        help_heading = "AI assistance"
-    )]
-    pub ai_iterations: Option<u32>,
-
-    /// Most measured refine rounds against --reference. Claude sees a render
-    /// of what the spec builds; each round's result is rendered and
-    /// measured, and the refine asks again while the distance falls, keeping
-    /// the closest spec [default: --ai-iterations]
-    #[arg(
-        long,
-        value_name = "N",
-        requires = "reference",
-        value_parser = clap::value_parser!(u32).range(1..=8),
-        help_heading = "AI assistance"
-    )]
-    pub refine_rounds: Option<u32>,
+    // The ai package's "AI assistance" group: `--ai-create`,
+    // `--ai-assist`, `--ai-refine` and their options.
+    #[command(flatten)]
+    pub ai: GenAiFlags,
 
     /// Print the final spec (after any AI steps and --seed) to stdout as
     /// TOML; the generation summary moves to stderr
-    #[arg(long, conflicts_with = "validate", help_heading = "AI assistance")]
+    #[arg(long, conflicts_with = "validate", help_heading = spec_heading())]
     pub print_spec: bool,
 
     /// Write the final spec to this file
-    #[arg(long, value_name = "PATH", help_heading = "AI assistance")]
+    #[arg(long, value_name = "PATH", help_heading = spec_heading())]
     pub save_spec: Option<String>,
 
-    /// Refuse any AI call that could take this run's spend past USD; checked
-    /// before every call, with a warning past 80%
-    #[arg(long, value_name = "USD", value_parser = parse_usd, help_heading = "Cost tracking")]
-    pub max_cost: Option<f64>,
-
-    /// Print what AI calls have cost, from the project's .flint/ai_costs.jsonl
-    /// (procgen, looks and assets): total, per provider, per model, per spec
-    /// or asset
-    #[arg(long, help_heading = "Cost tracking")]
-    pub cost_report: bool,
-
-    /// With --cost-report: only calls on or after this date (YYYY-MM-DD)
-    #[arg(
-        long,
-        value_name = "DATE",
-        requires = "cost_report",
-        help_heading = "Cost tracking"
-    )]
-    pub since: Option<String>,
+    // The ai package's "Cost tracking" group: `--max-cost`,
+    // `--cost-report` and `--since`.
+    #[command(flatten)]
+    pub cost: GenCostFlags,
 
     /// Output path (file or directory). Derived from spec name if omitted.
     #[arg(short, long)]
@@ -209,10 +192,9 @@ pub struct GenArgs {
     #[arg(long, value_enum, requires = "validate")]
     pub report: Option<ReportFormat>,
 
-    /// Style guide TOML path for additional validation constraints
-    /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
-    #[arg(long, requires = "validate")]
-    pub style_guide: Option<String>,
+    // A package's validation flags: the ai package's `--style-guide`.
+    #[command(flatten)]
+    pub guide: GenGuideFlags,
 
     /// Render a [living] spec over time as one labelled contact sheet, a PNG:
     /// hold-and-glide evaluated per frame from the spec's step, glide and
@@ -221,8 +203,7 @@ pub struct GenArgs {
         long,
         help_heading = "Living props",
         conflicts_with_all = [
-            "ai_step", "batch", "format", "print_spec", "register", "save_spec", "seed",
-            "validate",
+            "batch", "format", "print_spec", "register", "save_spec", "seed", "validate",
         ]
     )]
     pub strip: bool,

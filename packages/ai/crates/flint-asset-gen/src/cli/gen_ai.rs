@@ -16,9 +16,173 @@ use flint_procgen_ai::cost::{self, CostMeter};
 use flint_procgen_ai::{AgentConfig, AnthropicAgent, Distance, MockAgent, ProcGenAgent, Report};
 use serde::Deserialize;
 
-use flint_package::cli::gen::GenArgs;
+use flint_package::cli::flags::{self, Flags};
+use flint_package::cli::gen::{
+    parse_usd, GenAiPlace, GenArgs, GenCostPlace, GenGuidePlace, NO_SPEC,
+};
 
 use super::gen_refine::{MeshRenderPreviewer, PREVIEW_SIZE};
+
+/// `gen`'s "AI assistance" flags (#1592): this package's group, in the slot
+/// `GenArgs` declares where the heading has always been, so a flint
+/// without the package has none of them. Its ties to procgen's flags are
+/// here: `--ai-create` makes the spec needless ([`NO_SPEC`]), and a step
+/// conflicts with a catalog and with `--strip`.
+#[derive(clap::Args, Debug, Clone, Default)]
+#[command(group(
+    clap::ArgGroup::new("ai_step")
+        .args(["ai_assist", "ai_refine", "ai_create"])
+        .multiple(true)
+        .conflicts_with("strip")
+))]
+pub struct AiFlags {
+    /// Ask the AI agent to review the spec (interpret) and then improve it
+    /// (refine) before generating; suggestions are printed to stderr
+    #[arg(long, help_heading = "AI assistance")]
+    pub ai_assist: bool,
+
+    /// Create a new spec from a description, then generate it
+    #[arg(
+        long,
+        value_name = "DESCRIPTION",
+        group = NO_SPEC,
+        conflicts_with_all = ["spec", "list_generators", "describe"],
+        help_heading = "AI assistance"
+    )]
+    pub ai_create: Option<String>,
+
+    /// Refine the spec against the --reference image before generating
+    #[arg(long, requires = "reference", help_heading = "AI assistance")]
+    pub ai_refine: bool,
+
+    /// Reference image (PNG, JPEG, GIF or WebP) for the refine step
+    #[arg(
+        long,
+        value_name = "IMAGE",
+        requires = "ai_step",
+        help_heading = "AI assistance"
+    )]
+    pub reference: Option<String>,
+
+    /// With --ai-create: the generator to write for (tree_v1, texture_v1,
+    /// creature_v1). Guessed from the description when omitted
+    #[arg(
+        long,
+        value_name = "NAME",
+        requires = "ai_create",
+        help_heading = "AI assistance"
+    )]
+    pub ai_generator: Option<String>,
+
+    /// AI provider: anthropic or mock [default: anthropic, or
+    /// .flint/procgen_ai.toml's provider]
+    #[arg(long, value_name = "PROVIDER", help_heading = "AI assistance")]
+    pub ai_provider: Option<String>,
+
+    /// Model to ask [default: .flint/procgen_ai.toml's model, else the
+    /// provider's default]
+    #[arg(long, value_name = "MODEL", help_heading = "AI assistance")]
+    pub ai_model: Option<String>,
+
+    /// Most rounds per AI step before the agent gives up [default: 3]
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(u32).range(1..=20),
+        help_heading = "AI assistance"
+    )]
+    pub ai_iterations: Option<u32>,
+
+    /// Most measured refine rounds against --reference. Claude sees a render
+    /// of what the spec builds; each round's result is rendered and
+    /// measured, and the refine asks again while the distance falls, keeping
+    /// the closest spec [default: --ai-iterations]
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "reference",
+        value_parser = clap::value_parser!(u32).range(1..=8),
+        help_heading = "AI assistance"
+    )]
+    pub refine_rounds: Option<u32>,
+}
+
+/// `gen`'s "Cost tracking" flags: this package's group, in its own slot.
+/// `--cost-report` is `flint asset costs`'s answer on `gen`'s line, and
+/// makes the spec needless.
+#[derive(clap::Args, Debug, Clone, Default)]
+pub struct CostFlags {
+    /// Refuse any AI call that could take this run's spend past USD; checked
+    /// before every call, with a warning past 80%
+    #[arg(long, value_name = "USD", value_parser = parse_usd, help_heading = "Cost tracking")]
+    pub max_cost: Option<f64>,
+
+    /// Print what AI calls have cost, from the project's .flint/ai_costs.jsonl
+    /// (procgen, looks and assets): total, per provider, per model, per spec
+    /// or asset
+    #[arg(
+        long,
+        group = NO_SPEC,
+        conflicts_with_all = ["list_generators", "describe"],
+        help_heading = "Cost tracking"
+    )]
+    pub cost_report: bool,
+
+    /// With --cost-report: only calls on or after this date (YYYY-MM-DD)
+    #[arg(
+        long,
+        value_name = "DATE",
+        requires = "cost_report",
+        help_heading = "Cost tracking"
+    )]
+    pub since: Option<String>,
+}
+
+/// `gen --validate`'s style guide, whose reader is this crate's
+/// ([`crate::StyleGuide`]): in the slot among procgen's validation flags.
+#[derive(clap::Args, Debug, Clone, Default)]
+pub struct GuideFlags {
+    /// Style guide TOML path for additional validation constraints
+    /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
+    #[arg(long, requires = "validate")]
+    pub style_guide: Option<String>,
+}
+
+/// The package's three groups on `gen`, as its extension returns them.
+pub fn flags() -> [Flags; 3] {
+    [
+        Flags::at::<GenAiPlace, AiFlags>(),
+        Flags::at::<GenCostPlace, CostFlags>(),
+        Flags::at::<GenGuidePlace, GuideFlags>(),
+    ]
+}
+
+/// `gen`'s line as this package reads it: its own groups, from the matches
+/// the slots hold, and the one of procgen's flags its steps read (`-o`,
+/// which picks a generator for `--ai-create`).
+#[derive(Debug, Clone, Default)]
+pub struct GenAi {
+    pub ai: AiFlags,
+    pub cost: CostFlags,
+    pub guide: GuideFlags,
+    pub output: Option<String>,
+    pub dry_run: bool,
+}
+
+impl GenAi {
+    /// The package's flags on `args`' line; the defaults (no step, no
+    /// report) when its parser hadn't them (a launcher without this
+    /// package's flags).
+    pub fn of(args: &GenArgs) -> Self {
+        Self {
+            ai: flags::parsed(args.ai.matches(), "ai_assist").unwrap_or_default(),
+            cost: flags::parsed(args.cost.matches(), "cost_report").unwrap_or_default(),
+            guide: flags::parsed(args.guide.matches(), "style_guide").unwrap_or_default(),
+            output: args.output.clone(),
+            dry_run: args.dry_run,
+        }
+    }
+}
 
 /// Project defaults for the agent, read from this file when it exists.
 /// Every key is optional; flags override them.
@@ -44,7 +208,7 @@ pub struct Ai;
 
 impl flint_procgen_cli::AiSteps for Ai {
     fn any(&self, args: &GenArgs) -> bool {
-        Steps::of(args).any()
+        Steps::of(&GenAi::of(args)).any()
     }
 
     /// The AI steps (`--ai-create`, `--ai-assist`, `--ai-refine`): the spec
@@ -55,6 +219,7 @@ impl flint_procgen_cli::AiSteps for Ai {
         loaded: Option<ProcGenSpec>,
         stdout_reserved: bool,
     ) -> Result<Option<ProcGenSpec>> {
+        let args = &GenAi::of(args);
         let steps = Steps::of(args);
         let config = resolve_config(args, Path::new(CONFIG_PATH))?;
         if args.dry_run {
@@ -72,21 +237,28 @@ impl flint_procgen_cli::AiSteps for Ai {
             return Ok(None);
         }
         let meter = build_meter(&config, args)?;
-        let agent = build_agent(config, meter.clone(), args.refine_rounds)?;
+        let agent = build_agent(config, meter.clone(), args.ai.refine_rounds)?;
         run_steps(args, agent.as_ref(), &meter, loaded).map(Some)
     }
 
-    fn cost_report(&self, since: Option<&str>) -> Result<()> {
-        super::costs::cost_report(&super::costs::ledger(), since)
+    /// `--cost-report`: the ledger summed (= `flint asset costs`).
+    fn answer(&self, args: &GenArgs) -> Option<Result<()>> {
+        let cost = GenAi::of(args).cost;
+        cost.cost_report
+            .then(|| super::costs::cost_report(&super::costs::ledger(), cost.since.as_deref()))
     }
 
     fn style_constraints(
         &self,
-        path: &Path,
-    ) -> std::result::Result<flint_procgen::ValidationConstraints, String> {
-        crate::StyleGuide::load(path)
-            .map(|guide| guide.validation_constraints())
-            .map_err(|e| e.to_string())
+        args: &GenArgs,
+    ) -> Option<Result<flint_procgen::ValidationConstraints>> {
+        let path = GenAi::of(args).guide.style_guide?;
+        Some(
+            crate::StyleGuide::load(Path::new(&path))
+                .map(|guide| guide.validation_constraints())
+                .map_err(|e| anyhow!("{e}"))
+                .with_context(|| format!("failed to load style guide from {path}")),
+        )
     }
 }
 
@@ -99,11 +271,11 @@ pub struct Steps {
 }
 
 impl Steps {
-    pub fn of(args: &GenArgs) -> Self {
+    pub fn of(args: &GenAi) -> Self {
         Self {
-            create: args.ai_create.is_some(),
-            interpret: args.ai_assist,
-            refine: args.ai_assist || args.ai_refine,
+            create: args.ai.ai_create.is_some(),
+            interpret: args.ai.ai_assist,
+            refine: args.ai.ai_assist || args.ai.ai_refine,
         }
     }
 
@@ -125,7 +297,7 @@ impl Steps {
 
 /// The agent config this run uses: built-in defaults, then the project
 /// config, then the flags.
-pub fn resolve_config(args: &GenArgs, project_file: &Path) -> Result<AgentConfig> {
+pub fn resolve_config(args: &GenAi, project_file: &Path) -> Result<AgentConfig> {
     let project: ProjectConfig = match std::fs::read_to_string(project_file) {
         Ok(text) => toml::from_str(&text)
             .with_context(|| format!("failed to parse {}", project_file.display()))?,
@@ -135,6 +307,7 @@ pub fn resolve_config(args: &GenArgs, project_file: &Path) -> Result<AgentConfig
         }
     };
     let provider = args
+        .ai
         .ai_provider
         .clone()
         .or(project.provider)
@@ -144,10 +317,10 @@ pub fn resolve_config(args: &GenArgs, project_file: &Path) -> Result<AgentConfig
         "mock" => AgentConfig::mock(),
         other => bail!("unknown --ai-provider '{other}'; known providers: anthropic, mock"),
     };
-    if let Some(m) = args.ai_model.clone().or(project.model) {
+    if let Some(m) = args.ai.ai_model.clone().or(project.model) {
         config.model = m;
     }
-    if let Some(n) = args.ai_iterations.or(project.max_iterations) {
+    if let Some(n) = args.ai.ai_iterations.or(project.max_iterations) {
         config.max_iterations = n;
     }
     if project.effort.is_some() {
@@ -158,10 +331,10 @@ pub fn resolve_config(args: &GenArgs, project_file: &Path) -> Result<AgentConfig
 
 /// The meter every call of this run goes through: the project's ledger and
 /// prices, and the `--max-cost` ceiling if one was given.
-pub fn build_meter(config: &AgentConfig, args: &GenArgs) -> Result<Arc<CostMeter>> {
+pub fn build_meter(config: &AgentConfig, args: &GenAi) -> Result<Arc<CostMeter>> {
     Ok(Arc::new(super::costs::meter(
         &config.provider,
-        args.max_cost,
+        args.cost.max_cost,
     )?))
 }
 
@@ -303,22 +476,22 @@ pub fn infer_generator(prompt: &str, output: Option<&str>) -> Option<&'static st
 /// refine it. Prints what the agent says to stderr and returns the spec to
 /// generate.
 pub fn run_steps(
-    args: &GenArgs,
+    args: &GenAi,
     agent: &dyn ProcGenAgent,
     meter: &CostMeter,
     start: Option<ProcGenSpec>,
 ) -> Result<ProcGenSpec> {
     let steps = Steps::of(args);
-    let reference = match &args.reference {
+    let reference = match &args.ai.reference {
         Some(p) => {
             Some(std::fs::read(p).with_context(|| format!("failed to read reference image {p}"))?)
         }
         None => None,
     };
 
-    let mut spec = match (&args.ai_create, start) {
+    let mut spec = match (&args.ai.ai_create, start) {
         (Some(prompt), _) => {
-            let generator = match &args.ai_generator {
+            let generator = match &args.ai.ai_generator {
                 Some(g) => g.clone(),
                 None => infer_generator(prompt, args.output.as_deref())
                     .ok_or_else(|| {
@@ -454,15 +627,19 @@ pub fn cost_line(meter: &CostMeter) -> String {
 /// `--dry-run` with AI steps: what would be asked, and the most each call
 /// could cost, without sending anything. Lines, so the caller picks the stream
 /// (`--report json` keeps stdout for the report).
-pub fn plan_lines(config: &AgentConfig, steps: Steps, args: &GenArgs) -> Vec<String> {
+pub fn plan_lines(config: &AgentConfig, steps: Steps, args: &GenAi) -> Vec<String> {
     let (price, priced_as) = super::costs::prices()
         .unwrap_or_else(|_| cost::PriceTable::builtin())
         .token_price(&config.provider, &config.model);
     let max_out = AnthropicAgent::DEFAULT_MAX_TOKENS;
     // A refine against a reference is measured, and may converse once per
     // refine round.
-    let refine_rounds = match (&args.reference, steps.refine) {
-        (Some(_), true) => args.refine_rounds.unwrap_or(config.max_iterations).max(1),
+    let refine_rounds = match (&args.ai.reference, steps.refine) {
+        (Some(_), true) => args
+            .ai
+            .refine_rounds
+            .unwrap_or(config.max_iterations)
+            .max(1),
         _ => 1,
     };
     let mut lines = vec![
@@ -492,7 +669,7 @@ pub fn plan_lines(config: &AgentConfig, steps: Steps, args: &GenArgs) -> Vec<Str
                 .unwrap_or_default()
         ));
     }
-    if let Some(m) = args.max_cost {
+    if let Some(m) = args.cost.max_cost {
         lines.push(format!("Ceiling:    --max-cost {}", cost::usd(m)));
     }
     lines.push("(nothing was sent; drop --dry-run to run the AI steps)".to_string());
@@ -512,10 +689,15 @@ mod tests {
         gen: GenArgs,
     }
 
-    fn args(argv: &[&str]) -> GenArgs {
+    /// `flint gen`'s line with this package's flags in their slots.
+    fn parse(argv: &[&str]) -> Result<GenArgs, clap::Error> {
         let mut full = vec!["flint-gen"];
         full.extend_from_slice(argv);
-        Cli::try_parse_from(full).map(|c| c.gen).unwrap()
+        flags::with_flags(&flags(), || Cli::try_parse_from(full)).map(|c| c.gen)
+    }
+
+    fn args(argv: &[&str]) -> GenAi {
+        GenAi::of(&parse(argv).unwrap())
     }
 
     const PINE: &str = r##"{
@@ -554,11 +736,15 @@ mod tests {
             "--save-spec",
             "out.procgen.toml",
         ]);
-        assert_eq!(a.ai_create.as_deref(), Some("tall oak tree"));
-        assert_eq!(a.max_cost, Some(0.5));
-        assert!(a.print_spec);
+        assert_eq!(a.ai.ai_create.as_deref(), Some("tall oak tree"));
+        assert_eq!(a.cost.max_cost, Some(0.5));
+        assert!(
+            parse(&["--ai-create", "x", "--print-spec"])
+                .unwrap()
+                .print_spec
+        );
         let b = args(&["spec.toml", "--ai-assist"]);
-        assert!(b.ai_assist && Steps::of(&b).interpret && Steps::of(&b).refine);
+        assert!(b.ai.ai_assist && Steps::of(&b).interpret && Steps::of(&b).refine);
         let c = args(&[
             "spec.toml",
             "--ai-refine",
@@ -567,7 +753,7 @@ mod tests {
             "--refine-rounds",
             "4",
         ]);
-        assert_eq!(c.refine_rounds, Some(4));
+        assert_eq!(c.ai.refine_rounds, Some(4));
         assert_eq!(
             Steps::of(&c),
             Steps {
@@ -577,16 +763,12 @@ mod tests {
             }
         );
         let d = args(&["--cost-report", "--since", "2024-01-01"]);
-        assert!(d.cost_report && d.spec.is_none());
+        assert!(d.cost.cost_report && parse(&["--cost-report"]).unwrap().spec.is_none());
     }
 
     #[test]
     fn contradictory_flags_are_refused() {
-        let bad = |argv: &[&str]| {
-            let mut full = vec!["flint-gen"];
-            full.extend_from_slice(argv);
-            Cli::try_parse_from(full).is_err()
-        };
+        let bad = |argv: &[&str]| parse(argv).is_err();
         assert!(bad(&[])); // no spec, no --ai-create, no --cost-report
         assert!(bad(&["spec.toml", "--ai-create", "x"]));
         assert!(bad(&["spec.toml", "--ai-refine"])); // needs --reference
@@ -595,6 +777,15 @@ mod tests {
         assert!(bad(&["spec.toml", "--max-cost", "-1"]));
         assert!(bad(&["spec.toml", "--ai-iterations", "0"]));
         assert!(bad(&["spec.toml", "--ai-assist", "--refine-rounds", "2"])); // needs --reference
+                                                                             // The ties to procgen's flags are this group's (#1592)
+        assert!(bad(&["spec.toml", "--ai-assist", "--strip"]));
+        assert!(bad(&["--list-generators", "--ai-create", "x"]));
+        assert!(bad(&["--describe", "tree_v1", "--cost-report"]));
+        assert!(bad(&["spec.toml", "--style-guide", "g.toml"])); // needs --validate
+        assert!(parse(&["--cost-report"]).is_ok_and(|a| a.spec.is_none()));
+        assert!(parse(&["--ai-create", "x"]).is_ok());
+        assert!(parse(&["--list-generators"]).is_ok());
+        assert!(parse(&["spec.toml", "--strip"]).is_ok());
         assert!(bad(&[
             "spec.toml",
             "--ai-refine",

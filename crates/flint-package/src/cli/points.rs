@@ -24,7 +24,7 @@ pub struct Points {
     map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     /// The flags (and flag values) an owning command declares that a
     /// package serves, as its manifest's `[provides] flags` spells them
-    /// (`gen --ai-create`), #1572.
+    /// (`asset resolve --strategy ai_generate`), #1572.
     served: BTreeSet<&'static str>,
 }
 
@@ -46,8 +46,8 @@ impl Points {
     }
 
     /// Say that this run's packages serve `flag`, a flag the owning
-    /// command declares and runs through a point (`gen --ai-create`,
-    /// `asset resolve --strategy ai_generate`). The owner refuses a served
+    /// command declares and runs through a point (`asset resolve
+    /// --strategy ai_generate`). The owner refuses a served
     /// flag nobody registered, naming the package from the manifest.
     pub fn serve(&mut self, flag: &'static str) -> &mut Self {
         self.served.insert(flag);

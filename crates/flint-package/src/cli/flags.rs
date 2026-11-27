@@ -15,8 +15,15 @@
 //! The parsed line reaches the package through the slot: the command's
 //! code hands [`PackageFlags::matches`] to the package's point, which reads
 //! its own group from them ([`parsed`]).
+//!
+//! A command may declare more than one slot, each at its own heading's
+//! place: `gen` has three (#1592), the ai package's "AI assistance" and
+//! "Cost tracking" groups and its `--style-guide`. Each is named
+//! ([`FlagPlace::SLOT`]), and a group says which it goes in
+//! ([`Flags::at`]).
 
-use clap::{ArgMatches, Args, Command, FromArgMatches};
+use clap::parser::ValueSource;
+use clap::{ArgGroup, ArgMatches, Args, Command, FromArgMatches, Id};
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::OnceLock;
@@ -26,15 +33,28 @@ use std::sync::OnceLock;
 pub struct Flags {
     /// The command's words below `flint`: `["render"]`.
     pub on: &'static [&'static str],
+    /// Which of the command's slots: empty for a command with one.
+    pub slot: &'static str,
     /// The group, as its derived `Args::augment_args`.
     pub augment: fn(Command) -> Command,
 }
 
 impl Flags {
-    /// The derived group `A` on the command at `on`.
+    /// The derived group `A` on the command at `on`, in its one slot.
     pub fn of<A: Args>(on: &'static [&'static str]) -> Self {
         Self {
             on,
+            slot: "",
+            augment: A::augment_args,
+        }
+    }
+
+    /// The derived group `A` in the slot `P` names: one of several on a
+    /// command (`gen`'s).
+    pub fn at<P: FlagPlace, A: Args>() -> Self {
+        Self {
+            on: P::PATH,
+            slot: P::SLOT,
             augment: A::augment_args,
         }
     }
@@ -42,13 +62,43 @@ impl Flags {
 
 impl std::fmt::Debug for Flags {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Flags").field("on", &self.on).finish()
+        f.debug_struct("Flags")
+            .field("on", &self.on)
+            .field("slot", &self.slot)
+            .finish()
     }
 }
 
-/// Where a [`PackageFlags`] slot is: its command's words.
+/// Where a [`PackageFlags`] slot is: its command's words, and its name
+/// among the command's slots.
 pub trait FlagPlace: 'static {
     const PATH: &'static [&'static str];
+    /// Empty for a command's one slot.
+    const SLOT: &'static str = "";
+}
+
+/// Whether a package of the run (or of this thread's scope) brings flags
+/// to the slot `P`. Read while a command is built, it lets the owner place
+/// a flag of its own by what the slot holds: `gen --print-spec` sits under
+/// "AI assistance" when the ai group is there, among the options when it
+/// isn't.
+pub fn brought<P: FlagPlace>() -> bool {
+    !registered(P::PATH, P::SLOT).is_empty()
+}
+
+/// The group a slot puts its flags in, so the command's matches say which
+/// of the line's flags came through it ([`PackageFlags::given`]).
+/// Interned once a slot (clap's ids are `&'static str` in this build).
+fn group_of<P: FlagPlace>() -> &'static str {
+    static NAMES: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let name = format!("packages {} {}", P::PATH.join(" "), P::SLOT);
+    let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(&known) = names.iter().find(|n| **n == name) {
+        return known;
+    }
+    let leaked: &'static str = Box::leak(name.into_boxed_str());
+    names.push(leaked);
+    leaked
 }
 
 /// The slot a command declares for the flags packages add to it: an
@@ -64,6 +114,24 @@ impl<P> PackageFlags<P> {
     /// a value made by hand.
     pub fn matches(&self) -> Option<&ArgMatches> {
         self.matches.as_ref()
+    }
+}
+
+impl<P: FlagPlace> PackageFlags<P> {
+    /// The flags of this slot the line gave, each as `--its-id` (the
+    /// spelling a derived flag's id has): for an owner that refuses a
+    /// package's flags where they mean nothing (`gen` of a glyph set).
+    pub fn given(&self) -> Vec<String> {
+        let Some(matches) = &self.matches else {
+            return Vec::new();
+        };
+        let group = group_of::<P>();
+        let Ok(Some(ids)) = matches.try_get_many::<Id>(group) else {
+            return Vec::new();
+        };
+        ids.filter(|id| matches.value_source(id.as_str()) == Some(ValueSource::CommandLine))
+            .map(|id| format!("--{}", id.as_str().replace('_', "-")))
+            .collect()
     }
 }
 
@@ -93,9 +161,19 @@ impl<P> std::fmt::Debug for PackageFlags<P> {
 
 impl<P: FlagPlace> Args for PackageFlags<P> {
     fn augment_args(cmd: Command) -> Command {
-        registered(P::PATH)
+        let before: Vec<Id> = cmd.get_arguments().map(|a| a.get_id().clone()).collect();
+        let cmd = registered(P::PATH, P::SLOT)
             .into_iter()
-            .fold(cmd, |cmd, flags| (flags.augment)(cmd))
+            .fold(cmd, |cmd, flags| (flags.augment)(cmd));
+        let added: Vec<Id> = cmd
+            .get_arguments()
+            .map(|a| a.get_id().clone())
+            .filter(|id| !before.contains(id))
+            .collect();
+        if added.is_empty() {
+            return cmd;
+        }
+        cmd.group(ArgGroup::new(group_of::<P>()).args(added).multiple(true))
     }
 
     fn augment_args_for_update(cmd: Command) -> Command {
@@ -155,13 +233,14 @@ pub fn with_flags<R>(flags: &[Flags], build: impl FnOnce() -> R) -> R {
     build()
 }
 
-/// The flags registered at `path`: this thread's scope's, else the run's.
-fn registered(path: &[&str]) -> Vec<Flags> {
+/// The flags registered at `path`'s `slot`: this thread's scope's, else
+/// the run's.
+fn registered(path: &[&str], slot: &str) -> Vec<Flags> {
     let all = SCOPE.with(|s| s.borrow().clone());
     all.or_else(|| RUN.get().cloned())
         .unwrap_or_default()
         .into_iter()
-        .filter(|flags| flags.on == path)
+        .filter(|flags| flags.on == path && flags.slot == slot)
         .collect()
 }
 
@@ -220,5 +299,65 @@ mod tests {
         let bare = command().try_get_matches_from(["here"]).unwrap();
         let owner = Owner::from_arg_matches(&bare).unwrap();
         assert!(parsed::<Theirs>(owner.packages.matches(), "theirs").is_none());
+    }
+
+    struct First;
+    impl FlagPlace for First {
+        const PATH: &'static [&'static str] = &["two"];
+        const SLOT: &'static str = "first";
+    }
+    struct Second;
+    impl FlagPlace for Second {
+        const PATH: &'static [&'static str] = &["two"];
+        const SLOT: &'static str = "second";
+    }
+
+    /// `gen`'s shape (#1592): two slots on one command, the owner's own
+    /// flag between them.
+    #[derive(clap::Args)]
+    struct TwoSlots {
+        #[command(flatten)]
+        first: PackageFlags<First>,
+        #[arg(long)]
+        own: bool,
+        #[command(flatten)]
+        second: PackageFlags<Second>,
+    }
+
+    #[derive(clap::Args)]
+    struct Early {
+        #[arg(long)]
+        early: bool,
+        #[arg(long)]
+        early_value: Option<u32>,
+    }
+
+    #[derive(clap::Args)]
+    struct Late {
+        #[arg(long)]
+        late: bool,
+    }
+
+    #[test]
+    fn each_slot_of_a_command_holds_its_own_groups_in_its_place() {
+        let flags = [Flags::at::<Second, Late>(), Flags::at::<First, Early>()];
+        let cmd = with_flags(&flags, || TwoSlots::augment_args(Command::new("two")));
+        let order: Vec<&str> = cmd.get_arguments().map(|a| a.get_id().as_str()).collect();
+        assert_eq!(order, ["early", "early_value", "own", "late"]);
+        assert!(with_flags(&flags, brought::<First>));
+        assert!(!with_flags(&flags[..1], brought::<First>));
+
+        let matches = cmd
+            .try_get_matches_from(["two", "--early-value", "2", "--own", "--late"])
+            .unwrap();
+        let line = TwoSlots::from_arg_matches(&matches).unwrap();
+        assert_eq!(line.first.given(), ["--early-value"]);
+        assert_eq!(line.second.given(), ["--late"]);
+        // A slot nobody filled gives nothing
+        let bare = TwoSlots::augment_args(Command::new("two"))
+            .try_get_matches_from(["two", "--own"])
+            .unwrap();
+        let line = TwoSlots::from_arg_matches(&bare).unwrap();
+        assert!(line.first.given().is_empty() && line.second.given().is_empty());
     }
 }

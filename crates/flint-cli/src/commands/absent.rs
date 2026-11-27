@@ -663,28 +663,72 @@ mod tests {
             text.starts_with("flint render --ai-refine needs the `ai` package"),
             "{text}"
         );
-        // A flag the owner declares and the package serves: refused by the
-        // owner, before procgen's point is asked
-        let points = crate::points_of(&without_ai());
-        let gen = |words: &[&str]| {
-            let line = ["flint", "gen"].into_iter().chain(words.iter().copied());
-            let crate::Cli { command, .. } = crate::Cli::parse_from(line);
-            let crate::Commands::Gen(args) = command else {
-                unreachable!()
-            };
-            let e = super::super::gen::run_in(*args, &points).expect_err("not served");
-            let missing = e.downcast_ref::<MissingPackage>().unwrap();
-            (missing.what.clone(), missing.package)
-        };
+        // gen's AI, cost and style-guide flags are the package's groups
+        // too (#1592): none in the parser, each named as render's are
+        let gen = tree.find_subcommand("gen").unwrap();
+        for gone in [
+            "ai_assist",
+            "ai_create",
+            "ai_refine",
+            "reference",
+            "ai_provider",
+            "max_cost",
+            "cost_report",
+            "since",
+            "style_guide",
+        ] {
+            assert!(
+                gen.get_arguments().all(|a| a.get_id() != gone),
+                "gen {gone}"
+            );
+        }
         assert_eq!(
-            gen(&["--cost-report"]),
+            named(&["gen", "--ai-create", "a dead tree"]),
+            ("flint gen --ai-create".to_string(), "ai")
+        );
+        assert_eq!(
+            named(&["gen", "--cost-report"]),
             ("flint gen --cost-report".to_string(), "ai")
         );
-        assert_eq!(gen(&["--ai-create", "a dead tree"]).1, "ai");
         assert_eq!(
-            gen(&["specs/oak.procgen.toml", "--ai-assist"]),
+            named(&["gen", "specs/oak.procgen.toml", "--ai-assist"]),
             ("flint gen --ai-assist".to_string(), "ai")
         );
+        assert_eq!(
+            named(&[
+                "gen",
+                "x.procgen.toml",
+                "--validate",
+                "--style-guide=g.toml"
+            ]),
+            ("flint gen --style-guide".to_string(), "ai")
+        );
+        assert_eq!(
+            named(&["gen", "x.procgen.toml", "--ai-provider", "mock"]).1,
+            "ai"
+        );
+        // procgen's own flags stay, and need no package of ai's
+        for kept in ["print_spec", "save_spec", "strip", "list_generators"] {
+            assert!(
+                gen.get_arguments().any(|a| a.get_id() == kept),
+                "gen {kept}"
+            );
+        }
+        let help = tree
+            .clone()
+            .find_subcommand_mut("gen")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        for absent in [
+            "AI assistance:",
+            "Cost tracking:",
+            "--ai-create",
+            "--cost-report",
+        ] {
+            assert!(!help.contains(absent), "gen --help has {absent}:\n{help}");
+        }
+        let points = crate::points_of(&without_ai());
         let e = super::super::asset::batch_of(&points, "ai_generate").expect_err("no batch");
         let missing = e.downcast_ref::<MissingPackage>().unwrap();
         assert_eq!(
@@ -741,6 +785,48 @@ mod tests {
         assert!(at("Refine a look:") < at("--ai-refine"));
         assert!(at("--ai-refine") < at("--max-cost <MAX_COST>"));
         assert!(at("--max-cost <MAX_COST>") < at("Debug, lists, GPU and schemas:"));
+    }
+
+    /// The stock `flint` has `gen`'s three slots filled where their flags
+    /// always were (#1592): the AI group after the generators, procgen's
+    /// `--print-spec` still under its heading, the cost group after it,
+    /// and `--style-guide` between `--report` and the living props.
+    #[test]
+    fn with_ai_the_gen_flags_keep_their_places_in_gen_help() {
+        if !built_with("ai") {
+            return;
+        }
+        let mut tree = crate::stock_command();
+        let help = tree
+            .find_subcommand_mut("gen")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        let lines: Vec<&str> = help.lines().map(str::trim).collect();
+        let at = |line: &str| {
+            lines
+                .iter()
+                .position(|l| *l == line)
+                .unwrap_or_else(|| panic!("no line {line} in gen --help"))
+        };
+        let order = [
+            "--report <REPORT>",
+            "--style-guide <STYLE_GUIDE>",
+            "Generators:",
+            "AI assistance:",
+            "--ai-assist",
+            "--refine-rounds <N>",
+            "--print-spec",
+            "--save-spec <PATH>",
+            "Cost tracking:",
+            "--max-cost <USD>",
+            "--since <DATE>",
+            "Living props:",
+        ];
+        for pair in order.windows(2) {
+            assert!(at(pair[0]) < at(pair[1]), "{} before {}", pair[0], pair[1]);
+        }
+        assert!(help.contains("(not needed with --ai-create, --cost-report,"));
     }
 
     /// The done-when of #1543, in every build since #1557: a launcher

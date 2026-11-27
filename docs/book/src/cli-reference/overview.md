@@ -1496,7 +1496,7 @@ It also bakes a terrain spec, with no window: a `.terrain.toml` is a `terrain_v1
 | `--style-guide <path>` | (none) | Style guide TOML for validation constraints |
 | `--report <fmt>` | `human` | Validation report format: `human`, or `json` (one object per variant on stdout, with each check's `actual` and `limit`; human output moves to stderr). Requires `--validate` |
 
-AI assistance runs before generation; the agent's feedback goes to stderr:
+AI assistance runs before generation; the agent's feedback goes to stderr. These flags, the cost flags and `--style-guide` are the `ai` package's: a flint built without it has none of them in `flint gen --help`, and given one it exits 2 naming the package. `--print-spec` and `--save-spec` are procgen's and work in either build.
 
 ```bash
 ANTHROPIC_API_KEY=... flint gen --ai-create "twisted dead tree" -o tree.glb

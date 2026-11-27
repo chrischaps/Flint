@@ -14,9 +14,12 @@
 //! command of its own (#1572, ADR 0137 "As built: the CLI launcher"):
 //! `render --ai-refine` ([`look_refine`]: its flags in the slot `render`
 //! declares, the loop behind the kernel's `LookRefines` point), `gen
-//! --ai-*` ([`gen_ai`]: procgen's `AiPoint`) and `asset resolve --strategy
-//! ai_*` ([`resolve`]: the kernel's `BatchResolve`). The flags the owner
-//! declares are served ([`Points::serve`]), so a run without the package
+//! --ai-*`, `--cost-report` and `--style-guide` ([`gen_ai`]: its groups in
+//! the three slots `gen` declares, #1592, the steps behind procgen's
+//! `AiPoint`) and `asset resolve --strategy ai_*` ([`resolve`]: the
+//! kernel's `BatchResolve`). A flint without the package has none of its
+//! flags in its parser; the resolve strategies, values of a flag the owner
+//! declares, are served ([`Points::serve`]), so a run without the package
 //! refuses them naming it.
 
 pub mod asset;
@@ -34,15 +37,6 @@ use flint_package::cli::{subcommands, CliExtension, Flags, Points};
 pub fn extensions() -> Vec<Box<dyn CliExtension>> {
     vec![subcommands(asset::run).under(&["asset"]), Box::new(Steps)]
 }
-
-/// The flags of procgen's `gen` this package serves (`AiPoint`).
-pub const GEN_FLAGS: &[&str] = &[
-    "gen --ai-create",
-    "gen --ai-assist",
-    "gen --ai-refine",
-    "gen --cost-report",
-    "gen --style-guide",
-];
 
 /// The package's steps of other commands: no command, its points and its
 /// flags.
@@ -62,13 +56,15 @@ impl CliExtension for Steps {
             .insert(flint_procgen_cli::gen::AiPoint(Box::new(gen_ai::Ai)))
             .insert(look_refine::point())
             .insert(resolve::point());
-        for flag in GEN_FLAGS.iter().chain(resolve::SERVED) {
+        for flag in resolve::SERVED {
             points.serve(flag);
         }
     }
 
     fn flags(&self) -> Vec<Flags> {
-        vec![look_refine::flags()]
+        let mut flags = vec![look_refine::flags()];
+        flags.extend(gen_ai::flags());
+        flags
     }
 }
 
