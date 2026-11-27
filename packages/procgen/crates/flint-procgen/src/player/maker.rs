@@ -114,7 +114,7 @@ impl AssetMaker for Maker {
         // The load report's procgen stage (#1092): the note below is made by
         // hand once the time is known, which a load report doesn't hear
         let _span =
-            flint_core::load_report::span(flint_core::load_report::Stage::Procgen, String::new);
+            flint_core::load_report::span(flint_core::load_report::Stage::MadeAssets, String::new);
         let mut sink = GpuSink {
             renderer: &mut *ctx.gpu.renderer,
             device: ctx.gpu.device,
@@ -154,7 +154,7 @@ impl AssetMaker for Maker {
         let scene_path = ctx.scene_path;
         // A frame note (#1077) when the scene had assets to make or find
         flint_core::frame_notes::note(
-            flint_core::frame_notes::NoteKind::Procgen,
+            flint_core::frame_notes::NoteKind::MadeAssets,
             || {
                 format!(
                     "{} asset(s) for {}",
@@ -214,7 +214,7 @@ impl AssetMaker for Maker {
 
     /// The frame-budgeted queue: what it finished goes to the renderer,
     /// when there is one. Living props move on after it, at
-    /// `Stage::Procgen`, in whatever it left of the budget.
+    /// `Stage::MadeAssets`, in whatever it left of the budget.
     fn frame(&self, ctx: &mut FrameMake) {
         flint_core::scope!("tick_procgen");
         use flint_core::frame_notes::{self, NoteKind};
@@ -223,7 +223,7 @@ impl AssetMaker for Maker {
         let began = frame_notes::listening().then(web_time::Instant::now);
         // A load's procgen stage too (#1092), forgotten when nothing came
         let span =
-            flint_core::load_report::span(flint_core::load_report::Stage::Procgen, String::new);
+            flint_core::load_report::span(flint_core::load_report::Stage::MadeAssets, String::new);
         let resolver = resolver_mut(ctx.resources);
         let completed = resolver.process_frame(ctx.camera);
         let failures = resolver.take_failures();
@@ -252,7 +252,7 @@ impl AssetMaker for Maker {
         }
         if let (Some(began), Some(detail)) = (began, detail) {
             let ms = began.elapsed().as_secs_f32() * 1000.0;
-            frame_notes::note(NoteKind::Procgen, || detail, Some(ms));
+            frame_notes::note(NoteKind::MadeAssets, || detail, Some(ms));
         }
     }
 

@@ -564,7 +564,7 @@ impl Subsystem for LivingSubsystem {
         }
         // What the panel asked this frame, then the clock it may have
         // frozen. What it draws goes to the renderer in `frame_inputs`.
-        if stage == Stage::Procgen {
+        if stage == Stage::MadeAssets {
             #[cfg(feature = "debug-hud")]
             self.drain_living_panel(ctx);
             let dt = self.living_dt(ctx);

@@ -233,7 +233,7 @@ Each frame the player ticks the clock, applies any input script, advances a scen
 | `PostPhysics` | After script commands and camera overrides: the camera is final for the frame |
 | `ScriptUi` | After `on_draw_ui` and the draw commands |
 | `Animation` | After audio triggers, animation and particles |
-| `Procgen` | After the procgen queue and living props |
+| `MadeAssets` | After the asset makers' frame (the procgen queue) and living props |
 | `Sync` | After the renderer's sync, the frame's post overrides and quality; before the frame's input is cleared |
 
 `Stage` is `#[non_exhaustive]`: match the stages you want and let the rest fall through.

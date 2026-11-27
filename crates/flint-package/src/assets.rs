@@ -15,7 +15,7 @@
 //! | the first scene's start, once a run | [`AssetMaker::run_starts`] | [`RunStart`]: resources, project, scene folder, whether a disk tier is wanted |
 //! | a scene's load, before its models | [`AssetMaker::scene`] | [`MakeCtx`]: the world, the renderer, the colliders, the resources |
 //! | entities spawned since (#1107) | [`AssetMaker::spawned`] | the same, for those ids |
-//! | each frame, before `Stage::Procgen` | [`AssetMaker::frame`] | [`FrameMake`]: the camera, the renderer when there is one |
+//! | each frame, before `Stage::MadeAssets` | [`AssetMaker::frame`] | [`FrameMake`]: the camera, the renderer when there is one |
 //! | a scene's teardown | [`AssetMaker::scene_gone`] | the resources |
 //!
 //! And [`AssetMaker::pending`], asked when physics wants a model's
@@ -122,7 +122,7 @@ pub trait AssetMaker: Sync {
     /// Entities spawned since the scene's load (`ids` alone, #1107).
     fn spawned(&self, _ctx: &mut MakeCtx, _ids: &[EntityId]) {}
 
-    /// Each frame, before `Stage::Procgen`: what a queue finished goes up.
+    /// Each frame, before `Stage::MadeAssets`: what a queue finished goes up.
     fn frame(&self, _ctx: &mut FrameMake) {}
 
     /// Whether `name` is still being made (queued behind a placeholder).

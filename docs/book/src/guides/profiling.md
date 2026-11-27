@@ -749,7 +749,7 @@ A note made inside another, such as a model inside a transition or a pipeline in
 | `chunk load` | a chunk's entities spawned, with their models, colliders and scripts |
 | `script load`, `script reload` | a script compiled at load, or a changed one swapped in |
 | `reload poll` | the hot-reload poll itself, when it took 1 ms or more |
-| `procgen` | procedural assets made at a scene's load or by the frame's queue |
+| `made assets` | assets a package's maker made by name (procgen's specs) at a scene's load or by the frame's queue |
 | `audio decode` | a sound decoded on the frame, whole or the queue's share |
 | `surface reconfigure` | the window's swapchain made again (a resize) |
 | `physics steps` | a frame that ran more than one fixed step |
@@ -911,7 +911,7 @@ flint play levels/tavern_hub.scene.toml --load-report --exit-after 1
 ```text
 load (transition) showcase_game/levels/tavern_hub.scene.toml: 1272.5 ms to the first frame
   stage              ms   share  count
-  procgen        1088.7   85.6%      4
+  made assets    1088.7   85.6%      4
   scripts          75.3    5.9%     15
   models           39.0    3.1%      1
   scene read       26.8    2.1%      1
@@ -919,14 +919,14 @@ load (transition) showcase_game/levels/tavern_hub.scene.toml: 1272.5 ms to the f
   on_init           6.2    0.5%      1
   ...
   not named        21.8    1.7%
-  slowest:    466.8 ms  procgen asset tavern_wood_plank
-              458.7 ms  procgen asset tavern_stone
-              116.2 ms  procgen asset cracked_plaster
+  slowest:    466.8 ms  made asset tavern_wood_plank
+              458.7 ms  made asset tavern_stone
+              116.2 ms  made asset cracked_plaster
                39.0 ms  model showcase_game/models/YBotWithIdle.glb
                26.8 ms  scene read tavern_hub.scene.toml
 ```
 
-A start-up runs from the process's start to its first frame on screen. A transition runs from the frame that asked for it to the new scene's first frame, and a chunk from its load to the next frame. The stages are what the engine already notes for hitches ([frame notes](#hitches)): every model, texture, pipeline, style and script load, plus the bring-up's own steps (scene read, window, GPU device, audio device, renderer, HUD, teardown, procgen, physics, audio, animation, particles, `on_init`). The first frame is what ran after the bring-up, less what it built on first sight: a pipeline built on its first draw counts as a pipeline. Each stage counts its own time **less what ran inside it**, so a model's row leaves out its textures and the rows add up to the measured time. What no stage named is a row of its own, `not named`. On the desktop it is usually under 2%. On the web it holds the page's fetches and the device's promise, which nothing times. The slowest list is by each item's whole time, so a model there includes its textures.
+A start-up runs from the process's start to its first frame on screen. A transition runs from the frame that asked for it to the new scene's first frame, and a chunk from its load to the next frame. The stages are what the engine already notes for hitches ([frame notes](#hitches)): every model, texture, pipeline, style and script load, plus the bring-up's own steps (scene read, window, GPU device, audio device, renderer, HUD, teardown, made assets, physics, audio, animation, particles, `on_init`). The first frame is what ran after the bring-up, less what it built on first sight: a pipeline built on its first draw counts as a pipeline. Each stage counts its own time **less what ran inside it**, so a model's row leaves out its textures and the rows add up to the measured time. What no stage named is a row of its own, `not named`. On the desktop it is usually under 2%. On the web it holds the page's fetches and the device's promise, which nothing times. The slowest list is by each item's whole time, so a model there includes its textures.
 
 `flint render` takes the flag too, for a load with no window: its table runs to the first capture, and `--report json` carries it as `load` (`kind`, `name`, `total_ms`, `stages` of `stage`/`ms`/`count`, `unnamed_ms`, `slowest` of `kind`/`name`/`ms`):
 

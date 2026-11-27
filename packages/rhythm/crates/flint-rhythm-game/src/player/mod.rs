@@ -15,7 +15,7 @@
 //!   with `quit_on_finish` ends the run.
 //! - [`Stage::PreScripts`]: the `conducted_*` snapshot and the music clock,
 //!   for this frame's scripts (ADR 0020).
-//! - [`Stage::Procgen`], before the renderer's sync: the ladder's blur,
+//! - [`Stage::MadeAssets`], before the renderer's sync: the ladder's blur,
 //!   chromatic aberration and desaturation fill what scripts left of the
 //!   frame's post values (ADR 0021); after the session, one restore.
 //! - The scene unloading: the stems stop and the capture guard drops here,
@@ -295,7 +295,7 @@ impl Subsystem for RhythmSubsystem {
             // Before the renderer's sync takes the frame's post values.
             // Scripts' values win; the merge writes base + rung every frame,
             // so a recovered ladder restores the authored look
-            Stage::Procgen => {
+            Stage::MadeAssets => {
                 let post = &mut ctx.requests.post;
                 let mut blur = post.f32("radial_blur");
                 let mut aberration = post.f32("chromatic_aberration");

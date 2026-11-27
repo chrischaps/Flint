@@ -65,13 +65,6 @@ EXCEPTIONS = {
     ("flint-audio", "string", "music", "crates/flint-audio/src/bus.rs"): "the built-in "
     "`music` bus, which every game's audio has: #1619 makes flint-audio the audio "
     "package's, out of the kernel",
-    ("flint-core", "string", "procgen", "crates/flint-core/src/frame_notes.rs"): "the "
-    "`Procgen` frame note's label: #1632 names the made-assets note for the kernel's "
-    "point",
-    ("flint-core", "string", "procgen", "crates/flint-core/src/load_report.rs"): "the "
-    "`Procgen` load stage's label: #1632",
-    ("flint-package", "string", "procgen", "crates/flint-package/src/stage.rs"): "the "
-    "`Stage::Procgen` frame stage's label: #1632",
 }
 
 

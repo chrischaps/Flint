@@ -459,7 +459,7 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
         let (core, lent) = host.lend();
         core.tick_asset_makers(lent);
     }
-    run_stage(host, Stage::Procgen, Some(config));
+    run_stage(host, Stage::MadeAssets, Some(config));
 
     // The renderer's sync, the frame's post overrides, quality
     host.sync();
@@ -862,7 +862,7 @@ impl GameCore {
 
     /// Each asset maker's frame (#1557): the procgen package's budgeted
     /// queue, whose finished assets go to the renderer when there is one.
-    /// Living props move on after it, at `Stage::Procgen`, in whatever it
+    /// Living props move on after it, at `Stage::MadeAssets`, in whatever it
     /// left of the budget.
     pub(crate) fn tick_asset_makers(&mut self, lent: Lent<'_>) {
         let makers = self.asset_makers();
