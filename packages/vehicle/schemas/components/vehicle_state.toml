@@ -1,0 +1,27 @@
+# What a vehicle is doing (ADR 0140 section 3, #1628), written by the
+# vehicle package at the frame's `PreScripts` stage for scripts, the
+# inspector and `flint playtest --dump` to read. It comes from the body as
+# the last fixed step began, so it is one step (1/60 s) stale until the
+# Package API lends physics after the steps (#1647).
+
+[component.vehicle_state]
+description = "A vehicle's state as of the last fixed step, written by the vehicle package"
+
+[component.vehicle_state.fields]
+speed = { type = "f32", default = 0.0, description = "Speed along the body's forward, m/s (negative reversing)" }
+velocity = { type = "vec3", default = [0.0, 0.0, 0.0], description = "The body's velocity, m/s" }
+forward = { type = "vec3", default = [0.0, 0.0, -1.0], description = "The body's forward, a unit vector (a vehicle faces -Z)" }
+lateral_speed = { type = "f32", default = 0.0, description = "Speed along the body's right, m/s" }
+slip_angle = { type = "f32", default = 0.0, description = "Degrees the nose is off the travel heading, positive right" }
+yaw = { type = "f32", default = 0.0, description = "Heading, degrees: 0 faces -Z, positive turns left" }
+yaw_rate = { type = "f32", default = 0.0, description = "Degrees a second, positive left" }
+yaw_target = { type = "f32", default = 0.0, description = "The yaw rate the yaw assist pulled toward on the last step, degrees a second (0 with the assist off or fewer than two wheels down)" }
+accel_long = { type = "f32", default = 0.0, description = "Acceleration along the body's forward, m/s²" }
+accel_lat = { type = "f32", default = 0.0, description = "Acceleration along the body's right, m/s²" }
+grounded = { type = "bool", default = false, description = "Any wheel is on the ground" }
+wheels_grounded = { type = "i32", default = 0, description = "How many wheels are on the ground" }
+airborne_time = { type = "f32", default = 0.0, description = "Seconds since a wheel last touched (0 while grounded)" }
+contact = { type = "bool", default = false, description = "The chassis touches something other than the ground under its wheels (a wall, another vehicle)" }
+contact_normal = { type = "vec3", default = [0.0, 0.0, 0.0], description = "That contact's normal, pointing at the chassis" }
+contact_entity = { type = "i64", default = -1, description = "The entity the chassis touches, or -1" }
+impact = { type = "f32", default = 0.0, description = "The closing speed of the last hit, m/s, as the contact began" }

@@ -700,6 +700,7 @@ mod tests {
             "living",
             "music",
             "rhythm",
+            "vehicle",
             "toy",
         ];
         let kept: Vec<&str> = before.into_iter().filter(|p| registry.has(p)).collect();
@@ -716,12 +717,26 @@ mod tests {
         // In registration order: procgen (standard), then the feature
         // packages by name, rhythm after the music it requires; each in its
         // own folder when the build has it
-        let expected: Vec<&str> = ["debug-hud", "procgen", "living", "music", "rhythm"]
-            .into_iter()
-            .filter(|name| built_feature(name))
-            .collect();
+        let expected: Vec<&str> = [
+            "debug-hud",
+            "procgen",
+            "living",
+            "music",
+            "rhythm",
+            "vehicle",
+        ]
+        .into_iter()
+        .filter(|name| built_feature(name))
+        .collect();
         assert_eq!(moved, expected);
-        for name in ["debug-hud", "procgen", "living", "music", "rhythm"] {
+        for name in [
+            "debug-hud",
+            "procgen",
+            "living",
+            "music",
+            "rhythm",
+            "vehicle",
+        ] {
             assert!(PLAYER_PACKAGES.contains(&name), "{name}");
             assert_eq!(registry().has(name), built_feature(name), "{name}");
         }

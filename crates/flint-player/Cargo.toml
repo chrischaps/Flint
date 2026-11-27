@@ -42,7 +42,7 @@ default = ["packages", "audio", "gamepad", "frame-history"]
 # is its manifest's to say (packages/<name>/package.toml). Don't edit
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
-packages = ["debug-hud", "living", "music", "procgen", "rhythm"]
+packages = ["debug-hud", "living", "music", "procgen", "rhythm", "vehicle"]
 packages-audio = ["flint-music?/device", "flint-rhythm-game?/device"]
 packages-gamepad = ["flint-rhythm-game?/gamepad"]
 debug-hud = [
@@ -53,6 +53,7 @@ living = ["procgen", "dep:flint-living", "flint-living?/player"]
 music = ["dep:flint-music", "flint-music?/player"]
 procgen = ["dep:flint-procgen", "flint-procgen?/player"]
 rhythm = ["music", "dep:flint-rhythm-game", "flint-rhythm-game?/player"]
+vehicle = ["dep:flint-vehicle", "flint-vehicle?/player"]
 # package-sync:end
 # The always-on frame history (#1076): every frame's phases, clock, present,
 # physics steps and GPU time kept for the last 600 frames, and each judged
@@ -125,6 +126,7 @@ flint-living = { workspace = true, optional = true }
 flint-music = { workspace = true, optional = true }
 flint-procgen = { workspace = true, optional = true }
 flint-rhythm-game = { workspace = true, optional = true }
+flint-vehicle = { path = "../../packages/vehicle/crates/flint-vehicle", optional = true }
 # package-sync:end
 
 [build-dependencies]

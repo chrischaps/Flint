@@ -39,13 +39,13 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-37-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554). Every member but `flint-android` is a default member, so `cargo test` tests them all (#758):
+38-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554). Every member but `flint-android` is a default member, so `cargo test` tests them all (#758):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
   │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc, package, build
-  ├── flint-asset-gen AI asset generation: providers (Flux, Meshy, ElevenLabs, Mock)
-  ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
+  ├── flint-asset-gen AI assets: Flux, Meshy, ElevenLabs, Mock
+  ├── flint-procgen   Procedural generation: generators, specs, GLB
   ├── flint-procgen-cli `flint gen` and the spec editors
   ├── flint-procgen-ai AI-assisted procgen specs
   └── flint-ai-core   Every paid AI call: retries, prices, cost ledger
@@ -55,6 +55,7 @@ flint-player        Standalone player: the game loop, the subsystems, egui HUD
   ├── flint-music    Music: suite manifests, buses, tempo maps, conductor, offline render
   ├── flint-input-capture 1 kHz pad capture
   ├── flint-debug-ui F3/F4 debug panels
+  ├── flint-vehicle  Vehicles: raycast wheels, arcade assists
   ├── flint-package  Package API: Subsystem, its contexts
   ├── flint-script   Rhai scripting with hot-reload
   ├── flint-living   Living props' runtime
@@ -64,7 +65,7 @@ flint-player        Standalone player: the game loop, the subsystems, egui HUD
   ├── flint-audio-worklet Kira in the browser's AudioWorklet
   ├── flint-terrain  Heightmap terrain with splat-map blending
   ├── flint-physics  Rapier 3D (character controller, bodies, joints)
-  ├── flint-runtime  GameClock, InputState, EventBus, GameStateMachine, PersistentStore, pads
+  ├── flint-runtime  Clock, input, events, game states, saves, pads
   ├── flint-viewer   egui inspector: gizmos, undo/redo, TOML write-back
   ├── flint-widgets  egui widgets, F4's render panel
   ├── flint-import   glTF model importer

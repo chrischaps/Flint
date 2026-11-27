@@ -2052,6 +2052,7 @@ dependencies = [
  "flint-schema",
  "flint-script",
  "flint-terrain",
+ "flint-vehicle",
  "flint-wooze",
  "getrandom 0.3.4",
  "hound",
@@ -2315,6 +2316,20 @@ dependencies = [
  "rand_chacha",
  "serde",
  "toml",
+]
+
+[[package]]
+name = "flint-vehicle"
+version = "0.1.0"
+dependencies = [
+ "flint-core",
+ "flint-ecs",
+ "flint-package",
+ "flint-runtime",
+ "flint-script",
+ "rhai",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

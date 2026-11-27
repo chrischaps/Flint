@@ -1,0 +1,25 @@
+# A wheel of a vehicle (ADR 0140 section 4, #1628), on a child entity of
+# the `vehicle`. Its transform's position, in the vehicle's frame, is where
+# its suspension hangs from; the wheel's ray casts straight down the body
+# from there, `rest_length + radius` long.
+#
+# The last four fields are the wheel's state, which the vehicle package
+# writes (a script reads them, or `vehicle_wheels(id)`).
+
+[component.vehicle_wheel]
+description = "A wheel of the parent's vehicle: a suspension ray, hung from this entity's position (the vehicle package)"
+
+[component.vehicle_wheel.fields]
+radius = { type = "f32", default = 0.275, min = 0.01, description = "The wheel's radius, m" }
+rest_length = { type = "f32", default = 0.35, min = 0.0, description = "The spring's length at rest, m" }
+steer = { type = "bool", default = false, description = "It turns with the steering" }
+drive = { type = "bool", default = false, description = "The engine drives it" }
+brake = { type = "bool", default = true, description = "The brake slows it" }
+handbrake = { type = "bool", default = false, description = "The handbrake locks it and lets it slide" }
+pose = { type = "bool", default = true, description = "The package writes this entity's transform for the suspension, steering and spin (false leaves it to the game)" }
+# State, written by the package
+contact = { type = "bool", default = false, description = "State: the wheel is on the ground" }
+ground = { type = "i64", default = -1, description = "State: the entity under the wheel, or -1" }
+normal = { type = "vec3", default = [0.0, 1.0, 0.0], description = "State: the ground's normal under the wheel" }
+compression = { type = "f32", default = 0.0, description = "State: how far the spring is pressed, 0 (fully out, or in the air) to 1 (fully in)" }
+slip = { type = "f32", default = 0.0, description = "State: the angle between the wheel's heading and its travel over the ground, degrees" }

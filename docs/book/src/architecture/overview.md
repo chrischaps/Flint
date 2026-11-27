@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 38-member Cargo workspace (37 crates, 25 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 39-member Cargo workspace (38 crates, 25 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -52,6 +52,8 @@ flint/
 │   │   └── flint-wooze/        # The wooze field
 │   ├── debug-hud/crates/
 │   │   └── flint-debug-ui/     # The F3 panel roster (ocean, sky, ...) and the HUD the player asks
+│   ├── vehicle/crates/
+│   │   └── flint-vehicle/      # Vehicles: Rapier's raycast wheels with arcade assists, driven each fixed step
 │   └── engine/             # The kernel's manifest and schemas
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
@@ -248,6 +250,13 @@ The `debug-hud` package's crate (`packages/debug-hud/crates/flint-debug-ui`, #15
 - `player` feature: `player::PACKAGE`, a `flint_package::Package` that registers the run's `DebugHud` (`flint_package::hud`): it makes the engine's panels at each scene, syncs them each frame, lays them out over the game, drives F3 and F4, paints the corner cards (scripts and styles that fail) and draws F2's graph from the frames the player hands it. flint-player's `debug-hud` feature turns it on and its build script lists it from the manifest's `[rust]`
 - Depends on `flint-package`, `flint-widgets`, `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-particles`, `flint-schema`, `flint-terrain`, `flint-scene` and, with `player`, `flint-script`
 - A game drops it with `debug-hud = false`: the run has no panels, and F3, F4 and the graph are not offered. The game's `flint` leaves it out too (flint-cli's `debug-hud` feature, #1583), and its editors are the same without it
+
+### flint-vehicle
+
+The `vehicle` package's crate (`packages/vehicle/crates/flint-vehicle`, [ADR 0140](https://github.com/chrischaps/Flint/blob/main/docs/adr/0140-the-vehicle-package.md), #1628): the first package written against the Package API rather than moved onto it. Book: [Vehicles](../concepts/vehicles.md).
+- `player` feature: `player::PACKAGE`, whose subsystem drives each `vehicle` in a scene. In `Subsystem::fixed_update` it sets the wheels of Rapier's `DynamicRayCastVehicleController` from `vehicle_input`, updates it against the last step's colliders (the vehicle's own body left out), and applies the assists (yaw, grip, upright, scrub), the drag, the modifiers and the one-shot push as impulses that the step about to run integrates. At `Stage::PreScripts` it writes `vehicle_state` and each wheel's state, and a player-driven vehicle's input from its actions. At `Stage::Physics` it poses the wheel children and returns the modifiers to neutral
+- The `vehicle` script module (`vehicle_place`, `vehicle_wheels`, `vehicle_ids`), and the Vehicles panel at the kernel's `ScenePanels` point, which the player fills only where it has the debug HUD
+- Depends on `flint-package` (which lends the physics, Rapier and egui), `flint-core`, `flint-ecs`, `flint-runtime` and `flint-script`: the kernel alone
 
 ### flint-runtime
 
