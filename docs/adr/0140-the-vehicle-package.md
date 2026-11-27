@@ -53,6 +53,43 @@ the state policy and `Resources`. `PhysicsSystem` has `body_of(entity)`,
 the three sets at once, as `DynamicRayCastVehicleController::update_vehicle`
 takes them.
 
+### The three options
+
+The issue names three models for the package. The rest of this record calls
+them A, B and C.
+
+- **(A) A dynamic body on raycast wheels, with arcade assists.** The vehicle
+  is a dynamic `rigidbody` that Rapier integrates. Rapier's
+  `DynamicRayCastVehicleController` casts a ray down from each wheel, pushes
+  the body up with a spring and damper, and turns tyre friction into drive,
+  braking and cornering forces. On top of that the package adds **assists**:
+  forces and torques that pull the body toward arcade behaviour (a fixed
+  turn rate, instant sideways grip, staying upright). Each assist is a tuning
+  field, and at 0 it is off, leaving a plain physics car.
+  - For FlintKart, the kart becomes a body. Walls, other karts and items are
+    real contacts, and its handling is matched through the assists' tuning.
+  - For another game, a car or a truck is the same model with the assists
+    turned down.
+- **(B) A kinematic arcade model in Rust.** `kart_controller.rhai`'s driving
+  is ported to Rust and run on the fixed step. The kart stays outside
+  Rapier's dynamics, as today. The package integrates speed, sideways slip
+  and yaw itself, casts its own rays for the ground and the walls, and writes
+  the pose.
+  - For FlintKart, it handles exactly as now, minus the frame-rate
+    dependence.
+  - For another game, every vehicle is an arcade kart. Nothing in Rapier can
+    push it, so the package also has to carry collision code for walls and
+    for vehicles hitting each other.
+- **(C) Both, behind one component.** The `vehicle` component chooses (A) or
+  (B) with a field such as `model = "dynamic" | "arcade"`. Both models share
+  one input, one state and one debug panel.
+  - A game picks per vehicle.
+  - The package builds, tunes and tests two models.
+
+Option (A) is the plan's model, option (B) is FlintKart's, and option (C)
+hedges between them. The prototype below measures (A) and (B), plus (A)
+without assists, against FlintKart's own lap.
+
 ## Measured: a prototype against FlintKart's lap
 
 The prototype lives on the branch `proto/vehicle-1627` (`974ee527`,
@@ -73,14 +110,15 @@ The prototype lives on the branch `proto/vehicle-1627` (`974ee527`,
   with `max_speed` 33 and `acceleration` 16.5):
   - `arcade_frame`: `kart_controller.rhai`'s driving ported to Rust, stepped
     once a frame at the frame's dt, as FlintKart is today.
-  - `arcade_fixed`: the same port at the fixed 1/60 s step. This is option B.
+  - `arcade_fixed`: the same port at the fixed 1/60 s step. This is option
+    (B).
   - `rapier_raw`: `DynamicRayCastVehicleController` on a 150 kg dynamic
     body (centre of mass 0.25 m low, gravity scale 2.04 for the kart's
     -20 m/s²), with four 0.275 m wheels, tyre friction 1.8 and the kart's
     drag. The steering angle is set so that the wheel asks for the arcade
     model's path.
   - `rapier_assist`: the same body with three arcade assists. This is
-    option A. A **yaw assist** pulls the yaw rate toward the arcade turn rate
+    option (A). A **yaw assist** pulls the yaw rate toward the arcade turn rate
     at 10/s. **Grip** scrubs sideways speed at 9/s, as the arcade `grip`
     does. An **upright** torque turns the body's up toward the ground's.
   The port leaves out what stays FlintKart's (section 3). A simplified drift
@@ -111,9 +149,9 @@ fixed-step models always step at 1/60 s.
 | `arcade_frame` (today's model, autopilot) | 1/30 | 23.93, 21.97, 22.00 | 32.0 | 18.2 m at 25.9 m/s |
 | | 1/60 | 23.90, 22.00, 22.00 | 32.0 | 17.8 m at 25.8 m/s |
 | | 1/144 | 23.89, 22.01, 22.01 | 32.0 | 17.5 m at 25.7 m/s |
-| `arcade_fixed` (option B) | 1/30, 1/60, 1/144 | lap 3: 22.03, 22.00, 22.02 | 32.0 | 17.6-17.9 m at 25.8 m/s |
+| `arcade_fixed` (option (B)) | 1/30, 1/60, 1/144 | lap 3: 22.03, 22.00, 22.02 | 32.0 | 17.6-17.9 m at 25.8 m/s |
 | `rapier_raw` | 1/30, 1/60, 1/144 | lap 3: 22.37, 22.35, 22.36 | 32.1 | 16.7-16.9 m at 24.5 m/s |
-| **`rapier_assist` (option A)** | 1/30 | 23.70, 21.83, 21.83 | 32.1 | 19.0 m at 26.4 m/s |
+| **`rapier_assist` (option (A))** | 1/30 | 23.70, 21.83, 21.83 | 32.1 | 19.0 m at 26.4 m/s |
 | | 1/60 | 23.65, 21.83, 21.80 | 32.1 | 18.6 m at 26.4 m/s |
 | | 1/144 | 23.66, 21.82, 21.81 | 32.1 | 19.0 m at 26.2 m/s |
 
@@ -150,7 +188,7 @@ about 650 wall boxes, which a game with karts already pays.
 
 ### What it shows
 
-- **Option A reaches the arcade lap.** On the same autopilot, the assisted
+- **Option (A) reaches the arcade lap.** On the same autopilot, the assisted
   Rapier kart runs the flying lap in 21.80 s against the port's 22.00, at
   the same top speed, and holds a corner as tight (18.6 m at 26.4 m/s
   against 17.8 m at 25.8 m/s). FlintKart's own flying lap is 21.68 s, with
@@ -158,7 +196,7 @@ about 650 wall boxes, which a game with karts already pays.
 - **Raw Rapier is the one that falls short.** It is 0.35 s a lap slower. At
   speed it turns on twice the radius (35 m against 27.5 m at 30 m/s), and a
   30° wall spins it 51°. The assists are what close the gap. Without them
-  option A would make FlintKart's handling worse, as the risk table feared.
+  option (A) would make FlintKart's handling worse, as the risk table feared.
 - **The fixed step removes the frame-rate spread.** The fixed-step models'
   laps agree within 0.04 s from 1/30 to 1/144. FlintKart today spreads its
   laps by 0.2 s (the first lap), 1.2 s (the full race's second lap) and
@@ -181,6 +219,9 @@ about 650 wall boxes, which a game with karts already pays.
 ## Decision
 
 ### 1. One model: a dynamic body on Rapier's raycast wheels, with arcade assists as tuning
+
+This is option (A) of "The three options" above. Why not (B) or (C) is under
+"Alternatives considered".
 
 A vehicle is an entity with a dynamic `rigidbody`, a `collider` and a
 `vehicle` component. Its wheels are child entities with `vehicle_wheel`. The
