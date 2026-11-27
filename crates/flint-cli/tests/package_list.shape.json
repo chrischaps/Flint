@@ -23,7 +23,8 @@
     "script_modules": "array",
     "commands": "array",
     "flags": "array",
-    "specs": "array"
+    "specs": "array",
+    "fields": "array"
   },
   "packages": [
     ["engine", "kernel"],

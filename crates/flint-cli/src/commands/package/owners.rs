@@ -43,6 +43,9 @@ pub struct SchemaFile {
     /// Spelled from the repo root: `schemas/components/light.toml`.
     pub path: String,
     pub items: Vec<(Kind, String)>,
+    /// Each component's fields it declares, as `<component>.<field>`: what
+    /// a `[provides] fields` entry is held to (#1581).
+    pub fields: Vec<String>,
 }
 
 /// A workspace member: its folder (from the root) and its name.
@@ -106,9 +109,18 @@ pub fn schema_files(schemas: &Path, prefix: &str) -> Vec<SchemaFile> {
                         items.extend(t.keys().map(|n| (kind, n.clone())));
                     }
                 }
+                let mut fields = Vec::new();
+                if let Some(toml::Value::Table(components)) = table.get("component") {
+                    for (component, schema) in components {
+                        if let Some(declared) = schema.get("fields").and_then(|f| f.as_table()) {
+                            fields.extend(declared.keys().map(|f| format!("{component}.{f}")));
+                        }
+                    }
+                }
                 out.push(SchemaFile {
                     path: spelled,
                     items,
+                    fields,
                 });
             }
         }
@@ -420,8 +432,41 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
             .iter()
             .any(|dir| holds_file_ending(&repo().join(dir), ending))
     };
+    // A field entry names a field its component's schema declares (#1581)
+    let fields: BTreeSet<&str> = inv
+        .schemas
+        .iter()
+        .flat_map(|s| s.fields.iter().map(String::as_str))
+        .collect();
+    let has_field = |entry: &str| fields.contains(entry);
     for p in &packages.packages {
         let file = flint_core::project::shown(&p.file);
+        // ... of a component another package owns, the kernel or one it
+        // requires: its own component's fields are its already, and a
+        // field of one it doesn't bring could be written where the
+        // component isn't
+        for entry in &p.provides.fields {
+            let Some((component, _)) = flint_core::package::field_of(entry) else {
+                continue;
+            };
+            match packages.owner(Kind::Component, component) {
+                Some(owner) if owner.name == p.name => out.push(format!(
+                    "{file}: provides.fields lists `{entry}`, of its own component: \
+                     its components' fields are its already"
+                )),
+                Some(owner)
+                    if owner.tier != flint_core::package::Tier::Kernel
+                        && !p.requires.contains_key(&owner.name) =>
+                {
+                    out.push(format!(
+                        "{file}: provides.fields lists `{entry}`, and `{component}` is the \
+                         `{}` package's, which it doesn't require",
+                        owner.name
+                    ))
+                }
+                _ => {}
+            }
+        }
         for kind in Kind::ALL {
             let there: &dyn Fn(&str) -> bool = match kind {
                 Kind::Crate => &|i| crate_names.contains(i),
@@ -429,6 +474,7 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
                 Kind::Command => &|i| paths.contains(i),
                 Kind::Flag => &has_flag,
                 Kind::Spec => &has_spec,
+                Kind::Field => &has_field,
                 _ => &|i| declared.get(&kind).is_some_and(|s| s.contains(i)),
             };
             for item in p.provides.of(kind) {
@@ -616,10 +662,12 @@ fn a_schema_file_outside_its_packages_folder_fails_naming_where_it_goes() {
     inv.schemas.push(SchemaFile {
         path: "schemas/components/living_prop.toml".into(),
         items: living.items.clone(),
+        fields: living.fields.clone(),
     });
     inv.schemas.push(SchemaFile {
         path: "packages/music/schemas/components/transform.toml".into(),
         items: vec![(Kind::Component, "transform".into())],
+        fields: Vec::new(),
     });
     let found = problems(&engine_packages(), &inv);
     assert_eq!(
@@ -740,6 +788,39 @@ fn an_item_two_packages_claim_or_one_the_tree_lacks_fails() {
     for want in wanted {
         assert!(
             found.iter().any(|f| f.ends_with(want) || f == want),
+            "missing {want:?} in {found:#?}"
+        );
+    }
+}
+
+/// #1581: a `[provides] fields` entry names a field its component's
+/// schema declares, of a component a package it requires owns.
+#[test]
+fn a_field_entry_is_a_declared_field_of_a_required_packages_component() {
+    let inv = Inventory::of_repo();
+    assert!(problems(&engine_packages(), &inv).is_empty());
+    let mut packages = engine_packages();
+    let rhythm = packages
+        .packages
+        .iter_mut()
+        .find(|p| p.name == "rhythm")
+        .unwrap();
+    rhythm.provides.fields.push("music_session.chrat".into());
+    rhythm.provides.fields.push("living_prop.pose_ring".into());
+    let music = packages
+        .packages
+        .iter_mut()
+        .find(|p| p.name == "music")
+        .unwrap();
+    music.provides.fields.push("music_session.events".into());
+    let found = problems(&packages, &inv);
+    for want in [
+        "packages/rhythm/package.toml: provides.fields lists `music_session.chrat`, and the tree has no field of that name",
+        "packages/rhythm/package.toml: provides.fields lists `living_prop.pose_ring`, and `living_prop` is the `living` package's, which it doesn't require",
+        "packages/music/package.toml: provides.fields lists `music_session.events`, of its own component: its components' fields are its already",
+    ] {
+        assert!(
+            found.iter().any(|f| f.ends_with(want)),
             "missing {want:?} in {found:#?}"
         );
     }

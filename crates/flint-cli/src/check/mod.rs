@@ -193,7 +193,13 @@ impl SceneSchemas {
         }
     }
 
-    fn with_constraints(registry: SchemaRegistry, dirs: SchemaDirs) -> Self {
+    fn with_constraints(mut registry: SchemaRegistry, dirs: SchemaDirs) -> Self {
+        // The scene pass asks the registry which packages are in (a field
+        // a left-out package provides, #1581): a settled list's registry
+        // is read without them
+        if registry.packages().is_none() {
+            registry.set_packages(dirs.packages.clone());
+        }
         let mut constraints = ConstraintRegistry::new();
         let mut problems = registry.game_lints();
         for dir in &dirs.dirs {
