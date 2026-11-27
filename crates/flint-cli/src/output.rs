@@ -100,6 +100,7 @@ pub fn finish(result: anyhow::Result<()>) -> ExitCode {
                 if let Some(u) = e.downcast_ref::<flint_player::packages::Unbuilt>() {
                     doc["error"]["packages"] = json!(u.packages);
                     doc["error"]["hint"] = json!(u.hint());
+                    doc["error"]["unsynced"] = json!(u.unsynced);
                 }
                 document(&doc);
             }
