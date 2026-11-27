@@ -166,7 +166,7 @@ fn every_mistake_is_reported_at_once() {
     let text =
         "[package]\nname = \"Living\"\nversion = \"1\"\ntier = \"feture\"\nsummary = \"a\\nb\"\n\
         engine = \"not a range\"\n[requires]\nmusic = 3\n[provides]\ncrates = [\"a\", \"a\", 4]\n\
-        commands = [\"music --chart\"]\n";
+        commands = [\"music --chart\"]\nflags = [\"--ai-refine\", \"render --ai-refine a b\"]\n";
     let found = mistakes(text);
     for want in [
         "package.name: `Living` is no package name",
@@ -178,6 +178,8 @@ fn every_mistake_is_reported_at_once() {
         "provides.crates[1]: `a` is listed twice",
         "provides.crates[2]: a string, not an integer",
         "provides.commands[0]: `music --chart` is no command path",
+        "provides.flags[0]: `--ai-refine` is no flag line",
+        "provides.flags[1]: `render --ai-refine a b` is no flag line",
     ] {
         assert!(
             found.iter().any(|f| f.starts_with(want)),

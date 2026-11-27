@@ -13,7 +13,7 @@ description = "The Package API: the subsystem trait, its contexts and the run's 
 # The CLI's GIF writer (`cli::gif`, #1558): flint render's spans and a
 # package's sheets (living's `gen --strip`). Off in the player, which never
 # writes one.
-gif = ["dep:gif", "dep:color_quant", "dep:miniz_oxide", "dep:image"]
+gif = ["dep:gif", "dep:color_quant", "dep:miniz_oxide", "image/gif"]
 
 [dependencies]
 flint-core = { workspace = true }
@@ -53,7 +53,9 @@ web-time = { workspace = true }
 gif = { version = "0.14", optional = true }
 color_quant = { version = "1", optional = true }
 miniz_oxide = { version = "0.8", optional = true }
-image = { workspace = true, optional = true, features = ["gif"] }
+# The pictures a package's step of a kernel command hands back and forth
+# (`cli::look`: a refine's candidates; `cli::gen::ModelStill`), #1572
+image = { workspace = true }
 
 [lints]
 workspace = true

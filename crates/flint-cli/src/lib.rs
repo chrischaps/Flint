@@ -240,6 +240,9 @@ pub fn run_with(extensions: Vec<Box<dyn CliExtension>>) -> std::process::ExitCod
             return output::finish(Err(e));
         }
     };
+    // The packages' flags on commands they don't own, for every parse of
+    // the run (a `--variant`'s words too), #1572
+    flint_package::cli::flags::set_run_flags(added.flags().to_vec());
     let matches = match parse_line(&added, &argv) {
         Ok(matches) => matches,
         Err(Refused::Clap(e)) => parse_failed(e, &argv),
@@ -318,19 +321,18 @@ pub fn stock() -> Vec<Box<dyn CliExtension>> {
 }
 
 /// The run's registration points (#1557, `flint_package::cli::Points`):
-/// what the extensions of `extensions` register (procgen's spec commands),
-/// then this binary's own parts of another package's commands (the ai
-/// package's steps of procgen's `gen`, living's `--strip`), each under its
-/// feature.
+/// the kernel's own (its model still, which a package's step of `gen`
+/// draws with), then what the extensions of `extensions` register
+/// (procgen's spec commands, the ai package's steps of `gen`, `render` and
+/// `asset resolve`, #1572).
 fn points_of(extensions: &[Box<dyn CliExtension>]) -> flint_package::cli::Points {
     let mut points = flint_package::cli::Points::new();
+    points.insert(flint_package::cli::gen::ModelStill(
+        commands::preview::render_model,
+    ));
     for extension in extensions {
         extension.register(&mut points);
     }
-    #[cfg(feature = "ai")]
-    points.insert(flint_procgen_cli::gen::AiPoint(Box::new(
-        commands::gen_ai::Ai,
-    )));
     points
 }
 
@@ -352,7 +354,7 @@ fn procgen_editors() -> bool {
 pub(crate) fn stock_command() -> clap::Command {
     let added = extension::Added::new(stock(), &Cli::command())
         .expect("the stock extensions name no engine command");
-    with_play_flags(added.augment(Cli::command()))
+    with_play_flags(added.parser(Cli::command))
 }
 
 /// `flint play` with the run's packages' own player flags (living's
@@ -406,9 +408,11 @@ enum Refused {
 /// The line's matches in the one parser: the engine's commands with every
 /// extension's.
 fn parse_line(added: &extension::Added, argv: &[OsString]) -> Result<clap::ArgMatches, Refused> {
-    let mut parser = with_play_flags(added.augment(Cli::command()));
+    let mut parser = with_play_flags(added.parser(Cli::command));
     parser.try_get_matches_from_mut(argv).map_err(|e| {
-        match commands::absent::missing_command(&e, argv, &parser) {
+        let missing = commands::absent::missing_command(&e, argv, &parser)
+            .or_else(|| commands::absent::missing_flag(&e, argv, &parser));
+        match missing {
             Some(missing) => Refused::Missing(missing),
             None => Refused::Clap(e),
         }

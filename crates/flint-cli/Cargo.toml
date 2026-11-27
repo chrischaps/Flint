@@ -41,11 +41,13 @@ path = "src/main.rs"
 #            `flint gen x.glyphs.toml` and `flint edit x.terrain.toml` are
 #            the kernel's and stay in. `[living]` / `[wooze]` are settled
 #            at load with `living`, whose tables they are
-#   ai      the paid calls: `gen --ai-*`, `render --ai-refine`, `asset
-#            resolve --strategy ai_*`; and `asset generate` and the rest,
-#            which are the package's own extension (`stock()`, #1553): out,
-#            they leave the parser, and asking for one names the package
-#            from its manifest
+#   ai      the paid calls: `asset generate` and the rest, the package's
+#            own extension (`stock()`, #1553), and its steps of other
+#            commands (#1572): `render --ai-refine` (its flags, in the
+#            slot `render` declares), `gen --ai-*` and `asset resolve
+#            --strategy ai_*` (points). Out, they leave the parser or go
+#            unserved, and asking for one names the package from its
+#            manifest
 #   debug-hud  `flint play`'s F3/F4 panels, F2's graph and the corner cards
 #            (flint-player's `debug-hud`, #1583). The editors' widgets and
 #            the viewer's F4 are the kernel's (flint-widgets), so `flint
@@ -72,7 +74,7 @@ music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
 procgen = ["flint-player/procgen", "dep:flint-procgen", "dep:flint-procgen-cli"]
 debug-hud = ["flint-player/debug-hud"]
-ai = ["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli", "dep:flint-procgen-ai", "dep:flint-ai-core"]
+ai = ["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli"]
 
 [dependencies]
 flint-core = { workspace = true }
@@ -108,8 +110,6 @@ flint-procgen-cli = { workspace = true, optional = true }
 # `gen --strip`'s and the viewer's points; this crate's source names none
 # of it (`build.rs` lists its extension from the manifest)
 flint-living = { workspace = true, optional = true }
-flint-procgen-ai = { workspace = true, optional = true }
-flint-ai-core = { workspace = true, optional = true }
 flint-viewer = { workspace = true }
 # The widgets `frame open`, its profiler and the particle editor draw
 # with: the kernel's (#1583), not the debug-hud package's
@@ -173,6 +173,10 @@ flint-procgen = { workspace = true }
 # `check::LIVING_PROP` is the living package's component name, held to its
 # crate's (#1558), in every build
 flint-living = { workspace = true }
+# `--ai-refine`'s loop (the ai package's since #1572) run over the render's
+# host, in every build; and the meter it reads
+flint-asset-gen = { workspace = true, features = ["cli"] }
+flint-procgen-ai = { workspace = true }
 
 # A game binary with commands of its own (#1140): the test is the binary,
 # so its `main` is its own

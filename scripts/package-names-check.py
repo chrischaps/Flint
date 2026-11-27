@@ -52,13 +52,6 @@ EXCEPTIONS = {
     ("flint-player", "string", "music", "crates/flint-player/src/logging.rs"): "a log "
     "target the engine's warnings are counted under (`flint_target`), as `load` and "
     "`perf` are: the music package logs as `music`, and so did the player before it",
-    ("flint-cli", "feature", "ai"): "#1572: gen --ai-*, render --ai-refine and resolve "
-    "--strategy ai_* are still declared by their commands",
-    ("flint-cli", "crate", "flint-asset-gen"): "#1572: the ai flags' code",
-    ("flint-cli", "crate", "flint-procgen-ai"): "#1572: the ai flags' code",
-    ("flint-cli", "crate", "flint-procgen"): "#1572: gen --ai-*'s code reads procgen's specs",
-    ("flint-cli", "crate", "flint-procgen-cli"): "#1572: gen --ai-*'s point in procgen's gen",
-
 }
 
 

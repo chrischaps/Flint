@@ -35,14 +35,18 @@ use clap::{ArgMatches, Command, Subcommand};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+pub mod asset;
 mod clock;
+pub mod flags;
 pub mod gen;
 #[cfg(feature = "gif")]
 pub mod gif;
+pub mod look;
 mod points;
 pub mod render;
 
 pub use clock::{random_seed, rfc3339, utc_now};
+pub use flags::Flags;
 pub use points::{
     points, points_or, Points, SpecChecks, SpecGen, SpecIssue, SpecParams, Stages, TableCheck,
     TableChecks,
@@ -75,6 +79,14 @@ pub trait CliExtension {
     /// another command asks this package for (procgen's [`SpecGen`] for the
     /// kernel's `gen`). Called once, before parsing.
     fn register(&self, _points: &mut Points) {}
+
+    /// The flag groups this package adds to commands it doesn't own
+    /// ([`flags`], #1572): each a derived `clap::Args` and the command it
+    /// goes on, which declares a [`flags::PackageFlags`] slot for them.
+    /// Asked once a run, before parsing.
+    fn flags(&self) -> Vec<Flags> {
+        Vec::new()
+    }
 
     /// The chosen command opens a window (or plays sound, or reads a pad),
     /// which `--json` refuses, as it does `flint play`. No by default.

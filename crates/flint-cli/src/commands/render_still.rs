@@ -71,9 +71,6 @@ pub(super) fn render_still(
         wants_flips,
         reads_glyphs,
     } = still;
-    // The scene's own block is what --ai-refine lays a candidate over
-    #[cfg(not(feature = "ai"))]
-    let _ = scene_pp;
     // A still draws the scene as authored, before any script (#371): said, as
     // the clocked path says it, since a look a script sets is otherwise missing
     // from the picture with no word why
@@ -299,17 +296,17 @@ pub(super) fn render_still(
         );
     }
 
-    #[cfg(feature = "ai")]
-    if args.refine.ai_refine {
+    // The scene's own block is what --ai-refine lays a candidate over
+    if let Some(refine) = refines(args) {
         let look = look.expect("clap requires --look with --ai-refine");
         let reference = reference.expect("clap requires --reference with --ai-refine");
-        return refine_look(args, look, reference, &mut |table| {
+        return refine_look(args, refine, look, reference, &mut |table| {
             let def = crate::commands::look::overlay(scene_pp, table)?;
             let config = post_process_config(args, Some(&def), renderer.styles())?;
             let scale = reads_glyphs.then(|| ink_scale(args, &config));
             let image = draw_frame(ctx, &mut renderer, &camera, Some(config), Some(&world))?;
             let ink = scale.and_then(|s| frame_ink(&renderer, ctx, &s));
-            Ok(crate::commands::look_refine::Frame { image, ink })
+            Ok(Frame { image, ink })
         });
     }
 
@@ -751,7 +748,6 @@ pub(super) fn ink_scale(
 }
 
 /// The glyph grid the last frame drew, as ink; `None` when ASCII didn't draw.
-#[cfg(feature = "ai")]
 pub(super) fn frame_ink(
     renderer: &SceneRenderer,
     ctx: &HeadlessContext,
@@ -762,89 +758,154 @@ pub(super) fn frame_ink(
         .map(|t| crate::commands::look_measure::InkGrid::from_text(&t, scale))
 }
 
-/// `--ai-refine` (#357): run the loop, then write the refined look, its log
-/// and the sheet of rounds.
-#[cfg(feature = "ai")]
+/// One candidate block drawn by a render path: its picture, and its glyph
+/// grid when the ASCII style drew (read only when the reference has one).
+pub(super) struct Frame {
+    pub(super) image: image::RgbaImage,
+    pub(super) ink: Option<crate::commands::look_measure::InkGrid>,
+}
+
+/// `--ai-refine` (#357): the package's refine ([`refines`]) over this
+/// render, which lends it a [`RefineHost`] that draws with `draw` and
+/// measures against `reference` (#1572: the loop is the ai package's).
 pub(super) fn refine_look(
     args: &RenderArgs,
+    refine: &dyn flint_package::cli::look::LookRefine,
     look: crate::commands::look::Look,
     reference: crate::commands::look_measure::Reference,
-    draw: &mut dyn FnMut(&toml::Table) -> Result<crate::commands::look_refine::Frame>,
+    draw: &mut dyn FnMut(&toml::Table) -> Result<Frame>,
 ) -> Result<()> {
-    use crate::commands::look_refine as lr;
-    let (agent, meter) = lr::build_agent(
-        &args.refine.ai_provider,
-        args.refine.ai_model.as_deref(),
-        args.refine.max_cost,
-    )?;
-    let name = format!("{}_refined", look.name);
-    let out = args
-        .refine
-        .refine_out
-        .clone()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| lr::default_out(&args.output, &name));
-    let reference_path = args.measure.reference.clone().unwrap_or_default();
-    let log = lr::run(
-        lr::Options {
-            look: look.clone(),
-            reference_path,
-            reference,
-            rounds: args.refine.refine_rounds.max(1),
-            candidates: args.refine.refine_candidates.max(1),
-        },
-        agent.as_ref(),
-        &meter,
+    let mut host = LookHost {
+        args,
+        look,
+        reference,
         draw,
-    )?;
-    let text = lr::refined_look_toml(&log, &look, &name)?;
-    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).ok();
+    };
+    refine.run(args.packages.matches(), &mut host)
+}
+
+/// What a render lends a package's refine: the look, the reference, a draw
+/// of the scene under a candidate block, and what `--sweep` and the
+/// measures know.
+struct LookHost<'a> {
+    args: &'a RenderArgs,
+    look: crate::commands::look::Look,
+    reference: crate::commands::look_measure::Reference,
+    draw: &'a mut dyn FnMut(&toml::Table) -> Result<Frame>,
+}
+
+impl flint_package::cli::look::RefineHost for LookHost<'_> {
+    fn look(&self) -> &crate::commands::look::Look {
+        &self.look
     }
-    std::fs::write(&out, text).context(format!("Failed to write {}", out.display()))?;
-    let log_path = out.with_extension("json");
-    std::fs::write(&log_path, serde_json::to_string_pretty(&log)?)
-        .context(format!("Failed to write {}", log_path.display()))?;
-    let (labels, cells): (Vec<String>, Vec<image::RgbaImage>) = log.frames.iter().cloned().unzip();
-    let sheet = crate::commands::style_sheet::compose(
-        &cells,
-        &crate::commands::style_sheet::SheetText::new(
-            format!("refine {} toward {}", look.name, log.reference),
-            format!(
-                "{}: distance {:.2} -> {:.2}, {} round(s), {} call(s), ${:.4}",
-                log.agent, log.start.score, log.end.score, log.rounds_run, log.calls, log.cost_usd
-            ),
-            labels,
-        ),
-    );
-    sheet
-        .save(&args.output)
-        .context(format!("Failed to save image to {}", args.output))?;
-    say!(
-        "Refined {}: distance {:.2} -> {:.2} ({}), {} call(s), ${:.4}",
-        look.name,
-        log.start.score,
-        log.end.score,
-        log.stopped,
-        log.calls,
-        log.cost_usd
-    );
-    say!(
-        "  by {}: start {}; end {}",
-        log.metric.name(),
-        log.start.terms_line(),
-        log.end.terms_line()
-    );
-    say!(
-        "Wrote {} (load it with --look {})",
-        out.display(),
-        out.display()
-    );
-    say!(
-        "Wrote {} and the rounds' sheet {}",
-        log_path.display(),
-        args.output
-    );
+
+    fn reference_path(&self) -> &str {
+        self.args.measure.reference.as_deref().unwrap_or_default()
+    }
+
+    fn reference(&self) -> &image::RgbImage {
+        &self.reference.image
+    }
+
+    fn reference_ink(&self) -> Option<String> {
+        self.reference.ink.as_ref().map(|g| g.summary())
+    }
+
+    fn output(&self) -> &str {
+        &self.args.output
+    }
+
+    fn draw(&mut self, post_process: &toml::Table) -> Result<flint_package::cli::look::Drawn> {
+        let Frame { image, ink } = (self.draw)(post_process)?;
+        let distance = self.reference.distance(&image, ink.as_ref());
+        Ok(flint_package::cli::look::Drawn {
+            image,
+            distance,
+            ink: ink.map(|g| g.summary()),
+        })
+    }
+
+    fn measure(&self, image: &image::RgbaImage) -> crate::commands::look_measure::ImageMeasures {
+        crate::commands::look_measure::measure(image)
+    }
+
+    fn summary(&self, measures: &crate::commands::look_measure::ImageMeasures) -> String {
+        crate::commands::look_measure::summary(measures, None)
+    }
+
+    fn apply_edit(&self, table: &mut toml::Table, key: &str, value: &str) -> Result<(), String> {
+        look_edit(table, key, value)
+    }
+
+    fn tune(&self, sweep: &str) -> Option<flint_package::cli::look::TuneSweep> {
+        let sweep = crate::commands::sweep::Sweep::parse(sweep).ok()?;
+        Some(flint_package::cli::look::TuneSweep {
+            key: sweep.name(),
+            values: sweep.values,
+        })
+    }
+
+    fn current(&self, table: &toml::Table, key: &str) -> Option<toml::Value> {
+        // A key as `Sweep::name` spells it: `post.<field>`, `<style>.<key>`,
+        // or a scene's (`look`, `wooze.*`, `living.*`), which no block holds
+        match key.split_once('.')? {
+            ("post", field) => table.get(field).cloned(),
+            ("wooze" | "living", _) => None,
+            (style, key) => table.get("styles")?.get(style)?.get(key).cloned(),
+        }
+    }
+
+    fn value(&self, text: &str) -> toml::Value {
+        crate::commands::sweep::parse_value(text)
+    }
+
+    fn sheet(
+        &self,
+        cells: &[image::RgbaImage],
+        title: String,
+        subtitle: String,
+        labels: Vec<String>,
+    ) -> image::RgbaImage {
+        crate::commands::style_sheet::compose(
+            cells,
+            &crate::commands::style_sheet::SheetText::new(title, subtitle, labels),
+        )
+    }
+}
+
+/// Check `key=value` the way `--sweep` checks a column (key known, value in
+/// range) and put it into `table`, a look's `[post_process]`.
+fn look_edit(table: &mut toml::Table, key: &str, value: &str) -> Result<(), String> {
+    use crate::commands::sweep::{parse_value, Sweep, SweepKey};
+    // The sweep parser knows every key and range; one edit is a sweep of a
+    // single value, written twice because a sweep takes two.
+    let sweep = Sweep::parse(&format!("{key}={value}|{value}"))?;
+    let parsed = parse_value(value);
+    match sweep.key {
+        SweepKey::Look => return Err("`look` can't be an edit; edit its keys".into()),
+        SweepKey::Wooze { .. } | SweepKey::Echoes { .. } => {
+            return Err("wooze knobs and [living] echoes belong to the scene, not a look".into())
+        }
+        SweepKey::Post { field } => {
+            table.insert(field, parsed);
+        }
+        SweepKey::Style { style, key: name } => {
+            let styles = table
+                .entry("styles")
+                .or_insert_with(|| toml::Value::Table(Default::default()));
+            let Some(styles) = styles.as_table_mut() else {
+                return Err("[post_process] styles is not a table".into());
+            };
+            let t = styles
+                .entry(style)
+                .or_insert_with(|| toml::Value::Table(Default::default()));
+            let Some(t) = t.as_table_mut() else {
+                return Err(format!("[post_process.styles] {key} is not a table"));
+            };
+            t.insert(name, parsed);
+        }
+    }
+    crate::commands::look::overlay(None, table).map_err(|e| format!("{e:#}"))?;
     Ok(())
 }
 
@@ -979,4 +1040,237 @@ pub(super) fn write_measures(
         .context(format!("Failed to write {path}"))?;
     say!("Wrote measures to {path}");
     Ok(())
+}
+
+/// The render's half of `--ai-refine` (#1572): what [`LookHost`] lends the
+/// ai package's loop, held with the loop itself running over it.
+#[cfg(test)]
+mod refine_tests {
+    use super::*;
+    use crate::commands::look::{self, Look};
+    use crate::commands::look_measure::{InkGrid, Metric, Reference};
+    use flint_asset_gen::cli::look_refine::{
+        refined_look_toml, run, Ask, Candidate, Edit, LookAgent, Options, Tried, TuneWalker,
+    };
+    use flint_package::cli::look::RefineHost;
+    use flint_procgen_ai::cost::CostMeter;
+    use image::{RgbImage, RgbaImage};
+
+    fn noir() -> Look {
+        look::find("ascii_noir", "").unwrap()
+    }
+
+    fn args() -> RenderArgs {
+        use clap::Parser as _;
+        let cli = crate::Cli::parse_from(["flint", "render", "x.scene.toml", "-o", "out/s.png"]);
+        let crate::Commands::Render(args) = cli.command else {
+            unreachable!()
+        };
+        *args
+    }
+
+    fn host<'a>(
+        args: &'a RenderArgs,
+        look: Look,
+        reference: Reference,
+        draw: &'a mut dyn FnMut(&toml::Table) -> Result<Frame>,
+    ) -> LookHost<'a> {
+        LookHost {
+            args,
+            look,
+            reference,
+            draw,
+        }
+    }
+
+    fn grey(image: RgbImage) -> Reference {
+        Reference { image, ink: None }
+    }
+
+    #[test]
+    fn an_edit_lands_in_the_block_and_is_checked() {
+        let mut t = noir().post_process;
+        look_edit(&mut t, "ascii.brightness", "0.3").unwrap();
+        assert_eq!(t["styles"]["ascii"]["brightness"].as_float(), Some(0.3));
+        look_edit(&mut t, "post.fog_color", "0.1,0.2,0.3").unwrap();
+        assert!(t["fog_color"].is_array());
+        assert!(look_edit(&mut t, "ascii.cell", "900").is_err());
+        assert!(look_edit(&mut t, "post.exposur", "1")
+            .unwrap_err()
+            .contains("exposure"));
+        assert!(look_edit(&mut t, "wooze.glide", "0.5").is_err());
+    }
+
+    #[test]
+    fn the_walker_skips_current_and_tried_values() {
+        let args = args();
+        let mut draw = |_: &toml::Table| -> Result<Frame> { unreachable!() };
+        let h = host(&args, noir(), grey(RgbImage::new(1, 1)), &mut draw);
+        let look = noir();
+        let m = h.summary(&h.measure(&RgbaImage::new(1, 1)));
+        let flat = RgbImage::new(1, 1);
+        let d = crate::commands::look_measure::distance_report(
+            flint_import::measure::distance_rgb(&flat, &flat),
+            None,
+        );
+        let ask = |history: &[Tried]| {
+            TuneWalker
+                .propose(&Ask {
+                    round: 1,
+                    look: &look,
+                    current: &look.post_process,
+                    current_png: &[],
+                    current_distance: &d,
+                    current_measures: &m,
+                    current_ink: None,
+                    reference_png: &[],
+                    reference_measures: &m,
+                    reference_ink: None,
+                    history,
+                    want: 3,
+                    host: &h,
+                })
+                .unwrap()
+        };
+        let first = ask(&[]);
+        let labels: Vec<String> = first.iter().map(Candidate::label).collect();
+        // contrast 1.6 and brightness 0.15 are the look's own values
+        assert_eq!(
+            labels,
+            ["ascii.contrast=1.2", "ascii.cell=7", "ascii.brightness=0"]
+        );
+        let history: Vec<Tried> = first
+            .into_iter()
+            .map(|candidate| Tried {
+                round: 1,
+                candidate,
+                distance: None,
+                refused: None,
+                image: None,
+                kept: false,
+            })
+            .collect();
+        let next: Vec<String> = ask(&history).iter().map(Candidate::label).collect();
+        // cell 9 is the look's own 9.0
+        assert_eq!(
+            next,
+            [
+                "ascii.contrast=2.2",
+                "ascii.cell=12",
+                "ascii.brightness=0.3"
+            ]
+        );
+    }
+
+    /// #495: a halo-like key that moves only pixels wins on pixels, and
+    /// loses to a key that moves the letters once the reference has a grid.
+    /// The fake renderer's grey is the exposure; its glyphs' ink is twice
+    /// the ASCII brightness. The reference is grey 150 in ink 0.9: each key
+    /// matches one half of it.
+    #[test]
+    fn with_a_reference_grid_the_letters_win_over_the_pixels() {
+        let look = Look::parse(
+            "t",
+            "[look]\ndescription = \"test\"\n\
+             tune = [\"post.exposure=0.5,1.5\", \"ascii.brightness=0,0.45\"]\n\
+             [post_process]\nexposure = 0.5\n\
+             [post_process.styles.ascii]\nbrightness = 0.0",
+            "test",
+        )
+        .unwrap();
+        let filled = |ink: f32| InkGrid {
+            ink: vec![ink; 8 * 4],
+            ..InkGrid::blank(8, 4)
+        };
+        let args = args();
+        let kept = |ink: Option<InkGrid>| {
+            let mut draw = |t: &toml::Table| -> Result<Frame> {
+                let e = t.get("exposure").and_then(|v| v.as_float()).unwrap_or(1.0);
+                let b = t["styles"]["ascii"]["brightness"].as_float().unwrap_or(0.0);
+                let g = (e * 100.0).clamp(0.0, 255.0) as u8;
+                Ok(Frame {
+                    image: RgbaImage::from_pixel(16, 16, image::Rgba([g, g, g, 255])),
+                    ink: Some(filled((b * 2.0) as f32)),
+                })
+            };
+            let reference = Reference {
+                image: RgbImage::from_pixel(16, 16, image::Rgb([150, 150, 150])),
+                ink,
+            };
+            let mut h = host(&args, look.clone(), reference, &mut draw);
+            let log = run(
+                Options {
+                    rounds: 1,
+                    candidates: 2,
+                },
+                &TuneWalker,
+                &CostMeter::new("mock"),
+                &mut h,
+            )
+            .unwrap();
+            assert_eq!(log.tried.len(), 2, "both keys tried");
+            (
+                log.metric,
+                log.kept.iter().map(Edit::to_string).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            kept(None),
+            (Metric::Pixels, vec!["post.exposure=1.5".to_string()])
+        );
+        assert_eq!(
+            kept(Some(filled(0.9))),
+            (Metric::Glyphs, vec!["ascii.brightness=0.45".to_string()])
+        );
+    }
+
+    /// A fake renderer: the picture's grey level is the look's exposure,
+    /// so the loop's job is to walk exposure toward the reference's grey.
+    #[test]
+    fn the_loop_keeps_what_moves_the_distance_down_and_stops() {
+        let look = Look::parse(
+            "t",
+            "[look]\ndescription = \"test\"\ntune = [\"post.exposure=0.5,1,1.5,2\"]\n\
+             [post_process]\nexposure = 0.5",
+            "test",
+        )
+        .unwrap();
+        let mut draw = |t: &toml::Table| -> Result<Frame> {
+            let e = t.get("exposure").and_then(|v| v.as_float()).unwrap_or(1.0);
+            let g = (e * 100.0).clamp(0.0, 255.0) as u8;
+            Ok(Frame {
+                image: RgbaImage::from_pixel(16, 16, image::Rgba([g, g, g, 255])),
+                ink: None,
+            })
+        };
+        let args = args();
+        let reference = grey(RgbImage::from_pixel(16, 16, image::Rgb([150, 150, 150])));
+        let mut h = host(&args, look.clone(), reference, &mut draw);
+        let meter = CostMeter::new("mock");
+        let log = run(
+            Options {
+                rounds: 5,
+                candidates: 1,
+            },
+            &TuneWalker,
+            &meter,
+            &mut h,
+        )
+        .unwrap();
+        // 0.5 (50) -> 1 (100) -> 1.5 (150, the reference) -> 2 is further,
+        // then nothing is left to try: stop
+        assert_eq!(
+            log.kept.iter().map(Edit::to_string).collect::<Vec<_>>(),
+            ["post.exposure=1", "post.exposure=1.5"]
+        );
+        assert!(log.end.score < 1e-9, "{:?}", log.end);
+        assert!(log.stopped.contains("round 4"), "{}", log.stopped);
+        assert_eq!(log.frames.len(), 4, "reference, start and two kept rounds");
+        let text = refined_look_toml(&log, &look, "t_refined").unwrap();
+        let back = Look::parse("t_refined", &text, "test").unwrap();
+        assert_eq!(back.post_process["exposure"].as_float(), Some(1.5));
+        assert!(back
+            .notes
+            .contains("kept post.exposure=1, post.exposure=1.5"));
+    }
 }

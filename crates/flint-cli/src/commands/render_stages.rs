@@ -67,10 +67,11 @@ pub(super) fn run_stages(
              several: give --time T (--report json reports every capture's props)"
         );
     }
-    if args.refine.ai_refine && (animated || moments) {
+    let refine = refines(args);
+    if refine.is_some() && (animated || moments) {
         anyhow::bail!("--ai-refine refines a look at one moment: give --time T");
     }
-    if args.refine.ai_refine && report_json {
+    if refine.is_some() && report_json {
         anyhow::bail!("--ai-refine writes its own log beside the refined look: drop --report json");
     }
     let wants_text = args.out.ascii_text.is_some() || args.out.ascii_text_ansi.is_some();
@@ -100,7 +101,7 @@ pub(super) fn run_stages(
         Some(_) => view.render_size(args.width, args.height),
         // A refine's rounds are sheet cells
         // A refine's rounds are sheet cells, and so are a strip's tiles
-        None if args.refine.ai_refine || strip => {
+        None if refine.is_some() || strip => {
             let (w, h) = crate::commands::sweep::CELL_SIZE;
             (args.width.unwrap_or(w), args.height.unwrap_or(h))
         }
@@ -154,8 +155,7 @@ pub(super) fn run_stages(
 
     // --ai-refine (#357) at a moment: each candidate is the one stage redrawn
     // at that moment under the candidate's look, its clocks never rewound
-    #[cfg(feature = "ai")]
-    if args.refine.ai_refine {
+    if let Some(refine) = refine {
         let look = look.expect("clap requires --look with --ai-refine");
         let reference = reference.expect("clap requires --reference with --ai-refine");
         let t = match args.clock.time {
@@ -163,13 +163,13 @@ pub(super) fn run_stages(
             _ => 0.0,
         };
         let stage = &mut stages[0];
-        return refine_look(args, look, reference, &mut |table| {
+        return refine_look(args, refine, look, reference, &mut |table| {
             let def = crate::commands::look::overlay(scene_pp, table)?;
             let config = post_process_config(args, Some(&def), stage.renderer.styles())?;
             let scale = reads_glyphs.then(|| ink_scale(args, &config));
             let image = stage.redraw(args, ctx, t, frame_step, config)?;
             let ink = scale.and_then(|s| frame_ink(&stage.renderer, ctx, &s));
-            Ok(crate::commands::look_refine::Frame { image, ink })
+            Ok(Frame { image, ink })
         });
     }
 

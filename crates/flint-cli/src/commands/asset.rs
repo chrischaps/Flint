@@ -3,8 +3,6 @@
 //! `manifest`, `costs`, `job`) are its own extension under this command
 //! (`flint_asset_gen::cli`, #1553), listed after these.
 
-#[cfg(feature = "ai")]
-use crate::output::progress;
 use crate::output::{self, say};
 use anyhow::Result;
 use clap::Subcommand;
@@ -12,9 +10,9 @@ use flint_asset::{
     AssetCatalog, AssetMeta, AssetResolver, AssetType, ContentStore, Project, ProjectStore,
     ResolutionStrategy,
 };
-#[cfg(feature = "ai")]
-use flint_asset_gen::{FlintConfig, StyleGuide};
 use flint_import::import_gltf;
+use flint_package::cli::asset::{Batch, BatchResolve, MissingAsset};
+use flint_package::cli::Points;
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
@@ -104,30 +102,12 @@ pub enum AssetCommands {
     },
 }
 
-#[cfg(not(feature = "ai"))]
-impl AssetCommands {
-    /// The words of an ask that is the ai package's: `resolve`'s batch
-    /// strategies (#1333). Its own subcommands are its extension's, so a
-    /// build without it has none to ask for.
-    pub fn ai_words(&self) -> Option<String> {
-        match self {
-            AssetCommands::Resolve { strategy, .. } if BATCH_STRATEGIES.contains(&&**strategy) => {
-                Some(format!("flint asset resolve --strategy {strategy}"))
-            }
-            _ => None,
-        }
-    }
-}
-
 /// `resolve`'s strategies that hand a missing asset to a provider or a
-/// person, through flint-asset-gen's batch.
+/// person: a package's batch (the ai package's, through its
+/// [`BatchResolve`] point, #1572).
 const BATCH_STRATEGIES: &[&str] = &["ai_generate", "human_task", "ai_then_human"];
 
 pub fn run(cmd: AssetCommands) -> Result<()> {
-    #[cfg(not(feature = "ai"))]
-    if let Some(words) = cmd.ai_words() {
-        return Err(super::absent::missing(words, "ai"));
-    }
     match cmd {
         AssetCommands::Import { path, name, tags } => run_import(&path, name, tags),
         AssetCommands::List {
@@ -353,6 +333,18 @@ fn run_info(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// The batch a batch strategy hands the missing assets to: the one a
+/// package of the run registered, else the package that serves the
+/// strategy, named from its manifest.
+pub(super) fn batch_of(points: &Points, strategy: &str) -> Result<fn(Batch) -> Result<()>> {
+    match points.get::<BatchResolve>() {
+        Some(BatchResolve(resolve)) => Ok(*resolve),
+        None => Err(super::absent::missing_served(&format!(
+            "asset resolve --strategy {strategy}"
+        ))),
+    }
+}
+
 fn run_resolve(
     scene_path: &str,
     strategy_str: &str,
@@ -372,6 +364,12 @@ fn run_resolve(
             strategy_str
         ),
     };
+    // A batch strategy is a package's: a run without it names the package
+    // from its manifest, before the scene is read (#1333, #1572)
+    let resolve = match batch {
+        true => Some(batch_of(crate::points(), strategy_str)?),
+        false => None,
+    };
 
     // The scene's project's catalog, not the working directory's (#179),
     // and every `asset` field its schemas declare (#968).
@@ -383,92 +381,30 @@ fn run_resolve(
         say!("{}", reference.line());
     }
 
-    #[cfg(feature = "ai")]
-    if batch {
-        let batch_strat = match strategy_str {
-            "ai_generate" => flint_asset_gen::batch::BatchStrategy::AiGenerate,
-            "human_task" => flint_asset_gen::batch::BatchStrategy::HumanTask,
-            _ => flint_asset_gen::batch::BatchStrategy::AiThenHuman,
-        };
-        let config = FlintConfig::load().unwrap_or_else(|_| FlintConfig {
-            providers: HashMap::new(),
-            generation: Default::default(),
+    if let Some(resolve) = resolve {
+        return resolve(Batch {
+            scene: scene_path,
+            strategy: strategy_str,
+            style: style_name,
+            output_dir,
+            max_cost,
+            references: references.len(),
+            found,
+            missing: references
+                .iter()
+                .filter(|r| r.found.is_none())
+                .map(|r| MissingAsset {
+                    place: r.place(),
+                    field: r.field(),
+                    field_of: r.field_of(),
+                    name: r.name.clone(),
+                    kinds: r.kinds.clone(),
+                    json: r.json(),
+                })
+                .collect(),
         });
-
-        let style = match style_name.or_else(|| config.default_style()) {
-            Some(s) => StyleGuide::find(s).ok(),
-            None => None,
-        };
-
-        let generated = project.generated_dir().display().to_string();
-        let out = output_dir.unwrap_or(&generated);
-        // One meter for the whole scene: the scene's project's ledger and
-        // prices, and the run's ceiling.
-        let calls = flint_asset_gen::cli::asset::project_calls(&project, max_cost)?;
-
-        // What a provider makes is a model, a texture or a sound; a missing
-        // script or heightmap is reported, and left unresolved
-        let mut needs = flint_asset_gen::batch::SceneNeeds::default();
-        let mut no_provider = Vec::new();
-        for reference in references.iter().filter(|r| r.found.is_none()) {
-            match generated_kind(&reference.kinds) {
-                Some(kind) => needs.missing.push(flint_asset_gen::batch::MissingAsset {
-                    entity_name: reference.place(),
-                    field: reference.field(),
-                    asset_name: reference.name.clone(),
-                    kind,
-                }),
-                None => no_provider.push(reference),
-            }
-        }
-        needs.total = found + needs.missing.len();
-        for reference in &no_provider {
-            say!(
-                "  No provider makes {} {}: left missing",
-                kinds_label(&reference.kinds),
-                reference.field_of()
-            );
-        }
-
-        let result = flint_asset_gen::batch::resolve_missing(
-            &project,
-            &needs,
-            batch_strat,
-            style.as_ref(),
-            &config,
-            out,
-            &calls,
-        )
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-        progress!("{}", flint_asset_gen::cli::costs::spent_line(&calls.meter));
-
-        output::when_json(|| {
-            json!({
-                "scene": scene_path,
-                "strategy": strategy_str,
-                "references": references.len(),
-                "found": result.already_found,
-                "generated": result.generated,
-                "tasks_created": result.tasks_created,
-                "failed": result.failed,
-                "over_budget": result.over_budget,
-                "no_provider": no_provider.iter().map(|r| r.json()).collect::<Vec<_>>(),
-                "cost_usd": result.spent_usd,
-                "max_cost": max_cost,
-            })
-        });
-        // A reference neither generated nor handed to a person is a failure
-        let unresolved =
-            result.total_refs - result.already_found - result.generated - result.tasks_created;
-        if result.failed > 0 || unresolved > 0 || !no_provider.is_empty() {
-            return Err(output::failed());
-        }
-        return Ok(());
     }
 
-    // Without the ai package `run` refused a batch strategy before here
-    #[cfg(not(feature = "ai"))]
-    let _ = (style_name, output_dir, max_cost);
     let strategy = strategy.expect("a catalog strategy");
     let missing: Vec<&SceneAssetReference> =
         references.iter().filter(|r| r.found.is_none()).collect();
@@ -516,7 +452,6 @@ impl SceneAssetReference {
     }
 
     /// The entity, or `[environment]` for a scene table.
-    #[cfg(feature = "ai")]
     fn place(&self) -> String {
         match &self.entity {
             Some(entity) => entity.clone(),
@@ -615,29 +550,6 @@ fn scene_asset_references(
             }
         })
         .collect())
-}
-
-/// What a provider can make for a field of `kinds`: a model, a texture or
-/// a sound, the first the field takes.
-#[cfg(feature = "ai")]
-fn generated_kind(
-    kinds: &[flint_core::project::AssetKind],
-) -> Option<flint_asset_gen::provider::AssetKind> {
-    use flint_asset_gen::provider::AssetKind as Made;
-    use flint_core::project::AssetKind as Kind;
-    kinds.iter().find_map(|kind| match kind {
-        Kind::Models => Some(Made::Model),
-        Kind::Textures | Kind::ParticleTextures | Kind::Sprites => Some(Made::Texture),
-        Kind::Audio => Some(Made::Audio),
-        _ => None,
-    })
-}
-
-/// `files`, or `models or specs`.
-#[cfg(feature = "ai")]
-fn kinds_label(kinds: &[flint_core::project::AssetKind]) -> String {
-    let labels: Vec<&str> = kinds.iter().map(|k| k.label()).collect();
-    labels.join(" or ")
 }
 
 fn guess_asset_type(ext: &str) -> AssetType {

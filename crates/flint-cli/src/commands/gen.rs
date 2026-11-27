@@ -17,7 +17,7 @@ pub fn run(args: GenArgs) -> Result<()> {
 
 /// [`run`] against `points`, for a test's own.
 pub(crate) fn run_in(args: GenArgs, points: &Points) -> Result<()> {
-    super::gen_args::refuse_ai(&args)?;
+    super::gen_args::refuse_unserved(&args, points)?;
     if args
         .spec
         .as_deref()

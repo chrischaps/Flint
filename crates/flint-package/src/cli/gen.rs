@@ -283,6 +283,13 @@ fn parse_format(s: &str) -> std::result::Result<String, String> {
     }
 }
 
+/// The kernel's model still (`flint edit model.glb --render` without the
+/// file): a model auto-framed on the default camera at `width` x
+/// `height`. A point flint-cli registers in every build, so a package's
+/// step of `gen` can show a model it made (the ai package's
+/// `--ai-refine` previews, #1572).
+pub struct ModelStill(pub fn(&std::path::Path, u32, u32) -> anyhow::Result<image::RgbaImage>);
+
 /// A dollar amount: `0.50` or `$0.50`, not negative.
 pub fn parse_usd(s: &str) -> std::result::Result<f64, String> {
     let v: f64 = s

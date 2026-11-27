@@ -389,6 +389,23 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
 
     // What a manifest lists that the tree lacks
     let modules: BTreeSet<&str> = inv.script_modules.iter().map(String::as_str).collect();
+    // A flag line's flag on its command, in the stock tree (#1572): one a
+    // package adds there, or one the command declares for a package
+    let tree = crate::stock_command();
+    let has_flag = |line: &str| {
+        let Some(line) = flint_core::package::FlagLine::parse(line) else {
+            return false;
+        };
+        let Some(command) = line
+            .command
+            .iter()
+            .try_fold(&tree, |at, word| at.find_subcommand(word))
+        else {
+            return false;
+        };
+        let long = line.flag.trim_start_matches("--");
+        command.get_arguments().any(|a| a.get_long() == Some(long))
+    };
     for p in &packages.packages {
         let file = flint_core::project::shown(&p.file);
         for kind in Kind::ALL {
@@ -396,13 +413,14 @@ pub fn problems(packages: &Packages, inv: &Inventory) -> Vec<String> {
                 Kind::Crate => &|i| crate_names.contains(i),
                 Kind::ScriptModule => &|i| modules.contains(i),
                 Kind::Command => &|i| paths.contains(i),
+                Kind::Flag => &has_flag,
                 _ => &|i| declared.get(&kind).is_some_and(|s| s.contains(i)),
             };
             for item in p.provides.of(kind) {
                 // The script API is this build's: a package the binary was
                 // built without has no modules in it to find (#1333), nor
                 // commands, once it registers them itself (#1553)
-                let unbuilt = matches!(kind, Kind::ScriptModule | Kind::Command)
+                let unbuilt = matches!(kind, Kind::ScriptModule | Kind::Command | Kind::Flag)
                     && !p
                         .features
                         .iter()

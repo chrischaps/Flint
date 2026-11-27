@@ -293,11 +293,6 @@ pub(super) fn render(
     if let Some(grid) = grid.as_ref().filter(|g| g.wooze_knob().is_some()) {
         check_wooze_sweep(args, grid)?;
     }
-    // The refine asks a model through the cost meter: the ai package's (#1333)
-    #[cfg(not(feature = "ai"))]
-    if args.refine.ai_refine {
-        return Err(super::absent::missing("flint render --ai-refine", "ai"));
-    }
     if let Some(dt) = args.seq.frame_dt {
         if !(dt.is_finite() && dt > 0.0) {
             anyhow::bail!("--frame-dt must be a positive number of seconds");
@@ -340,7 +335,7 @@ pub(super) fn render(
             (args.width.unwrap_or(w), args.height.unwrap_or(h))
         }
         // A refine's rounds are sheet cells too
-        None if args.refine.ai_refine => {
+        None if refines(args).is_some() => {
             let (w, h) = super::sweep::CELL_SIZE;
             (args.width.unwrap_or(w), args.height.unwrap_or(h))
         }
@@ -569,8 +564,18 @@ fn draw_pixels(
     pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")
 }
 
+/// The package that refines a look (`--ai-refine`, the ai package's since
+/// #1572), when this run has one and the line asks for a refine: its flags
+/// are in `render`'s slot only when the package is.
+fn refines(args: &RenderArgs) -> Option<&'static dyn flint_package::cli::look::LookRefine> {
+    let point = crate::points().get::<flint_package::cli::look::LookRefines>()?;
+    point
+        .0
+        .asked(args.packages.matches())
+        .then(|| point.0.as_ref())
+}
+
 /// [`draw_pixels`] as an image.
-#[cfg(feature = "ai")]
 fn draw_frame(
     ctx: &HeadlessContext,
     renderer: &mut SceneRenderer,

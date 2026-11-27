@@ -779,8 +779,8 @@ fn auto_fit_camera(bounds: &MeshBounds, camera: &mut Camera) {
 
 /// `flint edit model.glb --render` without the file: the model, auto-framed
 /// on the default camera with no grid, at `width` x `height`. The refine
-/// previewer (`flint gen --refine`) shows Claude meshes through this.
-#[cfg(feature = "ai")]
+/// previewer (`flint gen --refine`) shows Claude meshes through this: the
+/// kernel's `ModelStill` point (#1572).
 pub fn render_model(model: &Path, width: u32, height: u32) -> Result<image::RgbaImage> {
     let options = HostOptions {
         width,
