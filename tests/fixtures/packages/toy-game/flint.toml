@@ -1,0 +1,9 @@
+# The game that plays the toy package (#1560): its scene uses the toy's
+# component, and its playtest the fixed-step hook and the `toy` module. The
+# engine's schemas bring every package's (#1332), so with `packages/toy/` in
+# the tree the toy's `toy_spring` is declared; with no `[packages]` table
+# every package is in.
+[project]
+id = "toy-game"
+schemas = ["../../../../schemas"]
+scene = "scenes/spring.scene.toml"

@@ -1,0 +1,16 @@
+# A toy spring pulls `bob` (1 kg, no gravity, from x = 1 m) towards the
+# origin at 4 N/m, once a fixed physics step: a period of pi seconds,
+# x = cos 2t. The toy package's scene (#1560).
+[scene]
+name = "Toy spring"
+
+[entities.bob.transform]
+position = [1.0, 0.0, 0.0]
+
+[entities.bob.rigidbody]
+body_type = "dynamic"
+gravity_scale = 0.0
+
+[entities.bob.toy_spring]
+k = 4.0
+anchor = [0.0, 0.0, 0.0]

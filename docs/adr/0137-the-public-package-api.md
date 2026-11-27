@@ -885,6 +885,56 @@ now it has none.
   when no other panel is open (the rule F3 and a subsystem's keys follow).
   Before, it caught it even with F3's panels open.
 
+## As built: the gate in CI (#1560)
+
+Decision 5 was taken as recommended, with the gate restated: a package is
+added by creating `packages/<name>/` and running `scripts/package-sync.py`.
+CI holds both halves.
+
+- **`scripts/package-sync.py` writes the generated blocks** of section 5,
+  one in each launcher's `Cargo.toml`, between `# package-sync:features`
+  (or `:dependencies`) and `# package-sync:end`. The blocks hold
+  `packages`, every package feature the crate has, which both crates'
+  `default` turns on. It is the `stock` of section 5, under the name
+  flint-cli already had, so `--features packages` and `flint build`'s
+  options read as before. They also hold, for a package whose feature
+  isn't written by hand, its feature (flint-player: `dep:<crate>`,
+  `<crate>?/player`; flint-cli: `flint-player/<name>` when it has a player
+  part, `dep:<crate>`, `<crate>?/cli`; each after its `[requires]`' features)
+  and an optional `path` dependency on `packages/<name>/crates/<crate>`.
+  Not every package is generated. The six moved packages keep their
+  hand-written features, which carry what no manifest states yet: device
+  features (`flint-music?/device`), `[with.debug-hud]` lines on another
+  package's feature, the ai flags' extra crates (#1572), and the CLI's
+  debug-hud in every build (#1583). The script lists them in `packages`
+  and refuses to generate a package that would need such a line, naming
+  the hand edit. Moving the six into the block is #1568's remaining work.
+  `--check` is in `scripts/ci.sh` and names the command.
+- **No package name in the launchers' source** is
+  `scripts/package-names-check.py`, in `scripts/ci.sh` (so CI's rustfmt job
+  runs it). A package name means two things in code. One is a
+  `feature = "<f>"` of any manifest's `[build] features`, anywhere in
+  `crates/flint-player/src` or `crates/flint-cli/src`, test code included.
+  The other is a path through a package's crate outside test code. Tests
+  keep their dev-dependencies (#1558, #1559). A string such as
+  `registry.has("living")` builds without the package, so it is not a
+  name in this sense. The CLI's two leftovers are recorded exceptions,
+  each failing once it matches nothing: the ai flags (#1572) and the
+  debug-hud widgets (#1583). flint-player has none.
+- **The toy package** (`tests/fixtures/packages/toy`, with a game in
+  `toy-game/`) is shaped like `vehicle`. It has a component (`toy_spring`),
+  a `fixed_update` that pulls the body before Rapier's step, a script
+  module (`toy_steps()`, `toy_springs()`) and a command
+  (`flint toy springs`). `scripts/package-toy.py`, in CI's `package
+  done-when` job, copies it in, syncs, and holds every change outside the
+  folder to the generated blocks and `Cargo.lock`. It then builds the stock
+  binaries, asks the built flint (`package list --built`, `check`,
+  `playtest`: 120 steps, bob swinging to x = -1.000 m, then `toy springs`),
+  deletes the folder, syncs, builds again, and holds both `Cargo.toml`
+  files and the lock to their bytes before. A toy calling a Package API
+  method that isn't there failed the build. A toy with a `[with.*]` part
+  failed the sync.
+
 ## Measured
 
 - **Cargo globs** (cargo 1.99.1, a scratch workspace, 2026-11-25): `members`

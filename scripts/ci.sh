@@ -26,9 +26,14 @@
 #                          each package alone, all and none) and the epic's
 #                          done-when on a `flint init` project that `flint
 #                          build` builds (scripts/package-done-when.py, CI's
-#                          package done-when job, #1525). Minutes, and five
-#                          builds (the third is the debug `flint` most
-#                          worktrees have already).
+#                          package done-when job, #1525), then the toy
+#                          package added by its folder alone and taken out
+#                          again (scripts/package-toy.py, the same job,
+#                          #1560). Minutes, and six builds (the third is the
+#                          debug `flint` most worktrees have already).
+#   Both run the package gate's quick half: the generated Cargo blocks match
+#   the manifests (scripts/package-sync.py --check) and no package is named
+#   in the launchers' source (scripts/package-names-check.py, #1560).
 #
 # Formatting is rustfmt's defaults at edition 2021 (rustfmt.toml). Fix a failure
 # with `cargo fmt --all`; one file alone is `rustfmt <file>`.
@@ -117,6 +122,14 @@ py=python3
 echo "ci: scripts/claude-md-check.py"
 "$py" scripts/claude-md-check.py
 
+# Epic #1548's gate (#1560): the launchers' generated Cargo blocks match the
+# package manifests, and neither launcher's source names a package (a
+# `feature = "<package>"` gate, or a path through a package's crate)
+echo "ci: scripts/package-sync.py --check"
+"$py" scripts/package-sync.py --check
+echo "ci: scripts/package-names-check.py"
+"$py" scripts/package-names-check.py
+
 # The book's crate table (#764), from every Cargo.toml: a dependency added
 # without `cargo run -p flint-arch-analyzer -- --book` kept CI's crate table
 # job red on main from #853 to #969, failing every PR in between
@@ -146,6 +159,8 @@ if [ "${1:-}" = "--full" ]; then
     bash scripts/package-check.sh --build
     echo "ci: scripts/package-done-when.py"
     "$py" scripts/package-done-when.py
+    echo "ci: scripts/package-toy.py"
+    "$py" scripts/package-toy.py
 fi
 
 echo "ci: ok"

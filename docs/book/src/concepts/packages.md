@@ -74,6 +74,22 @@ Say a game wants living props. Its scene gains a `living_prop` entity, and then:
 
 Leaving a package out is the same in reverse. Remove its line, or set a standard package to `false`. `flint check` names every scene and script that still uses it, and `flint build` makes binaries without it.
 
+## A package is a folder
+
+An engine package lives in `packages/<name>/`: its `package.toml`, its crates under `crates/`, and its schemas under `schemas/`, laid out as the engine's are. Nothing outside that folder names it. The stock `flint-player` and `flint` read the manifests when they build. A manifest's `[rust]` table names the crate whose player part (`player::PACKAGE`) and commands (`cli::extensions()`) the launchers list, and the engine's schema folder brings every package's `schemas/` with it.
+
+Cargo can't read a manifest, so one script writes the lines it needs. `scripts/package-sync.py` writes a generated block in `crates/flint-player/Cargo.toml` and `crates/flint-cli/Cargo.toml`: the `packages` feature (every package, which both binaries' defaults turn on), and for a new package its feature and an optional dependency on its crate. Adding a package is two steps:
+
+```bash
+# 1. create packages/<name>/ (package.toml, crates/, schemas/)
+# 2. write the generated lines; the next cargo command adds the crate to Cargo.lock
+python3 scripts/package-sync.py
+```
+
+Removing one is deleting the folder and running the script again. Nothing else is edited by hand: the player's and the CLI's source name no package (`scripts/package-names-check.py` holds that), and `scripts/ci.sh` fails on a stale block with `package-sync.py --check`, naming the command. The six packages above keep their features written by hand in the two `Cargo.toml` files for now, because they carry device features and flags that no manifest describes yet. The script leaves those lines alone.
+
+CI holds this on every pull request with a toy package (`tests/fixtures/packages/toy`). It has one component, a spring pulled in each fixed physics step, its own script module and a command, which is what a vehicle package needs. `scripts/package-toy.py` copies it into `packages/toy/`, runs the script, builds the stock binaries and plays a scene that uses it. Then it deletes the folder, builds again, and checks that the checkout is back byte for byte. A package that would need an edit anywhere else fails that build.
+
 ## Where the commands are
 
 | Command | What it answers |

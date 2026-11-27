@@ -1,0 +1,32 @@
+# The toy package (#1560): Phase 2a's gate (epic #1548), a package added by
+# creating `packages/toy/` and removed by deleting it. This folder is its
+# frozen copy; `scripts/package-toy.py` (CI's `package done-when` job)
+# copies it to `packages/toy/`, runs `scripts/package-sync.py`, builds the
+# stock `flint-player` and `flint`, plays `../toy-game` and then takes it out
+# again. Nothing outside the folder is edited by hand.
+#
+# What it brings is what `vehicle` (ADR 0136 decision 7) needs of the
+# Package API: a component (`toy_spring`), a hand in each fixed physics step
+# (the spring pulls its body once a step, before Rapier integrates), its own
+# script module (`toy`: `toy_steps()`, `toy_springs()`) and a command
+# (`flint toy springs <scene>`).
+
+[package]
+name = "toy"
+version = "0.1.0"
+tier = "feature"
+summary = "A spring on a body, pulled each fixed physics step: the Package API's gate"
+engine = "^0.1"
+
+[build]
+features = ["toy"]
+
+[rust]
+player = "flint-toy"
+cli = "flint-toy"
+
+[provides]
+crates = ["flint-toy"]
+components = ["toy_spring"]
+script_modules = ["toy"]
+commands = ["toy springs"]
