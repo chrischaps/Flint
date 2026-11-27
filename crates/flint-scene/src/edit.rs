@@ -62,11 +62,23 @@ impl fmt::Display for SceneScalar {
 /// One value to set, or with `None` to take out, in a table of a scene file:
 /// `[living.species.grove_thorn]`'s `echoes.count`, say. `table` is the header,
 /// and `key` the dotted path inside it, through inline tables.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// How the table sits in the file is the edit's to say, since the table is
+/// its package's, not the kernel's (#1591): `after` and `drops_empty`. An
+/// edit that says neither (`..Default::default()`) puts a new top-level table
+/// after `[scene]`'s and leaves an emptied one in place.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SceneEdit {
     pub table: Vec<String>,
     pub key: Vec<String>,
     pub value: Option<SceneScalar>,
+    /// Where `table` goes when the file has no top-level `[table[0]]` yet:
+    /// after the first of these top-level tables the file has, their own
+    /// tables included, else after `[scene]`'s. Living's go after `[wooze]`.
+    pub after: Vec<String>,
+    /// Whether `table` itself goes when taking the value out leaves it empty:
+    /// a table that says nothing empty, as one species' does.
+    pub drops_empty: bool,
 }
 
 impl SceneEdit {
