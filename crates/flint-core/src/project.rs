@@ -851,7 +851,12 @@ pub fn package_schema_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
     if !vfs::is_file(&kernel) {
         return Vec::new();
     }
-    let mut found: Vec<(String, PathBuf)> = vfs::read_dir(&packages)
+    schemas_in(&packages)
+}
+
+/// Each package's schema directory in a package folder, by name.
+fn schemas_in(packages: &Path) -> Vec<(String, PathBuf)> {
+    let mut found: Vec<(String, PathBuf)> = vfs::read_dir(packages)
         .unwrap_or_default()
         .into_iter()
         .filter_map(|package| {
@@ -862,6 +867,21 @@ pub fn package_schema_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
         .collect();
     found.sort();
     found
+}
+
+/// A game's own package folder (#1562): the `packages/` beside a schema
+/// directory that is no engine's (a game's `schemas`), in a folder with a
+/// `flint.toml`, when it is there. Its packages' schemas follow that
+/// directory as the engine's follow the engine's, and a `[packages]` list
+/// is held to its manifests too.
+pub fn game_packages_beside(dir: &Path) -> Option<PathBuf> {
+    let root = dir.parent()?;
+    let packages = root.join(crate::package::PACKAGES_DIR);
+    (vfs::is_dir(&packages)
+        && vfs::is_file(root.join(MANIFEST_FILE))
+        && !is_engine_packages(&packages)
+        && !is_engine_checkout(root))
+    .then_some(packages)
 }
 
 /// The kernel's package, whose manifest marks an engine tree.
@@ -894,12 +914,14 @@ fn with_packages(
     dirs: Vec<PathBuf>,
     list: Option<&crate::package::PackageList>,
 ) -> Result<(Vec<PathBuf>, Option<crate::package::InUse>), SchemaDirsError> {
+    let game = dirs.iter().find_map(|d| game_packages_beside(d));
     let in_use = match list {
         None => None,
         Some(list) => match dirs.iter().find_map(|d| engine_packages_of(d)) {
             None => None,
             Some(packages_dir) => {
-                let packages = crate::package::Packages::read(&packages_dir);
+                let packages =
+                    crate::package::Packages::read_with_game(&packages_dir, game.as_deref());
                 Some(
                     crate::package::InUse::resolve(list, &packages).map_err(|problems| {
                         SchemaDirsError::Packages {
@@ -922,7 +944,10 @@ fn with_packages(
         listed.push(same_dir_key(dir));
     }
     for dir in dirs {
-        let brings = package_schema_dirs(&dir);
+        let mut brings = package_schema_dirs(&dir);
+        if let Some(own) = game_packages_beside(&dir).filter(|own| Some(own) == game.as_ref()) {
+            brings.extend(schemas_in(&own));
+        }
         out.push(dir);
         for (name, package) in brings {
             if !wanted(&name) {

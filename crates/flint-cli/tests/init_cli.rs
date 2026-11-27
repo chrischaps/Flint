@@ -905,3 +905,136 @@ fn a_directory_with_files_is_refused_and_force_overwrites_nothing() {
     assert!(!o.status.success());
     assert!(!dir.join("bad{name").exists());
 }
+
+// ── #1562: a package of the game's own ───────────────────────────────
+
+/// A blank game with `flint init --package toy`, its box a spinner.
+fn game_with_toy(dir: &Path) -> PathBuf {
+    let (game, _) = init(dir, &["--template", "blank"]);
+    let said = ok(&flint(&game, &["init", "--package", "toy"]));
+    assert!(
+        said.contains("added `toy = \"*\"` under [packages]"),
+        "{said}"
+    );
+    let scene = game.join(SCENE);
+    let text = std::fs::read_to_string(&scene).unwrap().replace(
+        "[entities.box.rigidbody]",
+        "[entities.box.toy_spin]\nspeed = 90.0\n[entities.box.rigidbody]",
+    );
+    std::fs::write(&scene, text).unwrap();
+    game
+}
+
+fn json_of(dir: &Path, args: &[&str]) -> serde_json::Value {
+    serde_json::from_str(&stdout(&flint(dir, args))).expect("one JSON document")
+}
+
+#[test]
+fn a_game_package_is_planned_into_a_launcher_and_named_when_unlisted() {
+    let game = game_with_toy(&scratch("package_toy"));
+    let toy = game.join("packages/toy");
+    for file in ["package.toml", "schemas/components/toy_spin.toml"] {
+        assert!(toy.join(file).is_file(), "{file}");
+    }
+    let plan = json_of(&game, &["--json", "build", "--dry-run"]);
+    assert_eq!(
+        plan["launcher"]["game_packages"],
+        serde_json::json!(["toy"])
+    );
+    let argv: Vec<&str> = plan["argv"][0]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|w| w.as_str())
+        .collect();
+    assert_eq!(argv[..4], ["cargo", "build", "-p", "flint-launch-game"]);
+
+    // Unlisted, the scene's spinner names the line to add
+    let manifest = game.join("flint.toml");
+    let listed = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, listed.replace("toy = \"*\"\n", "")).unwrap();
+    let check = json_of(&game, &["--json", "check", SCENE]);
+    let named = check["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["code"] == "unlisted-package")
+        .unwrap_or_else(|| panic!("{check:#}"));
+    assert_eq!(
+        named["hint"],
+        "add `toy = \"*\"` under [packages] in flint.toml"
+    );
+
+    // Its folder gone too, the stock launcher builds the game again
+    std::fs::remove_dir_all(&toy).unwrap();
+    let plan = json_of(&game, &["--json", "build", "--dry-run"]);
+    assert_eq!(plan["launcher"]["crate"], "crates/flint-player", "{plan:#}");
+}
+
+/// Removes the launcher a test's build wrote into the engine, whatever
+/// the test did: a member naming a crate that is gone fails the workspace.
+struct Launcher(PathBuf);
+
+impl Drop for Launcher {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// #1562's done-when, built for real into a target folder of its own (so
+/// the `flint` the other tests run is never replaced): the game's flint
+/// runs the package's command and checks the scene clean, its playtest
+/// hears the package's script function, and with the folder and its line
+/// deleted the game builds again. Minutes; run it with `--ignored`.
+#[test]
+#[ignore = "a real flint build into its own target folder"]
+fn a_game_package_builds_into_the_games_flint_and_player() {
+    let game = game_with_toy(&scratch("package_build"));
+    let _launcher = Launcher(repo().join("launch/game"));
+    let scene = game.join(SCENE);
+    let text = std::fs::read_to_string(&scene).unwrap().replace(
+        "[entities.box.toy_spin]",
+        "[entities.box.script]\nsource = \"spin.rhai\"\n[entities.box.toy_spin]",
+    );
+    std::fs::write(&scene, text).unwrap();
+    std::fs::write(
+        game.join("scripts/spin.rhai"),
+        "fn on_update() {\n    if total_time() > 0.5 {\n        \
+         test_assert(toy_spinners() == 1, \"one spinner\");\n        test_pass();\n    }\n}\n",
+    )
+    .unwrap();
+    let target = scratch("package_build_target");
+    let build = || {
+        let o = Command::new(FLINT)
+            .args(["build"])
+            .current_dir(&game)
+            .env("CARGO_TARGET_DIR", &target)
+            .output()
+            .unwrap();
+        ok(&o)
+    };
+    build();
+    let exe = format!("flint{}", std::env::consts::EXE_SUFFIX);
+    let built = target.join("debug").join(exe);
+    let run = |args: &[&str]| {
+        let o = Command::new(&built)
+            .args(args)
+            .current_dir(&game)
+            .output()
+            .unwrap();
+        ok(&o)
+    };
+    assert!(run(&["toy", "spins", SCENE]).contains("box: 90 degrees a second"));
+    run(&["check"]);
+    assert!(run(&["playtest", SCENE]).starts_with("PASS"));
+
+    let manifest = game.join("flint.toml");
+    let listed = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, listed.replace("toy = \"*\"\n", "")).unwrap();
+    std::fs::remove_dir_all(game.join("packages/toy")).unwrap();
+    build();
+    assert!(
+        !repo().join("launch/game").exists(),
+        "the old launcher is gone"
+    );
+}

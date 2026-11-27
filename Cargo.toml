@@ -26,6 +26,9 @@ members = [
     "crates/flint-terrain",
     "crates/flint-cli",
     "packages/*/crates/*",
+    # A game's launcher, which `flint build` writes for a game package with
+    # Rust (#1562, ADR 0137 decision 6): gitignored, and in no default build
+    "launch/*",
     "crates/flint-android",
     "tools/arch-analyzer",
 ]

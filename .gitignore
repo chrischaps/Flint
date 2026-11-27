@@ -75,6 +75,10 @@ arch-data.json
 # The examples' repository, cloned into the checkout (#984): every
 # `flint-examples/<path>` in the tree is a path once it's here
 /flint-examples/
+# A game's launcher, written by `flint build` (#1562); the README keeps the
+# folder the members glob names
+/launch/*
+!/launch/README.md
 
 # Procgen outputs kept between runs (#181); rebuilt on demand
 **/.flint/procgen-cache/

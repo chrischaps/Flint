@@ -35,6 +35,12 @@
 //! line: a launcher dependency taking its defaults (every package) or
 //! pinning one in `features`, or a default feature of the game's that does.
 //!
+//! **A game's own packages** (#1562): a package in the project's
+//! `packages/` (`tier = "game"`) that the list lets in and that has Rust
+//! (`[rust] player` or `cli`) is built into a launcher crate `flint build`
+//! writes, `<engine>/launch/<id>/`, in place of the stock binaries' run
+//! (`build_launch.rs`).
+//!
 //! **A binary that is running.** Windows refuses to overwrite a running
 //! `.exe` (`flint.exe` doing this build, a `flint-player.exe` the game is
 //! open in), but lets it be renamed in its folder. So before cargo runs,
@@ -57,6 +63,9 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+
+#[path = "build_launch.rs"]
+mod launch;
 
 /// The two binaries, by package and target name.
 const PLAYER: &str = "flint-player";
@@ -151,6 +160,12 @@ struct Plan {
     runs: Vec<Run>,
     /// Why the player builds in a run of its own, when it does.
     split: Option<String>,
+    /// The launcher written for the game's own packages, when it has any
+    /// with Rust (#1562).
+    launch: Option<launch::Launch>,
+    /// Where that launcher goes: a build with none takes away one an
+    /// earlier build left there.
+    launch_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -168,6 +183,7 @@ impl Features {
 pub fn run(args: BuildArgs) -> Result<()> {
     let project = Project::current()?;
     let (engine, engine_from) = find_engine(&project, args.engine_path.as_deref())?;
+    launch::remove_broken(&launch::dir_for(&project, &engine))?;
     let plan = plan(&project, engine, engine_from, &args)?;
     if args.dry_run {
         return output::emit(&answer(&plan, &Outcome::DryRun));
@@ -210,7 +226,10 @@ fn is_engine_workspace(dir: &Path) -> bool {
 }
 
 /// The engine workspace for `project`, and how it was found.
-fn find_engine(project: &Project, flag: Option<&Path>) -> Result<(PathBuf, &'static str)> {
+pub(crate) fn find_engine(
+    project: &Project,
+    flag: Option<&Path>,
+) -> Result<(PathBuf, &'static str)> {
     if let Some(dir) = flag {
         let dir = normal(dir);
         if !is_engine_workspace(&dir) {
@@ -257,7 +276,7 @@ fn built_from() -> PathBuf {
 }
 
 /// `path` absolute, with `.` and `..` folded away by its words alone.
-fn normal(path: &Path) -> PathBuf {
+pub(crate) fn normal(path: &Path) -> PathBuf {
     let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let mut out = PathBuf::new();
     for c in path.components() {
@@ -280,7 +299,12 @@ fn plan(
     engine_from: &'static str,
     args: &BuildArgs,
 ) -> Result<Plan> {
-    let packages = Packages::read(&engine.join(flint_core::package::PACKAGES_DIR));
+    // The engine's packages, then the game's own (#1562)
+    let game_packages = project::game_packages_beside(&project.root.join("schemas"));
+    let packages = Packages::read_with_game(
+        &engine.join(flint_core::package::PACKAGES_DIR),
+        game_packages.as_deref(),
+    );
     if packages.failed() {
         let lines: Vec<String> = packages.problems.iter().map(|d| d.one_line()).collect();
         bail!(
@@ -342,6 +366,22 @@ fn plan(
     }
     player.options = build_options(&player_toml, &package_features);
     cli.options = build_options(&cli_toml, &package_features);
+    // The game's own packages with Rust, which a generated launcher lists
+    let own: Vec<&flint_core::package::Package> = included
+        .iter()
+        .filter_map(|i| packages.get(&i.name))
+        .filter(|p| p.tier == Tier::Game && (p.player.is_some() || p.cli.is_some()))
+        .collect();
+    launcher.extend(
+        own.iter()
+            .filter(|p| p.player.is_some())
+            .map(|p| p.name.clone()),
+    );
+    let launch = if own.is_empty() {
+        None
+    } else {
+        Some(launch::plan(project, &engine, &own, &player, &cli)?)
+    };
 
     // What flint-cli turns on in flint-player, which a shared run gives
     // the player too
@@ -401,7 +441,22 @@ fn plan(
     };
     let one = |names: &[&str]| -> Vec<String> { names.iter().map(|n| n.to_string()).collect() };
     let mut runs = Vec::new();
-    if split.is_some() {
+    if let Some(launch) = &launch {
+        if let Some(why) = &split {
+            bail!("a game's launcher builds the player and flint in one run, and {why}");
+        }
+        let mut args = vec!["build".to_string(), "-p".into(), launch.krate.clone()];
+        for bin in [PLAYER, CLI_BIN] {
+            args.push("--bin".into());
+            args.push(bin.into());
+        }
+        tail(&mut args);
+        runs.push(Run {
+            args,
+            dir: engine.clone(),
+            bins: bins_in(&engine_out, &[PLAYER, CLI_BIN]),
+        });
+    } else if split.is_some() {
         runs.push(Run {
             args: words(&[(PLAYER, one(&[PLAYER]))], qualified(PLAYER, &player)),
             dir: engine.clone(),
@@ -442,6 +497,7 @@ fn plan(
 
     Ok(Plan {
         project: project.root.clone(),
+        launch_dir: launch::dir_for(project, &engine),
         engine,
         engine_from,
         manifest: in_use.map(|u| u.manifest),
@@ -453,6 +509,7 @@ fn plan(
         games,
         runs,
         split,
+        launch,
     })
 }
 
@@ -818,6 +875,26 @@ impl Plan {
 /// be replaced. The set-aside copies that are still there after, deleted
 /// where they can be.
 fn build(plan: &Plan) -> Result<Vec<PathBuf>> {
+    let Some(launch) = &plan.launch else {
+        launch::remove_stale(&plan.launch_dir)?;
+        return build_runs(plan);
+    };
+    launch::write(launch)?;
+    // The launcher joins the engine's lock while cargo runs; the lock goes
+    // back as it was, so a game's subtree stays clean (ADR 0137 decision 6)
+    let lock = plan.engine.join("Cargo.lock");
+    let before = std::fs::read(&lock).ok();
+    let built = build_runs(plan);
+    if let Some(before) = before {
+        if std::fs::read(&lock).ok().as_ref() != Some(&before) {
+            std::fs::write(&lock, before)
+                .with_context(|| format!("putting {} back", project::shown(&lock)))?;
+        }
+    }
+    built
+}
+
+fn build_runs(plan: &Plan) -> Result<Vec<PathBuf>> {
     let mut kept = Vec::new();
     for run in &plan.runs {
         let aside: Vec<(PathBuf, PathBuf)> = if cfg!(windows) {
@@ -936,10 +1013,18 @@ fn plan_text(plan: &Plan) -> String {
     if !plan.left_out.is_empty() {
         out.push_str(&format!("left out  {}\n", plan.left_out.join(", ")));
     }
-    out.push_str(&format!(
-        "launcher  {PLAYER}, its stock list from these features: {}\n",
-        plan.launcher.join(", ")
-    ));
+    match &plan.launch {
+        Some(launch) => out.push_str(&format!(
+            "launcher  {} ({}, written by this build): {PLAYER} and {CLI_BIN} with {}\n",
+            launch.krate,
+            project::shown(&launch.dir),
+            plan.launcher.join(", ")
+        )),
+        None => out.push_str(&format!(
+            "launcher  {PLAYER}, its stock list from these features: {}\n",
+            plan.launcher.join(", ")
+        )),
+    }
     out.push_str(&format!("player    {}\n", features_line(&plan.player)));
     out.push_str(&format!("flint     {}\n", features_line(&plan.cli)));
     for game in &plan.games {
@@ -1022,10 +1107,20 @@ fn answer(plan: &Plan, outcome: &Outcome) -> Answer {
             "why": i.why,
         })).collect::<Vec<_>>(),
         "left_out": plan.left_out,
-        "launcher": {
-            "binary": PLAYER,
-            "crate": format!("crates/{PLAYER}"),
-            "packages": plan.launcher,
+        "launcher": match &plan.launch {
+            Some(launch) => json!({
+                "binary": PLAYER,
+                "crate": launch.krate,
+                "dir": project::shown(&launch.dir),
+                "generated": true,
+                "game_packages": launch.packages,
+                "packages": plan.launcher,
+            }),
+            None => json!({
+                "binary": PLAYER,
+                "crate": format!("crates/{PLAYER}"),
+                "packages": plan.launcher,
+            }),
         },
         "features": {
             PLAYER: { "packages": plan.player.packages, "options": plan.player.options },

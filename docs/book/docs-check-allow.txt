@@ -21,6 +21,10 @@ guides/publishing-to-the-web.md: dist/web dist/ascii_entities.flintpack
 # A command a plan names before it exists (#714)
 crates/flint-player/CLAUDE.md: playtest
 
+# The command a game package's crate adds (#1562): only the flint that
+# `flint build` makes for the game has it
+guides/building-a-game-project.md: toy
+
 # Package names that stand for any package (#1337): placeholders in the
 # notes (`x = "*"`, `name = "*"`, `InUse::on`), and the misspelling the
 # chapter shows `bad-manifest` refusing

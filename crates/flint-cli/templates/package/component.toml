@@ -1,0 +1,7 @@
+# The `{{package}}` package's component. Its schemas load after the game's
+# own, and only while flint.toml lets the package in.
+[component.{{snake}}_spin]
+description = "Turns this entity about its up axis (the {{package}} package)"
+
+[component.{{snake}}_spin.fields]
+speed = { type = "f32", default = 45.0, description = "Degrees a second" }

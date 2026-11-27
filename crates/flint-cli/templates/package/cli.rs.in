@@ -1,0 +1,49 @@
+//! The `{{package}}` package's command: `flint {{package}} spins <scene>`,
+//! each `{{snake}}_spin` a scene file declares, read from the file as written.
+
+use crate::SPIN;
+use flint_package::cli::{emit, subcommands, Answer, CliExtension};
+use std::path::PathBuf;
+
+#[derive(clap::Subcommand)]
+enum Top {
+    /// The {{package}} package: entities that turn about their up axis
+    #[command(name = "{{package}}", subcommand)]
+    Package(Commands),
+}
+
+#[derive(clap::Subcommand)]
+enum Commands {
+    /// List the spinners a scene file declares
+    Spins {
+        /// The scene file
+        scene: PathBuf,
+    },
+}
+
+/// The package's commands, as the game's flint lists them.
+pub fn extensions() -> Vec<Box<dyn CliExtension>> {
+    vec![subcommands(|Top::Package(command)| run(command))]
+}
+
+fn run(command: Commands) -> anyhow::Result<()> {
+    let Commands::Spins { scene } = command;
+    let table: toml::Table = std::fs::read_to_string(&scene)?.parse()?;
+    let mut lines = vec![];
+    let mut found = vec![];
+    let entities = table.get("entities").and_then(|e| e.as_table());
+    for (name, entity) in entities.into_iter().flatten() {
+        let Some(spin) = entity.get(SPIN) else {
+            continue;
+        };
+        let speed = match spin.get("speed") {
+            Some(toml::Value::Float(s)) => *s,
+            Some(toml::Value::Integer(s)) => *s as f64,
+            _ => 45.0,
+        };
+        lines.push(format!("  {name}: {speed} degrees a second"));
+        found.push(serde_json::json!({ "entity": name, "speed": speed }));
+    }
+    let text = format!("{} spinner(s) in {}\n{}", found.len(), scene.display(), lines.join("\n"));
+    emit(&Answer::new(text, serde_json::json!({ "spinners": found })))
+}

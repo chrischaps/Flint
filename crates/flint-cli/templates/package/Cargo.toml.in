@@ -1,0 +1,22 @@
+[package]
+name = "{{crate}}"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+# What the game's flint-player lists: `player::PACKAGE`
+player = []
+# What the game's flint lists: `cli::extensions()`
+cli = ["dep:clap", "dep:anyhow", "dep:serde_json"]
+
+[dependencies]
+# The Package API (ADR 0137), from the engine flint.toml names. A version
+# here is resolved against the engine's Cargo.lock, so it takes the engine's.
+flint-package = { path = "{{engine_crates}}/flint-package" }
+flint-script = { path = "{{engine_crates}}/flint-script" }
+flint-core = { path = "{{engine_crates}}/flint-core" }
+toml = "0.8"
+clap = { version = "4.5", features = ["derive"], optional = true }
+anyhow = { version = "1.0", optional = true }
+serde_json = { version = "1.0", optional = true }

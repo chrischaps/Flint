@@ -404,18 +404,36 @@ impl Packages {
     /// twice, a name other than its folder's, a requirement naming no
     /// package, more than one kernel, and an item two packages provide.
     pub fn read(dir: &Path) -> Packages {
+        Packages::read_with_game(dir, None)
+    }
+
+    /// [`read`](Self::read) of the engine's folder, then of a game's own
+    /// `packages/` (#1562), whose every package is `tier = "game"`, checked
+    /// against each other as one set.
+    pub fn read_with_game(dir: &Path, game: Option<&Path>) -> Packages {
         let mut out = Packages {
             dir: dir.to_path_buf(),
             ..Packages::default()
         };
+        out.read_folder(dir, false);
+        if let Some(game) = game {
+            out.read_folder(game, true);
+        }
+        out.packages
+            .sort_by(|a, b| (a.tier, &a.name).cmp(&(b.tier, &b.name)));
+        out.problems.extend(across(dir, &out.packages));
+        out
+    }
+
+    fn read_folder(&mut self, dir: &Path, game: bool) {
         let mut folders = match vfs::read_dir(dir) {
             Ok(entries) => entries,
             Err(e) => {
-                out.problems.push(
+                self.problems.push(
                     Diagnostic::error(codes::BAD_PACKAGE, format!("no package folder here: {e}"))
                         .file(dir),
                 );
-                return out;
+                return;
             }
         };
         folders.sort();
@@ -425,14 +443,18 @@ impl Packages {
                 continue;
             }
             match read(&file) {
-                Ok(package) => out.packages.push(package),
-                Err(problems) => out.problems.extend(problems),
+                Ok(p) if game && p.tier != Tier::Game => self.problems.push(
+                    Diagnostic::error(
+                        codes::BAD_PACKAGE,
+                        format!("a game's own package is `tier = \"game\"`, not {}", p.tier),
+                    )
+                    .file(&file)
+                    .field("package.tier"),
+                ),
+                Ok(package) => self.packages.push(package),
+                Err(problems) => self.problems.extend(problems),
             }
         }
-        out.packages
-            .sort_by(|a, b| (a.tier, &a.name).cmp(&(b.tier, &b.name)));
-        out.problems.extend(across(dir, &out.packages));
-        out
     }
 
     pub fn get(&self, name: &str) -> Option<&Package> {

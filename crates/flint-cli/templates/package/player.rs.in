@@ -1,0 +1,116 @@
+//! The `{{package}}` package's player part: what the game's flint-player lists.
+
+use crate::SPIN;
+use flint_core::EntityId;
+use flint_package::{Lasts, Package, Registry, SceneCtx, Stage, StageCtx, Subsystem};
+use flint_script::api::builder::kind::Int;
+use flint_script::api::Module;
+use flint_script::ScriptModule;
+
+/// The `{{package}}` package (`packages/{{package}}/package.toml`).
+pub static PACKAGE: Spin = Spin;
+
+pub struct Spin;
+
+impl Package for Spin {
+    fn name(&self) -> &'static str {
+        "{{package}}"
+    }
+
+    /// Its subsystem's builder and its script module, declared for every
+    /// scene and enabled where a spinner is.
+    fn register(&self, registry: &mut Registry) {
+        registry
+            .scene_subsystem(for_scene)
+            .script_modules(&[&MODULE]);
+    }
+}
+
+/// One spinner: its entity, its speed and the rotation it started at.
+struct Spinner {
+    entity: EntityId,
+    speed: f32,
+    start: [f32; 3],
+}
+
+struct Spinners(Vec<Spinner>);
+
+/// What the module's functions read, set each frame.
+#[derive(Default)]
+struct Heard {
+    spinners: i64,
+}
+
+/// A subsystem for a scene with any `{{snake}}_spin`.
+fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
+    let spinners: Vec<Spinner> = ctx
+        .world
+        .entities_with_component(SPIN)
+        .iter()
+        .map(|&entity| {
+            let r = ctx.world.get_transform(entity).unwrap_or_default().rotation;
+            Spinner {
+                entity,
+                speed: ctx.world.view(entity, SPIN).f32("speed", 45.0),
+                start: [r.x, r.y, r.z],
+            }
+        })
+        .collect();
+    if spinners.is_empty() {
+        return None;
+    }
+    Some(Box::new(Spinners(spinners)))
+}
+
+impl Subsystem for Spinners {
+    fn name(&self) -> &'static str {
+        "{{package}}"
+    }
+
+    fn lasts(&self) -> Lasts {
+        Lasts::Scene
+    }
+
+    fn script_modules(&self) -> &[&'static str] {
+        &["{{snake}}"]
+    }
+
+    /// Before the scripts run: each spinner turned to where the game's
+    /// clock puts it, so a capture at a time draws what the player does.
+    fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
+        if stage != Stage::PreScripts {
+            return;
+        }
+        let seconds = ctx.clock.total_time as f32;
+        for s in &self.0 {
+            let [x, y, z] = s.start;
+            let turned = [x, y + s.speed * seconds, z].map(|d| toml::Value::Float(d.into()));
+            let _ = ctx
+                .world
+                .set_field(s.entity, "transform", "rotation", toml::Value::Array(turned.into()));
+        }
+        ctx.script.set_module_state(Heard {
+            spinners: self.0.len() as i64,
+        });
+    }
+}
+
+struct SpinModule;
+
+static MODULE: SpinModule = SpinModule;
+
+impl ScriptModule for SpinModule {
+    fn name(&self) -> &'static str {
+        "{{snake}}"
+    }
+
+    fn enabled_when(&self) -> &'static str {
+        "the scene has a {{snake}}_spin"
+    }
+
+    fn declare(&self, m: &mut Module<'_>) {
+        m.func("{{snake}}_spinners", "The entities the {{package}} package turns.")
+            .returns(Int, "spinners")
+            .run(|call, ()| call.ctx().module_state.get_mut::<Heard>().spinners);
+    }
+}

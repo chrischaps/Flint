@@ -157,7 +157,7 @@ debug-hud = false   # a standard package: in unless set to false
 
 - **No `[packages]` table: every package**, as before there was one. A project that never writes it changes nothing.
 - **With it:** the kernel, every standard package not set to `false`, every feature package listed, and what those require (`living` brings `procgen`). An empty table is the kernel and the standard packages. `flint init` writes one, empty, in every template.
-- A value is a version requirement (`"*"`, `"^0.1"`), checked for its syntax and kept; nothing is held to it until packages have versions of their own. `false` drops a standard package. A table (`{ version, path }`) is for a game's own packages and package sources, which come later, and is refused until then.
+- A value is a version requirement (`"*"`, `"^0.1"`), checked for its syntax and kept; nothing is held to it until packages have versions of their own. `false` drops a standard package. A game's own packages, in its `packages/` folder, are listed by name the same way ([A game's own packages](#a-games-own-packages)). A table (`{ version, path }`) is for package sources, which come later, and is refused until then.
 
 The list decides what the game has. Only the listed packages' schemas load, so `flint schema` lists no `living_prop` in a game without `living`, and `flint script api` lists none of its script functions (it ends naming what it left out). A scene or script that uses one is an `unlisted-package` error in `flint check`, `flint validate` and `flint script check`, naming the package and the line to add, once a file and item:
 
@@ -245,6 +245,35 @@ cargo build -p lantern-game --bin lantern-game --no-default-features --features 
 ```
 
 The crate's dependency on the player has to leave the choice to `flint build`, so it says `default-features = false` and names no package in its `features` (`audio`, say, is fine). `flint build` refuses before anything builds, and names the line, when the dependency takes the player's default features (which are every package) or pins a package the list leaves out, or when a default feature of the game's own turns one on (`trees = ["flint-player/living"]`). The run reads the game's own Cargo.toml, `[patch]` lines and `build.rs` (the 8 MB stack), and writes into the game's `target/`.
+
+#### A game's own packages
+
+A game can write packages of its own, shaped like the engine's: `packages/<name>/` at the project root, with a manifest that says `tier = "game"`, its schemas and a crate. `flint init --package <name>` writes one into the project you're in, and adds `<name> = "*"` under `[packages]`:
+
+```text
+$ flint init --package toy
+Added the `toy` package, the game's own, in packages/toy:
+  packages/toy/package.toml
+  packages/toy/schemas/components/toy_spin.toml
+  packages/toy/crates/toy-package/Cargo.toml
+  packages/toy/crates/toy-package/src/lib.rs
+  packages/toy/crates/toy-package/src/player.rs
+  packages/toy/crates/toy-package/src/cli.rs
+```
+
+It brings a component (`toy_spin`, which turns an entity about its up axis), a script module (`toy`, with `toy_spinners`), a command (`flint toy spins <scene>`) and the crate that holds them. The crate's `player` part is a `Package` with a scene subsystem, as the engine's packages have, and its `cli` part is a `CliExtension`. Its `Cargo.toml` names the engine's crates by path: from `engine/` in a subtree project, by the engine's own path otherwise. A game package is listed like a feature package: it is in when `[packages]` names it, or when there is no `[packages]` table. Its schemas load after the game's own `schemas/`, so `flint check` names the line to add when a scene uses its component and the list leaves it out.
+
+When a listed game package has Rust (`[rust] player` or `cli` in its manifest), `flint build` writes a launcher crate for the game into the engine, `<engine>/launch/<game id>/`, and builds that in place of the stock binaries. That folder is gitignored and a member of the engine's workspace, so the engine's crates are reused and the engine's `.cargo/config.toml` applies. The launcher's `flint-player` and `flint` are the stock list of the build's features, then each game package. `Cargo.lock` is put back as it was afterwards, so a subtree stays clean:
+
+```text
+launcher  flint-launch-lantern (engine/launch/lantern, written by this build): flint-player and flint with engine, debug-hud, procgen, toy
+
+cargo build -p flint-launch-lantern --bin flint-player --bin flint
+```
+
+The binaries land where the stock ones do. The stock `flint` and `flint-player` can't run the package's code, so with it listed they stop with the `unbuilt-package` error below. To take a package out, delete its folder and its `[packages]` line: the next `flint build` removes the launcher it wrote and builds the stock pair again.
+
+**Which to use.** Write a game package for anything the engine's packages could have been: components and scene subsystems, a hand in each fixed physics step, script modules, commands. A game package gets the same hooks as the engine's, `flint check` knows its components, and leaving it out takes all of it out. Keep a [game binary](#a-games-own-binary) when you need what only an embedder has: your own `main`, window or event-loop setup, or a `PlayerExtension` you already have and don't want to move yet. `PlayerExtension` gets no new hooks; new ones go on `Subsystem` ([ADR 0137](https://github.com/chrischaps/Flint/blob/main/docs/adr/0137-the-public-package-api.md), decision 7). One build doesn't do both yet: a game binary at the project root links the stock packages, not the game's own.
 
 On Windows a running binary can't be overwritten, and the `flint.exe` running the build is one of the two it writes. So before Cargo runs, `flint build` renames each output binary that exists to `<name>.old.exe` beside it. Windows allows that while it runs. A failed build renames it back. A copy still running is deleted the next time that binary starts ([ADR 0136](https://github.com/chrischaps/Flint/blob/main/docs/adr/0136-the-package-model.md), decision 10).
 

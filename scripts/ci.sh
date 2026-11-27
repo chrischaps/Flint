@@ -66,6 +66,8 @@ bad_lints=""
 for m in $members; do
     manifest="$m/Cargo.toml"
     case "$m" in *'*'*) continue ;; esac
+    # A glob's file that is no crate (launch/README.md, #1562)
+    [ -f "$manifest" ] || continue
     if ! tr -d '\r' < "$manifest" | awk '/^\[lints\]/{l=1; next} /^\[/{l=0} l && /^workspace *= *true/{ok=1} END{exit !ok}'; then
         bad_lints="$bad_lints  $manifest: no \`[lints] workspace = true\`"$'\n'
     fi
