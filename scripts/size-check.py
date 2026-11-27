@@ -6,7 +6,10 @@
 
 Every game carries this whole tree as `engine/` (`git subtree add`), so every
 byte here is a byte in every game clone, worktree and CI checkout. It checks
-the files `git ls-files` lists, as they are on disk:
+the files `git ls-files` lists, sized as git stores them (#1599): a text file
+checked out CRLF on Windows is counted without the `\r` git strips on commit
+(an unchanged file is its index blob, a changed one its disk bytes so
+normalized), so every checkout reads what CI's Linux checkout reads:
 
 1. **No binary is tracked twice.** Two files with the same bytes are one
    file: point the second user at the first (a scene names a path as
@@ -83,7 +86,9 @@ AREAS = [
     ("book", ("docs/",), 78 * MB),  # 70.2
     ("tests", ("tests/", "crates/flint-cli/tests/golden/"), 50 * MB),  # 45.7 (#984: the 19.2 MB the fixtures borrowed)
     ("showcase_game", ("showcase_game/",), 18 * MB),  # 16.2 (#984: its own YBot)
-    ("engine", ("",), 23 * MB),  # 16.1; 20.5 at #1303, all source: crates, schemas, styles, scripts, tools
+    # 16.1; 20.5 at #1303 (on a CRLF disk); 23.1 at #1599 as git stores it.
+    # All source: crates, schemas, styles, scripts, tools
+    ("engine", ("",), 25 * MB),
 ]
 
 BINARY = {
@@ -105,6 +110,37 @@ def tracked() -> tuple[list[Path], set[str]]:
     ).stdout.decode("utf-8")
     names = {p for p in out.split("\0") if p}
     return [Path(p) for p in sorted(names) if Path(p).is_file()], names
+
+
+def git_lines(*args: str, stdin: str | None = None) -> list[str]:
+    out = subprocess.run(
+        ["git", *args], input=None if stdin is None else stdin.encode("utf-8"),
+        capture_output=True, check=True,
+    ).stdout.decode("utf-8")
+    return [e for e in out.split("\0" if "-z" in args else "\n") if e]
+
+
+def stored_sizes() -> dict[str, int]:
+    """Each tracked file's size as git stores it (#1599). A file unchanged since
+    it was staged is its index blob's size, which git already knows. A changed
+    one is its size on disk, less one byte a CRLF when git stores it LF
+    (`* text=auto`, which a Windows checkout writes CRLF)."""
+    blobs = {e.split("\t", 1)[1]: e.split()[1] for e in git_lines("ls-files", "-s", "-z")}
+    changed = set(git_lines("diff-files", "--name-only", "-z"))
+    clean = [p for p in blobs if p not in changed]
+    found = git_lines("cat-file", "--batch-check=%(objectsize)", stdin="\n".join(blobs[p] for p in clean))
+    sizes = {p: int(n) for p, n in zip(clean, found)}
+    on_disk = sorted(p for p in changed if Path(p).is_file())
+    # --eol reads the working file, so ask it only of the changed ones
+    eol = git_lines("--literal-pathspecs", "ls-files", "--eol", "-z", "--", *on_disk) if on_disk else []
+    for entry in eol:
+        # "i/lf    w/crlf  attr/text=auto      \tpath"; a binary is "i/-text"
+        meta, _, p = entry.partition("\t")
+        index_eol = meta.split()[0]
+        data = Path(p).read_bytes()
+        stored_lf = index_eol in ("i/lf", "i/none", "i/") and "attr/-text" not in meta
+        sizes[p] = len(data.replace(b"\r\n", b"\n")) if stored_lf else len(data)
+    return sizes
 
 
 def png_size(b: bytes):
@@ -177,9 +213,10 @@ def check(files: list[Path], names: set[str], report: bool) -> list[str]:
     by_hash: dict[str, list[str]] = defaultdict(list)
     sizes: dict[str, int] = defaultdict(int)
     total = 0
+    stored = stored_sizes()
     for f in files:
         p = f.as_posix()
-        n = f.stat().st_size
+        n = stored[p] if p in stored else f.stat().st_size
         total += n
         sizes[area_of(p)] += n
         ext = f.suffix.lower()
