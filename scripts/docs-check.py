@@ -47,8 +47,9 @@ Three mechanical checks, the ones a page drifts on without anyone noticing:
           A package's pages live in its folder (#1563): every file under
           packages/<name>/docs/ is the book's page at the same path (what
           scripts/book-collect.py copies into docs/book/src), read here from
-          its package's folder, never from the copy. Such a page's title
-          Package line names that package first; a book page in
+          its package's folder, never from the copy. Such a page, in any
+          section (#1598), states its package on its title's Package line
+          and names that package first; a book page in
           docs/book/src whose title line names a package other than the
           kernel belongs in that package's folder. And what book-collect.py
           --check holds (no page with two homes, every page in SUMMARY.md,
@@ -754,7 +755,10 @@ def self_test():
     global _PACKAGE_PAGES
     kept = _PACKAGE_PAGES
     music_page = ROOT / "packages" / "music" / "docs" / "concepts" / "t.md"
-    _PACKAGE_PAGES = {music_page.resolve(): ("concepts/t.md", "music")}
+    # Any section's page in a package's folder, not only concepts/ (#1598)
+    hud_guide = ROOT / "packages" / "debug-hud" / "docs" / "guides" / "t.md"
+    _PACKAGE_PAGES = {music_page.resolve(): ("concepts/t.md", "music"),
+                      hud_guide.resolve(): ("guides/t.md", "debug-hud")}
 
     def home(path, text):
         problems = []
@@ -769,6 +773,11 @@ def self_test():
          [(3, "the page lives in packages/music/docs/, but its Package line says `engine`")]),
         (home(music_page, "# M\n\nNo line.\n"),
          [(1, "the page lives in packages/music/docs/ but doesn't state its package")]),
+        (home(hud_guide, "# G\n\nNo line.\n"),
+         [(1, "the page lives in packages/debug-hud/docs/ but doesn't state its package")]),
+        (home(hud_guide, "# G\n\n> **Package:** `debug-hud`, a standard package.\n"), []),
+        (home(hud_guide, "# G\n\n> **Package:** " + music + "\n"),
+         [(3, "the page lives in packages/debug-hud/docs/, but its Package line says `music`")]),
         # A section's line may name another package; only the title's says whose the page is
         (home(music_page, "# M\n\n> **Package:** " + music + "\n\n## Props\n\n> **Package:** " + props + "\n"), []),
         (home(BOOK / "concepts" / "t.md", "# M\n\n> **Package:** " + music + "\n"),

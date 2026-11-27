@@ -51,4 +51,4 @@ Not recorded in the surviving text.
   (`post_process_config_from_def`), `crates/flint-viewer/src/app.rs`,
   `crates/flint-player/src/player_app/scene_loading.rs`,
   [Post-Processing](../book/src/concepts/post-processing.md),
-  [Debug Panels](../book/src/guides/debug-panels.md)
+  [Debug Panels](../../packages/debug-hud/docs/guides/debug-panels.md)

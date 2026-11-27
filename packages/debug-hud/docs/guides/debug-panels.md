@@ -1,5 +1,7 @@
 # Debug Panels
 
+> **Package:** `debug-hud`, a standard package: a game has the F3 panels, F2's graph and the corner cards unless its `[packages]` sets `debug-hud = false`. F4's Rendering & Effects panel is the kernel's. The Living Props panel and the F5-F8 keys are the `living` package's, and the Music Guide, the Manifest Map and their keys are the `rhythm` package's; each draws in the HUD only when debug-hud is in ([Packages](../concepts/packages.md)).
+
 Flint's runtime tuning surface is a set of egui **debug panels** that live in the `debug-hud` package's crate, `flint-debug-ui`, and are hosted by the player. One of them, F4's Rendering & Effects panel, is the kernel's (`flint-widgets`, with the widgets every panel draws with), so the scene viewer hosts it too without the package (#1583). They exist so that a tuning session ends as a diff to the scene file rather than as notes: every panel edits live values, and most can write those values back into the scene TOML.
 
 Panels are dev surface. They compile only when the player's `debug-hud` cargo feature is on (it is on by default), and a feature-off build carries zero panel code and must still compile.
