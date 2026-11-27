@@ -1,0 +1,4 @@
+### Changelog entries name their package: `changelog.sh since <date> --package engine,living` (#1564)
+**Package.** engine
+**What changed.** Every changelog entry belongs to a package. A month file heads each day once for the kernel's entries, which every game has (`## 2026-11-27`, as before), and once for each package with entries that day (`## 2026-11-27 · living`). `bash engine/scripts/changelog.sh since <date> --package engine,living` prints only those packages' entries; without `--package` it prints them all, as before. Entries written before this change are the kernel's. In the engine, `changelog.sh new <issue> <slug> --package <name>` files a fragment under a package (a `**Package.** <name>` line after its title), refusing a name that isn't one.
+**What to do.** Nothing. To read only what your game can notice, pass `--package` with `engine` and the packages your `flint.toml` lists.
