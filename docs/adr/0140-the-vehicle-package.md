@@ -1,7 +1,7 @@
 # ADR 0140: The vehicle package: raycast wheels on a Rapier body with arcade assists, one input for players and AI, and what stays the game's
 
-Status: proposed, 2026-11-27 (#1627). Waits on Chris's word on each item
-under "Decisions" at the end. Epic #1626 (Modularity, Phase 6).
+Status: accepted, 2026-11-27 (#1627). Chris accepted it with every
+recommendation under "Decisions" at the end. Epic #1626 (Modularity, Phase 6).
 Builds on [ADR 0136](0136-the-package-model.md) (decision 7: `vehicle`
 starts beside Phases 2c and 3) and [ADR 0137](0137-the-public-package-api.md)
 (section 3a: the fixed-step hook). Beside
@@ -487,7 +487,9 @@ These are the vehicle package's own, in #1628's scope:
 
 ## Decisions
 
-Each one is Chris's. The recommendation is written first.
+Chris accepted every recommendation below on 2026-11-27. All nine are
+settled: the package is option (A), and (C) stays open only if #1630's
+frame-step A/B fails on feel.
 
 1. **The model.** (A) a dynamic body on `DynamicRayCastVehicleController`
    with arcade assists as tuning; (B) a kinematic arcade model in Rust;
