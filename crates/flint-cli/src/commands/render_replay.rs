@@ -360,6 +360,7 @@ impl ReplayHost {
                 // The player resolves a scene's procgen specs (textures,
                 // meshes) and a render doesn't: draw as the writer drew
                 resolve_procgen: description.written_by.as_deref() == Some("flint-player"),
+                packages: registry.packages().cloned(),
             },
         )?;
 

@@ -25,6 +25,10 @@ pub(super) struct StageScene<'a> {
     /// scene: a replay of the player's capture (#1089). A render resolves
     /// them only in a scene with living props.
     pub(super) resolve_procgen: bool,
+    /// The packages the project's `[packages]` lets in, as the scene's
+    /// schemas were read (#1578): a left-out package makes no asset and
+    /// builds no subsystem here, as in the player. `None`: every one.
+    pub(super) packages: Option<flint_core::package::InUse>,
 }
 
 /// The look a stage's cell draws with before a script asks for another
@@ -116,6 +120,7 @@ impl Stage {
             look: cell_look,
             timeline,
             resolve_procgen,
+            packages,
         } = scene;
         let moment = is_moment(args, grid);
 
@@ -218,6 +223,7 @@ impl Stage {
         // The scene's game (#725), which owns the world from here
         let wants_living = living_wanted(&world);
         let mut game = HeadlessGame::new(world, &args.scene, config.project.clone());
+        game.set_packages(packages);
 
         // Living props (#216), and the procgen assets their scene asks for, before the
         // model loader as in the player: catalog > procgen > file. A build

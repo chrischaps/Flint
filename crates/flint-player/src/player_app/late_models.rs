@@ -123,17 +123,18 @@ impl PlayerApp {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
-        let config = build_model_load_config_of(
+        let mut config = build_model_load_config_of(
             &self.core.project,
             &self.core.scene_path,
             &self.core.world,
             ids,
             self.assets.of(&self.core.project),
         );
+        super::scene_loading::say_makers_asked(&mut config, !self.core.asset_makers().is_empty());
 
         // The asset makers before the file (procgen, for the names it has a
         // spec of), each mesh's triangles kept for the colliders naming it
-        for maker in crate::packages::registry().asset_makers() {
+        for maker in self.core.asset_makers() {
             maker.spawned(
                 &mut flint_package::assets::MakeCtx {
                     world: &mut self.core.world,

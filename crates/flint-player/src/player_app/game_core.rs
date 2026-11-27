@@ -179,6 +179,17 @@ impl GameCore {
             .as_ref()
             .is_some_and(|in_use| !in_use.is_on(package))
     }
+
+    /// The run's asset makers less those of a package the project's
+    /// `[packages]` leaves out (#1578), in the order registered: what every
+    /// moment of a made asset asks (the scene, spawned entities, the
+    /// frame, `pending`, the teardown), so a left-out package makes
+    /// nothing and its names are the file loader's.
+    pub(crate) fn asset_makers(&self) -> Vec<&'static dyn flint_package::assets::AssetMaker> {
+        crate::packages::registry()
+            .asset_makers_in(self.packages.as_ref())
+            .collect()
+    }
 }
 
 /// What a host lends the core for a stage of the frame.
@@ -783,7 +794,9 @@ impl GameCore {
     /// asset maker the run registered makes the names it can (the procgen
     /// package's specs, living's props through its load step), the rest
     /// staying the file loader's. A run with no maker says (with
-    /// `say_unmade`) what a spec would have made.
+    /// `say_unmade`) what a spec would have made; so does one whose
+    /// makers' packages the project's `[packages]` leaves out (#1578), in
+    /// `[packages]`' words.
     pub(crate) fn make_scene_assets(
         &mut self,
         gpu: flint_package::assets::Gpu<'_>,
@@ -793,18 +806,10 @@ impl GameCore {
         say_unmade: bool,
     ) {
         let registry = crate::packages::registry();
-        if registry.asset_makers().next().is_none() {
-            if !say_unmade {
-                return;
-            }
-            if let Some(line) =
-                super::missing_features::procgen_line(&self.world, &self.project, &self.scene_path)
-            {
-                tracing::warn!(target: "load", "{line}");
-            }
-            return;
+        if say_unmade {
+            self.say_unmade(registry);
         }
-        for maker in registry.asset_makers() {
+        for maker in self.asset_makers() {
             maker.scene(&mut flint_package::assets::MakeCtx {
                 world: &mut self.world,
                 scene_path: &self.scene_path,
@@ -824,13 +829,44 @@ impl GameCore {
         }
     }
 
+    /// Say, once at the scene's load, what the scene's names a spec would
+    /// make do when nothing makes them: a build with no asset maker says
+    /// so (`procgen_line`), and a project whose `[packages]` leaves out a
+    /// maker's package says that, with the line to add (#1578).
+    fn say_unmade(&self, registry: &flint_package::Registry) {
+        let lines: Vec<String> = if registry.asset_makers().next().is_none() {
+            super::missing_features::procgen_line(&self.world, &self.project, &self.scene_path)
+                .into_iter()
+                .collect()
+        } else if let Some(in_use) = &self.packages {
+            registry
+                .asset_makers_left_out(Some(in_use))
+                .into_iter()
+                .filter_map(|package| {
+                    super::missing_features::left_out_maker_line(
+                        in_use,
+                        package,
+                        &self.world,
+                        &self.project,
+                        &self.scene_path,
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for line in lines {
+            tracing::warn!(target: "load", "{line}");
+        }
+    }
+
     /// Each asset maker's frame (#1557): the procgen package's budgeted
     /// queue, whose finished assets go to the renderer when there is one.
     /// Living props move on after it, at `Stage::Procgen`, in whatever it
     /// left of the budget.
     pub(crate) fn tick_asset_makers(&mut self, lent: Lent<'_>) {
-        let mut makers = crate::packages::registry().asset_makers().peekable();
-        if makers.peek().is_none() {
+        let makers = self.asset_makers();
+        if makers.is_empty() {
             return;
         }
         let mut gpu = match (lent.renderer, lent.gpu) {

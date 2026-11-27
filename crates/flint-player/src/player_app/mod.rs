@@ -16,6 +16,9 @@ mod collider_mesh_tests;
 mod collider_meshes;
 #[cfg(test)]
 mod made_collider_mesh_tests;
+// A spec's asset in a project whose `[packages]` leaves procgen out (#1578)
+#[cfg(test)]
+mod made_left_out_tests;
 // The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;

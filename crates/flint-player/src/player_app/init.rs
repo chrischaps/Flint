@@ -877,10 +877,14 @@ impl PlayerApp {
     }
 
     /// Each asset maker's start of the run (#1557): the procgen package's
-    /// disk tier (#181), kept for the run, transitions included.
+    /// disk tier (#181), kept for the run, transitions included. Before the
+    /// first scene's entry, so the project's `[packages]` is read from the
+    /// schema directories here: a maker of a package it leaves out never
+    /// starts (#1578).
     pub(super) fn start_asset_makers(&mut self) {
         let scene_dir = self.scene_dir();
-        for maker in crate::packages::registry().asset_makers() {
+        let packages = self.schema_dirs.packages.as_ref();
+        for maker in crate::packages::registry().asset_makers_in(packages) {
             maker.run_starts(&mut flint_package::assets::RunStart {
                 resources: &mut self.core.resources,
                 project: &self.core.project,

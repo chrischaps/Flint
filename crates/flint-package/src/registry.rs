@@ -340,6 +340,36 @@ impl Registry {
     pub fn asset_makers(&self) -> impl Iterator<Item = &'static dyn AssetMaker> + '_ {
         self.makers.iter().map(|(_, m)| *m)
     }
+
+    /// The asset makers of the packages `packages` lets in, in the order
+    /// registered (#1578): a maker belongs to the package that registered
+    /// it, so one the project's `[packages]` leaves out makes nothing and
+    /// every name it would have made is the file loader's (ADR 0137
+    /// decision 8). `None`: every package is in.
+    pub fn asset_makers_in<'a>(
+        &'a self,
+        packages: Option<&'a InUse>,
+    ) -> impl Iterator<Item = &'static dyn AssetMaker> + 'a {
+        self.makers
+            .iter()
+            .filter(move |(package, _)| packages.is_none_or(|in_use| in_use.is_on(package)))
+            .map(|(_, m)| *m)
+    }
+
+    /// The packages that registered an asset maker `packages` leaves out,
+    /// each once, in the order registered.
+    pub fn asset_makers_left_out(&self, packages: Option<&InUse>) -> Vec<&'static str> {
+        let Some(in_use) = packages else {
+            return Vec::new();
+        };
+        let mut out: Vec<&'static str> = Vec::new();
+        for (package, _) in &self.makers {
+            if !in_use.is_on(package) && !out.contains(package) {
+                out.push(package);
+            }
+        }
+        out
+    }
 }
 
 impl std::fmt::Debug for Registry {
@@ -410,5 +440,45 @@ mod tests {
         assert_eq!(registry.point::<Judge>().unwrap().0, Some("filler's"));
         let alone = Registry::of(&[&filler]);
         assert!(alone.point::<Judge>().is_none());
+    }
+
+    /// A maker is its package's (#1578): one the project's `[packages]`
+    /// leaves out is skipped and named, and with no table every one runs.
+    #[test]
+    fn a_left_out_packages_asset_maker_is_skipped_and_named() {
+        struct Maker(&'static str);
+        impl AssetMaker for Maker {
+            fn scene(&self, _: &mut crate::assets::MakeCtx) {}
+            fn pending(&self, _: &crate::Resources, name: &str) -> bool {
+                name == self.0
+            }
+        }
+        static SPECS: Maker = Maker("specs");
+        static PROPS: Maker = Maker("props");
+        let specs = Named("specs", |r| {
+            r.asset_maker(&SPECS);
+        });
+        let props = Named("props", |r| {
+            r.asset_maker(&PROPS);
+        });
+        let registry = Registry::of(&[&specs, &props]);
+        let which = |packages: Option<&InUse>| -> Vec<bool> {
+            let resources = crate::Resources::new();
+            registry
+                .asset_makers_in(packages)
+                .map(|m| m.pending(&resources, "specs"))
+                .collect()
+        };
+        assert_eq!(which(None), [true, false], "no table: both, in order");
+        assert!(registry.asset_makers_left_out(None).is_empty());
+
+        let in_use = InUse {
+            manifest: "flint.toml".into(),
+            on: ["engine", "props"].map(String::from).into(),
+            left_out: Vec::new(),
+            off: ["specs".to_string()].into(),
+        };
+        assert_eq!(which(Some(&in_use)), [false], "only props' maker");
+        assert_eq!(registry.asset_makers_left_out(Some(&in_use)), ["specs"]);
     }
 }

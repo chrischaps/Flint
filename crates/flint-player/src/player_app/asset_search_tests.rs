@@ -4,7 +4,7 @@
 
 use super::scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
-    load_sequences_from_world, load_sprite_animations_from_world, visible_files,
+    load_sequences_from_world, load_sprite_animations_from_world, say_makers_asked, visible_files,
 };
 use super::PlayerApp;
 use flint_animation::AnimationSystem;
@@ -111,6 +111,20 @@ fn a_missing_model_says_every_path_tried_and_what_was_asked_first() {
             "{text}"
         );
         assert!(text.contains("\n  game/textures/moss_color.png"), "{text}");
+    });
+}
+
+/// With no asset maker running (a build without procgen, or `[packages]`
+/// leaving it out, #1578), a miss doesn't claim a spec was asked first.
+#[test]
+fn a_missing_model_with_no_maker_running_names_no_spec_asked() {
+    in_game(|project| {
+        let mut config = build_model_load_config(project, DEEP, &FlintWorld::new(), None);
+        say_makers_asked(&mut config, false);
+        let missing = resolve_model_path(&config, "boulder").unwrap_err();
+        let text = config.not_found_text(&missing);
+        assert!(!text.contains("procgen"), "{text}");
+        assert_eq!(text.lines().count(), 9, "{text}");
     });
 }
 
