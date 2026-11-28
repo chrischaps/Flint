@@ -1,0 +1,50 @@
+[package]
+name = "flint-animation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The animation package's core (ADR 0139, #1620): clips on one clock, sequences and cues, property clips and tween, skeletal and node clips until #1621, and the clip-kind seam flipbooks use"
+publish = false
+
+[features]
+default = []
+# Its player part (`player::PACKAGE`): the subsystem that plays every scene's
+# clips at `Stage::Animate`, poses at `Stage::Pose` and steps tweens at
+# `Stage::Tweens`, the `animation` and `tween` script modules, the
+# `ClipKinds` point, and a capture's `HeadlessAnimation`. flint-player's
+# generated `animation` feature turns it on.
+player = [
+    "dep:flint-package", "dep:flint-render", "dep:flint-script", "dep:rhai",
+    "dep:tracing", "dep:wgpu",
+]
+
+# The kernel only (#1624's rule): flint-package is the Package API.
+[dependencies]
+flint-core = { workspace = true }
+flint-ecs = { workspace = true }
+flint-import = { workspace = true }
+flint-runtime = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+flint-package = { workspace = true, optional = true }
+flint-render = { workspace = true, optional = true }
+flint-script = { workspace = true, optional = true }
+rhai = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The script calls' tests run the package's modules on a bare engine
+flint-script = { workspace = true }
+flint-scene = { workspace = true }
+flint-schema = { workspace = true }
+
+# `play_clip` / `stop_clip` from a real script: the module is the player
+# part's
+[[test]]
+name = "skeletal_clip_calls"
+required-features = ["player"]
+
+[lints]
+workspace = true

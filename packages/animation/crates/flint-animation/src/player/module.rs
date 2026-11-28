@@ -1,19 +1,41 @@
 //! The `animation` module: clips, blends, layers and sequences, written
 //! straight onto the entity's `animator` component, which the animation
-//! system follows next frame (ADR 0116), through `flint_animation::animator`
-//! (the one file that spells the animator's keys, #733).
+//! system follows next frame (ADR 0116), through `crate::animator` (the one
+//! file that spells the animator's keys, #733). The animation package's
+//! since #1620 (ADR 0139 section 3): every function writes `animator` keys.
 
-use super::builder::kind::{Entity, Int, Map, Num, Str};
-use super::builder::{CallResult, ScriptApi};
-use super::opts::read_opts;
-use flint_animation::animator::{self, LayerEdit};
+use crate::animator::{self, LayerEdit};
 use flint_core::tween::Easing;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
+use flint_script::api::builder::kind::{Entity, Int, Map, Num, Str};
+use flint_script::api::{CallResult, Module};
+use flint_script::ScriptModule;
 
-pub(crate) fn register(api: &mut ScriptApi) {
-    let mut m = api.module("animation");
+/// The module's name.
+pub const MODULE: &str = "animation";
 
+/// The `animation` module, declared by the package and enabled by its
+/// subsystem, which every scene has.
+pub struct AnimationModule;
+
+pub static ANIMATION_MODULE: AnimationModule = AnimationModule;
+
+impl ScriptModule for AnimationModule {
+    fn name(&self) -> &'static str {
+        MODULE
+    }
+
+    fn enabled_when(&self) -> &'static str {
+        "the animation package is in the build (every scene)"
+    }
+
+    fn declare(&self, m: &mut Module<'_>) {
+        declare(m);
+    }
+}
+
+fn declare(m: &mut Module<'_>) {
     // ── Clips ──
     m.func(
         "play_clip",
@@ -113,9 +135,9 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("weight", Num)
     .arg("opts", Map)
     .run(|call, (id, index, clip, weight, map)| {
-        let o = read_opts(call.ctx(), "set_anim_layer", &map, &["mode", "mask"]);
-        let mode = o.mode.unwrap_or_else(|| "additive".into());
-        let mask = o.mask.unwrap_or_default();
+        let (mode, mask) = flint_script::api::mode_and_mask(call.ctx(), "set_anim_layer", &map);
+        let mode = mode.unwrap_or_else(|| "additive".into());
+        let mask = mask.unwrap_or_default();
         edit_anim_layer(call.world_mut()?, id, index, |layer| {
             layer.clip(&clip).mode(&mode).mask(&mask).weight(weight);
         })
@@ -222,7 +244,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 }
 
 /// Read-modify-write one entry of `animator.layers` through
-/// `flint_animation::animator::edit_layer` (legacy-field migration and slot
+/// `crate::animator::edit_layer` (legacy-field migration and slot
 /// padding live there, so the sequence runner behaves identically). A
 /// negative index does nothing.
 fn edit_anim_layer(
@@ -242,14 +264,15 @@ fn edit_anim_layer(
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::ScriptEngine;
-    use flint_animation::animator::Animator;
+    use crate::animator::Animator;
     use flint_core::tween::Easing;
     use flint_ecs::FlintWorld;
+    use flint_script::engine::ScriptEngine;
 
     fn run(source: &str) -> (ScriptEngine, FlintWorld, flint_core::EntityId) {
         let mut engine = ScriptEngine::new();
-        engine.errors.set_quiet(true);
+        engine.declare_enabled_module(&super::ANIMATION_MODULE);
+        engine.errors_mut().set_quiet(true);
         let mut world = FlintWorld::new();
         let id = world.spawn("rig").unwrap();
         let ast = engine.compile(source).unwrap();
@@ -275,6 +298,21 @@ mod tests {
         assert_eq!(animator.blend_target, "run");
         assert_eq!(animator.blend_duration, 0.25);
         assert_eq!(animator.blend_easing, Easing::EaseInOut);
+    }
+
+    /// `play_clip` writes the clip and `playing` onto the animator (moved
+    /// from flint-script's `host_io_tests` with the module, #1620).
+    #[test]
+    fn play_clip_writes_the_animator() {
+        let (engine, world, id) = run("fn on_init() { play_clip(self_entity(), \"run\"); }");
+        assert!(
+            engine.errors().all().is_empty(),
+            "{:?}",
+            engine.errors().all()
+        );
+        let animator = Animator::of(&world, id);
+        assert_eq!(animator.clip, "run");
+        assert!(animator.playing);
     }
 
     #[test]

@@ -2,19 +2,24 @@
 //! headless capture shows a skinned character in the pose the player shows it
 //! in, not its bind pose.
 //!
-//! It loads what the player loads when a scene comes up (skeletons and clips
-//! from the scene's models, `.anim.toml` property tweens, sprite clips and
-//! sequences, each found by the project's one asset search), and a step is the
-//! animation share of the player's frame: every tier's `update`, the
-//! `bone_probe` joints published, then two-bone IK (ADR 0070) over the posed
-//! world. The caller keeps the clock, a fixed step at a time, so the same time
-//! gives the same pose run to run.
+//! It loads what the player loads when a scene comes up (the animation
+//! subsystem's load: skeletons and clips from the scene's models,
+//! `.anim.toml` property clips, each registered kind's clips (flipbooks'
+//! `.sprite.toml`) and sequences, each found by the project's one asset
+//! search), and a step is the animation share of the player's frame: every
+//! kind's `update`, the `bone_probe` joints published, then two-bone IK (ADR
+//! 0070) over the posed world. The caller keeps the clock, a fixed step at a
+//! time, so the same time gives the same pose run to run. The animation
+//! package's since #1620: the capture's game steps it through
+//! [`flint_package::CapturePose`], where the player runs `Stage::Animate` and
+//! `Stage::Pose`.
 //!
-//! It is not the player. Sequence cues and sprite-end events have no script to
+//! It is not the player. Sequence cues and one-shot ends have no script to
 //! hear them here; they are counted (see [`HeadlessAnimation::unheard`]) and
 //! dropped.
 
-use flint_animation::AnimationSystem;
+use super::ClipKinds;
+use crate::AnimationSystem;
 use flint_core::components as comp;
 use flint_core::project::Project;
 use flint_core::EntityId;
@@ -22,11 +27,6 @@ use flint_ecs::FlintWorld;
 use flint_render::model_loader::ModelLoadResult;
 use flint_render::SceneRenderer;
 use flint_runtime::RuntimeSystem;
-
-use super::scene_loading::{
-    load_animations_saying, load_sequences_saying, load_sprite_animations_saying,
-    register_node_animation_data_saying, register_skeletal_data_saying,
-};
 
 /// A scene's animation, run on a clock someone else keeps.
 pub struct HeadlessAnimation {
@@ -43,23 +43,20 @@ pub struct HeadlessAnimation {
 
 impl HeadlessAnimation {
     /// The animation of the scene at `scene_path`, whose models `models` are
-    /// (the model loader's result), found in `project` as the player finds it.
-    /// Nothing has moved yet: [`Self::step`] moves it.
-    pub fn load(models: &ModelLoadResult, project: &Project, scene_path: &str) -> Self {
-        let mut system = AnimationSystem::new();
+    /// (the model loader's result), found in `project` as the player finds it,
+    /// with the kinds the run's packages registered (`kinds`: the flipbook
+    /// package's). Nothing has moved yet: [`Self::step`] moves it.
+    pub fn load(
+        models: &ModelLoadResult,
+        project: &Project,
+        scene_path: &str,
+        kinds: Option<&ClipKinds>,
+    ) -> Self {
         let mut loaded = Vec::new();
-        let mut say = |line: String| loaded.push(line);
-        register_skeletal_data_saying(models, &mut system, &mut say);
-        register_node_animation_data_saying(models, &mut system, &mut say);
-        load_animations_saying(project, scene_path, &mut system, &mut say);
-        load_sprite_animations_saying(project, scene_path, &mut system, &mut say);
-        load_sequences_saying(project, scene_path, &mut system, &mut say);
-        let mut skinned: Vec<(EntityId, String)> = models
-            .skinned_entities
-            .iter()
-            .map(|(id, asset)| (*id, asset.clone()))
-            .collect();
-        skinned.sort();
+        let (system, skinned) =
+            super::subsystem::load_system(Some(models), kinds, project, scene_path, &mut |_, l| {
+                loaded.push(l)
+            });
         Self {
             system,
             skinned,
@@ -69,13 +66,13 @@ impl HeadlessAnimation {
         }
     }
 
-    /// One frame of animation, `dt` seconds on: every tier, the bone probes,
+    /// One frame of animation, `dt` seconds on: every kind, the bone probes,
     /// then IK, in the player's order.
     pub fn step(&mut self, world: &mut FlintWorld, dt: f64) {
         if let Err(e) = self.system.update(world, dt) {
             tracing::warn!("Animation update failed: {e:?}");
         }
-        self.unheard += self.system.drain_sprite_events().len();
+        self.unheard += self.system.drain_clip_ends().len();
         self.unheard += self.system.drain_sequence_cues().len();
         publish_bone_probes(&self.system, world);
         self.system.run_ik(world);
@@ -155,10 +152,20 @@ impl HeadlessAnimation {
     }
 }
 
+impl flint_package::CapturePose for HeadlessAnimation {
+    fn step(&mut self, world: &mut FlintWorld, dt: f64) {
+        HeadlessAnimation::step(self, world, dt);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// Write each `bone_probe`'s joint, in model space, into its component, right
 /// after the pose is computed, so scripts read this frame's pose (a seat camera
 /// following an eye, say).
-pub(super) fn publish_bone_probes(animation: &AnimationSystem, world: &mut FlintWorld) {
+pub fn publish_bone_probes(animation: &AnimationSystem, world: &mut FlintWorld) {
     let probe_ids: Vec<EntityId> = world
         .entities_with_component(comp::BONE_PROBE)
         .iter()

@@ -525,8 +525,12 @@ mod tests {
             lines(&engine_packages(), &found),
             ["procgen = \"*\"", "living = \"*\""]
         );
-        // Procgen is used, so nothing is named to leave out
-        assert!(left_out_lines(&engine_packages(), &found, None).is_empty());
+        // Procgen is used, so it isn't named to leave out; nothing scanned
+        // animates, so animation and flipbook are (#1620)
+        assert_eq!(
+            left_out_lines(&engine_packages(), &found, None),
+            ["animation", "flipbook"]
+        );
     }
 
     /// #1536: a scene that names no procgen spec gives `procgen = false`
@@ -538,7 +542,10 @@ mod tests {
         let files = vec!["pbr_test.scene.toml".to_string()];
         let found = scan(&root, &files, &packages);
         assert!(found.is_empty(), "{found:?}");
-        assert_eq!(left_out_lines(&packages, &found, None), ["procgen"]);
+        assert_eq!(
+            left_out_lines(&packages, &found, None),
+            ["animation", "flipbook", "procgen"]
+        );
         assert_eq!(
             left_out_line("procgen"),
             "procgen = false   # nothing scanned uses it"
@@ -567,14 +574,16 @@ mod tests {
             list(&[("living", any())]),
         ] {
             assert!(
-                left_out_lines(&packages, &found, Some(&listed)).is_empty(),
+                !left_out_lines(&packages, &found, Some(&listed))
+                    .iter()
+                    .any(|p| p == "procgen"),
                 "{listed:?}"
             );
         }
         // A listed package that needs nothing standard leaves it named
         assert_eq!(
             left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
-            ["procgen"]
+            ["animation", "flipbook", "procgen"]
         );
     }
 }

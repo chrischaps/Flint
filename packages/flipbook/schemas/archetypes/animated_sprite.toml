@@ -1,0 +1,12 @@
+# A sprite that plays flipbooks (ADR 0139 section 7): its clip is the
+# `animator`'s, as every clip is. No `[defaults.animator]`: the archetype
+# would then give an old scene's entity an empty `animator` over the
+# `sprite_animator` it still writes, which hides the one-release alias
+# (`Animator::of` reads `sprite_animator` only on an entity with no
+# `animator`). `animator.speed` is 1.0 unwritten anyway.
+[archetype.animated_sprite]
+description = "A 2D sprite entity that plays sprite-sheet clips (flipbooks) through its animator"
+components = ["transform", "sprite", "animator"]
+
+[archetype.animated_sprite.defaults.sprite]
+mode = "sprite2d"

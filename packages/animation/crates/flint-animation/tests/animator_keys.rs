@@ -1,10 +1,12 @@
 //! The `animator` component's keys are spelled in one file,
-//! `crates/flint-animation/src/animator.rs` (#733): three syncs once read
+//! `packages/animation/crates/flint-animation/src/animator.rs` (#733; the
+//! animation package's since #1620): three syncs once read
 //! them each with their own defaults and rules, and drifted (#732). Every
 //! other crate reads an animator through `Animator` / `animator::layers` and
 //! writes one through `animator::write` / `animator::edit_layer`.
 //!
-//! This walks every crate's `src/` and fails on code that names a key next
+//! This walks every crate's `src/`, the kernel's and every package's, and
+//! fails on code that names a key next
 //! to `comp::ANIMATOR`: `set_field(comp::ANIMATOR, "clip", ..)`,
 //! `view(id, comp::ANIMATOR).f64("speed", ..)`,
 //! `get(comp::ANIMATOR).and_then(|a| a.get("speed"))`. Test code is left
@@ -14,7 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-const HOME: &str = "flint-animation/src/animator.rs";
+const HOME: &str = "packages/animation/crates/flint-animation/src/animator.rs";
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -68,11 +70,20 @@ fn keys_named(text: &str) -> Vec<(usize, String)> {
 
 #[test]
 fn only_animator_rs_names_an_animator_key() {
-    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
     let mut files = Vec::new();
-    for entry in std::fs::read_dir(&crates).unwrap().flatten() {
+    for entry in std::fs::read_dir(root.join("crates")).unwrap().flatten() {
         rust_files(&entry.path().join("src"), &mut files);
     }
+    for package in std::fs::read_dir(root.join("packages")).unwrap().flatten() {
+        let Ok(crates) = std::fs::read_dir(package.path().join("crates")) else {
+            continue;
+        };
+        for entry in crates.flatten() {
+            rust_files(&entry.path().join("src"), &mut files);
+        }
+    }
+    let crates = root;
     assert!(files.len() > 100, "found only {} files", files.len());
 
     let mut offenders = Vec::new();

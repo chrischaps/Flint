@@ -67,7 +67,7 @@ At each of those directories `D`, the file tried is `D/<folder>/<name><extension
 | `textures` | `D` itself, then `textures/` | a file name as written; a name with no extension is tried bare, then `.png`, then `_color.png` | `material.texture = "wall.png"` or `"wall"`, `sprite.texture = "hero.png"` | |
 | `sprites` | `sprites/`, then `D` itself | a file name as written | `draw_sprite(x, y, w, h, "heart.png")` | |
 | `animations` | `animations/` | `.anim.toml` | every clip is loaded; `animator.clip = "door_swing"` names one by the `name` inside its file | |
-| `sprite-animations` | `animations/` | `.sprite.toml` | every file is loaded; a `sprite_animator` names a clip inside one | |
+| `sprite-animations` | `animations/` | `.sprite.toml` | every file is loaded; an `animator` names a clip inside one (the flipbook package) | |
 | `sequences` | `animations/` | `.sequence.toml` | every file is loaded; `animator.sequence = "intro"`, `play_sequence` | |
 | `audio` | `D` itself, then `audio/` | a file name as written (`.ogg`, `.wav`, `.mp3`, `.flac`); a name with no extension tries those four | `audio_source.file = "audio/fire.ogg"`; every file in `audio/` is preloaded for `play_sound`, and any other name `play_sound` gives is found by this search on its first play | |
 | `scripts` | `scripts/` | a file name as written (`.rhai`) | `script.source = "hud.rhai"` or `"ui/menu.rhai"`; `import "ui_kit"` is the script `lib/ui_kit.rhai` | |

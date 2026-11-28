@@ -1,0 +1,35 @@
+[package]
+name = "flint-flipbook"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The flipbook package (ADR 0139 section 6, #1620): sprite-sheet clips played as a clip kind on the animation package's clock"
+publish = false
+
+[features]
+default = []
+# Its player part (`player::PACKAGE`): the flipbook kind on animation's
+# `ClipKinds` point, the scene's `.sprite.toml` clips, and the `flipbook`
+# script module. flint-player's generated `flipbook` feature turns it on.
+player = [
+    "flint-animation/player", "dep:flint-package", "dep:flint-script", "dep:tracing",
+]
+
+# The kernel and the animation package it requires (#1624's rule)
+[dependencies]
+flint-animation = { workspace = true }
+flint-core = { workspace = true }
+flint-ecs = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+flint-package = { workspace = true, optional = true }
+flint-script = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+flint-animation = { workspace = true, features = ["player"] }
+flint-runtime = { workspace = true }
+flint-script = { workspace = true }
+
+[lints]
+workspace = true

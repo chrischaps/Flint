@@ -44,9 +44,15 @@ for arg in "$@"; do
     esac
 done
 
-# No exception: every package crate is out of a tree whose package is out.
-# The last, flint-cli's flint-procgen, went optional with #1543 (its wooze
-# field had gone behind its own `living` feature in #1516).
+# The crates a binary links whether its package is in or out, each with the
+# issue that ends it: `binary crate` -> reason. An exception whose edge is
+# gone (no configuration that leaves the package out links it) fails too, so
+# the list only shrinks. The last before #1620, flint-cli's flint-procgen,
+# went optional with #1543.
+declare -A EXCEPTIONS=(
+    ["flint-cli flint-animation"]="the model previewer, flint render --anim-time and its IK solve name the animation package's crate until #1621 puts them behind registration"
+)
+declare -A EXCUSED_SEEN=()
 
 # --- the manifests --------------------------------------------------------
 
@@ -179,6 +185,10 @@ for bin in flint-player flint-cli; do
             in_list "$p" $on && continue
             for c in ${CRATES[$p]}; do
                 printf '%s\n' "$tree" | grep -qx "$c" || continue
+                if [ -n "${EXCEPTIONS[$bin $c]:-}" ]; then
+                    EXCUSED_SEEN[$bin $c]=1
+                    continue
+                fi
                 bad+=("$c ($p)")
             done
         done
@@ -239,6 +249,18 @@ if [ ${#api_bad[@]} -gt 0 ]; then
     annotate "flint-package links ${api_bad[*]} (cargo tree -p flint-package)"
 else
     echo "-- flint-package: tree ok, no package's crate and no binary"
+fi
+
+# An exception that excused nothing (a full run only: a run of named
+# configurations may not have left its package out)
+if [ ${#only[@]} -eq 0 ]; then
+    for key in "${!EXCEPTIONS[@]}"; do
+        if [ -z "${EXCUSED_SEEN[$key]:-}" ]; then
+            FAILURES+=("the exception for $key excuses nothing now (${EXCEPTIONS[$key]}): take it out of scripts/package-check.sh")
+        else
+            echo "-- excused: $key links whatever its package's switch says (${EXCEPTIONS[$key]})"
+        fi
+    done
 fi
 
 echo

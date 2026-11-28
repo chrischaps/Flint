@@ -36,7 +36,6 @@ pub mod rig;
 pub mod style_reader;
 pub mod sync;
 pub mod testing;
-pub mod tween;
 pub mod ui;
 
 pub use context::MusicClock;
@@ -48,7 +47,7 @@ pub use context::{SoundPlay, SoundRef};
 pub use engine::output::FnTime;
 use engine::ScriptEngine;
 pub use errors::{ScriptError, ScriptErrors};
-use flint_core::Result;
+use flint_core::{EntityId, Result};
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, InputState, RuntimeSystem};
 pub use host::ScriptHost;
@@ -56,7 +55,6 @@ pub use module::{ModuleCommand, ScriptModule};
 pub use projector::{GroundField, Projector, ScreenPoint, View};
 pub use style_reader::{EntityStyle, StyleReader};
 use sync::ScriptSync;
-pub use tween::{FieldTweens, TWEEN_DONE};
 
 /// Top-level scripting system integrating engine, sync, and the game loop
 pub struct ScriptSystem {
@@ -679,20 +677,19 @@ impl ScriptSystem {
         c.ui_system.generate_draw_commands(screen_w, screen_h)
     }
 
-    /// Call on_animation_end(clip_name) for entities whose sprite animation finished
-    pub fn call_sprite_anim_ends(
-        &mut self,
-        world: &mut FlintWorld,
-        events: &[flint_animation::sprite_sync::SpriteAnimEndEvent],
-    ) {
-        self.engine.call_sprite_anim_ends(world, events);
+    /// Call `on_animation_end(clip)` on each entity's script, for each
+    /// `(entity, clip)` one-shot that ended (the animation package's, of
+    /// any kind of clip; ADR 0139 section 8)
+    pub fn call_animation_ends(&mut self, world: &mut FlintWorld, ends: &[(EntityId, String)]) {
+        self.engine.call_animation_ends(world, ends);
     }
 
-    /// Call on_sequence_cue(sequence, cue) for cues animation sequences passed
+    /// Call `on_sequence_cue(sequence, cue)` on each entity's script, for
+    /// each `(entity, sequence, cue)` an animation sequence passed
     pub fn call_sequence_cues(
         &mut self,
         world: &mut FlintWorld,
-        cues: &[flint_animation::SequenceCueEvent],
+        cues: &[(EntityId, String, String)],
     ) {
         self.engine.call_sequence_cues(world, cues);
     }

@@ -540,7 +540,7 @@ The engine's own set, `schemas/archetypes/`:
 | `character` | transform | A character or NPC |
 | `player` | transform, collider, rigidbody, character_controller | Player-controlled character with physics and a first-person camera |
 | `sprite` | transform, sprite | A flat 2D sprite |
-| `animated_sprite` | transform, sprite, sprite_animator | A 2D sprite with sheet animation |
+| `animated_sprite` | transform, sprite, animator | A 2D sprite with sheet animation (the flipbook package) |
 | `terrain` | transform, terrain | Heightmap terrain |
 
 ### The Examples Layer

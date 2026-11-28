@@ -1,0 +1,14 @@
+# Retired for one release (ADR 0139 section 7, #1620): a flipbook is a clip
+# on animation's clock, so a sprite plays through `animator` like every other
+# clip. A scene that still writes these fields hears why on load and from
+# `flint check`, and keeps animating meanwhile: `Animator::of` reads an
+# entity's `sprite_animator` when it has no `animator` (and `animator::write`
+# writes there for it), so play_sprite and its family still work on it. A
+# follow-up removes this file and the alias after the release.
+[component.sprite_animator]
+description = "Retired: sprite_animator is animator now (ADR 0139); read as its alias for one release"
+
+[component.sprite_animator.retired]
+clip = "sprite_animator is animator now (ADR 0139): write [entities.<name>.animator] clip = ... playing = ..."
+playing = "sprite_animator is animator now (ADR 0139): write [entities.<name>.animator] clip = ... playing = ..."
+speed = "sprite_animator is animator now (ADR 0139): write [entities.<name>.animator] clip = ... playing = ..."

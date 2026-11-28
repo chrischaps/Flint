@@ -2,7 +2,7 @@
 
 use crate::animator::{self, Animator};
 use crate::playback_state::ClipPlaybackState;
-use crate::player::{advance, AnimationPlayer};
+use crate::property::{advance, AnimationPlayer};
 use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
