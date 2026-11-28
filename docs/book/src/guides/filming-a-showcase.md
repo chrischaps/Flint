@@ -120,7 +120,7 @@ seed, input, args and a shorter `seconds`. A mistyped key is refused.
 | `seed` | capture, shot, take | Scripts' `random()` sequence (`--seed`); a stepped run is seeded anyway |
 | `input` | shot, take | An input script (`--input-script`), pointer positions in points |
 | `args` | capture, shot, take | More `flint play` flags, added in that order |
-| `notes` | shot | Free text kept in `take.json` |
+| `notes` | shot | Lines kept in `take.json`: a list, or a string as one line |
 | `take` | shot | The shot's takes, each with a `name`; one called `main` when none |
 
 ## What a take is

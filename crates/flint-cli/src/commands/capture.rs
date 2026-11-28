@@ -179,7 +179,8 @@ pub struct Shot {
     pub scene: String,
     pub seconds: f64,
     pub title: Option<String>,
-    #[serde(default)]
+    /// Lines kept in `take.json`: a list, or a string as one line (#1702)
+    #[serde(default, deserialize_with = "one_or_many")]
     pub notes: Vec<String>,
     pub fps: Option<u32>,
     pub width: Option<u32>,
@@ -193,6 +194,23 @@ pub struct Shot {
     pub args: Vec<String>,
     #[serde(default)]
     pub take: Vec<Take>,
+}
+
+/// `notes = "x"` reads as `notes = ["x"]`.
+fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Notes {
+        One(String),
+        Many(Vec<String>),
+    }
+    match Notes::deserialize(d) {
+        Ok(Notes::One(line)) => Ok(vec![line]),
+        Ok(Notes::Many(lines)) => Ok(lines),
+        Err(_) => Err(serde::de::Error::custom(
+            "notes must be a string or a list of strings",
+        )),
+    }
 }
 
 /// `[[shot.take]]`: one run of the shot, with what it changes.
@@ -1259,6 +1277,31 @@ fps = 20
             let err = format!("{:#}", ShotList::parse(text).unwrap_err());
             assert!(err.contains(says), "{text:?}: {err}");
         }
+    }
+
+    #[test]
+    fn notes_are_a_list_or_one_string() {
+        let shot = "[[shot]]
+id = \"a\"
+scene = \"s.scene.toml\"
+seconds = 2
+";
+        let notes = |line: &str| {
+            let list = ShotList::parse(&format!(
+                "{shot}{line}
+"
+            ))?;
+            let (_, plans) = plan(&list, Path::new("shots.toml"), &over())?;
+            anyhow::Ok(plans[0].notes.clone())
+        };
+        assert_eq!(
+            notes("notes = \"the whole tour\"").unwrap(),
+            ["the whole tour"]
+        );
+        assert_eq!(notes("notes = [\"one\", \"two\"]").unwrap(), ["one", "two"]);
+        assert!(notes("").unwrap().is_empty());
+        let err = format!("{:#}", notes("notes = 3").unwrap_err());
+        assert!(err.contains("a string or a list of strings"), "{err}");
     }
 
     #[test]
