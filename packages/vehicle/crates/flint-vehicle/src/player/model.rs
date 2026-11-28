@@ -651,6 +651,17 @@ impl Vehicle {
                 tuning.air_control,
                 dt,
             );
+            // and the travel turns with the nose, by the same share, so a
+            // steered hop lands going where it points rather than sideways
+            // (the tyres would scrub the slip away, and the speed with it)
+            if grounded == 0 {
+                let turn = UnitQuaternion::from_axis_angle(
+                    &Vector::y_axis(),
+                    angvel.y * dt * tuning.air_control,
+                );
+                let v = *body.linvel();
+                body.set_linvel(turn * v, true);
+            }
         }
         let [px, py, pz] = input.push;
         if px != 0.0 || py != 0.0 || pz != 0.0 {

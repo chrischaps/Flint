@@ -345,8 +345,10 @@ fn push_is_applied_once_and_modifiers_return_to_neutral() {
 }
 
 /// A hop at speed with the wheel turned right, `air_control` off and on:
-/// only with it does the kart turn while its wheels are off the ground.
-fn heading_turned_in_a_hop(air_control: f64) -> (f32, bool) {
+/// only with it does the kart turn while its wheels are off the ground,
+/// and its travel turns with its nose. The heading's turn, the travel's
+/// slip off the nose at the end (degrees), and whether it's still up.
+fn heading_turned_in_a_hop(air_control: f64) -> (f32, f32, bool) {
     let mut world = FlintWorld::new();
     ground(&mut world);
     let k = kart(
@@ -370,14 +372,18 @@ air_control = {air_control}"
     run.seconds(0.3);
     let airborne = !run.state(k).bool("grounded", true);
     let turned = run.state(k).f32("yaw", 0.0) - before;
-    (turned, airborne)
+    (turned, run.state(k).f32("slip_angle", 0.0), airborne)
 }
 
 #[test]
 fn air_control_steers_a_hop_and_off_leaves_it_to_its_spin() {
-    let (off, airborne_off) = heading_turned_in_a_hop(0.0);
-    let (on, airborne_on) = heading_turned_in_a_hop(1.0);
+    let (off, _, airborne_off) = heading_turned_in_a_hop(0.0);
+    let (on, slip, airborne_on) = heading_turned_in_a_hop(1.0);
     assert!(airborne_off && airborne_on, "both are still in the air");
+    assert!(
+        slip.abs() < 1.5,
+        "the travel turned with the nose, so it lands going where it points: slip {slip} degrees"
+    );
     assert!(
         off.abs() < 1.0,
         "with air_control 0 nothing steers off the ground: {off} degrees"

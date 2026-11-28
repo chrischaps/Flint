@@ -86,7 +86,7 @@ The state comes from the body as the last fixed step began, so it is one step (1
 |---|---|
 | Drive | `top_speed`, `accel`, `brake`, `reverse` (a fraction of top speed and accel), `drag` (with `accel` it sets the top speed: 16.5 / 0.5 = 33 m/s), `air_drag` (the share of `drag` kept with no wheel down: 1 by default; 0 for an arcade kart, whose hop or jump then costs no speed), `overspeed_decay`, `mass`, `center_of_mass` |
 | Steering | `turn_rate_low` and `turn_rate_high` (degrees a second, at standstill and at top speed), `min_turn_radius`, `steer_response` (full locks a second), `steer_curve` |
-| Assists | `grip` (sideways speed scrubbed a second), `yaw_assist` (how fast the yaw rate is pulled to the turn-rate curve), `air_control` (the share of the yaw assist that still steers with fewer than two wheels down, about the world's up: 0 by default; 1 steers a hop as on the ground), `upright`, `scrub` (speed lost to slip, 0 by default) |
+| Assists | `grip` (sideways speed scrubbed a second), `yaw_assist` (how fast the yaw rate is pulled to the turn-rate curve), `air_control` (the share of the yaw assist that still steers with fewer than two wheels down, about the world's up, and with no wheel down the travel turns with the nose by the same share, so a steered hop lands going where it points: 0 by default; 1 steers a hop as on the ground), `upright`, `scrub` (speed lost to slip, 0 by default) |
 | Tyres and springs | `tyre_grip`, `suspension_stiffness`, `suspension_damping`, `suspension_travel` |
 | Control | `driver`, `actions` |
 

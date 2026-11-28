@@ -35,7 +35,7 @@ grip = { type = "f32", default = 9.0, min = 0.0, description = "Sideways speed s
 yaw_assist = { type = "f32", default = 10.0, min = 0.0, description = "How fast the yaw rate is pulled toward the turn-rate curve, per second" }
 upright = { type = "f32", default = 60.0, min = 0.0, description = "The torque turning the body's up toward the ground's, per second squared" }
 scrub = { type = "f32", default = 0.0, min = 0.0, description = "Forward speed lost each second per radian of slip, for a vehicle that slows when thrown into a corner" }
-air_control = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "The share of the yaw assist that still steers with fewer than two wheels down (a hop, a jump), about the world's up: an arcade kart's steer in the air" }
+air_control = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "The share of the yaw assist that still steers with fewer than two wheels down (a hop, a jump), about the world's up, and with no wheel down the travel turns with the nose by the same share: an arcade kart's steer in the air" }
 # Tyres and suspension
 tyre_grip = { type = "f32", default = 1.8, min = 0.0, description = "Each tyre's friction (Rapier's friction_slip)" }
 suspension_stiffness = { type = "f32", default = 40.0, min = 0.0, description = "The springs' stiffness, per metre of compression" }
