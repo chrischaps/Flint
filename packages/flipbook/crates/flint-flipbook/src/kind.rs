@@ -164,6 +164,11 @@ impl ClipKind for FlipbookKind {
         KIND
     }
 
+    /// Last: after the rig's skeletal and node clips, as before the split.
+    fn slot(&self) -> u32 {
+        flint_animation::SLOT_FLIPBOOK
+    }
+
     fn clip_count(&self) -> usize {
         self.books.len()
     }
@@ -326,6 +331,14 @@ impl ClipKind for FlipbookKind {
 
     fn clear(&mut self) {
         self.playing.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 

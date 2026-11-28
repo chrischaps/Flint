@@ -512,7 +512,7 @@ vars! {
     CUBIC_MODEL = "FLINT_CUBIC_MODEL", Tests,
         Kind::Path,
         default "skipped",
-        "A glTF with CUBICSPLINE animation for flint-animation's opt-in cubicspline_model test";
+        "A glTF with CUBICSPLINE animation for flint-rig's opt-in cubicspline_model test";
     SAVE_194_DIR = "FLINT_194_SAVE_DIR", Tests,
         Kind::Path,
         default "none",

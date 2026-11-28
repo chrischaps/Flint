@@ -4,10 +4,10 @@
 //! skeleton joints. Used for glTF node animations where entire objects move/rotate
 //! via their transforms (as opposed to vertex skinning).
 
-use crate::clip::Interpolation;
 use crate::skeletal_clip::{
     make_rotation_track_continuous, slide_to_first_key, JointKeyframe, JointProperty,
 };
+use flint_animation::clip::Interpolation;
 
 /// A single track targeting one node's property (translation, rotation, or scale)
 #[derive(Debug, Clone)]

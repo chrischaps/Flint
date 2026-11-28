@@ -9,16 +9,16 @@
 //! `stop_clip`, `set_anim_speed`, through `animator::write`, as the Rhai
 //! calls do) and steps it as the player does: sync, advance, write back.
 
-use crate::animator::{self, Animator};
-use crate::clip::AnimationClip;
 use crate::node_clip::NodeClip;
 use crate::node_sync::NodeSync;
-use crate::playback_state::ClipPlaybackState;
-use crate::property::AnimationPlayer;
 use crate::skeletal_clip::SkeletalClip;
 use crate::skeletal_sync::SkeletalSync;
 use crate::skeleton::{JointPose, Skeleton};
-use crate::sync::AnimationSync;
+use flint_animation::animator::{self, Animator};
+use flint_animation::clip::AnimationClip;
+use flint_animation::playback_state::ClipPlaybackState;
+use flint_animation::property::AnimationPlayer;
+use flint_animation::sync::AnimationSync;
 use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;

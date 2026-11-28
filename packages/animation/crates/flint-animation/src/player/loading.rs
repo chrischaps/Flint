@@ -1,140 +1,18 @@
 //! A scene's animation, loaded (moved from the player's `scene_loading.rs`
-//! by #1620): skeletons and clips from the scene's models, every
-//! `.anim.toml` and `.sequence.toml` the scene can see, each found by the
+//! by #1620): every `.anim.toml` and `.sequence.toml` the scene can see, each found by the
 //! project's one asset search (ADR 0114). Each loader has a `_saying` form
 //! that hands its lines to a closure (`flint render --report json` keeps
 //! them); the player's is [`loaded`], a `load` event a line.
 
-use crate::node_clip::NodeClip;
-use crate::skeletal_clip::SkeletalClip;
-use crate::skeleton::Skeleton;
 use crate::AnimationSystem;
 use flint_core::project::{AssetKind, Project};
-use flint_core::EntityId;
-use flint_render::model_loader;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
-/// Register skeletal data from loaded models into the animation system.
-pub fn register_skeletal_data(
-    load_result: &model_loader::ModelLoadResult,
-    animation: &mut AnimationSystem,
-) {
-    register_skeletal_data_saying(
-        &models_of(load_result),
-        animation,
-        &mut loaded("skeletal_clip"),
-    );
-}
-
-/// Every model a load made, for the `_saying` loaders, which take a list so
-/// a host can leave some out (a late skinned model that took a skeleton).
-pub fn models_of(load_result: &model_loader::ModelLoadResult) -> Vec<&model_loader::LoadedModel> {
-    load_result.models.iter().collect()
-}
 
 /// The player's `say` for the `_saying` loaders: each line a `load` event
 /// of `kind`, which the load's summary counts and `RUST_LOG=load=debug`
 /// shows (#716). `flint render` hands its own `say`, for its report.
 pub fn loaded(kind: &'static str) -> impl FnMut(String) {
     move |line| tracing::debug!(target: "load", kind, "{}", line.trim_start())
-}
-
-/// [`register_skeletal_data`], each clip it registers told to `say` rather
-/// than printed: a headless host keeps stdout for its own output.
-pub fn register_skeletal_data_saying(
-    models: &[&model_loader::LoadedModel],
-    animation: &mut AnimationSystem,
-    say: &mut dyn FnMut(String),
-) {
-    // Skeletons built from the first import of each asset, so entities that hit
-    // the mesh cache (`import_result: None` — every 2nd+ entity sharing a
-    // skinned asset) still get their own skeleton and animate independently.
-    let mut skeletons_by_asset: HashMap<String, Vec<Skeleton>> = HashMap::new();
-    let mut deferred: Vec<(EntityId, String)> = Vec::new();
-
-    for loaded in models {
-        if !loaded.is_skinned {
-            continue;
-        }
-        let Some(ref import_result) = loaded.import_result else {
-            deferred.push((loaded.entity_id, loaded.asset_name.clone()));
-            continue;
-        };
-        let skeletons: Vec<Skeleton> = import_result
-            .skeletons
-            .iter()
-            .map(Skeleton::from_imported)
-            .collect();
-        for skeleton in &skeletons {
-            animation.add_skeleton(loaded.entity_id, skeleton.clone());
-        }
-        skeletons_by_asset
-            .entry(loaded.asset_name.clone())
-            .or_insert(skeletons);
-        for imported_clip in &import_result.skeletal_clips {
-            let clip = SkeletalClip::from_imported(imported_clip);
-            say(format!(
-                "  Skeletal clip: {} ({:.1}s, {} tracks)",
-                clip.name,
-                clip.duration,
-                clip.joint_tracks.len()
-            ));
-            animation.add_skeletal_clip(clip);
-        }
-    }
-
-    for (entity_id, asset_name) in deferred {
-        match skeletons_by_asset.get(&asset_name) {
-            Some(skeletons) => {
-                for skeleton in skeletons {
-                    animation.add_skeleton(entity_id, skeleton.clone());
-                }
-            }
-            None => tracing::warn!(
-                "skinned entity {:?} uses `{}` but no import of that asset produced a skeleton this load; it will render in rest pose",
-                entity_id,
-                asset_name
-            ),
-        }
-    }
-}
-
-/// Register node-level animation data from loaded models into the animation system.
-pub fn register_node_animation_data(
-    load_result: &model_loader::ModelLoadResult,
-    animation: &mut AnimationSystem,
-) {
-    register_node_animation_data_saying(
-        &models_of(load_result),
-        animation,
-        &mut loaded("node_clip"),
-    );
-}
-
-/// [`register_node_animation_data`], telling `say` what it registers.
-pub fn register_node_animation_data_saying(
-    models: &[&model_loader::LoadedModel],
-    animation: &mut AnimationSystem,
-    say: &mut dyn FnMut(String),
-) {
-    for loaded in models {
-        if let Some(ref import_result) = loaded.import_result {
-            for imported_clip in &import_result.node_clips {
-                let clip = NodeClip::from_imported(imported_clip);
-                say(format!(
-                    "  Node clip: {} ({:.1}s, {} tracks)",
-                    clip.name,
-                    clip.duration,
-                    clip.node_tracks.len()
-                ));
-                animation.add_node_clip(clip);
-            }
-        }
-        if let Some(ref node_map) = loaded.node_map {
-            animation.register_node_entity(loaded.entity_id, node_map.clone());
-        }
-    }
 }
 
 /// Load every `.anim.toml` clip the scene can see: `animations/` beside the

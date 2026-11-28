@@ -69,7 +69,7 @@ default = ["audio", "gamepad", "dialogs", "packages"]
 # package-sync:features
 packages = [
     "ai", "animation", "debug-hud", "flipbook", "living", "music", "particles", "physics",
-    "procgen", "rhythm", "terrain", "vehicle",
+    "procgen", "rhythm", "rig", "terrain", "vehicle",
 ]
 packages-audio = []
 packages-dialogs = ["flint-procgen-cli?/dialogs"]
@@ -84,6 +84,7 @@ particles = ["flint-player/particles", "dep:flint-particles", "flint-particles?/
 physics = ["flint-player/physics"]
 procgen = ["flint-player/procgen", "dep:flint-procgen-cli", "flint-procgen-cli?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
+rig = ["animation", "flint-player/rig", "dep:flint-rig", "flint-rig?/cli"]
 terrain = ["flint-player/terrain", "dep:flint-terrain", "flint-terrain?/cli"]
 vehicle = ["physics", "flint-player/vehicle"]
 # package-sync:end
@@ -102,10 +103,6 @@ flint-render = { workspace = true }
 flint-constraint = { workspace = true }
 flint-asset = { workspace = true }
 flint-import = { workspace = true }
-# The model previewer and `--anim-time` (`HeadlessAnimation`) name the
-# animation package directly until #1621 puts them behind registration
-# (`scripts/package-names-check.py` lists the exception)
-flint-animation = { workspace = true, features = ["player"] }
 flint-runtime = { workspace = true }
 flint-player = { workspace = true, features = ["frame-history"] }
 # `CliExtension` and the one output path (#1553): a package's commands
@@ -152,6 +149,7 @@ flint-music = { workspace = true, optional = true }
 flint-particles = { workspace = true, optional = true }
 flint-procgen-cli = { workspace = true, optional = true }
 flint-rhythm-game = { workspace = true, optional = true }
+flint-rig = { workspace = true, optional = true }
 flint-terrain = { workspace = true, optional = true }
 # package-sync:end
 

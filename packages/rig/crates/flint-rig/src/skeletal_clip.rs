@@ -1,6 +1,6 @@
 //! Skeletal animation clip — per-joint keyframe tracks with quaternion rotation
 
-use crate::clip::Interpolation;
+use flint_animation::clip::Interpolation;
 
 /// Which joint property a track animates
 #[derive(Debug, Clone, PartialEq)]

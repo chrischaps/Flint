@@ -321,17 +321,15 @@ pub fn stock() -> Vec<Box<dyn CliExtension>> {
 }
 
 /// The run's registration points (#1557, `flint_package::cli::Points`):
-/// the kernel's own (its model still, which a package's step of `gen`
-/// draws with), then what the extensions of `extensions` register
-/// (procgen's spec commands, the ai package's steps of `gen`, `render` and
-/// `asset resolve`, #1572).
+/// what the extensions of `extensions` register (procgen's spec commands,
+/// the ai package's steps of `gen`, `render` and `asset resolve`, #1572,
+/// the rig's model previewer and the model still a package's step of `gen`
+/// draws with, #1621).
 fn points_of(extensions: &[Box<dyn CliExtension>]) -> flint_package::cli::Points {
     let mut points = flint_package::cli::Points::new();
-    points.insert(flint_package::cli::gen::ModelStill(
-        commands::preview::render_model,
-    ));
     // The packages' scene binders (#1623), from the player's registry, for
-    // the hosts that have none of their own (the scene viewer)
+    // the hosts that have none of their own (the scene viewer). The model
+    // still is the rig package's to register (#1621)
     points.insert(flint_player::packages::registry().scene_binders());
     for extension in extensions {
         extension.register(&mut points);

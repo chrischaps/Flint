@@ -2,14 +2,14 @@
 //!
 //! Manages per-entity skeleton state, skeletal clip playback, and bone matrix computation.
 
-use crate::animator::{self, Animator};
 use crate::blend::{
     blend_joint, blend_poses, quat_conjugate, quat_mul, quat_normalize, quat_slerp,
 };
-use crate::playback_state::{AnimLayer, ClipPlaybackState, LayerMode};
 use crate::skeletal_clip::{JointProperty, SkeletalClip};
 use crate::skeletal_sampler::sample_joint_track;
 use crate::skeleton::{JointPose, Skeleton};
+use flint_animation::animator::{self, Animator};
+use flint_animation::playback_state::{AnimLayer, ClipPlaybackState, LayerMode};
 use flint_core::components as comp;
 use flint_core::tween::{Easing, Tween};
 use flint_core::EntityId;
@@ -406,13 +406,8 @@ impl SkeletalSync {
                     // Check if blend is complete
                     if through >= 1.0 {
                         // Transition to target clip
-                        state.clip_name = target_clip_name;
-                        state.time = target_time;
-                        state.blend_target.clear();
-                        state.blend_elapsed = 0.0;
+                        state.settle_crossfade(target_clip_name, target_time);
                         self.completed_blends.push(entity_id);
-                        // The animator's `clip` still names the old one.
-                        state.unpublished = true;
                     }
                 } else {
                     // Target clip not found, clear blend
@@ -771,8 +766,8 @@ impl SkeletalSync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clip::Interpolation;
     use crate::skeletal_clip::{JointKeyframe, JointTrack};
+    use flint_animation::clip::Interpolation;
     use flint_core::toml_util::toml_f32;
 
     const IDENT: [[f32; 4]; 4] = [

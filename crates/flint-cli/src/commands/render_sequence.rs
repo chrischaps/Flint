@@ -12,7 +12,7 @@ pub(super) struct SequenceRig<'a> {
     pub(super) camera_path: Option<&'a crate::commands::frame_seq::CameraPath>,
     pub(super) particles: Option<&'a mut dyn flint_render::ParticleSource>,
     /// `--anim-time` (#307): steps on a frame at a time from there
-    pub(super) animation: Option<&'a mut HeadlessAnimation>,
+    pub(super) animation: Option<&'a mut dyn CapturePose>,
     /// `--mesh` (#222): each frame shows the next file on each binding
     pub(super) meshes: &'a [crate::commands::mesh_seq::MeshBinding],
     pub(super) scene_name: &'a str,

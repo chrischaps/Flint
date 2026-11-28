@@ -188,6 +188,17 @@ impl ClipPlaybackState {
         self.unpublished = true;
     }
 
+    /// A crossfade finished, by a kind that composes one (the rig's
+    /// skeletal clips): `clip`, its target, plays on from `time`, and the
+    /// animator, whose `clip` still names the old one, must be told.
+    pub fn settle_crossfade(&mut self, clip: String, time: f64) {
+        self.clip_name = clip;
+        self.time = time;
+        self.blend_target.clear();
+        self.blend_elapsed = 0.0;
+        self.unpublished = true;
+    }
+
     /// Clear fired event tracking so events can fire again on replay.
     pub fn clear_fired_events(&mut self) {
         self.fired_events.clear();

@@ -526,11 +526,11 @@ mod tests {
             ["physics = \"*\"", "procgen = \"*\"", "living = \"*\""]
         );
         // Procgen is used, so it isn't named to leave out; nothing scanned
-        // animates (#1620) or emits (#1622), so animation, flipbook and
-        // particles are, and the grove has no terrain (#1623)
+        // animates (#1620), emits (#1622) or poses (#1621), so animation,
+        // flipbook, particles and rig are, and the grove has no terrain (#1623)
         assert_eq!(
             left_out_lines(&engine_packages(), &found, None),
-            ["animation", "flipbook", "particles", "terrain"]
+            ["animation", "flipbook", "particles", "rig", "terrain"]
         );
     }
 
@@ -551,6 +551,7 @@ mod tests {
                 "particles",
                 "physics",
                 "procgen",
+                "rig",
                 "terrain"
             ]
         );
@@ -599,6 +600,7 @@ mod tests {
                 "particles",
                 "physics",
                 "procgen",
+                "rig",
                 "terrain"
             ]
         );
