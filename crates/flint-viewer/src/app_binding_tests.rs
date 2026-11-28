@@ -56,13 +56,27 @@ fn staged(
     state: &mut ViewerState,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-) -> (SceneRenderer, Option<flint_terrain::scene::LoadedTerrain>) {
+) -> (SceneRenderer, Option<flint_package::bind::SceneGround>) {
     let mut renderer =
         SceneRenderer::new_headless(device, queue, FORMAT, SIZE, SIZE, RendererConfig::default());
     let config = ModelLoadConfig::from_scene_path(&state.scene_path);
     let binding = scene_binding(&state.scene_path);
-    let (_, terrain) = stage_scene(&mut renderer, device, queue, state, binding, &config);
+    let (_, terrain) = stage_scene(
+        &mut renderer,
+        device,
+        queue,
+        state,
+        binding,
+        &config,
+        &terrain_binder(),
+    );
     (renderer, terrain)
+}
+
+/// The terrain package's binder, as the CLI hands the viewer its packages'
+/// (#1623).
+fn terrain_binder() -> flint_package::bind::SceneBinders {
+    flint_package::bind::SceneBinders(vec![("terrain", flint_terrain::player::bind)])
 }
 
 fn gpu_renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> SceneRenderer {

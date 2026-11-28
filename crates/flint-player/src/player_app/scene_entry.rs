@@ -78,8 +78,6 @@ impl PlayerApp {
         // The run's debug HUD makes the scene's panels (#1559)
         self.create_scene_debug_panels(grass);
         self.apply_camera_tuning();
-        // The terrain height callback for scripts
-        self.update_terrain_height_fn();
 
         if entry == SceneEntry::Start {
             // The saved store (where: persist.rs) before any script's
@@ -182,14 +180,20 @@ impl PlayerApp {
             .unwrap_or_else(|| flint_render::SceneBinding::new(self.kept_asset_scope()))
             .with_archetypes(&schemas);
         let mut bound = renderer.bind_scene(device, queue, &self.core.world, &binding);
-        // The scene's terrain, which the renderer built in `bind_scene`
-        // until #1615: the terrain package's, before the models as it was
-        let terrain = flint_terrain::scene::bind_terrain(
-            renderer,
-            device,
-            queue,
-            &self.core.world,
-            &mut bound,
+        // The packages' share of the bind (#1623): the terrain's chunks and
+        // grass, which the renderer built in `bind_scene` until #1615, before
+        // the models as it was, and the ground it hands back
+        let ground = crate::packages::registry().bind_scene(
+            self.core.packages.as_ref(),
+            &mut flint_package::bind::BindCtx {
+                gpu: flint_package::assets::Gpu {
+                    renderer: &mut *renderer,
+                    device,
+                    queue,
+                },
+                world: &self.core.world,
+                bound: &mut bound,
+            },
         );
         // The core's registry is the scene's (#742), and a game style an
         // extension added since the binding was made is in it
@@ -307,11 +311,18 @@ impl PlayerApp {
             self.scene.post_process.as_ref(),
         );
 
-        // The terrain loaded after the bind: its collider, and its heights
-        // for scripts
-        if let Some(loaded) = terrain {
-            register_terrain_collider(physics_of_mut(&mut self.core.resources), &loaded);
-            self.terrain = Some((loaded.terrain, loaded.config));
+        // The ground the bind made: its collider, and the run resource the
+        // terrain package's subsystem hands its scripts (`terrain_height`)
+        match ground {
+            Some(ground) => {
+                register_terrain_collider(physics_of_mut(&mut self.core.resources), &ground);
+                self.core.resources.insert(ground);
+            }
+            None => {
+                self.core
+                    .resources
+                    .remove::<flint_geometry::ground::SceneGround>();
+            }
         }
         bound.grass.map(|grass| LoadedGrassInfo {
             config: grass.config,

@@ -76,34 +76,36 @@ pub fn scene_post_process_in(
 /// The grass a scene loaded, for its debug panel. The fields are only read
 /// by the `debug-hud` grass panel construction.
 pub(super) struct LoadedGrassInfo {
-    pub config: flint_terrain::GrassConfig,
+    pub config: flint_render::GrassConfig,
     pub terrain_entity_name: String,
     /// The component holding the `grass.*` fields: `terrain` or `grass_ground`.
     pub component: &'static str,
 }
 
-/// The static collider of a terrain `SceneRenderer::bind_scene` loaded: a
-/// heightfield of its chunks' vertex grid where its transform puts it
-/// (#1219), the same surface as the chunks' triangles with no seams.
+/// The static collider of the ground a scene binder made (the terrain
+/// package's, #1623): a heightfield of its drawn vertex grid where its
+/// transform puts it (#1219), the same surface as the chunks' triangles
+/// with no seams. Physics is the kernel's until #1617, so the kernel
+/// registers it and the terrain names no physics crate.
 pub(super) fn register_terrain_collider(
     physics: &mut PhysicsSystem,
-    loaded: &flint_terrain::scene::LoadedTerrain,
+    ground: &flint_geometry::ground::SceneGround,
 ) {
-    physics.register_static_heightfield(loaded.entity, &terrain_heightfield(loaded), 0.8, 0.1);
+    physics.register_static_heightfield(ground.entity, &terrain_heightfield(ground), 0.8, 0.1);
 }
 
-/// A loaded terrain's heights as physics takes them.
+/// A ground's heights as physics takes them.
 fn terrain_heightfield(
-    loaded: &flint_terrain::scene::LoadedTerrain,
+    ground: &flint_geometry::ground::SceneGround,
 ) -> flint_physics::StaticHeightfield {
-    let grid = loaded.terrain.height_grid();
+    let grid = &ground.grid;
     flint_physics::StaticHeightfield {
         columns: grid.columns,
         rows: grid.rows,
-        heights: grid.heights,
+        heights: grid.heights.clone(),
         width: grid.width,
         depth: grid.depth,
-        origin: loaded.offset,
+        origin: ground.origin,
     }
 }
 

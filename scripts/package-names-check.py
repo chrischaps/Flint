@@ -73,6 +73,18 @@ EXCEPTIONS = {
     ("flint-script", "string", "music", "crates/flint-script/src/api/music.rs"): "the "
     "`music` script module, declared here until Phase 3 (the music manifest says so): "
     "#1619 moves it to the music package",
+    ("flint-core", "string", "terrain", "crates/flint-core/src/components.rs"): "the "
+    "`terrain` component's name (`components::TERRAIN`), the one spelling the kernel's "
+    "readers of a terrain use: the renderer's terrain draws and replay, the scene check's "
+    "lone-collider rule, the CLI's asset fields. The component is the terrain package's "
+    "(#1623); its GPU half leaves the renderer in Phase 4 (ADR 0138 decision 5)",
+    ("flint-render", "string", "terrain", "crates/flint-render/src/scene_renderer/render_passes.rs"):
+    "the terrain pipeline's name in a frame's description (`MainPipe::Terrain`): the "
+    "renderer's GPU half of terrain, which stays in flint-render until Phase 4's "
+    "render-feature seam (ADR 0138 decision 5)",
+    ("flint-cli", "string", "terrain", "crates/flint-cli/src/check/references.rs"): "a "
+    "folder the reference check looks a bare file name up in (`ASSET_DIRS`), where "
+    "projects keep their heightmaps: a folder name, not the package",
     ("flint-audio", "string", "music", "crates/flint-audio/src/bus.rs"): "the built-in "
     "`music` bus, which every game's audio has: #1619 makes flint-audio the audio "
     "package's, out of the kernel",

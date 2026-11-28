@@ -32,6 +32,7 @@
     ["debug-hud", "standard"],
     ["flipbook", "standard"],
     ["procgen", "standard"],
+    ["terrain", "standard"],
     ["ai", "feature"],
     ["living", "feature"],
     ["music", "feature"],

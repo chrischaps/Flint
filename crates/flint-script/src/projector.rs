@@ -28,8 +28,8 @@
 
 use std::sync::{Arc, Mutex};
 
+pub use flint_geometry::ground::GroundField;
 pub use flint_geometry::ray_mesh::{RayHit, RayScene};
-pub use flint_terrain::GroundField;
 
 use crate::context::ScriptCallContext;
 
@@ -50,7 +50,7 @@ impl Projector {
     ///
     /// Takes the script context's lock, so don't call it from code the
     /// script system calls while holding that lock (the host's text
-    /// measurer or terrain height callback). Native functions called from
+    /// measurer). Native functions called from
     /// scripts are fine: the lock isn't held while they run.
     pub fn view(&self) -> View {
         View::of(&crate::lock_or_recover(&self.ctx))
@@ -340,7 +340,7 @@ mod tests {
             }
         }
         std::sync::Arc::new(super::GroundField::new(
-            flint_terrain::Heightmap::from_raw(heights, n, n),
+            flint_geometry::heightmap::Heightmap::from_raw(heights, n, n),
             [-20.0, -20.0],
             [40.0, 40.0],
             1.0,

@@ -126,12 +126,13 @@ pub(crate) fn build_for_scene(ctx: &mut SceneCtx) -> Vec<Box<dyn Subsystem>> {
 }
 
 /// The subsystems, and the script modules they enable, that every scene of
-/// a stock build has: the animation package's (its clips and `tween`) and
-/// the flipbook package's (#1620). A test of a scene's own leaves them out.
+/// a stock build has: the animation package's (its clips and `tween`), the
+/// flipbook package's (#1620) and the terrain package's (`terrain_height`,
+/// #1623). A test of a scene's own leaves them out.
 #[cfg(test)]
 pub(crate) const EVERY_SCENE: (&[&str], &[&str]) = (
-    &["animation", "flipbook"],
-    &["animation", "tween", "flipbook"],
+    &["animation", "flipbook", "terrain"],
+    &["animation", "tween", "flipbook", "terrain"],
 );
 
 /// The enabled script modules less those [`EVERY_SCENE`] enables.

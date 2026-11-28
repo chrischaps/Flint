@@ -64,7 +64,6 @@ mod sprite;
 mod state;
 mod style;
 mod style_field;
-mod terrain;
 mod test;
 mod time;
 mod touch;
@@ -123,7 +122,6 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     particle::register(api);
     spline::register(api);
     ocean::register(api);
-    terrain::register(api);
     chunk::register(api);
     scene::register(api);
     state::register(api);

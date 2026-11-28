@@ -45,6 +45,7 @@ pub use generator::{GenerationCost, Generator, LivingGenerator};
 pub use generators::creature::CreatureGenerator;
 pub use generators::register_built_in_generators;
 pub use generators::sweep::SweepGenerator;
+#[cfg(feature = "terrain")]
 pub use generators::terrain::TerrainGenerator;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;

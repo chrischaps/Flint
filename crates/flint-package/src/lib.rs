@@ -39,6 +39,7 @@
 //! decision 5).
 
 pub mod assets;
+pub mod bind;
 pub mod cli;
 mod context;
 pub mod hud;

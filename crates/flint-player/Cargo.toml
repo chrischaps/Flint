@@ -43,7 +43,8 @@ default = ["packages", "audio", "gamepad", "frame-history"]
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
 packages = [
-    "animation", "debug-hud", "flipbook", "living", "music", "procgen", "rhythm", "vehicle",
+    "animation", "debug-hud", "flipbook", "living", "music", "procgen", "rhythm", "terrain",
+    "vehicle",
 ]
 packages-audio = ["flint-music?/device", "flint-rhythm-game?/device"]
 packages-gamepad = ["flint-rhythm-game?/gamepad"]
@@ -57,6 +58,7 @@ living = ["procgen", "dep:flint-living", "flint-living?/player"]
 music = ["dep:flint-music", "flint-music?/player"]
 procgen = ["dep:flint-procgen", "flint-procgen?/player"]
 rhythm = ["music", "dep:flint-rhythm-game", "flint-rhythm-game?/player"]
+terrain = ["dep:flint-terrain", "flint-terrain?/player", "flint-procgen?/terrain"]
 vehicle = ["dep:flint-vehicle", "flint-vehicle?/player"]
 # package-sync:end
 # The always-on frame history (#1076): every frame's phases, clock, present,
@@ -104,9 +106,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 skrifa = { workspace = true }
 flint-particles = { workspace = true }
-# `render`: a scene's terrain built into the renderer (#1615), which the
-# renderer did itself before; `stage_scene` calls it after `bind_scene`
-flint-terrain = { workspace = true, features = ["render"] }
 flint-script = { workspace = true }
 rhai = { workspace = true }
 profiling = { workspace = true }
@@ -133,6 +132,7 @@ flint-living = { workspace = true, optional = true }
 flint-music = { workspace = true, optional = true }
 flint-procgen = { workspace = true, optional = true }
 flint-rhythm-game = { workspace = true, optional = true }
+flint-terrain = { workspace = true, optional = true }
 flint-vehicle = { path = "../../packages/vehicle/crates/flint-vehicle", optional = true }
 # package-sync:end
 

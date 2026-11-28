@@ -1344,6 +1344,7 @@ mod tests {
                 "music",
                 "procgen",
                 "rhythm",
+                "terrain",
                 "vehicle"
             ]
         );
@@ -1360,6 +1361,7 @@ mod tests {
                 "music",
                 "procgen",
                 "rhythm",
+                "terrain",
                 "vehicle"
             ]
         );

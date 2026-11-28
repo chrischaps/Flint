@@ -12,7 +12,18 @@ authors.workspace = true
 # physics, scripts and procgen read the heights without it, so they link no
 # renderer through this crate.
 render = ["dep:flint-render", "dep:wgpu", "dep:tracing"]
+# The package's player part (#1623, `player::PACKAGE`): the kernel's scene
+# binder (`render`'s `bind_terrain`), the subsystem and the `terrain` script
+# module. flint-player's generated `terrain` feature turns it on.
+player = ["render", "dep:flint-package", "dep:flint-script"]
+# The package's CLI part (#1623, `cli::extensions()`): the terrain editor,
+# on the kernel's `TerrainEditors` point. flint-cli's `terrain` turns it on.
+cli = [
+    "render", "dep:flint-package", "dep:flint-viewer", "dep:anyhow", "dep:clap",
+    "dep:winit", "dep:egui",
+]
 
+# The kernel only (#1624's rule): flint-package is the Package API.
 [dependencies]
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }
@@ -27,6 +38,13 @@ rand_chacha = { workspace = true }
 flint-render = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
+flint-package = { workspace = true, optional = true }
+flint-script = { workspace = true, optional = true }
+flint-viewer = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+winit = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
 
 [lints]
 workspace = true

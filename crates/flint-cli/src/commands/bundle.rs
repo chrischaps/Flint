@@ -1854,6 +1854,7 @@ mod tests {
     const FLIPBOOK: &str = "engine/packages/flipbook/schemas";
     const LIVING: &str = "engine/packages/living/schemas";
     const MUSIC: &str = "engine/packages/music/schemas";
+    const TERRAIN: &str = "engine/packages/terrain/schemas";
     const VEHICLE: &str = "engine/packages/vehicle/schemas";
 
     fn packed_under(gathered: &Gathered, dir: &str) -> bool {
@@ -1869,24 +1870,29 @@ mod tests {
     fn a_bundle_packs_only_the_packages_flint_toml_lists() {
         let listed = package_game("listed", Some("living = \"*\"\n"), "");
         let gathered = gather_game(&args(&listed)).unwrap();
-        // Animation and flipbook are standard (#1620): in unless set false
+        // Animation, flipbook (#1620) and terrain (#1623) are standard: in
+        // unless set false
         assert_eq!(
             gathered.schemas,
-            ["engine/schemas", ANIMATION, FLIPBOOK, LIVING]
+            ["engine/schemas", ANIMATION, FLIPBOOK, LIVING, TERRAIN]
         );
         assert!(packed_under(&gathered, LIVING));
         assert!(!packed_under(&gathered, MUSIC), "music isn't listed");
         assert!(gathered.packages.as_ref().unwrap().is_on("living"));
 
         // An empty table: the feature packages are all out, the standard
-        // ones with schemas (animation, flipbook) in
+        // ones with schemas (animation, flipbook, terrain) in
         let game = package_game("none_listed", Some(""), "");
         let gathered = gather_game(&args(&game)).unwrap();
-        assert_eq!(gathered.schemas, ["engine/schemas", ANIMATION, FLIPBOOK]);
+        assert_eq!(
+            gathered.schemas,
+            ["engine/schemas", ANIMATION, FLIPBOOK, TERRAIN]
+        );
         assert!(!gathered.files.keys().any(|k| {
             k.starts_with("engine/packages/")
                 && !k.starts_with(&format!("{ANIMATION}/"))
                 && !k.starts_with(&format!("{FLIPBOOK}/"))
+                && !k.starts_with(&format!("{TERRAIN}/"))
         }));
 
         // A scene packed alone reads the same list
@@ -1897,6 +1903,7 @@ mod tests {
             k.contains("packages/")
                 && !k.contains("packages/animation/")
                 && !k.contains("packages/flipbook/")
+                && !k.contains("packages/terrain/")
         };
         assert!(!gathered.files.keys().any(feature));
         assert!(!gathered.schemas.iter().any(feature));
@@ -1967,6 +1974,7 @@ mod tests {
                 FLIPBOOK,
                 LIVING,
                 MUSIC,
+                TERRAIN,
                 VEHICLE
             ]
         );

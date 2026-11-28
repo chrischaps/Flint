@@ -18,6 +18,8 @@ gif = ["dep:gif", "dep:color_quant", "dep:miniz_oxide", "image/gif"]
 [dependencies]
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }
+# The ground a scene binder hands back (`bind::SceneGround`, #1623)
+flint-geometry = { workspace = true }
 flint-runtime = { workspace = true }
 flint-script = { workspace = true }
 flint-render = { workspace = true }

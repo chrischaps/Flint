@@ -44,9 +44,10 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 
 | Package | Tier | Modules |
 |---|---|---|
-| [`engine`](#the-engine-package) | kernel | [entity](#entity) (41) · [input](#input) (22) · [time](#time) (3) · [audio](#audio) (17) · [physics](#physics) (8) · [physics_2d](#physics_2d) (5) · [nav](#nav) (3) · [camera](#camera) (8) · [camera_rig](#camera_rig) (12) · [post_process](#post_process) (22) · [quality](#quality) (5) · [math](#math) (23) · [event](#event) (2) · [log](#log) (4) · [draw](#draw) (44) · [draw_world](#draw_world) (6) · [view](#view) (6) · [ui](#ui) (26) · [screen_ui](#screen_ui) (6) · [sprite](#sprite) (6) · [camera_2d](#camera_2d) (12) · [touch](#touch) (15) · [style](#style) (25) · [style_field](#style_field) (6) · [panels](#panels) (4) · [particle](#particle) (7) · [spline](#spline) (4) · [ocean](#ocean) (3) · [terrain](#terrain) (1) · [chunk](#chunk) (3) · [scene](#scene) (10) · [state](#state) (8) · [persistence](#persistence) (15) · [data](#data) (2) · [expression](#expression) (1) · [test](#test) (4) · [field](#field) (9) |
+| [`engine`](#the-engine-package) | kernel | [entity](#entity) (41) · [input](#input) (22) · [time](#time) (3) · [audio](#audio) (17) · [physics](#physics) (8) · [physics_2d](#physics_2d) (5) · [nav](#nav) (3) · [camera](#camera) (8) · [camera_rig](#camera_rig) (12) · [post_process](#post_process) (22) · [quality](#quality) (5) · [math](#math) (23) · [event](#event) (2) · [log](#log) (4) · [draw](#draw) (44) · [draw_world](#draw_world) (6) · [view](#view) (6) · [ui](#ui) (26) · [screen_ui](#screen_ui) (6) · [sprite](#sprite) (6) · [camera_2d](#camera_2d) (12) · [touch](#touch) (15) · [style](#style) (25) · [style_field](#style_field) (6) · [panels](#panels) (4) · [particle](#particle) (7) · [spline](#spline) (4) · [ocean](#ocean) (3) · [chunk](#chunk) (3) · [scene](#scene) (10) · [state](#state) (8) · [persistence](#persistence) (15) · [data](#data) (2) · [expression](#expression) (1) · [test](#test) (4) · [field](#field) (9) |
 | [`animation`](#the-animation-package) | standard | [animation](#animation) (14) · [tween](#tween) (2) |
 | [`flipbook`](#the-flipbook-package) | standard | [flipbook](#flipbook) (8) |
+| [`terrain`](#the-terrain-package) | standard | [terrain](#terrain) (1) |
 | [`living`](#the-living-package) | feature | [wooze](#wooze) (8) · [living](#living) (8) · [debug](#debug) (5) |
 | [`music`](#the-music-package) | feature | [music](#music) (3) |
 | [`rhythm`](#the-rhythm-package) | feature | [conducted](#conducted) (22) |
@@ -541,12 +542,6 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 | `ocean_velocity_y(x: num, z: num)` | `num`: m/s; 0.0 without an ocean | The ocean surface's vertical velocity at world (x, z): the impact signal beside `ocean_height`. |
 | `ocean_normal(x: num, z: num)` | `map`: `#{x, y, z}`; `#{0, 1, 0}` without an ocean | The ocean surface's normal at world (x, z). |
 
-### terrain
-
-| Function | Returns | Description |
-|---|---|---|
-| `terrain_height(x: num, z: num)` | `num`: metres; 0.0 when no terrain is loaded | The world-space height of the terrain at world (x, z). |
-
 ### chunk
 
 | Function | Returns | Description |
@@ -693,6 +688,18 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 | `sprite_set_speed(id: entity, speed: num)` | — | **Deprecated:** use `set_sprite_speed`. Set the entity's flipbook playback speed (1 is the clip's own; negative plays it backwards). |
 | `is_sprite_playing(id: entity)` | `bool`: false without an animator | Whether the entity's flipbook is playing. |
 | `sprite_is_playing(id: entity)` | `bool`: false without an animator | **Deprecated:** use `is_sprite_playing`. Whether the entity's flipbook is playing. |
+
+## The `terrain` package
+
+*standard: a game has it unless its `[packages]` sets it to `false`.* Heightmap ground: chunks, splat-map layers, grass, a heightfield and `terrain_height`.
+
+### terrain
+
+*Enabled when the terrain package is in the build (every scene).* Anywhere else a call is a script error saying the module is not enabled.
+
+| Function | Returns | Description |
+|---|---|---|
+| `terrain_height(x: num, z: num)` | `num`: metres; 0.0 when no terrain is loaded | The world-space height of the terrain at world (x, z). |
 
 ## The `living` package
 

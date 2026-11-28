@@ -526,10 +526,11 @@ mod tests {
             ["procgen = \"*\"", "living = \"*\""]
         );
         // Procgen is used, so it isn't named to leave out; nothing scanned
-        // animates, so animation and flipbook are (#1620)
+        // animates, so animation and flipbook are (#1620), and the grove
+        // has no terrain (#1623)
         assert_eq!(
             left_out_lines(&engine_packages(), &found, None),
-            ["animation", "flipbook"]
+            ["animation", "flipbook", "terrain"]
         );
     }
 
@@ -544,7 +545,7 @@ mod tests {
         assert!(found.is_empty(), "{found:?}");
         assert_eq!(
             left_out_lines(&packages, &found, None),
-            ["animation", "flipbook", "procgen"]
+            ["animation", "flipbook", "procgen", "terrain"]
         );
         assert_eq!(
             left_out_line("procgen"),
@@ -583,7 +584,7 @@ mod tests {
         // A listed package that needs nothing standard leaves it named
         assert_eq!(
             left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
-            ["animation", "flipbook", "procgen"]
+            ["animation", "flipbook", "procgen", "terrain"]
         );
     }
 }

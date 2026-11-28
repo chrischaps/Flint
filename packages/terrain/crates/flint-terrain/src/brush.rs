@@ -202,7 +202,7 @@ pub fn apply_splat_brush(
 ///
 /// The heightmap is `res` x `res` samples spanning `0..width` x `0..depth`,
 /// with world y = sample x `height_scale`. Returns `Some((u, v))` if the ray
-/// hits the terrain. It's [`GroundField::ray`](crate::GroundField::ray)'s
+/// hits the terrain. It's [`GroundField::ray`](flint_geometry::ground::GroundField::ray)'s
 /// march (ADR 0095): the ray is clipped to the terrain's box, so it may
 /// start anywhere, then stepped a texel at a time and the crossing bisected.
 pub fn ray_heightmap_intersect(
@@ -231,7 +231,7 @@ pub fn ray_heightmap_intersect(
         });
     let (a, b) = (lo * height_scale, hi * height_scale);
     let step = width.min(depth) / (res - 1) as f32;
-    let hit = crate::ground::march(
+    let hit = flint_geometry::ground::march(
         origin,
         dir,
         [0.0, a.min(b), 0.0],

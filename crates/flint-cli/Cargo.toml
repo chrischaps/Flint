@@ -69,7 +69,7 @@ default = ["audio", "gamepad", "dialogs", "packages"]
 # package-sync:features
 packages = [
     "ai", "animation", "debug-hud", "flipbook", "living", "music", "procgen", "rhythm",
-    "vehicle",
+    "terrain", "vehicle",
 ]
 packages-audio = []
 packages-dialogs = ["flint-procgen-cli?/dialogs"]
@@ -82,6 +82,7 @@ living = ["procgen", "flint-player/living", "dep:flint-living", "flint-living?/c
 music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
 procgen = ["flint-player/procgen", "dep:flint-procgen-cli", "flint-procgen-cli?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
+terrain = ["flint-player/terrain", "dep:flint-terrain", "flint-terrain?/cli"]
 vehicle = ["flint-player/vehicle"]
 # package-sync:end
 audio = ["flint-player/audio", "packages-audio"]
@@ -114,8 +115,6 @@ flint-package = { workspace = true, features = ["gif"] }
 # it) is `flint script check` (#694). Both stay on with
 # `--no-default-features`
 flint-script = { workspace = true, features = ["metadata", "check"] }
-# `render`: a scene's terrain built into `flint render`'s renderer (#1615)
-flint-terrain = { workspace = true, features = ["render"] }
 flint-particles = { workspace = true }
 flint-viewer = { workspace = true }
 # The widgets `frame open`, its profiler and the particle editor draw
@@ -152,6 +151,7 @@ flint-living = { workspace = true, optional = true }
 flint-music = { workspace = true, optional = true }
 flint-procgen-cli = { workspace = true, optional = true }
 flint-rhythm-game = { workspace = true, optional = true }
+flint-terrain = { workspace = true, optional = true }
 # package-sync:end
 
 # `flint capture` asks the disk under `out` for its free space (#1196): std
@@ -181,6 +181,9 @@ flint-audio = { workspace = true }
 # well, so the test builds without the procgen package (#1543) and
 # `cargo tree -e normal` shows none
 flint-procgen = { workspace = true }
+# `tests/gen_cli.rs` bakes a terrain spec with the terrain package's own
+# bake, to hold `flint gen`'s maps to it (#1168), in any build (#1623)
+flint-terrain = { workspace = true }
 # `check::LIVING_PROP` is the living package's component name, held to its
 # crate's (#1558), in every build
 flint-living = { workspace = true }

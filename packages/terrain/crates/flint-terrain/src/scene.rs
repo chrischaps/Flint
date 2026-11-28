@@ -5,14 +5,13 @@
 //! this crate. It now draws only the plain data it's handed (the chunks'
 //! [`TerrainChunk`](crate::TerrainChunk)s and the
 //! [`GrassConfig`](crate::GrassConfig), both flint-geometry's), and the
-//! terrain is built here. Every host that binds a scene calls
-//! [`bind_terrain`] right after `bind_scene` and before the scene's models:
-//! the player, the scene viewer and `flint render`, as they did when the
-//! loader was the renderer's. ADR 0138 decision 5 makes this the terrain
-//! package's asset maker once flint-package stops linking this crate
-//! (#1616, #1623); until then the hosts call it by name.
+//! terrain is built here. It is the terrain package's scene binder (#1623,
+//! [`crate::player::bind`], `Registry::scene_binder`), which every host that
+//! binds a scene runs right after `bind_scene` and before the scene's
+//! models: the player, the scene viewer and `flint render`, as they did when
+//! the loader was the renderer's. None of them names this crate.
 
-use crate::{GrassConfig, Heightmap, Terrain, TerrainConfig};
+use crate::{GrassConfig, Heightmap, HeightmapFiles, Terrain, TerrainConfig};
 use flint_core::components as comp;
 use flint_core::{EntityId, Transform, Vec3};
 use flint_ecs::FlintWorld;
@@ -30,6 +29,23 @@ pub struct LoadedTerrain {
     pub heightmap_size: (u32, u32),
     /// Where the entity's transform puts it.
     pub offset: [f32; 3],
+}
+
+impl LoadedTerrain {
+    /// The kernel's ground (#1623): what the host is handed, for physics'
+    /// heightfield, `terrain_height` and what `flint render` says.
+    pub fn ground(&self) -> flint_geometry::ground::SceneGround {
+        flint_geometry::ground::SceneGround {
+            entity: self.entity,
+            name: self.name.clone(),
+            grid: self.terrain.height_grid(),
+            origin: self.offset,
+            heightmap: self.terrain.heightmap.clone(),
+            size: [self.config.width, self.config.depth],
+            height_scale: self.config.height_scale,
+            chunks: self.terrain.chunks.len(),
+        }
+    }
 }
 
 /// Load the first `terrain` entity of `world` into `renderer`: its chunks,

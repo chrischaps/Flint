@@ -1981,6 +1981,7 @@ dependencies = [
  "egui",
  "flint-core",
  "flint-ecs",
+ "flint-geometry",
  "flint-render",
  "flint-runtime",
  "flint-scene",
@@ -2311,7 +2312,6 @@ dependencies = [
  "flint-runtime",
  "flint-scene",
  "flint-schema",
- "flint-terrain",
  "rhai",
  "serde_json",
  "toml",
@@ -2325,10 +2325,16 @@ dependencies = [
 name = "flint-terrain"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
+ "egui",
  "flint-core",
  "flint-ecs",
  "flint-geometry",
+ "flint-package",
  "flint-render",
+ "flint-script",
+ "flint-viewer",
  "image",
  "noise",
  "rand 0.9.2",
@@ -2337,6 +2343,7 @@ dependencies = [
  "toml",
  "tracing",
  "wgpu",
+ "winit",
 ]
 
 [[package]]

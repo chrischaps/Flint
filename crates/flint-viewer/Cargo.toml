@@ -24,11 +24,6 @@ flint-package = { workspace = true }
 flint-schema = { workspace = true }
 flint-render = { workspace = true }
 flint-particles = { workspace = true }
-# A scene's terrain, which the renderer built itself until #1615
-# (`flint_terrain::scene::bind_terrain`, the `render` part). A kernel crate
-# naming a package's, as flint-particles above is, until the terrain package's
-# asset maker builds it (#1623, ADR 0138 decision 5)
-flint-terrain = { workspace = true, features = ["render"] }
 # The widgets, the Rendering & Effects panel (F4) and the style cards: the
 # kernel's (#1583), so the viewer links no debug-hud package
 flint-widgets = { workspace = true }
@@ -49,6 +44,11 @@ egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
 tracing = { workspace = true }
 image = { workspace = true }
+
+[dev-dependencies]
+# The terrain package's scene binder, which the binding tests hand
+# `stage_scene` as the CLI hands the viewer its packages' (#1623)
+flint-terrain = { workspace = true, features = ["player"] }
 
 # Built-in shader modules and frame acquisition go through flint-render's
 # seams; the list is this crate's clippy.toml (#944, #761), denied workspace-wide (#979).

@@ -22,7 +22,6 @@ members = [
     "crates/flint-audio-worklet",
     "crates/flint-script",
     "crates/flint-particles",
-    "crates/flint-terrain",
     "crates/flint-cli",
     "packages/*/crates/*",
     # A game's launcher, which `flint build` writes for a game package with
@@ -59,7 +58,6 @@ default-members = [
     "crates/flint-audio-worklet",
     "crates/flint-script",
     "crates/flint-particles",
-    "crates/flint-terrain",
     "crates/flint-cli",
     "packages/*/crates/*",
     "tools/arch-analyzer",
@@ -242,7 +240,10 @@ flint-flipbook = { path = "packages/flipbook/crates/flint-flipbook", default-fea
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "packages/ai/crates/flint-asset-gen" }
 flint-particles = { path = "crates/flint-particles" }
-flint-terrain = { path = "crates/flint-terrain" }
+# The terrain package (#1623): its `player` feature is the scene binder, the
+# subsystem and the `terrain` module; `cli` the terrain editor; `render` the
+# chunks built into a renderer, which both turn on
+flint-terrain = { path = "packages/terrain/crates/flint-terrain", default-features = false }
 # Its `living` feature (the [wooze] table's field and knob checks) is the
 # living package's to turn on (#1516)
 flint-procgen = { path = "packages/procgen/crates/flint-procgen", default-features = false }

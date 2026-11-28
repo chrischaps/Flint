@@ -533,12 +533,7 @@ fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
         )
     );
     // Pure reads take ints too
-    let h: f64 = eval(
-        &engine,
-        &mut world,
-        "terrain_height(1, 2) + ocean_height(0, 0)",
-    )
-    .unwrap();
+    let h: f64 = eval(&engine, &mut world, "ocean_height(0, 0)").unwrap();
     assert_eq!(h, 0.0);
     let gap: rhai::Dynamic = eval(
         &engine,
@@ -703,7 +698,6 @@ fn the_last_modules_are_declared_under_their_subsystems() {
         ("scene", "quit_game", 0),
         ("persistence", "persist_slot", 1),
         ("data", "load_data", 2),
-        ("terrain", "terrain_height", 2),
         ("chunk", "is_chunk_loaded", 1),
     ] {
         let e = reg
