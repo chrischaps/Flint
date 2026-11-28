@@ -874,4 +874,5 @@ decision 4, whose status line now says so.
   and a rendered run at 1/60 the same five 960x540 screenshots, byte for
   byte (0 of 2,592,000 pixels). With `first-person = false` the same run
   passes with the player standing at its start, and the loader names the
-  package: that run is the control.
+  package: that run is the control. All of it holds again after
+  merging `main` with #1623's terrain package.
