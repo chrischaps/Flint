@@ -2,7 +2,8 @@
 #
 # Every game links this package. It holds the kernel and the standard
 # packages that have no Cargo feature until Phase 3 (audio, terrain;
-# animation left with #1620, particles with #1622, physics with #1617), and
+# animation left with #1620, particles with #1622, physics with #1617,
+# first-person with #1618), and
 # the render features that live inside flint-render until Phase 4 (ocean,
 # grass, stylize, panels). Each list is grouped by the package it will
 # become, so the split is a move of lines.
@@ -36,9 +37,6 @@ components = [
     "interactable", "camera_tuning", "screen_anchor", "ui_fill", "ui_text",
     "sprite", "parallax", "spline", "spline_mesh",
     "motion_hold",
-    # first-person (#1618): the character controller stays in
-    # flint-physics until then, its component here
-    "character_controller",
     # audio
     "audio_source", "audio_trigger",
     # terrain
@@ -53,8 +51,6 @@ components = [
 archetypes = [
     # kernel
     "sprite", "character",
-    # first-person (#1618)
-    "player",
     # terrain
     "terrain",
 ]

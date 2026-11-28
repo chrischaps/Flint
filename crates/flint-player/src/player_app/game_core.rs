@@ -360,8 +360,8 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
         let (core, lent) = host.lend();
         core.tick_fixed_steps(config, steps_physics, lent.input);
     }
-    // The eye a controller placed (ADR 0138's `View`): physics' built-in
-    // character until the first-person package takes it (#1618). A capture
+    // The eye a controller placed (ADR 0138's `View`): the first-person
+    // package's walker (#1618), a vehicle's chase camera. A capture
     // steps no physics, and its camera stays the scene's.
     host.core()
         .resources
@@ -657,7 +657,7 @@ impl GameCore {
     }
 
     /// The scene's view at its entry, before its builders: reset, so a
-    /// controller's builder (physics' character controller, #1617) says
+    /// controller's builder (the first-person package's, #1618) says
     /// who its player is before the first frame (#1614's risk: the cursor
     /// and the controls line read it at the end of the entry), and a scene
     /// with none has no player.

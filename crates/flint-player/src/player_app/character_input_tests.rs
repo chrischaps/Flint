@@ -64,7 +64,7 @@ fn started(step: f64, script: &str) -> PlayerApp {
     app.focus.cursor_captured = true;
     app.enter_scene(SceneEntry::Start)
         .expect("the scene starts");
-    // Physics' controller said who the player is at the entry (#1614)
+    // The first-person package said who the player is at the entry (#1614, #1618)
     let view = app.core.player_view();
     assert!(view.player.is_some() && view.mouse_look);
     app
@@ -223,7 +223,7 @@ fn entered() -> PlayerApp {
 }
 
 /// #1614's risk: the cursor and the controls line ask who the player is
-/// while the scene comes up, so physics' controller writes the view before
+/// while the scene comes up, so the first-person package writes the view before
 /// either, and before the first frame. One frame later the eye is placed
 /// and the camera stands in it.
 #[test]
@@ -234,7 +234,7 @@ fn the_players_view_is_settled_at_the_entry_before_the_first_frame() {
         let view = app.core.player_view();
         assert_eq!(view.player, player);
         assert!(view.mouse_look);
-        assert_eq!(view.controls, &flint_physics::character::ACTIONS);
+        assert_eq!(view.controls, &flint_first_person::ACTIONS);
         assert_eq!(view.eye, None, "no eye before the first frame");
         assert!(app.is_cursor_captured(), "the entry caught the cursor");
         let said = app.input_layers.said_controls.clone().unwrap_or_default();

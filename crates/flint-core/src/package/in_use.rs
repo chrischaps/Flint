@@ -396,11 +396,14 @@ pub struct BuiltWithout {
     pub components: Vec<String>,
     /// `[provides] scene_tables`.
     pub scene_tables: Vec<String>,
+    /// `[provides] archetypes` (#1618: first-person's `player`).
+    pub archetypes: Vec<String>,
 }
 
 impl BuiltWithout {
-    /// Whether `d` is an `unknown-component` or `unknown-table` for a name
-    /// this package provides: the binary's line for the package says it.
+    /// Whether `d` is an `unknown-component`, `unknown-table` or
+    /// `unknown-archetype` for a name this package provides: the binary's
+    /// line for the package says it.
     pub fn names(&self, d: &Diagnostic) -> bool {
         let has = |names: &[String], item: &Option<String>| {
             item.as_ref().is_some_and(|i| names.contains(i))
@@ -408,6 +411,7 @@ impl BuiltWithout {
         match d.code {
             codes::UNKNOWN_COMPONENT => has(&self.components, &d.component),
             codes::UNKNOWN_TABLE => has(&self.scene_tables, &d.table),
+            codes::UNKNOWN_ARCHETYPE => has(&self.archetypes, &quoted(&d.message)),
             _ => false,
         }
     }

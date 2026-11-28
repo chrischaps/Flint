@@ -1,0 +1,39 @@
+# First person (ADR 0138 decision 4, #1618, epic #1611): a walker on
+# Rapier's kinematic character controller, and the eye it looks through.
+# A standard package: on unless a game writes `first-person = false`, so a
+# game that writes nothing keeps its walk. It was physics' built-in
+# controller until #1618 (ADR 0134 decision 4, which ADR 0138 supersedes).
+#
+# Its crate is in this folder: crates/flint-first-person, whose `player`
+# feature (`flint_first_person::player::PACKAGE`, named by `[rust]` below)
+# is its share of the player: a subsystem for a scene with a player that
+# writes the kernel's `PlayerView` (the player, mouse look, the six
+# actions the controls line lists, each frame's eye), takes the look and
+# the jump press once a frame and walks once a fixed step.
+
+[package]
+name = "first-person"
+version = "0.1.0"
+tier = "standard"
+summary = "A first-person walker on Rapier's character controller, and the eye the camera and listener follow"
+engine = "^0.1"
+
+# It sweeps its capsule through physics' world, and its body is physics'
+[requires]
+physics = "*"
+
+[build]
+features = ["first-person"]
+
+[rust]
+player = "flint-first-person"
+
+[provides]
+crates = ["flint-first-person"]
+components = ["character_controller"]
+archetypes = ["player"]
+
+# What a player built without it still knows (ADR 0137 decision 8): a
+# scene with a `character_controller` hears once that nobody walks it.
+[without]
+does = "stand where they are written: no one walks them or looks through their eyes"

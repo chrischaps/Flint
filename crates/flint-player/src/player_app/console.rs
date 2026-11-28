@@ -195,9 +195,9 @@ mod tests {
         .unwrap();
         let named: BTreeSet<String> = game.actions.keys().cloned().collect();
         merged.actions.extend(game.actions);
-        // What physics' controller writes into the player's view (#1614)
+        // What the first-person package writes into the player's view (#1614, #1618)
         let walker = Player {
-            controls: &flint_physics::character::ACTIONS,
+            controls: &flint_first_person::ACTIONS,
             mouse_look: true,
         };
         let line = controls_line(&merged, &named, &BTreeSet::new(), walker, Some("F1"));

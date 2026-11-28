@@ -771,3 +771,60 @@ where they are written.
   after merging `main` with #1620's animation package and #1622's
   particles package, whose builders now run before physics' (the
   registry's order by name): both only read the world.
+
+## As built: first person as a package (#1618)
+
+Decision 4's `first-person` package, as it landed. `packages/first-person/`
+holds the crate (`crates/flint-first-person`), the `character_controller`
+schema and the `player` archetype, and a manifest (`tier = "standard"`,
+`[requires] physics`, `[build] features = ["first-person"]`). The six action
+names are `flint_first_person::ACTIONS`, and `find_player` is the one rule
+(the first `character_controller` by name). This supersedes ADR 0134
+decision 4, whose status line now says so.
+
+- **The controller works on physics' public API.** `CharacterController`
+  takes the `PhysicsSystem` it walks in (`update(input, world, physics,
+  dt)`), and reads the body and collider through `body_of`, the new
+  `collider_of` and `gravity`, and sweeps with Rapier's controller over
+  `bodies()`, `colliders()` and `queries()`. The arithmetic and its order
+  are the old `character.rs`'s, line for line.
+- **Physics no longer knows the component.** `update_kinematic_bodies`
+  skipped every entity with a `character_controller` by name. It now skips
+  the bodies a controller named with `PhysicsSystem::drive(entity)`, which
+  `CharacterController::enter` calls for its player and `clear` forgets.
+  A second `character_controller` (`second-player`) is no longer skipped:
+  its kinematic body follows its transform, as any kinematic body's does.
+- **The stages.** The builder runs after physics' (requires first, so the
+  bodies exist), finds the player, faces its `start_yaw`, drives its body
+  and writes `PlayerView` (player, mouse look, controls). A scene with no
+  player gets no subsystem. `Stage::Scripts` takes the look and the jump
+  press after physics' `begin_frame`, under the physics policy; step
+  `Control` walks, before physics' `SyncIn`; `Stage::View` places the eye.
+  A capture's builder sets the view's player alone and makes nothing.
+  Physics' subsystem lost the four, and its builder no longer writes the
+  view. The walk's profiler scope is `first_person::walk`.
+- **The order.** The registry places first-person right after physics
+  (`engine, animation, debug-hud, flipbook, particles, physics,
+  first-person, procgen, ...`), so every stage meets physics' share done,
+  as the old calls inside physics did.
+- **`physics = false` now needs `first-person = false` beside it**, the
+  rule `flipbook` and `animation` already follow (#1620): a standard
+  package that requires a package set false is a `bad-manifest` naming
+  both lines. #1624's 2d template writes both.
+- **The first package with an archetype.** A player built without
+  first-person read the walk template's `player` archetype as
+  `unknown-archetype` beside the package's one line. `[provides]
+  archetypes` now reach the built-without list (`Without::archetypes`,
+  `BuiltWithout::archetypes`), so the summary leaves that to the line as it
+  does a component.
+- **Not done here.** `flint_scene::diagnose` still raises `second-player`
+  by the component's name, and `flint_core::components` still holds
+  `CHARACTER_CONTROLLER`: the kernel's scene pass carries the package's
+  rule, as it carries physics' `lone_collider` (filed as #1688).
+- **Measured, before and after** (debug builds, `main` at `08afa839`): the
+  walk template's playtest (walk, sprint, turn, strafe, two jumps, a step
+  back) has the same report, perf aside, at 1/60, 1/30 and 1/144 s frames,
+  and a rendered run at 1/60 the same five 960x540 screenshots, byte for
+  byte (0 of 2,592,000 pixels). With `first-person = false` the same run
+  passes with the player standing at its start, and the loader names the
+  package: that run is the control.

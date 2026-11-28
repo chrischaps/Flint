@@ -30,6 +30,7 @@
     ["engine", "kernel"],
     ["animation", "standard"],
     ["debug-hud", "standard"],
+    ["first-person", "standard"],
     ["flipbook", "standard"],
     ["particles", "standard"],
     ["physics", "standard"],

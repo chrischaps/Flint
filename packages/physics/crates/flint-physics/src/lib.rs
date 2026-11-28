@@ -3,11 +3,9 @@
 //! Provides physics simulation for the Flint engine:
 //! - `PhysicsWorld` — wraps Rapier pipeline, body/collider sets
 //! - `PhysicsSync` — bridges Flint's dynamic TOML components with Rapier bodies
-//! - `CharacterController` — first-person kinematic character with gravity and collision
 //! - `PhysicsSystem` — the fixed-step simulation the player steps; its contacts go
 //!   into the caller's `EventBus`
 
-pub mod character;
 pub mod layers;
 pub mod nav;
 /// The package's share of the player (#1617): what `[rust] player` names.
@@ -29,11 +27,10 @@ mod nav_tests;
 #[cfg(test)]
 mod order_tests;
 
-use character::CharacterController;
 use flint_core::resources::Resources;
 use flint_core::{EntityId, Result};
 use flint_ecs::FlintWorld;
-use flint_runtime::{EventBus, Eye, GameEvent, InputState, PlayerView};
+use flint_runtime::{EventBus, GameEvent};
 pub use layers::{CollisionLayers, LayerError, LayerMask};
 pub use nav::{NavGrid, NavSettings, NavStats};
 use rapier3d::control::{CharacterLength, KinematicCharacterController};
@@ -152,7 +149,6 @@ pub enum ColliderExtents {
 pub struct PhysicsSystem {
     pub(crate) physics_world: PhysicsWorld,
     pub(crate) sync: PhysicsSync,
-    pub(crate) character: CharacterController,
     /// Fixed steps this frame will run (set by the frame loop) and the index
     /// of the step in progress, for even kinematic motion across the frame
     frame_steps: usize,
@@ -174,7 +170,6 @@ impl PhysicsSystem {
         Self {
             physics_world: PhysicsWorld::new(),
             sync: PhysicsSync::new(),
-            character: CharacterController::new(),
             frame_steps: 1,
             step_in_frame: 0,
             frame_span: 1.0,
@@ -271,6 +266,25 @@ impl PhysicsSystem {
     /// An entity's Rapier body, once a step's sync-in has made it.
     pub fn body_of(&self, entity_id: EntityId) -> Option<RigidBodyHandle> {
         self.sync.get_body_handle(entity_id)
+    }
+
+    /// An entity's Rapier collider, once a step's sync-in has made it.
+    pub fn collider_of(&self, entity_id: EntityId) -> Option<ColliderHandle> {
+        self.sync.collider_map.get(&entity_id).copied()
+    }
+
+    /// The world's gravity, metres a second a second (a character
+    /// controller's fall, #1618).
+    pub fn gravity(&self) -> Vector<Real> {
+        self.physics_world.gravity
+    }
+
+    /// A kinematic body its controller moves itself (first-person's player,
+    /// #1618): the step no longer sets its next pose from its transform,
+    /// which the controller writes a step behind the body. Until the next
+    /// [`clear`](Self::clear), and whether or not its body is made yet.
+    pub fn drive(&mut self, entity_id: EntityId) {
+        self.sync.driven.insert(entity_id);
     }
 
     /// Rapier's bodies, to read.
@@ -596,67 +610,12 @@ impl PhysicsSystem {
     }
 
     /// Reset all physics state for a scene transition.
-    /// Replaces the world, clears sync maps, resets the character. Events are
+    /// Replaces the world and clears the sync maps (the driven bodies
+    /// among them). Events are
     /// the caller's bus's, and stay there.
     pub fn clear(&mut self) {
         self.physics_world = PhysicsWorld::new();
         self.sync.clear();
-        self.character = CharacterController::new();
-    }
-
-    /// Who the scene is played as, written into the kernel's view at the
-    /// scene's entry, after [`initialize`](Self::initialize) found the
-    /// player (ADR 0138 decision 4, #1614): the player, mouse look, and the
-    /// controller's six actions for the controls line. Nothing without a
-    /// player. The `first-person` package takes this over (#1618).
-    pub fn enter_player_view(&self, view: &mut PlayerView) {
-        let Some(player) = self.character.player_entity() else {
-            return;
-        };
-        view.player = Some(player);
-        view.mouse_look = true;
-        view.controls = &character::ACTIONS;
-    }
-
-    /// The player's eye after the frame's fixed steps: the entity's
-    /// position at eye height, looking along the controller's yaw and
-    /// pitch. Nothing without a player, so the camera stays where the scene
-    /// and the scripts put it.
-    pub fn place_eye(&self, world: &FlintWorld, view: &mut PlayerView) {
-        if self.character.player_entity().is_none() {
-            return;
-        }
-        let position = self.character.camera_position(world);
-        view.eye = Some(Eye {
-            position,
-            target: self.character.camera_target(position),
-            yaw: self.character.yaw,
-            pitch: self.character.pitch,
-        });
-    }
-
-    /// Camera yaw angle in radians (horizontal look)
-    #[cfg(test)]
-    pub(crate) fn camera_yaw(&self) -> f32 {
-        self.character.yaw
-    }
-
-    /// Camera pitch angle in radians (vertical look)
-    #[cfg(test)]
-    pub(crate) fn camera_pitch(&self) -> f32 {
-        self.character.pitch
-    }
-
-    /// Camera position derived from the player entity's transform + eye height
-    #[cfg(test)]
-    pub(crate) fn camera_position(&self, world: &FlintWorld) -> flint_core::Vec3 {
-        self.character.camera_position(world)
-    }
-
-    /// Camera look-at target from yaw/pitch
-    #[cfg(test)]
-    pub(crate) fn camera_target(&self, camera_pos: flint_core::Vec3) -> flint_core::Vec3 {
-        self.character.camera_target(camera_pos)
     }
 
     /// Register a static trimesh collider from raw geometry
@@ -695,49 +654,16 @@ impl PhysicsSystem {
             restitution,
         );
     }
-
-    /// The character's share of a frame's input, once a frame before its
-    /// fixed steps, whether the frame runs none or several (#728): mouse
-    /// look turns the view, a jump press waits for the next step.
-    pub fn character_frame_input(&mut self, input: &InputState, world: &FlintWorld) {
-        self.character.frame_input(input, world);
-    }
-
-    /// One fixed step of the character: walk, fall, jump (called from the
-    /// player's fixed loop; look and jump presses come from
-    /// `character_frame_input`)
-    pub fn update_character(&mut self, input: &InputState, world: &mut FlintWorld, dt: f64) {
-        // Nothing to step, and no scope, without a player (the kernel calls
-        // it every step since #1614)
-        if self.character.player_entity().is_none() {
-            return;
-        }
-        flint_core::scope!("physics::character");
-        self.character.update(
-            input,
-            world,
-            &mut self.physics_world,
-            &self.sync.body_map,
-            &self.sync.collider_map,
-            dt,
-        );
-    }
 }
 
 impl PhysicsSystem {
-    /// Read the scene's bodies, colliders and joints, and find the player
-    /// entity, when a scene is entered.
+    /// Read the scene's bodies, colliders and joints when a scene is
+    /// entered.
     pub fn initialize(&mut self, world: &mut FlintWorld) -> Result<()> {
         flint_core::scope!("physics::initialize");
         // Initial sync of all entities with physics components, then joints
         self.sync.sync_to_rapier(world, &mut self.physics_world);
         self.sync.sync_joints(world, &mut self.physics_world);
-
-        // Find the player entity (entity with character_controller component)
-        if let Some(player) = character::find_player(world) {
-            self.character.set_player_entity(player);
-            self.character.face_start(world);
-        }
 
         Ok(())
     }
@@ -1412,185 +1338,5 @@ mod tests {
         }
         assert!(world.read_reports().is_empty());
         assert!(sys.sync.get_body_handle(id).is_some());
-    }
-
-    /// Metres walked forward in one second by a character whose
-    /// `character_controller` is `settings`.
-    fn metres_walked(settings: &str) -> (f32, usize) {
-        let mut world = FlintWorld::new();
-        let mut sys = PhysicsSystem::new();
-        spawn_from_toml(
-            &mut world,
-            "floor",
-            "[transform]\nposition = [0, -0.5, 0]\n[rigidbody]\nbody_type = \"static\"\n\
-             [collider]\nshape = \"box\"\nsize = [200, 1, 200]",
-        );
-        let id = spawn_from_toml(
-            &mut world,
-            "player",
-            &format!(
-                "[transform]\nposition = [0, 1, 0]\n[rigidbody]\nbody_type = \"kinematic\"\n\
-                 [collider]\nshape = \"capsule\"\nsize = [0.6, 1.8, 0.6]\n\
-                 [character_controller]\n{settings}"
-            ),
-        );
-        sys.initialize(&mut world).unwrap();
-        let mut input = InputState::new();
-        let dt = 1.0 / 60.0;
-        // Settle on the floor, then hold forward for a second
-        for _ in 0..30 {
-            sys.update_character(&input, &mut world, dt);
-            sys.step(&mut world, dt);
-        }
-        let start = world.get_transform(id).unwrap().position;
-        input.process_key_down(flint_runtime::parse_key_code("KeyW").unwrap());
-        for _ in 0..60 {
-            sys.update_character(&input, &mut world, dt);
-            sys.step(&mut world, dt);
-        }
-        let end = world.get_transform(id).unwrap().position;
-        let walked = ((end.x - start.x).powi(2) + (end.z - start.z).powi(2)).sqrt();
-        (walked, world.read_reports().len())
-    }
-
-    #[test]
-    fn an_integer_move_speed_moves_at_that_speed() {
-        let (as_float, _) = metres_walked("move_speed = 8.0");
-        let (as_integer, reports) = metres_walked("move_speed = 8");
-        let (unset, _) = metres_walked("");
-        assert_eq!(reports, 0, "an integer is a number, not a mistake");
-        assert_eq!(
-            as_integer, as_float,
-            "`move_speed = 8` walks as far as `move_speed = 8.0`"
-        );
-        // 60 steps of 1/60 s at 8 m/s, less the step the kinematic body lags
-        assert!((7.5..=8.01).contains(&as_integer), "walked {as_integer}");
-        assert!((4.6..=5.01).contains(&unset), "the default is 5: {unset}");
-
-        // A string is a mistake: the default, and one report however long it walks
-        let (wrong, reports) = metres_walked("move_speed = \"fast\"");
-        assert_eq!(wrong, unset);
-        assert_eq!(reports, 1);
-    }
-
-    /// A floor and a character standing on it after half a second, whose
-    /// `character_controller` is `settings`.
-    fn standing(settings: &str) -> (FlintWorld, PhysicsSystem, EntityId) {
-        let mut world = FlintWorld::new();
-        let mut sys = PhysicsSystem::new();
-        spawn_from_toml(
-            &mut world,
-            "floor",
-            "[transform]\nposition = [0, -0.5, 0]\n[rigidbody]\nbody_type = \"static\"\n\
-             [collider]\nshape = \"box\"\nsize = [200, 1, 200]",
-        );
-        let id = spawn_from_toml(
-            &mut world,
-            "player",
-            &format!(
-                "[transform]\nposition = [0, 1, 0]\n[rigidbody]\nbody_type = \"kinematic\"\n\
-                 [collider]\nshape = \"capsule\"\nsize = [0.6, 1.8, 0.6]\n\
-                 [character_controller]\n{settings}"
-            ),
-        );
-        sys.initialize(&mut world).unwrap();
-        let input = InputState::new();
-        for _ in 0..30 {
-            sys.character_frame_input(&input, &world);
-            sys.update_character(&input, &mut world, 1.0 / 60.0);
-            sys.step(&mut world, 1.0 / 60.0);
-        }
-        (world, sys, id)
-    }
-
-    /// Highest the character's feet rise over `steps` steps of 1/60 s.
-    fn rise(sys: &mut PhysicsSystem, world: &mut FlintWorld, id: EntityId, steps: usize) -> f32 {
-        let input = InputState::new();
-        let floor = world.get_transform(id).unwrap().position.y;
-        let mut top = floor;
-        for _ in 0..steps {
-            sys.character_frame_input(&input, world);
-            sys.update_character(&input, world, 1.0 / 60.0);
-            sys.step(world, 1.0 / 60.0);
-            top = top.max(world.get_transform(id).unwrap().position.y);
-        }
-        top - floor
-    }
-
-    #[test]
-    fn a_jump_pressed_on_a_frame_with_no_step_still_jumps() {
-        let (mut world, mut sys, id) = standing("");
-        // A 144 Hz frame that runs no fixed step: Space goes down and is
-        // cleared again at the frame's end, before any step reads it
-        let mut input = InputState::new();
-        input.process_key_down(flint_runtime::parse_key_code("Space").unwrap());
-        sys.character_frame_input(&input, &world);
-        input.end_frame();
-        assert!(!input.is_action_just_pressed("jump"));
-
-        let height = rise(&mut sys, &mut world, id, 30);
-        // jump_force 6 under 9.81: about 1.8 at the top
-        assert!(
-            height > 1.0,
-            "the press waited for the next step: rose {height}"
-        );
-    }
-
-    #[test]
-    fn a_frame_of_several_steps_turns_once() {
-        let (world, mut sys, _) = standing("");
-        let mut input = InputState::new();
-        input.process_mouse_raw_delta(100.0, 0.0);
-        sys.character_frame_input(&input, &world);
-        let turned = -sys.camera_yaw();
-        // 100 units at 0.172 degrees each, however many steps follow
-        assert!((turned - 17.2f32.to_radians()).abs() < 1e-5, "{turned}");
-    }
-
-    #[test]
-    fn a_character_starts_facing_its_start_yaw() {
-        let (world, sys, _) = standing("start_yaw = 90");
-        assert!((sys.camera_yaw() - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
-        let eye = sys.camera_position(&world);
-        let ahead = sys.camera_target(eye) - eye;
-        assert!(
-            ahead.x > 0.999 && ahead.z.abs() < 1e-3,
-            "faces +X: {ahead:?}"
-        );
-
-        // Unset: +Z, as before
-        let (world, sys, _) = standing("");
-        let eye = sys.camera_position(&world);
-        let ahead = sys.camera_target(eye) - eye;
-        assert!(ahead.z > 0.999, "faces +Z: {ahead:?}");
-    }
-
-    #[test]
-    fn the_look_and_fall_settings_are_the_components() {
-        // Pitch held at 30 degrees, however far the mouse goes
-        let (world, mut sys, _) = standing("pitch_limit = 30");
-        let mut input = InputState::new();
-        input.process_mouse_raw_delta(0.0, -10_000.0);
-        sys.character_frame_input(&input, &world);
-        assert!((sys.camera_pitch() - 30f32.to_radians()).abs() < 1e-6);
-
-        // Twice the sensitivity, twice the turn
-        let (world, mut sys, _) = standing("look_sensitivity = 0.344");
-        let mut input = InputState::new();
-        input.process_mouse_raw_delta(100.0, 0.0);
-        sys.character_frame_input(&input, &world);
-        assert!((-sys.camera_yaw() - 34.4f32.to_radians()).abs() < 1e-5);
-
-        // Half the gravity, a jump about twice as high
-        let jump_height = |settings: &str| {
-            let (mut world, mut sys, id) = standing(settings);
-            let mut input = InputState::new();
-            input.process_key_down(flint_runtime::parse_key_code("Space").unwrap());
-            sys.character_frame_input(&input, &world);
-            rise(&mut sys, &mut world, id, 120)
-        };
-        let full = jump_height("");
-        let half = jump_height("gravity_scale = 0.5");
-        assert!((half / full - 2.0).abs() < 0.1, "{full} then {half}");
     }
 }

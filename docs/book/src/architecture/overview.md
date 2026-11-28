@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 40-member Cargo workspace (39 crates, 23 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 41-member Cargo workspace (40 crates, 23 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -18,7 +18,7 @@ flint/
 │   ├── flint-audio-worklet/# Kira mixer for the browser's AudioWorklet (its own small wasm)
 │   ├── flint-terrain/      # Heightmap terrain with splat-map blending
 │   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus, GameStateMachine, pads)
-│   ├── flint-physics/      # Rapier 3D integration (PhysicsWorld, CharacterController)
+│   ├── flint-physics/      # Rapier 3D integration (PhysicsWorld, PhysicsSync, rays, joints)
 │   ├── flint-render/       # wgpu PBR renderer with Cook-Torrance shading + skinned mesh pipeline
 │   ├── flint-import/       # File importers (glTF/GLB with skeleton/skin extraction)
 │   ├── flint-pixels/       # Texel loops on load (RGBA widening, mip chains), optimized in debug builds
@@ -55,6 +55,8 @@ flint/
 │   │   └── flint-debug-ui/     # The F3 panel roster (ocean, sky, ...) and the HUD the player asks
 │   ├── vehicle/crates/
 │   │   └── flint-vehicle/      # Vehicles: Rapier's raycast wheels with arcade assists, driven each fixed step
+│   ├── first-person/crates/
+│   │   └── flint-first-person/ # The first-person walker on Rapier's character controller, and its eye in the player view
 │   ├── particles/crates/
 │   │   └── flint-particles/    # Particles: emitters and effects on a fixed seeded step, and the package's player, panel and editor parts
 │   └── engine/             # The kernel's manifest and schemas
@@ -254,6 +256,13 @@ The `debug-hud` package's crate (`packages/debug-hud/crates/flint-debug-ui`, #15
 - Depends on `flint-package`, `flint-widgets`, `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-schema`, `flint-terrain`, `flint-scene` and, with `player`, `flint-script`. The Particles panel is the particles package's since #1622, at the kernel's `ScenePanels` point
 - A game drops it with `debug-hud = false`: the run has no panels, and F3, F4 and the graph are not offered. The game's `flint` leaves it out too (flint-cli's `debug-hud` feature, #1583), and its editors are the same without it
 
+### flint-first-person
+
+The `first-person` package's crate (`packages/first-person/crates/flint-first-person`, ADR 0138 decision 4, #1618): physics' built-in character controller until then, now one package among the controllers and cameras a game picks from. Book: [First-person walking](../concepts/physics-and-runtime.md#first-person-walking).
+- `CharacterController` --- kinematic first-person movement with gravity, jumping, sprint, stepping and ground snap, swept through physics' world; `ACTIONS`, the six action names it reads, and `find_player`, the first `character_controller` by name
+- `player` feature: `player::PACKAGE`, whose subsystem (built for a scene with a player, after physics' builder) writes the kernel's `PlayerView` at the entry, takes the look and the jump press at `Stage::Scripts`, walks at the step's `Control` stage and places the eye at `Stage::View`
+- Depends on `flint-core`, `flint-ecs`, `flint-runtime`, `flint-physics` and, with `player`, `flint-package`: the kernel and the package it requires
+
 ### flint-vehicle
 
 The `vehicle` package's crate (`packages/vehicle/crates/flint-vehicle`, [ADR 0140](https://github.com/chrischaps/Flint/blob/main/docs/adr/0140-the-vehicle-package.md), #1628): the first package written against the Package API rather than moved onto it. Book: [Vehicles](../concepts/vehicles.md).
@@ -278,8 +287,8 @@ Game loop infrastructure for interactive scenes:
 Rapier 3D integration:
 - `PhysicsWorld` --- manages Rapier rigid body and collider sets, raycasting via `EntityRaycastHit`
 - `PhysicsSync` --- bridges TOML component data to Rapier bodies, maintains collider-to-entity mapping
-- `CharacterController` --- kinematic first-person movement with gravity, jumping, and ground detection
-- Uses kinematic bodies for player control, static bodies for world geometry
+- `move_character_masked` --- the sweep a controller moves a collider with; `drive(entity)` marks a kinematic body its controller moves itself, so the step leaves it be
+- Uses kinematic bodies for player control, static bodies for world geometry. The first-person walker is `flint-first-person`'s since #1618
 
 ### flint-audio
 

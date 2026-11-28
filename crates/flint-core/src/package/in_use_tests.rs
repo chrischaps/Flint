@@ -11,6 +11,7 @@ fn built_without_names_only_its_own_unknowns() {
         package: "living".into(),
         components: vec!["living_prop".into()],
         scene_tables: vec!["wooze".into()],
+        archetypes: Vec::new(),
     };
     let unknown = |name: &str| Diagnostic::error(codes::UNKNOWN_COMPONENT, "").component(name);
     let table = |name: &str| Diagnostic::warning(codes::UNKNOWN_TABLE, "").table(name);
@@ -23,6 +24,24 @@ fn built_without_names_only_its_own_unknowns() {
     );
     let bad_field = Diagnostic::error(codes::BAD_TYPE, "").component("living_prop");
     assert!(!living.names(&bad_field), "only a name it doesn't know");
+
+    // An archetype is named by its message (#1618: first-person's `player`)
+    let walker = BuiltWithout {
+        package: "first-person".into(),
+        components: vec!["character_controller".into()],
+        scene_tables: Vec::new(),
+        archetypes: vec!["player".into()],
+    };
+    let archetype = |name: &str| {
+        Diagnostic::error(
+            codes::UNKNOWN_ARCHETYPE,
+            format!("no archetype named `{name}`, so the entity gets no defaults"),
+        )
+        .field("archetype")
+    };
+    assert!(walker.names(&archetype("player")));
+    assert!(!walker.names(&archetype("crate")));
+    assert!(!living.names(&archetype("player")));
 }
 
 fn manifest(name: &str, tier: &str, extra: &str) -> String {

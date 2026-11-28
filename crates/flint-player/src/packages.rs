@@ -63,6 +63,8 @@ pub struct Without {
     pub components: &'static [&'static str],
     /// `[provides] scene_tables`.
     pub scene_tables: &'static [&'static str],
+    /// `[provides] archetypes` (#1618).
+    pub archetypes: &'static [&'static str],
     /// `[without] does`: what the scene's parts do in a build without it.
     pub does: Option<&'static str>,
     /// `[without] policies`: names a game state may give in every build.
@@ -208,7 +210,8 @@ pub fn built_schema_dirs(dirs: SchemaDirs) -> SchemaDirs {
 }
 
 /// Every package this player [`lacks`], by what a scene names of it (its
-/// manifest's `[provides]` components and scene tables, [`WITHOUT`]).
+/// manifest's `[provides]` components, scene tables and archetypes,
+/// [`WITHOUT`]).
 pub fn built_without() -> Vec<flint_core::package::BuiltWithout> {
     WITHOUT
         .iter()
@@ -217,6 +220,7 @@ pub fn built_without() -> Vec<flint_core::package::BuiltWithout> {
             package: w.package.to_string(),
             components: w.components.iter().map(|c| c.to_string()).collect(),
             scene_tables: w.scene_tables.iter().map(|t| t.to_string()).collect(),
+            archetypes: w.archetypes.iter().map(|a| a.to_string()).collect(),
         })
         .collect()
 }
@@ -695,7 +699,8 @@ mod tests {
         // so its subsystem runs and tears down in the same place
         // Animation and flipbook (#1620) are standard packages whose names
         // sort them in before and after debug-hud; flipbook requires
-        // animation, which comes first
+        // animation, which comes first; first-person requires physics and
+        // comes straight after it (#1618)
         let before = [
             "engine",
             "animation",
@@ -703,6 +708,7 @@ mod tests {
             "flipbook",
             "particles",
             "physics",
+            "first-person",
             "procgen",
             "living",
             "music",
@@ -730,6 +736,7 @@ mod tests {
             "flipbook",
             "particles",
             "physics",
+            "first-person",
             "procgen",
             "living",
             "music",
@@ -746,6 +753,7 @@ mod tests {
             "flipbook",
             "particles",
             "physics",
+            "first-person",
             "procgen",
             "living",
             "music",

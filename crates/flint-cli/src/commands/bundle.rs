@@ -1859,6 +1859,8 @@ mod tests {
     const PARTICLES: &str = "engine/packages/particles/schemas";
     // A standard package (#1617): in unless a list says `physics = false`
     const PHYSICS: &str = "engine/packages/physics/schemas";
+    // A standard package (#1618): in unless a list says `first-person = false`
+    const FIRST_PERSON: &str = "engine/packages/first-person/schemas";
 
     fn packed_under(gathered: &Gathered, dir: &str) -> bool {
         gathered
@@ -1873,13 +1875,14 @@ mod tests {
     fn a_bundle_packs_only_the_packages_flint_toml_lists() {
         let listed = package_game("listed", Some("living = \"*\"\n"), "");
         let gathered = gather_game(&args(&listed)).unwrap();
-        // Animation, flipbook (#1620), particles (#1622) and physics (#1617)
-        // are standard: in unless set false
+        // Animation, flipbook (#1620), particles (#1622), physics (#1617)
+        // and first person (#1618) are standard: in unless set false
         assert_eq!(
             gathered.schemas,
             [
                 "engine/schemas",
                 ANIMATION,
+                FIRST_PERSON,
                 FLIPBOOK,
                 LIVING,
                 PARTICLES,
@@ -1891,16 +1894,25 @@ mod tests {
         assert!(gathered.packages.as_ref().unwrap().is_on("living"));
 
         // An empty table: the feature packages are all out, the standard
-        // ones with schemas (animation, flipbook, particles, physics) in
+        // ones with schemas (animation, first person, flipbook, particles,
+        // physics) in
         let game = package_game("none_listed", Some(""), "");
         let gathered = gather_game(&args(&game)).unwrap();
         assert_eq!(
             gathered.schemas,
-            ["engine/schemas", ANIMATION, FLIPBOOK, PARTICLES, PHYSICS]
+            [
+                "engine/schemas",
+                ANIMATION,
+                FIRST_PERSON,
+                FLIPBOOK,
+                PARTICLES,
+                PHYSICS
+            ]
         );
         assert!(!gathered.files.keys().any(|k| {
             k.starts_with("engine/packages/")
                 && !k.starts_with(&format!("{ANIMATION}/"))
+                && !k.starts_with(&format!("{FIRST_PERSON}/"))
                 && !k.starts_with(&format!("{FLIPBOOK}/"))
                 && !k.starts_with(&format!("{PARTICLES}/"))
                 && !k.starts_with(&format!("{PHYSICS}/"))
@@ -1913,6 +1925,7 @@ mod tests {
         let feature = |k: &String| {
             k.contains("packages/")
                 && !k.contains("packages/animation/")
+                && !k.contains("packages/first-person/")
                 && !k.contains("packages/flipbook/")
                 && !k.contains("packages/particles/")
                 && !k.contains("packages/physics/")
@@ -1983,6 +1996,7 @@ mod tests {
             [
                 "engine/schemas",
                 ANIMATION,
+                FIRST_PERSON,
                 FLIPBOOK,
                 LIVING,
                 MUSIC,

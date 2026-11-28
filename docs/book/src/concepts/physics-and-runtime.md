@@ -2,7 +2,7 @@
 
 > **Package:** `engine`: every game has it: the game loop, the events and the input. The physics sections say their own package ([Packages](packages.md)).
 
-Flint's runtime layer transforms static scenes into interactive, playable experiences. The `flint-runtime` crate provides the game loop infrastructure, and `flint-physics` (the physics package's crate, `packages/physics/`) integrates the Rapier 3D physics engine for collision detection and character movement.
+Flint's runtime layer transforms static scenes into interactive, playable experiences. The `flint-runtime` crate provides the game loop infrastructure, and `flint-physics` (the physics package's crate, `packages/physics/`) integrates the Rapier 3D physics engine for collision detection. The player walks on it through the `first-person` package ([First-person walking](#first-person-walking)).
 
 ## The Game Loop
 
@@ -25,17 +25,17 @@ The frame's events live in one `EventBus`, which the player owns. Each fixed phy
 
 ## Physics with Rapier 3D
 
-> **Package:** `physics`: a standard package, in every game unless its `[packages]` says `physics = false`, and then no body falls, collides or is cast against and the player and CLI link no Rapier ([Packages](packages.md)).
+> **Package:** `physics`: a standard package, in every game unless its `[packages]` says `physics = false` (with `first-person = false` too, which requires it), and then no body falls, collides or is cast against and the player and CLI link no Rapier ([Packages](packages.md)).
 
 The `flint-physics` crate wraps Rapier 3D and bridges it to Flint's TOML-based component system:
 
 - **PhysicsWorld** --- manages Rapier's rigid body set, collider set, and simulation pipeline
 - **PhysicsSync** --- reads `rigidbody` and `collider` components from entities and creates corresponding Rapier bodies. Static bodies for world geometry (walls, floors, furniture), kinematic bodies for the player.
-- **CharacterController** --- kinematic first-person movement with gravity, jumping, ground detection, and sprint
+- **`move_character`** --- the sweep any controller moves a collider with, sliding along what it meets; the built-in first-person walker is the `first-person` package's ([First-person walking](#first-person-walking))
 
 ### Physics Schemas
 
-Four component schemas define physics properties:
+Three component schemas define physics properties:
 
 **Rigidbody** (`rigidbody.toml`) --- determines how an entity participates in physics:
 - `body_type`: `"static"` (immovable world geometry, the default), `"dynamic"` (simulated), or `"kinematic"` (script-controlled; `"kinematic_velocity"` for a velocity-based one). A misspelt value fails `flint validate`
@@ -60,27 +60,6 @@ Four component schemas define physics properties:
 - `motor_axis`: which angular axis a spherical joint's motor and limits act on
 - `contacts_enabled`: let the two jointed bodies collide
 
-**Character Controller** (`character_controller.toml`) --- first-person movement parameters:
-- `move_speed` (5), `jump_force` (6), `sprint_multiplier` (1.6, while `sprint` is held)
-- `start_yaw`: the facing the scene starts with, degrees about +Y (0 faces +Z, 90 faces +X)
-- `look_sensitivity` (0.172 degrees per unit of raw mouse motion) and `pitch_limit` (80 degrees from level)
-- `gravity_scale` (1, times the physics world's gravity), `step_height` (0.5, the tallest ledge walked up; 0 turns it off), `snap_to_ground` (0.2; 0 turns it off)
-- `height` (the eye sits at 0.85 of it). The capsule is the entity's `collider`, and the camera is first person: the `radius` and `camera_mode` fields went in #1212, and a scene that still writes one is told so (`unknown-field`, with why)
-
-**One player.** The player is the first entity by name with a `character_controller`; another one's controller is never read. A scene with two says so at load and in `flint check`:
-
-```text
-warning[second-player] entity 'zed' component 'character_controller': `hero` is the player (the first entity by name with a `character_controller`), so this one's controller is never read
-```
-
-A character a script walks needs no controller: `move_character(id, dx, dy, dz)` moves any entity's collider and slides it along what it meets.
-
-**The actions it reads** are `move_forward`, `move_backward`, `move_left`, `move_right`, `sprint` and `jump`. A game binds its own keys and pads to them in its input config ([Input Configuration Files](#input-configuration-files)); the names themselves are fixed ([ADR 0134](https://github.com/chrischaps/Flint/blob/main/docs/adr/0134-the-character-controller-stays-in-physics-with-fixed-action-names.md)).
-
-Mouse look and the jump press are taken once a frame, and the walk once a fixed step. So a turn is the same at 30, 60 or 144 frames a second, and a jump pressed on a frame that runs no physics step still jumps at the next one.
-
-The **player** archetype (`player.toml`) bundles these together with a `transform` for a ready-to-use player entity.
-
 **A collider needs a rigidbody.** Colliders are given to the physics world as part of their entity's rigidbody, so a `collider` on an entity with no `rigidbody` collides with nothing. For scenery, add `[entities.<name>.rigidbody]` with `body_type = "static"`. The player says so when it finds one:
 
 ```
@@ -90,6 +69,8 @@ WARN warning[needs-component] entity 'wall' component 'collider': a collider wit
 **A value the physics cannot read is reported, then defaulted.** An unknown `body_type` makes a static body, an unknown `shape` a box and an unknown joint `type` a hinge, each with one warning naming the entity, the allowed values and the nearest one; a value of the wrong type (`friction = "low"`) takes the field's default the same way. Whole numbers are fine wherever a number is read: `move_speed = 8` is 8. See [Diagnostics while the game runs](schemas.md#diagnostics-while-the-game-runs).
 
 ### Adding Physics to a Scene
+
+> **Package:** `physics`. The player's `character_controller` and its `player` archetype are the `first-person` package's.
 
 To make a scene playable, add physics components to entities:
 
@@ -353,7 +334,7 @@ and a white ball rests on a crate drawn at 0.45 scale.
 
 ![The sieve at 1.6 s: amber balls in the glass tray, blue balls fallen through it into the tray below, green balls rolling off the barrel's curved side, a white ball on the scaled crate](../images/collision-layers-sieve.png)
 
-The character controller and a script's `move_character` meet what the
+The first-person package's walker and a script's `move_character` meet what the
 character's collider meets: a player whose mask leaves out `pickup` walks
 through pickups. `move_character(id, dx, dy, dz, mask)` moves against the
 layers of `mask` instead.
@@ -418,6 +399,33 @@ fn on_update() {
 | `move_along_path(id: entity, path: array, speed: num)` | `map`: `#{x, y, z, dir_x, dir_z, next, remaining, arrived}`: where it is now, the way it went this frame (0, 0 once arrived), the index of the point it walks to, metres of path left, and whether it is at the end | Walk the entity \`speed\` metres a second along a path from \``find_path`\`, keeping the height above it it started at; a new path starts again from its second point. |
 
 <!-- script-api:end -->
+
+## First-person walking
+
+> **Package:** `first-person`: a standard package that requires `physics`, in every game unless its `[packages]` says `first-person = false`. Then a scene's `character_controller` is `unlisted-package` in `flint check`, and nobody walks it or looks through its eyes ([Packages](packages.md)).
+
+The `first-person` package's crate, `flint-first-person` (`packages/first-person/`), walks the player on Rapier's kinematic character controller and writes the kernel's player view: who the game is played as, mouse look, the actions the controls line lists, and each frame's eye, which the camera and the listener follow. It was physics' built-in controller until #1618 ([ADR 0138](https://github.com/chrischaps/Flint/blob/main/docs/adr/0138-the-standard-packages.md) decision 4). A game that wants another controller leaves the package out and moves a collider with `move_character` from a script.
+
+**The controller** (`character_controller.toml`) --- first-person movement parameters:
+- `move_speed` (5), `jump_force` (6), `sprint_multiplier` (1.6, while `sprint` is held)
+- `start_yaw`: the facing the scene starts with, degrees about +Y (0 faces +Z, 90 faces +X)
+- `look_sensitivity` (0.172 degrees per unit of raw mouse motion) and `pitch_limit` (80 degrees from level)
+- `gravity_scale` (1, times the physics world's gravity), `step_height` (0.5, the tallest ledge walked up; 0 turns it off), `snap_to_ground` (0.2; 0 turns it off)
+- `height` (the eye sits at 0.85 of it). The capsule is the entity's `collider`, and the camera is first person: the `radius` and `camera_mode` fields went in #1212, and a scene that still writes one is told so (`unknown-field`, with why)
+
+**One player.** The player is the first entity by name with a `character_controller`; another one's controller is never read. A scene with two says so at load and in `flint check`:
+
+```text
+warning[second-player] entity 'zed' component 'character_controller': `hero` is the player (the first entity by name with a `character_controller`), so this one's controller is never read
+```
+
+A character a script walks needs no controller: `move_character(id, dx, dy, dz)` moves any entity's collider and slides it along what it meets.
+
+**The actions it reads** are `move_forward`, `move_backward`, `move_left`, `move_right`, `sprint` and `jump`. A game binds its own keys and pads to them in its input config ([Input Configuration Files](#input-configuration-files)); the names themselves are fixed ([ADR 0134](https://github.com/chrischaps/Flint/blob/main/docs/adr/0134-the-character-controller-stays-in-physics-with-fixed-action-names.md)).
+
+Mouse look and the jump press are taken once a frame, and the walk once a fixed step. So a turn is the same at 30, 60 or 144 frames a second, and a jump pressed on a frame that runs no physics step still jumps at the next one.
+
+The **player** archetype (`player.toml`, the package's too) bundles a `character_controller` with a `transform`, a capsule `collider` and a kinematic `rigidbody` for a ready-to-use player entity.
 
 ## Input System
 

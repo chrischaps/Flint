@@ -1,5 +1,7 @@
 //! The terrain's collider as a heightfield (#1219): the same answers as
-//! the chunks' trimesh it replaced, and no hop at a chunk seam.
+//! the chunks' trimesh it replaced, and no hop at a chunk seam. The
+//! character's walk across the seams went with the controller to the
+//! first-person package (#1618).
 
 use super::*;
 use flint_terrain::{Heightmap, Terrain, TerrainConfig};
@@ -210,76 +212,6 @@ fn the_heightfield_reports_its_extents_where_the_terrain_is() {
     };
     assert_eq!([half_extents[0], half_extents[2]], [32.0, 24.0]);
     assert_eq!([centre[0], centre[2]], [OFFSET[0] + 32.0, OFFSET[2] + 24.0]);
-}
-
-/// The character walking forward (+Z) for five seconds over the hills,
-/// across two seams, and its feet each step.
-fn walk(kind: Collider) -> Vec<([f32; 3], bool)> {
-    let (terrain, _) = hills();
-    let mut player = None;
-    let (mut world, mut sys, _) = with_terrain(&terrain, kind, |world| {
-        player = Some(spawn(
-            world,
-            "player",
-            &format!(
-                "[transform]\nposition = [{}, {}, {}]\n\
-                 [rigidbody]\nbody_type = \"kinematic\"\n\
-                 [collider]\nshape = \"capsule\"\nsize = [0.6, 1.8, 0.6]\n\
-                 [character_controller]\nstart_yaw = 20.0\n",
-                OFFSET[0] + 13.0,
-                OFFSET[1] + 9.0,
-                OFFSET[2] + 10.0
-            ),
-        ));
-    });
-    let id = player.unwrap();
-    let mut input = InputState::new();
-    let mut feet = Vec::new();
-    for step in 0..360 {
-        if step == 60 {
-            input.process_key_down(flint_runtime::parse_key_code("KeyW").unwrap());
-        }
-        sys.character_frame_input(&input, &world);
-        sys.update_character(&input, &mut world, DT);
-        sys.step(&mut world, DT);
-        let p = world.get_transform(id).unwrap().position;
-        feet.push(([p.x, p.y, p.z], sys.character.grounded));
-    }
-    feet
-}
-
-#[test]
-fn the_character_walks_the_heightfield_as_it_walked_the_trimesh() {
-    let mesh = walk(Collider::Trimesh);
-    let field = walk(Collider::Heightfield);
-    let (start, end) = (field[59].0, field.last().unwrap().0);
-    // It walked from before the seam at z = 16 to past the one at z = 32
-    assert!(
-        start[2] < OFFSET[2] + 16.0 && end[2] > OFFSET[2] + 32.0,
-        "{start:?} to {end:?}"
-    );
-    let (mut worst, mut grounded_apart) = (0.0f32, Vec::new());
-    for (step, (a, b)) in mesh.iter().zip(&field).enumerate() {
-        let gap = (0..3)
-            .map(|i| (a.0[i] - b.0[i]).powi(2))
-            .sum::<f32>()
-            .sqrt();
-        worst = worst.max(gap);
-        assert!(gap < 0.01, "step {step}: trimesh {a:?}, heightfield {b:?}");
-        if step > 30 && a.1 != b.1 {
-            grounded_apart.push(step);
-        }
-    }
-    // Walking downhill the controller's snap can land a millimetre either
-    // side of its reach for one step: measured, 1 step in 330 (step 302)
-    assert!(
-        grounded_apart.len() <= 3,
-        "grounded differs at steps {grounded_apart:?}"
-    );
-    eprintln!(
-        "walked {:.1} m; worst gap {worst:e} m; grounded differs at {grounded_apart:?}",
-        end[2] - start[2]
-    );
 }
 
 /// A ball rolled down [`slope`] across the seams at x = 16, 32 and 48, and

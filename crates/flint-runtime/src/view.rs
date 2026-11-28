@@ -5,9 +5,9 @@
 //! player, and where that player's eye was. A kernel that asks physics can't
 //! build without it, and every other controller would have to pretend to be
 //! physics' one. [`PlayerView`] is the answer as plain data: a controller
-//! writes it (physics' built-in one until the `first-person` package takes
-//! it, #1618), and the player, the cursor, the controls line, the listener
-//! and the scripts' `is_near_player` read it.
+//! writes it (the `first-person` package's walker since #1618), and the
+//! player, the cursor, the controls line, the listener and the scripts'
+//! `is_near_player` read it.
 
 use flint_core::{EntityId, Vec3};
 

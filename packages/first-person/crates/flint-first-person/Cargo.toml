@@ -1,0 +1,33 @@
+[package]
+name = "flint-first-person"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The first-person package (#1618): a walker on Rapier's kinematic character controller, and its eye in the kernel's player view"
+publish = false
+
+[features]
+default = []
+# Its player part (`player::PACKAGE`, ADR 0138 decision 4): the walker's
+# subsystem, which writes the kernel's `PlayerView`. flint-player's
+# generated `first-person` feature turns it on.
+player = ["dep:flint-package"]
+
+# The kernel and physics only (#1624's rule): the controller sweeps its
+# collider through physics' state (`flint_physics::rapier` is Rapier) and
+# writes the kernel's view (flint-runtime).
+[dependencies]
+flint-core = { workspace = true }
+flint-ecs = { workspace = true }
+flint-runtime = { workspace = true }
+flint-physics = { workspace = true }
+toml = { workspace = true }
+flint-package = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Real terrain chunks, for the walk over a heightfield against their
+# trimesh (#1219)
+flint-terrain = { workspace = true }
+
+[lints]
+workspace = true

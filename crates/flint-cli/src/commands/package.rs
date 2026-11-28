@@ -418,21 +418,24 @@ mod tests {
         let text = text(&repo());
         assert!(
             text.contains(
-                "living     feature   0.1.0  Props that hold and glide, and the wooze field\n"
+                "living        feature   0.1.0  Props that hold and glide, and the wooze field\n"
             ),
             "{text}"
         );
-        assert!(text.contains("           requires   procgen\n"), "{text}");
         assert!(
-            text.contains("           tables     [living], [wooze] (2)\n"),
+            text.contains("              requires   procgen\n"),
             "{text}"
         );
         assert!(
-            text.contains("           commands   music calibrate, music chart (2)\n"),
+            text.contains("              tables     [living], [wooze] (2)\n"),
             "{text}"
         );
         assert!(
-            text.trim_end().ends_with("12 packages in ") || text.contains("12 packages in "),
+            text.contains("              commands   music calibrate, music chart (2)\n"),
+            "{text}"
+        );
+        assert!(
+            text.trim_end().ends_with("13 packages in ") || text.contains("13 packages in "),
             "{text}"
         );
     }

@@ -29,9 +29,8 @@ pub enum Stage {
     FixedStep,
     /// After the fixed steps, before the camera follows the player: where
     /// a controller places the eye in the kernel's `PlayerView` (ADR 0138
-    /// decision 2; physics' character controller until the first-person
-    /// package takes it, #1618). The kernel clears the view's last eye just
-    /// before.
+    /// decision 2; the first-person package's controller, #1618). The
+    /// kernel clears the view's last eye just before.
     View,
     /// After the physics steps and the first-person camera.
     Physics,
@@ -120,7 +119,7 @@ impl Stage {
 ///
 /// | Step stage | Who |
 /// |---|---|
-/// | `Control` | a controller's walk (physics' character controller, until the first-person package, #1618) |
+/// | `Control` | a controller's walk (the first-person package's, #1618) |
 /// | `SyncIn` | physics: new bodies and joints, kinematic poses, colliders, joint targets |
 /// | `Forces` | every `fixed_update` (vehicle, a game's own) |
 /// | `Integrate` | physics: Rapier's step, then the step's contacts onto the bus |
