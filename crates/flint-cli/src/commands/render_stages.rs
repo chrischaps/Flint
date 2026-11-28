@@ -85,7 +85,20 @@ pub(super) fn run_stages(
     let mut scenes = Vec::with_capacity(count);
     scenes.push(first);
     for _ in 1..count {
-        scenes.push(load_settled(&args.scene, registry)?);
+        let (mut world, scene_file) = load_settled(&args.scene, registry)?;
+        render_post::lay_entity_sets(args, &mut world, registry)?;
+        scenes.push((world, scene_file));
+    }
+    // An entity column is its world with the column's value in the field
+    // (#1699), before the stage's renderer binds it
+    if let Some(grid) = grid.filter(|g| g.writes_entities()) {
+        for ((world, _), &(column, row)) in scenes.iter_mut().zip(&cells) {
+            for (field, value) in grid.entity_axes(column, row) {
+                field
+                    .lay(world, registry, value)
+                    .map_err(|e| anyhow::anyhow!("--sweep {}={value}: {e}", field.name()))?;
+            }
+        }
     }
     // An echoes column is its scene with the column's [living] echoes (#531),
     // written by the package that draws them (#1595) before anything reads

@@ -898,8 +898,12 @@ fn look_edit(table: &mut toml::Table, key: &str, value: &str) -> Result<(), Stri
     let parsed = parse_value(value);
     match sweep.key {
         SweepKey::Look => return Err("`look` can't be an edit; edit its keys".into()),
-        SweepKey::Wooze { .. } | SweepKey::Echoes { .. } => {
-            return Err("wooze knobs and [living] echoes belong to the scene, not a look".into())
+        SweepKey::Wooze { .. } | SweepKey::Echoes { .. } | SweepKey::Entity(_) => {
+            return Err(
+                "wooze knobs, [living] echoes and an entity's fields belong to the scene, \
+                 not a look"
+                    .into(),
+            )
         }
         SweepKey::Post { field } => {
             table.insert(field, parsed);

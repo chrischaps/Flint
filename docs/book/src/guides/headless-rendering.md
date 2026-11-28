@@ -370,6 +370,25 @@ A render with clocks (a `--time`, a wooze key, `--scripts`, `--report json`, or 
 
 A sweep sets the scene's global value, the same one a `[wooze]` table would, and a scene without a table gets an empty one. Zones still apply on top. If a zone keeps any prop off the value, the column says what the props really read (`PROPS READ 0.25-0.80`). If two neighbouring columns come out pixel-identical, a warning says so: at this moment, nothing on screen is listening to that knob.
 
+## Sweeping an Entity's Field
+
+`--set` and `--sweep` reach any field of any entity's component, written `<entity>.<component>.<field>` (#1699): a terrain's grass and tiling, a light's direction, a material's roughness. The value is written into the loaded world after the scene's packages settle it and before the renderer binds it, so what a package builds from the field at load is built from the value: a terrain's chunks, its texture tiling and its grass come out as a scene with that value written in would make them.
+
+```bash
+flint render tests/fixtures/scenes/terrain_grass.scene.toml --sweep ground.terrain.grass.density=10,30,60 -o density.png
+flint render tests/fixtures/scenes/terrain_grass.scene.toml --set sun.light.direction=-0.9,0.35,0.2 -o evening.png
+flint render tests/fixtures/scenes/terrain_grass.scene.toml --sweep ground.terrain.texture_tile=4,8,16 \
+    --sweep "sun.light.direction=0.6,0.8,0.3|-0.9,0.35,0.2" -o tile_by_sun.png
+```
+
+The first part is the entity's name, the second its component and the rest the field, as its schema names it (`grass.density`; `flint schema terrain` lists a component's fields). The value is read as the schema types the field (a number, a whole number, `true` or `false`, a vector as `x,y,z`, one of an enum's values) and held to its range; split a sweep's values on `|` when they are vectors. An entity, component or field the scene doesn't have is refused before a GPU wakes, naming what it does have and the nearest name:
+
+```text
+Error: --set groud.terrain.grass.density=30: no entity 'groud' in this scene (did you mean `ground`?); its entities: barrel, ground, sky, sun
+```
+
+A sweep of an entity's field draws a world and renderer a column, as a render with clocks does, so it takes what such a render takes (`--time`, a second `--sweep` for a grid). A key with three or more parts is an entity's unless it starts `post.`, `wooze.` or `living.`.
+
 ## Variants Side by Side
 
 A sweep turns one key. To compare things that aren't one key (two looks against a style, MSAA on and off, three palettes at two cell sizes), give each its own flags with `--variant "label: --flag value ..."`, as often as needed, and every one is drawn at the same camera onto one labelled sheet:
