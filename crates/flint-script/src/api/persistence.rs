@@ -219,7 +219,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 mod tests {
     use crate::context::StateScope;
     use crate::engine::ScriptEngine;
-    use flint_physics::PhysicsSystem;
+    use flint_core::resources::Resources;
     use flint_runtime::{GameStateMachine, PersistentStore};
 
     #[test]
@@ -227,9 +227,9 @@ mod tests {
         let engine = ScriptEngine::new();
         let mut sm = GameStateMachine::new();
         let mut store = PersistentStore::new();
-        let physics = PhysicsSystem::new();
+        let resources = Resources::new();
         {
-            let _scope = StateScope::new(&engine.ctx, &mut sm, &mut store, &physics);
+            let _scope = StateScope::new(&engine.ctx, &mut sm, &mut store, &resources);
             let rhai = engine.rhai_engine();
             let got: rhai::Map = rhai
                 .eval(

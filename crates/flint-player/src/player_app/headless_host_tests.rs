@@ -247,11 +247,15 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
         C::PushState { name: s("paused") },
         C::PopState,
         C::ReplaceState { name: s("paused") },
-        C::SetVelocity2D {
-            entity,
-            vx: 1.0,
-            vy: 0.0,
-        },
+        // The physics package's command since #1617
+        ScriptCommand::Module(flint_script::ModuleCommand::new(
+            "set_velocity_2d",
+            flint_physics::player::Velocity2D {
+                entity,
+                vx: 1.0,
+                vy: 0.0,
+            },
+        )),
         C::LoadChunk {
             path: s("chunks/a.scene.toml"),
             offset_x: 0.0,

@@ -65,6 +65,28 @@ EXCEPTIONS = {
     ("flint-audio", "string", "music", "crates/flint-audio/src/bus.rs"): "the built-in "
     "`music` bus, which every game's audio has: #1619 makes flint-audio the audio "
     "package's, out of the kernel",
+    # The frame's fixed-step part is named `physics` wherever the kernel
+    # times or labels it, whichever package steps in it (#1617): the word,
+    # not the package
+    ("flint-player", "string", "physics", "crates/flint-player/src/player_app/perf.rs"): "the "
+    "frame's `physics` phase (the fixed steps and the eye), as the perf line and the frame "
+    "history have always named it",
+    ("flint-package", "string", "physics", "crates/flint-package/src/stage.rs"): "`Stage::Physics`'s "
+    "label, the stage after the fixed steps, which a profiler scope's detail names",
+    ("flint-package", "string", "physics", "crates/flint-package/src/hud.rs"): "the frame graph's "
+    "`physics` band, the frame's fixed-step phase",
+    ("flint-cli", "string", "physics", "crates/flint-cli/src/commands/frame/open/timing.rs"): "a "
+    "capture's `physics` phase, read into the frame graph's band",
+    ("flint-cli", "string", "physics", "crates/flint-cli/src/commands/trace/profile.rs"): "a "
+    "trace's `physics::*` scopes, banded with the frame's fixed-step phase",
+    ("flint-core", "string", "physics", "crates/flint-core/src/load_report.rs"): "the load "
+    "report's `physics` row (`NoteKind::PhysicsBuild`'s stage), which the package's build notes",
+    ("flint-core", "string", "physics", "crates/flint-core/src/project.rs"): "the manifest's "
+    "`[project.physics] layers`, a game's own collision layers, which `flint check` reads in "
+    "every build",
+    ("flint-runtime", "string", "physics", "crates/flint-runtime/src/state.rs"): "the `physics` "
+    "policy name, kept as a constant of the name (ADR 0138 decision 7): a game state that names "
+    "it registers in every build",
 }
 
 

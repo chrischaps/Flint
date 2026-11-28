@@ -6,13 +6,15 @@
 //! Every field is a kernel type. What a package owns, and another package
 //! reads, is in [`Resources`]: procgen's resolver, living's props, the
 //! debug-hud's panels, and the standard packages' state (ADR 0138 decision
-//! 1, #1616): physics' `PhysicsSystem` in every context, the sound's
+//! 1, #1616): physics' `PhysicsSystem` in every context of a run that has
+//! the physics package (`flint_physics::of_mut`, #1617), the sound's
 //! `AudioEngine` while the host has one (`flint_audio::engine::of_mut`).
 
 use crate::{Note, Registry, Resources, Subsystem};
 use flint_core::package::InUse;
 use flint_core::project::Project;
 use flint_ecs::FlintWorld;
+use flint_render::model_loader::ModelLoadConfig;
 use flint_render::stylize::StyleRegistry;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::pad::Gilrs;
@@ -58,6 +60,11 @@ pub struct SceneCtx<'a> {
     /// every package is in. A builder of a package it leaves out makes
     /// nothing and says so ([`SceneCtx::leaves_out`], #1528).
     pub packages: Option<&'a InUse>,
+    /// Where the host found the scene's models (its catalog, the project's
+    /// search, what it asked first), for a package that reads a model's
+    /// file itself: physics' mesh colliders (#1617). `None` in a capture
+    /// and a headless test.
+    pub model_config: Option<&'a ModelLoadConfig>,
     /// The run's resources: what one package lends another. The sound is
     /// here while the host has one (`flint_audio::engine::of_mut`): a
     /// subsystem that plays on the shared kira manager (the music, ADR

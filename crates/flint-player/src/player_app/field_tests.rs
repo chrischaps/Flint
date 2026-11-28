@@ -3,6 +3,7 @@
 //! field and is told what it got wrong.
 
 use crate::player_app::scene_entry::SceneEntry;
+use crate::player_app::subsystem::own_modules;
 use crate::player_app::PlayerApp;
 use flint_core::project::{SchemaDirs, SchemaSource};
 use flint_core::vfs::{self, MemorySource};
@@ -99,7 +100,7 @@ fn on_update() {
     files.insert("game/scripts/walker.rhai", WALKER);
     vfs::scoped(Arc::new(files), || {
         let mut app = app_in("game/scenes/weather.scene.toml");
-        assert_eq!(app.core.script.enabled_modules(), ["field"]);
+        assert_eq!(own_modules(app.core.script.enabled_modules()), ["field"]);
         let mut walked = Vec::new();
         for _ in 0..16 {
             app.tick();
@@ -212,7 +213,7 @@ fn on_init() {
         );
 
         let app = app_in("game/scenes/plain.scene.toml");
-        assert!(app.core.script.enabled_modules().is_empty());
+        assert!(own_modules(app.core.script.enabled_modules()).is_empty());
         assert_eq!(number(&app, "wind"), -1.0, "the call was an error");
         let said = errors(&app).join("\n");
         assert!(

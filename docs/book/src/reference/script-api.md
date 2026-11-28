@@ -44,7 +44,8 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 
 | Package | Tier | Modules |
 |---|---|---|
-| [`engine`](#the-engine-package) | kernel | [entity](#entity) (41) · [input](#input) (22) · [time](#time) (3) · [audio](#audio) (17) · [animation](#animation) (14) · [physics](#physics) (8) · [physics_2d](#physics_2d) (5) · [nav](#nav) (3) · [camera](#camera) (8) · [camera_rig](#camera_rig) (12) · [post_process](#post_process) (22) · [quality](#quality) (5) · [math](#math) (23) · [event](#event) (2) · [log](#log) (4) · [draw](#draw) (44) · [draw_world](#draw_world) (6) · [view](#view) (6) · [ui](#ui) (26) · [screen_ui](#screen_ui) (6) · [sprite](#sprite) (14) · [camera_2d](#camera_2d) (12) · [touch](#touch) (15) · [style](#style) (25) · [style_field](#style_field) (6) · [panels](#panels) (4) · [particle](#particle) (7) · [spline](#spline) (4) · [ocean](#ocean) (3) · [terrain](#terrain) (1) · [chunk](#chunk) (3) · [scene](#scene) (10) · [state](#state) (8) · [persistence](#persistence) (15) · [data](#data) (2) · [expression](#expression) (1) · [test](#test) (4) · [tween](#tween) (2) · [field](#field) (9) |
+| [`engine`](#the-engine-package) | kernel | [entity](#entity) (40) · [input](#input) (22) · [time](#time) (3) · [audio](#audio) (17) · [animation](#animation) (14) · [camera](#camera) (8) · [camera_rig](#camera_rig) (12) · [post_process](#post_process) (22) · [quality](#quality) (5) · [math](#math) (23) · [event](#event) (2) · [log](#log) (4) · [draw](#draw) (44) · [draw_world](#draw_world) (6) · [view](#view) (6) · [ui](#ui) (26) · [screen_ui](#screen_ui) (6) · [sprite](#sprite) (14) · [camera_2d](#camera_2d) (12) · [touch](#touch) (15) · [style](#style) (25) · [style_field](#style_field) (6) · [panels](#panels) (4) · [particle](#particle) (7) · [spline](#spline) (4) · [ocean](#ocean) (3) · [terrain](#terrain) (1) · [chunk](#chunk) (3) · [scene](#scene) (10) · [state](#state) (8) · [persistence](#persistence) (15) · [data](#data) (2) · [expression](#expression) (1) · [test](#test) (4) · [tween](#tween) (2) · [field](#field) (9) |
+| [`physics`](#the-physics-package) | standard | [physics](#physics) (9) · [physics_2d](#physics_2d) (5) · [nav](#nav) (3) |
 | [`living`](#the-living-package) | feature | [wooze](#wooze) (8) · [living](#living) (8) · [debug](#debug) (5) |
 | [`music`](#the-music-package) | feature | [music](#music) (3) |
 | [`rhythm`](#the-rhythm-package) | feature | [conducted](#conducted) (22) |
@@ -97,7 +98,6 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 | `clear_material_override(id: entity, material: str)` | — | Drop the entity's own override of one material, colour and light alike. |
 | `set_joint_target(id: entity, value: num)` | — | Set the joint's motor target: degrees for a hinge or spherical, metres for prismatic. |
 | `get_joint_target(id: entity)` | `num`: 0 when it has none | The joint's motor target. |
-| `get_joint_position(id: entity)` | `num`: the coordinate, or () when there is no physics or no such joint | The simulated joint coordinate from its rest pose: hinge degrees or prismatic metres. |
 | `find_nearest_interactable()` | `map`: `#{entity, prompt_text, interaction_type, distance}`, or () when none is in range | The enabled interactable nearest the player within its own range, as the HUD's prompt shows it. |
 
 ### input
@@ -175,37 +175,6 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 | `fade_anim_layer(id: entity, index: int, weight: num, duration: num, easing: str)` | — | Ramp a layer's weight over seconds, eased: linear, smooth, `ease_in`, `ease_out` or `ease_in_out`. |
 | `play_sequence(id: entity, name: str)` | — | Play a \*.sequence.toml (timed blends, layers, speeds and cues) on the entity's animator. |
 | `stop_sequence(id: entity)` | — | Stop the animator's sequence. |
-
-### physics
-
-| Function | Returns | Description |
-|---|---|---|
-| `raycast(ox: num, oy: num, oz: num, dx: num, dy: num, dz: num, max_dist: num)` | `map`: `#{entity, distance, point_x, point_y, point_z, normal_x, normal_y, normal_z}`, or () for no hit or no physics | The nearest collider a ray meets, the calling entity's own excluded. |
-| `raycast(ox: num, oy: num, oz: num, dx: num, dy: num, dz: num, max_dist: num, mask: any)` | `map`: `#{entity, distance, point_x, point_y, point_z, normal_x, normal_y, normal_z}`, or () for no hit or no physics | The nearest collider on a layer of \`mask\` (a layer's name or an array of names) a ray meets, the calling entity's own excluded. |
-| `collision_layers()` | `array`: their names, \`default\` first; empty with no physics | The collision layers colliders and masks may name: \`default\`, then the project's. |
-| `set_collision_layer(id: entity, layer: str)` | — | Put an entity's collider on another collision layer, from the next physics step: a power-up that walks through walls, a corpse that stops blocking bullets. It writes \`collider.layer\`, as \``set_field`\` would, but an unknown layer is a script error here. |
-| `set_collision_mask(id: entity, mask: any)` | — | Change the layers an entity's collider meets (a layer's name or an array of names), from the next physics step. It writes \`collider.mask\`; an unknown layer is a script error here. |
-| `move_character(id: entity, dx: num, dy: num, dz: num)` | `map`: `#{x, y, z, grounded}`: where it ended up; () with no physics, transform or character collider | Move a character's collider by a step, sliding along what its collider's mask meets, from where the entity stands now. |
-| `move_character(id: entity, dx: num, dy: num, dz: num, mask: any)` | `map`: `#{x, y, z, grounded}`: where it ended up; () with no physics, transform or character collider | Move a character's collider by a step, sliding along what is on a layer of \`mask\` (a layer's name or an array of names) in place of its collider's mask. |
-| `get_collider_extents(id: entity)` | `map`: `#{shape: "box", half_x, half_y, half_z}`, `#{shape: "sphere", radius}`, `#{shape: "capsule"\|"cylinder", radius, half_height}` or `#{shape: "mesh"\|"convex"\|"heightfield", half_x, half_y, half_z, centre_x, centre_y, centre_z}` (its box); () with no collider or no physics | The shape and size of an entity's collider. |
-
-### physics_2d
-
-| Function | Returns | Description |
-|---|---|---|
-| `overlap_rect(x: num, y: num, w: num, h: num)` | `array`: their ids, in name order; empty with no physics | Every entity whose 2D collider overlaps a rectangle on the sprite plane. |
-| `raycast_2d(ox: num, oy: num, dx: num, dy: num, max_dist: num)` | `map`: `#{entity, distance, point_x, point_y, normal_x, normal_y}`, or () for no hit or no physics | The nearest 2D collider a ray on the sprite plane meets, the calling entity's own excluded. |
-| `raycast_2d(ox: num, oy: num, dx: num, dy: num, max_dist: num, mask: any)` | `map`: `#{entity, distance, point_x, point_y, normal_x, normal_y}`, or () for no hit or no physics | The nearest 2D collider on a layer of \`mask\` (a layer's name or an array of names) a ray on the sprite plane meets, the calling entity's own excluded. |
-| `set_velocity_2d(id: entity, vx: num, vy: num)` | — | Set a 2D body's velocity, applied after the script batch. |
-| `get_velocity_2d(id: entity)` | `map`: `#{vx, vy}`, or () when it has no 2D body or there is no physics | A 2D body's velocity. |
-
-### nav
-
-| Function | Returns | Description |
-|---|---|---|
-| `find_path(from_x: num, from_y: num, from_z: num, to_x: num, to_y: num, to_z: num)` | `array`: \[`#{x, y, z}`, ...\] on the floor, the first where \`from\` stands and the last where \`to\` does; \[\] when either is on no floor, no way joins them, or there is no physics | The way from one point to another over the floors the scene's fixed colliders make, for an agent 0.8 m across and 1.8 m tall that climbs 0.35 m steps and 45-degree slopes. |
-| `find_path(from_x: num, from_y: num, from_z: num, to_x: num, to_y: num, to_z: num, opts: map)` | `array`: \[`#{x, y, z}`, ...\] on the floor, the first where \`from\` stands and the last where \`to\` does; \[\] when either is on no floor, no way joins them, or there is no physics | \``find_path`\` for the agent \`opts\` describes: \`radius\`, \`height\`, \`step\` (metres), \``max_slope`\` (degrees), \`cell\` (the grid's, metres, under the agent's diameter) and \``max_nodes`\` (the most cells a search visits). |
-| `move_along_path(id: entity, path: array, speed: num)` | `map`: `#{x, y, z, dir_x, dir_z, next, remaining, arrived}`: where it is now, the way it went this frame (0, 0 once arrived), the index of the point it walks to, metres of path left, and whether it is at the end | Walk the entity \`speed\` metres a second along a path from \``find_path`\`, keeping the height above it it started at; a new path starts again from its second point. |
 
 ### camera
 
@@ -672,6 +641,48 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 | `field_set_zone(field: str, zone: str, fields: map, seconds: num)` | — | Change or add a field's named zone, its values easing and a new zone fading in over some seconds. |
 | `field_remove_zone(field: str, zone: str)` | `bool`: whether there was one | Drop a field's named zone at once. |
 | `field_remove_zone(field: str, zone: str, seconds: num)` | `bool`: whether there was one | Fade a field's named zone out over some seconds, then drop it. |
+
+## The `physics` package
+
+*standard: a game has it unless its `[packages]` sets it to `false`.* Rapier bodies, colliders and joints on the fixed step; rays, 2D velocity and paths for scripts.
+
+### physics
+
+*Enabled when the run has the physics package.* Anywhere else a call is a script error saying the module is not enabled.
+
+| Function | Returns | Description |
+|---|---|---|
+| `raycast(ox: num, oy: num, oz: num, dx: num, dy: num, dz: num, max_dist: num)` | `map`: `#{entity, distance, point_x, point_y, point_z, normal_x, normal_y, normal_z}`, or () for no hit or no physics | The nearest collider a ray meets, the calling entity's own excluded. |
+| `raycast(ox: num, oy: num, oz: num, dx: num, dy: num, dz: num, max_dist: num, mask: any)` | `map`: `#{entity, distance, point_x, point_y, point_z, normal_x, normal_y, normal_z}`, or () for no hit or no physics | The nearest collider on a layer of \`mask\` (a layer's name or an array of names) a ray meets, the calling entity's own excluded. |
+| `collision_layers()` | `array`: their names, \`default\` first; empty with no physics | The collision layers colliders and masks may name: \`default\`, then the project's. |
+| `set_collision_layer(id: entity, layer: str)` | — | Put an entity's collider on another collision layer, from the next physics step: a power-up that walks through walls, a corpse that stops blocking bullets. It writes \`collider.layer\`, as \``set_field`\` would, but an unknown layer is a script error here. |
+| `set_collision_mask(id: entity, mask: any)` | — | Change the layers an entity's collider meets (a layer's name or an array of names), from the next physics step. It writes \`collider.mask\`; an unknown layer is a script error here. |
+| `move_character(id: entity, dx: num, dy: num, dz: num)` | `map`: `#{x, y, z, grounded}`: where it ended up; () with no physics, transform or character collider | Move a character's collider by a step, sliding along what its collider's mask meets, from where the entity stands now. |
+| `move_character(id: entity, dx: num, dy: num, dz: num, mask: any)` | `map`: `#{x, y, z, grounded}`: where it ended up; () with no physics, transform or character collider | Move a character's collider by a step, sliding along what is on a layer of \`mask\` (a layer's name or an array of names) in place of its collider's mask. |
+| `get_collider_extents(id: entity)` | `map`: `#{shape: "box", half_x, half_y, half_z}`, `#{shape: "sphere", radius}`, `#{shape: "capsule"\|"cylinder", radius, half_height}` or `#{shape: "mesh"\|"convex"\|"heightfield", half_x, half_y, half_z, centre_x, centre_y, centre_z}` (its box); () with no collider or no physics | The shape and size of an entity's collider. |
+| `get_joint_position(id: entity)` | `num`: the coordinate, or () when there is no physics or no such joint | The simulated joint coordinate from its rest pose: hinge degrees or prismatic metres. |
+
+### physics_2d
+
+*Enabled when the run has the physics package.* Anywhere else a call is a script error saying the module is not enabled.
+
+| Function | Returns | Description |
+|---|---|---|
+| `overlap_rect(x: num, y: num, w: num, h: num)` | `array`: their ids, in name order; empty with no physics | Every entity whose 2D collider overlaps a rectangle on the sprite plane. |
+| `raycast_2d(ox: num, oy: num, dx: num, dy: num, max_dist: num)` | `map`: `#{entity, distance, point_x, point_y, normal_x, normal_y}`, or () for no hit or no physics | The nearest 2D collider a ray on the sprite plane meets, the calling entity's own excluded. |
+| `raycast_2d(ox: num, oy: num, dx: num, dy: num, max_dist: num, mask: any)` | `map`: `#{entity, distance, point_x, point_y, normal_x, normal_y}`, or () for no hit or no physics | The nearest 2D collider on a layer of \`mask\` (a layer's name or an array of names) a ray on the sprite plane meets, the calling entity's own excluded. |
+| `set_velocity_2d(id: entity, vx: num, vy: num)` | — | Set a 2D body's velocity, applied after the script batch. |
+| `get_velocity_2d(id: entity)` | `map`: `#{vx, vy}`, or () when it has no 2D body or there is no physics | A 2D body's velocity. |
+
+### nav
+
+*Enabled when the run has the physics package.* Anywhere else a call is a script error saying the module is not enabled.
+
+| Function | Returns | Description |
+|---|---|---|
+| `find_path(from_x: num, from_y: num, from_z: num, to_x: num, to_y: num, to_z: num)` | `array`: \[`#{x, y, z}`, ...\] on the floor, the first where \`from\` stands and the last where \`to\` does; \[\] when either is on no floor, no way joins them, or there is no physics | The way from one point to another over the floors the scene's fixed colliders make, for an agent 0.8 m across and 1.8 m tall that climbs 0.35 m steps and 45-degree slopes. |
+| `find_path(from_x: num, from_y: num, from_z: num, to_x: num, to_y: num, to_z: num, opts: map)` | `array`: \[`#{x, y, z}`, ...\] on the floor, the first where \`from\` stands and the last where \`to\` does; \[\] when either is on no floor, no way joins them, or there is no physics | \``find_path`\` for the agent \`opts\` describes: \`radius\`, \`height\`, \`step\` (metres), \``max_slope`\` (degrees), \`cell\` (the grid's, metres, under the agent's diameter) and \``max_nodes`\` (the most cells a search visits). |
+| `move_along_path(id: entity, path: array, speed: num)` | `map`: `#{x, y, z, dir_x, dir_z, next, remaining, arrived}`: where it is now, the way it went this frame (0, 0 once arrived), the index of the point it walks to, metres of path left, and whether it is at the end | Walk the entity \`speed\` metres a second along a path from \``find_path`\`, keeping the height above it it started at; a new path starts again from its second point. |
 
 ## The `living` package
 

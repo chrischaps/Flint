@@ -26,3 +26,4 @@ pub mod spline;
 pub mod spline_file;
 pub mod sweep;
 pub mod terrain_chunk;
+pub mod triangles;

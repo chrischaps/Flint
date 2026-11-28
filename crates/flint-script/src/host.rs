@@ -262,11 +262,6 @@ pub trait ScriptHost {
     fn unload_chunk(&mut self, chunk_id: String) {
         self.unsupported("unload_chunk");
     }
-
-    // ── Physics ──
-    fn set_velocity_2d(&mut self, entity: EntityId, vx: f64, vy: f64) {
-        self.unsupported("set_velocity_2d");
-    }
 }
 
 /// Carry out `cmd` on `host`: the one place a `ScriptCommand` is taken
@@ -380,7 +375,6 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
             chunk_id,
         } => host.load_chunk(path, offset_x, offset_y, chunk_id),
         C::UnloadChunk { chunk_id } => host.unload_chunk(chunk_id),
-        C::SetVelocity2D { entity, vx, vy } => host.set_velocity_2d(entity, vx, vy),
     }
 }
 
@@ -444,7 +438,6 @@ pub fn command_name(cmd: &ScriptCommand) -> Option<&'static str> {
         C::ReplaceState { .. } => "replace_state",
         C::LoadChunk { .. } => "load_chunk",
         C::UnloadChunk { .. } => "unload_chunk",
-        C::SetVelocity2D { .. } => "set_velocity_2d",
     })
 }
 

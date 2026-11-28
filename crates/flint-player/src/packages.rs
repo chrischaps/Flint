@@ -696,6 +696,7 @@ mod tests {
         let before = [
             "engine",
             "debug-hud",
+            "physics",
             "procgen",
             "living",
             "music",
@@ -719,6 +720,7 @@ mod tests {
         // own folder when the build has it
         let expected: Vec<&str> = [
             "debug-hud",
+            "physics",
             "procgen",
             "living",
             "music",
@@ -731,6 +733,7 @@ mod tests {
         assert_eq!(moved, expected);
         for name in [
             "debug-hud",
+            "physics",
             "procgen",
             "living",
             "music",

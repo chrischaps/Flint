@@ -509,7 +509,7 @@ mod tests {
         let found = scan(&root, &files, &engine_packages());
         assert_eq!(
             found.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["living", "procgen"]
+            ["living", "physics", "procgen"]
         );
         let living = &found["living"];
         assert!(living
@@ -523,7 +523,7 @@ mod tests {
         assert!(found["procgen"].required_by.contains("living"));
         assert_eq!(
             lines(&engine_packages(), &found),
-            ["procgen = \"*\"", "living = \"*\""]
+            ["physics = \"*\"", "procgen = \"*\"", "living = \"*\""]
         );
         // Procgen is used, so nothing is named to leave out
         assert!(left_out_lines(&engine_packages(), &found, None).is_empty());
@@ -538,7 +538,10 @@ mod tests {
         let files = vec!["pbr_test.scene.toml".to_string()];
         let found = scan(&root, &files, &packages);
         assert!(found.is_empty(), "{found:?}");
-        assert_eq!(left_out_lines(&packages, &found, None), ["procgen"]);
+        assert_eq!(
+            left_out_lines(&packages, &found, None),
+            ["physics", "procgen"]
+        );
         assert_eq!(
             left_out_line("procgen"),
             "procgen = false   # nothing scanned uses it"
@@ -566,15 +569,17 @@ mod tests {
             list(&[("ai", any())]),
             list(&[("living", any())]),
         ] {
-            assert!(
-                left_out_lines(&packages, &found, Some(&listed)).is_empty(),
+            // Physics stays named: nothing scanned uses it either
+            assert_eq!(
+                left_out_lines(&packages, &found, Some(&listed)),
+                ["physics"],
                 "{listed:?}"
             );
         }
         // A listed package that needs nothing standard leaves it named
         assert_eq!(
             left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
-            ["procgen"]
+            ["physics", "procgen"]
         );
     }
 }

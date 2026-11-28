@@ -29,6 +29,7 @@
   "packages": [
     ["engine", "kernel"],
     ["debug-hud", "standard"],
+    ["physics", "standard"],
     ["procgen", "standard"],
     ["ai", "feature"],
     ["living", "feature"],

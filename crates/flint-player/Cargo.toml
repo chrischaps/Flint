@@ -42,7 +42,7 @@ default = ["packages", "audio", "gamepad", "frame-history"]
 # is its manifest's to say (packages/<name>/package.toml). Don't edit
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
-packages = ["debug-hud", "living", "music", "procgen", "rhythm", "vehicle"]
+packages = ["debug-hud", "living", "music", "physics", "procgen", "rhythm", "vehicle"]
 packages-audio = ["flint-music?/device", "flint-rhythm-game?/device"]
 packages-gamepad = ["flint-rhythm-game?/gamepad"]
 debug-hud = [
@@ -51,9 +51,10 @@ debug-hud = [
 ]
 living = ["procgen", "dep:flint-living", "flint-living?/player"]
 music = ["dep:flint-music", "flint-music?/player"]
+physics = ["dep:flint-physics", "flint-physics?/player"]
 procgen = ["dep:flint-procgen", "flint-procgen?/player"]
 rhythm = ["music", "dep:flint-rhythm-game", "flint-rhythm-game?/player"]
-vehicle = ["dep:flint-vehicle", "flint-vehicle?/player"]
+vehicle = ["physics", "dep:flint-vehicle", "flint-vehicle?/player"]
 # package-sync:end
 # The always-on frame history (#1076): every frame's phases, clock, present,
 # physics steps and GPU time kept for the last 600 frames, and each judged
@@ -91,7 +92,6 @@ flint-query = { workspace = true }
 flint-render = { workspace = true }
 flint-pixels = { workspace = true }
 flint-runtime = { workspace = true, features = ["egui"] }
-flint-physics = { workspace = true }
 # The Package API (ADR 0137, #1550): the subsystem trait and its contexts
 flint-package = { workspace = true }
 flint-import = { workspace = true }
@@ -126,6 +126,7 @@ tracing-subscriber = { workspace = true }
 flint-debug-ui = { workspace = true, optional = true }
 flint-living = { workspace = true, optional = true }
 flint-music = { workspace = true, optional = true }
+flint-physics = { workspace = true, optional = true }
 flint-procgen = { workspace = true, optional = true }
 flint-rhythm-game = { workspace = true, optional = true }
 flint-vehicle = { path = "../../packages/vehicle/crates/flint-vehicle", optional = true }
@@ -155,6 +156,11 @@ flint-procgen = { workspace = true, features = ["player"] }
 # where the run's launcher lists living, as the stock one does with `living`.
 flint-living = { workspace = true, features = ["player", "debug-hud"] }
 flint-wooze = { workspace = true }
+# The physics package's crate, named by the tests that hold bodies, mesh
+# colliders and the character (`character_input_tests`, the toy's spring):
+# they run where the run's launcher lists physics, as the stock one does
+# (#1617).
+flint-physics = { workspace = true, features = ["player"] }
 
 # The hitch log's marks on a sampler's ETW timeline (#1250,
 # player_app/sampler_marks.rs)

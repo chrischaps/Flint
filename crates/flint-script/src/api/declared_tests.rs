@@ -72,7 +72,6 @@ fn the_entity_module_is_declared_whole() {
         "get_rotation_quat",
         "set_shear",
         "set_material_emissive",
-        "get_joint_position",
         "entity_count_with",
     ] {
         assert!(entity.contains(&name), "{name} not declared");
@@ -134,7 +133,7 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
         &format!(
             "set_render_mode(1.0, 1); set_camera_fov(60); set_time_scale(2); \
              set_fog_color(1, 0, 0); play_sound(\"blip\", 1, 2); \
-             set_anim_layer({id}, 1.0, \"wave\", 1); set_velocity_2d({id}, 3, 4)"
+             set_anim_layer({id}, 1.0, \"wave\", 1)"
         ),
     )
     .unwrap();
@@ -149,7 +148,8 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
             c.requests.post.get("fog_color"),
             Some(flint_schema::post_effects::PostValue::Rgb([1.0, 0.0, 0.0]))
         );
-        assert_eq!(c.commands.len(), 2, "the sound and the velocity");
+        // The sound (the velocity is the physics package's, #1617)
+        assert_eq!(c.commands.len(), 1, "the sound");
     }
     let eid = flint_core::EntityId::from_raw(id as u64);
     let layers = world
@@ -346,8 +346,6 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
         "set_anim_layer_ex",
         "play_sequence",
         "audio_position",
-        "set_velocity_2d",
-        "get_velocity_2d",
         "set_sprite_tint",
         "get_sprite_layer",
         "play_sprite",
@@ -356,8 +354,6 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
         "set_text_color",
         "follow_with_camera",
         "camera_follow",
-        "move_character",
-        "get_collider_extents",
         "emit_burst",
         "start_emitter",
         "set_emission_rate",
@@ -848,7 +844,6 @@ fn the_draw_and_ui_modules_are_declared() {
         ("camera_2d", "follow_with_camera", 6),
         ("touch", "touch_x", 1),
         ("touch", "touch_id", 1),
-        ("physics", "move_character", 4),
         ("entity", "find_nearest_interactable", 0),
     ] {
         let e = reg
