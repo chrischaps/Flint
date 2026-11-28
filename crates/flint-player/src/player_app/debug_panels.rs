@@ -196,11 +196,11 @@ impl PlayerApp {
     }
 
     /// The cursor follows the panels: let go while any is open, captured
-    /// again once none is, in a first-person scene.
+    /// again once none is, where the player looks with the mouse.
     pub(super) fn cursor_follows_panels(&mut self) {
         if self.panels_open() > 0 {
             self.release_cursor();
-        } else if self.core.physics.has_player_entity() {
+        } else if self.core.player_view().mouse_look {
             self.capture_cursor();
         }
     }

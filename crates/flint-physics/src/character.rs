@@ -31,6 +31,21 @@ pub const ACTIONS: [&str; 6] = [
     SPRINT,
 ];
 
+/// The entity the controller plays as: the first with a
+/// `character_controller`, in the world's order (ADR 0134 decision 1).
+/// `None` when the scene has none.
+pub fn find_player(world: &FlintWorld) -> Option<EntityId> {
+    world
+        .all_entities()
+        .iter()
+        .find(|e| {
+            world
+                .get_components(e.id)
+                .is_some_and(|c| c.has(comp::CHARACTER_CONTROLLER))
+        })
+        .map(|e| e.id)
+}
+
 /// The `character_controller` fields the controller reads, with the
 /// fallbacks the schema's defaults repeat
 /// (`schemas/components/character_controller.toml`). Read again every

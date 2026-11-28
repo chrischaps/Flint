@@ -401,6 +401,13 @@ impl HeadlessGame {
         self.screen = screen;
         self.authored = post.clone();
         let core = &mut self.core;
+        // Who the scene is played as, for `on_interact` and
+        // `find_nearest_interactable` (ADR 0138, #1614). A capture steps no
+        // physics, so it asks the controller's rule alone: no eye, no mouse
+        // look.
+        let player = flint_physics::character::find_player(&core.world);
+        core.player_view_mut().player = player;
+        core.script.set_player(player);
         core.script
             .set_style_reader(std::sync::Arc::new(SceneStyles::new(
                 post.clone(),
