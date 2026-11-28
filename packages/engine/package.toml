@@ -2,7 +2,7 @@
 #
 # Every game links this package. It holds the kernel and the standard
 # packages that have no Cargo feature until Phase 3 (physics, audio,
-# particles, terrain; animation left with #1620), and the render features
+# particles, terrain; animation left with #1620, rig with #1621), and the render features
 # that live inside flint-render until Phase 4 (ocean, grass, stylize, panels). Each list is
 # grouped by the package it will become, so the split is a move of lines.
 # `flint package list` reads this file; a test in flint-cli holds every
@@ -96,6 +96,7 @@ commands = [
     "export", "goldens", "prefab", "play", "playtest", "capture", "render",
     "dxc", "style", "package", "build",
     "asset import", "asset list", "asset info", "asset resolve", "asset where",
-    # hidden aliases of `flint edit`
-    "serve", "spline-edit", "preview", "terrain-edit",
+    # hidden aliases of `flint edit` (`preview`, the model previewer, is
+    # the rig package's, #1621)
+    "serve", "spline-edit", "terrain-edit",
 ]

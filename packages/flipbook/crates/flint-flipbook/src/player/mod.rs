@@ -9,10 +9,10 @@ mod module;
 use crate::kind::FlipbookKind;
 use crate::PACKAGE_NAME;
 use flint_animation::player::loading::visible_files;
-use flint_animation::player::ClipKinds;
+use flint_animation::player::{ClipKinds, KindCtx, KindEntry, Say};
 use flint_animation::ClipKind;
 use flint_core::components as comp;
-use flint_core::project::{AssetKind, Project};
+use flint_core::project::AssetKind;
 use flint_package::{Package, Registry, SceneCtx, Subsystem};
 
 pub use module::{FlipbookModule, FLIPBOOK_MODULE};
@@ -32,7 +32,12 @@ impl Package for FlipbookPackage {
     /// its line for a project that leaves it out.
     fn register(&self, registry: &mut Registry) {
         match registry.point_mut::<ClipKinds>() {
-            Some(kinds) => kinds.0.push((crate::kind::KIND, make)),
+            Some(kinds) => kinds.0.push(KindEntry {
+                package: PACKAGE_NAME,
+                name: crate::kind::KIND,
+                make,
+                late: None,
+            }),
             None => tracing::warn!(
                 "flipbook: the animation package isn't in this run, so sprites play no clips"
             ),
@@ -48,18 +53,21 @@ impl Package for FlipbookPackage {
 /// folders as its `.anim.toml` (the farthest first, so the nearest file's
 /// clip of a name wins). Each file may hold several clips under
 /// `[animation.NAME]`.
-fn make(project: &Project, scene_path: &str, say: &mut dyn FnMut(String)) -> Box<dyn ClipKind> {
+fn make(ctx: &KindCtx, say: &mut Say) -> Box<dyn ClipKind> {
     let mut kind = FlipbookKind::new();
-    for path in visible_files(project, AssetKind::SpriteAnimations, scene_path) {
+    for path in visible_files(ctx.project, AssetKind::SpriteAnimations, ctx.scene_path) {
         match crate::clip::load_sprite_clips_from_file(&path) {
             Ok(clips) => {
                 for clip in clips {
-                    say(format!(
-                        "Loaded sprite animation: {} ({}ms, {} frames)",
-                        clip.name,
-                        clip.total_duration_ms(),
-                        clip.frames.len()
-                    ));
+                    say(
+                        "sprite_clip",
+                        format!(
+                            "Loaded sprite animation: {} ({}ms, {} frames)",
+                            clip.name,
+                            clip.total_duration_ms(),
+                            clip.frames.len()
+                        ),
+                    );
                     kind.add_clip(clip);
                 }
             }

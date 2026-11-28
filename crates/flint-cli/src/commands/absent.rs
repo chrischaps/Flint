@@ -836,6 +836,32 @@ mod tests {
     /// (flint-render's, the kernel's): one that isn't there fails to load,
     /// naming no package.
     #[test]
+    fn without_rig_the_model_previewer_names_it() {
+        use clap::Parser as _;
+        // #1621: the previewer is the rig package's, through its point
+        let none = flint_package::cli::Points::new();
+        let run = |words: &[&str]| {
+            let line = std::iter::once("flint").chain(words.iter().copied());
+            let e = match crate::Cli::parse_from(line).command {
+                crate::Commands::Preview(args) => super::super::preview::run_in(*args, &none),
+                crate::Commands::Edit(args) => super::super::edit_router::run_in(*args, &none),
+                _ => unreachable!(),
+            }
+            .expect_err("no package opens it");
+            let missing = e
+                .downcast_ref::<MissingPackage>()
+                .unwrap_or_else(|| panic!("{e:#}"));
+            (missing.what.clone(), missing.package)
+        };
+        // Named before the file is read: there is none
+        assert_eq!(
+            run(&["edit", "no/such/hero.glb", "--render", "x.png"]),
+            ("flint edit no/such/hero.glb".to_string(), "rig")
+        );
+        assert_eq!(run(&["preview", "no/such/hero.gltf"]).1, "rig");
+    }
+
+    #[test]
     fn without_procgen_the_spec_commands_name_it() {
         use clap::Parser as _;
         let none = flint_package::cli::Points::new();

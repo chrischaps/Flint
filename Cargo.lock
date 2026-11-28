@@ -1649,7 +1649,6 @@ version = "0.1.0"
 dependencies = [
  "flint-core",
  "flint-ecs",
- "flint-import",
  "flint-package",
  "flint-render",
  "flint-runtime",
@@ -1758,7 +1757,6 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "exr",
- "flint-animation",
  "flint-asset",
  "flint-asset-gen",
  "flint-audio",
@@ -1779,6 +1777,7 @@ dependencies = [
  "flint-query",
  "flint-render",
  "flint-rhythm-game",
+ "flint-rig",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
@@ -2066,6 +2065,7 @@ dependencies = [
  "flint-query",
  "flint-render",
  "flint-rhythm-game",
+ "flint-rig",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
@@ -2252,6 +2252,33 @@ dependencies = [
  "toml",
  "tracing",
  "web-time",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "flint-rig"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "egui",
+ "flint-animation",
+ "flint-core",
+ "flint-ecs",
+ "flint-import",
+ "flint-package",
+ "flint-render",
+ "flint-runtime",
+ "flint-scene",
+ "flint-schema",
+ "flint-script",
+ "flint-viewer",
+ "image",
+ "log",
+ "serde",
+ "toml",
+ "tracing",
  "wgpu",
  "winit",
 ]

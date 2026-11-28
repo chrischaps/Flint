@@ -3,8 +3,8 @@
 //! Opt-in: set `FLINT_CUBIC_MODEL=/path/to/model.gltf`. Skipped otherwise so CI
 //! doesn't depend on game assets.
 
-use flint_animation::skeletal_clip::{JointProperty, SkeletalClip};
-use flint_animation::skeletal_sampler::sample_joint_track;
+use flint_rig::skeletal_clip::{JointProperty, SkeletalClip};
+use flint_rig::skeletal_sampler::sample_joint_track;
 
 #[test]
 fn real_cubicspline_model_stays_sane() {

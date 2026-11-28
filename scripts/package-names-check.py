@@ -56,10 +56,6 @@ def kernel_crates():
 # A "string" exception may name a file, (crate, "string", name, file):
 # only that file's literal is excused.
 EXCEPTIONS = {
-    ("flint-cli", "crate", "flint-animation"): "the model previewer (`preview.rs`), "
-    "`flint render --anim-time` (`HeadlessAnimation`) and the render's one IK solve "
-    "(`IkPass`) name the animation package's crate: skeletons, IK and the previewer "
-    "are `rig`'s (ADR 0139 section 3), and #1621 puts them behind registration",
     ("flint-core", "string", "animation", "crates/flint-core/src/load_report.rs"): "the "
     "load report's `animation` row, the kernel's stage of a scene's bring-up that the "
     "animation package's builder times (`NoteKind::AnimationLoad`), named for what is "

@@ -31,7 +31,7 @@ fn a_game_binary_without_a_listed_package_names_flint_build() {
     // living brings procgen; the debug HUD, animation and flipbook,
     // standard, are left out
     let listed =
-        "[packages]\nliving = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false";
+        "[packages]\nliving = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false\nrig = false";
     let scene = project(&dir.join("listed"), listed);
 
     // The resolver's answer handed over, as cave_game does
@@ -57,7 +57,7 @@ fn a_game_binary_without_a_listed_package_names_flint_build() {
     // The kernel alone, and no list
     let kernel = project(
         &dir.join("kernel"),
-        "[packages]\ndebug-hud = false\nprocgen = false\nanimation = false\nflipbook = false",
+        "[packages]\ndebug-hud = false\nprocgen = false\nanimation = false\nflipbook = false\nrig = false",
     );
     assert_eq!(app(&kernel).unbuilt_packages(), None);
     assert_eq!(

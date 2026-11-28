@@ -23,10 +23,10 @@ use super::render_plan::{self, TimeSpec};
 use super::render_post::{self, legacy_render_mode, post_process_config};
 use super::render_report::{self, CaptureReport};
 use anyhow::{anyhow, Context, Result};
-use flint_animation::player::HeadlessAnimation;
 use flint_core::components as comp;
 use flint_core::load_report;
 use flint_core::Vec3;
+use flint_package::CapturePose;
 use flint_player::{ExpressionTimeline, HeadlessGame, ScriptLook};
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{
@@ -611,7 +611,10 @@ const ANIM_DT: f64 = 1.0 / 60.0;
 /// `--anim-time` (#307): the scene's animation loaded as the player loads it and
 /// stepped to that time, `step` seconds at a time and landing on it exactly, IK
 /// after every step. `None` without the flag. With `tell`, says what it posed,
-/// or warns that nothing in the scene animates.
+/// or warns that nothing in the scene animates. The animation package makes it
+/// (the `CapturePoses` point, #1621), with the kinds the run's packages
+/// registered (the rig's, the flipbook's); without the package the flag is
+/// refused, naming it.
 fn pose_animation(
     args: &RenderArgs,
     models: &model_loader::ModelLoadResult,
@@ -619,11 +622,16 @@ fn pose_animation(
     world: &mut flint_ecs::FlintWorld,
     step: f64,
     tell: bool,
-) -> Option<HeadlessAnimation> {
-    let seconds = args.clock.anim_time?.max(0.0);
-    // With the kinds the run's packages registered (the flipbook's, #1620)
-    let kinds = flint_player::packages::registry().point::<flint_animation::player::ClipKinds>();
-    let mut posed = HeadlessAnimation::load(models, project, &args.scene, kinds);
+) -> Result<Option<Box<dyn CapturePose>>> {
+    let Some(seconds) = args.clock.anim_time.map(|s| s.max(0.0)) else {
+        return Ok(None);
+    };
+    let registry = flint_player::packages::registry();
+    let Some(flint_package::CapturePoses(make)) = registry.point::<flint_package::CapturePoses>()
+    else {
+        return Err(super::absent::missing_served("render --anim-time"));
+    };
+    let mut posed = make(models, project, &args.scene, registry);
     let (steps, rest) = render_plan::steps_within(seconds, step);
     if steps == 0 && rest == 0.0 {
         posed.settle(world);
@@ -635,9 +643,10 @@ fn pose_animation(
         posed.step(world, rest);
     }
     if !tell {
-        return Some(posed);
+        return Ok(Some(posed));
     }
-    let animated = posed.animated(world);
+    let report = posed.report(world);
+    let animated = report.animated;
     if animated.is_empty() {
         eprintln!(
             "warning: --anim-time: nothing in this scene animates (no animator, no skinned model)"
@@ -647,19 +656,30 @@ fn pose_animation(
             "Animation: {} at t = {:.3}s ({} skinned, {} step(s) of {:.6}s)",
             animated.join(", "),
             posed.time(),
-            posed.skinned_count(),
+            report.skinned,
             steps + u64::from(rest > 0.0),
             step
         );
     }
-    for name in posed.unposed(world) {
+    for name in report.unposed {
         eprintln!(
             "warning: --anim-time: {name} has an animator and a skinned model but no \
              `skeleton` component, so its clip doesn't play (in the player either); \
              add [entities.{name}.skeleton]"
         );
     }
-    Some(posed)
+    Ok(Some(posed))
+}
+
+/// A still that steps no animation: two-bone IK (ADR 0070) poses the
+/// authored chains once, through the rig package (the `StillPose` point,
+/// #1621). A build without it draws the chains as authored.
+fn pose_still(world: &mut flint_ecs::FlintWorld) {
+    if let Some(flint_package::StillPose(pose)) =
+        flint_player::packages::registry().point::<flint_package::StillPose>()
+    {
+        pose(world);
+    }
 }
 
 /// The renderer's share of a capture's scene, the same for the one-renderer

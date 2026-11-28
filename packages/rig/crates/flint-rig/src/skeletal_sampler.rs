@@ -1,7 +1,7 @@
 //! Skeletal keyframe sampling with quaternion slerp for rotation tracks
 
-use crate::clip::Interpolation;
 use crate::skeletal_clip::{JointProperty, JointTrack};
+use flint_animation::clip::Interpolation;
 
 /// Sample a joint track at a given time.
 ///
@@ -183,8 +183,8 @@ pub fn quat_slerp(a: &[f32], b: &[f32], t: f32) -> Vec<f32> {
 #[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
-    use crate::clip::Interpolation;
     use crate::skeletal_clip::{JointKeyframe, JointProperty, JointTrack};
+    use flint_animation::clip::Interpolation;
 
     #[test]
     fn slerp_identity_at_endpoints() {

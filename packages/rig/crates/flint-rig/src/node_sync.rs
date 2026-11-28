@@ -4,11 +4,11 @@
 //! Analogous to `SkeletalSync` but writes to child entity transforms instead of
 //! computing bone matrices for GPU skinning.
 
-use crate::animator::{self, Animator};
 use crate::node_clip::NodeClip;
-use crate::playback_state::ClipPlaybackState;
 use crate::skeletal_clip::{JointProperty, JointTrack};
 use crate::skeletal_sampler::sample_joint_track;
+use flint_animation::animator::{self, Animator};
+use flint_animation::playback_state::ClipPlaybackState;
 use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -40,6 +40,11 @@ impl NodeSync {
         self.clips.clear();
         self.states.clear();
         self.node_maps.clear();
+    }
+
+    /// Forget one entity's playback: a seek replays it from the start.
+    pub fn reset_state(&mut self, entity_id: &EntityId) {
+        self.states.remove(entity_id);
     }
 
     /// Register a node clip by name

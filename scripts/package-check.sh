@@ -47,11 +47,10 @@ done
 # The crates a binary links whether its package is in or out, each with the
 # issue that ends it: `binary crate` -> reason. An exception whose edge is
 # gone (no configuration that leaves the package out links it) fails too, so
-# the list only shrinks. The last before #1620, flint-cli's flint-procgen,
-# went optional with #1543.
-declare -A EXCEPTIONS=(
-    ["flint-cli flint-animation"]="the model previewer, flint render --anim-time and its IK solve name the animation package's crate until #1621 puts them behind registration"
-)
+# the list only shrinks. flint-cli's flint-procgen went optional with #1543,
+# and its flint-animation (the model previewer, --anim-time, the still's IK)
+# with #1621: none is left.
+declare -A EXCEPTIONS=()
 declare -A EXCUSED_SEEN=()
 
 # --- the manifests --------------------------------------------------------

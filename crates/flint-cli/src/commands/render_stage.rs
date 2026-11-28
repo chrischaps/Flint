@@ -446,11 +446,11 @@ impl Stage {
             game.world_mut(),
             step,
             index == 0,
-        );
+        )?;
         if animation.is_none() {
-            flint_animation::IkPass::new().run(game.world_mut());
+            pose_still(game.world_mut());
         }
-        game.set_animation(animation.map(|a| Box::new(a) as Box<dyn flint_package::CapturePose>));
+        game.set_animation(animation);
 
         if let Some(name) = &args.camera.select {
             let id = game
@@ -602,10 +602,7 @@ impl Stage {
                 &ctx.queue,
             );
         }
-        if let Some(posed) = self.game.animation().and_then(|a| {
-            a.as_any()
-                .downcast_ref::<flint_animation::player::HeadlessAnimation>()
-        }) {
+        if let Some(posed) = self.game.animation() {
             posed.upload(&mut self.renderer, &ctx.device, &ctx.queue);
         }
         // What the scripts asked of the renderer that waits for a capture

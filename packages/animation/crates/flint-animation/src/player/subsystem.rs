@@ -1,11 +1,8 @@
 //! The animation subsystem: a scene's clips, sequences, kinds, tweens and
 //! poses, at the frame's stages where the player ran them before #1620.
 
-use super::loading::{
-    load_animations_saying, load_sequences_saying, loaded, models_of,
-    register_node_animation_data_saying, register_skeletal_data_saying,
-};
-use super::{module, tween_module, ClipKinds, TweenField};
+use super::loading::{load_animations_saying, load_sequences_saying, loaded};
+use super::{module, tween_module, ClipKinds, KindCtx, TweenField};
 use crate::tween::FieldTweens;
 use crate::AnimationSystem;
 use flint_core::frame_notes::{self, NoteKind};
@@ -23,7 +20,12 @@ pub const NAME: &str = crate::POLICY;
 /// Every scene has one: its `tween` and `animation` modules are any scene's.
 pub fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     let _note = frame_notes::begin(NoteKind::AnimationLoad, String::new);
-    let kinds = ctx.registry.point::<ClipKinds>();
+    // The kinds of the packages the project keeps
+    let kinds = ctx
+        .registry
+        .point::<ClipKinds>()
+        .map(|k| k.of(|package| ctx.leaves_out(package).is_none()));
+    let kinds = kinds.as_ref();
     let mut say = |kind: &'static str, line: String| loaded(kind)(line);
     let animation = Animation::load(
         ctx.models,
@@ -36,20 +38,21 @@ pub fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     Some(Box::new(animation))
 }
 
-/// A scene's animation: the clips and their playback, the skinned entities
-/// whose bones go to the GPU, and the scripts' field tweens.
+/// A scene's animation: the clips and their playback, and the scripts'
+/// field tweens.
 pub struct Animation {
     system: AnimationSystem,
-    /// Skinned entities and their asset, for the bone upload.
-    skinned: Vec<(EntityId, String)>,
     tweens: FieldTweens,
+    /// What the registered kinds do with a model spawned later.
+    late: Vec<super::LateModels>,
 }
 
 impl Animation {
-    /// The scene's animation, loaded as the player always loaded it: the
-    /// models' skeletons and clips, `.anim.toml`, each registered kind's
-    /// clips (`kinds`), `.sequence.toml`, then the first sync. `say` hears
-    /// each line with what it is (`skeletal_clip`, `animation`...).
+    /// The scene's animation, loaded as the player always loaded it: each
+    /// registered kind's clips (`kinds`: the rig's from the models, the
+    /// flipbook's `.sprite.toml`), `.anim.toml`, `.sequence.toml`, then the
+    /// first sync. `say` hears each line with what it is (`skeletal_clip`,
+    /// `animation`...).
     pub fn load(
         models: Option<&ModelLoadResult>,
         kinds: Option<&ClipKinds>,
@@ -58,11 +61,13 @@ impl Animation {
         world: &mut FlintWorld,
         say: &mut dyn FnMut(&'static str, String),
     ) -> Self {
-        let (system, skinned) = load_system(models, kinds, project, scene_path, say);
+        let system = load_system(models, kinds, project, scene_path, say);
         let mut animation = Self {
             system,
-            skinned,
             tweens: FieldTweens::default(),
+            late: kinds
+                .map(|k| k.0.iter().filter_map(|k| k.late).collect())
+                .unwrap_or_default(),
         };
         animation
             .system
@@ -116,60 +121,60 @@ impl Animation {
         }
     }
 
-    /// The bones to the GPU, the bone probes, then IK (ADR 0070): the
-    /// last writer of transforms the renderer sees.
+    /// The kinds' skins to the GPU, then each kind's pose (the rig's bone
+    /// probes and two-bone IK, ADR 0070): the last writer of transforms the
+    /// renderer sees.
     fn pose(&mut self, ctx: &mut StageCtx) {
         if let (Some(renderer), Some((device, queue))) = (ctx.renderer.as_deref_mut(), ctx.gpu) {
-            flint_core::scope!("upload_bones", self.skinned.len());
-            for (id, asset) in &self.skinned {
-                if let Some(matrices) = self.system.bone_matrices(id) {
-                    renderer.update_bone_matrices(device, queue, *id, asset, matrices);
-                }
-            }
+            flint_core::scope!("upload_bones");
+            upload(&self.system, renderer, device, queue);
         }
-        {
-            flint_core::scope!("publish_bone_probes");
-            super::capture::publish_bone_probes(&self.system, ctx.world);
-        }
-        self.system.run_ik(ctx.world);
+        self.system.pose(ctx.world);
     }
 }
 
-/// The clips a scene's animation plays, before the first sync, and its
-/// skinned entities in id order: the player's load and a capture's.
+/// Every skinned entity's bones, as the kinds hold them, to the renderer.
+pub(super) fn upload(
+    system: &AnimationSystem,
+    renderer: &mut flint_render::SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    system.skins(&mut |id, asset, matrices| {
+        if let Some(matrices) = matrices {
+            renderer.update_bone_matrices(device, queue, id, asset, matrices);
+        }
+    });
+}
+
+/// The clips a scene's animation plays, before the first sync: the
+/// player's load and a capture's. The kinds load first, so the rig's
+/// skeletal and node clips are said first, as they were before #1621.
 pub(super) fn load_system(
     models: Option<&ModelLoadResult>,
     kinds: Option<&ClipKinds>,
     project: &flint_core::project::Project,
     scene_path: &str,
     say: &mut dyn FnMut(&'static str, String),
-) -> (AnimationSystem, Vec<(EntityId, String)>) {
+) -> AnimationSystem {
     let mut system = AnimationSystem::new();
-    let mut skinned = Vec::new();
-    if let Some(models) = models {
-        let list = models_of(models);
-        register_skeletal_data_saying(&list, &mut system, &mut |l| say("skeletal_clip", l));
-        register_node_animation_data_saying(&list, &mut system, &mut |l| say("node_clip", l));
-        skinned.extend(
-            models
-                .skinned_entities
-                .iter()
-                .map(|(id, a)| (*id, a.clone())),
-        );
-        skinned.sort();
+    if let Some(kinds) = kinds {
+        let ctx = KindCtx {
+            project,
+            scene_path,
+            models,
+        };
+        for kind in kinds.make(&ctx, say) {
+            system.add_kind(kind);
+        }
     }
     load_animations_saying(project, scene_path, &mut system, &mut |l| {
         say("animation", l)
     });
-    if let Some(kinds) = kinds {
-        for kind in kinds.make(project, scene_path, &mut |l| say("sprite_clip", l)) {
-            system.add_kind(kind);
-        }
-    }
     load_sequences_saying(project, scene_path, &mut system, &mut |l| {
         say("sequence", l)
     });
-    (system, skinned)
+    system
 }
 
 impl Subsystem for Animation {
@@ -214,33 +219,12 @@ impl Subsystem for Animation {
         true
     }
 
-    /// A spawned entity's model (#1107): a skinned mesh already cached gives
-    /// its new entity no import to build a skeleton from, so it takes a copy
-    /// of one an entity drawing the same asset has, in that entity's pose
-    /// until it animates.
+    /// A spawned entity's model (#1107), to each kind that takes one: the
+    /// rig's skeleton and clips.
     fn late_models(&mut self, _world: &mut FlintWorld, models: &ModelLoadResult) {
-        let mut rest = Vec::new();
-        for model in &models.models {
-            if model.is_skinned && model.import_result.is_none() {
-                let donor = self
-                    .skinned
-                    .iter()
-                    .filter(|(_, asset)| *asset == model.asset_name)
-                    .find_map(|(id, _)| self.system.skeleton(id).cloned());
-                if let Some(skeleton) = donor {
-                    self.system.add_skeleton(model.entity_id, skeleton);
-                    continue;
-                }
-            }
-            rest.push(model);
+        let mut say = |kind: &'static str, line: String| loaded(kind)(line);
+        for late in &self.late {
+            late(&mut self.system, models, &mut say);
         }
-        register_skeletal_data_saying(&rest, &mut self.system, &mut loaded("skeletal_clip"));
-        register_node_animation_data_saying(&rest, &mut self.system, &mut loaded("node_clip"));
-        self.skinned.extend(
-            models
-                .skinned_entities
-                .iter()
-                .map(|(id, a)| (*id, a.clone())),
-        );
     }
 }

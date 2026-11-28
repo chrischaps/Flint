@@ -234,9 +234,55 @@ pub trait CapturePose: std::any::Any {
     /// One frame of animation, `dt` seconds on.
     fn step(&mut self, world: &mut FlintWorld, dt: f64);
 
+    /// The pose as it stands: no time passes, the pose's readers (bone
+    /// probes, IK) run once. What a capture at time 0 draws.
+    fn settle(&mut self, world: &mut FlintWorld) {
+        self.step(world, 0.0);
+    }
+
+    /// Give the renderer every skinned entity's bones as they stand.
+    fn upload(&self, renderer: &mut SceneRenderer, device: &wgpu::Device, queue: &wgpu::Queue);
+
+    /// Seconds stepped so far.
+    fn time(&self) -> f64;
+
+    /// What it posed, for the command's report.
+    fn report(&self, world: &FlintWorld) -> PoseReport;
+
     /// Itself, for the command that made it to read back.
     fn as_any(&self) -> &dyn std::any::Any;
 }
+
+/// What a [`CapturePose`] posed: `flint render --anim-time`'s line and its
+/// JSON report.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PoseReport {
+    /// The entities that animate (an `animator` or a skinned model), by name.
+    pub animated: Vec<String>,
+    /// How many skinned entities are posed.
+    pub skinned: usize,
+    /// Skinned entities with an `animator` and no `skeleton` component, by
+    /// name: their clip plays nowhere, in the player either.
+    pub unposed: Vec<String>,
+    /// What the load registered, a line each (clips, sequences, sprite clips).
+    pub loaded: Vec<String>,
+    /// Sequence cues and one-shot ends that fired with no script to hear them.
+    pub unheard: usize,
+}
+
+/// The point the animation package fills (#1621): a capture's animation
+/// for the scene at the path, whose models the model loader gave, found in
+/// the project as the player finds it, with the kinds the run's packages
+/// registered (the registry). `flint render --anim-time` asks for it and
+/// names the package without it.
+pub struct CapturePoses(
+    pub fn(&ModelLoadResult, &Project, &str, &crate::Registry) -> Box<dyn CapturePose>,
+);
+
+/// The point the rig package fills (#1621): what poses a still that steps
+/// no animation, which is two-bone IK (ADR 0070) solved once over the
+/// authored chains. A render without it draws the chains as authored.
+pub struct StillPose(pub fn(&mut FlintWorld));
 
 /// A mouse button, as [`PlayerInput::Click`] carries it: the kernel's own,
 /// so winit is not in the API (ADR 0137 section 3).

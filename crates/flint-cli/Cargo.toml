@@ -69,7 +69,7 @@ default = ["audio", "gamepad", "dialogs", "packages"]
 # package-sync:features
 packages = [
     "ai", "animation", "debug-hud", "flipbook", "living", "music", "procgen", "rhythm",
-    "vehicle",
+    "rig", "vehicle",
 ]
 packages-audio = []
 packages-dialogs = ["flint-procgen-cli?/dialogs"]
@@ -82,6 +82,7 @@ living = ["procgen", "flint-player/living", "dep:flint-living", "flint-living?/c
 music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
 procgen = ["flint-player/procgen", "dep:flint-procgen-cli", "flint-procgen-cli?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
+rig = ["animation", "flint-player/rig", "dep:flint-rig", "flint-rig?/cli"]
 vehicle = ["flint-player/vehicle"]
 # package-sync:end
 audio = ["flint-player/audio", "packages-audio"]
@@ -99,10 +100,6 @@ flint-render = { workspace = true }
 flint-constraint = { workspace = true }
 flint-asset = { workspace = true }
 flint-import = { workspace = true }
-# The model previewer and `--anim-time` (`HeadlessAnimation`) name the
-# animation package directly until #1621 puts them behind registration
-# (`scripts/package-names-check.py` lists the exception)
-flint-animation = { workspace = true, features = ["player"] }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-player = { workspace = true, features = ["frame-history"] }
@@ -152,6 +149,7 @@ flint-living = { workspace = true, optional = true }
 flint-music = { workspace = true, optional = true }
 flint-procgen-cli = { workspace = true, optional = true }
 flint-rhythm-game = { workspace = true, optional = true }
+flint-rig = { workspace = true, optional = true }
 # package-sync:end
 
 # `flint capture` asks the disk under `out` for its free space (#1196): std
