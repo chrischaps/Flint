@@ -344,6 +344,97 @@ fn push_is_applied_once_and_modifiers_return_to_neutral() {
     assert!(run.state(k).bool("grounded", false), "it lands");
 }
 
+/// A hop at speed with the wheel turned right, `air_control` off and on:
+/// only with it does the kart turn while its wheels are off the ground.
+fn heading_turned_in_a_hop(air_control: f64) -> (f32, bool) {
+    let mut world = FlintWorld::new();
+    ground(&mut world);
+    let k = kart(
+        &mut world,
+        "kart",
+        [0.0, 0.0, 0.0],
+        &format!(
+            "top_speed = 20.0
+accel = 16.5
+air_control = {air_control}"
+        ),
+    );
+    let mut run = Run::new(world);
+    run.seconds(0.5);
+    run.set_input(k, "throttle", f(1.0));
+    run.seconds(3.0);
+    let before = run.state(k).f32("yaw", 0.0);
+    run.set_input(k, "push", toml::Value::Array(vec![f(0.0), f(6.0), f(0.0)]));
+    run.frame(1);
+    run.set_input(k, "steer", f(1.0));
+    run.seconds(0.3);
+    let airborne = !run.state(k).bool("grounded", true);
+    let turned = run.state(k).f32("yaw", 0.0) - before;
+    (turned, airborne)
+}
+
+#[test]
+fn air_control_steers_a_hop_and_off_leaves_it_to_its_spin() {
+    let (off, airborne_off) = heading_turned_in_a_hop(0.0);
+    let (on, airborne_on) = heading_turned_in_a_hop(1.0);
+    assert!(airborne_off && airborne_on, "both are still in the air");
+    assert!(
+        off.abs() < 1.0,
+        "with air_control 0 nothing steers off the ground: {off} degrees"
+    );
+    assert!(
+        on < -3.0,
+        "air_control 1 turns the hop right (negative yaw): {on} degrees, off {off}"
+    );
+}
+
+/// The speed over the ground a hop at 20 m/s loses in 0.4 s of flight, at
+/// `air_drag`.
+fn speed_lost_in_a_hop(air_drag: f64) -> f32 {
+    let mut world = FlintWorld::new();
+    ground(&mut world);
+    let k = kart(
+        &mut world,
+        "kart",
+        [0.0, 0.0, 0.0],
+        &format!(
+            "top_speed = 20.0
+accel = 16.5
+air_drag = {air_drag}"
+        ),
+    );
+    let mut run = Run::new(world);
+    run.seconds(0.5);
+    run.set_input(k, "throttle", f(1.0));
+    run.seconds(4.0);
+    run.set_input(k, "push", toml::Value::Array(vec![f(0.0), f(6.0), f(0.0)]));
+    run.frame(1);
+    run.seconds(0.1);
+    // Over the ground: the body pitches in flight, so not along its nose
+    let flat = |run: &Run| {
+        let [x, _, z] = run.state(k).vec3("velocity", [0.0; 3]);
+        x.hypot(z)
+    };
+    let before = flat(&run);
+    run.seconds(0.4);
+    assert!(!run.state(k).bool("grounded", true), "still in the air");
+    before - flat(&run)
+}
+
+#[test]
+fn air_drag_zero_keeps_a_hops_speed_and_the_default_drags_it() {
+    let arcade = speed_lost_in_a_hop(0.0);
+    let car = speed_lost_in_a_hop(1.0);
+    assert!(
+        arcade.abs() < 0.3,
+        "air_drag 0: no drag off the ground, lost {arcade} m/s"
+    );
+    assert!(
+        car > 2.0,
+        "air_drag 1 (the default) drags in the air too: lost {car} m/s"
+    );
+}
+
 #[test]
 fn vehicle_place_moves_it_there_at_rest() {
     let mut world = FlintWorld::new();
@@ -371,6 +462,66 @@ fn vehicle_place_moves_it_there_at_rest() {
 
 #[test]
 fn a_wall_is_a_contact_with_its_normal_entity_and_impact() {
+    wall_contact_with_chassis(None);
+}
+
+/// A round chassis (FlintKart's puck) meets walls as a box does
+#[test]
+fn a_cylinder_chassis_sees_the_wall_too() {
+    wall_contact_with_chassis(Some(
+        "shape = \"cylinder\"\nsize = [2.0, 0.4, 2.0]\nfriction = 0.3",
+    ));
+}
+
+/// A swept road's wall is a host trimesh (a spline's): a round chassis
+/// coasting square into it bounces off within one step, and the contact is
+/// still seen (the reach grows with the step's travel)
+#[test]
+fn a_cylinder_chassis_sees_a_trimesh_wall_it_bounces_off() {
+    let mut world = FlintWorld::new();
+    ground(&mut world);
+    let wall = world.spawn("wall").unwrap();
+    put(&mut world, wall, "transform", "position = [0.0, 0.0, 0.0]");
+    let k = kart(&mut world, "kart", [0.0, 0.0, 0.0], "");
+    put(
+        &mut world,
+        k,
+        "collider",
+        "shape = \"cylinder\"\nsize = [2.0, 0.4, 2.0]\nfriction = 0.3\nrestitution = 0.5",
+    );
+    let mut run = Run::new(world);
+    // A 20 m face across the road at z = -30, facing the kart (+Z)
+    run.physics.register_static_trimesh(
+        wall,
+        vec![
+            [-10.0, 0.0, -30.0],
+            [10.0, 0.0, -30.0],
+            [10.0, 2.0, -30.0],
+            [-10.0, 2.0, -30.0],
+        ],
+        vec![[0, 1, 2], [0, 2, 3]],
+        0.3,
+        0.5,
+    );
+    run.seconds(0.5);
+    run.set_input(k, "throttle", f(1.0));
+    run.seconds(2.0);
+    // Off the throttle: it meets the wall coasting and nothing presses it on
+    run.set_input(k, "throttle", f(0.0));
+    let mut hit = None;
+    for _ in 0..300 {
+        run.frame(1);
+        if run.state(k).bool("contact", false) {
+            hit = Some(run.state(k).f32("impact", 0.0));
+            break;
+        }
+    }
+    let impact = hit.expect("drove into the trimesh wall and saw it");
+    assert!(impact > 5.0, "hit at speed: {impact} m/s");
+    assert_eq!(run.state(k).i64("contact_entity", -1), wall.raw() as i64);
+}
+
+fn wall_contact_with_chassis(collider: Option<&str>) {
     let mut world = FlintWorld::new();
     ground(&mut world);
     let wall = world.spawn("wall").unwrap();
@@ -388,6 +539,9 @@ fn a_wall_is_a_contact_with_its_normal_entity_and_impact() {
         "shape = \"box\"\nsize = [20.0, 2.0, 1.0]",
     );
     let k = kart(&mut world, "kart", [0.0, 0.0, 0.0], "");
+    if let Some(c) = collider {
+        put(&mut world, k, "collider", c);
+    }
     let mut run = Run::new(world);
     run.seconds(0.5);
     run.set_input(k, "throttle", f(1.0));

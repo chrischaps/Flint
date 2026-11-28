@@ -17,7 +17,7 @@ use flint_package::panels::{DebugPanel, PanelCtx};
 pub const PANEL: &str = "Vehicles";
 
 /// The tuning the sliders cover: field, range, its schema default.
-const SLIDERS: [(&str, f32, f32, f32); 10] = [
+const SLIDERS: [(&str, f32, f32, f32); 11] = [
     ("top_speed", 0.0, 80.0, 30.0),
     ("accel", 0.0, 60.0, 15.0),
     ("drag", 0.0, 3.0, 0.5),
@@ -25,6 +25,7 @@ const SLIDERS: [(&str, f32, f32, f32); 10] = [
     ("yaw_assist", 0.0, 30.0, 10.0),
     ("upright", 0.0, 200.0, 60.0),
     ("scrub", 0.0, 5.0, 0.0),
+    ("air_control", 0.0, 1.0, 0.0),
     ("tyre_grip", 0.0, 5.0, 1.8),
     ("suspension_stiffness", 0.0, 200.0, 40.0),
     ("suspension_damping", 0.0, 20.0, 3.5),
