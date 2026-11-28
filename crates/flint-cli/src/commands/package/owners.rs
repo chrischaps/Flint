@@ -584,9 +584,9 @@ fn the_inventory_sees_the_whole_tree() {
     // The script API is this build's player's: a package's modules are
     // there exactly when flint-cli was built with it (#1333). `music` is
     // flint-script's, declared in every build.
-    // 34 with no package at all, since particle (#1622), animation's two (#1620) and
-    // physics' three (#1617) moved out
-    assert!(inv.script_modules.len() >= 34, "{:?}", inv.script_modules);
+    // 33 with no package at all, since particle (#1622), animation's two (#1620),
+    // physics' three (#1617) and terrain (#1623) moved out
+    assert!(inv.script_modules.len() >= 33, "{:?}", inv.script_modules);
     for (module, package) in [
         ("living", "living"),
         ("wooze", "living"),
@@ -910,14 +910,6 @@ fn flint_cli_has_each_packages_feature_and_forwards_it() {
                 let Some(dep) = deps.get(krate.as_str()) else {
                     continue;
                 };
-                // One exception, as `scripts/package-check.sh` has it: the
-                // model previewer and the render commands name the
-                // animation package's crate until #1621 puts them behind
-                // registration (#1543 had made flint-procgen optional, the
-                // last before it)
-                if krate == "flint-animation" {
-                    continue;
-                }
                 let optional = dep.get("optional").and_then(|o| o.as_bool()) == Some(true);
                 assert!(
                     optional,

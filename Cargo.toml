@@ -236,6 +236,9 @@ flint-rhythm-game = { path = "packages/rhythm/crates/flint-rhythm-game", default
 flint-animation = { path = "packages/animation/crates/flint-animation", default-features = false }
 # The flipbook package (ADR 0139 section 6): sprite-sheet clips on its clock
 flint-flipbook = { path = "packages/flipbook/crates/flint-flipbook", default-features = false }
+# The rig package (ADR 0139, #1621): skeletons, node clips, blending and IK
+# as clip kinds; `player` registers them, `cli` is the model previewer
+flint-rig = { path = "packages/rig/crates/flint-rig", default-features = false }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "packages/ai/crates/flint-asset-gen" }
 flint-particles = { path = "packages/particles/crates/flint-particles" }

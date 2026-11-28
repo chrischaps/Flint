@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 41-member Cargo workspace (40 crates, 21 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 42-member Cargo workspace (41 crates, 21 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -31,9 +31,11 @@ flint/
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
 ├── packages/               # One folder a package: its package.toml, and its schemas/ and crates/
 │   ├── animation/crates/
-│   │   └── flint-animation/    # Clips on one clock: property clips, sequences and cues, tween, the clip-kind seam (skeletal and node clips until #1621)
+│   │   └── flint-animation/    # Clips on one clock: property clips, sequences and cues, tween, the clip-kind seam
 │   ├── flipbook/crates/
 │   │   └── flint-flipbook/     # Sprite-sheet clips (.sprite.toml) as a clip kind on animation's clock
+│   ├── rig/crates/
+│   │   └── flint-rig/          # Skeletons, node clips, blending, two-bone IK and bone probes as clip kinds; the model previewer
 │   ├── ai/crates/
 │   │   ├── flint-asset-gen/    # AI asset generation: providers, style guides, batch resolution
 │   │   ├── flint-procgen-ai/   # AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
@@ -136,7 +138,7 @@ User / AI Agent
       ├──► flint-scene     (load/save)   ├──► flint-audio     (Kira spatial audio)
       ├──► flint-render    (renderer)    ├──► flint-rhythm-game (rhythm sessions: flint-rhythm,
       ├──► flint-constraint(validation)  │      flint-input-capture's 1 kHz pad, over flint-music)
-      ├──► flint-asset     (catalog)     ├──► flint-animation (tweens + skeletal)
+      ├──► flint-asset     (catalog)     ├──► flint-animation (clips, tweens; flint-rig: skeletal)
       ├──► flint-asset-gen (AI gen)      ├──► flint-particles (GPU particles)
       ├──► flint-procgen   (proc gen)    ├──► flint-script    (Rhai scripting)
       ├──► flint-rhythm-game (chart tools) ├──► flint-terrain (heightmap terrain)
@@ -267,7 +269,7 @@ The `first-person` package's crate (`packages/first-person/crates/flint-first-pe
 ### flint-vehicle
 
 The `vehicle` package's crate (`packages/vehicle/crates/flint-vehicle`, [ADR 0140](https://github.com/chrischaps/Flint/blob/main/docs/adr/0140-the-vehicle-package.md), #1628): the first package written against the Package API rather than moved onto it. Book: [Vehicles](../concepts/vehicles.md).
-- `player` feature: `player::PACKAGE`, whose subsystem drives each `vehicle` in a scene. In `Subsystem::fixed_update` it sets the wheels of Rapier's `DynamicRayCastVehicleController` from `vehicle_input`, updates it against the last step's colliders (the vehicle's own body left out), and applies the assists (yaw, grip, upright, scrub), the drag, the modifiers and the one-shot push as impulses that the step about to run integrates. At `Stage::PreScripts` it writes `vehicle_state` and each wheel's state, and a player-driven vehicle's input from its actions. At `Stage::Physics` it poses the wheel children and returns the modifiers to neutral
+- `player` feature: `player::PACKAGE`, whose subsystem drives each `vehicle` in a scene. In `Subsystem::fixed_update` it sets the wheels of Rapier's `DynamicRayCastVehicleController` from `vehicle_input`, updates it against the last step's colliders (the vehicle's own body left out), and applies the assists (yaw, grip, upright, scrub), the drag, the modifiers and the one-shot push as impulses that the step about to run integrates. At `Stage::PreScripts` it writes `vehicle_state` and each wheel's state, and a player-driven vehicle's input from its actions. At `Stage::View` its chase camera (`player::chase`, #1631) places the kernel's eye behind the vehicle with a `chase_camera`, from the pose the frame's last step left (a frame's earlier steps' poses at the start of the next step's `fixed_update`), so the shot moves once a step. At `Stage::Physics` it poses the wheel children and returns the modifiers to neutral
 - The `vehicle` script module (`vehicle_place`, `vehicle_wheels`, `vehicle_ids`), and the Vehicles panel at the kernel's `ScenePanels` point, which the player fills only where it has the debug HUD
 - Depends on `flint-package` (which lends the physics, Rapier and egui), `flint-core`, `flint-ecs`, `flint-runtime` and `flint-script`: the kernel alone
 
@@ -348,13 +350,20 @@ The `rhythm` package's two parts on the Package API (`packages/rhythm/crates/fli
 
 The `animation` package's crate (`packages/animation/crates/flint-animation`, ADR 0139, #1620): clips on one clock.
 - **Property clips** --- `AnimationClip` with keyframe tracks targeting transform properties (position, rotation, scale) or custom fields. Step, Linear, and CubicSpline interpolation. Clips defined in `.anim.toml` files.
-- **Skeletal and node clips** (#1621 moves them out to `rig`) --- `Skeleton` and `SkeletalClip` types for glTF skin/joint hierarchies. GPU vertex skinning via bone matrix storage buffer. Crossfade blending between clips.
-- **Clip kinds** --- `ClipKind`, which another package registers on the `player::ClipKinds` point (the flipbook's), played after the core's own on the same `animator` rules
-- `player` feature: the subsystem (`Stage::Tweens`, `Stage::Animate`, `Stage::Pose`), the `animation` and `tween` script modules and `HeadlessAnimation` for `flint render --anim-time`
+- **Clip kinds** --- `ClipKind`, which another package registers on the `player::ClipKinds` point (the rig's skeletal and node kinds, the flipbook's), each run at its slot after the core's own on the same `animator` rules; a kind's `pose` runs at `Stage::Pose` and its `skins` go to the GPU
+- `player` feature: the subsystem (`Stage::Tweens`, `Stage::Animate`, `Stage::Pose`), the `animation` and `tween` script modules and `HeadlessAnimation` for `flint render --anim-time` (the `CapturePoses` point)
 - `AnimationSync` bridges ECS `animator` components to property playback
-- `SkeletalSync` bridges ECS to skeletal playback with bone matrix computation
-- Layer stack (additive / override, per-joint masks, weight fades) and timed `.sequence.toml` playback with `on_sequence_cue` callbacks
-- glTF `CUBICSPLINE` samplers import with tangents and hemisphere-continuous quaternion keys
+- The layers' and crossfades' state and timed `.sequence.toml` playback with `on_sequence_cue` callbacks
+
+### flint-rig
+
+The `rig` package's crate (`packages/rig/crates/flint-rig`, ADR 0139, #1621): what a clip drives when it drives a pose of named parts.
+- **Skeletons and their clips** --- `Skeleton` and `SkeletalClip` types for glTF skin/joint hierarchies, sampled into bone matrices that flint-render's GPU skinning reads as plain data. glTF `CUBICSPLINE` samplers import with tangents and hemisphere-continuous quaternion keys
+- **Layers and crossfades** --- the layer stack (additive / override, per-joint masks, weight fades) composed joint by joint (`blend.rs`)
+- **Node clips** --- a model's child nodes moved by name, on the joint tracks skeletal clips use
+- **Two-bone IK and bone probes** --- `IkPass` (ADR 0070) and `publish_bone_probes`, the skeletal kind's pose
+- `SkeletalKind`, `NodeKind` and `Rig`, the rig's calls on an `AnimationSystem`
+- `player` feature: both kinds on animation's `ClipKinds` point, a spawned model's skeleton, the still's IK (`StillPose`); `cli` feature: the model previewer, `flint edit <model>.glb`, through the viewer's `ModelEditors` point
 
 ### flint-flipbook
 

@@ -119,7 +119,7 @@ For skeletal animation, the renderer provides a separate GPU pipeline that appli
 **How it works:**
 
 1. `flint-import` extracts joint indices and weights from glTF skins alongside the mesh data
-2. `flint-animation` evaluates keyframes and computes bone matrices each frame (local pose -> global hierarchy -> inverse bind matrix)
+2. `flint-rig` (the `rig` package's, on the `animation` package's clock) evaluates keyframes and computes bone matrices each frame (local pose -> global hierarchy -> inverse bind matrix)
 3. The renderer uploads bone matrices to a **per-entity** storage buffer and applies them in the vertex shader
 
 **Key types:**

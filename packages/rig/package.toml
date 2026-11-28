@@ -1,0 +1,44 @@
+# The rig (ADR 0139, #1621, epic #1611): what a clip drives when it drives a
+# pose of named parts. Skeletons from glTF skins and their clips, the joint
+# tracks node clips share, layers and crossfades composed joint by joint,
+# node clips on a model's child nodes, two-bone IK (ADR 0070) and bone
+# probes, all played as clip kinds on animation's clock. A standard package:
+# on unless a game writes `rig = false`; it requires `animation`, so
+# `animation = false` takes it too. A 2D game writes `rig = false` and links
+# no skeleton, no IK and no glTF clip.
+#
+# Its crate is in this folder: crates/flint-rig, whose `player` feature puts
+# the skeletal and node kinds on animation's `ClipKinds` point (their pose
+# is the bone probes, then IK, at `Stage::Pose`) and fills the `StillPose`
+# point (a still's one IK solve), and whose `cli` feature is the model
+# previewer, `flint edit <model>.glb`, through the viewer's `ModelEditors`
+# point and the `ModelStill` point. GPU skinning stays in flint-render until
+# Phase 4, fed bone matrices as plain data.
+
+[package]
+name = "rig"
+version = "0.1.0"
+tier = "standard"
+summary = "Skeletons, node clips, blending, two-bone IK and bone probes on animation's clock, and the model previewer"
+engine = "^0.1"
+
+[requires]
+animation = "*"
+
+[build]
+features = ["rig"]
+
+[rust]
+player = "flint-rig"
+cli = "flint-rig"
+
+[provides]
+crates = ["flint-rig"]
+components = ["skeleton", "ik_two_bone", "bone_probe"]
+# `flint edit` on a `.glb` / `.gltf` opens its previewer, the hidden alias
+# below
+commands = ["preview"]
+
+# What a player built without it still knows (ADR 0137 decision 8).
+[without]
+does = "stand in their rest pose"

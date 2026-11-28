@@ -44,7 +44,7 @@ default = ["packages", "audio", "gamepad", "frame-history"]
 # package-sync:features
 packages = [
     "animation", "debug-hud", "first-person", "flipbook", "living", "music", "particles",
-    "physics", "procgen", "rhythm", "terrain", "vehicle",
+    "physics", "procgen", "rhythm", "rig", "terrain", "vehicle",
 ]
 packages-audio = ["flint-music?/device", "flint-rhythm-game?/device"]
 packages-gamepad = ["flint-rhythm-game?/gamepad"]
@@ -61,6 +61,7 @@ particles = ["dep:flint-particles", "flint-particles?/player"]
 physics = ["dep:flint-physics", "flint-physics?/player"]
 procgen = ["dep:flint-procgen", "flint-procgen?/player"]
 rhythm = ["music", "dep:flint-rhythm-game", "flint-rhythm-game?/player"]
+rig = ["animation", "dep:flint-rig", "flint-rig?/player"]
 terrain = ["dep:flint-terrain", "flint-terrain?/player", "flint-procgen?/terrain"]
 vehicle = ["physics", "dep:flint-vehicle", "flint-vehicle?/player"]
 # package-sync:end
@@ -136,6 +137,7 @@ flint-particles = { workspace = true, optional = true }
 flint-physics = { workspace = true, optional = true }
 flint-procgen = { workspace = true, optional = true }
 flint-rhythm-game = { workspace = true, optional = true }
+flint-rig = { workspace = true, optional = true }
 flint-terrain = { workspace = true, optional = true }
 flint-vehicle = { path = "../../packages/vehicle/crates/flint-vehicle", optional = true }
 # package-sync:end

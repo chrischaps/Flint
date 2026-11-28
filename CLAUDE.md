@@ -39,7 +39,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-40-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554):
+41-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
@@ -51,8 +51,8 @@ flint-cli           CLI binary (clap). Commands: init, entity, scene, query, sch
   └── flint-ai-core   Every paid AI call: retries, prices, cost ledger
 flint-android       Android entry point (NativeActivity)
 flint-player        Standalone player: the game loop, the subsystems, egui HUD
-  ├── flint-rhythm-game Rhythm's subsystem, `music chart`; on flint-rhythm (charts, judging)
-  ├── flint-music    Music: suite manifests, buses, tempo maps, conductor, offline render
+  ├── flint-rhythm-game Rhythm's subsystem; flint-rhythm: charts, judging
+  ├── flint-music    Music: suites, buses, tempo maps, conductor
   ├── flint-input-capture 1 kHz pad capture
   ├── flint-debug-ui F3/F4 debug panels
   ├── flint-vehicle  Vehicles: raycast wheels, arcade assists
@@ -63,18 +63,19 @@ flint-player        Standalone player: the game loop, the subsystems, egui HUD
   ├── flint-particles Emitters, effects
   ├── flint-animation Clips, sequences, tween
   ├── flint-flipbook Sprite-sheet clips
+  ├── flint-rig      Skeletons, node clips, IK, previewer
   ├── flint-audio    Kira spatial audio
-  ├── flint-audio-worklet Kira in the browser's AudioWorklet
+  ├── flint-audio-worklet Kira in an AudioWorklet
   ├── flint-terrain  Heightmap ground, its editor
   ├── flint-physics  Rapier, joints
   ├── flint-runtime  Clock, input, events, game states, saves, pads
-  ├── flint-viewer   egui inspector: gizmos, undo/redo, TOML write-back
+  ├── flint-viewer   egui inspector: gizmos, undo, write-back
   ├── flint-widgets  egui widgets, F4's render panel
   ├── flint-import   glTF model importer
   ├── flint-asset    Content-addressed asset catalog
-  ├── flint-constraint Constraint evaluation + auto-fix
+  ├── flint-constraint Constraints + auto-fix
   ├── flint-query    PEG query language (pest parser)
-  ├── flint-scene    TOML scene serialization/deserialization
+  ├── flint-scene    TOML scene (de)serialization
   ├── flint-render   wgpu PBR renderer, post-processing, styles
   ├── flint-pixels   Texel loops, optimized in debug
   ├── flint-ecs      The world: stable EntityIds, dynamic components, hierarchy
@@ -102,7 +103,7 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear, project manifest, env switches |
 | `crates/flint-audio/CLAUDE.md` | audio clock, decoding, device features |
 | `packages/physics/crates/flint-physics/CLAUDE.md` | Rapier, joints |
-| `packages/animation/crates/flint-animation/CLAUDE.md` | animator keys, IK |
+| `packages/{animation/crates/flint-animation,rig/crates/flint-rig}/CLAUDE.md` | animator, kinds; skeletons, IK |
 | `packages/particles/crates/flint-particles/CLAUDE.md` | particles |
 | `packages/terrain/crates/flint-terrain/CLAUDE.md` | terrain |
 | `flint-examples/film/CLAUDE.md` | the film: shots, score, editor (flint-examples, #1195) |

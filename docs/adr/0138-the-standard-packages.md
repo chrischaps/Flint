@@ -313,7 +313,14 @@ pub struct Eye { pub position: Vec3, pub target: Vec3, pub yaw: f32, pub pitch: 
   the eye at `Stage::View` in the vehicle package, an orbit camera (ADR 0134's
   deferred `camera_mode`) the same way. The camera kinds go in the package
   of the thing they follow: no `camera` package until two packages need
-  the same kind.
+  the same kind. *As built (#1631):* `Stage::View` came with the chase
+  camera, ahead of #1617: physics still places its eye inside
+  `tick_fixed_physics`, then `View` runs and `GameCore::follow_eye` moves
+  the camera. `Eye` gained `fov` (`None` for first-person) and `roll`
+  (applied as the frame's roll when no script set one). The chase camera
+  steps once a fixed step from the pose that step left, so the vehicle
+  holds still in the shot between steps; `chase_camera.release` hands a
+  frame to a script's camera, which then also moves the listener.
 - **This supersedes ADR 0134 decision 4.** All three of its reasons are gone.
   Packages have a fixed step (`fixed_update`, #1551). A Rust package costs
   nothing over a built-in. And the host reads the player from `PlayerView`,
@@ -852,7 +859,7 @@ decision 4, whose status line now says so.
   view. The walk's profiler scope is `first_person::walk`.
 - **The order.** The registry places first-person right after physics
   (`engine, animation, debug-hud, flipbook, particles, physics,
-  first-person, procgen, terrain, ...`), so every stage meets physics' share done,
+  first-person, procgen, rig, terrain, ...`), so every stage meets physics' share done,
   as the old calls inside physics did.
 - **`physics = false` now needs `first-person = false` beside it**, the
   rule `flipbook` and `animation` already follow (#1620): a standard

@@ -483,6 +483,67 @@ pub struct SpecEditors {
     pub open: fn(SpecKind, SpecEdit) -> Result<Box<dyn Editor>>,
 }
 
+/// What `flint edit <model>.glb` (and the hidden `flint preview`) hands
+/// the model previewer it opens: its flags, as the command parsed them.
+#[derive(Debug, Clone, Default)]
+pub struct ModelEdit {
+    /// The `.glb` / `.gltf`; none opens an empty window to drop one on.
+    pub model: Option<String>,
+    /// `--render`: a still to this file, not a window.
+    pub render: Option<String>,
+    pub width: u32,
+    pub height: u32,
+    pub distance: Option<f32>,
+    pub yaw: Option<f32>,
+    pub pitch: Option<f32>,
+    pub target: Option<[f32; 3]>,
+    pub fov: Option<f32>,
+    pub no_grid: bool,
+    pub watch: bool,
+    pub no_animate: bool,
+    pub clip: Option<String>,
+    pub anim_speed: f32,
+    pub anim_time: Option<f32>,
+    /// `--layer clip[:weight[:mask[:mode]]]`, in order.
+    pub layers: Vec<String>,
+    pub sequence: Option<String>,
+    pub sequence_loop: bool,
+    pub auto_orbit: bool,
+    /// `--style` words, in order, each already parsed once.
+    pub styles: Vec<String>,
+    pub style_time: Option<f32>,
+    /// `--pose-bone joint:x,y,z`, in order.
+    pub pose_bones: Vec<String>,
+    pub show_skeleton: bool,
+    pub motion_hold: Option<f32>,
+}
+
+impl ModelEdit {
+    /// A still of `model` alone: auto-framed on the default camera, no
+    /// grid, nothing animating (the `ModelStill` point's).
+    pub fn still_of(model: String, width: u32, height: u32) -> Self {
+        Self {
+            model: Some(model),
+            width,
+            height,
+            no_grid: true,
+            no_animate: true,
+            anim_speed: 1.0,
+            ..Default::default()
+        }
+    }
+}
+
+/// The editor a package opens a model in (#1621): a registration point the
+/// rig package's CLI side fills (the model previewer, with its clips,
+/// layers, sequences and skeleton), which `flint edit` asks for a `.glb` /
+/// `.gltf` (as a `flint_package::cli::Points` value). A flint without the
+/// package has none, and names the package.
+pub struct ModelEditors {
+    /// The previewer, for the host to open in a window or draw as a still.
+    pub open: fn(ModelEdit) -> Result<Box<dyn Editor>>,
+}
+
 /// The editor a `.terrain.toml` opens in (#1623): a registration point the
 /// terrain package's CLI side fills, which `flint edit` and `flint
 /// terrain-edit` ask for (as a `flint_package::cli::Points` value). A flint

@@ -3,15 +3,13 @@
 # end), clips and their keys, the layers' and the crossfade's state,
 # sequences and their cues, the `animator` component and its one rule set,
 # property clips (`.anim.toml`) and `tween`. A standard package: on unless a
-# game writes `animation = false`, which takes `flipbook` (and, once #1621
-# lands, `rig`) with it.
+# game writes `animation = false`, which takes `flipbook` and `rig` with it.
 #
 # Its crate is in this folder: crates/flint-animation, whose `player` feature
 # is the subsystem (`flint_animation::player::PACKAGE`), the `animation` and
-# `tween` script modules, and the clip-kind point (`ClipKinds`) that
-# `flipbook` fills. Until #1621 moves them to `rig`, the crate still holds
-# skeletons, node clips, blending and IK, and the CLI's model previewer and
-# render commands name it directly (package-names-check.py's exceptions).
+# `tween` script modules, the clip-kind point (`ClipKinds`) that `rig` and
+# `flipbook` fill, and the `CapturePoses` point `flint render --anim-time`
+# asks for (#1621).
 
 [package]
 name = "animation"
@@ -28,9 +26,11 @@ player = "flint-animation"
 
 [provides]
 crates = ["flint-animation"]
-# skeleton, ik_two_bone and bone_probe go to rig with #1621
-components = ["animator", "skeleton", "ik_two_bone", "bone_probe"]
+components = ["animator"]
 script_modules = ["animation", "tween"]
+# The render's clock for clips: the kernel's flag, served through the
+# `CapturePoses` point
+flags = ["render --anim-time"]
 
 # What a player built without it still knows (ADR 0137 decision 8): a scene
 # with an animator hears once that it holds still, and a game state may

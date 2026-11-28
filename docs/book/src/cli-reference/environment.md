@@ -62,7 +62,7 @@ A switch that is the alias of a flag or a quality key (`FLINT_VSYNC` of `--vsync
 | `FLINT_GPU_TEST_TIMEOUT` | a whole number of at least 1 | the harness's DEFAULT_TIMEOUT_S | Seconds a GPU test may hold the device before the binary is called hung and aborted |
 | `FLINT_QUALITY_PNG` | a path | none | flint-render's quality test writes its frames to this folder |
 | `FLINT_PANELS_DUMP` | a path | none | flint-render's panels test writes a frame to this folder |
-| `FLINT_CUBIC_MODEL` | a path | skipped | A glTF with CUBICSPLINE animation for flint-animation's opt-in cubicspline_model test |
+| `FLINT_CUBIC_MODEL` | a path | skipped | A glTF with CUBICSPLINE animation for flint-rig's opt-in cubicspline_model test |
 | `FLINT_194_SAVE_DIR` | a path | none | gen_preview's spec-save test writes the old and new saves to this folder (#194) |
 | `FLINT_LIVING_PRINT_DIGEST` | 1\|on\|true\|yes or 0\|off\|false\|no | off | Set by Living Props' determinism test for the copy of itself it runs |
 | `FLINT_FORM_PRINT_DIGEST` | 1\|on\|true\|yes or 0\|off\|false\|no | off | Set by the form generator's determinism test for the copy of itself it runs |

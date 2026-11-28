@@ -11,9 +11,10 @@ Each package has a manifest, `packages/<name>/package.toml`, that says what it o
 | Package | Tier | What it brings | Comes with |
 |---|---|---|---|
 | `engine` | kernel | The kernel: the ECS, scenes, schemas, the renderer, scripting, the player and the CLI. It also holds, for now, the parts that have no switch yet (physics, audio, terrain, and the ocean, grass, stylize and panels render features) | |
-| `animation` | standard | Clips on one clock: `animator`, property clips, layers, crossfades, sequences and cues, `tween`, and the `animation` and `tween` script modules (skeletons, node clips and IK too, until they move to `rig`) | |
+| `animation` | standard | Clips on one clock: `animator`, property clips, layers, crossfades, sequences and cues, `tween`, and the `animation` and `tween` script modules | |
 | `flipbook` | standard | Sprite-sheet clips (`.sprite.toml`) played through `animator`, the `animated_sprite` archetype and the `flipbook` script module ([2D Sprites](sprites-2d.md)) | `animation` |
 | `particles` | standard | Particle emitters and reusable effects: `particle_emitter`, `particle_effect`, the `particle` script module, the F3 Particles panel and the effect editor | |
+| `rig` | standard | Skeletons and their clips from glTF, node clips, layers composed joint by joint, two-bone IK and bone probes (`skeleton`, `ik_two_bone`, `bone_probe`), and the model previewer, `flint edit <model>.glb` ([Animation](animation.md)) | `animation` |
 | `procgen` | standard | Models and textures made from procgen specs, at load and with `flint gen` | |
 | `debug-hud` | standard | The player's F3/F4 debug panels | |
 | `living` | feature | Living props and the wooze field: `living_prop`, `shallow_wooze`, `[living]`, `[wooze]`, and the `living`, `wooze` and `debug` script modules | `procgen` |

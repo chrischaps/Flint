@@ -572,31 +572,39 @@ pub(crate) fn run_in(args: EditArgs, points: &Points) -> Result<()> {
                 style_time: args.style.style_time,
             })?)
         }
-        K::Model => launch.go(preview::editor(preview::PreviewArgs {
-            model: Some(args.file),
-            render: args.render,
-            width: options.width,
-            height: options.height,
-            distance: args.distance,
-            yaw: args.yaw,
-            pitch: args.pitch,
-            target: args.target,
-            fov: args.fov,
-            no_grid: args.no_grid,
-            watch: args.watch,
-            no_animate: args.no_animate,
-            clip: args.clip,
-            anim_speed: args.anim_speed.unwrap_or(1.0),
-            anim_time: args.anim_time,
-            layers: args.layers,
-            sequence: args.sequence,
-            sequence_loop: args.sequence_loop,
-            auto_orbit: args.auto_orbit,
-            style: args.style,
-            pose_bones: args.pose_bones,
-            show_skeleton: args.show_skeleton,
-            motion_hold: args.motion_hold,
-        })?),
+        // The model previewer is the rig package's (#1621)
+        K::Model => launch.go((preview::editors(
+            points,
+            &format!("flint edit {}", args.file),
+        )?
+        .open)(
+            preview::PreviewArgs {
+                model: Some(args.file),
+                render: args.render,
+                width: options.width,
+                height: options.height,
+                distance: args.distance,
+                yaw: args.yaw,
+                pitch: args.pitch,
+                target: args.target,
+                fov: args.fov,
+                no_grid: args.no_grid,
+                watch: args.watch,
+                no_animate: args.no_animate,
+                clip: args.clip,
+                anim_speed: args.anim_speed.unwrap_or(1.0),
+                anim_time: args.anim_time,
+                layers: args.layers,
+                sequence: args.sequence,
+                sequence_loop: args.sequence_loop,
+                auto_orbit: args.auto_orbit,
+                style: args.style,
+                pose_bones: args.pose_bones,
+                show_skeleton: args.show_skeleton,
+                motion_hold: args.motion_hold,
+            }
+            .edit(),
+        )?),
     }
 }
 
@@ -824,6 +832,8 @@ name = \"x\"
         let mut stack = vec![
             root.join("flint-viewer/src"),
             root.join("../packages/particles/crates/flint-particles/src/cli"),
+            // The model previewer, the rig package's since #1621
+            root.join("../packages/rig/crates/flint-rig/src/cli"),
         ];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {

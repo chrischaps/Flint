@@ -1,8 +1,8 @@
 # Animation
 
-> **Package:** `animation`, a standard package: every game has it, with the `animator` component, the `animation` and `tween` script modules, and (until #1621 moves them to `rig`) `skeleton`, `ik_two_bone` and `bone_probe`, unless its `[packages]` writes `animation = false`. Sprite-sheet clips are the `flipbook` package's, which requires it ([2D Sprites](sprites-2d.md), [Packages](packages.md)).
+> **Package:** `animation`, a standard package: every game has it, with the `animator` component and the `animation` and `tween` script modules, unless its `[packages]` writes `animation = false`. The `rig` package, standard too and requiring it, has `skeleton`, `ik_two_bone` and `bone_probe`: skeletons, node clips, layers, IK and the model previewer (`rig = false` leaves them out, as a 2D game does). Sprite-sheet clips are the `flipbook` package's, which requires it as well ([2D Sprites](sprites-2d.md), [Packages](packages.md)).
 
-Flint's animation system provides two tiers of animation through the `flint-animation` crate: **property tweens** for simple transform animations defined in TOML, and **skeletal animation** for character rigs imported from glTF files with GPU vertex skinning.
+Flint's animation system provides two tiers of animation: **property tweens** for simple transform animations defined in TOML, through the `animation` package's `flint-animation` crate, and **skeletal animation** for character rigs imported from glTF files with GPU vertex skinning, through the `rig` package's `flint-rig`. Both play on one clock: the rig's skeletal and node clips are clip kinds on the core's seam, run after property clips and sequences each frame.
 
 ## Tier 1: Property Animation
 
@@ -81,6 +81,8 @@ The animation system scans for `.anim.toml` files at startup and matches clip na
 
 ## Tier 2: Skeletal Animation
 
+> **Package:** `rig`, a standard package that requires `animation`: the `skeleton` component, skeletal and node clips from glTF, layers and crossfades composed joint by joint, and the model previewer.
+
 For characters and complex articulated meshes, skeletal animation imports bone hierarchies from glTF files and drives them with GPU vertex skinning.
 
 ### Pipeline
@@ -97,7 +99,7 @@ glTF file (.glb)
   └──────────┬───────────┘
              │
   ┌──────────▼───────────┐
-  │   flint-animation     │  Evaluate keyframes → bone matrices each frame
+  │   flint-rig           │  Evaluate keyframes → bone matrices each frame
   └──────────┬───────────┘
              │
   ┌──────────▼───────────┐
@@ -108,7 +110,7 @@ glTF file (.glb)
 ### How It Works
 
 1. **Import** --- `flint-import` extracts the skeleton (joint hierarchy, inverse bind matrices) and animation clips (per-joint keyframe channels) from glTF files
-2. **Evaluate** --- each frame, `flint-animation` samples the current clip time to produce local joint poses, walks the bone hierarchy to compute global transforms, and multiplies by inverse bind matrices to get final bone matrices
+2. **Evaluate** --- each frame, `flint-rig` samples the current clip time to produce local joint poses, walks the bone hierarchy to compute global transforms, and multiplies by inverse bind matrices to get final bone matrices
 3. **Render** --- bone matrices are uploaded to a per-entity GPU storage buffer. The skinned vertex shader transforms each vertex by its weighted bone influences. Because each entity owns its buffer, two entities instancing the same skinned asset animate independently: a crowd of the same model no longer shows whichever skeleton uploaded last.
 
 The importer handles all three glTF interpolation modes. `CUBICSPLINE` samplers store three outputs per timestamp (`in_tangent`, `value`, `out_tangent`) and are consumed as triples; a sampler with fewer than `3 x timestamps` outputs warns and degrades to `LINEAR`. Rotation tracks are also made hemisphere-continuous at clip load: Blender exports adjacent keys as `q` then `-q` on large joint rotations, and the Hermite curve between them would collapse through zero and snap the joint. Such keys (value and both tangents) are negated so the curve stays on one side of the sphere.
@@ -419,6 +421,8 @@ Entities with both `animator` and `skeleton` components use the skeletal animati
 
 ## Two-Bone IK
 
+> **Package:** `rig`, with `ik_two_bone` and `bone_probe`: both run after every clip kind has posed the world.
+
 `ik_two_bone` ([ADR 0070](https://github.com/chrischaps/Flint/blob/main/docs/adr/0070-two-bone-ik-on-transform-chains.md)) pins the end of a two-segment transform chain to a
 target entity every frame, after scripts, physics and clip playback have posed
 the world. It works on *entities*, not skeleton joints, so it suits models whose
@@ -477,8 +481,9 @@ composed only on skinned models.)
 
 - **AnimationPlayer** --- clip registry and per-entity playback state for property tweens
 - **AnimationSync** --- bridges ECS `animator` components to property animation playback, auto-discovers new entities each frame
-- **SkeletalSync** --- bridges ECS to skeletal animation, manages per-entity skeleton state and bone matrix computation
-- **AnimationSystem** --- top-level `RuntimeSystem` implementation that ticks both tiers
+- **SkeletalSync** (`flint-rig`) --- bridges ECS to skeletal animation, manages per-entity skeleton state and bone matrix computation
+- **SkeletalKind** and **NodeKind** (`flint-rig`) --- the rig's clip kinds: a package registers a kind on the core's `ClipKinds` point, and each runs at its slot (skeletal, node, then the flipbook's); the skeletal kind's pose publishes bone probes and solves IK
+- **AnimationSystem** --- top-level `RuntimeSystem` implementation that ticks property clips, sequences and every registered kind
 
 Animation runs in `update()` (variable-rate), not at the fixed physics rate, because smooth interpolation benefits from matching the rendering frame rate rather than the physics tick rate.
 

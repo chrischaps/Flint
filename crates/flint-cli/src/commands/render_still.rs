@@ -221,10 +221,10 @@ pub(super) fn render_still(
 
     // Animation (#307), which runs IK after each step; without it, two-bone IK
     // (ADR 0070) poses authored chains before the single frame.
-    let mut animation = pose_animation(args, &models, &config.project, &mut world, ANIM_DT, true);
+    let mut animation = pose_animation(args, &models, &config.project, &mut world, ANIM_DT, true)?;
     match &animation {
         Some(posed) => posed.upload(&mut renderer, &ctx.device, &ctx.queue),
-        None => flint_animation::IkPass::new().run(&mut world),
+        None => pose_still(&mut world),
     }
 
     if let Some(name) = &args.camera.select {
@@ -301,7 +301,7 @@ pub(super) fn render_still(
                 camera,
                 camera_path: camera_path.as_ref(),
                 particles: particle_sim.as_deref_mut(),
-                animation: animation.as_mut(),
+                animation: animation.as_deref_mut(),
                 meshes: &meshes,
                 scene_name: &scene_file.scene.name,
             },

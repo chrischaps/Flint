@@ -10,12 +10,13 @@
 
 use flint_animation::animator::{self, Animator};
 use flint_animation::clip::Interpolation;
-use flint_animation::node_clip::{NodeClip, NodeTrack};
-use flint_animation::skeletal_clip::{JointKeyframe, JointProperty};
 use flint_animation::AnimationSystem;
 use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
+use flint_rig::node_clip::{NodeClip, NodeTrack};
+use flint_rig::skeletal_clip::{JointKeyframe, JointProperty};
+use flint_rig::Rig;
 use flint_runtime::RuntimeSystem;
 use std::collections::HashMap;
 

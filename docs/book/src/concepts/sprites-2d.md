@@ -112,7 +112,7 @@ Each region is `[x, y, width, height]` in pixel coordinates. The `AtlasRegistry`
 
 > **Package:** `flipbook`, a standard package on the `animation` package: a game has its clips, the `animated_sprite` archetype and the `flipbook` script module unless its `[packages]` writes `flipbook = false` (or `animation = false`) ([Packages](packages.md)).
 
-Sprite-sheet animation is the `flipbook` package's (#1620, ADR 0139): `.sprite.toml` clips played on the `animation` package's clock, through the same `animator` component every clip plays through. Both are standard packages, on unless a game writes `flipbook = false` (or `animation = false`, which takes flipbook too) under `[packages]`; a game that leaves them out still draws its sprites, each at its first frame.
+Sprite-sheet animation is the `flipbook` package's (#1620, ADR 0139): `.sprite.toml` clips played on the `animation` package's clock, through the same `animator` component every clip plays through. Both are standard packages, on unless a game writes `flipbook = false` (or `animation = false`, which takes flipbook too) under `[packages]`; a game that leaves them out still draws its sprites, each at its first frame. A 2D game has no use for the `rig` package (skeletons, node clips and IK from glTF): writing `rig = false` keeps them out of its build.
 
 ### Defining Clips
 

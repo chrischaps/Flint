@@ -4,11 +4,12 @@
 //! never changed clip, never paused, and a finished one-shot never replayed.
 
 use flint_animation::clip::Interpolation;
-use flint_animation::skeletal_clip::{JointKeyframe, JointProperty, JointTrack, SkeletalClip};
-use flint_animation::skeleton::{JointPose, Skeleton};
 use flint_animation::AnimationSystem;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
+use flint_rig::skeletal_clip::{JointKeyframe, JointProperty, JointTrack, SkeletalClip};
+use flint_rig::skeleton::{JointPose, Skeleton};
+use flint_rig::Rig as _;
 use flint_scene::load_scene_string;
 use flint_schema::SchemaRegistry;
 use flint_script::engine::ScriptEngine;

@@ -35,6 +35,7 @@
     ["particles", "standard"],
     ["physics", "standard"],
     ["procgen", "standard"],
+    ["rig", "standard"],
     ["terrain", "standard"],
     ["ai", "feature"],
     ["living", "feature"],

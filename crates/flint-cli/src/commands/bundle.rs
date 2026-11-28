@@ -1852,6 +1852,7 @@ mod tests {
                         [entities.elm]\nliving_prop = { lineage_seed = 4 }\n";
     const ANIMATION: &str = "engine/packages/animation/schemas";
     const FLIPBOOK: &str = "engine/packages/flipbook/schemas";
+    const RIG: &str = "engine/packages/rig/schemas";
     const LIVING: &str = "engine/packages/living/schemas";
     const MUSIC: &str = "engine/packages/music/schemas";
     const TERRAIN: &str = "engine/packages/terrain/schemas";
@@ -1876,9 +1877,9 @@ mod tests {
     fn a_bundle_packs_only_the_packages_flint_toml_lists() {
         let listed = package_game("listed", Some("living = \"*\"\n"), "");
         let gathered = gather_game(&args(&listed)).unwrap();
-        // Animation, flipbook (#1620), particles (#1622), physics (#1617),
-        // terrain (#1623) and first person (#1618) are standard: in unless
-        // set false
+        // Animation, flipbook (#1620), particles (#1622), physics (#1617), rig
+        // (#1621), terrain (#1623) and first person (#1618) are standard: in
+        // unless set false
         assert_eq!(
             gathered.schemas,
             [
@@ -1889,6 +1890,7 @@ mod tests {
                 LIVING,
                 PARTICLES,
                 PHYSICS,
+                RIG,
                 TERRAIN
             ]
         );
@@ -1898,7 +1900,7 @@ mod tests {
 
         // An empty table: the feature packages are all out, the standard
         // ones with schemas (animation, first person, flipbook, particles,
-        // physics, terrain) in
+        // physics, rig, terrain) in
         let game = package_game("none_listed", Some(""), "");
         let gathered = gather_game(&args(&game)).unwrap();
         assert_eq!(
@@ -1910,6 +1912,7 @@ mod tests {
                 FLIPBOOK,
                 PARTICLES,
                 PHYSICS,
+                RIG,
                 TERRAIN
             ]
         );
@@ -1918,6 +1921,7 @@ mod tests {
                 && !k.starts_with(&format!("{ANIMATION}/"))
                 && !k.starts_with(&format!("{FIRST_PERSON}/"))
                 && !k.starts_with(&format!("{FLIPBOOK}/"))
+                && !k.starts_with(&format!("{RIG}/"))
                 && !k.starts_with(&format!("{PARTICLES}/"))
                 && !k.starts_with(&format!("{PHYSICS}/"))
                 && !k.starts_with(&format!("{TERRAIN}/"))
@@ -1932,6 +1936,7 @@ mod tests {
                 && !k.contains("packages/animation/")
                 && !k.contains("packages/first-person/")
                 && !k.contains("packages/flipbook/")
+                && !k.contains("packages/rig/")
                 && !k.contains("packages/particles/")
                 && !k.contains("packages/physics/")
                 && !k.contains("packages/terrain/")
@@ -2008,6 +2013,7 @@ mod tests {
                 MUSIC,
                 PARTICLES,
                 PHYSICS,
+                RIG,
                 TERRAIN,
                 VEHICLE
             ]

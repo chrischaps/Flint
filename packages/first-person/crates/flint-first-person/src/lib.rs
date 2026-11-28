@@ -239,6 +239,10 @@ impl CharacterController {
             target: self.camera_target(position),
             yaw: self.yaw,
             pitch: self.pitch,
+            // The camera's own field of view, and no roll: a walker's
+            // eye stays level (#1631 added both for the chase camera)
+            fov: None,
+            roll: 0.0,
         });
     }
 
