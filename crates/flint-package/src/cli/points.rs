@@ -45,6 +45,16 @@ impl Points {
             .and_then(|value| value.downcast_ref::<T>())
     }
 
+    /// The value of a type that several packages add to ([`SceneChecks`]),
+    /// made empty the first time one asks.
+    pub fn get_or_insert_default<T: Any + Send + Sync + Default>(&mut self) -> &mut T {
+        self.map
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Box::new(T::default()))
+            .downcast_mut::<T>()
+            .expect("a point is stored under its own type")
+    }
+
     /// Say that this run's packages serve `flag`, a flag the owning
     /// command declares and runs through a point (`asset resolve
     /// --strategy ai_generate`). The owner refuses a served
@@ -131,14 +141,28 @@ pub struct TableChecks {
     pub check: fn(&TableCheck) -> Vec<(Option<&'static str>, Vec<flint_core::Diagnostic>)>,
 }
 
-/// One scene, as [`TableChecks::check`] reads it.
+/// One scene, as [`TableChecks::check`] and a [`SceneChecks`] entry read it.
 pub struct TableCheck<'a> {
     pub scene: &'a Path,
     pub file: &'a flint_scene::SceneFile,
     pub registry: &'a flint_schema::SchemaRegistry,
     /// The loaded world, when it loaded: which specs the props grow from.
     pub world: Option<&'a flint_ecs::FlintWorld>,
+    /// The scene's project, whose search finds the files it names.
+    pub project: &'a flint_core::project::Project,
 }
+
+/// What `flint check` and `flint validate` ask of the components a package
+/// reads beyond their schemas (#1697: a terrain against the recipe its
+/// `spec` names), each package's check with its name. Any number of
+/// packages push onto it in their `register`
+/// ([`Points::get_or_insert_default`]); each runs on every scene whose
+/// project lets its package in.
+#[derive(Default)]
+pub struct SceneChecks(pub Vec<SceneCheck>);
+
+/// One package's scene check.
+pub type SceneCheck = (&'static str, fn(&TableCheck) -> Vec<flint_core::Diagnostic>);
 
 /// `flint render`'s point for the package that clocks a scene
 /// ([`super::render::StagePart`]).

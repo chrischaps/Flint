@@ -45,8 +45,32 @@ pub struct SurfaceGrid {
     pub restitution: f32,
 }
 
+impl SurfaceGrid {
+    /// The surface of the ground a scene binder made (the terrain
+    /// package's): its drawn vertex grid where its transform puts it, the
+    /// same surface as the chunks' triangles with no seams. The one place
+    /// a terrain's friction and bounce are set.
+    pub fn of_ground(ground: &flint_geometry::ground::SceneGround) -> Self {
+        let grid = &ground.grid;
+        Self {
+            entity: ground.entity,
+            columns: grid.columns,
+            rows: grid.rows,
+            heights: grid.heights.clone(),
+            width: grid.width,
+            depth: grid.depth,
+            origin: ground.origin,
+            friction: 0.8,
+            restitution: 0.1,
+        }
+    }
+}
+
 /// The scene's surfaces, in the order the host built them: the splines'
-/// meshes first, then the terrains. Replaced at each scene's entry.
+/// meshes first, then the terrains. Replaced at each scene's entry, and
+/// put in again by a package whose ground changed while the scene plays
+/// (the terrain package's rebake, #1697): the physics package takes it at
+/// its next frame and makes each grid's entity's collider again.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Surfaces {
     pub meshes: Vec<SurfaceMesh>,

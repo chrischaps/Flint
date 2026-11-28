@@ -25,7 +25,7 @@ The heightmap is a grayscale PNG (8-bit or 16-bit) where black is the lowest poi
 
 ## Adding Terrain to a Scene
 
-Create an entity with the `terrain` archetype:
+Create an entity with the `terrain` archetype. The shortest terrain names its recipe, a `.terrain.toml` ([A Terrain Made From Its Recipe](#a-terrain-made-from-its-recipe)):
 
 ```toml
 [entities.ground]
@@ -34,6 +34,13 @@ archetype = "terrain"
 [entities.ground.transform]
 position = [-128, 0, -128]
 
+[entities.ground.terrain]
+spec = "land/hills.terrain.toml"
+```
+
+Or name the maps themselves, baked once or painted by hand:
+
+```toml
 [entities.ground.terrain]
 heightmap = "terrain/heightmap.png"
 splat_map = "terrain/splatmap.png"
@@ -127,7 +134,7 @@ rain_min_height = 0.15  # optional: no rain on the sea floor
 
 A 513² hydraulic layer at the default rainfall bakes in about 0.4 s in a release build. A key that only the other kind reads (`iterations` or `talus_angle` on a hydraulic layer, `rainfall` on a thermal one) is a warning naming the keys the layer does read: before Flint#1693, hydraulic's `iterations` counted single raindrops, and a recipe that still sets it gets the default rainfall.
 
-The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the same resolution, written as `<stem>_height.png` and `<stem>_splat.png`; point the `terrain` component's `heightmap` and `splat_map` at them. Both are the bytes the editor's Ctrl+E export writes (the one bake, `flint_terrain::bake`, makes both), and the same spec and seed bake the same bytes every run. The summary says how much of the ground each layer covers.
+The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the same resolution, written as `<stem>_height.png` and `<stem>_splat.png`; point the `terrain` component's `heightmap` and `splat_map` at them, or skip the step and name the spec itself ([A Terrain Made From Its Recipe](#a-terrain-made-from-its-recipe)). Both are the bytes the editor's Ctrl+E export writes (the one bake, `flint_terrain::bake`, makes both), and the same spec and seed bake the same bytes every run. The summary says how much of the ground each layer covers.
 
 The spec is checked against `terrain_v1`'s schema before anything is baked, by path. A key nothing reads is a warning with the key it was probably meant to be (``warning: `height_layers[1].octave` is not a parameter of the noise layer (did you mean `octaves`?)``), and `--strict` makes it an error. A value the bake can't use is an error that stops the run: a splat rule for a layer past 3, a `noise_type` that isn't one, a resolution over 4096. The terrain editor lists the same lines under its Save buttons while the file has them.
 
@@ -188,6 +195,45 @@ That is [`tests/fixtures/scenes/terrain/island.terrain.toml`](https://github.com
 
 The terrain editor's generate mode has a **+ Falloff** button, which puts the layer before the first erosion, and shows each field only for the shapes that read it (the gradient's direction as a compass angle).
 
+## A Terrain Made From Its Recipe
+
+A `terrain` that names its spec (`spec = "land/hills.terrain.toml"`, found like any file the scene names, from the scene's folder up) is made from it each time the scene loads (Flint#1697). Its `[geometry]`, `[textures]` and `[grass]` are the terrain's settings, its height layers and splat rules are baked into the two maps, and nothing is copied into the scene or committed beside the recipe:
+
+```toml
+# land/hills.terrain.toml
+[geometry]
+width = 512.0
+depth = 512.0
+height_scale = 100.0
+resolution = 513
+
+[textures]
+texture_tile = 18.0
+roughness = 0.9
+[textures.layers.layer0]
+path = "grass_color.png"     # from the spec's own folder, as the terrain editor reads it
+[textures.layers.layer2]
+path = "rock_color.png"
+
+[grass]
+enabled = true
+density = 45.0
+```
+
+**A key written on the component wins.** `height_scale = 60.0` beside `spec` draws the recipe 60 m tall; a key left out is the recipe's, and a key the recipe leaves out is the default the [schema](#component-schema) names. `seed` bakes the recipe at another seed than its `[seed] value`, so one recipe makes a row of islands. A `heightmap` or `splat_map` written beside `spec` is used in place of the bake's (a painted splat map over a baked shape).
+
+**The bake is cached.** It is keyed by what the bake reads (the geometry, the height layers, the splat rules and the seed), so a change to a comment, a texture or the grass bakes nothing, and the same recipe is a cache hit with the same bytes: in memory for the run, and on disk in the procgen cache's folder (`.flint/procgen-cache/` at the project root, or `FLINT_PROCGEN_CACHE`; `0` keeps no disk copy). Relief's 513 x 513 recipe with 120,000 raindrops of erosion bakes in about a second in a debug build.
+
+**The pixels are the baked PNGs'.** The heights are quantized to the 16 bits the PNG holds before the mesh is built, so a terrain made from its recipe and one made from the PNGs `flint gen` wrote from it draw the same pixels; `crates/flint-cli/tests/terrain_spec_cli.rs` holds the two byte for byte.
+
+**Saving the recipe while `flint play` runs rebuilds the terrain.** The player looks at the spec four times a second (`--no-hot-reload` turns it off), bakes it again on a thread of its own so the frames don't stop, and then replaces the chunks, the material, the grass, the physics heightfield and what `terrain_height` reads, in one frame. A spec that no longer parses keeps the terrain as it was, with a warning naming the mistake.
+
+**`flint check` holds the two together.** A key the component writes with another value than its recipe's is an `overrides-spec` warning naming the spec's key (`terrain.width = 400.0 overrides land/hills.terrain.toml's [geometry] width = 512`), as is a `heightmap` standing in for the bake; a spec that doesn't parse is a `bad-terrain-spec` error, and a key in it nothing reads a warning of the same code on the spec's file. A spec that isn't there is `missing-asset`.
+
+```bash
+flint check scenes/island.scene.toml      # the terrain against its recipe, and the recipe against its format
+```
+
 ## Texture Tiling
 
 Layer textures are **tiled** across the terrain surface based on world position, not the terrain UV. The `texture_tile` field controls how many times the texture repeats per 100 world units:
@@ -202,19 +248,23 @@ Higher values produce finer detail but may show visible tiling at a distance. Fu
 
 ## Component Schema
 
+A field left out is its recipe's when the terrain names one, and the default below otherwise. The schema writes no defaults into the component (since Flint#1697), so the scene file says only what it chose.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `heightmap` | string | | Path to grayscale PNG, from the scene's directory or any directory above it up to the project root ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)) |
+| `spec` | string | | The `.terrain.toml` the terrain is made from, found like `heightmap` ([A Terrain Made From Its Recipe](#a-terrain-made-from-its-recipe)) |
+| `seed` | i64 | the spec's | The seed the recipe bakes at |
+| `heightmap` | string | the bake's | Path to grayscale PNG, from the scene's directory or any directory above it up to the project root ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)) |
 | `width` | f32 | 256.0 | World-space extent along X axis |
 | `depth` | f32 | 256.0 | World-space extent along Z axis |
 | `height_scale` | f32 | 50.0 | Maximum height in world units |
 | `chunk_resolution` | i32 | 64 | Vertices per chunk edge (higher = more detail) |
 | `texture_tile` | f32 | 16.0 | Texture tiling factor per 100 world units |
-| `splat_map` | string | "" | Path to RGBA splat map PNG |
-| `layer0_texture` | string | "" | Layer 0 texture (splat R channel) |
-| `layer1_texture` | string | "" | Layer 1 texture (splat G channel) |
-| `layer2_texture` | string | "" | Layer 2 texture (splat B channel) |
-| `layer3_texture` | string | "" | Layer 3 texture (splat A channel) |
+| `splat_map` | string | the bake's | Path to RGBA splat map PNG |
+| `layer0_texture` | string | none | Layer 0 texture (splat R channel) |
+| `layer1_texture` | string | none | Layer 1 texture (splat G channel) |
+| `layer2_texture` | string | none | Layer 2 texture (splat B channel) |
+| `layer3_texture` | string | none | Layer 3 texture (splat A channel) |
 | `metallic` | f32 | 0.0 | PBR metallic value for terrain surface |
 | `roughness` | f32 | 0.85 | PBR roughness value for terrain surface |
 
@@ -299,7 +349,7 @@ fn on_update() {
 }
 ```
 
-`grass.enabled = false` stops the blades and `true` brings them back. A scene whose grass was off when it loaded grows its field the first time a script turns it on. A denser field or a longer `max_distance` remakes the blades' buffer before the next frame, which is a moment's work, so change those rarely and the colours and wind as often as you like. A `grass_ground` holds the scene's grass when there is one, and then the terrain's `grass.*` changes nothing (the player says so once).
+`grass.enabled = false` stops the blades and `true` brings them back. A scene whose grass was off when it loaded grows its field the first time a script turns it on. A denser field or a longer `max_distance` remakes the blades' buffer before the next frame, which is a moment's work, so change those rarely and the colours and wind as often as you like. A `grass_ground` holds the scene's grass when there is one, and then the terrain's `grass.*` changes nothing (the player says so once). On a terrain made from its recipe, a key the scene never set reads as the recipe's `[grass]` or `[textures]` value, so a script's change starts from what is drawn, and saving the recipe during play makes its new settings the ones the script's changes sit over.
 
 ## Physics Collision
 
@@ -311,7 +361,7 @@ Terrain automatically gets a **heightfield physics collider** via Rapier: the ch
 
 The collider is the rendered mesh triangle for triangle: each cell is split along the same diagonal the chunks use, so what you see is what you collide with. A heightfield is Rapier's own shape for a grid of heights. It holds one number a vertex rather than a mesh's points and triangles, and it knows its cells' neighbours, so the edges between cells and the seams between chunks are smooth to anything rolling or walking over them: a ball rolling across them no longer hops (until #1219 the collider was the chunks' triangles as one trimesh, and a ball rolling down a slope could be thrown 0.19 m into the air at a cell edge).
 
-The terrain's collider takes its entity's `collider.layer` and `mask` like any other, and `get_collider_extents` on it answers `shape: "heightfield"` with its box.
+The terrain's collider takes its entity's `collider.layer` and `mask` like any other, and `get_collider_extents` on it answers `shape: "heightfield"` with its box. When a terrain's recipe is saved while the game runs, the heightfield is made again in the same frame as the chunks, so what stands on the old ground falls or rises to the new one.
 
 ## Height Sampling from Scripts
 
@@ -375,7 +425,7 @@ Terrain is the `terrain` package (`packages/terrain/`), its one crate `flint-ter
 - **`flint-terrain`** --- the package's crate. With no feature it is pure data (no GPU dependency): heightmap reading, the spec format and its bake, chunked mesh geometry (positions, normals, UVs, indices). Its `render` part builds a scene's terrain into the renderer; its `player` part registers that as a *scene binder*, which every host runs right after binding a scene (the player, the scene viewer and `flint render`), and the `terrain` script module; its `cli` part is the terrain editor.
 - **`flint-geometry`** --- the kernel's plain data: the chunk mesh (`TerrainChunk`), the grass settings (`GrassConfig`), the height grid and `GroundField`, and the `SceneGround` the binder hands back to the host.
 - **`flint-render`** --- `TerrainPipeline` and `terrain_shader.wgsl`. Assembles GPU vertex buffers from terrain data and handles splat-map texture blending; its lighting is the meshes' own (`direct_light.wgsl`, #738). `GrassPipeline` with `grass_compute.wgsl` and `grass_render.wgsl` owns the grass layer; `flint-terrain` only holds its `GrassConfig`.
-- **`flint-physics`** --- `register_static_heightfield()` takes the ground's grid (the chunks' vertices as one grid) for collision; the player registers it from the `SceneGround`, so physics reads no terrain files and the terrain names no physics crate.
+- **`flint-physics`** --- `register_static_heightfield()` takes the ground's grid (the chunks' vertices as one grid) for collision; the player registers it from the `SceneGround`, so physics reads no terrain files and the terrain names no physics crate. A rebaked recipe hands physics the kernel's `Surfaces` again, and physics makes that entity's heightfield anew.
 - **`terrain_height(x, z)`** --- the package's `terrain` script module, which reads the ground the player kept for the scene.
 - **`flint-procgen`** --- `terrain_v1`, which `flint gen x.terrain.toml` runs, is the procgen package's part *with* terrain: a game that lists both has it.
 
@@ -385,7 +435,7 @@ This separation means `flint-terrain` can be used independently for tools, CLI c
 
 - **One terrain per scene** --- currently only the first terrain entity is loaded
 - **No mesh LOD** --- all chunks render at full resolution regardless of distance (chunks outside the camera frustum are culled; grass thins with distance)
-- **No runtime deformation** --- terrain is static after loading
+- **No runtime deformation** --- terrain is static after loading, but for a rebake when its recipe is saved during play
 - **CPU-side simulation** --- no GPU compute for terrain generation
 - **Fixed PBR parameters** --- metallic and roughness are uniform across the entire terrain surface
 

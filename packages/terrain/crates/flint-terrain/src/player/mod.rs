@@ -13,17 +13,18 @@
 
 mod live;
 mod module;
+mod watch;
 
 use crate::scene::bind_terrain;
 use flint_core::components as comp;
 use flint_package::bind::{BindCtx, SceneGround};
 use flint_package::{Package, Registry, SceneCtx, Stage, StageCtx, Subsystem};
+use std::path::{Path, PathBuf};
 
 pub use live::LIVE_FIELDS;
 pub use module::{TerrainHeight, TerrainModule, TERRAIN_MODULE};
 
-/// The package's name, as its manifest gives it.
-pub const PACKAGE_NAME: &str = "terrain";
+pub use crate::PACKAGE_NAME;
 
 /// The `terrain` package (`packages/terrain/package.toml`).
 pub static PACKAGE: TerrainPackage = TerrainPackage;
@@ -75,20 +76,33 @@ fn left_out(ctx: &SceneCtx) -> Option<String> {
     )
 }
 
-/// Every scene has one: `terrain_height` is any scene's.
+/// Every scene has one: `terrain_height` is any scene's. In the player,
+/// one whose terrain is made from its recipe watches it (#1697).
 pub fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     let height = TerrainHeight::of(ctx.resources.get::<SceneGround>());
     ctx.script.set_module_state(height);
+    let scene_dir = Path::new(ctx.scene_path).parent().unwrap_or(Path::new(""));
+    let live = live::LiveTerrain::of(ctx.world, ctx.project, scene_dir);
+    let watch = if ctx.capture.is_none() {
+        watch::SpecWatch::of(ctx)
+    } else {
+        None
+    };
     Some(Box::new(TerrainSubsystem {
-        live: live::LiveTerrain::of(ctx.world),
+        live,
+        watch,
+        scene_dir: scene_dir.to_path_buf(),
     }))
 }
 
 /// The scene's terrain, as its scripts read it (the `terrain` module) and
 /// change it: what they set on its material and grass reaches the renderer
-/// at the frame's sync (#1698, [`live`]).
+/// at the frame's sync (#1698, [`live`]); and, in the player, the watch on
+/// its recipe, which rebakes it when the recipe is saved (#1697, [`watch`]).
 pub struct TerrainSubsystem {
     live: Option<live::LiveTerrain>,
+    watch: Option<watch::SpecWatch>,
+    scene_dir: PathBuf,
 }
 
 impl Subsystem for TerrainSubsystem {
@@ -100,9 +114,19 @@ impl Subsystem for TerrainSubsystem {
         &[module::MODULE]
     }
 
-    /// After every script of the frame, before it is drawn: what they
-    /// changed on the terrain goes to the renderer.
+    /// Before the scripts, the recipe (#1697): a rebake lands here, before
+    /// physics' frame, which takes the new ground the same frame, and the
+    /// live reread takes the new recipe as its base. After every script of
+    /// the frame, before it is drawn, what they changed on the terrain goes
+    /// to the renderer (#1698).
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
+        if stage == Stage::PreScripts {
+            let rebuilt = self.watch.as_mut().and_then(|watch| watch.poll(ctx));
+            if let (Some(recipe), Some(live)) = (rebuilt, &mut self.live) {
+                live.rebase(ctx.world, Some(&recipe), &self.scene_dir);
+            }
+            return;
+        }
         if stage != Stage::Sync {
             return;
         }
@@ -115,5 +139,6 @@ impl Subsystem for TerrainSubsystem {
     /// The scene's heights go with it.
     fn scene_unloading(&mut self, ctx: &mut SceneCtx) {
         ctx.script.set_module_state(TerrainHeight::default());
+        self.watch = None;
     }
 }

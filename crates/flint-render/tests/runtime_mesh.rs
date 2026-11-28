@@ -2265,6 +2265,8 @@ fn a_sculpted_terrain_reloads_its_chunks() {
     const RES: u32 = 33;
     let config = flint_terrain::TerrainConfig {
         heightmap_path: String::new(),
+        spec_path: String::new(),
+        seed: None,
         width: 20.0,
         depth: 20.0,
         height_scale: 6.0,

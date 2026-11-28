@@ -2,10 +2,6 @@
 description = "Heightmap-based outdoor terrain"
 components = ["transform", "terrain"]
 
-[archetype.terrain.defaults.terrain]
-width = 256.0
-depth = 256.0
-height_scale = 50.0
-chunk_resolution = 64
-texture_tile = 16.0
-roughness = 0.85
+# No defaults (#1697): a terrain made from its recipe takes its size, its
+# textures and its grass from the spec, and the reader's own numbers stand in
+# for a terrain made from maps (the ones this table wrote until then).

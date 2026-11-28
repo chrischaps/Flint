@@ -5,9 +5,15 @@ use crate::grass_config::GrassConfig;
 use crate::heightmap::{Heightmap, HeightmapFiles};
 
 /// Configuration for terrain generation, parsed from the `terrain` component
+/// (over its recipe's settings when it names one: #1697)
+#[derive(Debug, Clone)]
 pub struct TerrainConfig {
     /// Path to the heightmap PNG
     pub heightmap_path: String,
+    /// The `.terrain.toml` the terrain is made from (#1697); empty for none
+    pub spec_path: String,
+    /// The seed the recipe bakes at, when the component writes one
+    pub seed: Option<u64>,
     /// World-space X extent
     pub width: f32,
     /// World-space Z extent
@@ -30,30 +36,110 @@ pub struct TerrainConfig {
     pub grass: Option<GrassConfig>,
 }
 
+impl Default for TerrainConfig {
+    /// What a component that writes nothing draws: the numbers the
+    /// component's schema gave as defaults until #1697 took them out, so
+    /// that a key a scene leaves out can be its recipe's.
+    fn default() -> Self {
+        Self {
+            heightmap_path: String::new(),
+            spec_path: String::new(),
+            seed: None,
+            width: 256.0,
+            depth: 256.0,
+            height_scale: 50.0,
+            chunk_resolution: 64,
+            texture_tile: 16.0,
+            splat_map_path: String::new(),
+            layer_textures: Default::default(),
+            metallic: 0.0,
+            roughness: 0.85,
+            grass: None,
+        }
+    }
+}
+
+/// The component's keys a recipe also sets (#1697): each with the spec's
+/// place for it, which `flint check` names when the two disagree.
+pub const SPEC_KEYS: [(&str, &str); 11] = [
+    ("width", "[geometry] width"),
+    ("depth", "[geometry] depth"),
+    ("height_scale", "[geometry] height_scale"),
+    ("chunk_resolution", "[geometry] chunk_resolution"),
+    ("texture_tile", "[textures] texture_tile"),
+    ("metallic", "[textures] metallic"),
+    ("roughness", "[textures] roughness"),
+    ("layer0_texture", "[textures.layers.layer0] path"),
+    ("layer1_texture", "[textures.layers.layer1] path"),
+    ("layer2_texture", "[textures.layers.layer2] path"),
+    ("layer3_texture", "[textures.layers.layer3] path"),
+];
+
 impl TerrainConfig {
     /// Read a `terrain` component through the typed view (ADR 0115): a
     /// wrong type reads as the default and is reported once by entity,
     /// component and field. `grass` is left for [`GrassConfig::from_component`].
     pub fn from_component(view: &flint_ecs::ComponentView<'_>) -> Self {
-        let text = |key: &str| view.str(key, "").to_string();
-        let [texture_tile, metallic, roughness] = Self::material_of(view);
+        Self::over(view, Self::default())
+    }
+
+    /// The component's keys over `base` (#1697): each key it writes wins,
+    /// each it leaves out is `base`'s (a recipe's settings, or the
+    /// defaults). `grass` is `base`'s, for [`GrassConfig::over`].
+    pub fn over(view: &flint_ecs::ComponentView<'_>, base: Self) -> Self {
+        let text = |key: &str, base: &str| view.opt_str(key).unwrap_or(base).to_string();
+        let [l0, l1, l2, l3] = &base.layer_textures;
+        let [texture_tile, metallic, roughness] = Self::material_over(view, base.material());
         Self {
-            heightmap_path: text("heightmap"),
-            width: view.f32("width", 256.0),
-            depth: view.f32("depth", 256.0),
-            height_scale: view.f32("height_scale", 50.0),
-            chunk_resolution: view.i64("chunk_resolution", 64) as i32 as u32,
+            heightmap_path: text("heightmap", &base.heightmap_path),
+            spec_path: text("spec", &base.spec_path),
+            seed: view.opt_i64("seed").map(|s| s as u64).or(base.seed),
+            width: view.f32("width", base.width),
+            depth: view.f32("depth", base.depth),
+            height_scale: view.f32("height_scale", base.height_scale),
+            chunk_resolution: view.i64("chunk_resolution", base.chunk_resolution as i64) as i32
+                as u32,
             texture_tile,
-            splat_map_path: text("splat_map"),
+            splat_map_path: text("splat_map", &base.splat_map_path),
             layer_textures: [
-                text("layer0_texture"),
-                text("layer1_texture"),
-                text("layer2_texture"),
-                text("layer3_texture"),
+                text("layer0_texture", l0),
+                text("layer1_texture", l1),
+                text("layer2_texture", l2),
+                text("layer3_texture", l3),
             ],
             metallic,
             roughness,
-            grass: None,
+            grass: base.grass,
+        }
+    }
+
+    /// A recipe's settings as a terrain's (#1697): its `[geometry]`, its
+    /// `[textures]` (each path, which is from the spec's folder as the
+    /// terrain editor reads it, made a name the project's search takes from
+    /// `scene_dir`) and its `[grass]`. No heightmap or splat map: the bake
+    /// is the terrain's.
+    pub fn from_spec(source: &crate::source::SpecSource, scene_dir: &std::path::Path) -> Self {
+        let spec = &source.spec;
+        let (geo, tex) = (&spec.geometry, &spec.textures);
+        let layer = |path: String| {
+            if path.is_empty() {
+                path
+            } else {
+                crate::source::from_scene_dir(&source.dir().join(path), scene_dir)
+            }
+        };
+        let [l0, l1, l2, l3] = spec.layer_paths();
+        Self {
+            width: geo.width,
+            depth: geo.depth,
+            height_scale: geo.height_scale,
+            chunk_resolution: geo.chunk_resolution,
+            texture_tile: tex.texture_tile,
+            layer_textures: [layer(l0), layer(l1), layer(l2), layer(l3)],
+            metallic: tex.metallic,
+            roughness: tex.roughness,
+            grass: spec.grass.clone(),
+            ..Self::default()
         }
     }
 
@@ -62,11 +148,24 @@ impl TerrainConfig {
     /// subsystem reads again each frame for a script's change (#1698),
     /// without the strings [`from_component`](Self::from_component) copies.
     pub fn material_of(view: &flint_ecs::ComponentView<'_>) -> [f32; 3] {
+        let base = Self::default();
+        Self::material_over(view, [base.texture_tile, base.metallic, base.roughness])
+    }
+
+    /// [`material_of`](Self::material_of) over `base` (#1697): a terrain
+    /// made from its recipe takes the recipe's `[textures]` numbers for a
+    /// key the component leaves out, at the bind and in the frame's reread.
+    pub fn material_over(view: &flint_ecs::ComponentView<'_>, base: [f32; 3]) -> [f32; 3] {
         [
-            view.f32("texture_tile", 16.0),
-            view.f32("metallic", 0.0),
-            view.f32("roughness", 0.85),
+            view.f32("texture_tile", base[0]),
+            view.f32("metallic", base[1]),
+            view.f32("roughness", base[2]),
         ]
+    }
+
+    /// This config's material numbers, as [`material_over`](Self::material_over) takes them.
+    pub fn material(&self) -> [f32; 3] {
+        [self.texture_tile, self.metallic, self.roughness]
     }
 }
 
@@ -205,6 +304,8 @@ mod height_grid_tests {
     fn config(res: u32) -> TerrainConfig {
         TerrainConfig {
             heightmap_path: String::new(),
+            spec_path: String::new(),
+            seed: None,
             width: 40.0,
             depth: 30.0,
             height_scale: 8.0,

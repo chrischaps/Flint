@@ -82,22 +82,12 @@ pub(super) struct LoadedGrassInfo {
 /// The surface of the ground a scene binder made (the terrain package's,
 /// #1623): its drawn vertex grid where its transform puts it, which the
 /// physics package makes a heightfield collider of (#1219, #1617), the same
-/// surface as the chunks' triangles with no seams.
+/// surface as the chunks' triangles with no seams. The terrain package's
+/// rebake (#1697) makes it again the same way: `SurfaceGrid::of_ground`.
 pub(super) fn terrain_surface(
     ground: &flint_geometry::ground::SceneGround,
 ) -> flint_package::surfaces::SurfaceGrid {
-    let grid = &ground.grid;
-    flint_package::surfaces::SurfaceGrid {
-        entity: ground.entity,
-        columns: grid.columns,
-        rows: grid.rows,
-        heights: grid.heights.clone(),
-        width: grid.width,
-        depth: grid.depth,
-        origin: ground.origin,
-        friction: 0.8,
-        restitution: 0.1,
-    }
+    flint_package::surfaces::SurfaceGrid::of_ground(ground)
 }
 
 /// Load a scene's `grass_ground` into `scene_renderer`, as the player does

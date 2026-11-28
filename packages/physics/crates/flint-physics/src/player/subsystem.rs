@@ -133,6 +133,36 @@ fn prepare(ctx: &mut SceneCtx) {
 }
 
 impl PhysicsSubsystem {
+    /// A ground that changed while the scene plays (#1697: the terrain
+    /// package rebaked its recipe and put the kernel's `Surfaces` in
+    /// again): each grid's entity's heightfield made again, the old one
+    /// removed first. Nothing to do on nearly every frame, one map lookup.
+    fn refresh_surfaces(ctx: &mut StageCtx) {
+        let Some(surfaces) = ctx.resources.remove::<Surfaces>() else {
+            return;
+        };
+        let Some(physics) = of_mut(ctx.resources) else {
+            return;
+        };
+        for grid in surfaces.grids {
+            physics.remove_entity(grid.entity);
+            let field = StaticHeightfield {
+                columns: grid.columns,
+                rows: grid.rows,
+                heights: grid.heights,
+                width: grid.width,
+                depth: grid.depth,
+                origin: grid.origin,
+            };
+            physics.register_static_heightfield(
+                grid.entity,
+                &field,
+                grid.friction,
+                grid.restitution,
+            );
+        }
+    }
+
     /// The made and runtime meshes' triangles that came since the last
     /// frame (a procgen model the queue finished, a mesh an extension
     /// uploaded), for the bodies whose `mesh` or `convex` collider names
@@ -176,6 +206,7 @@ impl Subsystem for PhysicsSubsystem {
             Stage::Scripts => {
                 if !self.capture {
                     Self::refresh_meshes(ctx);
+                    Self::refresh_surfaces(ctx);
                 }
                 let ratio = ctx.clock.pending_fixed_ratio();
                 let Some(physics) = of_mut(ctx.resources) else {

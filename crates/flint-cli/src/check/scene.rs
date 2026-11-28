@@ -40,6 +40,8 @@ pub(super) const ASSET_FIELDS: &[(&str, &str, AssetKind)] = &[
         "splat_map",
         AssetKind::Files,
     ),
+    // The recipe a terrain is made from (#1697)
+    (flint_core::components::TERRAIN, "spec", AssetKind::Files),
     ("grass_ground", "mask", AssetKind::Files),
     ("spline", "file", AssetKind::Files),
     ("particle_emitter", "texture", AssetKind::ParticleTextures),
@@ -287,6 +289,28 @@ fn check_all(
             particle_emitters(scene, world, &mut out.diagnostics);
         }
         spec_params(scene, scene_dir, &file, project, memo, &mut out.diagnostics);
+        // The components packages read beyond their schemas (#1697: a
+        // terrain against its recipe), each package's if the project lets
+        // it in
+        if let Some(found) = crate::points().get::<flint_package::cli::SceneChecks>() {
+            let at = flint_package::cli::TableCheck {
+                scene,
+                file: &file,
+                registry: &schemas.registry,
+                world: world.as_ref(),
+                project,
+            };
+            for (package, check) in &found.0 {
+                let left_out = schemas
+                    .dirs
+                    .packages
+                    .as_ref()
+                    .is_some_and(|in_use| !in_use.is_on(package));
+                if !left_out {
+                    out.diagnostics.extend(check(&at));
+                }
+            }
+        }
     }
     if checks.files {
         assets(scene, scene_dir, &file, project, memo, &mut out);
@@ -304,6 +328,7 @@ fn check_all(
             file: &file,
             registry: &schemas.registry,
             world: world.as_ref(),
+            project,
         });
         for (table, said) in found {
             // The scene pass has checked `[wooze]` against its

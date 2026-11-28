@@ -11,6 +11,8 @@ const DT: f64 = 1.0 / 60.0;
 fn config(width: f32, depth: f32, height_scale: f32, res: u32) -> TerrainConfig {
     TerrainConfig {
         heightmap_path: String::new(),
+        spec_path: String::new(),
+        seed: None,
         width,
         depth,
         height_scale,

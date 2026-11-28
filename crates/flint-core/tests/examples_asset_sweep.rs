@@ -63,6 +63,7 @@ fn named_by(scene: &toml::Table) -> Vec<(AssetKind, String)> {
         for (component, key) in [
             ("terrain", "heightmap"),
             ("terrain", "splat_map"),
+            ("terrain", "spec"),
             ("grass_ground", "mask"),
             ("spline", "file"),
         ] {

@@ -157,6 +157,8 @@ mod tests {
         let h = TerrainHeight::of(Some(&placed(heights.clone(), n, size, scale, origin)));
         let config = TerrainConfig {
             heightmap_path: String::new(),
+            spec_path: String::new(),
+            seed: None,
             width: size,
             depth: size,
             height_scale: scale,

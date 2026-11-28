@@ -43,6 +43,7 @@ pub use particles::load_scene_particle_textures;
 use post::next_post_config_generation;
 use render_passes::RenderPhase;
 pub use splines::{load_scene_splines, LoadedSplines, SplineCollider};
+pub use terrain::TerrainSplat;
 
 pub use lights::LightingLevers;
 use skinning::{CachedBoneBind, SHADOW_BONE_KEY};
@@ -917,7 +918,7 @@ impl SceneRenderer {
         texture_tile: f32,
         metallic: f32,
         roughness: f32,
-        splat_path: &str,
+        splat: terrain::TerrainSplat<'_>,
         layer_paths: &[String; 4],
         scene_dir: &Path,
     ) {
@@ -934,7 +935,7 @@ impl SceneRenderer {
             texture_tile,
             metallic,
             roughness,
-            splat_path,
+            splat,
             layer_paths,
             scene_dir,
         );

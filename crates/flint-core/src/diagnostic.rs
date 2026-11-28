@@ -187,6 +187,14 @@ pub mod codes {
     /// range, not one of the choices, a required key missing (#718;
     /// `flint_procgen::validate_params`, keyed by the parameter's path).
     pub const SPEC_PARAM: &str = "spec-param";
+    /// A `.terrain.toml` a `terrain.spec` names does not parse (an error),
+    /// or has a key nothing reads (a warning) (#1697).
+    pub const BAD_TERRAIN_SPEC: &str = "bad-terrain-spec";
+    /// A key a component writes over the recipe it names, with another
+    /// value (#1697: a terrain's `width` beside its spec's `[geometry]
+    /// width`, or a `heightmap` that stands in for the bake). A warning:
+    /// the component's key wins, but two copies drift.
+    pub const OVERRIDES_SPEC: &str = "overrides-spec";
     /// A `.spline.toml` a scene names does not parse, or a `spline_mesh`
     /// profile is no polygon (#750). Placed by line and column.
     pub const BAD_SPLINE: &str = "bad-spline";
@@ -432,6 +440,16 @@ pub mod codes {
             SPEC_PARAM,
             Severity::Error,
             "a procgen spec a scene names has a value its generator can't use (an error) or a key it ignores (a warning)",
+        ),
+        (
+            BAD_TERRAIN_SPEC,
+            Severity::Error,
+            "the .terrain.toml a terrain's spec names does not parse (an error) or has a key nothing reads (a warning)",
+        ),
+        (
+            OVERRIDES_SPEC,
+            Severity::Warning,
+            "a key a terrain writes over the recipe it names has another value there, or a heightmap or splat_map stands in for the bake's",
         ),
         (
             BAD_SPLINE,
@@ -1057,7 +1075,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 59);
+        assert_eq!(seen.len(), 61);
     }
 
     /// A problem in a scene-level table names the table as its header is
