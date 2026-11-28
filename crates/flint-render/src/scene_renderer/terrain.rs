@@ -62,7 +62,7 @@ impl TerrainRenderer {
         texture_cache: &mut Option<TextureCache>,
         transform_layout: &wgpu::BindGroupLayout,
         scope: &AssetScope,
-        chunks: &[flint_terrain::TerrainChunk],
+        chunks: &[flint_geometry::terrain_chunk::TerrainChunk],
         transform: &Transform,
         texture_tile: f32,
         metallic: f32,
@@ -120,7 +120,7 @@ impl TerrainRenderer {
         pipeline: Option<&TerrainPipeline>,
         texture_cache: &mut Option<TextureCache>,
         transform_layout: &wgpu::BindGroupLayout,
-        chunks: &[flint_terrain::TerrainChunk],
+        chunks: &[flint_geometry::terrain_chunk::TerrainChunk],
         transform: &Transform,
         texture_tile: f32,
         metallic: f32,
@@ -159,7 +159,7 @@ impl TerrainRenderer {
         &mut self,
         device: &wgpu::Device,
         transform_layout: &wgpu::BindGroupLayout,
-        chunks: &[flint_terrain::TerrainChunk],
+        chunks: &[flint_geometry::terrain_chunk::TerrainChunk],
         transform: &Transform,
     ) {
         self.upload_chunks(device, transform_layout, chunks, transform);
@@ -228,7 +228,7 @@ impl TerrainRenderer {
         &mut self,
         device: &wgpu::Device,
         transform_layout: &wgpu::BindGroupLayout,
-        chunks: &[flint_terrain::TerrainChunk],
+        chunks: &[flint_geometry::terrain_chunk::TerrainChunk],
         transform: &Transform,
     ) {
         // The old chunks' buffers go before the new ones are made.

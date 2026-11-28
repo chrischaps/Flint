@@ -1,4 +1,8 @@
-//! Grass configuration — parsed from `[grass]` TOML section
+//! Grass configuration — parsed from `[grass]` TOML section.
+//!
+//! Plain data a terrain and the renderer both read (#1615): a terrain's
+//! `grass.*` fields and a `grass_ground`'s. It was flint-terrain's, which
+//! re-exports it; the renderer draws it without linking a terrain crate.
 
 use flint_ecs::ComponentView;
 use serde::{Deserialize, Serialize};
@@ -250,40 +254,6 @@ mod tests {
             ..asks
         };
         assert_eq!(plain.wooze_comb(), None);
-    }
-
-    #[test]
-    fn a_wrong_type_in_a_terrain_is_the_default_and_reported_once() {
-        let (world, id) = world_with(
-            comp::TERRAIN,
-            "heightmap = \"h.png\"\nwidth = \"wide\"\nchunk_resolution = 32\n\
-             \"grass.enabled\" = true\n\"grass.density\" = [4]\n\"grass.color_tip\" = \"green\"",
-        );
-        for _ in 0..3 {
-            let terrain = crate::TerrainConfig::from_component(&world.view(id, comp::TERRAIN));
-            assert_eq!(terrain.width, 256.0);
-            assert_eq!(terrain.chunk_resolution, 32);
-            assert_eq!(terrain.heightmap_path, "h.png");
-            let grass = GrassConfig::from_component(&world.view(id, comp::TERRAIN), false);
-            assert!(grass.enabled);
-            assert_eq!(grass.density, 8.0);
-            assert_eq!(grass.color_tip, default_color_tip());
-        }
-        let said: Vec<String> = world
-            .read_reports()
-            .snapshot()
-            .iter()
-            .map(|d| d.to_string())
-            .collect();
-        assert_eq!(
-            said,
-            [
-                "error[bad-type] entity 'hills' terrain.width: expected a number, got string \"wide\"",
-                "error[bad-type] entity 'hills' terrain.grass.density: expected a number, got array [4]",
-                "error[bad-type] entity 'hills' terrain.grass.color_tip: expected 3 numbers, \
-                 [x, y, z], got string \"green\"",
-            ]
-        );
     }
 
     #[test]

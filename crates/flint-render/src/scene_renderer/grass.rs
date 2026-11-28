@@ -44,7 +44,7 @@ pub(crate) struct GrassRenderer {
     pub(crate) render_instance_bind_group: Option<wgpu::BindGroup>,
     pub(crate) entity_buffer: Option<wgpu::Buffer>,
     pub(crate) entity_count: u32,
-    pub(crate) config: Option<flint_terrain::GrassConfig>,
+    pub(crate) config: Option<flint_geometry::grass::GrassConfig>,
     pub(crate) terrain_offset: [f32; 3],
     pub(crate) terrain_width: f32,
     pub(crate) terrain_depth: f32,
@@ -71,7 +71,7 @@ impl SceneRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        config: &flint_terrain::GrassConfig,
+        config: &flint_geometry::grass::GrassConfig,
         heightmap_data: &[f32],
         heightmap_width: u32,
         heightmap_depth: u32,
@@ -131,7 +131,7 @@ impl SceneRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        config: &flint_terrain::GrassConfig,
+        config: &flint_geometry::grass::GrassConfig,
         ground: &GrassGround,
     ) -> Result<(), String> {
         ground.validate()?;
@@ -248,7 +248,7 @@ impl SceneRenderer {
     fn install_grass(
         &mut self,
         device: &wgpu::Device,
-        config: &flint_terrain::GrassConfig,
+        config: &flint_geometry::grass::GrassConfig,
         hm_view: &wgpu::TextureView,
         splat_view: &wgpu::TextureView,
         terrain_offset: [f32; 3],
@@ -505,7 +505,7 @@ impl SceneRenderer {
     /// If the new config needs more instances than the buffer holds (a
     /// higher density or a longer `max_distance`), the buffer is
     /// reallocated before the next dispatch.
-    pub fn set_grass_config(&mut self, config: flint_terrain::GrassConfig) {
+    pub fn set_grass_config(&mut self, config: flint_geometry::grass::GrassConfig) {
         let capacity = config.instance_capacity(self.grass.terrain_width, self.grass.terrain_depth);
         if self.grass.instance_buffer.is_some() && capacity > self.grass.max_instances {
             self.grass.needs_realloc = true;
@@ -519,7 +519,7 @@ impl SceneRenderer {
     pub fn reload_grass_config(
         &mut self,
         device: &wgpu::Device,
-        config: flint_terrain::GrassConfig,
+        config: flint_geometry::grass::GrassConfig,
     ) {
         let grass_pipeline = match &self.pipelines.grass {
             Some(p) => p,
@@ -641,7 +641,7 @@ impl SceneRenderer {
     }
 
     /// Read-only access to the current grass config (if loaded).
-    pub fn grass_config(&self) -> Option<&flint_terrain::GrassConfig> {
+    pub fn grass_config(&self) -> Option<&flint_geometry::grass::GrassConfig> {
         self.grass.config.as_ref()
     }
 

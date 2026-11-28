@@ -1,16 +1,26 @@
 //! Flint Terrain - Heightmap-based terrain generation
 //!
 //! Provides heightmap loading, chunked mesh generation, and trimesh export
-//! for physics collision. Does not depend on flint-render — outputs raw
-//! vertex data (positions, normals, UVs, indices) for the renderer to consume.
+//! for physics collision. Outputs raw vertex data (positions, normals, UVs,
+//! indices) as flint-geometry's [`TerrainChunk`], and the grass settings as
+//! its [`GrassConfig`]: plain data the renderer draws without linking this
+//! crate (#1615).
+//!
+//! The `render` feature adds [`scene`]: a scene's terrain built into a
+//! renderer, which the hosts call after `SceneRenderer::bind_scene`. The
+//! renderer built it itself until #1615; without the feature this crate links
+//! no renderer, so physics, scripts and procgen don't either.
 
 pub mod bake;
 pub mod brush;
 pub mod chunk;
-pub mod grass_config;
+/// The grass settings, flint-geometry's since #1615.
+pub use flint_geometry::grass as grass_config;
 pub mod ground;
 pub mod heightmap;
 pub mod procgen;
+#[cfg(feature = "render")]
+pub mod scene;
 pub mod spec;
 pub mod splatgen;
 pub mod terrain;
@@ -32,6 +42,50 @@ pub use terrain::{HeightGrid, Terrain, TerrainConfig};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flint_core::components as comp;
+    use flint_ecs::FlintWorld;
+
+    fn world_with(component: &str, text: &str) -> (FlintWorld, flint_core::EntityId) {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("hills").unwrap();
+        let data: toml::Value = toml::from_str(text).unwrap();
+        world.set_component(id, component, data).unwrap();
+        (world, id)
+    }
+
+    #[test]
+    fn a_wrong_type_in_a_terrain_is_the_default_and_reported_once() {
+        let (world, id) = world_with(
+            comp::TERRAIN,
+            "heightmap = \"h.png\"\nwidth = \"wide\"\nchunk_resolution = 32\n\
+             \"grass.enabled\" = true\n\"grass.density\" = [4]\n\"grass.color_tip\" = \"green\"",
+        );
+        for _ in 0..3 {
+            let terrain = TerrainConfig::from_component(&world.view(id, comp::TERRAIN));
+            assert_eq!(terrain.width, 256.0);
+            assert_eq!(terrain.chunk_resolution, 32);
+            assert_eq!(terrain.heightmap_path, "h.png");
+            let grass = GrassConfig::from_component(&world.view(id, comp::TERRAIN), false);
+            assert!(grass.enabled);
+            assert_eq!(grass.density, 8.0);
+            assert_eq!(grass.color_tip, GrassConfig::default().color_tip);
+        }
+        let said: Vec<String> = world
+            .read_reports()
+            .snapshot()
+            .iter()
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "error[bad-type] entity 'hills' terrain.width: expected a number, got string \"wide\"",
+                "error[bad-type] entity 'hills' terrain.grass.density: expected a number, got array [4]",
+                "error[bad-type] entity 'hills' terrain.grass.color_tip: expected 3 numbers, \
+                 [x, y, z], got string \"green\"",
+            ]
+        );
+    }
 
     #[test]
     fn flat_heightmap_generates_correct_mesh() {

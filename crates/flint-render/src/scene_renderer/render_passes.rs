@@ -109,7 +109,7 @@ pub(super) enum MainPipe {
     Echo {
         lighten: bool,
     },
-    Particles(flint_particles::ParticleBlendMode),
+    Particles(crate::particles::ParticleBlendMode),
 }
 
 /// What one [`MainPipe`] binds: for alpha, the back faces' pipeline drawn
@@ -140,8 +140,8 @@ impl MainPipe {
 
     /// What the frame's description calls it.
     pub(super) fn name(self) -> &'static str {
+        use crate::particles::ParticleBlendMode as P;
         use crate::pipeline::BlendMode as M;
-        use flint_particles::ParticleBlendMode as P;
         match self {
             MainPipe::Terrain => "terrain",
             MainPipe::Line => "line",

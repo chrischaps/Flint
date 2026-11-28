@@ -305,7 +305,8 @@ impl ScriptEngine {
             if action == "interact" && self.defines(entity_id, |s| s.defines(Callback::Interact)) {
                 // Read range from interactable component, fall back to 3.0
                 let (range, enabled) = get_interactable_config(entity_id, world);
-                if enabled && is_near_player(entity_id, world, range) {
+                let player = crate::lock_or_recover(&self.ctx).player;
+                if enabled && is_near_player(entity_id, world, range, player) {
                     self.call(entity_id, cb::ON_INTERACT, ());
                 }
             }

@@ -1,7 +1,7 @@
 use crate::widgets::{drag_f32, drag_vec3, drag_xyz};
 use crate::DebugPanel;
+use flint_render::GrassConfig;
 use flint_scene::SceneDocument;
-use flint_terrain::GrassConfig;
 use std::path::PathBuf;
 
 // ---------------------------------------------------------------------------

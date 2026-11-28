@@ -73,9 +73,10 @@ pub struct FrameInputs<'a> {
     pub pixels_per_point: f32,
     /// How 2D sprites and screen-anchored entities are placed (ADR 0063).
     pub view_2d: View2d,
-    /// The particles to draw, packed (`ParticleSystem::pack`). `None` draws
-    /// none.
-    pub particles: Option<&'a flint_particles::ParticleSync>,
+    /// The particles to draw: each emitter's packed instances and how they
+    /// draw (`ParticleSync::draw_data`, after `ParticleSystem::pack`; #1615).
+    /// `None` draws none; a frame capture records whether it was given.
+    pub particles: Option<&'a [crate::particles::ParticleDraw<'a>]>,
     /// Depth-tested script lines (ADR 0083), widths in logical points.
     pub world_lines: &'a [flint_core::world_line::WorldLine],
     /// What bends the grass this frame (bend-on-contact). Empty bends none.
@@ -284,10 +285,7 @@ impl SceneRenderer {
         self.overdraw.wanted = controls.is_some_and(|c| c.overdraw);
         self.take_inputs(queue, inputs);
         self.update_from_world(world, device);
-        match inputs.particles {
-            Some(sync) => self.update_particles_from(device, queue, sync),
-            None => self.update_particles(device, queue, &[]),
-        }
+        self.update_particles(device, queue, inputs.particles.unwrap_or_default());
     }
 
     /// [`prepare`](Self::prepare) again within the frame, for the other half

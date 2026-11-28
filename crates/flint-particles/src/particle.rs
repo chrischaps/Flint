@@ -1,6 +1,8 @@
-//! Particle types: CPU simulation state and GPU instance data
+//! Particle types: CPU simulation state, and the GPU instance it packs into
 
-use bytemuck::{Pod, Zeroable};
+/// The GPU instance, the renderer's since #1615 (ADR 0138 decision 5): the
+/// simulation packs it, the renderer draws it, and neither copies it.
+pub use flint_render::ParticleInstance;
 
 /// CPU-side particle state (not sent to GPU)
 #[derive(Clone, Debug)]
@@ -60,35 +62,30 @@ impl Particle {
     }
 }
 
-/// GPU instance data — matches WGSL `ParticleInstance` struct.
-/// 64 bytes, 16-byte aligned (4 rows of vec4). This is the single
-/// sim → GPU contract; `flint-render` re-exports this exact type
-/// (ADR 0068), so a future compute path only has to write the same layout.
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable, PartialEq)]
-pub struct ParticleInstance {
-    /// xyz = world position, w = width (size.x)
-    pub pos_size: [f32; 4],
-    /// rgba tint
-    pub color: [f32; 4],
-    /// x = rotation, y = frame, z = frames_x, w = frames_y
-    pub rotation_frame: [f32; 4],
-    /// xyz = velocity pre-scaled by the emitter's stretch factor (all zero
-    /// disables velocity-aligned stretching); w = height (size.y).
-    pub vel_stretch: [f32; 4],
-}
-
-impl ParticleInstance {
-    pub fn from_particle(p: &Particle, frames_x: u32, frames_y: u32, stretch: f32) -> Self {
-        Self {
-            pos_size: [p.position[0], p.position[1], p.position[2], p.size[0]],
-            color: p.color,
-            rotation_frame: [p.rotation, p.frame as f32, frames_x as f32, frames_y as f32],
+impl Particle {
+    /// The particle packed as the GPU draws it (ADR 0068): one 64-byte
+    /// [`ParticleInstance`]. It was `ParticleInstance::from_particle` until
+    /// the instance became the renderer's type (#1615).
+    pub fn instance(&self, frames_x: u32, frames_y: u32, stretch: f32) -> ParticleInstance {
+        ParticleInstance {
+            pos_size: [
+                self.position[0],
+                self.position[1],
+                self.position[2],
+                self.size[0],
+            ],
+            color: self.color,
+            rotation_frame: [
+                self.rotation,
+                self.frame as f32,
+                frames_x as f32,
+                frames_y as f32,
+            ],
             vel_stretch: [
-                p.velocity[0] * stretch,
-                p.velocity[1] * stretch,
-                p.velocity[2] * stretch,
-                p.size[1],
+                self.velocity[0] * stretch,
+                self.velocity[1] * stretch,
+                self.velocity[2] * stretch,
+                self.size[1],
             ],
         }
     }
@@ -219,10 +216,10 @@ mod tests {
         let mut p = Particle::dead();
         p.size = [0.5, 2.0];
         p.velocity = [1.0, 0.0, 0.0];
-        let a = ParticleInstance::from_particle(&p, 1, 1, 0.0);
+        let a = p.instance(1, 1, 0.0);
         assert_eq!(a.pos_size[3], 0.5);
         assert_eq!(a.vel_stretch, [0.0, 0.0, 0.0, 2.0]);
-        let b = ParticleInstance::from_particle(&p, 4, 2, 0.1);
+        let b = p.instance(4, 2, 0.1);
         assert!((b.vel_stretch[0] - 0.1).abs() < 1e-6);
         assert_eq!(b.rotation_frame[2], 4.0);
         assert_eq!(b.rotation_frame[3], 2.0);

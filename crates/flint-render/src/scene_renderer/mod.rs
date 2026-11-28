@@ -31,7 +31,7 @@ mod style_mask;
 mod terrain;
 mod water;
 
-pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
+pub use binding::{BoundGrass, BoundScene, SceneBinding};
 pub use capture::HeldFrameCapture;
 pub use describe::FrameHost;
 use draw_list::{Blend, Draw, DrawItem, DrawList, Layer, VertexStage};
@@ -635,7 +635,7 @@ pub struct SceneRenderer {
     /// Texture bind groups keyed by texture-cache name ("" = white).
     particle_texture_bind_groups: HashMap<String, std::sync::Arc<wgpu::BindGroup>>,
     /// Reused CPU staging for the per-frame instance upload.
-    particle_upload_scratch: Vec<flint_particles::ParticleInstance>,
+    particle_upload_scratch: Vec<crate::particles::ParticleInstance>,
     /// Editor/gizmo line overlay, drawn on top regardless of debug mode.
     debug_overlay_draws: Vec<DrawCall>,
     /// Depth-tested script lines for the next frame (ADR 0083), and the
@@ -912,7 +912,7 @@ impl SceneRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        chunks: &[flint_terrain::TerrainChunk],
+        chunks: &[flint_geometry::terrain_chunk::TerrainChunk],
         transform: &Transform,
         texture_tile: f32,
         metallic: f32,
@@ -945,7 +945,7 @@ impl SceneRenderer {
     pub fn reload_terrain_geometry(
         &mut self,
         device: &wgpu::Device,
-        chunks: &[flint_terrain::TerrainChunk],
+        chunks: &[flint_geometry::terrain_chunk::TerrainChunk],
         transform: &Transform,
     ) {
         self.terrain.reload_terrain_geometry(
@@ -963,7 +963,7 @@ impl SceneRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        chunks: &[flint_terrain::TerrainChunk],
+        chunks: &[flint_geometry::terrain_chunk::TerrainChunk],
         transform: &Transform,
         texture_tile: f32,
         metallic: f32,
@@ -995,8 +995,9 @@ impl SceneRenderer {
     /// `style_mask` (or a style's own component) on it, or on an ancestor,
     /// then masks the terrain's chunks like any styled mesh. Hosts call it
     /// beside [`load_terrain`](Self::load_terrain); `None` leaves the
-    /// terrain unmasked, as it was before.
-    pub(crate) fn set_terrain_entity(&mut self, entity: Option<flint_core::EntityId>) {
+    /// terrain unmasked, as it was before. Public since #1615: the terrain
+    /// package builds the terrain (`flint_terrain::scene::bind_terrain`).
+    pub fn set_terrain_entity(&mut self, entity: Option<flint_core::EntityId>) {
         self.terrain.entity = entity;
     }
 

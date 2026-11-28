@@ -25,7 +25,7 @@ pub mod tuning;
 use flint_core::package::InUse;
 use flint_ecs::FlintWorld;
 use flint_package::{Package, Registry, SceneCtx, Subsystem};
-use flint_terrain::GrassConfig;
+use flint_render::GrassConfig;
 
 /// A game state pauses the grove's clock by `living: "pause"` (#727). The
 /// kernel keeps the name in a build without the package, so a state that

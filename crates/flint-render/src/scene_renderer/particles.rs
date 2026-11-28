@@ -1,14 +1,16 @@
 //! Particle upload bridge and editor helpers (ADR 0068).
 //!
 //! Player, viewer, particle editor and `flint render` all feed particles to
-//! the renderer through [`SceneRenderer::update_particles_from`], so the
-//! `flint-particles` → GPU mapping lives in exactly one place.
+//! the renderer as `FrameInputs::particles`, a slice of
+//! [`ParticleDraw`](crate::ParticleDraw)s the particle system builds
+//! (`ParticleSync::draw_data`), so the renderer names no particle system
+//! (#1615) and the draw-to-GPU mapping lives in exactly one place.
 
 use super::{DrawCall, SceneRenderer};
-use crate::particle_pipeline::{sort_particle_draws, ParticleDrawCall, ParticleDrawData};
+use crate::particle_pipeline::{sort_particle_draws, ParticleDrawCall};
+use crate::particles::ParticleDraw;
 use crate::pipeline::{MaterialUniforms, TransformUniforms};
 use crate::primitives::Mesh;
-use flint_particles::ParticleSync;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -16,37 +18,17 @@ use std::sync::Arc;
 pub const SOFT_DISC_TEXTURE: &str = "__particle_soft_disc";
 
 impl SceneRenderer {
-    /// Upload every packed emitter of a [`ParticleSync`]. Call after
-    /// `ParticleSystem::pack`.
-    pub(crate) fn update_particles_from(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        sync: &ParticleSync,
-    ) {
-        let draws: Vec<ParticleDrawData<'_>> = sync
-            .draw_data()
-            .into_iter()
-            .map(|d| ParticleDrawData {
-                instances: d.instances,
-                texture: d.texture,
-                blend: d.blend_mode,
-                sort_key: d.sort_key,
-            })
-            .collect();
-        self.update_particles(device, queue, &draws);
-    }
-
-    /// Low-level upload: concatenate all emitters' instances into the shared
-    /// storage buffer (one `write_buffer`) and build sorted draw calls. For
-    /// a host with particle draws of its own, after `prepare` (which uploads
-    /// `FrameInputs::particles` and clears the last frame's otherwise), so
+    /// Upload the frame's particle draws: concatenate all emitters'
+    /// instances into the shared storage buffer (one `write_buffer`) and
+    /// build sorted draw calls. `prepare` calls it with
+    /// `FrameInputs::particles` (an empty slice clears the last frame's); a
+    /// host with particle draws of its own calls it after `prepare`, so
     /// they last one frame like every other input.
     pub fn update_particles(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        draws: &[ParticleDrawData<'_>],
+        draws: &[ParticleDraw<'_>],
     ) {
         flint_core::scope!("particles::upload", draws.len());
         self.particle_draws.clear();
@@ -77,7 +59,7 @@ impl SceneRenderer {
                 first_instance,
                 instance_count: data.instances.len() as u32,
                 texture_bind_group,
-                blend: data.blend,
+                blend: data.blend_mode,
                 sort_key: data.sort_key,
             });
         }
@@ -218,9 +200,9 @@ impl SceneRenderer {
     }
 }
 
-/// Load every texture referenced by the live particle instances and
-/// registered effects into the renderer's texture cache. Names are cache
-/// keys verbatim. Each texture is found by the
+/// Load every texture the particles name (`ParticleSync::texture_names`:
+/// the live instances' and the registered effects') into the renderer's
+/// texture cache. Names are cache keys verbatim. Each texture is found by the
 /// project's one asset search (`AssetKind::ParticleTextures`, ADR 0114):
 /// `particles/<name>`, then `<name>` beside the scene, the same at each
 /// directory above it up to the project root, then in the engine. A miss
@@ -229,12 +211,12 @@ pub fn load_scene_particle_textures(
     renderer: &mut SceneRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    sync: &ParticleSync,
+    texture_names: &[String],
     project: &flint_core::project::Project,
     scene_dir: &std::path::Path,
 ) {
     use flint_core::project::AssetKind;
-    load_textures_found(renderer, device, queue, sync, |name| {
+    load_textures_found(renderer, device, queue, texture_names, |name| {
         project
             .resolve(AssetKind::ParticleTextures, name, scene_dir)
             .map_err(|not_found| not_found.to_string())
@@ -245,14 +227,14 @@ fn load_textures_found(
     renderer: &mut SceneRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    sync: &ParticleSync,
+    texture_names: &[String],
     find: impl Fn(&str) -> Result<PathBuf, String>,
 ) {
     let mut any_new = false;
-    for tex_name in sync.texture_names() {
+    for tex_name in texture_names {
         // Loaded already: nothing to look for (and nothing to warn about twice)
-        match find(&tex_name) {
-            Ok(path) => match renderer.load_texture_file(device, queue, &tex_name, &path) {
+        match find(tex_name) {
+            Ok(path) => match renderer.load_texture_file(device, queue, tex_name, &path) {
                 Ok(true) => {
                     tracing::debug!(target: "load", kind = "texture", "Loaded particle texture: {tex_name}");
                     any_new = true;

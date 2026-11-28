@@ -86,7 +86,7 @@ pub enum Toggle {
 
 /// The grass the scene's renderer share bound, for its panel.
 pub struct GrassPanel {
-    pub config: flint_terrain::GrassConfig,
+    pub config: flint_render::GrassConfig,
     /// The entity holding the `grass.*` fields.
     pub entity: String,
     /// Which component holds them: `terrain` or `grass_ground`.

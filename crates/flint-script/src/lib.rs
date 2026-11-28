@@ -328,6 +328,13 @@ impl ScriptSystem {
     }
 
     /// Set camera position and direction for weapon aiming
+    /// Who the game is played as (`PlayerView::player`, ADR 0138, #1614):
+    /// what `on_interact` and `find_nearest_interactable` measure from.
+    /// `None`: no player, and neither finds anything.
+    pub fn set_player(&mut self, player: Option<flint_core::EntityId>) {
+        crate::lock_or_recover(&self.engine.ctx).player = player;
+    }
+
     pub fn set_camera(&mut self, position: [f32; 3], direction: [f32; 3]) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.camera_position = position;

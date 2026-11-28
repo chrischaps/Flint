@@ -28,8 +28,8 @@ use flint_physics::PhysicsSystem;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::state::{AUDIO, PARTICLES, PHYSICS, SCRIPTS};
 use flint_runtime::{
-    EventBus, GameClock, GameEvent, GameStateMachine, InputState, PersistentStore, RuntimeSystem,
-    StateConfig,
+    EventBus, Eye, GameClock, GameEvent, GameStateMachine, InputState, PersistentStore, PlayerView,
+    RuntimeSystem, StateConfig,
 };
 use flint_script::context::ScriptCommand;
 use flint_script::{CameraOverrides, PostProcessOverrides, ScriptHost, ScriptSystem};
@@ -112,6 +112,9 @@ impl GameCore {
     pub fn new(world: FlintWorld, scene_path: String, project: Project) -> Self {
         let mut resources = flint_package::Resources::new();
         crate::packages::registry().make_resources(&mut resources);
+        // Who the game is played as (ADR 0138), there from the start so
+        // every reader finds one
+        resources.insert(PlayerView::default());
         Self {
             subsystems: Default::default(),
             world,
@@ -210,14 +213,8 @@ pub(crate) struct Lent<'a> {
     pub quit: Option<&'a mut bool>,
 }
 
-/// Where the sound's listener goes, when the camera moved it this frame.
-pub(crate) enum Listener {
-    /// The first-person camera, after the physics steps: where it is, and
-    /// its yaw and pitch.
-    FirstPerson(flint_core::Vec3, f32, f32),
-    /// A script moved the camera (a chase camera): to where it now looks.
-    ScriptCamera,
-}
+/// What [`GameCore::player_view`] reads when no view is in the resources.
+static NO_VIEW: PlayerView = PlayerView::NONE;
 
 /// The presentation's part in a frame: what [`step`] calls back. Every hook
 /// but [`FrameHost::lend`] has a default that does nothing, which is what a
@@ -253,8 +250,9 @@ pub(crate) trait FrameHost {
     /// those at `Stage::PreScripts`).
     fn window_for_scripts(&mut self) {}
 
-    /// The camera moved the sound's listener.
-    fn listener(&mut self, _at: Listener) {}
+    /// The camera moved the sound's listener there
+    /// (`PlayerView::listener`, ADR 0138).
+    fn listener(&mut self, _at: Eye) {}
 
     /// Whether this host is a capture (`flint render`): it steps no
     /// physics, and steps its own animation and particles on fixed steps
@@ -317,16 +315,13 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     // Which systems the game state lets run this frame
     let config = host.core().state_machine.active_config().clone();
     let config = &config;
-    let (has_fps_player, game_events) = {
+    let game_events = {
         let (core, lent) = host.lend();
         // Physics events from the previous frame's fixed steps + this
         // frame's input events — scripts and audio both consume them.
         // Drained before the scripts run, so a collision reaches scripts
         // one frame after the step that produced it.
-        (
-            core.physics.has_player_entity(),
-            core.collect_game_events(lent.input),
-        )
+        core.collect_game_events(lent.input)
     };
     host.phase_done(Phase::Input);
     run_stage(host, Stage::PreScripts, Some(config));
@@ -369,13 +364,7 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
             core.collider_sources
                 .refresh(&core.world, &mut core.physics, lent.renderer.as_deref());
         }
-        core.tick_fixed_physics(
-            config,
-            has_fps_player && steps_physics,
-            steps_physics,
-            lent.input,
-            lent.camera,
-        )
+        core.tick_fixed_physics(config, steps_physics, lent.input, lent.camera)
     };
     if let Some(at) = moved {
         host.listener(at);
@@ -415,7 +404,7 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     // up with the drawn world instead of trailing it by a frame.
     let moved = {
         let (core, lent) = host.lend();
-        core.apply_script_camera(has_fps_player, lent.camera)
+        core.apply_script_camera(lent.camera)
     };
     if let Some(at) = moved {
         host.listener(at);
@@ -564,6 +553,8 @@ impl GameCore {
     fn run_scripts(&mut self, config: &StateConfig, events: &[GameEvent], lent: Lent<'_>) {
         flint_core::scope!("run_scripts");
         self.publish_style_reader(lent.renderer.as_deref());
+        // Who `on_interact` and `find_nearest_interactable` measure from
+        self.script.set_player(self.player_view().player);
         let camera = &*lent.camera;
         self.script
             .set_camera(camera.position_array(), camera.forward_vector());
@@ -583,23 +574,23 @@ impl GameCore {
     }
 
     /// The fixed-timestep physics loop (skipped while paused, but still
-    /// consuming steps to avoid a spiral), then the first-person camera.
-    /// Returns where the listener goes, when the sound runs and a
-    /// first-person player moved the camera.
+    /// consuming steps to avoid a spiral), then the eye a controller placed
+    /// (ADR 0138's `View`). Returns where the listener goes, when the
+    /// sound runs and a controller placed the eye.
     fn tick_fixed_physics(
         &mut self,
         config: &StateConfig,
-        has_fps_player: bool,
         steps: bool,
         input: &InputState,
         camera: &mut Camera,
-    ) -> Option<Listener> {
+    ) -> Option<Eye> {
         flint_core::scope!("tick_fixed_physics");
         self.physics.begin_frame(self.clock.pending_fixed_ratio());
         self.fixed_steps = 0;
         // Look and the jump press once a frame, however many steps run
-        // below: none on most frames above 60 Hz, two at 30 (#728)
-        if has_fps_player && config.runs(PHYSICS) {
+        // below: none on most frames above 60 Hz, two at 30 (#728). The
+        // character controller does nothing without its player.
+        if steps && config.runs(PHYSICS) {
             self.physics.character_frame_input(input, &self.world);
         }
         // The steps this frame runs, for a subsystem's `FixedCtx::step`
@@ -610,9 +601,7 @@ impl GameCore {
             if steps && config.runs(PHYSICS) {
                 let step = self.fixed_steps;
                 self.fixed_steps += 1;
-                if has_fps_player {
-                    self.physics.update_character(input, &mut self.world, dt);
-                }
+                self.physics.update_character(input, &mut self.world, dt);
                 let stepped = if self.subsystems.is_empty() {
                     self.physics
                         .fixed_update(&mut self.world, dt, &mut self.events)
@@ -645,25 +634,49 @@ impl GameCore {
             self.clock.consume_fixed_step();
         }
 
-        // Update camera from player character position (FPS mode)
-        if !has_fps_player {
-            return None;
+        // The eye a controller placed (ADR 0138's `View`): physics' built-in
+        // character until the first-person package takes it (#1618). A
+        // capture steps no physics, and its camera stays the scene's.
+        let view = self.resources.get_or_insert_with(PlayerView::default);
+        view.new_frame();
+        if steps {
+            self.physics.place_eye(&self.world, view);
         }
-        let cam_pos = self.physics.camera_position(&self.world);
-        let cam_target = self.physics.camera_target(cam_pos);
-        camera.update_first_person(
-            cam_pos,
-            self.physics.camera_yaw(),
-            self.physics.camera_pitch(),
-        );
-        camera.target = cam_target;
-        config.runs(AUDIO).then(|| {
-            Listener::FirstPerson(
-                cam_pos,
-                self.physics.camera_yaw(),
-                self.physics.camera_pitch(),
-            )
-        })
+        // The camera follows it, and the listener when the sound runs
+        let eye = view.eye?;
+        camera.update_first_person(eye.position, eye.yaw, eye.pitch);
+        camera.target = eye.target;
+        view.listener = config.runs(AUDIO).then_some(eye);
+        view.listener
+    }
+
+    /// Who the game is played as, and where it is seen from (ADR 0138
+    /// decision 4, #1614): a run resource that a controller writes, read by
+    /// the cursor, the controls line, the listener and the scripts.
+    pub fn player_view(&self) -> &PlayerView {
+        self.resources.get::<PlayerView>().unwrap_or(&NO_VIEW)
+    }
+
+    /// [`player_view`](Self::player_view), to write.
+    pub(crate) fn player_view_mut(&mut self) -> &mut PlayerView {
+        self.resources.get_or_insert_with(PlayerView::default)
+    }
+
+    /// The scene's view at its entry, before its first frame (#1614's
+    /// risk: the cursor and the controls line read it there): reset, then
+    /// the physics controller says who its player is. Physics has read the
+    /// scene (`PhysicsSystem::initialize`) by now.
+    pub(crate) fn enter_player_view(&mut self) {
+        let view = self.resources.get_or_insert_with(PlayerView::default);
+        *view = PlayerView::default();
+        self.physics.enter_player_view(view);
+        self.script.set_player(view.player);
+    }
+
+    /// The view forgotten with its scene, at a teardown.
+    pub(crate) fn forget_player_view(&mut self) {
+        *self.player_view_mut() = PlayerView::default();
+        self.script.set_player(None);
     }
 
     /// Move the style tweens (#370) on by this frame's game time, while
@@ -714,18 +727,22 @@ impl GameCore {
     /// The camera where the scripts asked this frame, and the scripts told
     /// where it is now. Returns the listener's move for a script-driven
     /// camera (chase cam etc.) that set a position.
-    fn apply_script_camera(
-        &mut self,
-        has_fps_player: bool,
-        camera: &mut Camera,
-    ) -> Option<Listener> {
+    fn apply_script_camera(&mut self, camera: &mut Camera) -> Option<Eye> {
         let cam = std::mem::take(&mut self.script_requests.camera);
         super::script_commands::apply_camera_overrides(camera, &cam);
         self.script
             .set_camera(camera.position_array(), camera.forward_vector());
         self.script
             .set_camera_view_proj(camera.view_projection_matrix());
-        (!has_fps_player && cam.position.is_some()).then_some(Listener::ScriptCamera)
+        // The listener follows a script's camera only where no controller
+        // placed an eye (ADR 0138)
+        let view = self.resources.get_or_insert_with(PlayerView::default);
+        if view.eye.is_some() || cam.position.is_none() {
+            return None;
+        }
+        let eye = Eye::looking(camera.position, camera.target);
+        view.listener = Some(eye);
+        Some(eye)
     }
 
     /// The particles, after the pose (`Stage::Pose`: bone probes and IK).

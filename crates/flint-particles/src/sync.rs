@@ -6,7 +6,7 @@
 //! deterministic frame to frame and run to run (ADR 0068).
 
 use crate::effect::{EmitterDef, ParticleEffect};
-use crate::emitter::{EmitterConfig, EmitterState, ParticleBlendMode, SortMode};
+use crate::emitter::{EmitterConfig, EmitterState, SortMode};
 use crate::particle::ParticleInstance;
 use crate::sim::{apply_spawn_requests, step_emitter, EmitterFrame, SpawnRequest, IDENTITY};
 use flint_core::components as comp;
@@ -330,27 +330,9 @@ pub fn fnv1a(bytes: &[u8]) -> u32 {
     h
 }
 
-/// Draw data for one emitter, consumed by the renderer
-pub struct ParticleDrawData<'a> {
-    pub key: InstanceKey,
-    pub entity_id: Option<EntityId>,
-    pub emitter_index: usize,
-    pub emitter_name: &'a str,
-    pub instances: &'a [ParticleInstance],
-    pub blend_mode: ParticleBlendMode,
-    pub texture: &'a str,
-    pub frames_x: u32,
-    pub frames_y: u32,
-    /// View distance of the emitter origin (larger = farther); renderers
-    /// draw order-dependent blends far-to-near.
-    pub sort_key: f32,
-    pub soft_distance: f32,
-    pub fade_near: f32,
-    pub fade_far: f32,
-    pub lighting: f32,
-    pub fog: bool,
-    pub stretch: f32,
-}
+/// One emitter's draw, as the renderer takes it (`FrameInputs::particles`):
+/// the renderer's plain data since #1615, so it links no particle system.
+pub use flint_render::ParticleDraw;
 
 /// The project and scene directory effects are searched from.
 struct EffectSearch {
@@ -851,8 +833,7 @@ impl ParticleSync {
                 let start = self.instance_buffer.len();
                 for &i in &scratch {
                     let p = &alive[i];
-                    let mut instance =
-                        ParticleInstance::from_particle(p, cfg.frames_x, cfg.frames_y, cfg.stretch);
+                    let mut instance = p.instance(cfg.frames_x, cfg.frames_y, cfg.stretch);
                     if !cfg.world_space {
                         let w = to_world(p.position);
                         instance.pos_size[0] = w[0];
@@ -879,15 +860,15 @@ impl ParticleSync {
     }
 
     /// Draw data for each emitter that has alive particles, in deterministic
-    /// instance order.
-    pub fn draw_data(&self) -> Vec<ParticleDrawData<'_>> {
+    /// instance order: what a host hands the renderer as
+    /// `FrameInputs::particles` (#1615).
+    pub fn draw_data(&self) -> Vec<ParticleDraw<'_>> {
         self.ranges
             .iter()
             .filter_map(|r| {
                 let inst = self.instance(r.key)?;
                 let cfg = &inst.emitters.get(r.emitter)?.config;
-                Some(ParticleDrawData {
-                    key: r.key,
+                Some(ParticleDraw {
                     entity_id: r.key.entity(),
                     emitter_index: r.emitter,
                     emitter_name: &cfg.name,

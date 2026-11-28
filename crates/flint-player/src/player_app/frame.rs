@@ -312,11 +312,14 @@ impl PlayerApp {
             {
                 if let Some(info) = &capture_adapter {
                     let targets = super::frame_capture::Targets::of(context, &output.texture, info);
+                    // The draws the frame was prepared with: the system was
+                    // packed once this frame, so they are the same (#1615)
+                    let particle_draws = self.core.particles.sync.draw_data();
                     let facts = super::frame_capture::FrameFacts {
                         world: &self.core.world,
                         particles: self
                             .particles_render_enabled
-                            .then_some(&self.core.particles.sync),
+                            .then_some(particle_draws.as_slice()),
                         scene_path: &self.core.scene_path,
                         project: &self.core.project,
                         index: self
@@ -966,6 +969,12 @@ impl PlayerApp {
             .iter()
             .filter_map(|&id| Some((id, self.core.physics.dynamic_velocity(id)?)))
             .collect();
+        // Each emitter's draw, as the renderer takes it (#1615)
+        let particle_draws = if self.particles_render_enabled {
+            self.core.particles.sync.draw_data()
+        } else {
+            Vec::new()
+        };
         let mut inputs = FrameInputs {
             // Ocean waves run on the clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the
@@ -980,7 +989,7 @@ impl PlayerApp {
             view_2d: View2d::of(&self.camera),
             particles: self
                 .particles_render_enabled
-                .then_some(&self.core.particles.sync),
+                .then_some(particle_draws.as_slice()),
             world_lines: &self.hud.world_lines,
             style_field: self.hud.style_field.shapes(),
             grass_benders: &benders,
@@ -1572,25 +1581,10 @@ impl super::game_core::FrameHost for PlayerApp {
         // subsystem's, set at `Stage::PreScripts`, just before this
     }
 
-    fn listener(&mut self, at: super::game_core::Listener) {
-        match at {
-            super::game_core::Listener::FirstPerson(position, yaw, pitch) => {
-                self.audio.update_listener(position, yaw, pitch);
-            }
-            // A script-driven camera (chase cam, etc.)
-            super::game_core::Listener::ScriptCamera => {
-                let cam_pos = self.camera.position;
-                let dir = flint_core::Vec3::new(
-                    self.camera.target.x - cam_pos.x,
-                    self.camera.target.y - cam_pos.y,
-                    self.camera.target.z - cam_pos.z,
-                );
-                let yaw = dir.x.atan2(dir.z);
-                let horiz = (dir.x * dir.x + dir.z * dir.z).sqrt();
-                let pitch = (-dir.y).atan2(horiz);
-                self.audio.update_listener(cam_pos, yaw, pitch);
-            }
-        }
+    fn listener(&mut self, at: flint_runtime::Eye) {
+        // The first-person eye, or a script-driven camera's (chase cam,
+        // etc.): `PlayerView::listener`, which the kernel chose (ADR 0138)
+        self.audio.update_listener(at.position, at.yaw, at.pitch);
     }
 
     fn host_command(&mut self, command: flint_script::context::ScriptCommand) {

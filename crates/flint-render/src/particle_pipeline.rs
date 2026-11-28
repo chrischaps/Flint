@@ -11,17 +11,7 @@ use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 
-pub use flint_particles::{ParticleBlendMode, ParticleInstance};
-
-/// Data for one emitter's particle draw, provided by the particle system
-pub struct ParticleDrawData<'a> {
-    pub instances: &'a [ParticleInstance],
-    pub texture: &'a str,
-    pub blend: ParticleBlendMode,
-    /// View distance of the emitter origin; order-dependent blends draw
-    /// far-to-near.
-    pub sort_key: f32,
-}
+pub use crate::particles::{ParticleBlendMode, ParticleInstance};
 
 /// Camera uniforms shared across all particle draws in a frame
 #[repr(C)]
