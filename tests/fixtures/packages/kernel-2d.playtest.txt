@@ -1,0 +1,12 @@
+# The 2d template on the kernel alone (#1624, scripts/package-kernel-2d.py):
+# the player sprite moves under WASD and the HUD draws, with no package in
+# the build. The template's player starts at (0, -1) and moves 6 units a
+# second, so half a second of D puts it near x = 3.
+0.0  expect player transform.position.x == 0
+0.1  down KeyD
+0.6  up KeyD
+0.7  expect player transform.position.x > 2
+0.8  down KeyW
+1.1  up KeyW
+1.2  expect player transform.position.y > 0
+1.3  expect frame hud contains "WASD"

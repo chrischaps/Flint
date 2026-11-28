@@ -15,11 +15,13 @@ scene = "scenes/main.scene.toml"
 input = "config/input.toml"
 
 # The engine's packages the game uses (ADR 0136). The kernel and the
-# standard packages (animation, flipbook, procgen, debug-hud, particles)
-# are in unless set to false; a
+# standard packages (physics, first-person, audio, animation, flipbook, rig,
+# particles, terrain, procgen, debug-hud) are in unless set to false; a
 # feature package is in only when it is listed here, as `living = "*"`
-# (living props), `music`, `rhythm` or `ai`. Leaving one out leaves out its
-# components, scene tables and script functions, and `flint check` names
-# the line to add for a scene that uses them. `flint package list` shows
-# every package; `flint package used --write` lists what the game uses.
+# (living props), `music`, `rhythm`, `vehicle` or `ai`. Leaving one out
+# leaves out its components, scene tables and script functions, and its
+# code is not in the game's `flint build`; `flint check` names the line to
+# add for a scene that uses them. `flint package list` shows every
+# package; `flint package used --write` lists what the game uses.
 [packages]
+{{packages}}

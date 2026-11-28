@@ -28,7 +28,11 @@ jobs:
         with:
           components: rustfmt
 
+      # The token lets scripts/package-deps-check.py ask whether each of its
+      # exceptions' issues is still open (#1624): one closed fails the run
       - name: cargo fmt --all --check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash scripts/ci.sh
 
   # Native clippy over the default members (#757). Warnings are printed and
@@ -236,6 +240,39 @@ jobs:
 
       - name: scripts/package-toy.py
         run: python3 scripts/package-toy.py
+
+  # Epic #1611's gate the way a game meets it (#1624): a flint with no
+  # package runs `flint init --template 2d` (five `= false` lines of its
+  # own, ADR 0138 decision 7), the script sets the rest of the standard tier
+  # false, and `flint build` builds that game's player and CLI on the kernel
+  # alone. Its cargo tree must hold no package's crate, the built flint must
+  # say it has no package, `flint check` must pass, and `flint playtest`
+  # plays the scene headless with an input script: WASD moves the sprite and
+  # the HUD draws. The crate graph's rule itself is scripts/package-deps-check.py,
+  # which the rustfmt job runs (scripts/ci.sh). A game's build keeps the
+  # device options, so the headers go in first. Its own job, beside the
+  # done-when's builds, not after them.
+  # Run it locally with `python3 scripts/package-kernel-2d.py`.
+  kernel-2d:
+    name: kernel 2d
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kernel-2d
+          cache-on-failure: true
+
+      - name: Build headers
+        timeout-minutes: 15
+        run: bash scripts/linux-build-deps.sh
+
+      - name: scripts/package-kernel-2d.py
+        run: python3 scripts/package-kernel-2d.py
 
   # The GPU tests and render goldens (#314) on WARP, the software DX12
   # adapter every Windows ships. A runner has no GPU, and these tests skip

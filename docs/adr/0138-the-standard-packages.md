@@ -883,3 +883,48 @@ decision 4, whose status line now says so.
   passes with the player standing at its start, and the loader names the
   package: that run is the control. All of it holds again after
   merging `main` with #1623's terrain package.
+
+## As built: the gate (#1624)
+
+Decision 6 and the gate as they landed. Decisions 7 and 8 are written as
+recommended: five `= false` lines in the template, and sizes as context.
+
+- **The rule is `scripts/package-deps-check.py`**, in `scripts/ci.sh`, so
+  CI's rustfmt job runs it on every pull request. It reads `cargo metadata
+  --format-version 1 --no-deps` and the manifests, exactly as decision 6's
+  Input says. `--no-deps` doesn't resolve the graph, so it still answers on
+  a planted edge that makes a cycle. Both of the issue's done-when edges
+  are cycles: physics already depends on flint-render, and every rhythm
+  crate on flint-music. A full `cargo metadata` there says only `cyclic
+  package dependency`, and the check names the rule and the fix.
+- **"Turned on only by `[with.Q]` features"** is read as: every feature of
+  the crate that turns the optional dependency on, through the crate's own
+  feature lists and `default` included, is one the part's `features`
+  names. procgen's `terrain` passes. procgen's `living` would fail twice,
+  as on by default and as reached from `default`, so the exception holds
+  it. A part is its package's edge wherever it is turned on: a crate that
+  asks another for a `[with.Q]` feature (its dependency's `features`, a
+  `dep/f` of its own, or the dependency's `default`) brings Q in, so its
+  package requires Q or asks from its own `[with.Q]` feature. flint-living
+  asking flint-procgen's `living` passes, since that part is living's own.
+- **An exception's issue** is asked with `gh`, else the REST API with
+  `$GITHUB_TOKEN` (the rustfmt job passes `github.token`). With neither, it
+  prints a note and still holds the edge. The one exception, flint-procgen
+  -> flint-wooze, names #1659.
+- **On main** (`1dbba2d1`) 41 crates in 16 manifests hold it, with 40
+  edges between packages, each allowed (`--graph` prints them and why).
+  `--self-test` plants 20 cases in a copy of the graph, the done-when's
+  two among them, with no build and no GitHub.
+- **The kernel alone is `scripts/package-kernel-2d.py`**, CI's `kernel
+  2d` job. `flint init --template 2d` writes the five lines, the script
+  sets `animation`, `audio`, `debug-hud`, `flipbook` and `procgen` false
+  as well, and `flint build` builds the game. The build's tree holds no
+  package's crate (324 crates in the two binaries, with the device options
+  a game's build keeps). `flint check` is clean, and `flint playtest
+  --strict` holds 4 of 4 checks: D and W move the sprite, and the HUD
+  draws. A control without the key lines failed its two position checks.
+- **The matrix needed no edit.** `scripts/package-check.sh` already reads
+  every manifest with a build switch. It runs 17 configurations for the
+  player and 18 for the CLI. Built with no device option, the player's tree
+  is 298 crates with no package, 356 with the standard tier and 364 with
+  all.

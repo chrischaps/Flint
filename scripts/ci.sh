@@ -29,12 +29,16 @@
 #                          package done-when job, #1525), then the toy
 #                          package added by its folder alone and taken out
 #                          again (scripts/package-toy.py, the same job,
-#                          #1560). Minutes, and six builds (the third is the
-#                          debug `flint` most worktrees have already).
+#                          #1560), and the 2d template built and played on
+#                          the kernel alone (scripts/package-kernel-2d.py,
+#                          CI's kernel 2d job, #1624). Minutes, and eight
+#                          builds (the third is the debug `flint` most
+#                          worktrees have already).
 #   Both run the package gate's quick half: the generated Cargo blocks match
-#   the manifests (scripts/package-sync.py --check) and no package is named
+#   the manifests (scripts/package-sync.py --check), no package is named
 #   in the kernel's source (scripts/package-names-check.py, #1560; every
-#   crate the engine manifest lists since #1591).
+#   crate the engine manifest lists since #1591), and the crate graph holds
+#   the one dependency rule (scripts/package-deps-check.py, #1624).
 #
 # Formatting is rustfmt's defaults at edition 2021 (rustfmt.toml). Fix a failure
 # with `cargo fmt --all`; one file alone is `rustfmt <file>`.
@@ -136,6 +140,18 @@ echo "ci: scripts/package-sync.py --self-test"
 echo "ci: scripts/package-names-check.py"
 "$py" scripts/package-names-check.py
 
+# Epic #1611's gate (#1624): one dependency rule over the whole crate graph
+# (ADR 0138 decision 6), read from `cargo metadata --no-deps` and the
+# manifests: a kernel crate depends on no package's crate, a package's crate
+# only on the kernel and what its [requires] lists. Before the analyzer's
+# build: a planted kernel -> package edge is often a cycle cargo refuses
+# with no word of the rule. The self-test plants each kind of edge in a copy
+# of the graph
+echo "ci: scripts/package-deps-check.py"
+"$py" scripts/package-deps-check.py
+echo "ci: scripts/package-deps-check.py --self-test"
+"$py" scripts/package-deps-check.py --self-test
+
 # The book's crate table (#764), from every Cargo.toml: a dependency added
 # without `cargo run -p flint-arch-analyzer -- --book` kept CI's crate table
 # job red on main from #853 to #969, failing every PR in between
@@ -172,6 +188,8 @@ if [ "${1:-}" = "--full" ]; then
     "$py" scripts/package-done-when.py
     echo "ci: scripts/package-toy.py"
     "$py" scripts/package-toy.py
+    echo "ci: scripts/package-kernel-2d.py"
+    "$py" scripts/package-kernel-2d.py
 fi
 
 echo "ci: ok"
