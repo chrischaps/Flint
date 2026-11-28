@@ -1,4 +1,0 @@
-### `terrain_height(x, z)` takes the terrain's transform into account (#1691)
-**Package.** terrain
-**What changed.** `terrain_height` answers with the drawn surface wherever the terrain entity's `transform.position` puts it: world (x, z) is read relative to the terrain's corner, and the position's y is added. It used to read world (x, z) from the heightmap's own corner and ignore the transform, so it was right only for a terrain at `[0, 0, 0]`; a centred terrain read the wrong spot, and every negative x or z read the map's edge. A point off the map now reads the nearest edge's height, as `sample_world` does, where it used to extrapolate the edge cell.
-**What to do.** A script that worked round it by adding the corner back (`terrain_height(x - cx, z - cz) + cy`) should call `terrain_height(x, z)` directly. A terrain at the origin needs nothing.
