@@ -22,7 +22,7 @@ fn test_hot_reload_and_bad_edit() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("binder.rhai");
     let v1 = r#"fn on_update() {
-        set_field(self_entity(), "probe", "coh", music_beat());
+        set_field(self_entity(), "probe", "coh", -1.0);
     }"#;
     std::fs::write(&path, v1).unwrap();
 
@@ -39,7 +39,7 @@ fn test_hot_reload_and_bad_edit() {
     // v2 writes a different field; bump mtime explicitly (Windows mtime
     // granularity would otherwise swallow a fast rewrite).
     let v2 = r#"fn on_update() {
-        set_field(self_entity(), "probe", "lx", music_bar().to_float() + 3.0);
+        set_field(self_entity(), "probe", "lx", -1.0 + 3.0);
     }"#;
     std::fs::write(&path, v2).unwrap();
     let f = std::fs::OpenOptions::new()

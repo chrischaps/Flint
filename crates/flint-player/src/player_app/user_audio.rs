@@ -173,7 +173,9 @@ impl PlayerApp {
                         "audio: the player's bus volumes from {shown}: {}",
                         said.join(", ")
                     );
-                    self.audio.engine.load_user_bus_volumes(volumes);
+                    if let Some(sound) = self.sound() {
+                        sound.load_user_volumes(volumes);
+                    }
                 }
                 Err(why) => tracing::warn!(
                     "audio: the player's bus volumes at {shown} don't read ({why}); \
@@ -190,9 +192,9 @@ impl PlayerApp {
     /// A script's `set_user_bus_volume`: into the mixer, back to the
     /// scripts, and to the file soon.
     pub(super) fn set_user_bus_volume(&mut self, bus: &str, volume: f64) {
-        let before = self.audio.engine.user_bus_volume(bus);
-        if self.audio.engine.set_user_bus_volume(bus, volume).is_ok()
-            && self.audio.engine.user_bus_volume(bus) != before
+        if self
+            .sound()
+            .is_some_and(|sound| sound.set_user_volume(bus, volume))
         {
             self.saves.audio.dirty = true;
             self.saves.audio.debounce.note_dirty(Instant::now());
@@ -204,7 +206,7 @@ impl PlayerApp {
 
     /// Hand the scripts the player's volumes as the engine holds them.
     fn publish_user_audio(&mut self) {
-        let volumes = self.audio.engine.user_bus_volumes();
+        let volumes = self.sound().map(|s| s.user_volumes()).unwrap_or_default();
         self.core
             .script
             .set_user_bus_volumes(volumes.iter().map(|(n, v)| (n.as_str(), *v)));
@@ -226,7 +228,8 @@ impl PlayerApp {
         let Some(file) = self.saves.audio.file.clone() else {
             return;
         };
-        let text = format_user_audio(self.audio.engine.user_bus_volumes());
+        let volumes = self.sound().map(|s| s.user_volumes()).unwrap_or_default();
+        let text = format_user_audio(&volumes);
         let written = {
             let _note =
                 flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::Save, || {

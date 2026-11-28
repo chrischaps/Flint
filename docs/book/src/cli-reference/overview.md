@@ -512,7 +512,7 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--schemas <path>` | Schema directory (repeatable; later paths override earlier). Without it: the project's `flint.toml` `schemas`, else `schemas/` in the working directory, beside the scene and one level up ([Common Flags](#common-flags)) |
 | `--fullscreen` | Launch in fullscreen mode |
 | `--width <px>` / `--height <px>` | Initial window size in physical pixels (default `1280`x`720`; ignored with `--fullscreen`). A narrow or square window keeps the camera's aspect: it shows less to the sides, never a stretched scene |
-| `--position <x,y>` | Put the window's outer top-left corner here, in physical desktop pixels. Negative values reach a monitor left of or above the main one; write them with `=` (`--position=-1920,0`). Default: wherever the system puts it |
+| `--position <x,y>` | Put the window's outer top-left corner here, in physical desktop pixels. Negative values reach a monitor left of or above the main one (`--position -1920,0`). Default: wherever the system puts it |
 | `--borderless` | No title bar or frame. Esc still exits (unless the game binds it) and Alt+F4 still closes it |
 | `--always-on-top` | Keep the window above other windows |
 | `--no-activate` | Open without taking the keyboard from the window that has it, for a companion window beside a terminal. Clicking the window still focuses it. Not with `--fullscreen`, whose path takes the foreground on Windows |
@@ -998,9 +998,13 @@ flint capture flint-examples/film/film.toml --shot 02_type --scale 0.5 --dry-run
 | `--encode mp4` | Also an MP4 a take (H.264, BT.709, no sound; needs ffmpeg on `PATH`) |
 | `--dry-run` | Print each take's frames and `flint play` command line; capture nothing |
 | `--no-disk-check` | Capture even when the estimate (8 MB a 4K frame) passes 90% of the free space under `--out`; without it such a run stops before any take |
+| `--strict` | Fail a take whose player found no schemas or had a script error; without it the summary names such takes and the run passes |
 | `--schemas <dir>` | Schema directories for the player (repeatable; default: the scene's project's) |
 
 Words after `--` are added to every take's `flint play` command line.
+Paths in the list are from its folder, so a list in `shots/` names its
+scene `../x.scene.toml`; each take is handed the path with the `..`
+folded away.
 
 ## The `render` Command
 
@@ -1022,9 +1026,9 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--json` | | The [global flag](#machine-readable-output): a render's report as one document, as `--report json` prints it; with `--list-styles`, `--list-effects` or `--list-gpus` the list; with `--variant` the files written |
 | `--watch` | `false` | Keep running and write `--output` again after every save to the scene's folder, its style folders, its schemas or a file a flag names (#432). A still or a `--sweep` keeps its GPU, scene and renderer, so a user style's `.wgsl` save is drawn again on them; anything else (and a `.shader.toml` whose description changed) loads the scene again on the same GPU. One `watch: render <n> in <s>` line a render, then each style's error. Ctrl-C stops it ([Stylize Passes](../concepts/stylize-passes.md#user-authored-styles)) |
 | `--distance <f32>` | (auto) | Camera distance from target |
-| `--yaw <deg>` | (auto) | Horizontal camera angle |
-| `--pitch <deg>` | (auto) | Vertical camera angle |
-| `--target <x,y,z>` | (auto) | Camera look-at point |
+| `--yaw <deg>` | (auto) | Horizontal camera angle (`-45` too) |
+| `--pitch <deg>` | (auto) | Vertical camera angle (`-10` too) |
+| `--target <x,y,z>` | (auto) | Camera look-at point; a coordinate may be negative (`--target -60,2,120`) |
 | `--fov <deg>` | (auto) | Field of view |
 | `--no-grid` | `false` | Disable ground grid |
 | `--select <entity>` | (none) | Outline this entity (by name) and its descendants as `flint edit` does when it is picked |
@@ -1325,9 +1329,9 @@ as before.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--distance <f32>` | (auto) | Camera orbit distance |
-| `--yaw <deg>` | (auto) | Horizontal camera angle |
-| `--pitch <deg>` | (auto) | Vertical camera angle |
-| `--target <x,y,z>` | (auto) | Camera look-at point |
+| `--yaw <deg>` | (auto) | Horizontal camera angle (`-45` too) |
+| `--pitch <deg>` | (auto) | Vertical camera angle (`-10` too) |
+| `--target <x,y,z>` | (auto) | Camera look-at point; a coordinate may be negative (`--target -60,2,120`) |
 | `--fov <deg>` | (auto) | Field of view |
 | `--no-animate` | `false` | Disable animation playback |
 | `--clip <name>` | (none) | Start with a specific animation clip |

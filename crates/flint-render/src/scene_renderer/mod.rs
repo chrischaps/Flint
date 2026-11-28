@@ -1001,6 +1001,28 @@ impl SceneRenderer {
         self.terrain.entity = entity;
     }
 
+    /// Change the loaded terrain's material at run time (#1698): its
+    /// `texture_tile`, `metallic` and `roughness`, written into the
+    /// uniform every chunk shares, so the next frame draws them. One
+    /// 12-byte write, no new buffer or bind group; nothing with no terrain.
+    pub fn set_terrain_material(
+        &mut self,
+        queue: &wgpu::Queue,
+        texture_tile: f32,
+        metallic: f32,
+        roughness: f32,
+    ) {
+        if let Some(buf) = &self.terrain.material_buffer {
+            // texture_tile, metallic, roughness lead TerrainUniforms;
+            // the per-frame tonemapping flag at byte 12 is left as it is
+            queue.write_buffer_counted(
+                buf,
+                0,
+                bytemuck::cast_slice(&[texture_tile, metallic, roughness]),
+            );
+        }
+    }
+
     /// Clear terrain draw calls (for scene transitions)
     pub fn clear_terrain(&mut self) {
         self.terrain.clear();
@@ -1535,6 +1557,15 @@ impl SceneRenderer {
         {
             flint_core::scope!("extract::shallow_wooze");
             self.apply_shallow_wooze(device);
+        }
+
+        // A debug view of a terrain (#1692): its pipelines and, for the two
+        // wireframes, each chunk shape's edges, made the first frame one draws
+        if !self.terrain.draws.is_empty() && (need_overlay || self.debug_state.mode.as_u32() != 0) {
+            self.pipelines.ensure_terrain_debug(device);
+            if need_overlay {
+                self.terrain.ensure_wires(device);
+            }
         }
 
         // Drop cached resources nothing used this frame (despawned entities,

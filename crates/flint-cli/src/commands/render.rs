@@ -392,6 +392,9 @@ pub(super) fn render(
     // an earlier render in this process loaded (a case before this one in
     // `flint goldens`, #911) from a folder this scene can't see is not one
     let (mut world, scene_file) = load_settled(&args.scene, &registry)?;
+    // An entity's fields from --set, and every entity --sweep's values
+    // checked, before anything binds the world (#1699)
+    render_post::lay_entity_sets(args, &mut world, &registry)?;
     drop(read);
     say!("Loaded scene: {}", scene_file.scene.name);
     say!("Entities: {}", world.entity_count());
@@ -456,9 +459,11 @@ pub(super) fn render(
     // A reference grid scores frames by their glyphs: every frame's grid is read
     let reads_glyphs = reference.as_ref().is_some_and(|r| r.ink.is_some());
 
-    // A render with clocks goes through stages (#216, #487)
+    // A render with clocks goes through stages (#216, #487), and so does
+    // a sweep of an entity's field: a world a cell, each bound once (#1699)
     let timed = args.clock.time.is_some()
         || grid.as_ref().is_some_and(|g| g.wooze_knob().is_some())
+        || grid.as_ref().is_some_and(|g| g.writes_entities())
         || args.clock.scripts
         || args.clock.expression_timeline.is_some()
         || report_json

@@ -66,20 +66,43 @@ impl FieldPath {
         format!("{}.{}", self.component, self.fields.join("."))
     }
 
+    /// The field: down the component's tables a key a step, else, when no
+    /// such table holds it, the rest of the path as one key the component
+    /// writes with its dots (`"grass.wind_strength" = 0.14`, a terrain's
+    /// grass, #1698), as `set_field` and the schemas spell it.
     fn leaf<'w>(&self, world: &'w FlintWorld, id: EntityId) -> Option<&'w toml::Value> {
-        let mut at = world.get_component(id, &self.component)?;
+        let component = world.get_component(id, &self.component)?;
+        self.nested(component)
+            .or_else(|| component.as_table()?.get(&self.dotted_key()?))
+    }
+
+    fn leaf_mut<'w>(&self, world: &'w mut FlintWorld, id: EntityId) -> Option<&'w mut toml::Value> {
+        let nested = self
+            .nested(world.get_component(id, &self.component)?)
+            .is_some();
+        let component = world.get_component_mut(id, &self.component)?;
+        if nested {
+            let mut at = component;
+            for field in &self.fields {
+                at = at.as_table_mut()?.get_mut(field)?;
+            }
+            Some(at)
+        } else {
+            component.as_table_mut()?.get_mut(&self.dotted_key()?)
+        }
+    }
+
+    fn nested<'w>(&self, component: &'w toml::Value) -> Option<&'w toml::Value> {
+        let mut at = component;
         for field in &self.fields {
             at = at.as_table()?.get(field)?;
         }
         Some(at)
     }
 
-    fn leaf_mut<'w>(&self, world: &'w mut FlintWorld, id: EntityId) -> Option<&'w mut toml::Value> {
-        let mut at = world.get_component_mut(id, &self.component)?;
-        for field in &self.fields {
-            at = at.as_table_mut()?.get_mut(field)?;
-        }
-        Some(at)
+    /// The fields as one dotted key, for a path of two or more.
+    fn dotted_key(&self) -> Option<String> {
+        (self.fields.len() > 1).then(|| self.fields.join("."))
     }
 }
 
@@ -370,6 +393,35 @@ mod tests {
         assert_eq!(name, TWEEN_DONE);
         assert_eq!(data["path"].as_str(), Some("light.intensity"));
         assert!(tweens.is_empty());
+    }
+
+    /// A terrain's grass is written with dotted keys (`"grass.wind_strength"
+    /// = 0.14`), so `terrain.grass.wind_strength` is that key; a table the
+    /// component holds is still walked first (#1698).
+    #[test]
+    fn a_dotted_key_the_component_writes_is_a_field_a_tween_eases() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("island").unwrap();
+        let mut terrain = toml::map::Map::new();
+        terrain.insert("grass.wind_strength".into(), toml::Value::Float(0.2));
+        terrain.insert("shear".into(), toml::toml! { xz = 1.0 }.into());
+        world
+            .set_component(id, "terrain", toml::Value::Table(terrain))
+            .unwrap();
+        let mut tweens = FieldTweens::default();
+        for (path, to) in [
+            ("terrain.grass.wind_strength", 0.8),
+            ("terrain.shear.xz", 3.0),
+        ] {
+            tweens
+                .start(&mut world, id, path, &to.into(), 1.0, Easing::Linear)
+                .unwrap();
+        }
+        tweens.step(&mut world, 0.5);
+        let terrain = world.get_component(id, "terrain").unwrap();
+        assert_eq!(toml_f64(&terrain["grass.wind_strength"]), Some(0.5));
+        assert_eq!(toml_f64(&terrain["shear"]["xz"]), Some(2.0));
+        assert!(terrain.get("grass").is_none(), "no table is made");
     }
 
     #[test]

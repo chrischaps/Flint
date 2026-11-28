@@ -37,6 +37,13 @@
 //! game's, and the game's own `[egui] monospace` face when it names one. A
 //! project family of either name comes first.
 //!
+//! egui's proportional faces have no arrows (#1701), so Flint's
+//! definitions ([`default_definitions`]) put egui's monospace face, Hack,
+//! last in the proportional family, and so in every named one: a key hint
+//! `"← → stations"` draws its arrows. A character no face of the family has
+//! still draws as egui's ◻; `draw_text` and world text name it in a warning,
+//! once ([`warn_missing_glyphs`]).
+//!
 //! An extension can add fonts of its own with `PlayerExtension::fonts`,
 //! which edits the definitions before Flint installs them, so they survive
 //! every reload.
@@ -359,16 +366,38 @@ fn face_error(bytes: &[u8]) -> Option<skrifa::raw::ReadError> {
         .or_else(|| font.cmap().err())
 }
 
-/// egui's definitions with a project's fonts added: each file under its
+/// egui's monospace face, which has the arrows and key symbols egui's
+/// proportional faces lack (← ↑ → ↓ ↔ ↵ ⇧ ⇥, #1701).
+const SYMBOL_FALLBACK: &str = "Hack";
+
+/// egui's definitions with [`SYMBOL_FALLBACK`] last in the proportional
+/// family, behind egui's own faces: a glyph they have looks as it did, and
+/// an arrow they lack draws in Hack. Named families copy this list as their
+/// fallbacks (`build_definitions`), so they get it too.
+pub fn default_definitions() -> egui::FontDefinitions {
+    let mut defs = egui::FontDefinitions::default();
+    if defs.font_data.contains_key(SYMBOL_FALLBACK) {
+        let list = defs
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default();
+        if !list.iter().any(|f| f == SYMBOL_FALLBACK) {
+            list.push(SYMBOL_FALLBACK.to_string());
+        }
+    }
+    defs
+}
+
+/// [`default_definitions`] with a project's fonts added: each file under its
 /// stem, a named family per stem and alias, and `defaults` first in egui's
-/// own families. Every named family falls back to egui's proportional fonts.
+/// own families. Every named family falls back to the proportional fonts.
 /// `families` is `resolve_families`' table.
 pub fn build_definitions(
     data: BTreeMap<String, Vec<u8>>,
     families: &BTreeMap<String, String>,
     defaults: &EguiDefaults,
 ) -> egui::FontDefinitions {
-    let mut defs = egui::FontDefinitions::default();
+    let mut defs = default_definitions();
     let fallbacks = defs
         .families
         .get(&egui::FontFamily::Proportional)
@@ -416,10 +445,10 @@ pub fn project_font_definitions(scene_path: &str) -> egui::FontDefinitions {
 }
 
 /// The font definitions for what a scene sees (see `build_definitions`):
-/// egui's defaults when it sees no font file.
+/// [`default_definitions`] when it sees no font file.
 pub fn font_definitions(fonts: &ProjectFonts) -> egui::FontDefinitions {
     if fonts.faces.is_empty() && fonts.manifest.is_none() {
-        return egui::FontDefinitions::default();
+        return default_definitions();
     }
     let (data, aliases, defaults, linked) = fonts.read();
     let keys: Vec<String> = data.keys().cloned().collect();
@@ -507,6 +536,103 @@ pub fn resolve_font_id(
             egui::FontId::proportional(size)
         }
     }
+}
+
+/// The name a script gives `family`, for a warning.
+fn family_name(family: &egui::FontFamily) -> &str {
+    match family {
+        egui::FontFamily::Proportional => PROPORTIONAL,
+        egui::FontFamily::Monospace => MONOSPACE,
+        egui::FontFamily::Name(name) => name,
+    }
+}
+
+/// The characters of `text` egui's `has_glyph` says no to, each once, in
+/// order. Its no is only a suspicion: it compares the face a character
+/// resolves to with the face of the replacement ◻, which is NotoEmoji's, so
+/// every emoji and `↔` read as missing too ([`family_has`] settles it). Its
+/// yes is sure. A control (a newline, a tab) is never drawn, so never asked.
+fn suspects(
+    fonts: &mut egui::epaint::FontsView<'_>,
+    font_id: &egui::FontId,
+    text: &str,
+) -> Vec<char> {
+    let mut out = Vec::new();
+    for c in text.chars() {
+        if !c.is_control() && !out.contains(&c) && !fonts.has_glyph(font_id, c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Whether a face of `family` maps `c` in its `cmap`, read with skrifa as
+/// egui reads the faces. A family the definitions don't have, or a face
+/// that won't open, counts as having it: nothing is warned of on a guess.
+fn family_has(defs: &egui::FontDefinitions, family: &egui::FontFamily, c: char) -> bool {
+    use skrifa::MetadataProvider;
+    let Some(keys) = defs.families.get(family) else {
+        return true;
+    };
+    keys.iter().any(|key| {
+        let Some(data) = defs.font_data.get(key) else {
+            return false;
+        };
+        skrifa::FontRef::from_index(&data.font, data.index)
+            .map(|font| font.charmap().map(c).is_some())
+            .unwrap_or(true)
+    })
+}
+
+/// The characters of `text` no face of `font_id`'s family has, each once,
+/// in order: what egui draws as its replacement ◻ (#1701). The tests' view
+/// of what `warn_missing_glyphs` finds, without its once-a-session memory.
+#[cfg(test)]
+fn missing_glyphs(
+    fonts: &mut egui::epaint::FontsView<'_>,
+    font_id: &egui::FontId,
+    text: &str,
+) -> Vec<char> {
+    let mut missing = suspects(fonts, font_id, text);
+    missing.retain(|&c| !family_has(fonts.definitions(), &font_id.family, c));
+    missing
+}
+
+/// Warn of the characters of `text` its font lacks (#1701), each once a
+/// family for the session: the warning names the string, the font and each
+/// character by its code point, where before the first anyone knew was an
+/// empty box in a screenshot. `warned` keeps `"U+2190 in proportional"` for
+/// each suspect once its face list has been read, missing or not, so a
+/// string drawn every frame reads no `cmap` after its first; beside them
+/// are the unknown family names `resolve_font_id` keeps. `what` names the
+/// caller (`draw_text`, `world text`). Call it where the text is laid out,
+/// once egui's fonts are built.
+pub fn warn_missing_glyphs(
+    ctx: &egui::Context,
+    what: &str,
+    text: &str,
+    font_id: &egui::FontId,
+    warned: &mut HashSet<String>,
+) {
+    if text.is_ascii() {
+        return; // every family ends in faces that have all of ASCII
+    }
+    let family = family_name(&font_id.family);
+    let new: Vec<String> = ctx.fonts_mut(|f| {
+        suspects(f, font_id, text)
+            .into_iter()
+            .filter(|c| warned.insert(format!("U+{:04X} in {family}", *c as u32)))
+            .filter(|&c| !family_has(f.definitions(), &font_id.family, c))
+            .map(|c| format!("U+{:04X} {c:?}", c as u32))
+            .collect()
+    });
+    if new.is_empty() {
+        return;
+    }
+    tracing::warn!(
+        "{what} {text:?}: font `{family}` has no glyph for {}; it draws as an empty box (a font under fonts/ that has it fixes this)",
+        new.join(", ")
+    );
 }
 
 /// Scripts' `measure_text`, and the UI documents' layout (#731), laid out
@@ -864,11 +990,11 @@ monospace = 3
     }
 
     /// The named face leads egui's family and egui's fonts stay behind it;
-    /// named families fall back to egui's proportional fonts; an unknown
+    /// named families fall back to the proportional fonts; an unknown
     /// default leaves egui's family alone.
     #[test]
     fn definitions_put_the_named_defaults_first() {
-        let egui_defaults = egui::FontDefinitions::default();
+        let egui_defaults = default_definitions();
         let proportional = &egui_defaults.families[&egui::FontFamily::Proportional];
         let monospace = &egui_defaults.families[&egui::FontFamily::Monospace];
 
@@ -906,6 +1032,69 @@ monospace = 3
         let mut names: Vec<String> = script_families(&defs).into_iter().collect();
         names.sort();
         assert_eq!(names, ["Body", "Title", "body"]);
+    }
+
+    /// A context with `defs` installed and its fonts built.
+    fn built(defs: egui::FontDefinitions) -> egui::Context {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(defs);
+        let _ = flint_debug_ui::run_headless_frame(&ctx, egui::RawInput::default(), |_| {});
+        ctx
+    }
+
+    /// #1701: egui's proportional faces have no arrows, so `"← →"` drew two
+    /// boxes. Flint's definitions draw them (Hack, last), in the default
+    /// family and in a project's named one, and the key symbols with them.
+    #[test]
+    fn the_default_font_draws_arrows() {
+        let hint = "← ↑ → ↓ ↔ ↵ ⇧ ⇥  stations";
+        let egui_own = built(egui::FontDefinitions::default());
+        let missing =
+            egui_own.fonts_mut(|f| missing_glyphs(f, &egui::FontId::proportional(20.0), hint));
+        assert_eq!(missing.first(), Some(&'←'), "egui's own faces lack them");
+
+        let data: BTreeMap<String, Vec<u8>> = [("Body".to_string(), face("body"))].into();
+        let families = resolve_families(&["Body".to_string()], &[]);
+        let ctx = built(build_definitions(data, &families, &EguiDefaults::default()));
+        for family in [
+            egui::FontFamily::Proportional,
+            egui::FontFamily::Monospace,
+            egui::FontFamily::Name("Body".into()),
+        ] {
+            let id = egui::FontId::new(20.0, family.clone());
+            let missing = ctx.fonts_mut(|f| missing_glyphs(f, &id, hint));
+            assert!(missing.is_empty(), "{family:?} lacks {missing:?}");
+        }
+        let plain = built(default_definitions());
+        let p = &default_definitions().families[&egui::FontFamily::Proportional];
+        assert_eq!(p.last().map(|s| s.as_str()), Some(SYMBOL_FALLBACK));
+        let missing =
+            plain.fonts_mut(|f| missing_glyphs(f, &egui::FontId::proportional(20.0), hint));
+        assert!(missing.is_empty(), "{missing:?}");
+    }
+
+    /// #1701: a character no face has is warned of once a family, by its
+    /// code point; a string of glyphs the font has warns of nothing.
+    #[test]
+    fn a_missing_glyph_is_named_once_by_code_point() {
+        let ctx = built(default_definitions());
+        let id = egui::FontId::proportional(20.0);
+        let mut warned = HashSet::new();
+        warn_missing_glyphs(&ctx, "draw_text", "← →  SCORE 42", &id, &mut warned);
+        assert!(warned.is_empty(), "{warned:?}");
+
+        let missing = ctx.fonts_mut(|f| missing_glyphs(f, &id, "⌫ delete ⌫\n"));
+        assert_eq!(missing, ['⌫']);
+        // NotoEmoji holds the replacement ◻, so egui's `has_glyph` says no
+        // to all of its glyphs: they are there, and not warned of.
+        let emoji = ctx.fonts_mut(|f| missing_glyphs(f, &id, "↔ ▶ ◻"));
+        assert!(emoji.is_empty(), "{emoji:?}");
+        warn_missing_glyphs(&ctx, "draw_text", "⌫ delete", &id, &mut warned);
+        warn_missing_glyphs(&ctx, "draw_text", "⌫ again", &id, &mut warned);
+        assert_eq!(
+            warned.iter().collect::<Vec<_>>(),
+            ["U+232B in proportional"]
+        );
     }
 
     #[test]

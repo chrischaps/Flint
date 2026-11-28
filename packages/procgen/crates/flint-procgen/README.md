@@ -268,7 +268,7 @@ Each `[[params.control_points]]` entry:
 |---|---|---|---|
 | `geometry` | table |  | The terrain's size and the maps' resolution |
 | `grass` | table |  | The terrain component's GPU grass (see the book's Terrain page). Not read by the bake; leave it out unless the terrain should grow grass |
-| `height_layers` | array of tables |  | The height recipe, run in order on a grid starting at 0: `noise` adds fractal noise, `flatten` pulls heights toward a level, `erosion` wears them |
+| `height_layers` | array of tables |  | The height recipe, run in order on a grid starting at 0: `noise` adds fractal noise, `flatten` pulls heights toward a level, `erosion` wears them, `falloff` says where the land is (an island, a coast) |
 | `splat_rules` | array of tables |  | Paint the four surface layers: each texel takes every rule whose height and slope it fits, weighted toward the middle of the rule's band, and the weights are normalized. No rules paints all layer 0 |
 | `textures` | table |  | The terrain component's surface textures and material; not read by the bake |
 
@@ -353,6 +353,21 @@ Only when `kind` is `thermal`:
 |---|---|---|---|
 | `iterations` | integer ≥ 0 | `50` | Passes over the whole map; the bake's cost grows with it |
 | `talus_angle` | number ≥ 0 | `0.6` | The steepest slope left alone |
+
+Each `[[params.height_layers]]` entry with `op = "falloff"`:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `amplitude` | number | `1.0` | What add raises the shape by, in the heights' units so far; only add reads it |
+| `blend` | `sink` \| `multiply` \| `add` | `"sink"` | sink pulls the heights toward the lowest of them where the shape is 0, whatever the noise's sign; multiply scales them by the shape; add raises them by the shape times amplitude (a plateau) |
+| `center` | list of numbers | `[0.5, 0.5]` | [u, v]: the disc's middle (island, radial) or the line the gradient rises from |
+| `curve` | number ≥ 0 | `1.0` | The fade's exponent: above 1 shrinks the land toward where it is whole (steeper shores), below 1 widens it |
+| `direction` | list of numbers | `[0.0, -1.0]` | [u, v] the gradient rises toward; [0, -1] is toward -Z |
+| `invert` | bool | `false` | Keep the land outside the shape instead: a crater, a lake, a bay |
+| `op` | `"falloff"` | required | Say where the land is: a shape over the map keeps the heights so far where it is 1 and sinks them where it is 0. Map coordinates run 0..1, u along +X and v along +Z. Put it after the noise and before erosion; a noise layer after it brings land back to the border |
+| `radius` | number ≥ 0 | `0.25` | How far from center the land is kept whole (island, radial) |
+| `shape` | `island` \| `edge` \| `radial` \| `gradient` | `"island"` | island: a disc that also fades out at the border, so the land never reaches the edge for any seed; edge: only the border fades; radial: a disc that may cross the border; gradient: land rises toward `direction` |
+| `width` | number ≥ 0 | `0.2` | How far the shape fades out: past radius, in from the border (island, edge) or past the line (gradient) |
 
 Each `[[params.splat_rules]]` entry:
 

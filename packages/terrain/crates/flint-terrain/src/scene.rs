@@ -167,6 +167,59 @@ pub fn bind_terrain(
     None
 }
 
+/// Grow the grass of the terrain `entity` after its bind (#1698): a scene
+/// whose terrain had `grass.enabled = false` when it loaded, and a script
+/// that has just turned it on. `bind_terrain` grew none then, so the blades'
+/// buffers and the splat map's mask are made now, as the bind would have.
+/// `heightmap` is the bound ground's when the host kept it (the player);
+/// without it (a capture) the heightmap is read again. True when the grass
+/// is in; a splat map that doesn't read is warned, and there is none.
+pub fn grow_terrain_grass(
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &FlintWorld,
+    entity: EntityId,
+    grass: &GrassConfig,
+    heightmap: Option<&Heightmap>,
+) -> bool {
+    let config = TerrainConfig::from_component(&world.view(entity, comp::TERRAIN));
+    let scope = renderer.asset_scope();
+    let scene_dir = scope.scene_dir.as_path();
+    let read;
+    let heightmap = match heightmap {
+        Some(heightmap) => heightmap,
+        None => {
+            let path = scope.project.file_or_beside(
+                "terrain heightmap",
+                &config.heightmap_path,
+                scene_dir,
+            );
+            match Heightmap::from_png(&path) {
+                Ok(hm) => {
+                    read = hm;
+                    &read
+                }
+                Err(e) => {
+                    tracing::warn!("Grass turned on, but the heightmap didn't load: {e}");
+                    return false;
+                }
+            }
+        }
+    };
+    let pos = world
+        .view(entity, comp::TRANSFORM)
+        .vec3("position", [0.0; 3]);
+    let splat =
+        scope
+            .project
+            .file_or_beside("terrain splat map", &config.splat_map_path, scene_dir);
+    load_terrain_grass(
+        renderer, device, queue, grass, heightmap, &config, pos, &splat,
+    );
+    renderer.grass_config().is_some()
+}
+
 /// The terrain's grass, grown over its splat map (warned when the map
 /// doesn't read, and then there is none).
 #[allow(clippy::too_many_arguments)]

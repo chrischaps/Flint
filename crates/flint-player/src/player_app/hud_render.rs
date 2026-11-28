@@ -1,6 +1,6 @@
 //! Script-driven UI rendering via egui layer painter.
 
-use super::fonts::{resolve_font_id, text_layout_job};
+use super::fonts::{resolve_font_id, text_layout_job, warn_missing_glyphs};
 use super::text_halo::{stamp_offsets, wants_halo, HaloSpec, TextHalos};
 use flint_script::context::{DrawCommand, DrawItem};
 use flint_script::draw2d::{ring_indices, ring_points, ring_steps};
@@ -110,6 +110,7 @@ pub(super) fn render_draw_commands(
                     _ => egui::Align2::LEFT_TOP,
                 };
                 let font_id = resolve_font_id(*size, font.as_deref(), ui_fonts, ui_fonts_warned);
+                warn_missing_glyphs(ctx, "draw_text", text, &font_id, ui_fonts_warned);
                 let main = to_color32(color);
                 // Galleys bake their section colour, so shadow / stroke /
                 // main each get their own (the galley cache makes repeats

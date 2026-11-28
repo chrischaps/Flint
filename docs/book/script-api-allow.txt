@@ -10,7 +10,7 @@
 # page, don't list it here.
 
 # Rust: the engine's traits and types, named in prose
-architecture/overview.md: assign_columns constraint create_spec_from_prompt estimate_cost generate interpret_spec param_schema refine_spec update validate_model weight
+architecture/overview.md: assign_columns constraint create_spec_from_prompt drive estimate_cost generate interpret_spec param_schema refine_spec update validate_model weight
 concepts/ai-generation.md: import_gltf
 concepts/animation.md: fixed_update update
 concepts/audio.md: fixed_update update

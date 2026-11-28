@@ -1,6 +1,9 @@
 //! Procedural heightmap generation from terrain spec layers
 
-use crate::spec::{BlendMode, ErosionKind, FlattenMode, HeightLayer, NoiseType, TerrainSpec};
+use crate::spec::{
+    BlendMode, ErosionKind, FalloffBlend, FalloffLayer, FalloffShape, FlattenMode, HeightLayer,
+    NoiseType, TerrainSpec,
+};
 use noise::{NoiseFn, OpenSimplex, Perlin, Value as ValueNoise};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -18,6 +21,7 @@ pub fn generate_heightmap(spec: &TerrainSpec, seed: u64) -> Vec<f32> {
             HeightLayer::Erosion(erosion) => {
                 apply_erosion(&mut buffer, res, erosion, &spec.geometry, seed)
             }
+            HeightLayer::Falloff(falloff) => apply_falloff(&mut buffer, res, falloff),
         }
     }
 
@@ -147,6 +151,68 @@ fn apply_flatten(buffer: &mut [f32], _res: usize, layer: &crate::spec::FlattenLa
                 }
             }
         }
+    }
+}
+
+/// Hermite smoothstep from `lo` to `hi`; a zero-wide step is 0 up to `lo`
+/// and 1 past it.
+fn smoothstep(lo: f64, hi: f64, x: f64) -> f64 {
+    if hi <= lo {
+        return if x > lo { 1.0 } else { 0.0 };
+    }
+    let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// A falloff's shape at map point `(u, v)`, both 0 to 1: 1 where the land is
+/// kept whole, 0 where it goes (#1694).
+pub fn falloff_mask(layer: &FalloffLayer, u: f64, v: f64) -> f64 {
+    let [cu, cv] = layer.center;
+    let width = layer.width.max(0.0);
+    let disc = || {
+        let d = ((u - cu).powi(2) + (v - cv).powi(2)).sqrt();
+        1.0 - smoothstep(layer.radius, layer.radius + width, d)
+    };
+    // 0 on the border itself, whole `width` in from it
+    let border = || smoothstep(0.0, width, u.min(1.0 - u).min(v).min(1.0 - v));
+    let shape = match layer.shape {
+        FalloffShape::Island => disc() * border(),
+        FalloffShape::Edge => border(),
+        FalloffShape::Radial => disc(),
+        FalloffShape::Gradient => {
+            let [du, dv] = layer.direction;
+            let len = (du * du + dv * dv).sqrt();
+            let (du, dv) = if len > 1e-12 {
+                (du / len, dv / len)
+            } else {
+                (0.0, -1.0)
+            };
+            smoothstep(0.0, width, (u - cu) * du + (v - cv) * dv)
+        }
+    };
+    let shaped = shape.powf(layer.curve.max(0.0));
+    if layer.invert {
+        1.0 - shaped
+    } else {
+        shaped
+    }
+}
+
+fn apply_falloff(buffer: &mut [f32], res: usize, layer: &FalloffLayer) {
+    // The border's texels sit at exactly 0 and 1, so `edge` and `island`
+    // zero them whatever the resolution
+    let span = (res - 1).max(1) as f64;
+    // `sink`'s floor: the lowest height so far, which normalizing makes 0
+    let floor = buffer.iter().copied().fold(f32::MAX, f32::min);
+    for (idx, h) in buffer.iter_mut().enumerate() {
+        let u = (idx % res) as f64 / span;
+        let v = (idx / res) as f64 / span;
+        let m = falloff_mask(layer, u, v) as f32;
+        *h = match layer.blend {
+            FalloffBlend::Sink => floor + (*h - floor) * m,
+            FalloffBlend::Multiply => *h * m,
+            FalloffBlend::Add => *h + m * layer.amplitude as f32,
+        };
     }
 }
 
@@ -493,6 +559,172 @@ mod tests {
         // Just verify no extreme low values
         let min = heights.iter().copied().fold(f32::MAX, f32::min);
         assert!(min >= 0.0);
+    }
+
+    /// An island recipe: rolling noise, an island falloff, thermal erosion
+    /// after it, as Relief's would be (#1694).
+    fn island_spec(falloff: Option<FalloffLayer>) -> TerrainSpec {
+        let mut spec = minimal_spec();
+        spec.geometry.resolution = 64;
+        spec.height_layers = vec![HeightLayer::Noise(NoiseLayer {
+            noise_type: NoiseType::Perlin,
+            octaves: 5,
+            frequency: 3.0,
+            lacunarity: 2.0,
+            persistence: 0.5,
+            amplitude: 1.0,
+            blend: BlendMode::Add,
+        })];
+        spec.height_layers.extend(falloff.map(HeightLayer::Falloff));
+        spec.height_layers.push(HeightLayer::Erosion(ErosionLayer {
+            kind: ErosionKind::Thermal,
+            iterations: 20,
+            talus_angle: 0.6,
+            strength: 0.3,
+            ..ErosionLayer::default()
+        }));
+        spec
+    }
+
+    /// The highest texel on the map's border.
+    fn border_max(heights: &[f32], res: usize) -> f32 {
+        (0..res * res)
+            .filter(|i| {
+                let (x, y) = (i % res, i / res);
+                x == 0 || y == 0 || x == res - 1 || y == res - 1
+            })
+            .map(|i| heights[i])
+            .fold(f32::MIN, f32::max)
+    }
+
+    /// The level a border must stay under: a sea's.
+    const SEA: f32 = 0.05;
+
+    /// Done-when (#1694): an island falloff keeps the land clear of the
+    /// border for any seed, and there is land.
+    #[test]
+    fn an_island_falloff_keeps_every_seeds_border_under_the_sea() {
+        let spec = island_spec(Some(FalloffLayer::default()));
+        for seed in 0..20 {
+            let heights = generate_heightmap(&spec, seed);
+            let border = border_max(&heights, 64);
+            assert!(border < SEA, "seed {seed}: the border reaches {border}");
+            let land = heights.iter().filter(|&&h| h > 0.3).count();
+            assert!(
+                land > 64 * 64 / 50,
+                "seed {seed}: only {land} texels of land"
+            );
+        }
+    }
+
+    /// The same recipe with no falloff is the lottery the ticket describes:
+    /// most seeds' land meets the border.
+    #[test]
+    fn without_the_falloff_most_borders_are_land() {
+        let spec = island_spec(None);
+        let reaching = (0..20)
+            .filter(|&seed| border_max(&generate_heightmap(&spec, seed), 64) > SEA)
+            .count();
+        assert!(
+            reaching >= 18,
+            "only {reaching} of 20 borders reach the sea level"
+        );
+    }
+
+    /// Wherever the disc is put, `island` still clears the border; `radial`
+    /// doesn't.
+    #[test]
+    fn island_clears_the_border_wherever_its_center_is() {
+        let corner = FalloffLayer {
+            center: [0.1, 0.1],
+            radius: 0.4,
+            ..FalloffLayer::default()
+        };
+        for (u, v) in [(0.0, 0.1), (0.1, 0.0), (0.0, 0.0), (1.0, 0.5), (0.5, 1.0)] {
+            assert_eq!(falloff_mask(&corner, u, v), 0.0, "({u}, {v})");
+        }
+        assert_eq!(falloff_mask(&corner, 0.3, 0.3), 1.0);
+        let radial = FalloffLayer {
+            shape: FalloffShape::Radial,
+            ..corner
+        };
+        assert_eq!(falloff_mask(&radial, 0.0, 0.1), 1.0);
+    }
+
+    #[test]
+    fn the_shapes_keep_where_they_say() {
+        let edge = FalloffLayer {
+            shape: FalloffShape::Edge,
+            width: 0.1,
+            ..FalloffLayer::default()
+        };
+        assert_eq!(falloff_mask(&edge, 0.0, 0.5), 0.0);
+        assert_eq!(falloff_mask(&edge, 0.15, 0.9), 1.0);
+        assert!((falloff_mask(&edge, 0.05, 0.5) - 0.5).abs() < 1e-9);
+
+        // Mountains toward -Z: kept at v = 0, gone at v = 1
+        let north = FalloffLayer {
+            shape: FalloffShape::Gradient,
+            width: 0.3,
+            ..FalloffLayer::default()
+        };
+        assert_eq!(falloff_mask(&north, 0.5, 0.1), 1.0);
+        assert_eq!(falloff_mask(&north, 0.5, 0.9), 0.0);
+        let east = FalloffLayer {
+            direction: [2.0, 0.0],
+            ..north.clone()
+        };
+        assert_eq!(falloff_mask(&east, 0.9, 0.5), 1.0);
+        assert_eq!(falloff_mask(&east, 0.1, 0.5), 0.0);
+
+        // A crater: inverted, the middle goes and the rest stays
+        let crater = FalloffLayer {
+            shape: FalloffShape::Radial,
+            invert: true,
+            ..FalloffLayer::default()
+        };
+        assert_eq!(falloff_mask(&crater, 0.5, 0.5), 0.0);
+        assert_eq!(falloff_mask(&crater, 0.0, 0.0), 1.0);
+
+        // A steeper curve keeps less of the fade
+        let soft = FalloffLayer::default();
+        let steep = FalloffLayer {
+            curve: 3.0,
+            ..FalloffLayer::default()
+        };
+        assert!(falloff_mask(&steep, 0.5, 0.8) < falloff_mask(&soft, 0.5, 0.8));
+    }
+
+    /// `sink` lands the border on the floor whatever the noise's sign:
+    /// noise runs -1..1, so `multiply` leaves the border mid-height wherever
+    /// the land around it dips below 0.
+    #[test]
+    fn sink_floors_the_border_where_multiply_cant() {
+        let floored = |blend| {
+            let spec = island_spec(Some(FalloffLayer {
+                blend,
+                ..FalloffLayer::default()
+            }));
+            (0..20)
+                .filter(|&seed| border_max(&generate_heightmap(&spec, seed), 64) < SEA)
+                .count()
+        };
+        assert_eq!(floored(FalloffBlend::Sink), 20);
+        assert!(floored(FalloffBlend::Multiply) < 20);
+    }
+
+    #[test]
+    fn add_raises_the_shape() {
+        let mut spec = minimal_spec();
+        spec.height_layers = vec![HeightLayer::Falloff(FalloffLayer {
+            shape: FalloffShape::Radial,
+            blend: FalloffBlend::Add,
+            ..FalloffLayer::default()
+        })];
+        let heights = generate_heightmap(&spec, 1);
+        let res = 32;
+        assert_eq!(heights[res / 2 * res + res / 2], 1.0, "the plateau");
+        assert_eq!(heights[0], 0.0, "the plain");
     }
 
     #[test]

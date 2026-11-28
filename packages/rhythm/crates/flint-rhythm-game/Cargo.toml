@@ -15,7 +15,7 @@ default = []
 player = [
     "dep:flint-package", "dep:flint-ecs", "dep:flint-script", "dep:flint-scene",
     "dep:flint-audio", "dep:flint-runtime", "dep:flint-render", "dep:anyhow",
-    "flint-music/player",
+    "flint-music/player", "flint-audio/player",
 ]
 # The Music Guide and Manifest Map panels and the session's debug keys:
 # flint-player's `debug-hud` turns it on when the player part is in.

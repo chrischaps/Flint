@@ -152,7 +152,6 @@ mod world_text;
 
 #[cfg(target_os = "android")]
 use events::AndroidGamepadTracker;
-use flint_audio::AudioSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::pad::Gilrs;
 use flint_runtime::InputState;
@@ -372,12 +371,11 @@ impl CaptureConfig {
 pub struct PlayerApp {
     /// The game with no window (ADR 0117 decision 4): the world, its clock,
     /// scripts, physics, animation, particles, states and the subsystems,
-    /// and the frame order (`game_core::step`). Declared before `audio`, so
-    /// whatever a subsystem holds of the audio engine goes before the
-    /// engine.
+    /// and the frame order (`game_core::step`). The sound is its resource
+    /// (the audio package's, #1619), dropped after the subsystems, so
+    /// whatever one holds of the audio engine goes before the engine.
     pub core: GameCore,
     pub input: InputState,
-    pub audio: AudioSystem,
 
     /// What the host asked for before the event loop started (the command
     /// line, the page's query, a dev profile).
@@ -415,11 +413,6 @@ pub struct PlayerApp {
     /// The post-processing scripts asked for this frame, stamped over the
     /// renderer's config before it draws
     post: state::PostOverrides,
-
-    /// `vfs::generation()` when the scene's audio was last loaded. A late
-    /// bundle (#98) installs a grown file source mid-game; when the count
-    /// moves, the audio that couldn't be found before is loaded.
-    pub(super) audio_vfs_generation: u64,
 
     /// Screenshot capture driven by `--screenshot` / `--screenshot-at` /
     /// `--screenshot-every` / `--exit-after`. Captures the presented frame

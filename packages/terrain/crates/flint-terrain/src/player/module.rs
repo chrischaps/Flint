@@ -4,7 +4,7 @@
 
 use flint_geometry::heightmap::Heightmap;
 use flint_package::bind::SceneGround;
-use flint_script::api::builder::kind::Num;
+use flint_script::api::builder::kind::{Array, Num};
 use flint_script::api::Module;
 use flint_script::ScriptModule;
 use std::sync::Arc;
@@ -40,6 +40,18 @@ impl ScriptModule for TerrainModule {
                 .module_state
                 .get_mut::<TerrainHeight>()
                 .at(x as f32, z as f32) as f64
+        });
+
+        m.func(
+            "terrain_live_fields",
+            "The terrain fields a script can change while the game runs, with set_field(id, \"terrain\", field, v) or tween(id, \"terrain.<field>\", v, seconds): every grass.* key (grass.enabled false stops the grass, true brings it back), texture_tile, metallic and roughness. They reach the next frame drawn.",
+        )
+        .returns(Array, "the field names, as a scene file writes them")
+        .run(|_call, ()| -> rhai::Array {
+            super::LIVE_FIELDS
+                .iter()
+                .map(|f| rhai::Dynamic::from(f.to_string()))
+                .collect()
         });
     }
 }
