@@ -13,6 +13,7 @@ use crate::{Note, Registry, Resources, Subsystem};
 use flint_core::package::InUse;
 use flint_core::project::Project;
 use flint_ecs::FlintWorld;
+use flint_render::model_loader::ModelLoadResult;
 use flint_render::stylize::StyleRegistry;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::pad::Gilrs;
@@ -62,6 +63,13 @@ pub struct SceneCtx<'a> {
     /// every package is in. A builder of a package it leaves out makes
     /// nothing and says so ([`SceneCtx::leaves_out`], #1528).
     pub packages: Option<&'a InUse>,
+    /// What the model loader made of the scene's models, when the host
+    /// loaded them for this scene: the skeletons and clips a skinned or
+    /// animated model brought, and which entities are skinned (#1620).
+    /// `None` in a headless test and a capture, whose animation is its own
+    /// ([`CapturePose`]). A model spawned later reaches the subsystems
+    /// through [`Subsystem::late_models`](crate::Subsystem::late_models).
+    pub models: Option<&'a ModelLoadResult>,
     /// The run's resources: what one package lends another. The sound is
     /// here while the host has one (`flint_audio::engine::of_mut`): a
     /// subsystem that plays on the shared kira manager (the music, ADR
@@ -166,6 +174,10 @@ pub struct StageCtx<'a> {
     /// state is here at every stage (`flint_physics::of`), and the sound
     /// while the host has one (`flint_audio::engine::of_mut`).
     pub resources: &'a mut Resources,
+    /// The frame's event bus: what a subsystem raises here (a tween's
+    /// `tween_done`) reaches the scripts with the next frame's events, as
+    /// the physics contacts do.
+    pub bus: &'a mut EventBus,
 }
 
 impl StageCtx<'_> {
@@ -215,6 +227,19 @@ impl FixedCtx<'_> {
     pub fn runs(&self, name: &str) -> bool {
         self.policy.runs(name)
     }
+}
+
+/// A capture's own animation (`flint render --anim-time`, #307): the
+/// clips, bone probes and IK a package steps on the capture's clock, which
+/// the command makes and hands to the capture's game. The capture steps it
+/// where the player's frame runs `Stage::Animate` and `Stage::Pose` (which
+/// a capture doesn't run), after the scripts and before the bones go up.
+pub trait CapturePose: std::any::Any {
+    /// One frame of animation, `dt` seconds on.
+    fn step(&mut self, world: &mut FlintWorld, dt: f64);
+
+    /// Itself, for the command that made it to read back.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// A mouse button, as [`PlayerInput::Click`] carries it: the kernel's own,

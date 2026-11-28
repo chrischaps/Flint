@@ -1665,9 +1665,9 @@ impl super::game_core::FrameHost for PlayerApp {
     }
 
     fn bones_posed(&mut self) {
-        // Push skeletal bone matrices to GPU
-        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            flint_core::scope!("upload_bones", self.skeletal_entity_assets.len());
+        // The motion-hold clock, before the bones go up at `Stage::Pose`
+        // (the animation package uploads them there, #1620)
+        if let Some(renderer) = &mut self.scene_renderer {
             // The clock poses held on twos tick by (#405), before the bones
             // go up: the same seconds the post time reads, so a held pose
             // and a style's boil turn on the same frame
@@ -1679,17 +1679,6 @@ impl super::game_core::FrameHost for PlayerApp {
                     self.core.clock.total_time,
                     Some(renderer.effective_post_process_config().motion_hold),
                 );
-            }
-            for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                if let Some(matrices) = self.core.animation.bone_matrices(entity_id) {
-                    renderer.update_bone_matrices(
-                        &context.device,
-                        &context.queue,
-                        *entity_id,
-                        asset_name,
-                        matrices,
-                    );
-                }
             }
         }
     }

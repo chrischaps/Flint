@@ -126,10 +126,14 @@ pub(crate) fn build_for_scene(ctx: &mut SceneCtx) -> Vec<Box<dyn Subsystem>> {
 }
 
 /// The subsystems, and the script modules they enable, that every scene of
-/// a stock build has: the particles package's (#1622: an effect needs no
-/// emitter in the scene). A test of a scene's own leaves them out.
+/// a stock build has: the animation package's (its clips and `tween`), the
+/// flipbook package's (#1620) and the particles package's (#1622: an effect
+/// needs no emitter in the scene). A test of a scene's own leaves them out.
 #[cfg(test)]
-pub(crate) const EVERY_SCENE: (&[&str], &[&str]) = (&["particles"], &["particle"]);
+pub(crate) const EVERY_SCENE: (&[&str], &[&str]) = (
+    &["animation", "flipbook", "particles"],
+    &["animation", "tween", "flipbook", "particle"],
+);
 
 /// The enabled script modules less those [`EVERY_SCENE`] enables.
 #[cfg(test)]
@@ -226,6 +230,17 @@ impl Subsystems {
     pub(crate) fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
         for s in &mut self.list {
             s.update(stage, ctx);
+        }
+    }
+
+    /// The late models loaded (#1107): what the loader made of them.
+    pub(crate) fn late_models(
+        &mut self,
+        world: &mut flint_ecs::FlintWorld,
+        models: &flint_render::model_loader::ModelLoadResult,
+    ) {
+        for s in &mut self.list {
+            s.late_models(world, models);
         }
     }
 
@@ -350,6 +365,7 @@ macro_rules! with_stage_ctx {
                     )),
                     quit: Some(&mut $app.outcome.exit_requested),
                     resources,
+                    bus: &mut $app.core.events,
                 };
                 $body
             },
@@ -385,6 +401,7 @@ macro_rules! with_scene_ctx {
                     )),
                     capture: None,
                     packages: $app.core.packages.as_ref(),
+                    models: None,
                     resources,
                     registry: $crate::packages::registry(),
                 };
@@ -424,7 +441,13 @@ impl super::PlayerApp {
                 }
             }
         }
-        let built = with_scene_ctx!(self, |ctx| build_for_scene(&mut ctx));
+        // The scene's models as the loader made them (skeletons, clips),
+        // kept from the renderer's share of the entry for the builders
+        let models = self.scene_models.take();
+        let built = with_scene_ctx!(self, |ctx| {
+            ctx.models = models.as_ref();
+            build_for_scene(&mut ctx)
+        });
         for subsystem in built {
             self.core.subsystems.push(subsystem);
         }

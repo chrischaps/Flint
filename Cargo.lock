@@ -1650,10 +1650,18 @@ dependencies = [
  "flint-core",
  "flint-ecs",
  "flint-import",
+ "flint-package",
+ "flint-render",
  "flint-runtime",
+ "flint-scene",
+ "flint-schema",
+ "flint-script",
  "log",
+ "rhai",
  "serde",
  "toml",
+ "tracing",
+ "wgpu",
 ]
 
 [[package]]
@@ -1856,6 +1864,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-flipbook"
+version = "0.1.0"
+dependencies = [
+ "flint-animation",
+ "flint-core",
+ "flint-ecs",
+ "flint-package",
+ "flint-runtime",
+ "flint-script",
+ "serde",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "flint-geometry"
 version = "0.1.0"
 dependencies = [
@@ -2041,6 +2064,7 @@ dependencies = [
  "flint-core",
  "flint-debug-ui",
  "flint-ecs",
+ "flint-flipbook",
  "flint-geometry",
  "flint-import",
  "flint-living",
@@ -2290,7 +2314,6 @@ dependencies = [
 name = "flint-script"
 version = "0.1.0"
 dependencies = [
- "flint-animation",
  "flint-core",
  "flint-ecs",
  "flint-geometry",

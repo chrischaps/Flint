@@ -1,0 +1,41 @@
+# Flipbooks (ADR 0139 section 6, #1620, epic #1611): sprite-sheet clips
+# (`.sprite.toml`) played as a clip kind on animation's clock, so a sprite
+# follows the `animator` rules every clip follows and gains sequences, cues,
+# `autoplay`, reverse play and resume. A standard package: on unless a game
+# writes `flipbook = false`; it requires `animation`, so `animation = false`
+# takes it too.
+#
+# Its crate is in this folder: crates/flint-flipbook, whose `player` feature
+# registers the flipbook clip kind on animation's `ClipKinds` point, loads
+# the scene's `.sprite.toml` clips, and declares the `flipbook` script
+# module (`play_sprite`, `stop_sprite`, `set_sprite_speed`,
+# `is_sprite_playing` and their deprecated spellings). Drawing a sprite stays
+# the kernel's until Phase 4 (#1665), when `sprite` joins `[requires]`.
+
+[package]
+name = "flipbook"
+version = "0.1.0"
+tier = "standard"
+summary = "Sprite-sheet clips played on animation's clock, with its sequences and cues"
+engine = "^0.1"
+
+[requires]
+animation = "*"
+
+[build]
+features = ["flipbook"]
+
+[rust]
+player = "flint-flipbook"
+
+[provides]
+crates = ["flint-flipbook"]
+# sprite_animator is animator now (ADR 0139 section 7): its schema stays for
+# one release, its fields retired, and Animator::of reads it as an alias
+components = ["sprite_animator"]
+archetypes = ["animated_sprite"]
+script_modules = ["flipbook"]
+
+# What a player built without it still knows (ADR 0137 decision 8).
+[without]
+does = "show their first frame"

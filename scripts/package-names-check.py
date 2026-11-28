@@ -68,6 +68,17 @@ EXCEPTIONS = {
     "report's `particles` row, the stage of a scene's bring-up the particles package's "
     "builder times (`NoteKind::ParticleLoad`), named for what is loaded there as `models` "
     "and `scripts` are (#1622)",
+    ("flint-cli", "crate", "flint-animation"): "the model previewer (`preview.rs`), "
+    "`flint render --anim-time` (`HeadlessAnimation`) and the render's one IK solve "
+    "(`IkPass`) name the animation package's crate: skeletons, IK and the previewer "
+    "are `rig`'s (ADR 0139 section 3), and #1621 puts them behind registration",
+    ("flint-core", "string", "animation", "crates/flint-core/src/load_report.rs"): "the "
+    "load report's `animation` row, the kernel's stage of a scene's bring-up that the "
+    "animation package's builder times (`NoteKind::AnimationLoad`), named for what is "
+    "loaded there as `models` and `scripts` are",
+    ("flint-package", "string", "animation", "crates/flint-package/src/stage.rs"): "the "
+    "label of `Stage::Animation` (after the animation, the pose and the particles), a "
+    "kernel stage every package may hear, which a profiler scope names",
     ("flint-player", "string", "music", "crates/flint-player/src/logging.rs"): "a log "
     "target the engine's warnings are counted under (`flint_target`), as `load` and "
     "`perf` are: the music package logs as `music`, and so did the player before it",

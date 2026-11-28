@@ -51,8 +51,8 @@ mod stage;
 mod subsystem;
 
 pub use context::{
-    find, find_mut, Button, Capture, CaptureGame, CaptureGameMut, EncodeCtx, ExitReport, FixedCtx,
-    FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, StageCtx,
+    find, find_mut, Button, Capture, CaptureGame, CaptureGameMut, CapturePose, EncodeCtx,
+    ExitReport, FixedCtx, FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, StageCtx,
 };
 /// The run's typed values: flint-core's since #1616, so flint-script can
 /// lend them to a script call (ADR 0138 decision 1).

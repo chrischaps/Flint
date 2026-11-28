@@ -23,10 +23,11 @@ use super::render_plan::{self, TimeSpec};
 use super::render_post::{self, legacy_render_mode, post_process_config};
 use super::render_report::{self, CaptureReport};
 use anyhow::{anyhow, Context, Result};
+use flint_animation::player::HeadlessAnimation;
 use flint_core::components as comp;
 use flint_core::load_report;
 use flint_core::Vec3;
-use flint_player::{ExpressionTimeline, HeadlessAnimation, HeadlessGame, ScriptLook};
+use flint_player::{ExpressionTimeline, HeadlessGame, ScriptLook};
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{
     Camera, DebugMode, FrameInputs, HeadlessContext, RendererConfig, SceneRenderer,
@@ -634,7 +635,9 @@ fn pose_animation(
     tell: bool,
 ) -> Option<HeadlessAnimation> {
     let seconds = args.clock.anim_time?.max(0.0);
-    let mut posed = HeadlessAnimation::load(models, project, &args.scene);
+    // With the kinds the run's packages registered (the flipbook's, #1620)
+    let kinds = flint_player::packages::registry().point::<flint_animation::player::ClipKinds>();
+    let mut posed = HeadlessAnimation::load(models, project, &args.scene, kinds);
     let (steps, rest) = render_plan::steps_within(seconds, step);
     if steps == 0 && rest == 0.0 {
         posed.settle(world);

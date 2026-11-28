@@ -134,7 +134,7 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
         &format!(
             "set_render_mode(1.0, 1); set_camera_fov(60); set_time_scale(2); \
              set_fog_color(1, 0, 0); play_sound(\"blip\", 1, 2); \
-             set_anim_layer({id}, 1.0, \"wave\", 1); set_velocity_2d({id}, 3, 4)"
+             set_velocity_2d({id}, 3, 4)"
         ),
     )
     .unwrap();
@@ -151,13 +151,6 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
         );
         assert_eq!(c.commands.len(), 2, "the sound and the velocity");
     }
-    let eid = flint_core::EntityId::from_raw(id as u64);
-    let layers = world
-        .get_components(eid)
-        .and_then(|c| c.get_field("animator", "layers").cloned())
-        .and_then(|v| v.as_array().cloned())
-        .unwrap();
-    assert_eq!(layers.len(), 2, "slot 0 padded, slot 1 set");
     // A fractional float is not an int
     let err = eval::<()>(&engine, &mut world, "is_mouse_pressed(0.5)").unwrap_err();
     assert!(
@@ -341,17 +334,11 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
     // The ported modules' entity functions are all here
     for name in [
         "set_position",
-        "play_clip",
-        "set_anim_layer",
-        "set_anim_layer_ex",
-        "play_sequence",
         "audio_position",
         "set_velocity_2d",
         "get_velocity_2d",
         "set_sprite_tint",
         "get_sprite_layer",
-        "play_sprite",
-        "sprite_play",
         "set_text",
         "set_text_color",
         "follow_with_camera",
@@ -830,8 +817,6 @@ fn the_draw_and_ui_modules_are_declared() {
         ("view", "world_to_screen", 3),
         ("ui", "load_ui", 1),
         ("screen_ui", "set_text", 2),
-        ("sprite", "play_sprite", 2),
-        ("sprite", "sprite_play", 2),
         ("camera_2d", "follow_with_camera", 6),
         ("touch", "touch_x", 1),
         ("touch", "touch_id", 1),

@@ -525,11 +525,12 @@ mod tests {
             lines(&engine_packages(), &found),
             ["procgen = \"*\"", "living = \"*\""]
         );
-        // Procgen is used, so of the standard packages only particles, which
-        // nothing in the grove uses, is named to leave out (#1622)
+        // Procgen is used, so it isn't named to leave out; nothing scanned
+        // animates (#1620) or emits (#1622), so animation, flipbook and
+        // particles are
         assert_eq!(
             left_out_lines(&engine_packages(), &found, None),
-            ["particles"]
+            ["animation", "flipbook", "particles"]
         );
     }
 
@@ -544,7 +545,7 @@ mod tests {
         assert!(found.is_empty(), "{found:?}");
         assert_eq!(
             left_out_lines(&packages, &found, None),
-            ["particles", "procgen"]
+            ["animation", "flipbook", "particles", "procgen"]
         );
         assert_eq!(
             left_out_line("procgen"),
@@ -574,16 +575,17 @@ mod tests {
             list(&[("ai", any())]),
             list(&[("living", any())]),
         ] {
-            assert_eq!(
-                left_out_lines(&packages, &found, Some(&listed)),
-                ["particles"],
+            assert!(
+                !left_out_lines(&packages, &found, Some(&listed))
+                    .iter()
+                    .any(|p| p == "procgen"),
                 "{listed:?}"
             );
         }
         // A listed package that needs nothing standard leaves it named
         assert_eq!(
             left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
-            ["particles", "procgen"]
+            ["animation", "flipbook", "particles", "procgen"]
         );
     }
 }
