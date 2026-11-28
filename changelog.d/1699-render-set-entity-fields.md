@@ -1,4 +1,0 @@
-### `flint render --set` and `--sweep` reach an entity's fields: `<entity>.<component>.<field>` (#1699)
-**Package.** engine
-**What changed.** A key of three or more parts that doesn't start `post.`, `wooze.` or `living.` names one field of one entity's component: `--set sun.light.direction=0.8,0.1,-0.3`, `--sweep ground.terrain.grass.density=10,30,60`. The value is written into the loaded world before the renderer binds it, so what a package builds at load (a terrain's chunks, tiling and grass) follows it, and a sweep of one draws a world a column. The value is read as the field's schema types it and held to its range; an entity, component or field the scene doesn't have is an error naming what it has, with the nearest name. Every key that worked before means what it did.
-**What to do.** Nothing. To tune a terrain or a light, sweep its fields instead of editing the scene between renders.
