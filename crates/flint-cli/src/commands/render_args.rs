@@ -162,15 +162,15 @@ pub struct CameraArgs {
     pub distance: Option<f32>,
 
     /// Camera horizontal angle in degrees
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     pub yaw: Option<f32>,
 
     /// Camera vertical angle in degrees
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     pub pitch: Option<f32>,
 
-    /// Camera look-at point (comma-separated x,y,z)
-    #[arg(long, value_parser = parse_vec3)]
+    /// Camera look-at point (comma-separated x,y,z; `-60,2,120` too)
+    #[arg(long, value_name = "X,Y,Z", value_parser = parse_vec3, allow_hyphen_values = true)]
     pub target: Option<[f32; 3]>,
 
     /// Field of view in degrees
@@ -231,7 +231,7 @@ pub struct ShadingArgs {
     pub sheen_strength: Option<f32>,
 
     /// Charlie-sheen rim tint as comma-separated R,G,B (default: 1,1,1)
-    #[arg(long, value_parser = parse_vec3)]
+    #[arg(long, value_name = "R,G,B", value_parser = parse_vec3, allow_hyphen_values = true)]
     pub sheen_color: Option<[f32; 3]>,
 }
 

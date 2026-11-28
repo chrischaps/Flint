@@ -29,15 +29,16 @@ pub struct PreviewArgs {
     pub distance: Option<f32>,
 
     /// Camera horizontal angle in degrees
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     pub yaw: Option<f32>,
 
     /// Camera vertical angle in degrees
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     pub pitch: Option<f32>,
 
     /// Camera look-at point (comma-separated x,y,z)
-    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
+    #[arg(long, value_name = "X,Y,Z", value_parser = crate::commands::common_args::parse_vec3,
+          allow_hyphen_values = true)]
     pub target: Option<[f32; 3]>,
 
     /// Field of view in degrees
