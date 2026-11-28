@@ -13,11 +13,16 @@
 //!   wall, a rail, a pipe (#750)
 //! - [`ray_mesh`] - rays against the triangles a game draws (ADR 0105)
 //! - [`components`] - the `ocean`, `water_body` and `spline` component names
+//! - [`terrain_chunk`] and [`grass`] - a terrain chunk's mesh and the grass
+//!   settings, the plain data the terrain package makes and the renderer
+//!   draws, so the renderer links no terrain crate (#1615)
 
 pub mod components;
+pub mod grass;
 pub mod ocean;
 pub mod point_path;
 pub mod ray_mesh;
 pub mod spline;
 pub mod spline_file;
 pub mod sweep;
+pub mod terrain_chunk;

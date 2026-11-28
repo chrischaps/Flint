@@ -641,6 +641,8 @@ impl Stage {
         // where the load put it, and the grass where the load's first step
         // left it: woozy grass's sway and comb, else at rest.
         let clocked = on_clock(args);
+        // Each emitter's draw, as the renderer takes it (#1615)
+        let particle_draws = particle_time.map(|_| self.game.particles().sync.draw_data());
         let style_time = args
             .style
             .style_time
@@ -673,7 +675,7 @@ impl Stage {
         if !clocked {
             inputs.grass_time = inputs.grass_time.or(Some(0.0));
         }
-        inputs.particles = particle_time.map(|_| &self.game.particles().sync);
+        inputs.particles = particle_draws.as_deref();
         // A captured frame keeps its inputs for its replay (#1089)
         self.replay_inputs = self
             .renderer
@@ -851,7 +853,7 @@ pub(super) fn load_particles(
         renderer,
         &ctx.device,
         &ctx.queue,
-        &particles.sync,
+        &particles.sync.texture_names(),
         project,
         Path::new(scene).parent().unwrap_or(Path::new(".")),
     );

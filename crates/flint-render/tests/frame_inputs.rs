@@ -199,8 +199,17 @@ fn a_bound_scene_draws_its_terrain_masked_and_the_next_forgets_it() {
     let (mut world, ground) = terrain_world();
     let binding = SceneBinding::for_scene(&fixture_scene());
     let mut renderer = gpu.renderer();
-    let bound = renderer.bind_scene(gpu.device, gpu.queue, &world, &binding);
-    let terrain = bound.terrain.expect("the scene's terrain loaded");
+    // The terrain package builds the terrain after the bind (#1615), as
+    // every host does
+    let mut bound = renderer.bind_scene(gpu.device, gpu.queue, &world, &binding);
+    let terrain = flint_terrain::scene::bind_terrain(
+        &mut renderer,
+        gpu.device,
+        gpu.queue,
+        &world,
+        &mut bound,
+    )
+    .expect("the scene's terrain loaded");
     assert_eq!(terrain.entity, ground);
     assert_eq!(terrain.heightmap_size, (257, 257));
     let plain = gpu.frame(&mut renderer, &world, &FrameInputs::default());
@@ -224,8 +233,15 @@ fn a_bound_scene_draws_its_terrain_masked_and_the_next_forgets_it() {
 
     // The next scene has no terrain: nothing of this one's is drawn
     let empty = FlintWorld::new();
-    let bound = renderer.bind_scene(gpu.device, gpu.queue, &empty, &binding);
-    assert!(bound.terrain.is_none() && bound.grass.is_none());
+    let mut bound = renderer.bind_scene(gpu.device, gpu.queue, &empty, &binding);
+    let terrain = flint_terrain::scene::bind_terrain(
+        &mut renderer,
+        gpu.device,
+        gpu.queue,
+        &empty,
+        &mut bound,
+    );
+    assert!(terrain.is_none() && bound.grass.is_none());
     let after = gpu.frame(&mut renderer, &empty, &FrameInputs::default());
     let mut fresh = gpu.renderer();
     fresh.bind_scene(gpu.device, gpu.queue, &empty, &binding);
@@ -236,9 +252,10 @@ fn a_bound_scene_draws_its_terrain_masked_and_the_next_forgets_it() {
     );
 }
 
-/// #802: the renderer reads sprites, their 2D UI, materials and the terrain
-/// through the typed view, so a wrong type or an unknown choice is reported
-/// once by entity, component and field, however many frames read it.
+/// #802: the renderer reads sprites, their 2D UI and materials, and the
+/// terrain package the terrain (#1615), through the typed view, so a wrong
+/// type or an unknown choice is reported once by entity, component and field,
+/// however many frames read it.
 #[test]
 fn a_mistake_in_a_sprite_its_ui_a_material_or_the_terrain_is_said_once() {
     let Some(gpu) = gpu() else {
@@ -277,7 +294,8 @@ fn a_mistake_in_a_sprite_its_ui_a_material_or_the_terrain_is_said_once() {
 
     let binding = SceneBinding::for_scene(&fixture_scene());
     let mut renderer = gpu.renderer();
-    renderer.bind_scene(gpu.device, gpu.queue, &world, &binding);
+    let mut bound = renderer.bind_scene(gpu.device, gpu.queue, &world, &binding);
+    flint_terrain::scene::bind_terrain(&mut renderer, gpu.device, gpu.queue, &world, &mut bound);
     for _ in 0..3 {
         gpu.frame(&mut renderer, &world, &FrameInputs::default());
     }

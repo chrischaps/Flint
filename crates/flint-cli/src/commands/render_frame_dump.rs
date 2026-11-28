@@ -299,7 +299,7 @@ fn write_replay(
     let particles = facts
         .particles
         .filter(|_| facts.inputs.particles)
-        .map(|p| replay::ParticlesState::of(p, world))
+        .map(|p| replay::ParticlesState::of(&p.draw_data(), world))
         .unwrap_or_default();
     let inputs = replay::ReplayInputs {
         version: 1,

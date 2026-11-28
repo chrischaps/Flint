@@ -16,7 +16,8 @@
 # --no-default-features` links none of the optional parts' crates (the
 # music, the rhythm game, procgen, living props and the wooze field, the
 # debug panels), and with --build it compiles, tests and examples included.
-# And flint-render links no flint-wooze (#1330). And the headless CLI is the
+# And flint-render links no flint-wooze (#1330), flint-terrain or flint-particles
+# (#1615). And the headless CLI is the
 # one with no package either (#1333): none of the music, rhythm, living and
 # AI crates, and no flint-wooze, whose readers in flint-procgen are behind its
 # `living` feature (#1516). Nor does the viewer with no features.
@@ -91,6 +92,20 @@ if cargo tree -p flint-render -e normal --prefix none | grep -qE '^flint-wooze v
     exit 1
 fi
 echo "flint-render: no flint-wooze"
+
+# Nor the terrain's or the particles' crates (#1615, ADR 0138 decision 5):
+# it draws the plain data they hand it (`flint_render::particles`,
+# flint-geometry's `TerrainChunk` and `GrassConfig`)
+render=$(cargo tree -p flint-render -e normal --prefix none)
+found=$(printf '%s\n' "$render" | grep -E '^(flint-terrain|flint-particles) v' | sort -u || true)
+if [ -n "$found" ]; then
+    echo "flint-render links a package's crate:" >&2
+    printf '%s\n' "$found" | sed 's/^/  /' >&2
+    first=$(printf '%s\n' "$found" | head -n1 | cut -d' ' -f1)
+    cargo tree -p flint-render -e normal -i "$first" >&2 || true
+    exit 1
+fi
+echo "flint-render: no flint-terrain, no flint-particles"
 
 if [ "${1:-}" = "--build" ]; then
     cargo check -p flint-cli --no-default-features --bins

@@ -81,8 +81,8 @@ impl Blend {
     }
 
     /// A particle emitter's.
-    pub fn of_particles(mode: flint_particles::ParticleBlendMode) -> Self {
-        use flint_particles::ParticleBlendMode as P;
+    pub fn of_particles(mode: crate::particles::ParticleBlendMode) -> Self {
+        use crate::particles::ParticleBlendMode as P;
         match mode {
             P::Alpha => Blend::Alpha,
             P::Premultiplied => Blend::Premultiplied,

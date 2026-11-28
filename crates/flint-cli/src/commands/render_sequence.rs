@@ -250,6 +250,7 @@ pub(super) fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) 
         }
         // The frame's inputs, and the world read again: the draw lists hold
         // the poses and meshes they were built with (#739)
+        let particle_draws = particles.as_deref().map(|p| p.sync.draw_data());
         renderer.prepare(
             &ctx.device,
             &ctx.queue,
@@ -259,7 +260,7 @@ pub(super) fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) 
                 grass_time: Some(t),
                 // History smoothing scales by the frame's game time (#342)
                 dt,
-                particles: particles.as_deref().map(|p| &p.sync),
+                particles: particle_draws.as_deref(),
                 ..still_inputs(args, &camera, time)
             },
         );

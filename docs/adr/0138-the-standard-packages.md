@@ -555,3 +555,46 @@ Each one is Chris's. The recommendation is written first.
    Recommended: five, restating the gate as ADR 0137 decision 5 did.
 9. **Sizes reported as context, gated nowhere.** Already Chris's
    (2026-11-27); recorded here.
+
+## As built: the renderer's plain data (#1615)
+
+Decision 5 as it landed. `cargo tree -p flint-render -e normal` shows
+neither flint-terrain nor flint-particles, and no golden moved.
+
+- **Particles, as written.** `ParticleInstance` (unchanged: the same fields
+  and `repr(C)`, 64 bytes, which `particle_shader.wgsl` and a capture's
+  `particles.bin` read), `ParticleBlendMode` and `ParticleDraw` are
+  `flint_render::particles`'s; flint-particles depends on flint-render and
+  re-exports them. `FrameInputs::particles` is `Option<&[ParticleDraw]>`,
+  from `ParticleSync::draw_data()`, and `ParticlesState::of` writes
+  `particles.bin` from the same slice. The renderer's own upload type
+  (`ParticleDrawData`, four fields) went into `ParticleDraw`, so a replay
+  and a host's own draws take the one type. The hosts build the slice where
+  they built the frame's inputs, not in a `frame_inputs` hook: the
+  particles aren't a package yet (#1622 moves them).
+- **`TerrainChunk` and `GrassConfig` are flint-geometry's**
+  (`terrain_chunk`, `grass`), re-exported from `flint_render` and
+  `flint_terrain`, not defined in flint-render as the table says. Defined in
+  the renderer, they would make flint-terrain link the renderer in every
+  build, and so flint-physics, flint-script and flint-procgen (which read
+  heights, never draw) would carry wgpu. flint-geometry is the kernel's
+  plain data both sides read (the ocean's spectrum is there already), where
+  `GroundField` is going too.
+- **The terrain loader is in flint-terrain behind a `render` feature, called
+  by the hosts.** `flint_terrain::scene::bind_terrain(renderer, device,
+  queue, world, &mut bound) -> Option<LoadedTerrain>` is `load_scene_terrain`
+  moved; `bind_scene` loads only the `grass_ground`, and the terrain's grass
+  goes into `bound.grass` unless that holds one, as before. It is not yet
+  an asset maker: a maker is a `flint_package::assets::AssetMaker`, and
+  flint-package still depends on flint-terrain (through flint-script's
+  `GroundField`), so flint-terrain can't depend on it without a cycle. The
+  player (`stage_scene_in_renderer`), the viewer (`stage_scene`) and
+  `flint render` (`bind_capture_scene`) call it right after `bind_scene`,
+  where it ran. #1623 makes it the maker once #1616 and the `GroundField`
+  move end the cycle, and drops these calls.
+- **Edges this adds and ends.** flint-viewer (kernel) gains a normal edge
+  to flint-terrain, beside the flint-particles one it has (#1622); #1623
+  ends both terrain calls' edges. Ended here as well as flint-render's:
+  flint-living's and flint-debug-ui's edges to flint-terrain (they read only
+  `GrassConfig`, now `flint_render::GrassConfig`), and flint-package's direct
+  one, assigned to #1616 in the Context's table, for the same reason.

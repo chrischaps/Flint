@@ -330,7 +330,8 @@ impl<'a> Targets<'a> {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct FrameFacts<'a> {
     pub world: &'a flint_ecs::FlintWorld,
-    pub particles: Option<&'a flint_particles::ParticleSync>,
+    /// The frame's particle draws, as `FrameInputs::particles` had them.
+    pub particles: Option<&'a [flint_render::ParticleDraw<'a>]>,
     pub scene_path: &'a str,
     pub project: &'a flint_core::project::Project,
     /// The history's number for the frame under way, when it records.

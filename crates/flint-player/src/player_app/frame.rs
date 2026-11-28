@@ -312,11 +312,14 @@ impl PlayerApp {
             {
                 if let Some(info) = &capture_adapter {
                     let targets = super::frame_capture::Targets::of(context, &output.texture, info);
+                    // The draws the frame was prepared with: the system was
+                    // packed once this frame, so they are the same (#1615)
+                    let particle_draws = self.core.particles.sync.draw_data();
                     let facts = super::frame_capture::FrameFacts {
                         world: &self.core.world,
                         particles: self
                             .particles_render_enabled
-                            .then_some(&self.core.particles.sync),
+                            .then_some(particle_draws.as_slice()),
                         scene_path: &self.core.scene_path,
                         project: &self.core.project,
                         index: self
@@ -966,6 +969,12 @@ impl PlayerApp {
             .iter()
             .filter_map(|&id| Some((id, self.core.physics.dynamic_velocity(id)?)))
             .collect();
+        // Each emitter's draw, as the renderer takes it (#1615)
+        let particle_draws = if self.particles_render_enabled {
+            self.core.particles.sync.draw_data()
+        } else {
+            Vec::new()
+        };
         let mut inputs = FrameInputs {
             // Ocean waves run on the clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the
@@ -980,7 +989,7 @@ impl PlayerApp {
             view_2d: View2d::of(&self.camera),
             particles: self
                 .particles_render_enabled
-                .then_some(&self.core.particles.sync),
+                .then_some(particle_draws.as_slice()),
             world_lines: &self.hud.world_lines,
             style_field: self.hud.style_field.shapes(),
             grass_benders: &benders,
