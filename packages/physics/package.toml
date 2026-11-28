@@ -9,9 +9,9 @@
 # has (the scene's bodies at its entry, the frame's step stages, the eye
 # its character controller places), and the `physics`, `physics_2d` and
 # `nav` script modules. The character controller and its
-# `character_controller` component stay in this crate until the
-# first-person package takes them (#1618); the component is the kernel's
-# schema until then.
+# `character_controller` component are the first-person package's since
+# #1618, which requires this one; physics keeps the sweep any controller
+# uses (`move_character`).
 
 [package]
 name = "physics"

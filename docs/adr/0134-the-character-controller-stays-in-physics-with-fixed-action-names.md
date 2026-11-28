@@ -1,7 +1,12 @@
 # ADR 0134: The character controller stays in physics, with one player and fixed action names
 
 Status: accepted, 2026-11-23 (#1212). Follows #728, whose audit named
-these four questions and left them open.
+these four questions and left them open. Decision 4 is superseded by
+[ADR 0138](0138-the-standard-packages.md) decision 4 (#1618, 2026-11-28):
+the controller left physics for the `first-person` package
+(`flint_first_person`), and the host reads the player from the kernel's
+`PlayerView`. Decisions 1 to 3 stand; the six names are
+`flint_first_person::ACTIONS`.
 
 ## Context
 

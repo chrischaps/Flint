@@ -12,14 +12,13 @@ use flint_core::EntityId;
 use flint_package::surfaces::{MadeTriangles, Surfaces};
 use flint_package::{FixedCtx, FrameCtx, SceneCtx, Stage, StageCtx, StepStage, Subsystem};
 use flint_render::FrameInputs;
-use flint_runtime::PlayerView;
 use flint_script::context::ScriptCommand;
 
 /// The scene's physics at the kernel's stages.
 #[derive(Default)]
 pub struct PhysicsSubsystem {
-    /// Built for a capture, which steps no physics: it only finds the
-    /// player and enables the modules
+    /// Built for a capture, which steps no physics: it only enables the
+    /// modules
     capture: bool,
     /// Each `ocean_contact` hull's velocity this frame (#749), lent to the
     /// renderer's inputs
@@ -28,14 +27,10 @@ pub struct PhysicsSubsystem {
 
 /// The subsystem for the scene being entered: always one, since a scene's
 /// scripts may cast rays whatever it holds. In the player the scene's
-/// bodies are made here; in a capture only the player is found.
+/// bodies are made here; in a capture nothing is (the first-person
+/// package says who the player is there, #1618).
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     if ctx.capture.is_some() {
-        // Who the scene is played as, for `on_interact` and
-        // `find_nearest_interactable` (ADR 0138, #1614): the controller's
-        // rule alone, no eye, no mouse look
-        let player = crate::character::find_player(ctx.world);
-        ctx.resources.get_or_insert_with(PlayerView::default).player = player;
         return Some(Box::new(PhysicsSubsystem {
             capture: true,
             ..Default::default()
@@ -48,7 +43,9 @@ pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
 /// The scene's bodies, in the order the player made them before #1617:
 /// the host's static surfaces (the splines' swept meshes, then each
 /// terrain's heightfield), the project's layers and the mesh colliders'
-/// triangles, then every body, joint and the player.
+/// triangles, then every body and joint. Who the player is comes after,
+/// from the first-person package's builder (#1618), which the registry
+/// orders after physics'.
 fn enter_scene(ctx: &mut SceneCtx) {
     let surfaces = ctx.resources.remove::<Surfaces>().unwrap_or_default();
     if let Some(physics) = of_mut(ctx.resources) {
@@ -89,12 +86,6 @@ fn enter_scene(ctx: &mut SceneCtx) {
             tracing::warn!("Failed to initialize physics: {e:#}");
         }
     });
-    // Who the scene is played as, before anything reads it: the cursor and
-    // the controls line at the end of the entry, `on_init`'s interactables
-    // (ADR 0138, #1614). The kernel reset the view before the builders.
-    let mut view = PlayerView::default();
-    physics.enter_player_view(&mut view);
-    ctx.resources.insert(view);
 }
 
 /// The project's layers, then the triangles of the mesh colliders the last
@@ -180,35 +171,17 @@ impl Subsystem for PhysicsSubsystem {
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
         match stage {
             // The frame's share before its steps, against the poses and
-            // joint targets the scripts just wrote
+            // joint targets the scripts just wrote (a controller's look
+            // comes after, at the same stage: first-person's, #1618)
             Stage::Scripts => {
                 if !self.capture {
                     Self::refresh_meshes(ctx);
                 }
                 let ratio = ctx.clock.pending_fixed_ratio();
-                let runs = ctx
-                    .policy
-                    .is_none_or(|p| p.runs(flint_runtime::state::PHYSICS));
                 let Some(physics) = of_mut(ctx.resources) else {
                     return;
                 };
                 physics.begin_frame(ratio);
-                // Look and the jump press once a frame, however many steps
-                // run: none on most frames above 60 Hz, two at 30 (#728).
-                // The controller does nothing without its player.
-                if !self.capture && runs {
-                    physics.character_frame_input(ctx.input, ctx.world);
-                }
-            }
-            // The eye the controller placed (ADR 0138's `View`), until the
-            // first-person package takes it (#1618). A capture's camera
-            // stays the scene's.
-            Stage::View if !self.capture => {
-                if let Some((physics, view)) =
-                    ctx.resources.get_two_mut::<PhysicsSystem, PlayerView>()
-                {
-                    physics.place_eye(ctx.world, view);
-                }
             }
             // A hull on a dynamic body foams with the velocity the solver
             // gave it (#749); the renderer differences the rest's motion
@@ -233,8 +206,9 @@ impl Subsystem for PhysicsSubsystem {
         let Some(physics) = of_mut(ctx.resources) else {
             return;
         };
+        // A controller walks at `Control`, before the sync-in (first-person's,
+        // #1618)
         match stage {
-            StepStage::Control => physics.update_character(ctx.input, ctx.world, ctx.dt),
             StepStage::SyncIn => {
                 flint_core::scope!("physics::fixed_update");
                 physics.sync_in(ctx.world);
@@ -285,7 +259,7 @@ impl Subsystem for PhysicsSubsystem {
         }
     }
 
-    /// The scene is going: its world, bodies and character, all at once.
+    /// The scene is going: its world and bodies, all at once.
     /// The run's layers and made triangles stay.
     fn scene_unloading(&mut self, ctx: &mut SceneCtx) {
         if let Some(physics) = of_mut(ctx.resources) {

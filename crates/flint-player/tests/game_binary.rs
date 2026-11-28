@@ -33,7 +33,7 @@ fn a_game_binary_without_a_listed_package_names_flint_build() {
     // package lacks every standard one too)
     let listed =
         "[packages]\nliving = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false\n\
-         particles = false\nphysics = false\nrig = false\nterrain = false";
+         particles = false\nphysics = false\nrig = false\nterrain = false\nfirst-person = false";
     let scene = project(&dir.join("listed"), listed);
 
     // The resolver's answer handed over, as cave_game does
@@ -60,7 +60,7 @@ fn a_game_binary_without_a_listed_package_names_flint_build() {
     let kernel = project(
         &dir.join("kernel"),
         "[packages]\ndebug-hud = false\nprocgen = false\nanimation = false\nflipbook = false\n\
-         particles = false\nphysics = false\nrig = false\nterrain = false",
+         particles = false\nphysics = false\nrig = false\nterrain = false\nfirst-person = false",
     );
     assert_eq!(app(&kernel).unbuilt_packages(), None);
     assert_eq!(
