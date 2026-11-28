@@ -215,7 +215,15 @@ impl Stage {
         renderer.set_pass_knobs(args.measure.pass_knobs.knobs()?);
 
         // The scene bound, its levers set (#739), as the one-renderer path does
-        bind_capture_scene(args, ctx, &mut renderer, &world, &scene_file, binding);
+        bind_capture_scene(
+            args,
+            ctx,
+            &mut renderer,
+            &world,
+            &scene_file,
+            binding,
+            packages.as_ref(),
+        );
 
         // Load models and textures from the scene
         let config = ModelLoadConfig::from_scene_path(&args.scene);

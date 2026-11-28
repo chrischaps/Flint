@@ -1,12 +1,11 @@
 # The kernel, and with it what can't be left out yet (ADR 0136 decision 8).
 #
 # Every game links this package. It holds the kernel and the standard
-# packages that have no Cargo feature until Phase 3 (audio, terrain;
-# animation left with #1620, particles with #1622, physics with #1617,
-# first-person with #1618), and
-# the render features that live inside flint-render until Phase 4 (ocean,
-# grass, stylize, panels). Each list is grouped by the package it will
-# become, so the split is a move of lines.
+# packages that have no Cargo feature until Phase 3 (audio; animation left
+# with #1620, particles with #1622, physics with #1617, terrain with #1623,
+# first-person with #1618), and the render features that live inside
+# flint-render until Phase 4 (ocean, grass, stylize, panels). Each list is
+# grouped by the package it will become, so the split is a move of lines.
 # `flint package list` reads this file; a test in flint-cli holds every
 # crate, schema, script module and command of the tree to one manifest.
 
@@ -27,8 +26,6 @@ crates = [
     "flint-widgets", "flint-cli",
     # audio
     "flint-audio", "flint-audio-worklet",
-    # terrain
-    "flint-terrain",
 ]
 components = [
     # kernel
@@ -39,8 +36,6 @@ components = [
     "motion_hold",
     # audio
     "audio_source", "audio_trigger",
-    # terrain
-    "terrain",
     # ocean
     "ocean", "ocean_contact", "water_body",
     # grass
@@ -51,8 +46,6 @@ components = [
 archetypes = [
     # kernel
     "sprite", "character",
-    # terrain
-    "terrain",
 ]
 scene_tables = [
     # kernel
@@ -69,8 +62,6 @@ script_modules = [
     "field",
     # audio
     "audio",
-    # terrain
-    "terrain",
     # ocean
     "ocean",
     # stylize
@@ -85,5 +76,5 @@ commands = [
     "dxc", "style", "package", "build",
     "asset import", "asset list", "asset info", "asset resolve", "asset where",
     # hidden aliases of `flint edit`
-    "serve", "spline-edit", "preview", "terrain-edit",
+    "serve", "spline-edit", "preview",
 ]

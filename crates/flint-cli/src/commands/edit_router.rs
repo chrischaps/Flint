@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use flint_viewer::host::{self, CameraFlags, Editor, HostOptions, StillOptions};
 
-use super::{preview, spline_edit, terrain_edit};
+use super::{preview, spline_edit};
 use flint_package::cli::Points;
 use flint_viewer::host::{EffectEdit, EffectEditors, SpecEdit, SpecKind};
 
@@ -433,6 +433,20 @@ pub(crate) fn run_in(args: EditArgs, points: &Points) -> Result<()> {
     } else {
         None
     };
+    // A terrain spec's editor is the terrain package's (#1623), asked the
+    // same way
+    let terrain_editors = if path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().ends_with(".terrain.toml"))
+    {
+        Some(super::terrain_edit::editors(
+            points,
+            &format!("flint edit {}", args.file),
+            &["terrain-edit"],
+        )?)
+    } else {
+        None
+    };
     let file_kind = detect_file_kind(path)?;
     // An effect's editor is the particles package's (#1622): the editor it
     // registered, or the package named before the file is read or made
@@ -537,13 +551,17 @@ pub(crate) fn run_in(args: EditArgs, points: &Points) -> Result<()> {
                 },
             )?)
         }
-        K::Terrain => launch.go(terrain_edit::editor(terrain_edit::TerrainEditArgs {
-            spec: args.file,
-            seed: args.seed,
-            width: options.width,
-            height: options.height,
-            no_grid: args.no_grid,
-        })?),
+        K::Terrain => {
+            let editors = terrain_editors.expect("a .terrain.toml found its editor above");
+            launch.go((editors.open)(SpecEdit {
+                spec: args.file,
+                seed: args.seed,
+                width: options.width,
+                height: options.height,
+                no_grid: args.no_grid,
+                auto_orbit: false,
+            })?)
+        }
         K::Particles => {
             let editors = effect_editors.expect("a .particles.toml found its editor above");
             launch.go((editors.open)(EffectEdit {

@@ -446,8 +446,10 @@ impl PlayerApp {
         // scene's world is installed reuses one
         self.core.world = FlintWorld::after(&self.core.world);
 
-        // Clear terrain
-        self.terrain = None;
+        // Clear terrain: its ground goes with it (#1623)
+        self.core
+            .resources
+            .remove::<flint_geometry::ground::SceneGround>();
         if let Some(renderer) = &mut self.scene_renderer {
             renderer.clear_terrain();
             // Entity ids are never reused, so the old scene's bones are garbage.

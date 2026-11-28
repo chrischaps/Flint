@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 41-member Cargo workspace (40 crates, 23 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 41-member Cargo workspace (40 crates, 21 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -16,7 +16,6 @@ flint/
 │   ├── flint-widgets/      # The kernel's egui: widgets, a headless frame, F4's Rendering & Effects panel
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
 │   ├── flint-audio-worklet/# Kira mixer for the browser's AudioWorklet (its own small wasm)
-│   ├── flint-terrain/      # Heightmap terrain with splat-map blending
 │   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus, GameStateMachine, pads)
 │   ├── flint-physics/      # Rapier 3D integration (PhysicsWorld, PhysicsSync, rays, joints)
 │   ├── flint-render/       # wgpu PBR renderer with Cook-Torrance shading + skinned mesh pipeline
@@ -53,6 +52,8 @@ flint/
 │   │   └── flint-wooze/        # The wooze field
 │   ├── debug-hud/crates/
 │   │   └── flint-debug-ui/     # The F3 panel roster (ocean, sky, ...) and the HUD the player asks
+│   ├── terrain/crates/
+│   │   └── flint-terrain/      # Heightmap ground: chunks, splat layers, grass, the scene binder, the terrain editor
 │   ├── vehicle/crates/
 │   │   └── flint-vehicle/      # Vehicles: Rapier's raycast wheels with arcade assists, driven each fixed step
 │   ├── first-person/crates/
@@ -253,7 +254,7 @@ The `debug-hud` package's crate (`packages/debug-hud/crates/flint-debug-ui`, #15
 - Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4, `flint-widgets`' own), Ocean, Camera, Grass, Styles, and `ComponentPanel`, drawn from any component schema whose fields say `panel = ...` (#744)
 - `widgets`: `flint-widgets` re-exported, so a package's panel names either
 - `player` feature: `player::PACKAGE`, a `flint_package::Package` that registers the run's `DebugHud` (`flint_package::hud`): it makes the engine's panels at each scene, syncs them each frame, lays them out over the game, drives F3 and F4, paints the corner cards (scripts and styles that fail) and draws F2's graph from the frames the player hands it. flint-player's `debug-hud` feature turns it on and its build script lists it from the manifest's `[rust]`
-- Depends on `flint-package`, `flint-widgets`, `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-schema`, `flint-terrain`, `flint-scene` and, with `player`, `flint-script`. The Particles panel is the particles package's since #1622, at the kernel's `ScenePanels` point
+- Depends on `flint-package`, `flint-widgets`, `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-schema`, `flint-scene` and, with `player`, `flint-script`. The Particles panel is the particles package's since #1622, at the kernel's `ScenePanels` point
 - A game drops it with `debug-hud = false`: the run has no panels, and F3, F4 and the graph are not offered. The game's `flint` leaves it out too (flint-cli's `debug-hud` feature, #1583), and its editors are the same without it
 
 ### flint-first-person
@@ -451,12 +452,14 @@ What every paid AI call in the tools goes through, shared by `flint-procgen-ai`,
 
 ### flint-terrain
 
-Heightmap terrain system:
-- Chunked mesh generation from grayscale PNG heightmaps
-- RGBA splat-map blending for up to 4 texture layers
-- Bilinear height interpolation for smooth surfaces
-- `terrain_height(x, z)` callback for script queries
-- Does NOT depend on `flint-render`; uses standard `Vertex` format
+The `terrain` package's crate (`packages/terrain/crates/flint-terrain`, #1623): heightmap ground for outdoor 3D games.
+- Chunked mesh generation from grayscale PNG heightmaps, the spec format (`.terrain.toml`) and its one bake
+- RGBA splat-map blending for up to 4 texture layers, grass over the splat map
+- The plain data it makes is the kernel's (flint-geometry): the chunk mesh, the grass settings, the height grid and `GroundField`, and the `SceneGround` it hands its host
+- `render` feature: a scene's terrain built into a renderer (`scene::bind_terrain`); with no feature it links no renderer
+- `player` feature: `player::PACKAGE`, which registers the kernel's scene binder (run after `bind_scene` in the player, the viewer and `flint render`), a subsystem and the `terrain` script module (`terrain_height`)
+- `cli` feature: the terrain editor, on the kernel's `TerrainEditors` point (`flint edit x.terrain.toml`)
+- A game drops it with `terrain = false`: neither launcher links it, and a scene's `terrain` is `unlisted-package`
 
 ### flint-android
 

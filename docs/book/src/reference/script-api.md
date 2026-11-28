@@ -44,11 +44,12 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 
 | Package | Tier | Modules |
 |---|---|---|
-| [`engine`](#the-engine-package) | kernel | [entity](#entity) (40) · [input](#input) (22) · [time](#time) (3) · [audio](#audio) (17) · [camera](#camera) (8) · [camera_rig](#camera_rig) (12) · [post_process](#post_process) (22) · [quality](#quality) (5) · [math](#math) (23) · [event](#event) (2) · [log](#log) (4) · [draw](#draw) (44) · [draw_world](#draw_world) (6) · [view](#view) (6) · [ui](#ui) (26) · [screen_ui](#screen_ui) (6) · [sprite](#sprite) (6) · [camera_2d](#camera_2d) (12) · [touch](#touch) (15) · [style](#style) (25) · [style_field](#style_field) (6) · [panels](#panels) (4) · [spline](#spline) (4) · [ocean](#ocean) (3) · [terrain](#terrain) (1) · [chunk](#chunk) (3) · [scene](#scene) (10) · [state](#state) (8) · [persistence](#persistence) (15) · [data](#data) (2) · [expression](#expression) (1) · [test](#test) (4) · [field](#field) (9) |
+| [`engine`](#the-engine-package) | kernel | [entity](#entity) (40) · [input](#input) (22) · [time](#time) (3) · [audio](#audio) (17) · [camera](#camera) (8) · [camera_rig](#camera_rig) (12) · [post_process](#post_process) (22) · [quality](#quality) (5) · [math](#math) (23) · [event](#event) (2) · [log](#log) (4) · [draw](#draw) (44) · [draw_world](#draw_world) (6) · [view](#view) (6) · [ui](#ui) (26) · [screen_ui](#screen_ui) (6) · [sprite](#sprite) (6) · [camera_2d](#camera_2d) (12) · [touch](#touch) (15) · [style](#style) (25) · [style_field](#style_field) (6) · [panels](#panels) (4) · [spline](#spline) (4) · [ocean](#ocean) (3) · [chunk](#chunk) (3) · [scene](#scene) (10) · [state](#state) (8) · [persistence](#persistence) (15) · [data](#data) (2) · [expression](#expression) (1) · [test](#test) (4) · [field](#field) (9) |
 | [`animation`](#the-animation-package) | standard | [animation](#animation) (14) · [tween](#tween) (2) |
 | [`flipbook`](#the-flipbook-package) | standard | [flipbook](#flipbook) (8) |
 | [`particles`](#the-particles-package) | standard | [particle](#particle) (7) |
 | [`physics`](#the-physics-package) | standard | [physics](#physics) (9) · [physics_2d](#physics_2d) (5) · [nav](#nav) (3) |
+| [`terrain`](#the-terrain-package) | standard | [terrain](#terrain) (1) |
 | [`living`](#the-living-package) | feature | [wooze](#wooze) (8) · [living](#living) (8) · [debug](#debug) (5) |
 | [`music`](#the-music-package) | feature | [music](#music) (3) |
 | [`rhythm`](#the-rhythm-package) | feature | [conducted](#conducted) (22) |
@@ -499,12 +500,6 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 | `ocean_velocity_y(x: num, z: num)` | `num`: m/s; 0.0 without an ocean | The ocean surface's vertical velocity at world (x, z): the impact signal beside `ocean_height`. |
 | `ocean_normal(x: num, z: num)` | `map`: `#{x, y, z}`; `#{0, 1, 0}` without an ocean | The ocean surface's normal at world (x, z). |
 
-### terrain
-
-| Function | Returns | Description |
-|---|---|---|
-| `terrain_height(x: num, z: num)` | `num`: metres; 0.0 when no terrain is loaded | The world-space height of the terrain at world (x, z). |
-
 ### chunk
 
 | Function | Returns | Description |
@@ -711,6 +706,18 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 | `find_path(from_x: num, from_y: num, from_z: num, to_x: num, to_y: num, to_z: num)` | `array`: \[`#{x, y, z}`, ...\] on the floor, the first where \`from\` stands and the last where \`to\` does; \[\] when either is on no floor, no way joins them, or there is no physics | The way from one point to another over the floors the scene's fixed colliders make, for an agent 0.8 m across and 1.8 m tall that climbs 0.35 m steps and 45-degree slopes. |
 | `find_path(from_x: num, from_y: num, from_z: num, to_x: num, to_y: num, to_z: num, opts: map)` | `array`: \[`#{x, y, z}`, ...\] on the floor, the first where \`from\` stands and the last where \`to\` does; \[\] when either is on no floor, no way joins them, or there is no physics | \``find_path`\` for the agent \`opts\` describes: \`radius\`, \`height\`, \`step\` (metres), \``max_slope`\` (degrees), \`cell\` (the grid's, metres, under the agent's diameter) and \``max_nodes`\` (the most cells a search visits). |
 | `move_along_path(id: entity, path: array, speed: num)` | `map`: `#{x, y, z, dir_x, dir_z, next, remaining, arrived}`: where it is now, the way it went this frame (0, 0 once arrived), the index of the point it walks to, metres of path left, and whether it is at the end | Walk the entity \`speed\` metres a second along a path from \``find_path`\`, keeping the height above it it started at; a new path starts again from its second point. |
+
+## The `terrain` package
+
+*standard: a game has it unless its `[packages]` sets it to `false`.* Heightmap ground: chunks, splat-map layers, grass, a heightfield and `terrain_height`.
+
+### terrain
+
+*Enabled when the terrain package is in the build (every scene).* Anywhere else a call is a script error saying the module is not enabled.
+
+| Function | Returns | Description |
+|---|---|---|
+| `terrain_height(x: num, z: num)` | `num`: metres; 0.0 when no terrain is loaded | The world-space height of the terrain at world (x, z). |
 
 ## The `living` package
 

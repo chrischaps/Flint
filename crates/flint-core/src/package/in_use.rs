@@ -396,7 +396,7 @@ pub struct BuiltWithout {
     pub components: Vec<String>,
     /// `[provides] scene_tables`.
     pub scene_tables: Vec<String>,
-    /// `[provides] archetypes` (#1618: first-person's `player`).
+    /// `[provides] archetypes` (#1618: first-person's `player`, terrain's `terrain`).
     pub archetypes: Vec<String>,
 }
 

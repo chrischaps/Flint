@@ -1,6 +1,6 @@
 # Terrain
 
-> **Package:** `engine`: every game has it. Its terrain is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+> **Package:** `terrain`: standard, so every game has it unless its `flint.toml` writes `terrain = false` under `[packages]` ([Packages](packages.md)). Without it a scene's `terrain` is `unlisted-package`, and neither launcher links the `flint-terrain` crate.
 
 Flint's terrain system provides heightmap-based outdoor environments via the `flint-terrain` crate. Rolling hills, mountains, valleys, and open landscapes are defined by a grayscale heightmap image and textured with up to four blended surface layers controlled by an RGBA splat map.
 
@@ -263,18 +263,20 @@ Terrain is fully cleared and reloaded during [scene transitions](scripting.md). 
 1. Current terrain draw calls and physics collider are removed
 2. New scene is loaded
 3. New terrain (if any) is generated, uploaded to GPU, and registered with physics
-4. The `terrain_height()` callback is updated to use the new heightmap
+4. `terrain_height()` reads the new heightmap
 
 ## Architecture
 
-The terrain system is split across crates to maintain clean dependency boundaries:
+Terrain is the `terrain` package (`packages/terrain/`), its one crate `flint-terrain`. The engine names no terrain code: the package registers its parts, and the plain data on either side is the kernel's.
 
-- **`flint-terrain`** --- pure data crate (no GPU dependency). Generates chunked mesh geometry from heightmap data. Outputs raw positions, normals, UVs, and indices.
+- **`flint-terrain`** --- the package's crate. With no feature it is pure data (no GPU dependency): heightmap reading, the spec format and its bake, chunked mesh geometry (positions, normals, UVs, indices). Its `render` part builds a scene's terrain into the renderer; its `player` part registers that as a *scene binder*, which every host runs right after binding a scene (the player, the scene viewer and `flint render`), and the `terrain` script module; its `cli` part is the terrain editor.
+- **`flint-geometry`** --- the kernel's plain data: the chunk mesh (`TerrainChunk`), the grass settings (`GrassConfig`), the height grid and `GroundField`, and the `SceneGround` the binder hands back to the host.
 - **`flint-render`** --- `TerrainPipeline` and `terrain_shader.wgsl`. Assembles GPU vertex buffers from terrain data and handles splat-map texture blending; its lighting is the meshes' own (`direct_light.wgsl`, #738). `GrassPipeline` with `grass_compute.wgsl` and `grass_render.wgsl` owns the grass layer; `flint-terrain` only holds its `GrassConfig`.
-- **`flint-physics`** --- `register_static_heightfield()` takes the terrain's `height_grid()` (its chunks' vertices as one grid) for collision; physics reads no terrain files.
-- **`flint-script`** --- `terrain_height(x, z)` Rhai function via callback pattern.
+- **`flint-physics`** --- `register_static_heightfield()` takes the ground's grid (the chunks' vertices as one grid) for collision; the player registers it from the `SceneGround`, so physics reads no terrain files and the terrain names no physics crate.
+- **`terrain_height(x, z)`** --- the package's `terrain` script module, which reads the ground the player kept for the scene.
+- **`flint-procgen`** --- `terrain_v1`, which `flint gen x.terrain.toml` runs, is the procgen package's part *with* terrain: a game that lists both has it.
 
-This separation means `flint-terrain` can be used independently for tools, CLI commands, or headless processing without pulling in the GPU stack.
+This separation means `flint-terrain` can be used independently for tools, CLI commands, or headless processing without pulling in the GPU stack, and a game with no terrain (`terrain = false`) builds without it.
 
 ## Limitations
 

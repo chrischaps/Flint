@@ -533,10 +533,10 @@ mod tests {
         );
         // Procgen is used, so it isn't named to leave out; nothing scanned
         // animates (#1620) or emits (#1622), so animation, flipbook and
-        // particles are
+        // particles are, and the grove has no terrain (#1623)
         assert_eq!(
             left_out_lines(&engine_packages(), &found, None),
-            ["animation", "flipbook", "particles"]
+            ["animation", "flipbook", "particles", "terrain"]
         );
     }
 
@@ -557,7 +557,8 @@ mod tests {
                 "flipbook",
                 "particles",
                 "physics",
-                "procgen"
+                "procgen",
+                "terrain"
             ]
         );
         assert_eq!(
@@ -605,7 +606,8 @@ mod tests {
                 "flipbook",
                 "particles",
                 "physics",
-                "procgen"
+                "procgen",
+                "terrain"
             ]
         );
     }

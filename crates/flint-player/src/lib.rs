@@ -45,7 +45,9 @@ pub use flint_render::{
     WaterVertex,
 };
 pub use flint_script::{Projector, ScreenPoint, View};
-pub use flint_terrain::{GrassConfig, GroundField, Heightmap};
+// The ground and the grass settings: flint-geometry's plain data (#1615,
+// #1623), which the terrain package and a game's own ground both make
+pub use flint_geometry::{grass::GrassConfig, ground::GroundField, heightmap::Heightmap};
 pub use hitch_args::{HitchArgs, HitchClass, HitchGate};
 pub use load_args::LoadReportArgs;
 pub use pass_knob_args::PassKnobArgs;

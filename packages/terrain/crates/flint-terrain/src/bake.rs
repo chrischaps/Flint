@@ -80,7 +80,7 @@ impl TerrainMaps {
 }
 
 /// Heights in [0, 1] as a 16-bit greyscale PNG, the format
-/// [`Heightmap::from_png`](crate::Heightmap::from_png) reads back. Values
+/// [`HeightmapFiles::from_png`](crate::HeightmapFiles::from_png) reads back. Values
 /// outside [0, 1] are clamped.
 pub fn encode_heightmap_png(heights: &[f32], width: u32, depth: u32) -> Result<Vec<u8>, String> {
     let expected = width as usize * depth as usize;
@@ -139,7 +139,7 @@ fn encode_png(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Heightmap;
+    use crate::{Heightmap, HeightmapFiles};
 
     fn small_spec() -> TerrainSpec {
         let mut spec: TerrainSpec = toml::from_str(

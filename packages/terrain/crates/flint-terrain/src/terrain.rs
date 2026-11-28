@@ -2,7 +2,7 @@
 
 use crate::chunk::{generate_chunk, TerrainChunk};
 use crate::grass_config::GrassConfig;
-use crate::heightmap::Heightmap;
+use crate::heightmap::{Heightmap, HeightmapFiles};
 
 /// Configuration for terrain generation, parsed from the `terrain` component
 pub struct TerrainConfig {
@@ -181,22 +181,9 @@ impl Terrain {
     }
 }
 
-/// A terrain's heights on its vertex grid ([`Terrain::height_grid`]), in the
-/// terrain's own frame: column 0 at x = 0, the last at x = `width`; row 0 at
-/// z = 0, the last at z = `depth`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct HeightGrid {
-    /// Samples along X.
-    pub columns: usize,
-    /// Samples along Z.
-    pub rows: usize,
-    /// World heights, row by row: `heights[row * columns + column]`.
-    pub heights: Vec<f32>,
-    /// The X extent the columns span.
-    pub width: f32,
-    /// The Z extent the rows span.
-    pub depth: f32,
-}
+/// The grid's type is flint-geometry's since #1623, the plain data physics'
+/// heightfield and the kernel's [`SceneGround`](flint_geometry::ground::SceneGround) carry.
+pub use flint_geometry::heightmap::HeightGrid;
 
 #[cfg(test)]
 mod height_grid_tests {
