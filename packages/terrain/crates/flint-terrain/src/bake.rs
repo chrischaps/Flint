@@ -157,7 +157,7 @@ octaves = 3
 [[height_layers]]
 op = "erosion"
 kind = "hydraulic"
-iterations = 40
+rainfall = 0.5
 
 [[splat_rules]]
 layer = 0

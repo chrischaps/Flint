@@ -164,7 +164,8 @@ impl Generator for TerrainGenerator {
     }
 
     fn revision(&self) -> u32 {
-        1
+        // 2: hydraulic erosion is droplets, counted by `rainfall` (#1693)
+        2
     }
 
     fn output_kind(&self) -> OutputKind {
@@ -202,7 +203,8 @@ impl Generator for TerrainGenerator {
         let res = u64::from(resolution_of(spec));
         let texels = res * res;
         // Release build, rolling_meadow's recipe: about 0.25 us a texel for
-        // each noise octave and 0.02 us for each erosion iteration.
+        // each noise octave, 0.02 us for each thermal pass, and 1.5 us for
+        // each droplet a texel of hydraulic rainfall (#1693; 513²: 0.4 s).
         let mut ns_per_texel = 30.0; // the splat rules and normalizing
         for layer in spec
             .params
@@ -212,8 +214,15 @@ impl Generator for TerrainGenerator {
             .flatten()
         {
             let int = |k: &str, d: i64| layer.get(k).and_then(toml::Value::as_integer).unwrap_or(d);
+            let hydraulic = layer.get("kind").and_then(toml::Value::as_str) == Some("hydraulic");
             ns_per_texel += match layer.get("op").and_then(toml::Value::as_str) {
                 Some("noise") => 250.0 * int("octaves", 6) as f64,
+                Some("erosion") if hydraulic => {
+                    let rain = layer
+                        .get("rainfall")
+                        .and_then(flint_core::toml_util::toml_f64);
+                    1500.0 * rain.unwrap_or(1.0)
+                }
                 Some("erosion") => 20.0 * int("iterations", 50) as f64,
                 _ => 2.0,
             };
@@ -319,24 +328,28 @@ pub fn param_schema() -> Json {
                     "discriminator": { "propertyName": "op" },
                     "oneOf": [
                         height_op("noise", "Fractal noise, octaves summed and blended into the heights", json!({
-                            "noise_type": { "type": "string", "enum": ["perlin", "simplex", "value", "ridged"], "default": "perlin", "description": "perlin and simplex roll; value is blockier; ridged makes sharp crests (mountain ridges)" },
+                            "noise_type": { "type": "string", "enum": ["perlin", "simplex", "value", "ridged"], "default": "perlin", "description": "perlin and simplex roll; value is blockier; ridged makes sharp crests (mountain ridges). Raw range: perlin, simplex and value -1..1 (signed), ridged 0..1; `range` remaps it" },
                             "octaves": { "type": "integer", "minimum": 1, "maximum": 16, "default": 6, "description": "Noise layers summed, each finer than the last; more adds small detail" },
                             "frequency": { "type": "number", "exclusiveMinimum": 0.0, "default": 2.0, "description": "Features across the whole terrain in the first octave: 1 to 2 is one or two big hills, 8 is many small ones" },
                             "lacunarity": { "type": "number", "exclusiveMinimum": 0.0, "default": 2.0, "description": "Frequency multiplier from one octave to the next" },
                             "persistence": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5, "description": "Amplitude multiplier from one octave to the next; lower is smoother" },
-                            "amplitude": { "type": "number", "default": 1.0, "description": "Scale of this layer's noise (which runs about -1..1) before it is blended in" },
-                            "blend": { "type": "string", "enum": ["add", "multiply", "max", "min", "overlay"], "default": "add", "description": "How the noise combines with the heights so far" }
+                            "amplitude": { "type": "number", "default": 1.0, "description": "Scale of this layer's noise before it is blended in: of its raw range, or of `range` when it has one" },
+                            "range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2, "description": "[from, to]: the noise's raw range mapped onto it and held inside, before amplitude; [1.0, 0.0] inverts. Give a multiply layer [0.0, 1.0]: raw perlin is negative over about half the map, and multiplying by it turns that land upside down. Unset blends the raw values" },
+                            "blend": { "type": "string", "enum": ["add", "multiply", "max", "min", "overlay"], "default": "add", "description": "How the noise combines with the heights so far. multiply, max, min and overlay read the noise's sign: shape a region with multiply and range = [0.0, 1.0]" }
                         })),
                         height_op("flatten", "Pull heights below (or above) a level toward it: valley floors, plateaus, lake beds", json!({
                             "height": { "type": "number", "default": 0.1, "description": "The level, in the heights' units so far (normalizing comes after the last layer)" },
                             "falloff": { "type": "number", "minimum": 0.0, "default": 0.05, "description": "Distance from the level over which the pull fades in; 0 cuts flat" },
                             "mode": { "type": "string", "enum": ["below", "above"], "default": "below", "description": "below raises what is under the level (a flat floor); above lowers what is over it (a plateau)" }
                         })),
-                        height_op("erosion", "Wear the heights: thermal slumps steep slopes, hydraulic carves channels with seeded raindrops", json!({
-                            "kind": { "type": "string", "enum": ["thermal", "hydraulic"], "default": "thermal", "description": "thermal softens slopes steeper than talus_angle; hydraulic carves gullies and fans" },
-                            "iterations": { "type": "integer", "minimum": 0, "default": 50, "description": "Passes (thermal) or hundreds of droplets (hydraulic); the bake's cost grows with it" },
-                            "talus_angle": { "type": "number", "minimum": 0.0, "default": 0.6, "description": "The steepest slope thermal erosion leaves alone; hydraulic doesn't read it" },
-                            "strength": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3, "description": "How much each pass moves" }
+                        height_op("erosion", "Wear the heights: thermal slumps steep slopes, hydraulic rolls seeded droplets downhill to carve branching gullies and lay fans", json!({
+                            "kind": { "type": "string", "enum": ["thermal", "hydraulic"], "default": "thermal", "description": "thermal softens slopes steeper than talus_angle (reads iterations, talus_angle); hydraulic carves gullies and fans (reads rainfall, radius, rain_min_height)" },
+                            "iterations": { "x-when": { "kind": ["thermal"] }, "type": "integer", "minimum": 0, "default": 50, "description": "Passes over the whole map; the bake's cost grows with it" },
+                            "talus_angle": { "x-when": { "kind": ["thermal"] }, "type": "number", "minimum": 0.0, "default": 0.6, "description": "The steepest slope left alone" },
+                            "strength": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3, "description": "Thermal: the share of the excess each pass moves. Hydraulic: how fast a droplet picks up soil" },
+                            "rainfall": { "x-when": { "kind": ["hydraulic"] }, "type": "number", "minimum": 0.0, "default": 1.0, "description": "Droplets rained for each texel of the map (1.0 is one per texel, so a value wears any resolution alike); 0.3 is light wear, 1 clear gullies, 3 badlands; the bake's cost grows with it" },
+                            "radius": { "x-when": { "kind": ["hydraulic"] }, "type": "number", "minimum": 0.5, "default": 3.0, "description": "The radius in texels a droplet erodes over; wider is broader, softer gullies" },
+                            "rain_min_height": { "x-when": { "kind": ["hydraulic"] }, "type": "number", "description": "Droplets start only where the height is at least this, in the heights' units so far (as flatten's height), so the rain falls on land and not the sea floor. Unset: anywhere" }
                         })),
                         height_op("falloff", "Say where the land is: a shape over the map keeps the heights so far where it is 1 and sinks them where it is 0. Map coordinates run 0..1, u along +X and v along +Z. Put it after the noise and before erosion; a noise layer after it brings land back to the border", json!({
                             "shape": { "type": "string", "enum": ["island", "edge", "radial", "gradient"], "default": "island", "description": "island: a disc that also fades out at the border, so the land never reaches the edge for any seed; edge: only the border fades; radial: a disc that may cross the border; gradient: land rises toward `direction`" },
@@ -411,7 +424,7 @@ octaves = 3
 [[height_layers]]
 op = "erosion"
 kind = "hydraulic"
-iterations = 40
+rainfall = 0.5
 
 [[splat_rules]]
 layer = 0
@@ -522,6 +535,9 @@ height_min = 0.4
             toml::from_str("op = \"noise\"").unwrap(),
             toml::from_str("op = \"flatten\"").unwrap(),
             toml::from_str("op = \"erosion\"").unwrap(),
+            // An erosion layer writes only its kind's keys (#1693)
+            toml::from_str("op = \"erosion\"\nkind = \"hydraulic\"\nrain_min_height = 0.1")
+                .unwrap(),
             toml::from_str("op = \"falloff\"").unwrap(),
         ];
         full.splat_rules = vec![toml::from_str("layer = 1").unwrap()];
@@ -563,6 +579,33 @@ height_min = 0.4
         );
     }
 
+    /// #1693: hydraulic erosion counts `rainfall`, so an old recipe's
+    /// `iterations` on it is said to do nothing, here as in `parse_checked`.
+    #[test]
+    fn an_erosion_key_of_the_other_kind_is_inapplicable() {
+        let spec = from_terrain_toml(
+            "[meta]\nname = \"x\"\n\
+             [[height_layers]]\nop = \"erosion\"\nkind = \"hydraulic\"\niterations = 120000\n\
+             [[height_layers]]\nop = \"erosion\"\nrainfall = 2.0\n",
+        )
+        .unwrap();
+        let issues = validate_params(&param_schema(), &spec.params);
+        let found: Vec<(&str, &str)> = issues
+            .iter()
+            .map(|i| match i {
+                ParamIssue::Inapplicable { key, actual, .. } => (key.as_str(), actual.as_str()),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("height_layers[0].iterations", "hydraulic"),
+                ("height_layers[1].rainfall", "thermal")
+            ]
+        );
+    }
+
     #[test]
     fn values_it_cant_use_are_errors() {
         let spec = from_terrain_toml(
@@ -595,5 +638,60 @@ height_min = 0.4
         let meadow = g.estimate_cost(&from_terrain_toml(MEADOW).unwrap());
         assert_eq!(small.estimated_texture_bytes, 24 * 24 * 6);
         assert!(meadow.estimated_generation_ms > small.estimated_generation_ms);
+    }
+
+    /// #1695: `--describe terrain_v1` prints the noise layer's keys, `range`
+    /// among them, and each noise type's raw range as the bake has it.
+    #[test]
+    fn describe_gives_each_noise_types_raw_range() {
+        use flint_terrain::spec::NoiseType;
+        let schema = param_schema();
+        let branches = crate::tagged_branches(&schema);
+        let noise = branches
+            .iter()
+            .find(|b| b.key == "height_layers" && b.value == "noise")
+            .expect("the noise layer is a tagged branch");
+        let text = crate::param_reference_text(noise.schema);
+        assert!(text.contains("range        list of numbers"), "{text}");
+        let shown = |t: NoiseType| {
+            let [lo, hi] = t.raw_range();
+            format!("{lo}..{hi}")
+        };
+        let signed = [NoiseType::Perlin, NoiseType::Simplex, NoiseType::Value];
+        assert!(signed.iter().all(|&t| shown(t) == shown(NoiseType::Perlin)));
+        let said = format!(
+            "perlin, simplex and value {} (signed), ridged {}",
+            shown(NoiseType::Perlin),
+            shown(NoiseType::Ridged)
+        );
+        assert!(text.contains(&said), "{said} not in:\n{text}");
+        // Every op is a branch, so flatten, erosion and falloff print their
+        // keys too
+        let ops: Vec<&str> = branches.iter().map(|b| b.value).collect();
+        assert_eq!(ops, ["noise", "flatten", "erosion", "falloff"]);
+    }
+
+    /// A layer's `range` reaches the bake: the procgen spelling with it
+    /// bakes what the terrain types do, and differently from without.
+    #[test]
+    fn a_range_reaches_the_bake() {
+        let ranged = format!(
+            "{}\n[[height_layers]]\nop = \"noise\"\nblend = \"multiply\"\nrange = [0.0, 1.0]\n",
+            small()
+        );
+        let raw = ranged.replace("range = [0.0, 1.0]\n", "");
+        let spec = from_terrain_toml(&ranged).unwrap();
+        assert!(validate_params(&param_schema(), &spec.params).is_empty());
+        let terrain = terrain_spec(&spec, 3).unwrap();
+        let flint_terrain::spec::HeightLayer::Noise(n) = terrain.height_layers.last().unwrap()
+        else {
+            panic!("the last layer is noise")
+        };
+        assert_eq!(n.range, Some([0.0, 1.0]));
+        assert_ne!(
+            generate(&spec),
+            generate(&from_terrain_toml(&raw).unwrap()),
+            "range changed nothing"
+        );
     }
 }

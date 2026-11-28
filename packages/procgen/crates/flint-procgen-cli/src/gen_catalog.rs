@@ -6,7 +6,7 @@
 use anyhow::{bail, Result};
 use flint_procgen::{
     op_ports, op_schema, param_reference_markdown, param_reference_markdown_in,
-    param_reference_text, Generator, GeneratorRegistry, OutputKind, ALL_OP_TYPES,
+    param_reference_text, tagged_branches, Generator, GeneratorRegistry, OutputKind, ALL_OP_TYPES,
 };
 use serde_json::{json, Value};
 
@@ -172,6 +172,15 @@ pub fn describe(registry: &GeneratorRegistry, name: &str, format: Format) -> Res
                     }
                     out.push_str(&param_reference_markdown_in(&op_schema(op), "params.ops"));
                 }
+            } else {
+                for b in tagged_branches(&schema) {
+                    let path = format!("params.{}", b.key);
+                    out.push_str(&format!(
+                        "\n#### `[[{path}]]` with `{} = \"{}\"`\n\n",
+                        b.tag, b.value
+                    ));
+                    out.push_str(&param_reference_markdown_in(b.schema, &path));
+                }
             }
             print!("{out}");
         }
@@ -198,6 +207,13 @@ pub fn describe(registry: &GeneratorRegistry, name: &str, format: Format) -> Res
                         println!("  ports: {ports}");
                     }
                     print!("{}", param_reference_text(&op_schema(op)));
+                }
+            } else {
+                // A tagged array's entries, branch by branch (#1695): the
+                // main reference stops at the array
+                for b in tagged_branches(&schema) {
+                    println!("\n[[{}]] with {} = \"{}\":", b.key, b.tag, b.value);
+                    print!("{}", param_reference_text(b.schema));
                 }
             }
             println!("\n`flint gen --describe {name} --json` gives the schema itself.");
