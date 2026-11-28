@@ -583,4 +583,58 @@ height_min = 0.4
         assert_eq!(small.estimated_texture_bytes, 24 * 24 * 6);
         assert!(meadow.estimated_generation_ms > small.estimated_generation_ms);
     }
+
+    /// #1695: `--describe terrain_v1` prints the noise layer's keys, `range`
+    /// among them, and each noise type's raw range as the bake has it.
+    #[test]
+    fn describe_gives_each_noise_types_raw_range() {
+        use flint_terrain::spec::NoiseType;
+        let schema = param_schema();
+        let branches = crate::tagged_branches(&schema);
+        let noise = branches
+            .iter()
+            .find(|b| b.key == "height_layers" && b.value == "noise")
+            .expect("the noise layer is a tagged branch");
+        let text = crate::param_reference_text(noise.schema);
+        assert!(text.contains("range        list of numbers"), "{text}");
+        let shown = |t: NoiseType| {
+            let [lo, hi] = t.raw_range();
+            format!("{lo}..{hi}")
+        };
+        let signed = [NoiseType::Perlin, NoiseType::Simplex, NoiseType::Value];
+        assert!(signed.iter().all(|&t| shown(t) == shown(NoiseType::Perlin)));
+        let said = format!(
+            "perlin, simplex and value {} (signed), ridged {}",
+            shown(NoiseType::Perlin),
+            shown(NoiseType::Ridged)
+        );
+        assert!(text.contains(&said), "{said} not in:\n{text}");
+        // Every op is a branch, so flatten and erosion print their keys too
+        let ops: Vec<&str> = branches.iter().map(|b| b.value).collect();
+        assert_eq!(ops, ["noise", "flatten", "erosion"]);
+    }
+
+    /// A layer's `range` reaches the bake: the procgen spelling with it
+    /// bakes what the terrain types do, and differently from without.
+    #[test]
+    fn a_range_reaches_the_bake() {
+        let ranged = format!(
+            "{}\n[[height_layers]]\nop = \"noise\"\nblend = \"multiply\"\nrange = [0.0, 1.0]\n",
+            small()
+        );
+        let raw = ranged.replace("range = [0.0, 1.0]\n", "");
+        let spec = from_terrain_toml(&ranged).unwrap();
+        assert!(validate_params(&param_schema(), &spec.params).is_empty());
+        let terrain = terrain_spec(&spec, 3).unwrap();
+        let flint_terrain::spec::HeightLayer::Noise(n) = terrain.height_layers.last().unwrap()
+        else {
+            panic!("the last layer is noise")
+        };
+        assert_eq!(n.range, Some([0.0, 1.0]));
+        assert_ne!(
+            generate(&spec),
+            generate(&from_terrain_toml(&raw).unwrap()),
+            "range changed nothing"
+        );
+    }
 }

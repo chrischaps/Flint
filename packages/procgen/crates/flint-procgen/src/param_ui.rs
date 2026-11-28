@@ -281,6 +281,57 @@ fn nested(prop: &Value) -> Option<Nested<'_>> {
     }
 }
 
+/// One branch of a tagged array (#1695): `[[params.<key>]]` entries told
+/// apart by `tag` (a `discriminator`'s `propertyName`), this branch's being
+/// `value`. `flint gen --describe` prints each branch's keys after the
+/// main reference, the way it prints a pipeline's ops.
+pub struct TaggedBranch<'a> {
+    pub key: &'a str,
+    pub tag: &'a str,
+    pub value: &'a str,
+    pub schema: &'a Value,
+}
+
+/// Every top-level key of `schema` whose `items` are a `oneOf` told apart
+/// by a `discriminator`, branch by branch, each branch's tag a `const`
+/// (`terrain_v1`'s `height_layers`: `op = "noise"`, `"flatten"`,
+/// `"erosion"`).
+pub fn tagged_branches(schema: &Value) -> Vec<TaggedBranch<'_>> {
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (key, prop) in props {
+        let Some(items) = prop.get("items") else {
+            continue;
+        };
+        let tag = items
+            .get("discriminator")
+            .and_then(|d| d.get("propertyName"))
+            .and_then(|t| t.as_str());
+        let branches = items.get("oneOf").and_then(|b| b.as_array());
+        let (Some(tag), Some(branches)) = (tag, branches) else {
+            continue;
+        };
+        for branch in branches {
+            if let Some(value) = branch
+                .get("properties")
+                .and_then(|p| p.get(tag))
+                .and_then(|t| t.get("const"))
+                .and_then(|c| c.as_str())
+            {
+                out.push(TaggedBranch {
+                    key,
+                    tag,
+                    value,
+                    schema: branch,
+                });
+            }
+        }
+    }
+    out
+}
+
 /// Whether `schema`'s `required` names `key`.
 fn is_required(schema: &Value, key: &str) -> bool {
     schema
