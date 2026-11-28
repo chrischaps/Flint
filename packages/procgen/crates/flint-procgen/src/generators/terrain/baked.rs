@@ -319,13 +319,14 @@ pub fn param_schema() -> Json {
                     "discriminator": { "propertyName": "op" },
                     "oneOf": [
                         height_op("noise", "Fractal noise, octaves summed and blended into the heights", json!({
-                            "noise_type": { "type": "string", "enum": ["perlin", "simplex", "value", "ridged"], "default": "perlin", "description": "perlin and simplex roll; value is blockier; ridged makes sharp crests (mountain ridges)" },
+                            "noise_type": { "type": "string", "enum": ["perlin", "simplex", "value", "ridged"], "default": "perlin", "description": "perlin and simplex roll; value is blockier; ridged makes sharp crests (mountain ridges). Raw range: perlin, simplex and value -1..1 (signed), ridged 0..1; `range` remaps it" },
                             "octaves": { "type": "integer", "minimum": 1, "maximum": 16, "default": 6, "description": "Noise layers summed, each finer than the last; more adds small detail" },
                             "frequency": { "type": "number", "exclusiveMinimum": 0.0, "default": 2.0, "description": "Features across the whole terrain in the first octave: 1 to 2 is one or two big hills, 8 is many small ones" },
                             "lacunarity": { "type": "number", "exclusiveMinimum": 0.0, "default": 2.0, "description": "Frequency multiplier from one octave to the next" },
                             "persistence": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5, "description": "Amplitude multiplier from one octave to the next; lower is smoother" },
-                            "amplitude": { "type": "number", "default": 1.0, "description": "Scale of this layer's noise (which runs about -1..1) before it is blended in" },
-                            "blend": { "type": "string", "enum": ["add", "multiply", "max", "min", "overlay"], "default": "add", "description": "How the noise combines with the heights so far" }
+                            "amplitude": { "type": "number", "default": 1.0, "description": "Scale of this layer's noise before it is blended in: of its raw range, or of `range` when it has one" },
+                            "range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2, "description": "[from, to]: the noise's raw range mapped onto it and held inside, before amplitude; [1.0, 0.0] inverts. Give a multiply layer [0.0, 1.0]: raw perlin is negative over about half the map, and multiplying by it turns that land upside down. Unset blends the raw values" },
+                            "blend": { "type": "string", "enum": ["add", "multiply", "max", "min", "overlay"], "default": "add", "description": "How the noise combines with the heights so far. multiply, max, min and overlay read the noise's sign: shape a region with multiply and range = [0.0, 1.0]" }
                         })),
                         height_op("flatten", "Pull heights below (or above) a level toward it: valley floors, plateaus, lake beds", json!({
                             "height": { "type": "number", "default": 0.1, "description": "The level, in the heights' units so far (normalizing comes after the last layer)" },
