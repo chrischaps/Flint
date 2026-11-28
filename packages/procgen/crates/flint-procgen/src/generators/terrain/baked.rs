@@ -46,10 +46,11 @@ pub struct TerrainGenerator;
 const MAX_RESOLUTION: u32 = 4096;
 
 /// The `[params]` keys a terrain spec has, besides `[meta]` and `[seed]`.
-const PARAM_TABLES: [&str; 5] = [
+const PARAM_TABLES: [&str; 6] = [
     "geometry",
     "height_layers",
     "splat_rules",
+    "splat",
     "textures",
     "grass",
 ];
@@ -147,6 +148,31 @@ pub fn terrain_spec(spec: &ProcGenSpec, seed: u64) -> Result<TerrainSpec> {
     Ok(terrain)
 }
 
+/// How much of a baked terrain no splat rule covers, and what its
+/// `[splat] fallback` painted there (#1696): what `flint gen` adds to a
+/// splat map's coverage. Measured by running the spec's splat rules again
+/// over `height`, the heightmap the bake wrote (16-bit, as the runtime
+/// reads it), so it costs the splat pass and none of the height layers.
+/// `None` for a spec that isn't `terrain_v1`'s or a height that isn't L16.
+pub fn uncovered_of(spec: &ProcGenSpec, height: &ImageData) -> Option<super::Uncovered> {
+    if spec.generator != TERRAIN_GENERATOR || height.width != height.height {
+        return None;
+    }
+    let seed = spec.resolve_seed().ok()?;
+    let terrain = terrain_spec(spec, seed).ok()?;
+    let heights: Vec<f32> = height
+        .grey16_samples()?
+        .iter()
+        .map(|&s| f32::from(s) / 65535.0)
+        .collect();
+    let res = height.width;
+    let map = flint_terrain::generate_splat_map(&heights, res, res, &terrain, seed);
+    Some(super::Uncovered {
+        share: map.uncovered as f64 / (heights.len().max(1)) as f64,
+        fallback: terrain.splat.fallback.layer(),
+    })
+}
+
 /// The resolution a spec bakes at, as the bake clamps it, without baking.
 fn resolution_of(spec: &ProcGenSpec) -> u32 {
     let asked = spec
@@ -165,7 +191,9 @@ impl Generator for TerrainGenerator {
 
     fn revision(&self) -> u32 {
         // 2: hydraulic erosion is droplets, counted by `rainfall` (#1693)
-        2
+        // 3: slopes are rise over run, an unset slope_max is no ceiling,
+        // and a band reaching 0 or 1 paints the map's extremes (#1696)
+        3
     }
 
     fn output_kind(&self) -> OutputKind {
@@ -367,16 +395,20 @@ pub fn param_schema() -> Json {
             },
             "splat_rules": {
                 "type": "array",
-                "description": "Paint the four surface layers: each texel takes every rule whose height and slope it fits, weighted toward the middle of the rule's band, and the weights are normalized. No rules paints all layer 0",
+                "description": "Paint the four surface layers: each texel takes every rule whose height and slope it fits, weighted toward the middle of the rule's band, and the weights are normalized. A texel no rule covers is `[splat] fallback`'s (layer 0 unless it says)",
                 "items": splat_rule(json!({
                     "layer": { "type": "integer", "minimum": 0, "maximum": 3, "description": "The layer painted: 0 to 3 (the splat map's R, G, B, A)" },
                     "height_min": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0, "description": "Lowest normalized height the rule paints" },
                     "height_max": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 1.0, "description": "Highest normalized height the rule paints" },
-                    "slope_max": { "type": "number", "minimum": 0.0, "default": 1.0, "description": "Steepest slope (rise over run) the rule paints; its weight fades toward it" },
+                    "slope_min": { "type": "number", "minimum": 0.0, "description": "Gentlest slope (rise over run: 1 is 45 degrees) the rule paints; its weight fades in above it, as 1 - slope_min / slope. Unset: no floor" },
+                    "slope_max": { "type": "number", "minimum": 0.0, "description": "Steepest slope (rise over run: 1 is 45 degrees) the rule paints; its weight fades out toward it, as 1 - slope / slope_max. Unset: no ceiling" },
                     "noise_amount": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0, "description": "How much seeded noise breaks up the rule's edges" },
                     "noise_scale": { "type": "number", "exclusiveMinimum": 0.0, "default": 4.0, "description": "Noise features across the terrain" }
                 }))
             },
+            "splat": table("splat table", "What the splat rules leave undecided", json!({
+                "fallback": { "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 3 }, { "type": "string", "enum": ["none"] }], "default": 0, "description": "What a texel no rule covers is painted: a layer, 0 to 3, at full weight, or \"none\" for no layer (weights of 0: no grass grows there, and the terrain draws it black). `flint gen` says how much of the map it took" }
+            })),
             "textures": table("textures table", "The terrain component's surface textures and material; not read by the bake", json!({
                 "texture_tile": { "type": "number", "exclusiveMinimum": 0.0, "default": 16.0, "description": "Times each layer's texture repeats across the terrain" },
                 "metallic": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0, "description": "Metallic factor" },
@@ -540,7 +572,8 @@ height_min = 0.4
                 .unwrap(),
             toml::from_str("op = \"falloff\"").unwrap(),
         ];
-        full.splat_rules = vec![toml::from_str("layer = 1").unwrap()];
+        full.splat_rules =
+            vec![toml::from_str("layer = 1\nslope_min = 0.5\nslope_max = 2.0").unwrap()];
         full.grass = Some(GrassConfig::default());
         let layer = || {
             Some(flint_terrain::spec::TextureLayer {
@@ -619,6 +652,62 @@ height_min = 0.4
             .map(|i| i.key())
             .collect();
         assert_eq!(keys, ["height_layers[0].op", "splat_rules[0].layer"]);
+    }
+
+    /// Done-when of #1696: a spec whose rules miss a band says what takes
+    /// it, and the share `flint gen` reports is the bake's.
+    #[test]
+    fn the_uncovered_share_is_the_bakes() {
+        for fallback in ["2", "\"none\""] {
+            // Only layer 2 above 0.4: the low ground is no rule's
+            let rules = small().replace(
+                "[[splat_rules]]\nlayer = 0\nheight_max = 0.5\nnoise_amount = 0.2\n",
+                "",
+            );
+            let text = format!("{rules}\n[splat]\nfallback = {fallback}\n");
+            let spec = from_terrain_toml(&text).unwrap();
+            assert!(validate_params(&param_schema(), &spec.params).is_empty());
+            let (terrain, _) = TerrainSpec::parse_checked(&text).unwrap();
+            let maps = flint_terrain::bake(&terrain, 7);
+            assert!(maps.uncovered > 0, "the low ground is covered");
+            let images = generate(&spec);
+            let got = uncovered_of(&spec, &images[0]).unwrap();
+            assert_eq!(got.share, maps.uncovered_share(), "{fallback}");
+            assert_eq!(got.fallback, terrain.splat.fallback.layer());
+        }
+        let images = generate(&from_terrain_toml(small()).unwrap());
+        let full = uncovered_of(&from_terrain_toml(small()).unwrap(), &images[0]).unwrap();
+        assert_eq!(full.share, 0.0, "small()'s rules cover everything");
+    }
+
+    /// `[splat] fallback` is a layer or "none", and the schema says which
+    /// is wrong and how.
+    #[test]
+    fn the_fallback_is_checked_as_a_layer_or_none() {
+        let issues = |v: &str| {
+            let spec =
+                from_terrain_toml(&format!("[meta]\nname = \"x\"\n[splat]\nfallback = {v}\n"))
+                    .unwrap();
+            validate_params(&param_schema(), &spec.params)
+        };
+        for good in ["0", "3", "\"none\""] {
+            assert!(issues(good).is_empty(), "{good}: {:?}", issues(good));
+        }
+        assert!(
+            matches!(&issues("5")[..], [ParamIssue::OutOfRange { key, .. }] if key == "splat.fallback"),
+            "{:?}",
+            issues("5")
+        );
+        assert!(
+            matches!(&issues("\"sand\"")[..], [ParamIssue::NotInEnum { key, .. }] if key == "splat.fallback"),
+            "{:?}",
+            issues("\"sand\"")
+        );
+        assert!(
+            matches!(&issues("true")[..], [ParamIssue::WrongType { .. }]),
+            "{:?}",
+            issues("true")
+        );
     }
 
     #[test]

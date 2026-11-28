@@ -18,6 +18,22 @@ pub fn is_terrain_spec(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(TERRAIN_SUFFIX)
 }
 
+/// How much of a terrain's splat map no rule covers, and what took it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Uncovered {
+    /// The share of texels, in [0, 1].
+    pub share: f64,
+    /// The layer `[splat] fallback` painted them, or `None` for `"none"`.
+    pub fallback: Option<u8>,
+}
+
+/// How much of a baked terrain no splat rule covers: in this build, which
+/// has no terrain package, nothing to say.
+#[cfg(not(feature = "terrain"))]
+pub fn uncovered_of(_spec: &crate::ProcGenSpec, _height: &crate::ImageData) -> Option<Uncovered> {
+    None
+}
+
 #[cfg(feature = "terrain")]
 mod baked;
 #[cfg(feature = "terrain")]

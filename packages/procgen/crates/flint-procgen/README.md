@@ -269,7 +269,8 @@ Each `[[params.control_points]]` entry:
 | `geometry` | table |  | The terrain's size and the maps' resolution |
 | `grass` | table |  | The terrain component's GPU grass (see the book's Terrain page). Not read by the bake; leave it out unless the terrain should grow grass |
 | `height_layers` | array of tables |  | The height recipe, run in order on a grid starting at 0: `noise` adds fractal noise, `flatten` pulls heights toward a level, `erosion` wears them, `falloff` says where the land is (an island, a coast) |
-| `splat_rules` | array of tables |  | Paint the four surface layers: each texel takes every rule whose height and slope it fits, weighted toward the middle of the rule's band, and the weights are normalized. No rules paints all layer 0 |
+| `splat` | table |  | What the splat rules leave undecided |
+| `splat_rules` | array of tables |  | Paint the four surface layers: each texel takes every rule whose height and slope it fits, weighted toward the middle of the rule's band, and the weights are normalized. A texel no rule covers is `[splat] fallback`'s (layer 0 unless it says) |
 | `textures` | table |  | The terrain component's surface textures and material; not read by the bake |
 
 The `[params.geometry]` table:
@@ -309,6 +310,12 @@ The `[params.grass]` table:
 | `wooze_amplitude` | number | `0.11999999731779099` |  |
 | `wooze_wavelength` | number | `2.5` |  |
 
+The `[params.splat]` table:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `fallback` | integer 0–3 or `none` | `0` | What a texel no rule covers is painted: a layer, 0 to 3, at full weight, or "none" for no layer (weights of 0: no grass grows there, and the terrain draws it black). `flint gen` says how much of the map it took |
+
 Each `[[params.splat_rules]]` entry:
 
 | Key | Type | Default | What it does |
@@ -318,7 +325,8 @@ Each `[[params.splat_rules]]` entry:
 | `layer` | integer 0–3 | required | The layer painted: 0 to 3 (the splat map's R, G, B, A) |
 | `noise_amount` | number 0–1 | `0.0` | How much seeded noise breaks up the rule's edges |
 | `noise_scale` | number > 0 | `4.0` | Noise features across the terrain |
-| `slope_max` | number ≥ 0 | `1.0` | Steepest slope (rise over run) the rule paints; its weight fades toward it |
+| `slope_max` | number ≥ 0 |  | Steepest slope (rise over run: 1 is 45 degrees) the rule paints; its weight fades out toward it, as 1 - slope / slope_max. Unset: no ceiling |
+| `slope_min` | number ≥ 0 |  | Gentlest slope (rise over run: 1 is 45 degrees) the rule paints; its weight fades in above it, as 1 - slope_min / slope. Unset: no floor |
 
 The `[params.textures]` table:
 

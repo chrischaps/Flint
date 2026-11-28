@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 
 use crate::spec::{
     BlendMode, ErosionKind, ErosionLayer, FalloffBlend, FalloffLayer, FalloffShape, FlattenLayer,
-    FlattenMode, HeightLayer, NoiseLayer, NoiseType, SeedMode, SplatRule, TerrainSpec,
+    FlattenMode, HeightLayer, NoiseLayer, NoiseType, SeedMode, SplatFallback, SplatRule,
+    TerrainSpec,
 };
 use crate::{
     apply_height_brush, apply_splat_brush, ray_heightmap_intersect, BrushParams, HeightBrushMode,
@@ -838,12 +839,15 @@ impl TerrainEditApp {
                                             spec.splat_rules.remove(idx);
                                             dirty = true;
                                         }
+                                        dirty |=
+                                            render_splat_fallback_ui(ui, &mut spec.splat.fallback);
                                         if ui.button("+ Splat Rule").clicked() {
                                             spec.splat_rules.push(SplatRule {
                                                 layer: 0,
                                                 height_min: 0.0,
                                                 height_max: 1.0,
-                                                slope_max: 1.0,
+                                                slope_min: None,
+                                                slope_max: None,
                                                 noise_amount: 0.0,
                                                 noise_scale: 4.0,
                                             });
@@ -1480,9 +1484,58 @@ fn render_splat_rule_ui(ui: &mut egui::Ui, rule: &mut SplatRule, _idx: usize) ->
     }
     dirty |= drag_f32(ui, "Height Min", &mut rule.height_min, 0.01, 0.0..=1.0);
     dirty |= drag_f32(ui, "Height Max", &mut rule.height_max, 0.01, 0.0..=1.0);
-    dirty |= drag_f32(ui, "Slope Max", &mut rule.slope_max, 0.01, 0.0..=1.0);
+    dirty |= optional_slope(ui, "Slope Min", &mut rule.slope_min, 0.5);
+    dirty |= optional_slope(ui, "Slope Max", &mut rule.slope_max, 1.0);
     dirty |= drag_f32(ui, "Noise Amt", &mut rule.noise_amount, 0.01, 0.0..=1.0);
     dirty |= drag_f32(ui, "Noise Scale", &mut rule.noise_scale, 0.1, 0.1..=100.0);
+    dirty
+}
+
+/// A rule's slope floor or ceiling (rise over run: 1 is 45 degrees), with a
+/// box to turn it off; `start` is what ticking the box sets.
+fn optional_slope(ui: &mut egui::Ui, label: &str, value: &mut Option<f32>, start: f32) -> bool {
+    let mut dirty = false;
+    ui.horizontal(|ui| {
+        let mut on = value.is_some();
+        if ui.checkbox(&mut on, format!("{label}:")).changed() {
+            *value = on.then_some(start);
+            dirty = true;
+        }
+        if let Some(v) = value {
+            let r = ui.add(
+                egui::DragValue::new(v)
+                    .speed(0.01)
+                    .range(0.0..=20.0)
+                    .max_decimals(2),
+            );
+            dirty |= r.changed();
+            ui.weak(format!("{:.0}°", v.atan().to_degrees()));
+        } else {
+            ui.weak("none");
+        }
+    });
+    dirty
+}
+
+/// What a texel no rule covers is painted: a layer, or none (#1696).
+fn render_splat_fallback_ui(ui: &mut egui::Ui, fallback: &mut SplatFallback) -> bool {
+    let mut dirty = false;
+    ui.horizontal(|ui| {
+        ui.label("Uncovered:")
+            .on_hover_text("What a texel no rule covers is painted");
+        for (choice, name) in [
+            (SplatFallback::Layer(0), "0"),
+            (SplatFallback::Layer(1), "1"),
+            (SplatFallback::Layer(2), "2"),
+            (SplatFallback::Layer(3), "3"),
+            (SplatFallback::None, "none"),
+        ] {
+            if ui.selectable_label(*fallback == choice, name).clicked() && *fallback != choice {
+                *fallback = choice;
+                dirty = true;
+            }
+        }
+    });
     dirty
 }
 

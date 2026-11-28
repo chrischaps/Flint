@@ -671,7 +671,7 @@ fn generate_one(
     out_path: &Path,
 ) -> Result<(GeneratorOutput, Vec<WrittenFile>)> {
     let (output, gen_time) = generate_and_get_output(spec, registry)?;
-    let files = write_output(&output, out_path, gen_time)?;
+    let files = write_output(spec, &output, out_path, gen_time)?;
     Ok((output, files))
 }
 
@@ -743,6 +743,7 @@ fn planned_files(out_path: &Path, prov: &gen_store::Provenance) -> Vec<WrittenFi
 /// Write a GeneratorOutput to disk, print summary info, and return the files
 /// written (one, or one per map of an image set).
 fn write_output(
+    spec: &ProcGenSpec,
     output: &GeneratorOutput,
     out_path: &Path,
     gen_time: std::time::Duration,
@@ -817,7 +818,12 @@ fn write_output(
                     format_bytes(size)
                 );
                 if img.channel_semantics == flint_procgen::ChannelSemantics::Splat {
-                    say!("    coverage: {}", splat_coverage(img));
+                    let height = images
+                        .iter()
+                        .find(|i| i.channel_semantics == flint_procgen::ChannelSemantics::Height);
+                    let uncovered = height
+                        .and_then(|h| flint_procgen::generators::terrain::uncovered_of(spec, h));
+                    say!("    coverage: {}", splat_coverage(img, uncovered));
                 }
                 written.push(WrittenFile {
                     role: Some(role),
@@ -862,22 +868,40 @@ fn write_output(
 }
 
 /// How much of a splat map each layer paints, `layer 0 61.2%, layer 2 ...`:
-/// the mean of each channel, leaving out a layer that paints nothing.
-fn splat_coverage(img: &flint_procgen::ImageData) -> String {
+/// the mean of each channel over every texel, leaving out a layer that
+/// paints nothing, then how much no rule covers and what took it (#1696):
+/// `; no rule covers 80.0%, painted layer 0 ([splat] fallback)`. A
+/// `"none"` fallback's texels weigh nothing, so the layers' shares sum to
+/// the rest.
+fn splat_coverage(
+    img: &flint_procgen::ImageData,
+    uncovered: Option<flint_procgen::generators::terrain::Uncovered>,
+) -> String {
     let mut sums = [0u64; 4];
     for texel in img.pixels.as_chunks::<4>().0 {
         for (sum, &w) in sums.iter_mut().zip(texel) {
             *sum += u64::from(w);
         }
     }
-    let total: u64 = sums.iter().sum::<u64>().max(1);
+    let total = (img.pixels.len() as u64 / 4).max(1) * 255;
     let shares: Vec<String> = sums
         .iter()
         .enumerate()
         .filter(|(_, &s)| s * 2000 >= total)
         .map(|(i, &s)| format!("layer {i} {:.1}%", s as f64 * 100.0 / total as f64))
         .collect();
-    shares.join(", ")
+    let mut line = shares.join(", ");
+    if let Some(u) = uncovered.filter(|u| u.share > 0.0) {
+        let took = match u.fallback {
+            Some(l) => format!("painted layer {l} ([splat] fallback)"),
+            None => "left unpainted ([splat] fallback = \"none\")".to_string(),
+        };
+        if !line.is_empty() {
+            line.push_str("; ");
+        }
+        line.push_str(&format!("no rule covers {:.1}%, {took}", u.share * 100.0));
+    }
+    line
 }
 
 /// Resolve output path for batch mode, inserting the seed into the filename.

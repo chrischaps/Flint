@@ -537,6 +537,7 @@ mod tests {
                 range: None,
             })],
             splat_rules: Vec::new(),
+            splat: Default::default(),
             grass: None,
         }
     }
