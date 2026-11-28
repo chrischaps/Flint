@@ -24,10 +24,9 @@ use flint_animation::AnimationSystem;
 use flint_core::project::Project;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, SceneRenderer};
-use flint_runtime::state::{ANIMATION, AUDIO, PARTICLES, PHYSICS, SCRIPTS};
+use flint_runtime::state::{ANIMATION, AUDIO, PHYSICS, SCRIPTS};
 use flint_runtime::{
     EventBus, Eye, GameClock, GameEvent, GameStateMachine, InputState, PersistentStore, PlayerView,
     RuntimeSystem, StateConfig,
@@ -53,7 +52,6 @@ pub struct GameCore {
     /// at a transition leaves it alone.
     pub(crate) events: EventBus,
     pub animation: AnimationSystem,
-    pub particles: ParticleSystem,
     pub script: ScriptSystem,
     /// Game states and the persistent store survive scene transitions. The
     /// machine knows the built-in systems and every scene subsystem's
@@ -129,7 +127,6 @@ impl GameCore {
             clock: GameClock::new(),
             events: EventBus::new(),
             animation: AnimationSystem::new(),
-            particles: ParticleSystem::new(),
             script: crate::script_system(),
             state_machine: super::subsystem::state_machine(),
             store: PersistentStore::new(),
@@ -448,10 +445,12 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     }
     host.bones_posed();
     if !capture {
-        host.core().after_animation(config);
+        host.core().after_animation();
     }
-    host.phase_done(Phase::AnimFx);
+    // The particles package's step (#1622), timed with the animation as it
+    // was when the core stepped them
     run_stage(host, Stage::Animation, Some(config));
+    host.phase_done(Phase::AnimFx);
 
     // The asset makers' frame (procgen's budgeted queue); living props move
     // on after it, in what it left of the budget
@@ -829,8 +828,9 @@ impl GameCore {
         }
     }
 
-    /// Bone probes, IK, then the particles.
-    fn after_animation(&mut self, config: &StateConfig) {
+    /// Bone probes, then IK; the particles package steps at
+    /// `Stage::Animation`, right after (#1622).
+    fn after_animation(&mut self) {
         flint_core::scope!("after_animation");
         // Publish bone_probe joints: model-local joint positions written
         // into the component right after the pose computation, so scripts
@@ -845,13 +845,6 @@ impl GameCore {
         // renderer reads world matrices on demand, so this is the last
         // writer it sees.
         self.animation.run_ik(&mut self.world);
-
-        // Advance particle simulation (skip when paused)
-        if config.runs(PARTICLES) {
-            self.particles
-                .update(&mut self.world, self.clock.delta_time)
-                .ok();
-        }
     }
 
     /// The scene's made assets, before the model loader (#32, #1557): each
@@ -1174,41 +1167,6 @@ impl ScriptHost for CoreCommands<'_> {
 
     fn fire_event(&mut self, name: String, data: toml::Value) {
         self.core.events.push(GameEvent::Custom { name, data });
-    }
-
-    fn emit_burst(&mut self, entity: EntityId, count: i64) {
-        self.core
-            .particles
-            .sync
-            .queue_burst(entity, count.max(0) as u32);
-    }
-
-    fn play_effect(&mut self, handle: u64, name: String, position: (f64, f64, f64)) {
-        let pos = [position.0 as f32, position.1 as f32, position.2 as f32];
-        let particles = &mut self.core.particles;
-        if !particles.sync.spawn_effect(handle, &name, pos) {
-            tracing::warn!(
-                target: "script",
-                "play_effect: {}",
-                particles.sync.missing_effect_report(&name)
-            );
-        }
-    }
-
-    fn stop_effect(&mut self, handle: u64) {
-        self.core.particles.sync.stop_effect(handle);
-    }
-
-    fn set_effect_param(&mut self, handle: u64, param: String, value: f64) {
-        let particles = &mut self.core.particles;
-        if !particles.sync.set_effect_param(handle, &param, value) {
-            tracing::warn!(
-                target: "script",
-                "set_effect_param: unknown handle {} or param '{}'",
-                handle,
-                param
-            );
-        }
     }
 
     fn set_entity_style(&mut self, entity: EntityId, style: String) {

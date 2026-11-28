@@ -32,7 +32,6 @@ flint-geometry = { workspace = true }
 flint-render = { workspace = true }
 flint-scene = { workspace = true }
 flint-ecs = { workspace = true }
-flint-particles = { workspace = true }
 flint-schema = { workspace = true }
 wgpu = { workspace = true }
 egui = { workspace = true }

@@ -10,7 +10,8 @@ Each package has a manifest, `packages/<name>/package.toml`, that says what it o
 
 | Package | Tier | What it brings | Comes with |
 |---|---|---|---|
-| `engine` | kernel | The kernel: the ECS, scenes, schemas, the renderer, scripting, the player and the CLI. It also holds, for now, the parts that have no switch yet (physics, audio, animation, particles, terrain, and the ocean, grass, stylize and panels render features) | |
+| `engine` | kernel | The kernel: the ECS, scenes, schemas, the renderer, scripting, the player and the CLI. It also holds, for now, the parts that have no switch yet (physics, audio, animation, terrain, and the ocean, grass, stylize and panels render features) | |
+| `particles` | standard | Particle emitters and reusable effects: `particle_emitter`, `particle_effect`, the `particle` script module, the F3 Particles panel and the effect editor | |
 | `procgen` | standard | Models and textures made from procgen specs, at load and with `flint gen` | |
 | `debug-hud` | standard | The player's F3/F4 debug panels | |
 | `living` | feature | Living props and the wooze field: `living_prop`, `shallow_wooze`, `[living]`, `[wooze]`, and the `living`, `wooze` and `debug` script modules | `procgen` |

@@ -1833,7 +1833,6 @@ dependencies = [
  "flint-ecs",
  "flint-geometry",
  "flint-package",
- "flint-particles",
  "flint-render",
  "flint-scene",
  "flint-schema",
@@ -1978,16 +1977,28 @@ dependencies = [
 name = "flint-particles"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bytemuck",
+ "clap",
+ "egui",
  "flint-core",
  "flint-ecs",
+ "flint-package",
  "flint-render",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
+ "flint-script",
+ "flint-viewer",
+ "flint-widgets",
+ "image",
+ "rhai",
  "serde",
  "toml",
+ "toml_edit 0.22.27",
  "tracing",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]
@@ -2345,7 +2356,6 @@ dependencies = [
  "flint-geometry",
  "flint-import",
  "flint-package",
- "flint-particles",
  "flint-render",
  "flint-runtime",
  "flint-scene",

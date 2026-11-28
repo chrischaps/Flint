@@ -401,28 +401,6 @@ pub(super) fn visible_files(project: &Project, kind: AssetKind, scene_path: &str
     folders.into_iter().rev().flatten().collect()
 }
 
-/// Load every texture referenced by live particle instances and registered
-/// effects into the renderer's texture cache, each found by the project's
-/// one search (`AssetKind::ParticleTextures`: `particles/`, then beside the
-/// scene, at each directory up to the root, then in the engine).
-pub(super) fn load_particle_textures_from_world(
-    particles: &flint_particles::ParticleSystem,
-    renderer: &mut SceneRenderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    project: &flint_core::project::Project,
-    scene_path: &str,
-) {
-    flint_render::load_scene_particle_textures(
-        renderer,
-        device,
-        queue,
-        &particles.sync.texture_names(),
-        project,
-        scene_dir_of(scene_path),
-    );
-}
-
 /// Load every `.anim.toml` clip the scene can see: `animations/` beside the
 /// scene, beside each directory above it up to the project root, and in the
 /// mounted engine (the project's one asset search, ADR 0114). A nearer file

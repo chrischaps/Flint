@@ -643,3 +643,62 @@ ground-field modules #1617 and #1623 move; the API itself reaches neither.
   resources while the panels sync and lends `GameCore::particles` in as the
   `ParticleSystem` the Particles panel reads. #1622 makes it resident.
 - **Terrain** was already off the API's own list (#1615).
+
+## As built: particles as a package (#1622)
+
+Decision 1's particles row and the table's particles line, as they landed.
+`packages/particles/` holds `flint-particles`, the `particle_emitter` and
+`particle_effect` schemas, the `particle` module, the F3 Particles panel and
+the effect editor. With `particles = false` neither launcher's `cargo tree`
+has `flint-particles`, and flint-render, flint-package, flint-script,
+flint-viewer and flint-debug-ui name it in no build.
+
+- **The system is resident.** The package's `run_resources` puts one
+  `ParticleSystem` in for the run, where `GameCore::particles` was. Its
+  subsystem is built for every scene, since an effect needs no emitter in
+  the scene. It loads the scene's effects and finds the world's emitters
+  at the scene's build, right where the player loaded them, just before
+  the other builders. It steps at `Stage::Animation` under the `particles`
+  policy, and clears at `scene_unloading`. `Stage::Animation` now runs
+  before the frame's `AnimFx` phase mark, so the step stays timed with the
+  animation. The textures need a device at the build, so `SceneCtx` gains
+  `gpu` (the window's device and queue, `None` in a capture, a test and a
+  playtest, exactly where the player skipped them before).
+- **`frame_inputs` doesn't carry the draws; a kernel point does.**
+  `Subsystem::frame_inputs` lends `&'s self`, and the draws borrow the
+  system, which lives in the resources rather than the subsystem. So the
+  kernel declares `flint_render::ParticleSource` (load, step,
+  `simulate_to`, the motion stamp, pack, `draw_data`, counts) and
+  `flint_package::particles::Particles` (`new`, `of`, `of_mut`,
+  `set_drawn`, `emitter_problems`). The package fills the point on the
+  player's registry and on the command line. The player's frame stamps the
+  motion clock in `bones_posed`, packs before `prepare` and reads the draws
+  for `prepare` and for a frame capture through it, each call where the
+  frame made it on `GameCore::particles`. `flint render`'s stills,
+  sequences and stages, `flint check`'s `bad-emitter`, and the scene
+  viewer use the same point. A host without the point draws none, and
+  `--particle-time` names the package.
+- **Commands, as written.** `EmitBurst`, `PlayEffect`, `StopEffect` and
+  `SetEffectParam` became the package's `Particle` payload. The subsystem
+  takes them at the drain where the core took them before. A capture that
+  draws no particles drops them with the same one line. That line moved
+  from `HeadlessGame::refuses`, which named the four functions, into the
+  subsystem, which reads the capture's `CaptureDrawn` resource.
+- **The policy name is the package's.** It is registered with the package
+  and listed under `[without] policies`. `flint_runtime::state::PARTICLES`
+  is gone rather than kept as a constant, as decision 7 had it, because
+  `scripts/package-names-check.py` refuses a kernel literal that is a
+  package's name and nothing read the constant any more.
+- **The panel moved to the package.** It moved from debug-hud to the
+  kernel's `ScenePanels` point, as vehicle's panel did, so debug-hud needs
+  no `[with.particles]` part. Particles registers before every feature
+  package, so its panel keeps its place among the F3 panels, right after
+  Camera.
+- **The editor is a point too.** `flint edit <x>.particles.toml` asks
+  `flint_viewer::host::EffectEditors`, as a `.procgen.toml` asks
+  `SpecEditors`. Without it the router names the package from the
+  manifest that provides `particle_effect`, before the file is read.
+- **Three literals are excused.** These are the asset search's
+  `particles/` folder (flint-core's resolver and `flint check`'s
+  reference walk) and the load report's `particles` row. Each is the name
+  of a folder or a load stage, not the package.

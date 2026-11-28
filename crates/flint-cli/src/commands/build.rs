@@ -1340,6 +1340,7 @@ mod tests {
                 "debug-hud",
                 "living",
                 "music",
+                "particles",
                 "procgen",
                 "rhythm",
                 "vehicle"
@@ -1354,6 +1355,7 @@ mod tests {
                 "debug-hud",
                 "living",
                 "music",
+                "particles",
                 "procgen",
                 "rhythm",
                 "vehicle"

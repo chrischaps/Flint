@@ -19,14 +19,14 @@ pub const PHYSICS: &str = "physics";
 pub const SCRIPTS: &str = "scripts";
 /// Property, skeletal, node and sprite animation and sequences.
 pub const ANIMATION: &str = "animation";
-/// The particle simulation.
-pub const PARTICLES: &str = "particles";
 /// Audio triggers, source sync and the FPS listener.
 pub const AUDIO: &str = "audio";
 
 /// The systems every host that has a state machine runs, by the names a
-/// state's policy uses.
-pub const BUILTIN_SYSTEMS: &[&str] = &[PHYSICS, SCRIPTS, ANIMATION, PARTICLES, AUDIO];
+/// state's policy uses. Particles' is the particles package's since #1622
+/// (ADR 0138 decision 7): registered with the package, and known in a build
+/// without it from its manifest's `[without] policies`.
+pub const BUILTIN_SYSTEMS: &[&str] = &[PHYSICS, SCRIPTS, ANIMATION, AUDIO];
 
 /// Whether a system runs under a state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1853,6 +1853,8 @@ mod tests {
     const LIVING: &str = "engine/packages/living/schemas";
     const MUSIC: &str = "engine/packages/music/schemas";
     const VEHICLE: &str = "engine/packages/vehicle/schemas";
+    /// A standard package's: in unless a list sets it `false` (#1622)
+    const PARTICLES: &str = "engine/packages/particles/schemas";
 
     fn packed_under(gathered: &Gathered, dir: &str) -> bool {
         gathered
@@ -1867,26 +1869,25 @@ mod tests {
     fn a_bundle_packs_only_the_packages_flint_toml_lists() {
         let listed = package_game("listed", Some("living = \"*\"\n"), "");
         let gathered = gather_game(&args(&listed)).unwrap();
-        assert_eq!(gathered.schemas, ["engine/schemas", LIVING]);
+        assert_eq!(gathered.schemas, ["engine/schemas", LIVING, PARTICLES]);
         assert!(packed_under(&gathered, LIVING));
         assert!(!packed_under(&gathered, MUSIC), "music isn't listed");
         assert!(gathered.packages.as_ref().unwrap().is_on("living"));
 
-        // An empty table: the feature packages are all out
+        // An empty table: the feature packages are all out, the standard
+        // ones with schemas (particles, #1622) still in
         let game = package_game("none_listed", Some(""), "");
         let gathered = gather_game(&args(&game)).unwrap();
-        assert_eq!(gathered.schemas, ["engine/schemas"]);
-        assert!(!gathered
-            .files
-            .keys()
-            .any(|k| k.starts_with("engine/packages/")));
+        assert_eq!(gathered.schemas, ["engine/schemas", PARTICLES]);
+        let a_feature_packages = |k: &String| k.contains("packages/") && !k.starts_with(PARTICLES);
+        assert!(!gathered.files.keys().any(a_feature_packages));
 
         // A scene packed alone reads the same list
         let mut one = args(&game);
         one.game = game.join("scenes/main.scene.toml");
         let gathered = gather_scene(&one).unwrap();
-        assert!(!gathered.files.keys().any(|k| k.contains("packages/")));
-        assert!(!gathered.schemas.iter().any(|s| s.contains("packages/")));
+        assert!(!gathered.files.keys().any(a_feature_packages));
+        assert!(!gathered.schemas.iter().any(a_feature_packages));
         let _ = std::fs::remove_dir_all(&listed);
         let _ = std::fs::remove_dir_all(&game);
     }
@@ -1946,7 +1947,10 @@ mod tests {
         let every = package_game("every", Some(all), OAKS);
         let none = gather_game(&args(&no_table)).unwrap();
         let listed = gather_game(&args(&every)).unwrap();
-        assert_eq!(none.schemas, ["engine/schemas", LIVING, MUSIC, VEHICLE]);
+        assert_eq!(
+            none.schemas,
+            ["engine/schemas", LIVING, MUSIC, PARTICLES, VEHICLE]
+        );
         assert_eq!(none.schemas, listed.schemas);
         assert!(none.packages.is_none());
         let engine_files = |g: &Gathered| -> BTreeMap<String, Vec<u8>> {

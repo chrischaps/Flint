@@ -2,12 +2,12 @@
 //! viewport overlays. Every widget mutates the authored `EmitterDef`
 //! directly and reports `changed`; `mod.rs` turns that into undo + re-sim.
 
-use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
-use flint_particles::effect::{CountDef, ShapeField};
-use flint_particles::{
+use crate::effect::{CountDef, ShapeField};
+use crate::{
     BurstDef, Curve, CurveDef, EmitterDef, ForceDef, Interp, ParticleBlendMode, ParticleEffect,
     RangeDef, ShapeDef, SortMode, SubEmitterDef,
 };
+use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use flint_widgets::{
     check, combo_str, drag_f32, drag_range_f32, drag_u32, drag_xyz, CurveEditor, GradientEditor,
 };
@@ -904,9 +904,9 @@ fn section_lifetime(ui: &mut egui::Ui, em: &mut EmitterDef, idx: usize) -> bool 
                 em.alpha = if has_alpha {
                     Some(CurveDef::Keys {
                         keys: vec![
-                            flint_particles::Key { t: 0.0, v: 0.0 },
-                            flint_particles::Key { t: 0.2, v: 1.0 },
-                            flint_particles::Key { t: 1.0, v: 0.0 },
+                            crate::Key { t: 0.0, v: 0.0 },
+                            crate::Key { t: 0.2, v: 1.0 },
+                            crate::Key { t: 1.0, v: 0.0 },
                         ],
                         interp: Interp::Smooth,
                     })

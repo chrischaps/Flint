@@ -24,6 +24,11 @@ pub mod rand;
 pub mod sim;
 pub mod sync;
 
+#[cfg(feature = "cli")]
+pub mod cli;
+#[cfg(feature = "player")]
+pub mod player;
+
 use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_runtime::RuntimeSystem;
@@ -112,6 +117,160 @@ impl ParticleSystem {
 impl Default for ParticleSystem {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The package's name, as its manifest gives it.
+pub const PACKAGE_NAME: &str = "particles";
+
+/// The name a game state's policy pauses the simulation by (#727): `particles:
+/// "pause"`. Registered with the package (ADR 0138 decision 7), and known to a
+/// build without it from the manifest's `[without] policies`.
+pub const POLICY: &str = PACKAGE_NAME;
+
+/// What a host steps (#1622): every call is the one it made on the system
+/// itself before the package was one, so a frame is the same.
+impl flint_render::ParticleSource for ParticleSystem {
+    fn load(
+        &mut self,
+        project: &flint_core::project::Project,
+        scene_path: &str,
+        world: &FlintWorld,
+    ) -> Result<()> {
+        load_particle_effects_from_world(project, scene_path, self);
+        self.sync.sync_from_world(world);
+        let count = self.sync.emitter_count();
+        if count > 0 {
+            tracing::debug!(target: "load",
+                "[particles] Discovered {count} emitter(s) across {} effect instance(s)",
+                self.sync.instance_count()
+            );
+        }
+        Ok(())
+    }
+
+    fn texture_names(&self) -> Vec<String> {
+        self.sync.texture_names()
+    }
+
+    fn sync_from_world(&mut self, world: &FlintWorld) {
+        self.sync.sync_from_world(world);
+    }
+
+    fn step(&mut self, world: &FlintWorld, dt: f32) {
+        ParticleSystem::step(self, world, dt);
+    }
+
+    fn simulate_to(&mut self, world: &FlintWorld, seconds: f32, dt: f32) {
+        ParticleSystem::simulate_to(self, world, seconds, dt);
+    }
+
+    fn set_motion(&mut self, seconds: f64, whole_hold: Option<f32>) {
+        self.sync.set_motion_time(seconds);
+        if let Some(whole) = whole_hold {
+            self.sync.set_motion_hold(whole);
+        }
+    }
+
+    fn pack(&mut self, eye: Option<[f32; 3]>) {
+        ParticleSystem::pack(self, eye);
+    }
+
+    fn draw_data(&self) -> Vec<ParticleDraw<'_>> {
+        self.sync.draw_data()
+    }
+
+    fn total_alive(&self) -> usize {
+        self.sync.total_alive()
+    }
+
+    fn emitter_count(&self) -> usize {
+        self.sync.emitter_count()
+    }
+
+    fn instance_count(&self) -> usize {
+        self.sync.instance_count()
+    }
+
+    fn entity_effects(&self) -> Vec<(flint_core::EntityId, String)> {
+        self.sync
+            .instances()
+            .filter_map(|(key, inst)| match (&inst.source, key) {
+                (EffectSource::Asset(fx), InstanceKey::Entity(id)) => Some((id, fx.name.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn restart_all(&mut self) {
+        self.sync.restart_all();
+    }
+
+    fn clear(&mut self) {
+        ParticleSystem::clear(self);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+/// The run's system, among a host's resources.
+#[cfg(any(feature = "player", feature = "cli"))]
+pub fn of(resources: &flint_package::Resources) -> Option<&ParticleSystem> {
+    resources.get::<ParticleSystem>()
+}
+
+/// The run's system, to change.
+#[cfg(any(feature = "player", feature = "cli"))]
+pub fn of_mut(resources: &mut flint_package::Resources) -> Option<&mut ParticleSystem> {
+    resources.get_mut::<ParticleSystem>()
+}
+
+/// Whether a capture draws particles (`flint_package::particles::Particles::set_drawn`):
+/// a run resource of its own, which a capture's subsystem reads.
+#[cfg(any(feature = "player", feature = "cli"))]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CaptureDrawn(pub bool);
+
+/// The kernel's point, as this package fills it (on the player's registry
+/// and on the command line alike).
+#[cfg(any(feature = "player", feature = "cli"))]
+pub fn point() -> flint_package::particles::Particles {
+    use flint_render::ParticleSource;
+    fn new() -> Box<dyn ParticleSource> {
+        Box::new(ParticleSystem::new())
+    }
+    fn of_dyn(resources: &flint_package::Resources) -> Option<&dyn ParticleSource> {
+        of(resources).map(|p| p as &dyn ParticleSource)
+    }
+    fn of_mut_dyn(resources: &mut flint_package::Resources) -> Option<&mut dyn ParticleSource> {
+        of_mut(resources).map(|p| p as &mut dyn ParticleSource)
+    }
+    fn set_drawn(resources: &mut flint_package::Resources, drawn: bool) {
+        resources.insert(CaptureDrawn(drawn));
+    }
+    fn emitter_problems(table: &toml::value::Table) -> Vec<flint_package::particles::EmitterIssue> {
+        EmitterDef::problems(table)
+            .into_iter()
+            .map(|p| flint_package::particles::EmitterIssue {
+                key: p.key,
+                message: p.message,
+                unknown: p.unknown,
+                hint: p.hint,
+            })
+            .collect()
+    }
+    flint_package::particles::Particles {
+        new,
+        of: of_dyn,
+        of_mut: of_mut_dyn,
+        set_drawn,
+        emitter_problems,
     }
 }
 

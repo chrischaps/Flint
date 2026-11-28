@@ -525,8 +525,12 @@ mod tests {
             lines(&engine_packages(), &found),
             ["procgen = \"*\"", "living = \"*\""]
         );
-        // Procgen is used, so nothing is named to leave out
-        assert!(left_out_lines(&engine_packages(), &found, None).is_empty());
+        // Procgen is used, so of the standard packages only particles, which
+        // nothing in the grove uses, is named to leave out (#1622)
+        assert_eq!(
+            left_out_lines(&engine_packages(), &found, None),
+            ["particles"]
+        );
     }
 
     /// #1536: a scene that names no procgen spec gives `procgen = false`
@@ -538,7 +542,10 @@ mod tests {
         let files = vec!["pbr_test.scene.toml".to_string()];
         let found = scan(&root, &files, &packages);
         assert!(found.is_empty(), "{found:?}");
-        assert_eq!(left_out_lines(&packages, &found, None), ["procgen"]);
+        assert_eq!(
+            left_out_lines(&packages, &found, None),
+            ["particles", "procgen"]
+        );
         assert_eq!(
             left_out_line("procgen"),
             "procgen = false   # nothing scanned uses it"
@@ -548,7 +555,8 @@ mod tests {
         assert!(!seen_by_scan(debug_hud));
 
         // A line [packages] already has, or a listed package that needs
-        // procgen, keeps it from being named
+        // procgen, keeps it from being named; particles, which nothing
+        // there needs, is named still (#1622)
         let list = |lines: &[(&str, Wanted)]| PackageList {
             file: PathBuf::from("flint.toml"),
             entries: lines
@@ -566,15 +574,16 @@ mod tests {
             list(&[("ai", any())]),
             list(&[("living", any())]),
         ] {
-            assert!(
-                left_out_lines(&packages, &found, Some(&listed)).is_empty(),
+            assert_eq!(
+                left_out_lines(&packages, &found, Some(&listed)),
+                ["particles"],
                 "{listed:?}"
             );
         }
         // A listed package that needs nothing standard leaves it named
         assert_eq!(
             left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
-            ["procgen"]
+            ["particles", "procgen"]
         );
     }
 }

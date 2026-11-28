@@ -125,6 +125,21 @@ pub(crate) fn build_for_scene(ctx: &mut SceneCtx) -> Vec<Box<dyn Subsystem>> {
     built
 }
 
+/// The subsystems, and the script modules they enable, that every scene of
+/// a stock build has: the particles package's (#1622: an effect needs no
+/// emitter in the scene). A test of a scene's own leaves them out.
+#[cfg(test)]
+pub(crate) const EVERY_SCENE: (&[&str], &[&str]) = (&["particles"], &["particle"]);
+
+/// The enabled script modules less those [`EVERY_SCENE`] enables.
+#[cfg(test)]
+pub(crate) fn own_modules(modules: Vec<&'static str>) -> Vec<&'static str> {
+    modules
+        .into_iter()
+        .filter(|m| !EVERY_SCENE.1.contains(m))
+        .collect()
+}
+
 /// The player's subsystems, in the order they were added, torn down in the
 /// other order.
 #[derive(Default)]
@@ -147,6 +162,17 @@ impl Subsystems {
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {
         self.list.iter().map(|s| s.name()).collect()
+    }
+
+    /// [`Self::names`] less the subsystems every scene of a stock build has
+    /// (the standard packages', [`EVERY_SCENE`]): what a test of a scene's
+    /// own subsystems compares.
+    #[cfg(test)]
+    pub(crate) fn own_names(&self) -> Vec<&'static str> {
+        self.names()
+            .into_iter()
+            .filter(|n| !EVERY_SCENE.0.contains(n))
+            .collect()
     }
 
     /// Drop the scene's subsystems, last added first, keeping the run's.
@@ -351,6 +377,7 @@ macro_rules! with_scene_ctx {
                     post: $app.scene.post_process.as_ref(),
                     script: &mut $app.core.script,
                     renderer: $app.scene_renderer.as_mut(),
+                    gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
                     pads: Some($crate::player_app::subsystem::Pads::new(
                         &mut $app.gilrs,
                         &mut $app.pad_rumble,

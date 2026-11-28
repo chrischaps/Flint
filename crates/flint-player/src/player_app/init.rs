@@ -6,7 +6,6 @@
 
 use super::input_config::{read_user_override_file, resolve_input_paths, resolve_user_override};
 use super::scene_loading;
-use super::scene_loading::load_particle_textures_from_world;
 use super::state::{AssetSources, InputLayers};
 #[cfg(target_os = "android")]
 use super::AndroidGamepadTracker;
@@ -1098,24 +1097,6 @@ impl PlayerApp {
             Ok(buses) => self.audio.engine.set_buses(&buses),
             Err(e) => tracing::error!(target: "load", "audio buses: {e}"),
         }
-    }
-
-    /// Load image files referenced by particle_emitter texture fields into
-    /// the renderer's texture cache (no-op until renderer/context exist).
-    pub(super) fn load_particle_textures(&mut self) {
-        let (Some(renderer), Some(context)) =
-            (self.scene_renderer.as_mut(), self.render_context.as_ref())
-        else {
-            return;
-        };
-        load_particle_textures_from_world(
-            &self.core.particles,
-            renderer,
-            &context.device,
-            &context.queue,
-            &self.core.project,
-            &self.core.scene_path,
-        );
     }
 
     /// (Re)load the fonts the scene sees (`fonts/`, by the project's one

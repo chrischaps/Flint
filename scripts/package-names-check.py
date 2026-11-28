@@ -56,6 +56,18 @@ def kernel_crates():
 # A "string" exception may name a file, (crate, "string", name, file):
 # only that file's literal is excused.
 EXCEPTIONS = {
+    ("flint-core", "string", "particles", "crates/flint-core/src/project/assets.rs"): "the "
+    "asset search's `particles/` folder and the `particles` kind (`AssetKind::Particles`, "
+    "`ParticleTextures`): the folder a project keeps its effects and their textures in, "
+    "as `models/` and `sprites/` are, which the kernel's one resolver searches (ADR 0114), "
+    "not the package's name (#1622)",
+    ("flint-cli", "string", "particles", "crates/flint-cli/src/check/references.rs"): "the "
+    "asset folders `flint check` looks for a reference under, the resolver's `particles/` "
+    "among them (ADR 0114), not the package's name (#1622)",
+    ("flint-core", "string", "particles", "crates/flint-core/src/load_report.rs"): "the load "
+    "report's `particles` row, the stage of a scene's bring-up the particles package's "
+    "builder times (`NoteKind::ParticleLoad`), named for what is loaded there as `models` "
+    "and `scripts` are (#1622)",
     ("flint-player", "string", "music", "crates/flint-player/src/logging.rs"): "a log "
     "target the engine's warnings are counted under (`flint_target`), as `load` and "
     "`perf` are: the music package logs as `music`, and so did the player before it",
