@@ -765,6 +765,10 @@ pub struct ScriptCallContext {
     pub world: *mut FlintWorld,
     /// Raw pointer to the PhysicsSystem — valid only during call scope
     pub physics: *const PhysicsSystem,
+    /// Who the game is played as (`flint_runtime::PlayerView::player`,
+    /// ADR 0138): what `on_interact` and `find_nearest_interactable`
+    /// measure from. The host sets it each frame (#1614).
+    pub player: Option<EntityId>,
     /// Camera position and direction for weapon aiming
     pub camera_position: [f32; 3],
     pub camera_direction: [f32; 3],
@@ -962,6 +966,7 @@ impl ScriptCallContext {
         Self {
             world: std::ptr::null_mut(),
             physics: std::ptr::null(),
+            player: None,
             camera_position: [0.0; 3],
             camera_view_proj: [
                 [1.0, 0.0, 0.0, 0.0],

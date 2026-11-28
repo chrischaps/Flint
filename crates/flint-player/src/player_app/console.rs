@@ -43,11 +43,15 @@ impl PlayerApp {
             .find(|e| e.action == super::debug_keys::SHOW_KEYS_ACTION)
             .filter(|e| table.enabled && e.standing == flint_runtime::Standing::Active)
             .map(|e| e.key_label());
+        let view = self.core.player_view();
         let line = controls_line(
             config,
             &self.input_layers.named_actions,
             &read,
-            self.core.physics.has_player_entity(),
+            Player {
+                controls: view.controls,
+                mouse_look: view.mouse_look,
+            },
             list_key.as_deref(),
         );
         if self.input_layers.said_controls.as_deref() == Some(line.as_str()) {
@@ -58,31 +62,33 @@ impl PlayerApp {
     }
 }
 
-/// The actions the character controller reads, which a first-person scene
-/// binds whatever its own layer names: physics' own list (ADR 0134), so the
-/// two can't drift
-const CHARACTER_ACTIONS: [&str; 6] = flint_physics::character::ACTIONS;
+/// What the controls line says of the player (`PlayerView`, ADR 0138):
+/// the actions its controller reads, which a scene binds whatever its own
+/// layer names (the character controller's six, ADR 0134), and whether the
+/// mouse turns it.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Player<'a> {
+    pub controls: &'a [&'a str],
+    pub mouse_look: bool,
+}
 
 /// `Controls: jump Space/Pad:South, steer A/D | Esc cursor/exit, F1 debug
 /// keys`: each bound action the scene uses with its bindings' labels, then
 /// the player's own keys. An action is used when the game's layers name it
-/// (`named`), a script reads it (`read`), or it is the character
-/// controller's and the scene has one (`first_person`, which the mouse
-/// turns too). A built-in nothing uses (`fire` in a racing game) is left
+/// (`named`), a script reads it (`read`), or the player's controller reads
+/// it (`player.controls`; `mouse look` joins the keys when the mouse turns
+/// the player). A built-in nothing uses (`fire` in a racing game) is left
 /// out. `debug_keys` is the key that shows the debug-key list, when one
 /// does (the `keys` row of the table, F1 unless `[debug_keys]` moved it).
 pub(super) fn controls_line(
     config: &InputConfig,
     named: &BTreeSet<String>,
     read: &BTreeSet<String>,
-    first_person: bool,
+    player: Player<'_>,
     debug_keys: Option<&str>,
 ) -> String {
-    let listed = |name: &str| {
-        named.contains(name)
-            || read.contains(name)
-            || (first_person && CHARACTER_ACTIONS.contains(&name))
-    };
+    let listed =
+        |name: &str| named.contains(name) || read.contains(name) || player.controls.contains(&name);
     let actions: Vec<String> = config
         .actions
         .iter()
@@ -105,7 +111,7 @@ pub(super) fn controls_line(
     };
 
     let mut keys: Vec<String> = Vec::new();
-    if first_person {
+    if player.mouse_look {
         keys.push("mouse look".into());
     }
     // A game that binds Escape has it, and the window doesn't close (#639)
@@ -127,7 +133,7 @@ pub(super) fn controls_line(
 
 #[cfg(test)]
 mod tests {
-    use super::controls_line;
+    use super::{controls_line, Player};
     use flint_runtime::InputConfig;
     use std::collections::BTreeSet;
 
@@ -159,7 +165,13 @@ mod tests {
         let game = kart();
         let named: BTreeSet<String> = game.actions.keys().cloned().collect();
         merged.actions.extend(game.actions);
-        let line = controls_line(&merged, &named, &BTreeSet::new(), false, Some("F1"));
+        let line = controls_line(
+            &merged,
+            &named,
+            &BTreeSet::new(),
+            Player::default(),
+            Some("F1"),
+        );
         assert!(
             line.starts_with(
                 "Controls: accelerate W/Pad:RightTrigger2, pause Escape, steer A/D/Pad:LeftStickX | "
@@ -183,7 +195,12 @@ mod tests {
         .unwrap();
         let named: BTreeSet<String> = game.actions.keys().cloned().collect();
         merged.actions.extend(game.actions);
-        let line = controls_line(&merged, &named, &BTreeSet::new(), true, Some("F1"));
+        // What physics' controller writes into the player's view (#1614)
+        let walker = Player {
+            controls: &flint_physics::character::ACTIONS,
+            mouse_look: true,
+        };
+        let line = controls_line(&merged, &named, &BTreeSet::new(), walker, Some("F1"));
         assert!(
             line.starts_with(
                 "Controls: jump Space, move_backward S, move_forward W, move_left A, \
@@ -211,7 +228,7 @@ mod tests {
             .unwrap()
             .actions,
         );
-        let line = controls_line(&config, &named, &read, false, Some("F1"));
+        let line = controls_line(&config, &named, &read, Player::default(), Some("F1"));
         assert!(
             line.starts_with(
                 "Controls: jump Space, move_left A, move_right D, toggle_help H | Esc cursor/exit, F1 debug keys"
@@ -223,7 +240,13 @@ mod tests {
     #[test]
     fn a_scene_that_reads_no_action_says_so() {
         let none = BTreeSet::new();
-        let line = controls_line(&InputConfig::built_in_defaults(), &none, &none, false, None);
+        let line = controls_line(
+            &InputConfig::built_in_defaults(),
+            &none,
+            &none,
+            Player::default(),
+            None,
+        );
         assert!(
             line == "Controls: the scene reads no actions | Esc cursor/exit",
             "{line}"

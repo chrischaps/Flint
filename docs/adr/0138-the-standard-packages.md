@@ -299,7 +299,13 @@ pub struct Eye { pub position: Vec3, pub target: Vec3, pub yaw: f32, pub pitch: 
   `flint_first_person::ACTIONS`.
 - **#1614 comes before the package.** Physics' built-in controller writes
   `PlayerView` from inside physics until #1618 moves it, so the readers
-  move once.
+  move once. *As built (#1614):* `PhysicsSystem::enter_player_view` at
+  the scene's entry and `place_eye` after the steps; the view is a run
+  resource from `GameCore::new`. A capture steps no physics, so it sets
+  `player` alone (`flint_physics::character::find_player`), which
+  `find_nearest_interactable` reads as well as `is_near_player`. The
+  script camera's listener keeps its old pitch sign (`Eye::looking`, #1666),
+  and `set_player` is #1667.
 - **Room for other controllers and cameras.** A script controller that calls
   `move_character` sets `player` through a kernel script function
   (`set_player(id)`, in the kernel's `camera` module) and gets the cursor,

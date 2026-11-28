@@ -113,14 +113,14 @@ impl PlayerApp {
         self.load_brought_up();
 
         // On Android the cursor always counts as captured, so touch input
-        // flows without a click-to-capture gate; elsewhere a first-person
-        // player captures it.
+        // flows without a click-to-capture gate; elsewhere a player who
+        // looks with the mouse captures it.
         #[cfg(target_os = "android")]
         {
             self.focus.cursor_captured = true;
         }
         #[cfg(not(target_os = "android"))]
-        if self.core.physics.has_player_entity() && !self.focus.cursor_captured {
+        if self.core.player_view().mouse_look && !self.focus.cursor_captured {
             self.capture_cursor();
         }
         Ok(())
@@ -336,6 +336,10 @@ impl PlayerApp {
             (Err(e), SceneEntry::Transition) => tracing::warn!("{e:#}"),
             (Ok(()), _) => {}
         }
+        // Who the scene is played as, before anything reads it: the cursor
+        // and the controls line at the end of the entry, `on_init`'s
+        // interactables (ADR 0138, #1614)
+        self.core.enter_player_view();
 
         let audio_note = frame_notes::begin(NoteKind::AudioLoad, String::new);
         load_audio_from_world(

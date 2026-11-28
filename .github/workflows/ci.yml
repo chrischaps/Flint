@@ -157,6 +157,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/docs-check.py --flint target/debug/flint
 
+      # The vehicle package's example (#1629): one lap of its test track,
+      # played headless at 1/60, 1/30 and 1/144 s frames by the same input
+      # script. It fails when the kart leaves the track, flips or doesn't
+      # finish, or when the laps are over 0.1 s apart (ADR 0140 decision 8).
+      # Same binary: `packages` has vehicle, and a playtest draws nothing.
+      - name: vehicle test track lap
+        run: python3 packages/vehicle/examples/test_track/playtests/lap_check.py --flint target/debug/flint
+
   # The package matrix (#1336, epic #1328): flint-player and flint-cli built
   # with no package, the standard set alone (what a game listing none of the
   # feature packages gets), each package alone and all of them, read from

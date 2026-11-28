@@ -1132,3 +1132,21 @@ args = ["--no-grid", "--style", "tron:blend_source=tear", "--set", "post.tear=0.
 name = "reality-tron-ground"
 scene = "tests/fixtures/scenes/tron_ground.scene.toml"
 args = ["--no-grid", "--style", "tron"]
+
+# --- packages' examples -----------------------------------------------------
+
+# The vehicle mid-corner (#1629): the vehicle package's test track with the
+# kart frozen where its playtest has it 4.9 s into the lap, halfway round the
+# hairpin with the front wheels steered and every wheel posed on its spring.
+# Plain boxes, real lights, no style: it holds the package's example as the
+# book shows it (packages/vehicle/docs/images/vehicle-mid-corner.png is this
+# render). The lap itself is held by the example's playtest, in CI's
+# headless job (packages/vehicle/examples/test_track/playtests/lap_check.py).
+# Tighter than the suite's glyph tolerance: the front wheels put straight
+# (no steer, no roll) read 0.09% past 48, which the suite's 2% passes, and
+# 0.24% past 24 (mean 0.21), which this fails
+[[case]]
+name = "vehicle-mid-corner"
+scene = "tests/fixtures/scenes/vehicle_mid_corner.scene.toml"
+args = ["--no-grid"]
+tolerance = { level = 24, share = 0.0005, mean = 0.5 }

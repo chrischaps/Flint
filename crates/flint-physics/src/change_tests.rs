@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::sync::ColliderRereads;
+use flint_core::components as comp;
 use flint_runtime::EventBus;
 
 fn spawn(world: &mut FlintWorld, name: &str, text: &str) -> EntityId {
