@@ -122,7 +122,7 @@ pub use scene_renderer::{
     load_grass_ground_in, load_scene_grass_ground, load_scene_particle_textures,
     load_scene_splines, BoundGrass, BoundScene, DrawControls, DrawLimit, DrawTimesRead, FrameHost,
     FrameInputs, HeldFrameCapture, LightingLevers, LoadedGrassGround, LoadedSplines, LodSettings,
-    RendererConfig, SceneBinding, SceneRenderer, SplineCollider, SteppedPass, View2d,
+    RendererConfig, SceneBinding, SceneRenderer, SplineCollider, SteppedPass, TerrainSplat, View2d,
     DEFAULT_CLEAR_COLOR,
 };
 /// The most bones one skinned mesh's buffer holds.

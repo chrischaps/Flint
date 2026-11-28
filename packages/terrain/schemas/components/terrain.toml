@@ -1,41 +1,47 @@
 [component.terrain]
-description = "Heightmap-based terrain with splat-map texture blending"
+description = "Heightmap-based terrain with splat-map texture blending: from a recipe (`spec`), or from baked or hand-made maps (`heightmap`, `splat_map`)"
 
+# No field has a default (#1697): a key the scene leaves out is the recipe's
+# when the terrain names one (`spec`), and the reader's otherwise. Each
+# description ends with that number, which `TerrainConfig::default()` and
+# `GrassConfig::default()` hold (`the_described_defaults_are_the_readers`).
 [component.terrain.fields]
-heightmap = { type = "asset", kind = "files", description = "Path to grayscale heightmap PNG" }
-width = { type = "f32", description = "World X extent in units", default = 256.0 }
-depth = { type = "f32", description = "World Z extent in units", default = 256.0 }
-height_scale = { type = "f32", description = "Maximum Y height (heightmap 1.0 maps to this)", default = 50.0 }
-chunk_resolution = { type = "i32", description = "Quads per chunk edge", default = 64 }
-texture_tile = { type = "f32", description = "UV tiling factor for layer textures", default = 16.0 }
-splat_map = { type = "asset", kind = "files", description = "Path to RGBA splat map PNG", default = "" }
-layer0_texture = { type = "asset", kind = "files", description = "Texture for splat R channel (e.g. grass)", default = "" }
-layer1_texture = { type = "asset", kind = "files", description = "Texture for splat G channel (e.g. dirt)", default = "" }
-layer2_texture = { type = "asset", kind = "files", description = "Texture for splat B channel (e.g. rock)", default = "" }
-layer3_texture = { type = "asset", kind = "files", description = "Texture for splat A channel (e.g. sand)", default = "" }
-metallic = { type = "f32", description = "PBR metallic factor 0.0-1.0", default = 0.0 }
-roughness = { type = "f32", description = "PBR roughness factor 0.0-1.0", default = 0.85 }
+spec = { type = "asset", kind = "files", description = "The .terrain.toml the terrain is made from: baked at load (cached), its [geometry], [textures] and [grass] the terrain's, a key written here winning; saving it while the game runs rebakes the terrain (#1697)" }
+seed = { type = "i64", description = "The seed the recipe bakes at; the spec's [seed] value without it" }
+heightmap = { type = "asset", kind = "files", description = "Path to grayscale heightmap PNG; with a spec, used in place of the bake's" }
+width = { type = "f32", description = "World X extent in units (the spec's, else 256)" }
+depth = { type = "f32", description = "World Z extent in units (the spec's, else 256)" }
+height_scale = { type = "f32", description = "Maximum Y height, heightmap 1.0 maps to this (the spec's, else 50)" }
+chunk_resolution = { type = "i32", description = "Quads per chunk edge (the spec's, else 64)" }
+texture_tile = { type = "f32", description = "UV tiling factor for layer textures (the spec's, else 16)" }
+splat_map = { type = "asset", kind = "files", description = "Path to RGBA splat map PNG; with a spec, used in place of the bake's" }
+layer0_texture = { type = "asset", kind = "files", description = "Texture for splat R channel, e.g. grass (the spec's, else none)" }
+layer1_texture = { type = "asset", kind = "files", description = "Texture for splat G channel, e.g. dirt (the spec's, else none)" }
+layer2_texture = { type = "asset", kind = "files", description = "Texture for splat B channel, e.g. rock (the spec's, else none)" }
+layer3_texture = { type = "asset", kind = "files", description = "Texture for splat A channel, e.g. sand (the spec's, else none)" }
+metallic = { type = "f32", description = "PBR metallic factor 0.0-1.0 (the spec's, else 0)" }
+roughness = { type = "f32", description = "PBR roughness factor 0.0-1.0 (the spec's, else 0.85)" }
 
-# Grass rendering
-"grass.enabled" = { type = "bool", description = "Enable grass rendering", default = false }
-"grass.density" = { type = "f32", description = "Blades per square meter", default = 8.0 }
-"grass.max_distance" = { type = "f32", description = "Grass fade-out distance in meters", default = 80.0 }
-"grass.fade_start" = { type = "f32", description = "Distance where density falloff begins", default = 60.0 }
-"grass.blade_width" = { type = "f32", description = "Base blade width in meters", default = 0.08 }
-"grass.blade_height" = { type = "f32", description = "Base blade height in meters", default = 0.4 }
-"grass.height_variation" = { type = "f32", description = "Random height scale variation 0..1", default = 0.3 }
-"grass.color_base" = { type = "vec3", description = "Dark base color (RGB linear)", default = [0.15, 0.45, 0.1] }
-"grass.color_tip" = { type = "vec3", description = "Bright tip color (RGB linear)", default = [0.3, 0.7, 0.15] }
-"grass.color_dry" = { type = "vec3", description = "Dry/dead tint (RGB linear)", default = [0.55, 0.5, 0.2] }
-"grass.dry_amount" = { type = "f32", description = "Dry grass mix amount 0..1", default = 0.15 }
-"grass.wind_direction" = { type = "vec3", description = "Wind direction (XZ plane)", default = [1.0, 0.0, 0.3] }
-"grass.wind_speed" = { type = "f32", description = "Wind sway frequency multiplier", default = 1.0 }
-"grass.wind_strength" = { type = "f32", description = "Max sway displacement in meters", default = 0.15 }
-"grass.bend_radius" = { type = "f32", description = "Entity bend influence radius in meters", default = 2.0 }
-"grass.bend_strength" = { type = "f32", description = "Entity bend amount 0..1", default = 0.8 }
-"grass.density_source" = { type = "string", description = "Density source: splat or map", default = "splat" }
-"grass.density_layer" = { type = "i32", description = "Which splat layer drives grass density (0=R)", default = 0 }
-"grass.density_threshold" = { type = "f32", description = "Min splat weight to spawn grass 0..1", default = 0.1 }
-"grass.wooze" = { type = "bool", description = "Sway on the scene's [wooze] field: hold and glide with the trees, and comb the tips with the field's noise each beat (#252)", default = false }
-"grass.wooze_amplitude" = { type = "f32", description = "Metres the tips lean at full swing on a woozy field, times the field's amplitude; 0 keeps only the clock", default = 0.12 }
-"grass.wooze_wavelength" = { type = "f32", description = "Metres from one combed patch of grass to the next", default = 2.5 }
+# Grass rendering: each the spec's [grass] key of the same name, else the default
+"grass.enabled" = { type = "bool", description = "Enable grass rendering (default false)" }
+"grass.density" = { type = "f32", description = "Blades per square meter (default 8)" }
+"grass.max_distance" = { type = "f32", description = "Grass fade-out distance in meters (default 80)" }
+"grass.fade_start" = { type = "f32", description = "Distance where density falloff begins (default 60)" }
+"grass.blade_width" = { type = "f32", description = "Base blade width in meters (default 0.08)" }
+"grass.blade_height" = { type = "f32", description = "Base blade height in meters (default 0.4)" }
+"grass.height_variation" = { type = "f32", description = "Random height scale variation 0..1 (default 0.3)" }
+"grass.color_base" = { type = "vec3", description = "Dark base color, RGB linear (default [0.15, 0.45, 0.1])" }
+"grass.color_tip" = { type = "vec3", description = "Bright tip color, RGB linear (default [0.3, 0.7, 0.15])" }
+"grass.color_dry" = { type = "vec3", description = "Dry/dead tint, RGB linear (default [0.55, 0.5, 0.2])" }
+"grass.dry_amount" = { type = "f32", description = "Dry grass mix amount 0..1 (default 0.15)" }
+"grass.wind_direction" = { type = "vec3", description = "Wind direction, XZ plane (default [1, 0, 0.3])" }
+"grass.wind_speed" = { type = "f32", description = "Wind sway frequency multiplier (default 1)" }
+"grass.wind_strength" = { type = "f32", description = "Max sway displacement in meters (default 0.15)" }
+"grass.bend_radius" = { type = "f32", description = "Entity bend influence radius in meters (default 2)" }
+"grass.bend_strength" = { type = "f32", description = "Entity bend amount 0..1 (default 0.8)" }
+"grass.density_source" = { type = "string", description = "Density source: splat or map (default splat)" }
+"grass.density_layer" = { type = "i32", description = "Which splat layer drives grass density, 0=R (default 0)" }
+"grass.density_threshold" = { type = "f32", description = "Min splat weight to spawn grass 0..1 (default 0.1)" }
+"grass.wooze" = { type = "bool", description = "Sway on the scene's [wooze] field: hold and glide with the trees, and comb the tips with the field's noise each beat (#252; default false)" }
+"grass.wooze_amplitude" = { type = "f32", description = "Metres the tips lean at full swing on a woozy field, times the field's amplitude; 0 keeps only the clock (default 0.12)" }
+"grass.wooze_wavelength" = { type = "f32", description = "Metres from one combed patch of grass to the next (default 2.5)" }

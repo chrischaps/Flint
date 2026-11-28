@@ -14,6 +14,9 @@
 //! CLI part (the terrain editor). Without a feature this crate links no
 //! renderer, so procgen's `terrain_v1` doesn't either.
 
+/// The package's name, as its manifest gives it.
+pub const PACKAGE_NAME: &str = "terrain";
+
 pub mod bake;
 pub mod brush;
 pub mod chunk;
@@ -27,6 +30,7 @@ pub mod player;
 pub mod procgen;
 #[cfg(feature = "render")]
 pub mod scene;
+pub mod source;
 pub mod spec;
 pub mod splatgen;
 pub mod terrain;
@@ -42,6 +46,7 @@ pub use flint_geometry::ground::{GroundField, SceneGround};
 pub use grass_config::GrassConfig;
 pub use heightmap::{Heightmap, HeightmapFiles};
 pub use procgen::generate_heightmap;
+pub use source::{baked, Baked, SpecSource};
 pub use spec::{SpecIssue, TerrainSpec};
 pub use splatgen::generate_splat_map;
 pub use terrain::{HeightGrid, Terrain, TerrainConfig};
@@ -58,6 +63,98 @@ mod tests {
         let data: toml::Value = toml::from_str(text).unwrap();
         world.set_component(id, component, data).unwrap();
         (world, id)
+    }
+
+    /// The schema's fields carry no `default` since #1697 (a key left out
+    /// is the recipe's); each description ends with the number it stands
+    /// for, which must be the reader's: `(default 8)`, `(the spec's, else
+    /// 256)`. Loading a scene before #1697 wrote those defaults in, so a
+    /// scene with no recipe draws as it did only while the two agree.
+    #[test]
+    fn the_described_defaults_are_the_readers() {
+        let schema: toml::Table =
+            toml::from_str(include_str!("../../../schemas/components/terrain.toml")).unwrap();
+        let fields = schema["component"]["terrain"]["fields"].as_table().unwrap();
+        let config = TerrainConfig::default();
+        let grass = toml::Value::try_from(GrassConfig::default()).unwrap();
+        let reader = |key: &str| -> Option<toml::Value> {
+            let float = |v: f32| Some(toml::Value::Float(v as f64));
+            match key {
+                "width" => float(config.width),
+                "depth" => float(config.depth),
+                "height_scale" => float(config.height_scale),
+                "chunk_resolution" => Some(toml::Value::Integer(config.chunk_resolution as i64)),
+                "texture_tile" => float(config.texture_tile),
+                "metallic" => float(config.metallic),
+                "roughness" => float(config.roughness),
+                _ => grass.get(key.strip_prefix("grass.")?).cloned(),
+            }
+        };
+        let mut held = 0;
+        for (key, field) in fields {
+            assert!(field.get("default").is_none(), "{key} has a default again");
+            let text = field["description"].as_str().unwrap();
+            let Some(said) = text
+                .rsplit_once("(default ")
+                .or_else(|| text.rsplit_once("else "))
+                .and_then(|(_, rest)| rest.strip_suffix(')'))
+            else {
+                continue;
+            };
+            if said == "none" {
+                continue;
+            }
+            let said: toml::Value = toml::from_str::<toml::Table>(&format!("v = {said}"))
+                .map(|t| t["v"].clone())
+                .unwrap_or_else(|_| toml::Value::String(said.to_string()));
+            let reads = reader(key).unwrap_or_else(|| panic!("{key}: no reader default"));
+            let reads = match reads {
+                // The enum reads back as its word
+                toml::Value::String(s) => toml::Value::String(s.to_lowercase()),
+                v => v,
+            };
+            assert!(
+                flint_core::toml_util::reads_same(&said, &reads),
+                "{key}: the schema says {said}, the reader {reads}"
+            );
+            held += 1;
+        }
+        assert!(held >= 27, "only {held} described defaults found");
+    }
+
+    #[test]
+    fn a_component_key_wins_over_its_recipe_and_a_left_out_one_is_the_recipes() {
+        let dir = std::env::temp_dir().join(format!("flint-terrain-over-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("land")).unwrap();
+        std::fs::write(
+            dir.join("land/hill.terrain.toml"),
+            "[meta]\nname = \"hill\"\n[seed]\nvalue = 3\n\
+             [geometry]\nwidth = 90.0\ndepth = 70.0\nheight_scale = 12.0\nresolution = 9\n\
+             [textures]\ntexture_tile = 4.0\n[textures.layers.layer1]\npath = \"dirt.png\"\n\
+             [grass]\nenabled = true\ndensity = 3.0\n\
+             [[height_layers]]\nop = \"noise\"\noctaves = 2\n",
+        )
+        .unwrap();
+        let project = flint_core::project::Project::for_scene(&dir.join("hill.scene.toml"));
+        let (world, id) = world_with(
+            comp::TERRAIN,
+            "spec = \"land/hill.terrain.toml\"\nwidth = 50.0\n\"grass.blade_height\" = 0.9",
+        );
+        let made = source::make_terrain(&world.view(id, comp::TERRAIN), &project, &dir).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        // Written: the component's. Left out: the recipe's
+        assert_eq!(made.config.width, 50.0);
+        assert_eq!(made.config.depth, 70.0);
+        assert_eq!(made.config.height_scale, 12.0);
+        assert_eq!(made.config.texture_tile, 4.0);
+        assert_eq!(made.config.layer_textures[1], "./land/dirt.png");
+        assert!(made.grass.enabled);
+        assert_eq!((made.grass.density, made.grass.blade_height), (3.0, 0.9));
+        // The bake's maps, at the recipe's resolution and seed
+        assert_eq!((made.heightmap.width, made.heightmap.depth), (9, 9));
+        let recipe = made.recipe.unwrap();
+        assert_eq!(recipe.seed, 3);
+        assert!(matches!(made.splat, source::SplatMap::Baked(_)));
     }
 
     #[test]
@@ -99,6 +196,8 @@ mod tests {
         let hm = Heightmap::from_raw(vec![0.5; 16], 4, 4);
         let config = TerrainConfig {
             heightmap_path: String::new(),
+            spec_path: String::new(),
+            seed: None,
             width: 10.0,
             depth: 10.0,
             height_scale: 20.0,
@@ -140,6 +239,8 @@ mod tests {
         let hm = Heightmap::from_raw(vec![0.5; 4], 2, 2);
         let config = TerrainConfig {
             heightmap_path: String::new(),
+            spec_path: String::new(),
+            seed: None,
             width: 100.0,
             depth: 100.0,
             height_scale: 40.0,
@@ -162,6 +263,8 @@ mod tests {
         let hm = Heightmap::from_raw(vec![0.0; 9], 3, 3);
         let config = TerrainConfig {
             heightmap_path: String::new(),
+            spec_path: String::new(),
+            seed: None,
             width: 10.0,
             depth: 10.0,
             height_scale: 5.0,

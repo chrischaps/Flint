@@ -249,6 +249,8 @@ impl TerrainEditApp {
         let hm = Heightmap::from_raw(self.heightmap_data.clone(), geo.resolution, geo.resolution);
         let config = TerrainConfig {
             heightmap_path: String::new(),
+            spec_path: String::new(),
+            seed: None,
             width: geo.width,
             depth: geo.depth,
             height_scale: geo.height_scale,
@@ -295,6 +297,8 @@ impl TerrainEditApp {
         let hm = Heightmap::from_raw(self.heightmap_data.clone(), geo.resolution, geo.resolution);
         let config = TerrainConfig {
             heightmap_path: String::new(),
+            spec_path: String::new(),
+            seed: None,
             width: geo.width,
             depth: geo.depth,
             height_scale: geo.height_scale,

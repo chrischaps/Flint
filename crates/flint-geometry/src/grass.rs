@@ -133,10 +133,22 @@ impl GrassConfig {
     /// and is reported once. `enabled_default` is what a missing
     /// `grass.enabled` means.
     pub fn from_component(view: &ComponentView<'_>, enabled_default: bool) -> Self {
-        let mut gc = Self::default();
-        if !view.bool("grass.enabled", enabled_default) {
-            return gc;
+        let base = Self {
+            enabled: enabled_default,
+            ..Self::default()
+        };
+        Self::over(view, &base)
+    }
+
+    /// The component's `grass.*` keys over `base` (#1697: a terrain's
+    /// recipe's `[grass]`): each key written wins, each left out is
+    /// `base`'s, and `grass.enabled` left out is `base.enabled`. Grass that
+    /// isn't enabled is the defaults, as [`from_component`](Self::from_component)'s.
+    pub fn over(view: &ComponentView<'_>, base: &Self) -> Self {
+        if !view.bool("grass.enabled", base.enabled) {
+            return Self::default();
         }
+        let mut gc = base.clone();
         let get_f32 = |key: &str, default: f32| -> f32 { view.f32(key, default) };
         gc.enabled = true;
         gc.density = get_f32("grass.density", gc.density);

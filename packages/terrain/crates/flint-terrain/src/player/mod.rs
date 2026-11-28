@@ -12,16 +12,16 @@
 //! ground into its game's resources) reads 0.0 too.
 
 mod module;
+mod watch;
 
 use crate::scene::bind_terrain;
 use flint_core::components as comp;
 use flint_package::bind::{BindCtx, SceneGround};
-use flint_package::{Package, Registry, SceneCtx, Subsystem};
+use flint_package::{Package, Registry, SceneCtx, Stage, StageCtx, Subsystem};
 
 pub use module::{TerrainHeight, TerrainModule, TERRAIN_MODULE};
 
-/// The package's name, as its manifest gives it.
-pub const PACKAGE_NAME: &str = "terrain";
+pub use crate::PACKAGE_NAME;
 
 /// The `terrain` package (`packages/terrain/package.toml`).
 pub static PACKAGE: TerrainPackage = TerrainPackage;
@@ -73,15 +73,24 @@ fn left_out(ctx: &SceneCtx) -> Option<String> {
     )
 }
 
-/// Every scene has one: `terrain_height` is any scene's.
+/// Every scene has one: `terrain_height` is any scene's. In the player,
+/// one whose terrain is made from its recipe watches it (#1697).
 pub fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     let height = TerrainHeight::of(ctx.resources.get::<SceneGround>());
     ctx.script.set_module_state(height);
-    Some(Box::new(TerrainSubsystem))
+    let watch = if ctx.capture.is_none() {
+        watch::SpecWatch::of(ctx)
+    } else {
+        None
+    };
+    Some(Box::new(TerrainSubsystem { watch }))
 }
 
-/// The scene's terrain, as its scripts read it: the `terrain` module.
-pub struct TerrainSubsystem;
+/// The scene's terrain, as its scripts read it: the `terrain` module, and
+/// the watch on its recipe.
+pub struct TerrainSubsystem {
+    watch: Option<watch::SpecWatch>,
+}
 
 impl Subsystem for TerrainSubsystem {
     fn name(&self) -> &'static str {
@@ -92,8 +101,19 @@ impl Subsystem for TerrainSubsystem {
         &[module::MODULE]
     }
 
+    /// The recipe, looked at before the scripts (and physics' frame, which
+    /// takes a rebaked ground the same frame).
+    fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
+        if stage == Stage::PreScripts {
+            if let Some(watch) = &mut self.watch {
+                watch.poll(ctx);
+            }
+        }
+    }
+
     /// The scene's heights go with it.
     fn scene_unloading(&mut self, ctx: &mut SceneCtx) {
         ctx.script.set_module_state(TerrainHeight::default());
+        self.watch = None;
     }
 }

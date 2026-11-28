@@ -5,13 +5,15 @@
 //! `flint terrain-edit`), so `flint --help` is the same in every build; a
 //! flint without this package names it. What this crate brings it registers
 //! as a point ([`extensions`], in [`CliExtension::register`]):
-//! [`TerrainEditors`], the editor a `.terrain.toml` opens in.
+//! [`TerrainEditors`], the editor a `.terrain.toml` opens in, and its entry
+//! on `SceneChecks` ([`check`], #1697): a terrain held to its recipe.
 
+pub mod check;
 mod editor;
 
 pub use editor::TerrainEditApp;
 
-use flint_package::cli::{CliExtension, Points};
+use flint_package::cli::{CliExtension, Points, SceneChecks};
 use flint_viewer::host::{Editor, SpecEdit, TerrainEditors};
 
 /// What the CLI launcher lists for the terrain package
@@ -35,6 +37,11 @@ impl CliExtension for Terrain {
 
     fn register(&self, points: &mut Points) {
         points.insert(TerrainEditors { open });
+        // A terrain held to the recipe it names (#1697)
+        points
+            .get_or_insert_default::<SceneChecks>()
+            .0
+            .push((crate::PACKAGE_NAME, check::check));
     }
 }
 

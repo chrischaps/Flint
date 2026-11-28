@@ -35,6 +35,8 @@ toml = { workspace = true }
 noise = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+# The disk tier's file times (#1697): std's on native, the browser's on wasm
+web-time = { workspace = true }
 flint-render = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }

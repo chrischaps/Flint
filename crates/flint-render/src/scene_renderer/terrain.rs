@@ -18,6 +18,20 @@ use flint_core::vfs;
 use flint_core::Transform;
 use std::path::Path;
 
+/// Where a terrain's splat map comes from (#1697): a file the scene names,
+/// found by the project's search, or the pixels a recipe's bake made.
+/// Both reach the cache as the same texture (sRGB, one level), so a terrain
+/// made from its recipe draws as one made from the PNG its bake wrote.
+#[derive(Debug, Clone, Copy)]
+pub enum TerrainSplat<'a> {
+    /// No splat map: the material reads white.
+    None,
+    /// A name the project's search takes from the scene's folder.
+    File(&'a str),
+    /// RGBA8 weights, `size` texels a side.
+    Pixels { rgba: &'a [u8], size: u32 },
+}
+
 /// The texture cache's name for the terrain's splat map.
 const SPLAT: &str = "terrain_splat";
 /// The texture cache's names for the four layers the splat map blends.
@@ -67,13 +81,19 @@ impl TerrainRenderer {
         texture_tile: f32,
         metallic: f32,
         roughness: f32,
-        splat_path: &str,
+        splat: TerrainSplat<'_>,
         layer_paths: &[String; 4],
         scene_dir: &Path,
     ) {
         let (Some(tp), Some(tc)) = (pipeline, texture_cache.as_mut()) else {
             return;
         };
+        // A terrain loaded again (its recipe rebaked, #1697, or another
+        // scene's) takes its own maps, not the cache's last ones
+        tc.remove_texture(SPLAT);
+        for name in LAYERS {
+            tc.remove_texture(name);
+        }
 
         // The splat map and the layers are paths the scene names: found by
         // the project's one search (`AssetKind::Files`, ADR 0114), and a
@@ -86,9 +106,17 @@ impl TerrainRenderer {
                 .ok()
         };
 
-        if !splat_path.is_empty() {
-            if let Some(path) = find("terrain splat map", splat_path) {
-                let _ = tc.load_file(device, queue, SPLAT, &path);
+        match splat {
+            TerrainSplat::None | TerrainSplat::File("") => {}
+            TerrainSplat::File(name) => {
+                if let Some(path) = find("terrain splat map", name) {
+                    let _ = tc.load_file(device, queue, SPLAT, &path);
+                }
+            }
+            TerrainSplat::Pixels { rgba, size } => {
+                if let Err(e) = tc.upload_rgba(device, queue, SPLAT, size, size, rgba, false) {
+                    tracing::warn!("terrain splat map: {e}");
+                }
             }
         }
         for (name, layer_path) in LAYERS.iter().zip(layer_paths) {

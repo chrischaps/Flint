@@ -10,12 +10,19 @@
 //! binds a scene runs right after `bind_scene` and before the scene's
 //! models: the player, the scene viewer and `flint render`, as they did when
 //! the loader was the renderer's. None of them names this crate.
+//!
+//! What the terrain is made of is [`crate::source`]'s (#1697): its settings
+//! and maps from its component over its recipe ([`make_terrain`]), which
+//! needs no GPU; this file uploads them ([`build_terrain`]), at the bind
+//! and again when the player's subsystem sees the recipe saved.
 
-use crate::{GrassConfig, Heightmap, HeightmapFiles, Terrain, TerrainConfig};
+use crate::source::{make_terrain, MadeTerrain, SplatMap};
+use crate::{GrassConfig, Heightmap, Terrain, TerrainConfig};
 use flint_core::components as comp;
 use flint_core::{EntityId, Transform, Vec3};
 use flint_ecs::FlintWorld;
-use flint_render::{BoundGrass, BoundScene, SceneRenderer};
+use flint_render::{BoundGrass, BoundScene, SceneRenderer, TerrainSplat};
+use std::path::PathBuf;
 
 /// A terrain [`bind_terrain`] loaded: its entity, what it was generated
 /// from, and the generated chunks (whose collider a host with physics
@@ -29,6 +36,9 @@ pub struct LoadedTerrain {
     pub heightmap_size: (u32, u32),
     /// Where the entity's transform puts it.
     pub offset: [f32; 3],
+    /// The recipe it was made from (#1697), as the project's search found
+    /// it: what the player's subsystem watches.
+    pub spec: Option<PathBuf>,
 }
 
 impl LoadedTerrain {
@@ -53,7 +63,8 @@ impl LoadedTerrain {
 /// and mark it as the entity a `style_mask` on it masks (#310). Files are
 /// found by the project's one search (`AssetKind::Files`) from the scene's
 /// folder, the scope `bind_scene` gave the renderer, so call it after
-/// `bind_scene`, which unloads the last scene's terrain and grass first.
+/// `bind_scene`, which unloads the last scene's terrain and grass first. A
+/// terrain that names its recipe (`spec`, #1697) is baked from it.
 ///
 /// One grass field a scene (ADR 0089): a `grass_ground`, which `bind_scene`
 /// loaded into `bound.grass`, replaces a terrain's grass, so the terrain's
@@ -67,108 +78,178 @@ pub fn bind_terrain(
 ) -> Option<LoadedTerrain> {
     flint_core::scope!("load_terrain");
     let scope = renderer.asset_scope();
-    let project = &scope.project;
-    let scene_dir = scope.scene_dir.as_path();
 
     for entity in world.all_entities() {
         // Through the typed view (ADR 0115): a wrong type is reported once
-        let terrain_comp = world.view(entity.id, comp::TERRAIN);
-        if !terrain_comp.exists() {
+        let view = world.view(entity.id, comp::TERRAIN);
+        if !view.exists() {
             continue;
         }
-        let config = TerrainConfig::from_component(&terrain_comp);
-        if config.heightmap_path.is_empty() {
-            tracing::warn!("Terrain entity '{}': missing heightmap path", entity.name);
-            continue;
-        }
-        let hm_path =
-            project.file_or_beside("terrain heightmap", &config.heightmap_path, scene_dir);
-        let heightmap = match Heightmap::from_png(&hm_path) {
-            Ok(hm) => hm,
+        let made = match make_terrain(&view, &scope.project, &scope.scene_dir) {
+            Ok(made) => made,
             Err(e) => {
-                tracing::warn!("Failed to load heightmap: {}", e);
+                tracing::warn!("Terrain entity '{}': {e}", entity.name);
                 continue;
             }
         };
-
-        let terrain = Terrain::generate(&heightmap, &config);
-
-        // Only the position: a terrain is never rotated or scaled
-        let pos = world
-            .view(entity.id, comp::TRANSFORM)
-            .vec3("position", [0.0; 3]);
-        let transform = Transform {
-            position: Vec3::new(pos[0], pos[1], pos[2]),
-            ..Default::default()
-        };
-
-        renderer.load_terrain(
-            device,
-            queue,
-            &terrain.chunks,
-            &transform,
-            config.texture_tile,
-            config.metallic,
-            config.roughness,
-            &config.splat_map_path,
-            &config.layer_textures,
-            scene_dir,
-        );
-        // A style_mask on the terrain entity masks its chunks (#310)
-        renderer.set_terrain_entity(Some(entity.id));
-
-        let grass_config = GrassConfig::from_component(&terrain_comp, false);
-        if grass_config.enabled {
-            if let Some(ground) = &bound.grass {
+        if let Some(ground) = &bound.grass {
+            if made.grass.enabled {
                 tracing::warn!(
                     "grass_ground '{}' replaces the terrain's grass",
                     ground.entity_name
                 );
-            } else {
-                load_terrain_grass(
-                    renderer,
-                    device,
-                    queue,
-                    &grass_config,
-                    &heightmap,
-                    &config,
-                    pos,
-                    &project.file_or_beside("terrain splat map", &config.splat_map_path, scene_dir),
-                );
-                // The terrain's grass is in only when its splat map loaded
-                if renderer.grass_config().is_some() {
-                    bound.grass = Some(BoundGrass {
-                        config: grass_config,
-                        entity_name: entity.name.clone(),
-                        component: comp::TERRAIN,
-                    });
-                }
             }
         }
-
-        tracing::info!(
-            "Loaded terrain '{}': {}x{} heightmap, {} chunks, {}x{} world units",
-            entity.name,
-            heightmap.width,
-            heightmap.depth,
-            terrain.chunks.len(),
-            config.width,
-            config.depth,
+        let grass_free = bound.grass.is_none();
+        let (loaded, grass) = build_terrain(
+            renderer,
+            device,
+            queue,
+            world,
+            entity.id,
+            &entity.name,
+            made,
+            grass_free,
         );
-        return Some(LoadedTerrain {
-            entity: entity.id,
-            name: entity.name.clone(),
-            heightmap_size: (heightmap.width, heightmap.depth),
-            terrain,
-            config,
-            offset: pos,
-        });
+        if grass_free {
+            bound.grass = grass;
+        }
+        return Some(loaded);
     }
     None
 }
 
-/// The terrain's grass, grown over its splat map (warned when the map
-/// doesn't read, and then there is none).
+/// Build a terrain made of `made` into `renderer` for `entity`: its chunks
+/// and material (replacing a terrain loaded before), the style mask's
+/// entity, and, when `grass_free` (no `grass_ground` holds the scene's
+/// grass), its grass, or none when it has grass no more. Returns the loaded
+/// terrain, and its grass when it loaded.
+#[allow(clippy::too_many_arguments)]
+pub fn build_terrain(
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &FlintWorld,
+    entity: EntityId,
+    name: &str,
+    made: MadeTerrain,
+    grass_free: bool,
+) -> (LoadedTerrain, Option<BoundGrass>) {
+    let scope = renderer.asset_scope();
+    let project = &scope.project;
+    let scene_dir = scope.scene_dir.as_path();
+    let MadeTerrain {
+        config,
+        grass,
+        heightmap,
+        splat,
+        recipe,
+    } = made;
+    let terrain = Terrain::generate(&heightmap, &config);
+
+    // Only the position: a terrain is never rotated or scaled
+    let pos = world
+        .view(entity, comp::TRANSFORM)
+        .vec3("position", [0.0; 3]);
+    let transform = Transform {
+        position: Vec3::new(pos[0], pos[1], pos[2]),
+        ..Default::default()
+    };
+
+    let splat_arg = match &splat {
+        SplatMap::None => TerrainSplat::None,
+        SplatMap::File(name) => TerrainSplat::File(name),
+        SplatMap::Baked(maps) => TerrainSplat::Pixels {
+            rgba: &maps.splat,
+            size: maps.resolution,
+        },
+    };
+    renderer.load_terrain(
+        device,
+        queue,
+        &terrain.chunks,
+        &transform,
+        config.texture_tile,
+        config.metallic,
+        config.roughness,
+        splat_arg,
+        &config.layer_textures,
+        scene_dir,
+    );
+    // A style_mask on the terrain entity masks its chunks (#310)
+    renderer.set_terrain_entity(Some(entity));
+
+    let mut bound_grass = None;
+    if grass_free {
+        if grass.enabled {
+            let rgba = match &splat {
+                SplatMap::Baked(maps) => {
+                    Some((maps.splat.clone(), maps.resolution, maps.resolution))
+                }
+                SplatMap::File(name) => {
+                    let path = project.file_or_beside("terrain splat map", name, scene_dir);
+                    match flint_render::open_image(&path) {
+                        Ok(img) => {
+                            let rgba = img.to_rgba8();
+                            let (w, h) = rgba.dimensions();
+                            Some((rgba.into_raw(), w, h))
+                        }
+                        Err(_) => {
+                            tracing::warn!("Grass enabled but splat map not found at {path:?}");
+                            None
+                        }
+                    }
+                }
+                SplatMap::None => {
+                    tracing::warn!("Grass enabled but the terrain has no splat map");
+                    None
+                }
+            };
+            if let Some((rgba, sw, sh)) = rgba {
+                load_terrain_grass(
+                    renderer, device, queue, &grass, &heightmap, &config, pos, &rgba, sw, sh,
+                );
+            }
+            // The terrain's grass is in only when its splat map loaded
+            if renderer.grass_config().is_some() {
+                bound_grass = Some(BoundGrass {
+                    config: grass,
+                    entity_name: name.to_string(),
+                    component: comp::TERRAIN,
+                });
+            }
+        } else if renderer.grass_config().is_some() {
+            // Its recipe's grass was turned off since the last build
+            renderer.unload_grass();
+        }
+    }
+
+    let from = recipe
+        .as_ref()
+        .map(|r| format!(" from {}", r.words()))
+        .unwrap_or_default();
+    tracing::info!(
+        "Loaded terrain '{}'{from}: {}x{} heightmap, {} chunks, {}x{} world units",
+        name,
+        heightmap.width,
+        heightmap.depth,
+        terrain.chunks.len(),
+        config.width,
+        config.depth,
+    );
+    let loaded = LoadedTerrain {
+        entity,
+        name: name.to_string(),
+        heightmap_size: (heightmap.width, heightmap.depth),
+        terrain,
+        config,
+        offset: pos,
+        spec: recipe.map(|r| r.source.path),
+    };
+    (loaded, bound_grass)
+}
+
+/// The terrain's grass, grown over its splat map's weights.
 #[allow(clippy::too_many_arguments)]
 fn load_terrain_grass(
     renderer: &mut SceneRenderer,
@@ -178,35 +259,28 @@ fn load_terrain_grass(
     heightmap: &Heightmap,
     config: &TerrainConfig,
     pos: [f32; 3],
-    splat_path: &std::path::Path,
+    splat_rgba: &[u8],
+    sw: u32,
+    sh: u32,
 ) {
-    match flint_render::open_image(splat_path) {
-        Ok(splat_img) => {
-            let splat_rgba = splat_img.to_rgba8();
-            let (sw, sh) = splat_rgba.dimensions();
-            renderer.load_grass(
-                device,
-                queue,
-                grass,
-                &heightmap.clone_heights(),
-                heightmap.width,
-                heightmap.depth,
-                splat_rgba.as_raw(),
-                sw,
-                sh,
-                pos,
-                config.width,
-                config.depth,
-                config.height_scale,
-            );
-            tracing::info!(
-                "Grass enabled: density={}, max_dist={}",
-                grass.density,
-                grass.max_distance
-            );
-        }
-        Err(_) => {
-            tracing::warn!("Grass enabled but splat map not found at {:?}", splat_path)
-        }
-    }
+    renderer.load_grass(
+        device,
+        queue,
+        grass,
+        &heightmap.clone_heights(),
+        heightmap.width,
+        heightmap.depth,
+        splat_rgba,
+        sw,
+        sh,
+        pos,
+        config.width,
+        config.depth,
+        config.height_scale,
+    );
+    tracing::info!(
+        "Grass enabled: density={}, max_dist={}",
+        grass.density,
+        grass.max_distance
+    );
 }

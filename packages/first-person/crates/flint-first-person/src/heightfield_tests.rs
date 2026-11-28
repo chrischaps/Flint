@@ -27,6 +27,8 @@ fn hills() -> Terrain {
         .collect();
     let cfg = TerrainConfig {
         heightmap_path: String::new(),
+        spec_path: String::new(),
+        seed: None,
         width: 64.0,
         depth: 48.0,
         height_scale: 6.0,
