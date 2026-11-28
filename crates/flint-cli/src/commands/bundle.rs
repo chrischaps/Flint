@@ -1855,6 +1855,8 @@ mod tests {
     const LIVING: &str = "engine/packages/living/schemas";
     const MUSIC: &str = "engine/packages/music/schemas";
     const VEHICLE: &str = "engine/packages/vehicle/schemas";
+    /// A standard package's: in unless a list sets it `false` (#1622)
+    const PARTICLES: &str = "engine/packages/particles/schemas";
     // A standard package (#1617): in unless a list says `physics = false`
     const PHYSICS: &str = "engine/packages/physics/schemas";
 
@@ -1871,28 +1873,36 @@ mod tests {
     fn a_bundle_packs_only_the_packages_flint_toml_lists() {
         let listed = package_game("listed", Some("living = \"*\"\n"), "");
         let gathered = gather_game(&args(&listed)).unwrap();
-        // Animation, flipbook (#1620) and physics (#1617) are standard: in
-        // unless set false
+        // Animation, flipbook (#1620), particles (#1622) and physics (#1617)
+        // are standard: in unless set false
         assert_eq!(
             gathered.schemas,
-            ["engine/schemas", ANIMATION, FLIPBOOK, LIVING, PHYSICS]
+            [
+                "engine/schemas",
+                ANIMATION,
+                FLIPBOOK,
+                LIVING,
+                PARTICLES,
+                PHYSICS
+            ]
         );
         assert!(packed_under(&gathered, LIVING));
         assert!(!packed_under(&gathered, MUSIC), "music isn't listed");
         assert!(gathered.packages.as_ref().unwrap().is_on("living"));
 
         // An empty table: the feature packages are all out, the standard
-        // ones with schemas (animation, flipbook, physics) in
+        // ones with schemas (animation, flipbook, particles, physics) in
         let game = package_game("none_listed", Some(""), "");
         let gathered = gather_game(&args(&game)).unwrap();
         assert_eq!(
             gathered.schemas,
-            ["engine/schemas", ANIMATION, FLIPBOOK, PHYSICS]
+            ["engine/schemas", ANIMATION, FLIPBOOK, PARTICLES, PHYSICS]
         );
         assert!(!gathered.files.keys().any(|k| {
             k.starts_with("engine/packages/")
                 && !k.starts_with(&format!("{ANIMATION}/"))
                 && !k.starts_with(&format!("{FLIPBOOK}/"))
+                && !k.starts_with(&format!("{PARTICLES}/"))
                 && !k.starts_with(&format!("{PHYSICS}/"))
         }));
 
@@ -1904,6 +1914,7 @@ mod tests {
             k.contains("packages/")
                 && !k.contains("packages/animation/")
                 && !k.contains("packages/flipbook/")
+                && !k.contains("packages/particles/")
                 && !k.contains("packages/physics/")
         };
         assert!(!gathered.files.keys().any(feature));
@@ -1975,6 +1986,7 @@ mod tests {
                 FLIPBOOK,
                 LIVING,
                 MUSIC,
+                PARTICLES,
                 PHYSICS,
                 VEHICLE
             ]

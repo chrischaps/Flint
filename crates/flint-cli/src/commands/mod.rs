@@ -38,7 +38,7 @@ pub mod look;
 pub mod look_measure;
 pub mod mesh_seq;
 pub mod package;
-pub mod particle_edit;
+
 pub mod play;
 pub mod playtest;
 pub mod prefab;

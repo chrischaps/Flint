@@ -267,28 +267,6 @@ fn scene_dir_of(scene_path: &str) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-/// Load every texture referenced by live particle instances and registered
-/// effects into the renderer's texture cache, each found by the project's
-/// one search (`AssetKind::ParticleTextures`: `particles/`, then beside the
-/// scene, at each directory up to the root, then in the engine).
-pub(super) fn load_particle_textures_from_world(
-    particles: &flint_particles::ParticleSystem,
-    renderer: &mut SceneRenderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    project: &flint_core::project::Project,
-    scene_path: &str,
-) {
-    flint_render::load_scene_particle_textures(
-        renderer,
-        device,
-        queue,
-        &particles.sync.texture_names(),
-        project,
-        scene_dir_of(scene_path),
-    );
-}
-
 /// The scene a transition names, from the current scene: a path found by
 /// the project's one search (`AssetKind::Scenes`, ADR 0114), which tries it
 /// from the current scene's directory, then from each directory above it up

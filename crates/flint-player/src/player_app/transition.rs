@@ -436,7 +436,7 @@ impl PlayerApp {
         // or an extension's own events go on to the next scene's scripts
         // (#727: they used to be lost with physics' queue).
         self.core.events.retain(|event| !event.is_contact());
-        self.core.particles.clear();
+
         // What the asset makers queued for the scene going (procgen's)
         for maker in self.core.asset_makers() {
             maker.scene_gone(&mut self.core.resources);

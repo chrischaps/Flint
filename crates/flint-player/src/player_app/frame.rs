@@ -126,9 +126,9 @@ impl PlayerApp {
         // Every panel applies its edits and reads back what it shows (#744):
         // one loop, no panel asked its name, by the run's debug HUD (#1559).
         // What they tell the player comes back through `PanelHost`.
-        // The panels are held out of the resources while they sync, and the
-        // particles lent in, so a panel finds its package's state by type
-        // (#1616: the Package API names no standard package)
+        // The panels are held out of the resources while they sync, so a
+        // panel finds its package's state there by type (#1616), the
+        // particles' among them (#1622)
         let panels = match self.hud.debug {
             Some(_) => self.core.resources.remove::<flint_package::DebugPanels>(),
             None => None,
@@ -139,22 +139,15 @@ impl PlayerApp {
                 particles_render: self.particles_render_enabled,
                 ..Default::default()
             };
-            let (world, camera) = (&mut self.core.world, &mut self.camera);
-            self.core.resources.lend(
-                &mut self.core.particles,
-                flint_particles::ParticleSystem::new,
-                |resources| {
-                    hud.sync(
-                        &mut panels,
-                        &mut flint_package::panels::PanelCtx {
-                            world,
-                            renderer: &mut *renderer,
-                            device: &context.device,
-                            camera,
-                            resources,
-                            host: &mut host,
-                        },
-                    )
+            hud.sync(
+                &mut panels,
+                &mut flint_package::panels::PanelCtx {
+                    world: &mut self.core.world,
+                    renderer: &mut *renderer,
+                    device: &context.device,
+                    camera: &mut self.camera,
+                    resources: &mut self.core.resources,
+                    host: &mut host,
                 },
             );
             self.core.resources.insert(panels);
@@ -328,7 +321,7 @@ impl PlayerApp {
                     let targets = super::frame_capture::Targets::of(context, &output.texture, info);
                     // The draws the frame was prepared with: the system was
                     // packed once this frame, so they are the same (#1615)
-                    let particle_draws = self.core.particles.sync.draw_data();
+                    let particle_draws = particle_draws(&self.core.resources);
                     let facts = super::frame_capture::FrameFacts {
                         world: &self.core.world,
                         particles: self
@@ -951,9 +944,12 @@ impl PlayerApp {
             }
         }
 
-        // Particles packed, camera-sorted, for the upload (ADR 0068)
+        // Particles packed, camera-sorted, for the upload (ADR 0068): the
+        // particles package's system, through the kernel's point (#1622)
         if self.particles_render_enabled && self.scene_renderer.is_some() {
-            self.core.particles.pack(Some(self.camera.position_array()));
+            if let Some(particles) = particles_mut(&mut self.core.resources) {
+                particles.pack(Some(self.camera.position_array()));
+            }
         }
         // The subsystems' and the frame's inputs (#739)
 
@@ -979,7 +975,7 @@ impl PlayerApp {
         // (#1617); the rest have their drawn motion differenced
         // Each emitter's draw, as the renderer takes it (#1615)
         let particle_draws = if self.particles_render_enabled {
-            self.core.particles.sync.draw_data()
+            particle_draws(&self.core.resources)
         } else {
             Vec::new()
         };
@@ -1665,9 +1661,12 @@ impl super::game_core::FrameHost for PlayerApp {
             renderer.set_motion_time(self.core.clock.total_time);
             // ...and the emitters held entities carry (#873), which step
             // right after this, on the same clock and whole-frame rate
-            let sync = &mut self.core.particles.sync;
-            sync.set_motion_time(self.core.clock.total_time);
-            sync.set_motion_hold(renderer.effective_post_process_config().motion_hold);
+            if let Some(particles) = particles_mut(&mut self.core.resources) {
+                particles.set_motion(
+                    self.core.clock.total_time,
+                    Some(renderer.effective_post_process_config().motion_hold),
+                );
+            }
         }
     }
 
@@ -1924,6 +1923,26 @@ pub(crate) fn numbered_capture_path(base: &std::path::Path, n: u32) -> std::path
         .map(|e| e.to_string_lossy().into_owned())
         .unwrap_or_else(|| "png".to_string());
     base.with_file_name(format!("{stem}_{n:04}.{ext}"))
+}
+
+/// The run's particles, when the particles package is in it (#1622): the
+/// system its `run_resources` put in, reached through the kernel's point.
+pub(super) fn particles_mut(
+    resources: &mut flint_package::Resources,
+) -> Option<&mut dyn flint_render::ParticleSource> {
+    let point = crate::packages::registry().point::<flint_package::particles::Particles>()?;
+    (point.of_mut)(resources)
+}
+
+/// Each emitter's draw, as packed last; none without the package.
+pub(super) fn particle_draws(
+    resources: &flint_package::Resources,
+) -> Vec<flint_render::ParticleDraw<'_>> {
+    crate::packages::registry()
+        .point::<flint_package::particles::Particles>()
+        .and_then(|point| (point.of)(resources))
+        .map(|particles| particles.draw_data())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -44,9 +44,10 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 
 | Package | Tier | Modules |
 |---|---|---|
-| [`engine`](#the-engine-package) | kernel | [entity](#entity) (40) · [input](#input) (22) · [time](#time) (3) · [audio](#audio) (17) · [camera](#camera) (8) · [camera_rig](#camera_rig) (12) · [post_process](#post_process) (22) · [quality](#quality) (5) · [math](#math) (23) · [event](#event) (2) · [log](#log) (4) · [draw](#draw) (44) · [draw_world](#draw_world) (6) · [view](#view) (6) · [ui](#ui) (26) · [screen_ui](#screen_ui) (6) · [sprite](#sprite) (6) · [camera_2d](#camera_2d) (12) · [touch](#touch) (15) · [style](#style) (25) · [style_field](#style_field) (6) · [panels](#panels) (4) · [particle](#particle) (7) · [spline](#spline) (4) · [ocean](#ocean) (3) · [terrain](#terrain) (1) · [chunk](#chunk) (3) · [scene](#scene) (10) · [state](#state) (8) · [persistence](#persistence) (15) · [data](#data) (2) · [expression](#expression) (1) · [test](#test) (4) · [field](#field) (9) |
+| [`engine`](#the-engine-package) | kernel | [entity](#entity) (40) · [input](#input) (22) · [time](#time) (3) · [audio](#audio) (17) · [camera](#camera) (8) · [camera_rig](#camera_rig) (12) · [post_process](#post_process) (22) · [quality](#quality) (5) · [math](#math) (23) · [event](#event) (2) · [log](#log) (4) · [draw](#draw) (44) · [draw_world](#draw_world) (6) · [view](#view) (6) · [ui](#ui) (26) · [screen_ui](#screen_ui) (6) · [sprite](#sprite) (6) · [camera_2d](#camera_2d) (12) · [touch](#touch) (15) · [style](#style) (25) · [style_field](#style_field) (6) · [panels](#panels) (4) · [spline](#spline) (4) · [ocean](#ocean) (3) · [terrain](#terrain) (1) · [chunk](#chunk) (3) · [scene](#scene) (10) · [state](#state) (8) · [persistence](#persistence) (15) · [data](#data) (2) · [expression](#expression) (1) · [test](#test) (4) · [field](#field) (9) |
 | [`animation`](#the-animation-package) | standard | [animation](#animation) (14) · [tween](#tween) (2) |
 | [`flipbook`](#the-flipbook-package) | standard | [flipbook](#flipbook) (8) |
+| [`particles`](#the-particles-package) | standard | [particle](#particle) (7) |
 | [`physics`](#the-physics-package) | standard | [physics](#physics) (9) · [physics_2d](#physics_2d) (5) · [nav](#nav) (3) |
 | [`living`](#the-living-package) | feature | [wooze](#wooze) (8) · [living](#living) (8) · [debug](#debug) (5) |
 | [`music`](#the-music-package) | feature | [music](#music) (3) |
@@ -481,18 +482,6 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 | `remove_panel(name: str)` | — | Take one panel off the page; with the last gone the frame is one view again. |
 | `clear_panels()` | — | Draw the frame as one view again, with no panels. |
 
-### particle
-
-| Function | Returns | Description |
-|---|---|---|
-| `emit_burst(id: entity, count: int)` | — | Fire a number of particles from the entity's emitter at once. |
-| `start_emitter(id: entity)` | — | Start the entity's particle emitter. |
-| `stop_emitter(id: entity)` | — | Stop the entity's particle emitter; particles in flight finish. |
-| `set_emission_rate(id: entity, rate: num)` | — | Set the entity's emitter's rate, in particles a second. |
-| `play_effect(name: str, x: num, y: num, z: num)` | `int`: its handle, for `stop_effect` and `set_effect_param` | Play a detached one-shot particle effect (particles/\<name\>.particles.toml) at a world point. |
-| `stop_effect(handle: int)` | — | Stop a detached effect's emission; particles in flight finish. |
-| `set_effect_param(handle: int, param: str, value: num)` | — | Tune a detached effect: `emission_scale`, scale, playing (above 0.5 is on), x, y or z. |
-
 ### spline
 
 | Function | Returns | Description |
@@ -662,6 +651,24 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 | `sprite_set_speed(id: entity, speed: num)` | — | **Deprecated:** use `set_sprite_speed`. Set the entity's flipbook playback speed (1 is the clip's own; negative plays it backwards). |
 | `is_sprite_playing(id: entity)` | `bool`: false without an animator | Whether the entity's flipbook is playing. |
 | `sprite_is_playing(id: entity)` | `bool`: false without an animator | **Deprecated:** use `is_sprite_playing`. Whether the entity's flipbook is playing. |
+
+## The `particles` package
+
+*standard: a game has it unless its `[packages]` sets it to `false`.* Particle emitters and reusable effects, simulated on a fixed seeded step.
+
+### particle
+
+*Enabled when the particles package is in the build.* Anywhere else a call is a script error saying the module is not enabled.
+
+| Function | Returns | Description |
+|---|---|---|
+| `emit_burst(id: entity, count: int)` | — | Fire a number of particles from the entity's emitter at once. |
+| `start_emitter(id: entity)` | — | Start the entity's particle emitter. |
+| `stop_emitter(id: entity)` | — | Stop the entity's particle emitter; particles in flight finish. |
+| `set_emission_rate(id: entity, rate: num)` | — | Set the entity's emitter's rate, in particles a second. |
+| `play_effect(name: str, x: num, y: num, z: num)` | `int`: its handle, for `stop_effect` and `set_effect_param` | Play a detached one-shot particle effect (particles/\<name\>.particles.toml) at a world point. |
+| `stop_effect(handle: int)` | — | Stop a detached effect's emission; particles in flight finish. |
+| `set_effect_param(handle: int, param: str, value: num)` | — | Tune a detached effect: `emission_scale`, scale, playing (above 0.5 is on), x, y or z. |
 
 ## The `physics` package
 

@@ -30,7 +30,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
    ```bash
    flint render levels/demo.scene.toml --output test.png --distance 20 --pitch 30 --yaw 45 --no-grid
    ```
-2. **`flint edit <file>`** -- Interactive editor for a scene (hot-reload), a `.glb` or a `.procgen.toml`.
+2. **`flint edit <file>`** -- Editor for a scene (hot-reload), a `.glb` or a spec.
 3. **`flint gen <spec>`** -- A procgen spec to a GLB or PNG.
 4. **`flint play <scene>`** -- Full game runtime with physics, scripting, audio, and input (`cargo run --bin flint -- play <scene>`).
 5. **`flint capture <shots.toml>`** -- A shot list as deterministic frame sequences.
@@ -39,7 +39,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-39-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554).:
+39-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
@@ -59,7 +59,7 @@ flint-player        Standalone player: the game loop, the subsystems, egui HUD
   ├── flint-package  Package API: Subsystem, its contexts
   ├── flint-script   Rhai scripting with hot-reload
   ├── flint-living   Living props' runtime
-  ├── flint-particles Particles: effects, curves, forces, bursts
+  ├── flint-particles Emitters, effects
   ├── flint-animation Clips, sequences, tween
   ├── flint-flipbook Sprite-sheet clips
   ├── flint-audio    Kira spatial audio
@@ -100,8 +100,9 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-script/CLAUDE.md` | Rhai detail, callbacks, script UI |
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear, project manifest, env switches |
 | `crates/flint-audio/CLAUDE.md` | audio clock, decoding, device features |
-| `{crates/flint-{particles,terrain},packages/physics/crates/flint-physics}/CLAUDE.md` | particles, terrain, Rapier |
+| `{crates/flint-terrain,packages/physics/crates/flint-physics}/CLAUDE.md` | terrain, Rapier |
 | `packages/animation/crates/flint-animation/CLAUDE.md` | animator keys, IK |
+| `packages/particles/crates/flint-particles/CLAUDE.md` | particles |
 | `flint-examples/film/CLAUDE.md` | the film: shots, score, editor (flint-examples, #1195) |
 | `showcase_game/CLAUDE.md` | the example game |
 | `docs/CLAUDE.md` | the book, its checks, design notes, ADRs |
@@ -142,8 +143,8 @@ A change a game can notice (a scene or schema key, a script function, a CLI flag
 
 - `schemas/` -- engine schemas, `schemas/examples/` the examples' room-builder layer; `styles/` style guides, looks; `packages/` manifests
 - `flint-examples/` -- the examples, their own repository (#984): clone it here (gitignored). `tests/fixtures/scenes/` -- frozen scenes the goldens load
-- `showcase_game/` -- the example game; `docs/book/` the book, `docs/design/` notes, `docs/adr/` decisions
-- **Every byte here is in every game** (ADR 0122): `scripts/size-check.py` caps the tree. The root holds only manifests and docs
+- `showcase_game/` -- the example game; `docs/book/` the book, `docs/design/` notes, `docs/adr/` ADRs
+- **Every byte here is in every game** (ADR 0122): `scripts/size-check.py` caps the tree and its root (`scripts/CLAUDE.md`)
 
 <!-- claims:begin (from chrischaps/Dashboard skills/setup-claims; re-run its install.sh to update) -->
 

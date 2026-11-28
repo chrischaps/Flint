@@ -223,28 +223,6 @@ pub enum ScriptCommand {
         level: LogLevel,
         message: String,
     },
-    /// A live entity: `emit_burst` resolves the id before queuing.
-    EmitBurst {
-        entity: EntityId,
-        count: i64,
-    },
-    /// Spawn a detached one-shot instance of a registered particle effect
-    /// (ADR 0068). `handle` is the id `play_effect` returned to the script.
-    PlayEffect {
-        handle: u64,
-        name: String,
-        position: (f64, f64, f64),
-    },
-    /// Stop emission on a detached effect; particles in flight finish.
-    StopEffect {
-        handle: u64,
-    },
-    /// Tune a detached effect: `emission_scale`, `scale`, `playing`, `x`/`y`/`z`.
-    SetEffectParam {
-        handle: u64,
-        param: String,
-        value: f64,
-    },
     /// Draw an entity (and its descendants) in a per-entity style such as
     /// `ascii` (#269). The player adds the style's component. A live
     /// entity, as in every style command: the id was resolved before queuing.

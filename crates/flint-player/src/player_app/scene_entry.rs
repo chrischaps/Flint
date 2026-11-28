@@ -40,7 +40,8 @@ impl PlayerApp {
     /// settings `apply_scene_settings` took) up: input bindings, camera,
     /// fonts, the renderer's share (models, lights, skybox, post-processing,
     /// terrain), the debug panels, then physics, audio,
-    /// animation, particles and scripts, in that order.
+    /// animation, the subsystems (the particles package first) and scripts,
+    /// in that order.
     ///
     /// An error is a startup failure (physics would not initialize); at a
     /// transition the same failure is logged and the scene plays on.
@@ -355,22 +356,11 @@ impl PlayerApp {
         drop(audio_note);
 
         // The animation's load is the animation package's builder now
-        // (#1620), with the scene's subsystems below
-        // `particles/*.particles.toml` registered first, so `particle_effect`
-        // components resolve on the first sync
+        // (#1620), and the particles' (`particles/*.particles.toml` first, so
+        // `particle_effect` components resolve on the first sync) the
+        // particles package's (#1622), with the scene's subsystems below:
+        // the project as it stands for them
         self.refresh_project();
-        let particle_note = frame_notes::begin(NoteKind::ParticleLoad, String::new);
-        flint_particles::load_particle_effects_from_world(
-            &self.core.project,
-            &self.core.scene_path,
-            &mut self.core.particles,
-        );
-        self.core
-            .particles
-            .initialize(&mut self.core.world)
-            .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
-        self.load_particle_textures();
-        drop(particle_note);
 
         // The subsystems this scene uses, and the script modules they own
         // (#698), before the scripts that may call them load

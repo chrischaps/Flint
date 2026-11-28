@@ -6,9 +6,9 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use flint_viewer::host::{self, CameraFlags, Editor, HostOptions, StillOptions};
 
-use super::{particle_edit, preview, spline_edit, terrain_edit};
+use super::{preview, spline_edit, terrain_edit};
 use flint_package::cli::Points;
-use flint_viewer::host::{SpecEdit, SpecKind};
+use flint_viewer::host::{EffectEdit, EffectEditors, SpecEdit, SpecKind};
 
 /// Recognised file kinds that `flint edit` can route to.
 pub enum FileKind {
@@ -434,6 +434,17 @@ pub(crate) fn run_in(args: EditArgs, points: &Points) -> Result<()> {
         None
     };
     let file_kind = detect_file_kind(path)?;
+    // An effect's editor is the particles package's (#1622): the editor it
+    // registered, or the package named before the file is read or made
+    let effect_editors = match file_kind {
+        FileKind::ParticleEffect => Some(points.get::<EffectEditors>().ok_or_else(|| {
+            super::absent::missing_component_owner(
+                format!("flint edit {}", args.file),
+                flint_core::components::PARTICLE_EFFECT,
+            )
+        })?),
+        _ => None,
+    };
     let kind = match (file_kind, spec_editors) {
         (FileKind::Scene, _) if args.spline => K::Track,
         (FileKind::Scene, _) => K::Scene,
@@ -533,22 +544,16 @@ pub(crate) fn run_in(args: EditArgs, points: &Points) -> Result<()> {
             height: options.height,
             no_grid: args.no_grid,
         })?),
-        K::Particles => launch.go(particle_edit::editor(particle_edit::ParticleEditArgs {
-            file: args.file,
-            width: options.width,
-            height: options.height,
-            no_grid: args.no_grid,
-            auto_orbit: args.auto_orbit,
-            render: args.render,
-            anim_time: args.anim_time,
-            preset: args.preset,
-            distance: args.distance,
-            yaw: args.yaw,
-            pitch: args.pitch,
-            target: args.target,
-            fov: args.fov,
-            style: args.style,
-        })?),
+        K::Particles => {
+            let editors = effect_editors.expect("a .particles.toml found its editor above");
+            launch.go((editors.open)(EffectEdit {
+                file: args.file,
+                preset: args.preset,
+                no_grid: args.no_grid,
+                styles: args.style.styles,
+                style_time: args.style.style_time,
+            })?)
+        }
         K::Model => launch.go(preview::editor(preview::PreviewArgs {
             model: Some(args.file),
             render: args.render,
@@ -800,7 +805,7 @@ name = \"x\"
         .collect();
         let mut stack = vec![
             root.join("flint-viewer/src"),
-            commands.join("particle_edit"),
+            root.join("../packages/particles/crates/flint-particles/src/cli"),
         ];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {

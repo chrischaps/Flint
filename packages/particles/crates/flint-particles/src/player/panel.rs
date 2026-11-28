@@ -5,9 +5,9 @@
 //! while the panel is clean and applies `take_actions()` to the particles
 //! when it is dirty.
 
-use crate::widgets::drag_u32;
-use crate::DebugPanel;
 use flint_core::EntityId;
+use flint_package::panels::{DebugPanel, PanelCtx};
+use flint_widgets::drag_u32;
 
 pub const PARTICLES_DEBUG_PANEL: &str = "Particles";
 
@@ -99,9 +99,9 @@ impl DebugPanel for ParticlesDebugPanel {
     }
 
     /// Apply what was pressed; while nothing was, mirror the live counts.
-    fn sync(&mut self, ctx: &mut crate::PanelCtx) {
-        // The particles are the run's resource, lent to the panels (#1616)
-        let Some(particles) = ctx.resources.get_mut::<flint_particles::ParticleSystem>() else {
+    fn sync(&mut self, ctx: &mut PanelCtx) {
+        // The particles are the run's resource (#1622)
+        let Some(particles) = ctx.resources.get_mut::<crate::ParticleSystem>() else {
             return;
         };
         let sync = &mut particles.sync;
@@ -125,16 +125,16 @@ impl DebugPanel for ParticlesDebugPanel {
             .instances()
             .map(|(key, inst)| {
                 let (entity_id, handle, label) = match key {
-                    flint_particles::InstanceKey::Entity(id) => (
+                    crate::InstanceKey::Entity(id) => (
                         Some(id),
                         0,
                         ctx.world.get_name(id).unwrap_or("?").to_string(),
                     ),
-                    flint_particles::InstanceKey::Detached(h) => (None, h, format!("effect #{h}")),
+                    crate::InstanceKey::Detached(h) => (None, h, format!("effect #{h}")),
                 };
                 let effect = match &inst.source {
-                    flint_particles::EffectSource::Asset(fx) => Some(fx.name.clone()),
-                    flint_particles::EffectSource::Inline => None,
+                    crate::EffectSource::Asset(fx) => Some(fx.name.clone()),
+                    crate::EffectSource::Inline => None,
                 };
                 EmitterRow {
                     entity_id,
@@ -258,4 +258,19 @@ impl DebugPanel for ParticlesDebugPanel {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
+}
+
+/// The Particles panel when the scene has any `particle_emitter` or
+/// `particle_effect` entity (ADR 0068), at the kernel's `ScenePanels` point
+/// (#1622: debug-hud's until then, made in the same place among the F3
+/// panels). Rows are refreshed each frame by its `sync`.
+pub(super) fn for_scene(world: &flint_ecs::FlintWorld) -> Option<Box<dyn DebugPanel>> {
+    use flint_core::components as comp;
+    let has_any = !world
+        .entities_with_component(comp::PARTICLE_EMITTER)
+        .is_empty()
+        || !world
+            .entities_with_component(comp::PARTICLE_EFFECT)
+            .is_empty();
+    has_any.then(|| Box::new(ParticlesDebugPanel::new()) as Box<dyn DebugPanel>)
 }

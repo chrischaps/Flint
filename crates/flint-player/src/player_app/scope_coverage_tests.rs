@@ -206,8 +206,10 @@ fn each_phase_of_a_headless_frame_is_broken_into_its_systems() {
             "animate",
             "animation::update",
             "animation::skeletal",
-            "after_animation",
             "animation::ik",
+            // The particles package's step, under `subsystems` at
+            // `Stage::Animation` since #1622 (the core's `after_animation`
+            // scope went with it)
             "particles::simulate",
             // Sync
             "sync_renderer",

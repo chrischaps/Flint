@@ -340,9 +340,6 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
         "set_text_color",
         "follow_with_camera",
         "camera_follow",
-        "emit_burst",
-        "start_emitter",
-        "set_emission_rate",
         "set_entity_style",
         "set_style_param",
         "tween_style_param",
@@ -502,31 +499,22 @@ fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
         &mut world,
         &format!(
             "tween_style_param({id}, \"cell\", 8, 1); \
-             tween_style_param({id}, \"cell\", 8, 1, \"linear\"); emit_burst({id}, 3.0); \
-             set_effect_param(1.0, \"scale\", 2); load_chunk(\"c.scene.toml\", 1, 2, \"c\")"
+             tween_style_param({id}, \"cell\", 8, 1, \"linear\"); \
+             load_chunk(\"c.scene.toml\", 1, 2, \"c\")"
         ),
     );
     let floats = commands(
         &mut world,
         &format!(
             "tween_style_param({id}, \"cell\", 8, 1.0); \
-             tween_style_param({id}, \"cell\", 8, 1.0, \"linear\"); emit_burst({id}, 3); \
-             set_effect_param(1, \"scale\", 2.0); load_chunk(\"c.scene.toml\", 1.0, 2.0, \"c\")"
+             tween_style_param({id}, \"cell\", 8, 1.0, \"linear\"); \
+             load_chunk(\"c.scene.toml\", 1.0, 2.0, \"c\")"
         ),
     );
-    assert_eq!(ints.len(), 5, "{ints:?}");
+    // The particle calls in this test are the particles package's since
+    // #1622 (its module's own tests hold them)
+    assert_eq!(ints.len(), 3, "{ints:?}");
     assert_eq!(ints, floats);
-    let eid = flint_core::EntityId::from_raw(id as u64);
-    assert_eq!(
-        ints[2],
-        format!(
-            "{:?}",
-            ScriptCommand::EmitBurst {
-                entity: eid,
-                count: 3
-            }
-        )
-    );
     // Pure reads take ints too
     let h: f64 = eval(
         &engine,
@@ -543,9 +531,9 @@ fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
     .unwrap();
     assert!(gap.is_unit(), "no spline_data: no attribute");
     // A fractional float is not an int
-    let err = eval::<()>(&engine, &mut world, &format!("emit_burst({id}, 2.5)")).unwrap_err();
+    let err = eval::<()>(&engine, &mut world, &format!("set_sound_volume(2.5, 0.5)")).unwrap_err();
     assert!(
-        err.contains("`count`") && err.contains("an integer"),
+        err.contains("`handle`") && err.contains("an integer"),
         "{err}"
     );
     // A tween's seconds must be a number: an error now, not a warning queued
@@ -688,7 +676,6 @@ fn the_last_modules_are_declared_under_their_subsystems() {
         ("quality", "set_quality", 2),
         ("ocean", "ocean_normal", 2),
         ("spline", "spline_sample_at", 2),
-        ("particle", "play_effect", 4),
         ("style", "tween_style_param", 5),
         ("style", "set_look", 1),
         ("style", "set_look", 2),

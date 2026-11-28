@@ -143,7 +143,7 @@ mod tests {
 
     fn demo_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures/scenes")
+            .join("../../../../tests/fixtures/scenes")
             .canonicalize()
             .expect("the fixture scenes' folder")
     }

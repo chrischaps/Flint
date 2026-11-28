@@ -464,8 +464,10 @@ pub struct ViewerApp {
 
     // Live particles (ADR 0068): the viewer steps the same ParticleSystem the
     // player uses, so inspector edits to particle_emitter / particle_effect
-    // components show immediately. Controls live in the F4 menu.
-    particles: flint_particles::ParticleSystem,
+    // components show immediately. Controls live in the F4 menu. The
+    // particles package's (#1622, `flint_package::particles::Particles` on
+    // the command line): `None` in a viewer without it, which draws none.
+    particles: Option<Box<dyn flint_render::ParticleSource>>,
     show_particles: bool,
     particles_paused: bool,
     particle_speed: f32,
@@ -513,6 +515,19 @@ impl Default for LoadSummary {
 
 /// The style settings a scene authors: its `[post_process.styles]`, or
 /// none (every style off) when it has no `[post_process]` block.
+/// The scene's effects registered, then its emitters found (ADR 0068), as
+/// the player loads them.
+fn load_particles(
+    particles: &mut dyn flint_render::ParticleSource,
+    project: &flint_core::project::Project,
+    scene_path: &str,
+    world: &FlintWorld,
+) {
+    if let Err(e) = particles.load(project, scene_path, world) {
+        tracing::warn!(target: "viewer", "particles: {e}");
+    }
+}
+
 /// The folder a scene file sits in.
 fn scene_dir_of(scene_path: &str) -> &Path {
     Path::new(scene_path)
@@ -748,7 +763,9 @@ impl ViewerApp {
             motion_hold: None,
             motion_clock: Instant::now(),
             window_opts: ViewerWindow::default(),
-            particles: flint_particles::ParticleSystem::new(),
+            particles: flint_package::cli::points()
+                .get::<flint_package::particles::Particles>()
+                .map(|p| (p.new)()),
             show_particles: true,
             particles_paused: false,
             particle_speed: 1.0,
@@ -879,20 +896,17 @@ impl ViewerApp {
 
             // Particles (ADR 0068): effects next to the scene, then textures.
             let project = &config.project;
-            flint_particles::load_particle_effects_from_world(
-                project,
-                &state.scene_path,
-                &mut self.particles,
-            );
-            self.particles.sync.sync_from_world(&state.world);
-            flint_render::load_scene_particle_textures(
-                &mut scene_renderer,
-                &render_context.device,
-                &render_context.queue,
-                &self.particles.sync.texture_names(),
-                project,
-                scene_dir_of(&state.scene_path),
-            );
+            if let Some(particles) = self.particles.as_mut() {
+                load_particles(particles.as_mut(), project, &state.scene_path, &state.world);
+                flint_render::load_scene_particle_textures(
+                    &mut scene_renderer,
+                    &render_context.device,
+                    &render_context.queue,
+                    &particles.texture_names(),
+                    project,
+                    scene_dir_of(&state.scene_path),
+                );
+            }
         }
 
         // Apply the scene's authored [post_process] block (DoF, vignette,
@@ -1047,7 +1061,9 @@ impl ViewerApp {
             self.particle_speed = speed;
         }
         if menu_actions.particles_restart {
-            self.particles.sync.restart_all();
+            if let Some(particles) = self.particles.as_mut() {
+                particles.restart_all();
+            }
         }
 
         // Process gizmo interaction
@@ -1107,10 +1123,9 @@ impl ViewerApp {
         let state = self.state.lock().unwrap();
         let woozy = state.wooze.is_some();
         // Each emitter's draw, as the renderer takes it (#1615)
-        let particles = if self.show_particles {
-            self.particles.sync.draw_data()
-        } else {
-            Vec::new()
+        let particles = match (&self.particles, self.show_particles) {
+            (Some(particles), true) => particles.draw_data(),
+            _ => Vec::new(),
         };
         let inputs = FrameInputs {
             time: self.motion_clock.elapsed().as_secs_f64(),
@@ -1146,17 +1161,20 @@ impl ViewerApp {
         if self.scene_renderer.is_none() || !self.show_particles {
             return;
         }
+        let Some(particles) = self.particles.as_mut() else {
+            return;
+        };
         {
             let state = self.state.lock().unwrap();
             if self.particles_paused {
                 // Still pick up component edits so a paused frame reflects them.
-                self.particles.sync.sync_from_world(&state.world);
+                particles.sync_from_world(&state.world);
             } else {
-                self.particles.step(&state.world, dt * self.particle_speed);
+                particles.step(&state.world, dt * self.particle_speed);
             }
         }
-        self.particle_alive = self.particles.sync.total_alive();
-        self.particles.pack(Some(self.camera.position_array()));
+        self.particle_alive = particles.total_alive();
+        particles.pack(Some(self.camera.position_array()));
     }
 
     /// View depth of the DoF focus entity along the camera forward axis, as
@@ -1480,23 +1498,16 @@ impl ViewerApp {
         let particles_paused = self.particles_paused;
         let particle_speed = self.particle_speed;
         let particle_alive = self.particle_alive;
-        let particle_instances = self.particles.sync.instance_count();
-        let particle_emitters = self.particles.sync.emitter_count();
+        let particles = self.particles.as_deref();
+        let particle_instances = particles.map_or(0, |p| p.instance_count());
+        let particle_emitters = particles.map_or(0, |p| p.emitter_count());
         let particle_effects: Vec<(String, String)> = {
             let st = self.state.lock().unwrap();
-            self.particles
-                .sync
-                .instances()
-                .filter_map(|(key, inst)| match (&inst.source, key) {
-                    (
-                        flint_particles::EffectSource::Asset(fx),
-                        flint_particles::InstanceKey::Entity(id),
-                    ) => Some((
-                        st.world.get_name(id).unwrap_or("?").to_string(),
-                        fx.name.clone(),
-                    )),
-                    _ => None,
-                })
+            particles
+                .map(|p| p.entity_effects())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(id, fx)| (st.world.get_name(id).unwrap_or("?").to_string(), fx))
                 .collect()
         };
 
@@ -2331,22 +2342,24 @@ impl ViewerApp {
 
                         // Particles: effects may have changed on disk too
                         // (the watcher covers the scene dir recursively).
-                        self.particles.clear();
                         let project = &config.project;
-                        flint_particles::load_particle_effects_from_world(
-                            project,
-                            &state.scene_path,
-                            &mut self.particles,
-                        );
-                        self.particles.sync.sync_from_world(&state.world);
-                        flint_render::load_scene_particle_textures(
-                            renderer,
-                            &context.device,
-                            &context.queue,
-                            &self.particles.sync.texture_names(),
-                            project,
-                            scene_dir_of(&state.scene_path),
-                        );
+                        if let Some(particles) = self.particles.as_mut() {
+                            particles.clear();
+                            load_particles(
+                                particles.as_mut(),
+                                project,
+                                &state.scene_path,
+                                &state.world,
+                            );
+                            flint_render::load_scene_particle_textures(
+                                renderer,
+                                &context.device,
+                                &context.queue,
+                                &particles.texture_names(),
+                                project,
+                                scene_dir_of(&state.scene_path),
+                            );
+                        }
 
                         // Re-derive the authored post-process so [post_process]
                         // edits hot-reload like the rest of the scene. Not

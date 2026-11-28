@@ -584,9 +584,9 @@ fn the_inventory_sees_the_whole_tree() {
     // The script API is this build's player's: a package's modules are
     // there exactly when flint-cli was built with it (#1333). `music` is
     // flint-script's, declared in every build.
-    // 35 with no package at all, since animation's two (#1620) and
+    // 34 with no package at all, since particle (#1622), animation's two (#1620) and
     // physics' three (#1617) moved out
-    assert!(inv.script_modules.len() >= 35, "{:?}", inv.script_modules);
+    assert!(inv.script_modules.len() >= 34, "{:?}", inv.script_modules);
     for (module, package) in [
         ("living", "living"),
         ("wooze", "living"),

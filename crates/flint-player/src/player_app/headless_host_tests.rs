@@ -109,18 +109,6 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             level: LogLevel::Info,
             message: s("a line"),
         },
-        C::EmitBurst { entity, count: 4 },
-        C::PlayEffect {
-            handle: 1,
-            name: s("sparks"),
-            position: (0.0, 0.0, 0.0),
-        },
-        C::StopEffect { handle: 1 },
-        C::SetEffectParam {
-            handle: 1,
-            param: s("scale"),
-            value: 2.0,
-        },
         C::SetEntityStyle {
             entity,
             style: s("ascii"),

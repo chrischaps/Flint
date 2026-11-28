@@ -127,15 +127,17 @@ pub(crate) fn build_for_scene(ctx: &mut SceneCtx) -> Vec<Box<dyn Subsystem>> {
 
 /// The subsystems, and the script modules they enable, that every scene of
 /// a stock build has: the animation package's (its clips and `tween`), the
-/// flipbook package's (#1620) and the physics package's (#1617). A test of
-/// a scene's own leaves them out.
+/// flipbook package's (#1620), the particles package's (#1622: an effect
+/// needs no emitter in the scene) and the physics package's (#1617). A test
+/// of a scene's own leaves them out.
 #[cfg(test)]
 pub(crate) const EVERY_SCENE: (&[&str], &[&str]) = (
-    &["animation", "flipbook", "physics"],
+    &["animation", "flipbook", "particles", "physics"],
     &[
         "animation",
         "tween",
         "flipbook",
+        "particle",
         "physics",
         "physics_2d",
         "nav",
@@ -415,6 +417,7 @@ macro_rules! with_scene_ctx {
                     post: $app.scene.post_process.as_ref(),
                     script: &mut $app.core.script,
                     renderer: $app.scene_renderer.as_mut(),
+                    gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
                     pads: Some($crate::player_app::subsystem::Pads::new(
                         &mut $app.gilrs,
                         &mut $app.pad_rumble,
