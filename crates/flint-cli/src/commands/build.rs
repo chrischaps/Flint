@@ -1339,6 +1339,7 @@ mod tests {
             [
                 "animation",
                 "debug-hud",
+                "first-person",
                 "flipbook",
                 "living",
                 "music",
@@ -1359,6 +1360,7 @@ mod tests {
                 "ai",
                 "animation",
                 "debug-hud",
+                "first-person",
                 "flipbook",
                 "living",
                 "music",

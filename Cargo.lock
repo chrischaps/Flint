@@ -1862,6 +1862,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-first-person"
+version = "0.1.0"
+dependencies = [
+ "flint-core",
+ "flint-ecs",
+ "flint-package",
+ "flint-physics",
+ "flint-runtime",
+ "flint-terrain",
+ "toml",
+]
+
+[[package]]
 name = "flint-flipbook"
 version = "0.1.0"
 dependencies = [
@@ -2069,6 +2082,7 @@ dependencies = [
  "flint-core",
  "flint-debug-ui",
  "flint-ecs",
+ "flint-first-person",
  "flint-flipbook",
  "flint-geometry",
  "flint-import",

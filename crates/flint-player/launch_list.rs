@@ -29,10 +29,12 @@ pub struct Manifest {
     pub features: Vec<String>,
     /// `[rust] player`: its crate's Rust name.
     pub player: Option<String>,
-    /// `[provides] components` and `scene_tables`: what a scene uses of it
-    /// (#1585).
+    /// `[provides] components`, `scene_tables` and `archetypes`: what a
+    /// scene uses of it (#1585; archetypes since #1618, first-person's
+    /// `player`).
     pub components: Vec<String>,
     pub scene_tables: Vec<String>,
+    pub archetypes: Vec<String>,
     /// `[without] does` and `policies`: what a build without it still says
     /// and takes (#1585).
     pub does: Option<String>,
@@ -103,6 +105,7 @@ pub fn read(engine: &Path) -> Vec<Manifest> {
                 .map(|krate| krate.replace('-', "_")),
             components: strings(table.get("provides"), "components"),
             scene_tables: strings(table.get("provides"), "scene_tables"),
+            archetypes: strings(table.get("provides"), "archetypes"),
             does: table
                 .get("without")
                 .and_then(|w| w.get("does"))

@@ -39,7 +39,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
 
 ## Architecture
 
-40-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554):
+41-crate Cargo workspace (plus `tools/arch-analyzer`); a package's crates are in `packages/<name>/crates/` (#1554):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, playtest, capture, check, frame, profile, env, validate,
@@ -56,6 +56,7 @@ flint-player        Standalone player: the game loop, the subsystems, egui HUD
   ├── flint-input-capture 1 kHz pad capture
   ├── flint-debug-ui F3/F4 debug panels
   ├── flint-vehicle  Vehicles: raycast wheels, arcade assists
+  ├── flint-first-person Walker, eye
   ├── flint-package  Package API: Subsystem, its contexts
   ├── flint-script   Rhai scripting with hot-reload
   ├── flint-living   Living props' runtime
@@ -74,13 +75,13 @@ flint-player        Standalone player: the game loop, the subsystems, egui HUD
   ├── flint-asset    Content-addressed asset catalog
   ├── flint-constraint Constraints + auto-fix
   ├── flint-query    PEG query language (pest parser)
-  ├── flint-scene    TOML scene serialization/deserialization
+  ├── flint-scene    TOML scene (de)serialization
   ├── flint-render   wgpu PBR renderer, post-processing, styles
-  ├── flint-pixels   Texel loops on load, optimized in debug builds
+  ├── flint-pixels   Texel loops, optimized in debug
   ├── flint-ecs      The world: stable EntityIds, dynamic components, hierarchy
   ├── flint-schema   Component/archetype schema system
   ├── flint-wooze    The wooze field and the boil clock
-  ├── flint-geometry Ocean spectrum, splines, profile sweeps, mesh rays
+  ├── flint-geometry Ocean, splines, sweeps, mesh rays
   └── flint-core     EntityId, Transform, Vec3, Color, FlintError, vfs
 ```
 

@@ -716,7 +716,7 @@ fn schema_names(dir: &Path) -> BTreeSet<String> {
 #[test]
 fn no_engine_schema_is_copied_into_the_game() {
     let engine = schema_names(&repo().join("schemas"));
-    assert!(engine.contains("component.transform") && engine.contains("archetype.player"));
+    assert!(engine.contains("component.transform") && engine.contains("archetype.character"));
     for template in TEMPLATES {
         for mode in ["path", "subtree", "none"] {
             let dir = scratch(&format!("schemas_{template}_{mode}"));

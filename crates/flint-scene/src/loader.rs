@@ -503,6 +503,7 @@ position = [5, 0, 0]
             package: "living".into(),
             components: vec!["living_prop".into(), "shallow_wooze".into()],
             scene_tables: vec!["living".into(), "wooze".into()],
+            archetypes: Vec::new(),
         }]);
         assert_eq!(
             unknown(&registry),

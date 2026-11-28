@@ -268,11 +268,21 @@ fn package_used_on_the_woozy_grove_reports_living_and_procgen() {
         .iter()
         .map(|p| p["name"].as_str().unwrap())
         .collect();
-    // Its bodies are the physics package's (#1617)
-    assert_eq!(names, ["physics", "procgen", "living"], "{doc:#}");
+    // Its bodies are the physics package's (#1617), its walker
+    // first-person's (#1618)
+    assert_eq!(
+        names,
+        ["first-person", "physics", "procgen", "living"],
+        "{doc:#}"
+    );
     assert_eq!(
         doc["lines"],
-        serde_json::json!(["physics = \"*\"", "procgen = \"*\"", "living = \"*\""])
+        serde_json::json!([
+            "first-person = \"*\"",
+            "physics = \"*\"",
+            "procgen = \"*\"",
+            "living = \"*\""
+        ])
     );
     let text = stdout(&flint(&game, &["package", "used"]));
     assert!(
@@ -293,7 +303,9 @@ fn package_used_on_the_woozy_grove_reports_living_and_procgen() {
     assert!(o.status.success(), "{}", said(&o));
     let manifest = std::fs::read_to_string(game.join("flint.toml")).unwrap();
     assert!(
-        manifest.contains("[packages]\nphysics = \"*\"\nprocgen = \"*\"\nliving = \"*\"\n"),
+        manifest.contains(
+            "[packages]\nfirst-person = \"*\"\nphysics = \"*\"\nprocgen = \"*\"\nliving = \"*\"\n"
+        ),
         "{manifest}"
     );
     // init's comment above the table is kept
@@ -376,12 +388,14 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
         "{doc:#}"
     );
     // The blank template animates nothing (#1620), has no emitters (#1622),
-    // poses nothing (#1621) and has no terrain (#1623), so animation,
-    // flipbook, particles, rig and terrain are named
+    // poses nothing (#1621) and has no terrain (#1623) or player (#1618),
+    // so animation, first-person, flipbook, particles, rig and terrain are
+    // named
     assert_eq!(
         doc["leave_out"],
         serde_json::json!([
             { "name": "animation", "line": "animation = false" },
+            { "name": "first-person", "line": "first-person = false" },
             { "name": "flipbook", "line": "flipbook = false" },
             { "name": "particles", "line": "particles = false" },
             { "name": "procgen", "line": "procgen = false" },
@@ -415,7 +429,7 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     set_packages(
         &game,
         "procgen = false\nanimation = false\nflipbook = false\nparticles = false\n\
-         rig = false\nterrain = false\n",
+         rig = false\nterrain = false\nfirst-person = false\n",
     );
     let doc = json(&flint(&game, &["package", "used", "--json"]));
     assert_eq!(doc["leave_out"], serde_json::json!([]), "{doc:#}");
@@ -423,8 +437,8 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     assert!(o.status.success(), "{}", said(&o));
     assert!(
         stdout(&o).contains(
-            "left out  animation, flipbook, particles, procgen, rig, terrain, ai, living, music, \
-             rhythm, vehicle"
+            "left out  animation, first-person, flipbook, particles, procgen, rig, terrain, ai, \
+             living, music, rhythm, vehicle"
         ),
         "{}",
         said(&o)
@@ -473,6 +487,7 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
         [
             "animation",
             "debug-hud",
+            "first-person",
             "flipbook",
             "particles",
             "physics",
@@ -491,6 +506,7 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
             "engine",
             "animation",
             "debug-hud",
+            "first-person",
             "flipbook",
             "particles",
             "physics",
@@ -515,7 +531,7 @@ fn build_dry_run_names_a_launcher_holding_only_the_listed_package() {
     set_packages(
         &game,
         "procgen = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false\n\
-         particles = false\nphysics = false\nrig = false\nterrain = false\n",
+         particles = false\nphysics = false\nrig = false\nterrain = false\nfirst-person = false\n",
     );
     let o = flint(&game, &["build", "--dry-run"]);
     assert!(o.status.success(), "{}", said(&o));

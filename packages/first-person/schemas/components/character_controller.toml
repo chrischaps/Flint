@@ -1,4 +1,5 @@
-# First-person player movement (flint-physics `character.rs`). Defaults are
+# First-person player movement (the first-person package, #1618: its crate
+# `flint-first-person`, once flint-physics' `character.rs`). Defaults are
 # the reader's own fallbacks (#792). `height` has none: with no height the
 # camera sits 1.5 above the entity, with one it sits at 0.85 x height, so a
 # default would move the eye. Look and the jump press are taken once a

@@ -113,10 +113,11 @@ fn package_list(engine: &Path) {
     for m in manifests.iter().filter(|m| ours(m)) {
         writeln!(
             out,
-            "    crate::packages::Without {{ package: {:?}, components: {}, scene_tables: {}, does: {:?}, policies: {} }},",
+            "    crate::packages::Without {{ package: {:?}, components: {}, scene_tables: {}, archetypes: {}, does: {:?}, policies: {} }},",
             m.name,
             list(&m.components),
             list(&m.scene_tables),
+            list(&m.archetypes),
             m.does,
             list(&m.policies),
         )
