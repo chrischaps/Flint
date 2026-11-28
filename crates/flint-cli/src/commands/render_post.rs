@@ -169,7 +169,8 @@ pub struct RenderModeArgs {
     #[arg(long, hide = true)]
     pub mode_mix: Option<f32>,
     /// With --render-mode: X,Y,Z,W
-    #[arg(long, hide = true, value_parser = parse_vec4)]
+    #[arg(long, hide = true, value_name = "X,Y,Z,W", value_parser = parse_vec4,
+          allow_hyphen_values = true)]
     pub mode_params: Option<[f32; 4]>,
 }
 

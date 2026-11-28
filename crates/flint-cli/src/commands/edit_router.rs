@@ -132,15 +132,16 @@ pub struct EditArgs {
     pub distance: Option<f32>,
 
     /// Camera horizontal angle in degrees (editors with a 3D view)
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     pub yaw: Option<f32>,
 
     /// Camera vertical angle in degrees (editors with a 3D view)
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     pub pitch: Option<f32>,
 
     /// Camera look-at point as comma-separated x,y,z (editors with a 3D view)
-    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
+    #[arg(long, value_name = "X,Y,Z", value_parser = crate::commands::common_args::parse_vec3,
+          allow_hyphen_values = true)]
     pub target: Option<[f32; 3]>,
 
     /// Field of view in degrees (editors with a 3D view)
