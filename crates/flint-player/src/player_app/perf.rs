@@ -470,7 +470,7 @@ pub(crate) struct PerfContext {
     pub audio: Option<(u64, u64, f64, f64)>,
     /// The voices and spatial tracks being mixed, and how many of each are
     /// paused because nobody can hear them (#138); `None` without sound.
-    pub mix: Option<flint_audio::MixCounts>,
+    pub mix: Option<flint_core::sound::MixCounts>,
     /// What the GPU lines are.
     pub gpu: GpuSource,
     /// The swapchain's present mode, as wgpu resolved it (#380); `None`
@@ -1245,6 +1245,9 @@ impl super::PlayerApp {
             .and_then(|n| n.to_str())
             .map(|n| n.split('.').next().unwrap_or(n).to_string())
             .unwrap_or_default();
+        let meter = flint_package::sound::of(&self.core.resources)
+            .map(|sound| sound.meter())
+            .unwrap_or_default();
         Some((
             summary,
             PerfContext {
@@ -1258,12 +1261,8 @@ impl super::PlayerApp {
                 draw_calls: stats.draw_calls,
                 triangles: stats.triangles,
                 game_time: self.core.clock.total_time,
-                audio: self
-                    .audio
-                    .engine
-                    .buffer_stats()
-                    .map(|b| (b.late, b.buffers, b.buffer_ms, b.mix_mean_ms)),
-                mix: self.audio.mix_counts(),
+                audio: meter.buffers,
+                mix: meter.mix,
                 gpu,
                 present: Some(context.present_mode_in_use()),
                 pacing: self.frame_rate_line(),
@@ -1519,7 +1518,7 @@ mod tests {
             triangles: 1_234_567,
             game_time: 812.4,
             audio: Some((3, 1200, 46.4, 2.5)),
-            mix: Some(flint_audio::MixCounts {
+            mix: Some(flint_core::sound::MixCounts {
                 voices: 18,
                 paused_voices: 11,
                 tracks: 9,

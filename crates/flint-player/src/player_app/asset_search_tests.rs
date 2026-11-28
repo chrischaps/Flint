@@ -2,7 +2,7 @@
 //! each kind is found from a scene two folders deep, and a miss says where
 //! it looked.
 
-use super::scene_loading::{build_model_load_config, load_audio_from_world, say_makers_asked};
+use super::scene_loading::{build_model_load_config, say_makers_asked};
 use super::PlayerApp;
 // The animation package's loaders (#1620), on the same search
 use flint_animation::player::loading::{
@@ -214,14 +214,18 @@ fn a_deep_scene_finds_the_projects_sounds_by_path_and_preloads_its_audio_folder(
         // Queued, as the web does: nothing is decoded, so the bytes needn't
         // be sound.
         let mut audio = flint_audio::AudioSystem::new();
-        load_audio_from_world(&world, &mut audio, project, DEEP, true, true);
+        flint_audio::player::loading::load_audio_from_world(
+            &world, &mut audio, project, DEEP, true, true,
+        );
         assert!(audio.engine.is_queued("audio/hit.ogg"));
         assert!(audio.engine.is_queued("audio/wind.wav"));
         assert_eq!(audio.engine.queued_count(), 2);
 
         // With the preload off, only what a source names.
         let mut audio = flint_audio::AudioSystem::new();
-        load_audio_from_world(&world, &mut audio, project, DEEP, false, true);
+        flint_audio::player::loading::load_audio_from_world(
+            &world, &mut audio, project, DEEP, false, true,
+        );
         assert!(audio.engine.is_queued("audio/hit.ogg"));
         assert_eq!(audio.engine.queued_count(), 1);
     });

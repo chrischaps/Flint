@@ -62,6 +62,11 @@ fn the_showcase_pause_menu_works_from_keys_and_touch() {
     files.insert("scripts/lib/menu.rhai", repo_file("scripts/lib/menu.rhai"));
     vfs::scoped(Arc::new(files), || {
         let mut engine = ScriptEngine::new();
+        // The showcase's muffle under its menu is the audio package's
+        // (#1619), which this crate doesn't link: a stand-in that hears it
+        engine
+            .rhai_engine_mut()
+            .register_fn("set_audio_lowpass", |_cutoff: f64| {});
         engine.set_module_base("scripts/lib".into());
         let mut world = FlintWorld::new();
         let id = scripted(&mut world, "game_controller", "showcase_controller.rhai");

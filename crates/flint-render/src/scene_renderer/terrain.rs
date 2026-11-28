@@ -11,7 +11,9 @@
 use super::helpers::mat4_inv_transpose;
 use crate::gpu_counts::CountedDevice;
 use crate::pipeline::TransformUniforms;
-use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
+use crate::terrain_pipeline::{
+    TerrainDrawCall, TerrainFrameFlags, TerrainPipeline, TerrainUniforms,
+};
 use crate::texture_cache::TextureCache;
 use flint_core::project::AssetScope;
 use flint_core::vfs;
@@ -63,6 +65,22 @@ pub(crate) struct TerrainRenderer {
     ///
     /// [`SceneRenderer::set_terrain_entity`]: super::SceneRenderer::set_terrain_entity
     pub(crate) entity: Option<flint_core::EntityId>,
+    /// Each distinct triangle list among the chunks, kept once (a terrain's
+    /// chunks share one: the same grid, raised differently), with its edges
+    /// as a line list once a wireframe view has asked (#1692). A chunk's
+    /// `shape` indexes it. `upload_chunks` replaces it.
+    pub(crate) shapes: Vec<ChunkShape>,
+    /// Chunks along x and z (`TerrainChunk::grid_pos`'s extent), which the
+    /// wire's chunk borders read.
+    pub(crate) grid: [f32; 2],
+}
+
+/// One triangle list the terrain's chunks are drawn with, and its edges.
+pub(crate) struct ChunkShape {
+    triangles: Vec<u32>,
+    /// The triangles' edges, each once, as a line list: made the first
+    /// frame a wireframe view draws the terrain (`ensure_wires`).
+    pub(crate) wire: Option<(wgpu::Buffer, u32)>,
 }
 
 impl TerrainRenderer {
@@ -209,7 +227,8 @@ impl TerrainRenderer {
             texture_tile,
             metallic,
             roughness,
-            enable_tonemapping: 0, // Updated per frame
+            // Tonemapping, the debug view and the chunk grid: written each frame
+            frame: TerrainFrameFlags::default(),
         };
         let buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
             label: Some("Terrain Uniform Buffer"),
@@ -261,6 +280,15 @@ impl TerrainRenderer {
     ) {
         // The old chunks' buffers go before the new ones are made.
         self.draws.clear();
+        self.shapes.clear();
+        let extent = |axis: fn(&(u32, u32)) -> u32| {
+            chunks
+                .iter()
+                .map(|c| axis(&c.grid_pos) + 1)
+                .max()
+                .unwrap_or(1) as f32
+        };
+        self.grid = [extent(|p| p.0), extent(|p| p.1)];
 
         let model = transform.to_matrix();
         let model_inv_transpose = mat4_inv_transpose(&model);
@@ -315,6 +343,7 @@ impl TerrainRenderer {
                     label: Some("Terrain Chunk Transform Bind Group"),
                 });
 
+            let shape = self.shape_of(&chunk.indices);
             self.draws.push(TerrainDrawCall {
                 vertex_buffer,
                 index_buffer,
@@ -325,15 +354,73 @@ impl TerrainRenderer {
                 model_inv_transpose,
                 aabb_min: std::array::from_fn(|k| chunk.aabb_min[k] + offset[k]),
                 aabb_max: std::array::from_fn(|k| chunk.aabb_max[k] + offset[k]),
+                shape,
             });
         }
+    }
+
+    /// The index of `triangles` among the shapes, added if it is new.
+    fn shape_of(&mut self, triangles: &[u32]) -> usize {
+        if let Some(n) = self.shapes.iter().position(|s| s.triangles == triangles) {
+            return n;
+        }
+        self.shapes.push(ChunkShape {
+            triangles: triangles.to_vec(),
+            wire: None,
+        });
+        self.shapes.len() - 1
+    }
+
+    /// Make each shape's edges as a line list, once: what a wireframe view
+    /// draws (#1692). A terrain whose chunks share one shape makes one
+    /// buffer.
+    pub(crate) fn ensure_wires(&mut self, device: &wgpu::Device) {
+        for shape in self.shapes.iter_mut().filter(|s| s.wire.is_none()) {
+            let lines = crate::primitives::triangles_to_wireframe_indices(&shape.triangles);
+            let buffer = device.create_buffer_init_counted(&wgpu::util::BufferInitDescriptor {
+                label: Some("Terrain Chunk Wire Index Buffer"),
+                contents: bytemuck::cast_slice(&lines),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            shape.wire = Some((buffer, lines.len() as u32));
+        }
+    }
+
+    /// Chunk `draw`'s edges, once a wireframe view has made them.
+    pub(crate) fn wire_of(&self, draw: &TerrainDrawCall) -> Option<(&wgpu::Buffer, u32)> {
+        let (buffer, count) = self.shapes.get(draw.shape)?.wire.as_ref()?;
+        Some((buffer, *count))
     }
 
     /// Clear terrain draw calls (for scene transitions)
     pub(crate) fn clear(&mut self) {
         self.draws.clear();
+        self.shapes.clear();
         self.entity = None;
         self.material_bind_group = None;
         self.material_buffer = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A terrain's chunks are one grid raised differently, so they share one
+    /// triangle list, kept once: the wireframe views make one edge buffer a
+    /// terrain, not one a chunk (#1692).
+    #[test]
+    fn chunks_with_the_same_triangles_share_one_shape() {
+        let mut terrain = TerrainRenderer::default();
+        let grid = [0, 1, 2, 0, 2, 3];
+        assert_eq!(terrain.shape_of(&grid), 0);
+        assert_eq!(terrain.shape_of(&grid), 0);
+        assert_eq!(terrain.shape_of(&[0, 2, 1]), 1);
+        assert_eq!(terrain.shape_of(&grid), 0);
+        assert_eq!(terrain.shapes.len(), 2);
+        assert!(
+            terrain.shapes.iter().all(|s| s.wire.is_none()),
+            "made only when asked"
+        );
     }
 }

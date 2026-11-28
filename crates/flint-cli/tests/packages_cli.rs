@@ -395,6 +395,7 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
         doc["leave_out"],
         serde_json::json!([
             { "name": "animation", "line": "animation = false" },
+            { "name": "audio", "line": "audio = false" },
             { "name": "first-person", "line": "first-person = false" },
             { "name": "flipbook", "line": "flipbook = false" },
             { "name": "particles", "line": "particles = false" },
@@ -429,7 +430,7 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     set_packages(
         &game,
         "procgen = false\nanimation = false\nflipbook = false\nparticles = false\n\
-         rig = false\nterrain = false\nfirst-person = false\n",
+         rig = false\nterrain = false\nfirst-person = false\naudio = false\n",
     );
     let doc = json(&flint(&game, &["package", "used", "--json"]));
     assert_eq!(doc["leave_out"], serde_json::json!([]), "{doc:#}");
@@ -437,8 +438,8 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     assert!(o.status.success(), "{}", said(&o));
     assert!(
         stdout(&o).contains(
-            "left out  animation, first-person, flipbook, particles, procgen, rig, terrain, ai, \
-             living, music, rhythm, vehicle"
+            "left out  animation, audio, first-person, flipbook, particles, procgen, rig, terrain, \
+             ai, living, music, rhythm, vehicle"
         ),
         "{}",
         said(&o)
@@ -486,6 +487,7 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
         packages,
         [
             "animation",
+            "audio",
             "debug-hud",
             "first-person",
             "flipbook",
@@ -505,6 +507,7 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
         serde_json::json!([
             "engine",
             "animation",
+            "audio",
             "debug-hud",
             "first-person",
             "flipbook",
@@ -531,7 +534,7 @@ fn build_dry_run_names_a_launcher_holding_only_the_listed_package() {
     set_packages(
         &game,
         "procgen = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false\n\
-         particles = false\nphysics = false\nrig = false\nterrain = false\nfirst-person = false\n",
+         particles = false\nphysics = false\nrig = false\nterrain = false\nfirst-person = false\naudio = false\n",
     );
     let o = flint(&game, &["build", "--dry-run"]);
     assert!(o.status.success(), "{}", said(&o));
@@ -675,8 +678,9 @@ fn used_names(doc: &serde_json::Value) -> Vec<String> {
 fn package_used_names_rhythm_for_a_music_session_with_a_chart() {
     let game = music_game("used_chart", CHARTED);
     let doc = json(&flint(&game, &["package", "used", "--json"]));
-    assert_eq!(used_names(&doc), ["music", "rhythm"], "{doc:#}");
-    let rhythm = &doc["packages"][1];
+    // Both play on the audio package's mixer, which comes with them (#1619)
+    assert_eq!(used_names(&doc), ["audio", "music", "rhythm"], "{doc:#}");
+    let rhythm = &doc["packages"][2];
     assert_eq!(
         rhythm["uses"],
         serde_json::json!([{
@@ -688,7 +692,7 @@ fn package_used_names_rhythm_for_a_music_session_with_a_chart() {
     );
     assert_eq!(
         doc["lines"],
-        serde_json::json!(["music = \"*\"", "rhythm = \"*\""])
+        serde_json::json!(["audio = \"*\"", "music = \"*\"", "rhythm = \"*\""])
     );
     let text = stdout(&flint(&game, &["package", "used"]));
     assert!(
@@ -707,7 +711,7 @@ fn package_used_names_rhythm_for_a_music_session_with_a_chart() {
         "manifest = \"music/tempo_change.suite.toml\"",
     );
     let doc = json(&flint(&plain, &["package", "used", "--json"]));
-    assert_eq!(used_names(&doc), ["music"], "{doc:#}");
+    assert_eq!(used_names(&doc), ["audio", "music"], "{doc:#}");
 }
 
 /// #1581's done-when: with only `music` listed, `flint check` says the

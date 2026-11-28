@@ -85,7 +85,7 @@ fn with_sounds(script: &str, sounds: &[(&str, f32)], run: impl FnOnce(&mut Playe
         }
         let link = Link::default();
         engine.start_remote(link.clone());
-        app.audio.engine = engine;
+        app.test_audio().engine = engine;
         app.enter_scene(SceneEntry::Start)
             .expect("the scene starts");
         sent(&link);
@@ -223,4 +223,13 @@ fn a_script_hears_its_sound_play_until_it_ends_or_is_stopped() {
             "the ding has played out, and nothing else came back"
         );
     });
+}
+
+/// The run's sound, the audio package's resource (#1619), for the sound
+/// tests that read or swap its engine.
+impl super::PlayerApp {
+    pub(crate) fn test_audio(&mut self) -> &mut flint_audio::AudioSystem {
+        flint_audio::player::system_of_mut(&mut self.core.resources)
+            .expect("the run opened its sound")
+    }
 }

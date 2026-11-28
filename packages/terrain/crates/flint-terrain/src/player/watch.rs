@@ -16,7 +16,7 @@
 
 use crate::player::TerrainHeight;
 use crate::scene::build_terrain;
-use crate::source::{self, made_from, Recipe};
+use crate::source::{self, made_from, Recipe, SpecSource};
 use flint_core::components as comp;
 use flint_core::file_watch::{self, Stamp};
 use flint_core::EntityId;
@@ -66,24 +66,24 @@ impl SpecWatch {
         })
     }
 
-    /// One frame's look: a finished bake built in, else (every
-    /// [`POLL_FRAMES`]) a changed spec sent to be baked.
-    pub fn poll(&mut self, ctx: &mut StageCtx) {
+    /// One frame's look: a finished bake built in (handing back the recipe
+    /// it was built from, so the live reread takes it as its base), else
+    /// (every [`POLL_FRAMES`]) a changed spec sent to be baked.
+    pub fn poll(&mut self, ctx: &mut StageCtx) -> Option<SpecSource> {
         if self.job.as_ref().is_some_and(|job| job.is_finished()) {
             let job = self.job.take().expect("checked above");
             let result = job
                 .join()
                 .unwrap_or_else(|_| Err("the bake panicked".to_string()));
-            self.build(result, ctx);
-            return;
+            return self.build(result, ctx);
         }
         self.frames = self.frames.wrapping_add(1);
         if self.job.is_some() || self.frames % POLL_FRAMES != 0 {
-            return;
+            return None;
         }
         let now = file_watch::stamp(&self.path);
         if now == self.stamp || now.is_none() {
-            return;
+            return None;
         }
         self.stamp = now;
         let seed = ctx
@@ -101,18 +101,21 @@ impl SpecWatch {
         self.job = Some(std::thread::spawn(move || {
             Recipe::bake(&path, seed, disk.as_deref())
         }));
+        None
     }
 
-    /// The terrain built again from the new recipe, or left as it was.
-    fn build(&self, result: Result<Recipe, String>, ctx: &mut StageCtx) {
+    /// The terrain built again from the new recipe (which it hands back),
+    /// or left as it was.
+    fn build(&self, result: Result<Recipe, String>, ctx: &mut StageCtx) -> Option<SpecSource> {
         let shown = flint_core::project::shown(&self.path);
         let recipe = match result {
             Ok(recipe) => recipe,
             Err(e) => {
                 tracing::warn!("[terrain] {shown}: {e}; the terrain stays as it was");
-                return;
+                return None;
             }
         };
+        let source = recipe.source.clone();
         for issue in &recipe.source.issues {
             tracing::warn!("[terrain] {shown}: {issue}");
         }
@@ -122,11 +125,11 @@ impl SpecWatch {
             Ok(made) => made,
             Err(e) => {
                 tracing::warn!("[terrain] {shown}: {e}; the terrain stays as it was");
-                return;
+                return None;
             }
         };
         let (Some(renderer), Some((device, queue))) = (ctx.renderer.as_deref_mut(), ctx.gpu) else {
-            return;
+            return None;
         };
         let (loaded, _grass) = build_terrain(
             renderer,
@@ -147,6 +150,7 @@ impl SpecWatch {
         });
         ctx.resources.insert(ground);
         tracing::info!(target: "player", "[terrain] '{}' rebuilt from {words}", self.name);
+        Some(source)
     }
 }
 

@@ -89,6 +89,7 @@ impl TerrainConfig {
     pub fn over(view: &flint_ecs::ComponentView<'_>, base: Self) -> Self {
         let text = |key: &str, base: &str| view.opt_str(key).unwrap_or(base).to_string();
         let [l0, l1, l2, l3] = &base.layer_textures;
+        let [texture_tile, metallic, roughness] = Self::material_over(view, base.material());
         Self {
             heightmap_path: text("heightmap", &base.heightmap_path),
             spec_path: text("spec", &base.spec_path),
@@ -98,7 +99,7 @@ impl TerrainConfig {
             height_scale: view.f32("height_scale", base.height_scale),
             chunk_resolution: view.i64("chunk_resolution", base.chunk_resolution as i64) as i32
                 as u32,
-            texture_tile: view.f32("texture_tile", base.texture_tile),
+            texture_tile,
             splat_map_path: text("splat_map", &base.splat_map_path),
             layer_textures: [
                 text("layer0_texture", l0),
@@ -106,8 +107,8 @@ impl TerrainConfig {
                 text("layer2_texture", l2),
                 text("layer3_texture", l3),
             ],
-            metallic: view.f32("metallic", base.metallic),
-            roughness: view.f32("roughness", base.roughness),
+            metallic,
+            roughness,
             grass: base.grass,
         }
     }
@@ -140,6 +141,31 @@ impl TerrainConfig {
             grass: spec.grass.clone(),
             ..Self::default()
         }
+    }
+
+    /// The material's three numbers, `[texture_tile, metallic, roughness]`,
+    /// with the defaults the bind draws: what the terrain package's
+    /// subsystem reads again each frame for a script's change (#1698),
+    /// without the strings [`from_component`](Self::from_component) copies.
+    pub fn material_of(view: &flint_ecs::ComponentView<'_>) -> [f32; 3] {
+        let base = Self::default();
+        Self::material_over(view, [base.texture_tile, base.metallic, base.roughness])
+    }
+
+    /// [`material_of`](Self::material_of) over `base` (#1697): a terrain
+    /// made from its recipe takes the recipe's `[textures]` numbers for a
+    /// key the component leaves out, at the bind and in the frame's reread.
+    pub fn material_over(view: &flint_ecs::ComponentView<'_>, base: [f32; 3]) -> [f32; 3] {
+        [
+            view.f32("texture_tile", base[0]),
+            view.f32("metallic", base[1]),
+            view.f32("roughness", base[2]),
+        ]
+    }
+
+    /// This config's material numbers, as [`material_over`](Self::material_over) takes them.
+    pub fn material(&self) -> [f32; 3] {
+        [self.texture_tile, self.metallic, self.roughness]
     }
 }
 

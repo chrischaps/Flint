@@ -31,8 +31,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Bump when the bake's output changes for the same spec (a new layer
-/// rule, a fixed bug): every cached bake is then a miss.
-pub const BAKE_REVISION: u32 = 1;
+/// rule, a fixed bug): every cached bake is then a miss. 2: hydraulic
+/// erosion became droplets (#1708), which bakes a hydraulic layer anew.
+pub const BAKE_REVISION: u32 = 2;
 
 /// The ending of a cached bake's file in the cache folder.
 pub const CACHE_EXTENSION: &str = "terrain-maps";

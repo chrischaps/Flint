@@ -23,6 +23,7 @@
 //! Nothing here runs in a scene without the component.
 
 pub mod conducted;
+pub mod music_module;
 
 use crate::components::MUSIC_SESSION;
 use crate::{Conductor, EventScript, SuiteManifest, SuiteSession};
@@ -46,15 +47,17 @@ impl Package for Music {
 
     /// Its builder, the line a scene with a session hears when the project
     /// leaves it out (#1528), its chart judge (empty until rhythm fills
-    /// it), and the `conducted` module (#698): a rhythm session's state,
-    /// enabled in a scene whose `music_session` has a chart (`music_beat()`
-    /// and the rest are flint-script's core: any scene asks them). The music
-    /// plays on under a pause menu, as a loop does: no game state pauses it.
+    /// it), the `conducted` module (#698): a rhythm session's state,
+    /// enabled in a scene whose `music_session` has a chart, and the
+    /// `music` module (`music_beat()` and the rest), which every scene has
+    /// (#1619): any scene asks them. The music plays on under a pause menu,
+    /// as a loop does: no game state pauses it.
     fn register(&self, registry: &mut Registry) {
         registry
             .scene_subsystem(for_scene)
             .when_left_out(left_out)
             .script_modules(&[&conducted::CONDUCTED])
+            .every_scene_modules(&[&music_module::MUSIC_MODULE])
             .insert_point(ChartJudge::default());
     }
 }

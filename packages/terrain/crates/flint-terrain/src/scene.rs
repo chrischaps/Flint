@@ -182,30 +182,7 @@ pub fn build_terrain(
     let mut bound_grass = None;
     if grass_free {
         if grass.enabled {
-            let rgba = match &splat {
-                SplatMap::Baked(maps) => {
-                    Some((maps.splat.clone(), maps.resolution, maps.resolution))
-                }
-                SplatMap::File(name) => {
-                    let path = project.file_or_beside("terrain splat map", name, scene_dir);
-                    match flint_render::open_image(&path) {
-                        Ok(img) => {
-                            let rgba = img.to_rgba8();
-                            let (w, h) = rgba.dimensions();
-                            Some((rgba.into_raw(), w, h))
-                        }
-                        Err(_) => {
-                            tracing::warn!("Grass enabled but splat map not found at {path:?}");
-                            None
-                        }
-                    }
-                }
-                SplatMap::None => {
-                    tracing::warn!("Grass enabled but the terrain has no splat map");
-                    None
-                }
-            };
-            if let Some((rgba, sw, sh)) = rgba {
+            if let Some((rgba, sw, sh)) = splat_pixels(&splat, project, scene_dir) {
                 load_terrain_grass(
                     renderer, device, queue, &grass, &heightmap, &config, pos, &rgba, sw, sh,
                 );
@@ -247,6 +224,89 @@ pub fn build_terrain(
         spec: recipe.map(|r| r.source.path),
     };
     (loaded, bound_grass)
+}
+
+/// Grow the grass of the terrain `entity` after its bind (#1698): a scene
+/// whose terrain had `grass.enabled = false` when it loaded, and a script
+/// that has just turned it on. `bind_terrain` grew none then, so the blades'
+/// buffers and the splat map's mask are made now, as the bind would have.
+/// The terrain is read as the bind reads it (#1697: a recipe's settings and
+/// its bake, a cache hit, under the component's keys), so a terrain made
+/// from its recipe grows over its baked splat. `heightmap` is the bound
+/// ground's when the host kept it (the player); without it (a capture) it is
+/// read again. True when the grass is in; a splat map that doesn't read is
+/// warned, and there is none.
+pub fn grow_terrain_grass(
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &FlintWorld,
+    entity: EntityId,
+    grass: &GrassConfig,
+    heightmap: Option<&Heightmap>,
+) -> bool {
+    let view = world.view(entity, comp::TERRAIN);
+    let scope = renderer.asset_scope();
+    let scene_dir = scope.scene_dir.as_path();
+    let names_spec = view.opt_str("spec").is_some_and(|s| !s.is_empty());
+    // A terrain from maps with its ground in hand reads no file again
+    let (config, splat, read) = match (names_spec, heightmap) {
+        (false, Some(_)) => {
+            let config = TerrainConfig::from_component(&view);
+            let splat = SplatMap::File(config.splat_map_path.clone());
+            (config, splat, None)
+        }
+        _ => match make_terrain(&view, &scope.project, scene_dir) {
+            Ok(made) => (made.config, made.splat, Some(made.heightmap)),
+            Err(e) => {
+                tracing::warn!("Grass turned on, but the terrain didn't load: {e}");
+                return false;
+            }
+        },
+    };
+    let Some(heightmap) = heightmap.or(read.as_ref()) else {
+        return false;
+    };
+    let pos = world
+        .view(entity, comp::TRANSFORM)
+        .vec3("position", [0.0; 3]);
+    let Some((rgba, sw, sh)) = splat_pixels(&splat, &scope.project, scene_dir) else {
+        return false;
+    };
+    load_terrain_grass(
+        renderer, device, queue, grass, heightmap, &config, pos, &rgba, sw, sh,
+    );
+    renderer.grass_config().is_some()
+}
+
+/// The splat map's RGBA8 weights and size, which the grass grows over: the
+/// bake's, or the file's (warned when it doesn't read, and then none).
+fn splat_pixels(
+    splat: &SplatMap,
+    project: &flint_core::project::Project,
+    scene_dir: &std::path::Path,
+) -> Option<(Vec<u8>, u32, u32)> {
+    match splat {
+        SplatMap::Baked(maps) => Some((maps.splat.clone(), maps.resolution, maps.resolution)),
+        SplatMap::File(name) => {
+            let path = project.file_or_beside("terrain splat map", name, scene_dir);
+            match flint_render::open_image(&path) {
+                Ok(img) => {
+                    let rgba = img.to_rgba8();
+                    let (w, h) = rgba.dimensions();
+                    Some((rgba.into_raw(), w, h))
+                }
+                Err(_) => {
+                    tracing::warn!("Grass enabled but splat map not found at {path:?}");
+                    None
+                }
+            }
+        }
+        SplatMap::None => {
+            tracing::warn!("Grass enabled but the terrain has no splat map");
+            None
+        }
+    }
 }
 
 /// The terrain's grass, grown over its splat map's weights.

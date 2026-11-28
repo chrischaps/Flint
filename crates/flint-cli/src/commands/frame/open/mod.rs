@@ -101,7 +101,8 @@ pub struct OpenArgs {
     pub schemas: Vec<String>,
     /// A screenshot's pointer, in points (`900,420`): what the readout
     /// reads
-    #[arg(long, value_name = "X,Y", value_parser = parse_point, hide = true)]
+    #[arg(long, value_name = "X,Y", value_parser = parse_point, hide = true,
+          allow_hyphen_values = true)]
     pub hover: Option<[f32; 2]>,
     #[command(flatten)]
     pub trace: TraceOpenArgs,

@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::spec::{
-    BlendMode, ErosionKind, ErosionLayer, FlattenLayer, FlattenMode, HeightLayer, NoiseLayer,
-    NoiseType, SeedMode, SplatRule, TerrainSpec,
+    BlendMode, ErosionKind, ErosionLayer, FalloffBlend, FalloffLayer, FalloffShape, FlattenLayer,
+    FlattenMode, HeightLayer, NoiseLayer, NoiseType, SeedMode, SplatRule, TerrainSpec,
 };
 use crate::{
     apply_height_brush, apply_splat_brush, ray_heightmap_intersect, BrushParams, HeightBrushMode,
@@ -740,6 +740,9 @@ impl TerrainEditApp {
                                                 HeightLayer::Erosion(e) => {
                                                     format!("[{}] Erosion ({:?})", i, e.kind)
                                                 }
+                                                HeightLayer::Falloff(f) => {
+                                                    format!("[{}] Falloff ({:?})", i, f.shape)
+                                                }
                                             };
                                             egui::CollapsingHeader::new(&label)
                                                 .id_salt(format!("hlayer_{i}"))
@@ -767,6 +770,7 @@ impl TerrainEditApp {
                                                         persistence: 0.5,
                                                         amplitude: 1.0,
                                                         blend: BlendMode::Add,
+                                                        range: None,
                                                     },
                                                 ));
                                                 dirty = true;
@@ -785,11 +789,25 @@ impl TerrainEditApp {
                                                 spec.height_layers.push(HeightLayer::Erosion(
                                                     ErosionLayer {
                                                         kind: ErosionKind::Thermal,
-                                                        iterations: 50,
-                                                        talus_angle: 0.6,
-                                                        strength: 0.3,
+                                                        ..ErosionLayer::default()
                                                     },
                                                 ));
+                                                dirty = true;
+                                            }
+                                            if ui.button("+ Falloff").clicked() {
+                                                // Before any erosion, so the
+                                                // shore it leaves is worn too
+                                                let at = spec
+                                                    .height_layers
+                                                    .iter()
+                                                    .position(|l| {
+                                                        matches!(l, HeightLayer::Erosion(_))
+                                                    })
+                                                    .unwrap_or(spec.height_layers.len());
+                                                spec.height_layers.insert(
+                                                    at,
+                                                    HeightLayer::Falloff(FalloffLayer::default()),
+                                                );
                                                 dirty = true;
                                             }
                                         });
@@ -1205,6 +1223,41 @@ fn drag_f32(
     (*value - before).abs() > f32::EPSILON
 }
 
+/// A noise layer's `range` (#1695): ticked, its raw range (shown beside the
+/// box) maps onto From..To before it blends; a new range starts at 0..1,
+/// what a `multiply` layer wants.
+fn range_row(ui: &mut egui::Ui, n: &mut NoiseLayer) -> bool {
+    let mut dirty = false;
+    let [lo, hi] = n.noise_type.raw_range();
+    ui.horizontal(|ui| {
+        let mut on = n.range.is_some();
+        if ui
+            .checkbox(&mut on, "Range")
+            .on_hover_text(format!(
+                "Map the noise's raw {lo}..{hi} onto From..To before it blends. \
+                 A multiply layer wants 0..1: a negative multiplier turns land upside down"
+            ))
+            .changed()
+        {
+            n.range = on.then_some([0.0, 1.0]);
+            dirty = true;
+        }
+        match &mut n.range {
+            Some([from, to]) => {
+                for v in [from, to] {
+                    let before = *v;
+                    ui.add(egui::DragValue::new(v).speed(0.01).max_decimals(3));
+                    dirty |= (*v - before).abs() > f64::EPSILON;
+                }
+            }
+            None => {
+                ui.weak(format!("raw {lo}..{hi}"));
+            }
+        }
+    });
+    dirty
+}
+
 fn drag_f64(
     ui: &mut egui::Ui,
     label: &str,
@@ -1273,6 +1326,7 @@ fn render_height_layer_ui(ui: &mut egui::Ui, layer: &mut HeightLayer, _idx: usiz
             dirty |= drag_f64(ui, "Lacunarity", &mut n.lacunarity, 0.05, 0.1..=10.0);
             dirty |= drag_f64(ui, "Persistence", &mut n.persistence, 0.01, 0.0..=1.0);
             dirty |= drag_f64(ui, "Amplitude", &mut n.amplitude, 0.05, 0.0..=10.0);
+            dirty |= range_row(ui, n);
 
             // Blend mode
             let blends = [
@@ -1334,14 +1388,89 @@ fn render_height_layer_ui(ui: &mut egui::Ui, layer: &mut HeightLayer, _idx: usiz
                     dirty = true;
                 }
             });
-            let mut iters = e.iterations as i64;
-            if drag_i64(ui, "Iterations", &mut iters, 1, 0..=1000) {
-                e.iterations = iters as u32;
-                dirty = true;
+            match e.kind {
+                ErosionKind::Thermal => {
+                    let mut iters = e.iterations as i64;
+                    if drag_i64(ui, "Iterations", &mut iters, 1, 0..=1000) {
+                        e.iterations = iters as u32;
+                        dirty = true;
+                    }
+                    dirty |= drag_f64(ui, "Talus Angle", &mut e.talus_angle, 0.01, 0.0..=2.0);
+                }
+                ErosionKind::Hydraulic => {
+                    // Droplets per texel (#1693), so it reads the same at any size
+                    dirty |= drag_f64(ui, "Rainfall", &mut e.rainfall, 0.05, 0.0..=8.0);
+                    dirty |= drag_f64(ui, "Radius", &mut e.radius, 0.1, 0.5..=12.0);
+                }
             }
-            dirty |= drag_f64(ui, "Talus Angle", &mut e.talus_angle, 0.01, 0.0..=2.0);
             dirty |= drag_f64(ui, "Strength", &mut e.strength, 0.01, 0.0..=2.0);
         }
+        HeightLayer::Falloff(f) => dirty |= render_falloff_ui(ui, f),
+    }
+    dirty
+}
+
+/// A falloff's fields (#1694), each shown only where its shape reads it.
+fn render_falloff_ui(ui: &mut egui::Ui, f: &mut FalloffLayer) -> bool {
+    let mut dirty = false;
+    ui.horizontal(|ui| {
+        ui.label("Shape:");
+        for s in [
+            FalloffShape::Island,
+            FalloffShape::Edge,
+            FalloffShape::Radial,
+            FalloffShape::Gradient,
+        ] {
+            if ui
+                .selectable_label(f.shape == s, format!("{s:?}"))
+                .clicked()
+            {
+                f.shape = s;
+                dirty = true;
+            }
+        }
+    });
+    let disc = matches!(f.shape, FalloffShape::Island | FalloffShape::Radial);
+    if disc || f.shape == FalloffShape::Gradient {
+        let [mut u, mut v] = f.center;
+        dirty |= drag_f64(ui, "Center U (+X)", &mut u, 0.005, 0.0..=1.0);
+        dirty |= drag_f64(ui, "Center V (+Z)", &mut v, 0.005, 0.0..=1.0);
+        f.center = [u, v];
+    }
+    if disc {
+        dirty |= drag_f64(ui, "Radius", &mut f.radius, 0.005, 0.0..=1.5);
+    }
+    if f.shape == FalloffShape::Gradient {
+        // The direction as a compass angle: 0 is toward -Z, 90 toward +X
+        let [du, dv] = f.direction;
+        let mut deg = du.atan2(-dv).to_degrees().rem_euclid(360.0).round();
+        if drag_f64(ui, "Direction (deg)", &mut deg, 1.0, 0.0..=360.0) {
+            let r = deg.to_radians();
+            f.direction = [r.sin(), -r.cos()];
+            dirty = true;
+        }
+    }
+    dirty |= drag_f64(ui, "Width", &mut f.width, 0.005, 0.0..=1.0);
+    dirty |= drag_f64(ui, "Curve", &mut f.curve, 0.05, 0.05..=8.0);
+    dirty |= ui.checkbox(&mut f.invert, "Invert").changed();
+    ui.horizontal(|ui| {
+        ui.label("Blend:");
+        for b in [
+            FalloffBlend::Sink,
+            FalloffBlend::Multiply,
+            FalloffBlend::Add,
+        ] {
+            if ui
+                .selectable_label(f.blend == b, format!("{b:?}"))
+                .clicked()
+            {
+                f.blend = b;
+                dirty = true;
+            }
+        }
+    });
+    if f.blend == FalloffBlend::Add {
+        dirty |= drag_f64(ui, "Amplitude", &mut f.amplitude, 0.05, -10.0..=10.0);
     }
     dirty
 }
