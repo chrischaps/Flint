@@ -9,7 +9,7 @@ publish = false
 [features]
 # Its player part (`player::PACKAGE`): the spring's subsystem and the `toy`
 # module. flint-player's generated `toy` feature turns it on.
-player = ["dep:flint-script"]
+player = ["dep:flint-script", "dep:flint-physics"]
 # Its command (`cli::extensions()`): `flint toy springs <scene>`.
 # flint-cli's generated `toy` feature turns it on.
 cli = ["dep:clap", "dep:anyhow", "dep:serde_json"]
@@ -19,6 +19,9 @@ cli = ["dep:clap", "dep:anyhow", "dep:serde_json"]
 flint-package = { workspace = true }
 flint-core = { workspace = true }
 flint-script = { workspace = true, optional = true }
+# The physics its springs pull, the run's resource since #1616: the API
+# names no standard package, so a package that requires one names its crate
+flint-physics = { workspace = true, optional = true }
 toml = { workspace = true }
 clap = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }

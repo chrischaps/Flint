@@ -200,6 +200,31 @@ impl OneShot {
     }
 }
 
+/// The sound in the run's resources, while a host lends it
+/// ([`lend`]): what a package's hook plays on (the music hosts its suite
+/// on the shared mixer, ADR 0017). `None` with no sound (a capture, a
+/// headless test), or outside a lend.
+pub fn of_mut(resources: &mut flint_core::resources::Resources) -> Option<&mut AudioEngine> {
+    resources.get_mut::<AudioEngine>()
+}
+
+/// `engine` in the run's resources while `f` runs, then back in place
+/// (#1616): how the player lends its sound to the package hooks, which
+/// find it by type ([`of_mut`]) since the Package API names no standard
+/// package. A silent engine stands in meanwhile, made once a run. With no
+/// engine, `f` runs on the resources as they are. The audio package owns
+/// the engine as a resource instead (#1619).
+pub fn lend<R>(
+    resources: &mut flint_core::resources::Resources,
+    engine: Option<&mut AudioEngine>,
+    f: impl FnOnce(&mut flint_core::resources::Resources) -> R,
+) -> R {
+    match engine {
+        Some(engine) => resources.lend(engine, AudioEngine::silent, f),
+        None => f(resources),
+    }
+}
+
 /// Wraps Kira's AudioManager with sound caching and listener management
 pub struct AudioEngine {
     /// Where the mix runs (#730): [`Silent`] until a device opens.

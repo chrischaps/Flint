@@ -1,7 +1,7 @@
 //! The toy package's player part: what a launcher lists.
 
 use crate::TOY_SPRING;
-use flint_package::physics::rapier::math::Vector;
+use flint_physics::rapier::math::Vector;
 use flint_package::{FixedCtx, Lasts, Package, Registry, SceneCtx, Stage, StageCtx, Subsystem};
 use flint_script::api::builder::kind::Int;
 use flint_script::api::Module;
@@ -94,11 +94,15 @@ impl Subsystem for Springs {
     /// it (ADR 0137 section 3a).
     fn fixed_update(&mut self, ctx: &mut FixedCtx) {
         self.steps += 1;
+        // Physics is the run's resource (ADR 0138 decision 1, #1616)
+        let Some(physics) = flint_physics::of_mut(ctx.resources) else {
+            return;
+        };
         for spring in &self.springs {
-            let Some(handle) = ctx.physics.body_of(spring.entity) else {
+            let Some(handle) = physics.body_of(spring.entity) else {
                 continue;
             };
-            let Some(body) = ctx.physics.bodies_mut().get_mut(handle) else {
+            let Some(body) = physics.bodies_mut().get_mut(handle) else {
                 continue;
             };
             let at = *body.translation();

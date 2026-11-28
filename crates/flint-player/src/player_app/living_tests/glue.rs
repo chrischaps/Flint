@@ -2,7 +2,7 @@
 //! `PlayerApp`, each handing the living subsystem its context, and the
 //! subsystem itself (`living()`), made bare if the test entered no scene.
 
-use crate::player_app::subsystem::stage_ctx;
+use crate::player_app::subsystem::with_stage_ctx;
 use crate::player_app::PlayerApp;
 use flint_living::panel::{KnobFlags, LivingPanelAction, LivingPickedState, LivingSpeciesState};
 use flint_living::player::ab::AbState;
@@ -62,9 +62,10 @@ impl PlayerApp {
         f: impl FnOnce(&mut LivingSubsystem, &mut crate::player_app::subsystem::StageCtx) -> R,
     ) -> R {
         self.living();
-        let living = self.core.subsystems.find_mut::<LivingSubsystem>().unwrap();
-        let mut ctx = stage_ctx!(self, None);
-        f(living, &mut ctx)
+        with_stage_ctx!(self, None, |ctx| {
+            let living = self.core.subsystems.find_mut::<LivingSubsystem>().unwrap();
+            f(living, &mut ctx)
+        })
     }
 
     /// The procgen queue, then `dt` of living props, as one frame's

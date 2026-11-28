@@ -27,6 +27,7 @@ mod nav_tests;
 mod order_tests;
 
 use character::CharacterController;
+use flint_core::resources::Resources;
 use flint_core::{EntityId, Result};
 use flint_ecs::FlintWorld;
 use flint_runtime::{EventBus, Eye, GameEvent, InputState, PlayerView};
@@ -39,8 +40,20 @@ use sync::PhysicsSync;
 use world::PhysicsWorld;
 
 /// Rapier, as this crate builds it, so a package reaches the same version
-/// (`flint_package::physics::rapier`, ADR 0137 section 3a).
+/// (ADR 0137 section 3a; `flint_package::physics::rapier` until #1616).
 pub use rapier3d as rapier;
+
+/// Physics' state in the run's resources (ADR 0138 decision 1, #1616):
+/// what a package that requires physics reads at any stage, and what the
+/// player keeps it in. `None` in a run without physics.
+pub fn of(resources: &Resources) -> Option<&PhysicsSystem> {
+    resources.get::<PhysicsSystem>()
+}
+
+/// [`of`], to change: a fixed step's forces, a vehicle's controller.
+pub fn of_mut(resources: &mut Resources) -> Option<&mut PhysicsSystem> {
+    resources.get_mut::<PhysicsSystem>()
+}
 
 /// Rapier's sets, lent at once by [`PhysicsSystem::rapier_mut`]: the
 /// bodies to change, beside the colliders and the queries to read.
@@ -759,6 +772,30 @@ impl PhysicsSystem {
         self.sync_in(world);
         between(self, world, events);
         self.step_and_publish(world, dt, events);
+        Ok(())
+    }
+
+    /// [`fixed_update_with`](Self::fixed_update_with) for physics' state in
+    /// the run's resources (ADR 0138 decision 1, #1616): `between` is lent
+    /// the resources, physics among them ([`of_mut`]), so a package's
+    /// fixed step finds it by type where it found a `FixedCtx::physics`.
+    /// Nothing is stepped when the resources hold no physics.
+    pub fn fixed_update_in(
+        resources: &mut Resources,
+        world: &mut FlintWorld,
+        dt: f64,
+        events: &mut EventBus,
+        between: impl FnOnce(&mut Resources, &mut FlintWorld, &mut EventBus),
+    ) -> Result<()> {
+        flint_core::scope!("physics::fixed_update");
+        let Some(physics) = of_mut(resources) else {
+            return Ok(());
+        };
+        physics.sync_in(world);
+        between(resources, world, events);
+        if let Some(physics) = of_mut(resources) {
+            physics.step_and_publish(world, dt, events);
+        }
         Ok(())
     }
 

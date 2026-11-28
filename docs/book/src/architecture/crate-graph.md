@@ -73,17 +73,17 @@ The workspace has 38 engine crates, 25 under `crates/` and 13 in packages (`pack
 | 3 | `flint-scene` | asset, core, ecs, schema | android, asset-gen (optional), cli, debug-ui, living (optional), package, player, procgen, render, rhythm-game (optional), viewer, widgets |
 | 3 | `flint-wooze` | core, ecs | living, procgen (optional) |
 | 4 | `flint-animation` | core, ecs, import, runtime | cli, player, script |
-| 4 | `flint-audio` | core, ecs, runtime | music, package, player, rhythm-game (optional) |
+| 4 | `flint-audio` | core, ecs, runtime | music, player, rhythm-game (optional) |
 | 4 | `flint-constraint` | core, ecs, query, schema | cli, viewer |
-| 4 | `flint-physics` | core, ecs, runtime | cli, package, player, script |
+| 4 | `flint-physics` | core, ecs, runtime | cli, player, script, vehicle (optional) |
 | 4 | `flint-render` | core, ecs, geometry, import, pixels, scene, schema | asset-gen (optional), cli, debug-ui, living (optional), package, particles, player, procgen (optional), procgen-cli, rhythm-game (optional), terrain (optional), viewer, widgets |
-| 5 | `flint-particles` | core, ecs, render, runtime | cli, debug-ui, package, player, viewer |
+| 5 | `flint-particles` | core, ecs, render, runtime | cli, debug-ui, player, viewer |
 | 5 | `flint-terrain` | core, ecs, geometry, render (optional) | cli, player, procgen, script, viewer |
 | 6 | `flint-script` | animation, core, ecs, geometry, physics, runtime, schema, terrain | cli, debug-ui (optional), living (optional), music (optional), package, player, rhythm-game (optional), vehicle (optional) |
-| 7 | `flint-package` | audio, core, ecs, particles, physics, render, runtime, scene, schema, script | asset-gen (optional), cli, debug-ui, living (optional), music (optional), player, procgen (optional), procgen-cli, rhythm-game (optional), vehicle (optional), viewer, widgets |
+| 7 | `flint-package` | core, ecs, render, runtime, scene, schema, script | asset-gen (optional), cli, debug-ui, living (optional), music (optional), player, procgen (optional), procgen-cli, rhythm-game (optional), vehicle (optional), viewer, widgets |
 | 8 | `flint-music` | audio, core, ecs (optional), package (optional), script (optional) | cli (optional), input-capture, player (optional), rhythm, rhythm-game |
 | 8 | `flint-procgen` | asset (optional), core, ecs (optional), geometry, import, package (optional), render (optional), scene, schema, terrain, wooze (optional) | asset-gen, living, player (optional), procgen-ai, procgen-cli |
-| 8 | `flint-vehicle` | core, ecs (optional), package (optional), runtime (optional), script (optional) | player (optional) |
+| 8 | `flint-vehicle` | core, ecs (optional), package (optional), physics (optional), runtime (optional), script (optional) | player (optional) |
 | 8 | `flint-widgets` | core, package, render, scene, schema | cli, debug-ui, viewer |
 | 9 | `flint-debug-ui` | core, ecs, geometry, package, particles, render, scene, schema, script (optional), widgets | living (optional), player (optional), rhythm-game (optional) |
 | 9 | `flint-procgen-ai` | ai-core, import, procgen | asset-gen (optional) |

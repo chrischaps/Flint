@@ -218,7 +218,10 @@ impl RhythmSubsystem {
 
     /// The frame's first step, before the clock ticks.
     fn drain(&mut self, ctx: &mut StageCtx) {
-        self.start(ctx.audio.as_deref_mut(), ctx.pads.as_mut());
+        self.start(
+            flint_audio::engine::of_mut(ctx.resources),
+            ctx.pads.as_mut(),
+        );
         #[cfg(feature = "debug-hud")]
         if let Some(panels) = ctx.resources.get_mut::<flint_debug_ui::DebugPanels>() {
             self.add_panels(panels);
@@ -266,7 +269,10 @@ impl Subsystem for RhythmSubsystem {
     }
 
     fn scene_loaded(&mut self, ctx: &mut SceneCtx) {
-        self.start(ctx.audio.as_deref_mut(), ctx.pads.as_mut());
+        self.start(
+            flint_audio::engine::of_mut(ctx.resources),
+            ctx.pads.as_mut(),
+        );
     }
 
     fn scene_unloading(&mut self, ctx: &mut SceneCtx) {

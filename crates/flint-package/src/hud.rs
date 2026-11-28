@@ -12,7 +12,7 @@
 //! |---|---|---|
 //! | a scene's panels, after its renderer share | [`DebugHud::scene_panels`] | [`HudScene`]: the world, the grass the scene bound, its authored styles, looks, schemas, the packages' panels |
 //! | a look changed (#356) | [`DebugHud::look_changed`] | the authored styles under it, its name |
-//! | once a frame, before the renderer prepares | [`DebugHud::sync`] | [`PanelCtx`]: world, renderer, device, camera, particles, the panels' answers |
+//! | once a frame, before the renderer prepares | [`DebugHud::sync`] | [`PanelCtx`]: world, renderer, device, camera, the run's resources, the panels' answers |
 //! | the script's world lines are in | [`DebugHud::world_lines`] | the world and the camera, the frame's lines |
 //! | F3, F4 | [`DebugHud::toggle`] | which |
 //! | the HUD pass | [`DebugHud::ui`], [`DebugHud::cards`], [`DebugHud::graph`] | egui, the panels, a drawer for the player's own panels |

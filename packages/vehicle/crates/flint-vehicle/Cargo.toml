@@ -12,16 +12,19 @@ default = []
 # `vehicle` script module and the Vehicles panel. flint-player's generated
 # `vehicle` feature turns it on.
 player = [
-    "dep:flint-package", "dep:flint-ecs", "dep:flint-runtime", "dep:flint-script",
-    "dep:rhai", "dep:toml", "dep:tracing",
+    "dep:flint-package", "dep:flint-physics", "dep:flint-ecs", "dep:flint-runtime",
+    "dep:flint-script", "dep:rhai", "dep:toml", "dep:tracing",
 ]
 
-# The kernel and its physics only (#1624's rule, ADR 0140 Consequences):
-# flint-package is the Package API, and lends the physics and egui it
-# builds against (`flint_package::physics`, `flint_package::egui`).
+# The kernel and physics only (#1624's rule, ADR 0140 Consequences):
+# flint-package is the Package API, and lends the egui it builds against
+# (`flint_package::egui`); physics is named directly, since the API names
+# no standard package (#1616): its state is the run's resource
+# (`flint_physics::of_mut`), and Rapier is `flint_physics::rapier`.
 [dependencies]
 flint-core = { workspace = true }
 flint-package = { workspace = true, optional = true }
+flint-physics = { workspace = true, optional = true }
 flint-ecs = { workspace = true, optional = true }
 flint-runtime = { workspace = true, optional = true }
 flint-script = { workspace = true, optional = true }

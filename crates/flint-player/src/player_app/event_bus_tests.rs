@@ -131,7 +131,7 @@ fn physics_clear_leaves_a_scripts_event_on_the_bus() {
         app.tick();
         app.fire_event("kept".into(), toml::Value::Integer(7));
         // What a transition does to physics; it used to drop the event
-        app.core.physics.clear();
+        app.core.physics_mut().clear();
         app.tick();
         assert_eq!(stored(&app, "kept"), Some(7));
     });
