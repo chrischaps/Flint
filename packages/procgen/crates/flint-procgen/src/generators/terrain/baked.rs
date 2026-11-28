@@ -164,7 +164,8 @@ impl Generator for TerrainGenerator {
     }
 
     fn revision(&self) -> u32 {
-        1
+        // 2: hydraulic erosion is droplets, counted by `rainfall` (#1693)
+        2
     }
 
     fn output_kind(&self) -> OutputKind {
@@ -202,7 +203,8 @@ impl Generator for TerrainGenerator {
         let res = u64::from(resolution_of(spec));
         let texels = res * res;
         // Release build, rolling_meadow's recipe: about 0.25 us a texel for
-        // each noise octave and 0.02 us for each erosion iteration.
+        // each noise octave, 0.02 us for each thermal pass, and 1.5 us for
+        // each droplet a texel of hydraulic rainfall (#1693; 513²: 0.4 s).
         let mut ns_per_texel = 30.0; // the splat rules and normalizing
         for layer in spec
             .params
@@ -212,8 +214,15 @@ impl Generator for TerrainGenerator {
             .flatten()
         {
             let int = |k: &str, d: i64| layer.get(k).and_then(toml::Value::as_integer).unwrap_or(d);
+            let hydraulic = layer.get("kind").and_then(toml::Value::as_str) == Some("hydraulic");
             ns_per_texel += match layer.get("op").and_then(toml::Value::as_str) {
                 Some("noise") => 250.0 * int("octaves", 6) as f64,
+                Some("erosion") if hydraulic => {
+                    let rain = layer
+                        .get("rainfall")
+                        .and_then(flint_core::toml_util::toml_f64);
+                    1500.0 * rain.unwrap_or(1.0)
+                }
                 Some("erosion") => 20.0 * int("iterations", 50) as f64,
                 _ => 2.0,
             };
@@ -333,11 +342,14 @@ pub fn param_schema() -> Json {
                             "falloff": { "type": "number", "minimum": 0.0, "default": 0.05, "description": "Distance from the level over which the pull fades in; 0 cuts flat" },
                             "mode": { "type": "string", "enum": ["below", "above"], "default": "below", "description": "below raises what is under the level (a flat floor); above lowers what is over it (a plateau)" }
                         })),
-                        height_op("erosion", "Wear the heights: thermal slumps steep slopes, hydraulic carves channels with seeded raindrops", json!({
-                            "kind": { "type": "string", "enum": ["thermal", "hydraulic"], "default": "thermal", "description": "thermal softens slopes steeper than talus_angle; hydraulic carves gullies and fans" },
-                            "iterations": { "type": "integer", "minimum": 0, "default": 50, "description": "Passes (thermal) or hundreds of droplets (hydraulic); the bake's cost grows with it" },
-                            "talus_angle": { "type": "number", "minimum": 0.0, "default": 0.6, "description": "The steepest slope thermal erosion leaves alone; hydraulic doesn't read it" },
-                            "strength": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3, "description": "How much each pass moves" }
+                        height_op("erosion", "Wear the heights: thermal slumps steep slopes, hydraulic rolls seeded droplets downhill to carve branching gullies and lay fans", json!({
+                            "kind": { "type": "string", "enum": ["thermal", "hydraulic"], "default": "thermal", "description": "thermal softens slopes steeper than talus_angle (reads iterations, talus_angle); hydraulic carves gullies and fans (reads rainfall, radius, rain_min_height)" },
+                            "iterations": { "x-when": { "kind": ["thermal"] }, "type": "integer", "minimum": 0, "default": 50, "description": "Passes over the whole map; the bake's cost grows with it" },
+                            "talus_angle": { "x-when": { "kind": ["thermal"] }, "type": "number", "minimum": 0.0, "default": 0.6, "description": "The steepest slope left alone" },
+                            "strength": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3, "description": "Thermal: the share of the excess each pass moves. Hydraulic: how fast a droplet picks up soil" },
+                            "rainfall": { "x-when": { "kind": ["hydraulic"] }, "type": "number", "minimum": 0.0, "default": 1.0, "description": "Droplets rained for each texel of the map (1.0 is one per texel, so a value wears any resolution alike); 0.3 is light wear, 1 clear gullies, 3 badlands; the bake's cost grows with it" },
+                            "radius": { "x-when": { "kind": ["hydraulic"] }, "type": "number", "minimum": 0.5, "default": 3.0, "description": "The radius in texels a droplet erodes over; wider is broader, softer gullies" },
+                            "rain_min_height": { "x-when": { "kind": ["hydraulic"] }, "type": "number", "description": "Droplets start only where the height is at least this, in the heights' units so far (as flatten's height), so the rain falls on land and not the sea floor. Unset: anywhere" }
                         })),
                         height_op("falloff", "Say where the land is: a shape over the map keeps the heights so far where it is 1 and sinks them where it is 0. Map coordinates run 0..1, u along +X and v along +Z. Put it after the noise and before erosion; a noise layer after it brings land back to the border", json!({
                             "shape": { "type": "string", "enum": ["island", "edge", "radial", "gradient"], "default": "island", "description": "island: a disc that also fades out at the border, so the land never reaches the edge for any seed; edge: only the border fades; radial: a disc that may cross the border; gradient: land rises toward `direction`" },
@@ -412,7 +424,7 @@ octaves = 3
 [[height_layers]]
 op = "erosion"
 kind = "hydraulic"
-iterations = 40
+rainfall = 0.5
 
 [[splat_rules]]
 layer = 0
@@ -523,6 +535,9 @@ height_min = 0.4
             toml::from_str("op = \"noise\"").unwrap(),
             toml::from_str("op = \"flatten\"").unwrap(),
             toml::from_str("op = \"erosion\"").unwrap(),
+            // An erosion layer writes only its kind's keys (#1693)
+            toml::from_str("op = \"erosion\"\nkind = \"hydraulic\"\nrain_min_height = 0.1")
+                .unwrap(),
             toml::from_str("op = \"falloff\"").unwrap(),
         ];
         full.splat_rules = vec![toml::from_str("layer = 1").unwrap()];
@@ -561,6 +576,33 @@ height_min = 0.4
             matches!(&issues[..], [ParamIssue::Unknown { key, suggestion: Some(s), .. }]
                 if key == "heigth_layers" && s == "height_layers"),
             "{issues:?}"
+        );
+    }
+
+    /// #1693: hydraulic erosion counts `rainfall`, so an old recipe's
+    /// `iterations` on it is said to do nothing, here as in `parse_checked`.
+    #[test]
+    fn an_erosion_key_of_the_other_kind_is_inapplicable() {
+        let spec = from_terrain_toml(
+            "[meta]\nname = \"x\"\n\
+             [[height_layers]]\nop = \"erosion\"\nkind = \"hydraulic\"\niterations = 120000\n\
+             [[height_layers]]\nop = \"erosion\"\nrainfall = 2.0\n",
+        )
+        .unwrap();
+        let issues = validate_params(&param_schema(), &spec.params);
+        let found: Vec<(&str, &str)> = issues
+            .iter()
+            .map(|i| match i {
+                ParamIssue::Inapplicable { key, actual, .. } => (key.as_str(), actual.as_str()),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("height_layers[0].iterations", "hydraulic"),
+                ("height_layers[1].rainfall", "thermal")
+            ]
         );
     }
 

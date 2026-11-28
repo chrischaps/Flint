@@ -1,0 +1,4 @@
+### Hydraulic erosion carves gullies, and `rainfall` counts its droplets per texel (#1693)
+**Package.** terrain
+**What changed.** `kind = "hydraulic"` erosion is a droplet model: droplets with inertia wear a `radius`-texel brush (default 3) and lay soil down as they slow, so slopes get branching gullies and fans instead of axis-aligned dashes. Its amount is the new `rainfall`, droplets for each texel of the map (default 1.0, which visibly wears a 513² map in about 0.4 s); `rain_min_height` starts droplets only on ground at least that high. Hydraulic no longer reads `iterations` (which counted single raindrops: 50 changed about 1% of a 513² map) or `talus_angle`; a spec that sets them on a hydraulic layer gets a warning naming the keys it does read, and every hydraulic layer bakes different heights.
+**What to do.** In each hydraulic layer, replace `iterations` with `rainfall` (0.3 light, 1 clear gullies, 3 badlands) and re-bake its maps.

@@ -54,7 +54,8 @@ mode = "below"
 [[height_layers]]
 op = "erosion"
 kind = "hydraulic"
-iterations = 7500
+# Relief's 120,000 drops on 513², 0.45 a texel (#1693)
+rainfall = 0.45
 strength = 0.35
 
 [[height_layers]]
