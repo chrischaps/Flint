@@ -20,7 +20,7 @@ impl Default for DensitySource {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GrassConfig {
     #[serde(default)]
     pub enabled: bool,
