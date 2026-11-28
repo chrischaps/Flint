@@ -207,6 +207,25 @@ The grass isn't tied to a terrain. A game with mesh ground gives it a density ma
 
 The **Grass Debug** panel (`F3` in the player, see [Debug Panels](../guides/debug-panels.md)) exposes every field above live and can commit them back to the scene file, which is how the meadow demo's numbers were found.
 
+### Changing the grass and the ground while the game runs
+
+A script changes the terrain's grass and material the way it changes a light: with `set_field`, or eased over time with `tween`. The terrain package reads the fields again after every frame's scripts and hands the renderer what moved, so the next frame draws it. `terrain_live_fields()` lists them: every `grass.*` key above, `texture_tile`, `metallic` and `roughness`.
+
+```rust
+fn on_update() {
+    let island = get_entity("island");
+    // A gust: wind that rises over three seconds and swings round
+    if total_time() > 10.0 && total_time() < 10.1 {
+        tween(island, "terrain.grass.wind_strength", 0.6, 3.0);
+        tween(island, "terrain.grass.wind_direction", [0.2, 0.0, 1.0], 3.0);
+    }
+    // Dusk: the dry tint rises as the sun goes down
+    set_field(island, "terrain", "grass.dry_amount", 0.15 + 0.5 * (total_time() / 60.0).min(1.0));
+}
+```
+
+`grass.enabled = false` stops the blades and `true` brings them back. A scene whose grass was off when it loaded grows its field the first time a script turns it on. A denser field or a longer `max_distance` remakes the blades' buffer before the next frame, which is a moment's work, so change those rarely and the colours and wind as often as you like. A `grass_ground` holds the scene's grass when there is one, and then the terrain's `grass.*` changes nothing (the player says so once).
+
 ## Physics Collision
 
 Terrain automatically gets a **heightfield physics collider** via Rapier: the chunks' vertex grid as one grid of heights, on a fixed (immovable) rigid body. This means:
