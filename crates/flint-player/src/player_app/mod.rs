@@ -24,8 +24,7 @@ mod flipbook_cue_tests;
 // The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
-// The walk is the first-person package's (#1618)
-#[cfg(all(test, feature = "first-person"))]
+#[cfg(test)]
 mod character_input_tests;
 #[cfg(test)]
 mod component_panel_tests;
