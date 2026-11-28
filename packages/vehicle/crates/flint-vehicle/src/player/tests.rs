@@ -506,18 +506,20 @@ fn a_cylinder_chassis_sees_a_trimesh_wall_it_bounces_off() {
     );
     let mut run = Run::new(world);
     // A 20 m face across the road at z = -30, facing the kart (+Z)
-    run.physics.register_static_trimesh(
-        wall,
-        vec![
-            [-10.0, 0.0, -30.0],
-            [10.0, 0.0, -30.0],
-            [10.0, 2.0, -30.0],
-            [-10.0, 2.0, -30.0],
-        ],
-        vec![[0, 1, 2], [0, 2, 3]],
-        0.3,
-        0.5,
-    );
+    flint_physics::of_mut(&mut run.resources)
+        .expect("physics")
+        .register_static_trimesh(
+            wall,
+            vec![
+                [-10.0, 0.0, -30.0],
+                [10.0, 0.0, -30.0],
+                [10.0, 2.0, -30.0],
+                [-10.0, 2.0, -30.0],
+            ],
+            vec![[0, 1, 2], [0, 2, 3]],
+            0.3,
+            0.5,
+        );
     run.seconds(0.5);
     run.set_input(k, "throttle", f(1.0));
     run.seconds(2.0);
