@@ -642,7 +642,12 @@ impl Stage {
         // left it: woozy grass's sway and comb, else at rest.
         let clocked = on_clock(args);
         // Each emitter's draw, as the renderer takes it (#1615)
-        let particle_draws = particle_time.map(|_| self.game.particles().sync.draw_data());
+        let particle_draws = particle_time.map(|_| {
+            self.game
+                .particles()
+                .map(|p| p.draw_data())
+                .unwrap_or_default()
+        });
         let style_time = args
             .style
             .style_time
@@ -783,13 +788,14 @@ impl Stage {
         let wanted = (seconds.max(0.0) / PARTICLE_DT).round() as u32;
         let steps = wanted.saturating_sub(self.particle_steps);
         let whole = self.renderer.effective_post_process_config().motion_hold;
-        let (world, particles) = self.game.world_and_particles();
+        let (world, Some(particles)) = self.game.world_and_particles() else {
+            return;
+        };
         // Emitters on held entities (#873) hold on each step's own time, as
         // the player stamps its frame's before the particles step
-        particles.sync.set_motion_hold(whole);
         for k in 1..=steps {
             let at = (self.particle_steps + k) as f64 * PARTICLE_DT as f64;
-            particles.sync.set_motion_time(at);
+            particles.set_motion(at, (k == 1).then_some(whole));
             particles.simulate_to(world, PARTICLE_DT, PARTICLE_DT);
         }
         self.particle_steps += steps;
@@ -812,15 +818,17 @@ impl Stage {
             self.particles_loaded = true;
         }
         self.step_particles_to(seconds);
-        let (_, particles) = self.game.world_and_particles();
+        let Some(particles) = self.game.particles_mut() else {
+            return Ok(());
+        };
         // Packed for the capture's frame inputs
         particles.pack(Some(self.camera.position_array()));
         let first = !std::mem::replace(&mut self.particles_said, true);
-        if first && (args.clock.particle_time.is_some() || particles.sync.emitter_count() > 0) {
+        if first && (args.clock.particle_time.is_some() || particles.emitter_count() > 0) {
             say!(
                 "Particles: {} alive across {} emitter(s) at t = {:.2}s",
-                particles.sync.total_alive(),
-                particles.sync.emitter_count(),
+                particles.total_alive(),
+                particles.emitter_count(),
                 seconds
             );
         }
@@ -841,19 +849,21 @@ pub(super) fn load_particles(
     renderer: &mut SceneRenderer,
     ctx: &HeadlessContext,
 ) -> Result<()> {
-    use flint_runtime::RuntimeSystem;
     // What the scripts emit reaches them from here
     game.set_particles_drawn(true);
-    let (world, particles) = game.world_and_particles();
-    flint_particles::load_particle_effects_from_world(project, scene, particles);
+    let (world, Some(particles)) = game.world_and_particles() else {
+        // A flint without the particles package draws none: said where a
+        // render asks for them by name (`--particle-time`)
+        return Ok(());
+    };
     particles
-        .initialize(world)
+        .load(project, scene, world)
         .context("Failed to initialize particles")?;
     flint_render::load_scene_particle_textures(
         renderer,
         &ctx.device,
         &ctx.queue,
-        &particles.sync.texture_names(),
+        &particles.texture_names(),
         project,
         Path::new(scene).parent().unwrap_or(Path::new(".")),
     );

@@ -224,20 +224,20 @@ pub(super) fn render_still(
 
     // Particles (ADR 0068): fixed-step, fixed-seed simulation so a snapshot
     // at a given --particle-time is reproducible run to run.
-    let mut particle_sim = None;
-    if let Some(seconds) = args.clock.particle_time {
-        use flint_runtime::RuntimeSystem;
-        let mut particles = flint_particles::ParticleSystem::new();
+    // The particles package's system (#1622): `render` refused
+    // --particle-time already in a flint without it
+    let mut particle_sim: Option<Box<dyn flint_render::ParticleSource>> = None;
+    if let (Some(seconds), Some(point)) = (args.clock.particle_time, particles()) {
+        let mut particles = (point.new)();
         let project = &config.project;
-        flint_particles::load_particle_effects_from_world(project, &args.scene, &mut particles);
         particles
-            .initialize(&mut world)
+            .load(project, &args.scene, &world)
             .context("Failed to initialize particles")?;
         flint_render::load_scene_particle_textures(
             &mut renderer,
             &ctx.device,
             &ctx.queue,
-            &particles.sync.texture_names(),
+            &particles.texture_names(),
             project,
             Path::new(&args.scene).parent().unwrap_or(Path::new(".")),
         );
@@ -245,15 +245,15 @@ pub(super) fn render_still(
         particles.pack(Some(camera.position_array()));
         say!(
             "Particles: {} alive across {} emitter(s) at t = {:.2}s",
-            particles.sync.total_alive(),
-            particles.sync.emitter_count(),
+            particles.total_alive(),
+            particles.emitter_count(),
             seconds
         );
         particle_sim = Some(particles);
     }
 
     // The frame's inputs, and the world read into the draw lists (#739)
-    let particle_draws = particle_sim.as_ref().map(|p| p.sync.draw_data());
+    let particle_draws = particle_sim.as_ref().map(|p| p.draw_data());
     renderer.prepare(
         &ctx.device,
         &ctx.queue,
@@ -288,7 +288,7 @@ pub(super) fn render_still(
                 world: &mut world,
                 camera,
                 camera_path: camera_path.as_ref(),
-                particles: particle_sim.as_mut(),
+                particles: particle_sim.as_deref_mut(),
                 animation: animation.as_deref_mut(),
                 meshes: &meshes,
                 scene_name: &scene_file.scene.name,
@@ -360,7 +360,7 @@ pub(super) fn render_still(
                             },
                             &world,
                         ),
-                        particles: particle_sim.as_ref().map(|p| &p.sync),
+                        particles: particle_sim.as_deref(),
                     }),
                 )?;
                 for line in said {

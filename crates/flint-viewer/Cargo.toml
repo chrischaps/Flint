@@ -23,10 +23,9 @@ flint-scene = { workspace = true }
 flint-package = { workspace = true }
 flint-schema = { workspace = true }
 flint-render = { workspace = true }
-flint-particles = { workspace = true }
 # A scene's terrain, which the renderer built itself until #1615
 # (`flint_terrain::scene::bind_terrain`, the `render` part). A kernel crate
-# naming a package's, as flint-particles above is, until the terrain package's
+# naming a package's until the terrain package's
 # asset maker builds it (#1623, ADR 0138 decision 5)
 flint-terrain = { workspace = true, features = ["render"] }
 # The widgets, the Rendering & Effects panel (F4) and the style cards: the

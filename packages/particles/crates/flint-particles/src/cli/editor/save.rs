@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use flint_particles::{EmitterDef, ParticleEffect};
+use crate::{EmitterDef, ParticleEffect};
 use toml_edit::{DocumentMut, Item};
 
 /// How the file was written.
@@ -265,11 +265,10 @@ emission_rate = 2.0
     fn table_key_keeps_table_style_and_new_keys_inline() {
         let saved = load(SRC);
         let mut live = saved.clone();
-        live.emitters[0].shape =
-            flint_particles::effect::ShapeField::Def(flint_particles::ShapeDef::Cone {
-                radius: 0.2,
-                angle: 12.0,
-            });
+        live.emitters[0].shape = crate::effect::ShapeField::Def(crate::ShapeDef::Cone {
+            radius: 0.2,
+            angle: 12.0,
+        });
         live.emitters[1].gravity = [0.0, 1.0, 0.0];
         let out = patch_document(SRC, &saved, &live).unwrap().unwrap();
         assert!(out.contains("[emitters.shape]"), "{out}");

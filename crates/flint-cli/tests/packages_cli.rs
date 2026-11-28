@@ -369,13 +369,15 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     assert!(o.status.success(), "{}", said(&o));
     let doc = json(&o);
     assert_eq!(doc["lines"], serde_json::json!([]), "{doc:#}");
-    // The blank template animates nothing either, so animation, flipbook
-    // and rig (standard since #1620 and #1621) are named too
+    // The blank template animates nothing (#1620), has no emitters (#1622)
+    // and poses nothing (#1621) either, so animation, flipbook, particles
+    // and rig are named too
     assert_eq!(
         doc["leave_out"],
         serde_json::json!([
             { "name": "animation", "line": "animation = false" },
             { "name": "flipbook", "line": "flipbook = false" },
+            { "name": "particles", "line": "particles = false" },
             { "name": "procgen", "line": "procgen = false" },
             { "name": "rig", "line": "rig = false" }
         ]),
@@ -405,15 +407,16 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     // Added by hand, the line is kept and nothing more is named
     set_packages(
         &game,
-        "procgen = false\nanimation = false\nflipbook = false\nrig = false\n",
+        "procgen = false\nanimation = false\nflipbook = false\nparticles = false\nrig = false\n",
     );
     let doc = json(&flint(&game, &["package", "used", "--json"]));
     assert_eq!(doc["leave_out"], serde_json::json!([]), "{doc:#}");
     let o = flint(&game, &["build", "--dry-run"]);
     assert!(o.status.success(), "{}", said(&o));
     assert!(
-        stdout(&o)
-            .contains("left out  animation, flipbook, procgen, rig, ai, living, music, rhythm"),
+        stdout(&o).contains(
+            "left out  animation, flipbook, particles, procgen, rig, ai, living, music, rhythm"
+        ),
         "{}",
         said(&o)
     );
@@ -458,12 +461,19 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
         .collect();
     assert_eq!(
         packages,
-        ["animation", "debug-hud", "flipbook", "procgen", "rig"],
+        [
+            "animation",
+            "debug-hud",
+            "flipbook",
+            "particles",
+            "procgen",
+            "rig"
+        ],
         "{doc:#}"
     );
     // The launcher (#1552): the kernel, then the packages with a part in
-    // the player (debug-hud, animation, flipbook and rig are standard: in
-    // unless set false)
+    // the player (debug-hud, animation, flipbook, particles and rig are
+    // standard: in unless set false)
     assert_eq!(
         doc["launcher"]["packages"],
         serde_json::json!([
@@ -471,6 +481,7 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
             "animation",
             "debug-hud",
             "flipbook",
+            "particles",
             "procgen",
             "rig"
         ]),
@@ -490,7 +501,7 @@ fn build_dry_run_names_a_launcher_holding_only_the_listed_package() {
     let game = game("build_launcher");
     set_packages(
         &game,
-        "procgen = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false\nrig = false\n",
+        "procgen = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false\nparticles = false\nrig = false\n",
     );
     let o = flint(&game, &["build", "--dry-run"]);
     assert!(o.status.success(), "{}", said(&o));

@@ -7,7 +7,7 @@
 //!   `Stage::Pose`) solves two-bone IK over the world, as `IkPass` alone did;
 //! - registering a clip through `Rig` adds the kind it needs.
 
-use flint_animation::{AnimationSystem, ClipKind, SLOT_FLIPBOOK, SLOT_NODE, SLOT_SKELETAL};
+use flint_animation::{AnimationSystem, SLOT_FLIPBOOK, SLOT_NODE, SLOT_SKELETAL};
 use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;

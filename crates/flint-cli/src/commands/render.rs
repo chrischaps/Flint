@@ -395,6 +395,14 @@ pub(super) fn render(
     drop(read);
     say!("Loaded scene: {}", scene_file.scene.name);
     say!("Entities: {}", world.entity_count());
+    // The particles are the particles package's (#1622): a flint without it
+    // can't step any, so a render that asks for them names the package
+    if args.clock.particle_time.is_some() && particles().is_none() {
+        return Err(super::absent::missing_component_owner(
+            "flint render --particle-time",
+            flint_core::components::PARTICLE_EMITTER,
+        ));
+    }
     // An echoes column with nothing to echo would draw the same picture
     // in every column (#531)
     if let Some(grid) = grid.as_ref().filter(|g| g.writes_tables()) {
@@ -523,6 +531,12 @@ pub(super) fn stages() -> Option<&'static dyn flint_package::cli::render::StageP
     crate::points()
         .get::<flint_package::cli::Stages>()
         .map(|stages| stages.0)
+}
+
+/// The particles package's point (#1622): what a still, a sequence and a
+/// stage step a scene's particles through. `None` in a flint without it.
+pub(super) fn particles() -> Option<&'static flint_package::particles::Particles> {
+    crate::points().get::<flint_package::particles::Particles>()
 }
 
 /// A sweep of a key a package draws (a scene's field or tables), in a

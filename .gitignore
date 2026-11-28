@@ -96,9 +96,11 @@ __pycache__/
 /docs/book/src/concepts/ai-generation.md
 /docs/book/src/concepts/animation.md
 /docs/book/src/concepts/music-sessions.md
+/docs/book/src/concepts/particles.md
 /docs/book/src/concepts/procgen.md
 /docs/book/src/concepts/vehicles.md
 /docs/book/src/guides/debug-panels.md
+/docs/book/src/guides/particle-editor.md
 /docs/book/src/images/debug-keys-f1.png
 /docs/book/src/images/linklater-slit.png
 /docs/book/src/images/linklater-strip.png
@@ -110,6 +112,8 @@ __pycache__/
 /docs/book/src/images/living-pick.png
 /docs/book/src/images/living-softness.png
 /docs/book/src/images/living-strip.png
+/docs/book/src/images/particle-editor-campfire.png
+/docs/book/src/images/particles-campfire-scene.png
 /docs/book/src/images/procgen-examples.png
 /docs/book/src/images/procgen-refine-oak.png
 /docs/book/src/images/sweep-coil.png

@@ -20,6 +20,7 @@ accel = { type = "f32", default = 15.0, min = 0.0, description = "Full-throttle 
 brake = { type = "f32", default = 25.0, min = 0.0, description = "Full-brake deceleration, m/s²" }
 reverse = { type = "f32", default = 0.3, min = 0.0, max = 1.0, description = "Reverse speed and drive, as a fraction of top_speed and accel" }
 drag = { type = "f32", default = 0.5, min = 0.0, description = "Speed lost each second, as a fraction of speed" }
+air_drag = { type = "f32", default = 1.0, min = 0.0, max = 1.0, description = "The share of drag that still slows it with no wheel down: 1 for drag that is air, 0 for an arcade kart whose drag balances its drive (a hop, a jump costs no speed)" }
 overspeed_decay = { type = "f32", default = 2.5, min = 0.0, description = "How fast speed above the cap eases back, per second" }
 mass = { type = "f32", default = 150.0, min = 0.1, description = "The chassis mass, kg (replaces the rigidbody's mass; the inertia is the collider's box at this mass)" }
 center_of_mass = { type = "vec3", default = [0.0, -0.25, 0.0], description = "The centre of mass in the body's frame, m: low keeps it on its wheels" }
@@ -34,6 +35,7 @@ grip = { type = "f32", default = 9.0, min = 0.0, description = "Sideways speed s
 yaw_assist = { type = "f32", default = 10.0, min = 0.0, description = "How fast the yaw rate is pulled toward the turn-rate curve, per second" }
 upright = { type = "f32", default = 60.0, min = 0.0, description = "The torque turning the body's up toward the ground's, per second squared" }
 scrub = { type = "f32", default = 0.0, min = 0.0, description = "Forward speed lost each second per radian of slip, for a vehicle that slows when thrown into a corner" }
+air_control = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "The share of the yaw assist that still steers with fewer than two wheels down (a hop, a jump), about the world's up, and with no wheel down the travel turns with the nose by the same share: an arcade kart's steer in the air" }
 # Tyres and suspension
 tyre_grip = { type = "f32", default = 1.8, min = 0.0, description = "Each tyre's friction (Rapier's friction_slip)" }
 suspension_stiffness = { type = "f32", default = 40.0, min = 0.0, description = "The springs' stiffness, per metre of compression" }

@@ -50,6 +50,10 @@ pub struct SceneCtx<'a> {
     pub script: &'a mut ScriptSystem,
     /// `None` in a headless test and a capture.
     pub renderer: Option<&'a mut SceneRenderer>,
+    /// The window's device and queue, for what a builder uploads to the
+    /// renderer at the scene's entry (the particles' textures, #1622);
+    /// `None` without a window: a headless test, a capture, a playtest.
+    pub gpu: Option<(&'a wgpu::Device, &'a wgpu::Queue)>,
     /// The pads, when the host has them.
     pub pads: Option<Pads<'a>>,
     /// `Some` when the host is a capture (`flint render`'s `HeadlessGame`,
