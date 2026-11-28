@@ -13,7 +13,7 @@
 //! blend, so a name looks the same as it would drawn with `draw_text_opts`.
 //! Fog, bloom and tonemapping don't touch it.
 
-use super::fonts::{resolve_font_id, text_layout_job};
+use super::fonts::{resolve_font_id, text_layout_job, warn_missing_glyphs};
 use super::hud_render::to_color32;
 use super::text_halo::{stamp_offsets, wants_halo, HaloSpec, TextHalos};
 use bytemuck::{Pod, Zeroable};
@@ -135,6 +135,7 @@ pub(super) fn lay_out(
             continue;
         };
         let font_id = resolve_font_id(points, t.font.as_deref(), fonts, warned);
+        warn_missing_glyphs(ctx, "world text", &t.text, &font_id, warned);
         let galley = |color: egui::Color32| {
             ctx.fonts_mut(|f| {
                 f.layout_job(text_layout_job(

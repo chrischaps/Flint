@@ -268,7 +268,7 @@ Each `[[params.control_points]]` entry:
 |---|---|---|---|
 | `geometry` | table |  | The terrain's size and the maps' resolution |
 | `grass` | table |  | The terrain component's GPU grass (see the book's Terrain page). Not read by the bake; leave it out unless the terrain should grow grass |
-| `height_layers` | array of tables |  | The height recipe, run in order on a grid starting at 0: `noise` adds fractal noise, `flatten` pulls heights toward a level, `erosion` wears them |
+| `height_layers` | array of tables |  | The height recipe, run in order on a grid starting at 0: `noise` adds fractal noise, `flatten` pulls heights toward a level, `erosion` wears them, `falloff` says where the land is (an island, a coast) |
 | `splat` | table |  | What the splat rules leave undecided |
 | `splat_rules` | array of tables |  | Paint the four surface layers: each texel takes every rule whose height and slope it fits, weighted toward the middle of the rule's band, and the weights are normalized. A texel no rule covers is `[splat] fallback`'s (layer 0 unless it says) |
 | `textures` | table |  | The terrain component's surface textures and material; not read by the bake |

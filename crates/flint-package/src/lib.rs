@@ -48,6 +48,7 @@ pub mod note;
 pub mod panels;
 pub mod particles;
 mod registry;
+pub mod sound;
 mod stage;
 mod subsystem;
 pub mod surfaces;

@@ -10,8 +10,7 @@
 //! `teardown_current_scene` in `transition.rs`.
 
 use super::scene_loading::{
-    build_model_load_config, load_audio_from_world, load_scripts_from_world, terrain_surface,
-    LoadedGrassInfo,
+    build_model_load_config, load_scripts_from_world, terrain_surface, LoadedGrassInfo,
 };
 use super::PlayerApp;
 use anyhow::Result;
@@ -350,22 +349,8 @@ impl PlayerApp {
         // and a load report times them
         self.core.enter_player_view();
 
-        let audio_note = frame_notes::begin(NoteKind::AudioLoad, String::new);
-        load_audio_from_world(
-            &self.core.world,
-            &mut self.audio,
-            &self.core.project,
-            &self.core.scene_path,
-            self.scene.preload_audio,
-            // In the browser the audio may already be here, and decoding it
-            // all in one frame is the stall #124 removed: queue it. The
-            // desktop decodes up front, as a load can afford.
-            cfg!(target_arch = "wasm32"),
-        );
-        self.audio
-            .initialize(&mut self.core.world)
-            .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
-        drop(audio_note);
+        // The scene's sounds load as the audio package's subsystem is
+        // built, below (#1619)
 
         // The animation's load is the animation package's builder now
         // (#1620), and the particles' (`particles/*.particles.toml` first, so

@@ -19,7 +19,7 @@ What it writes there, all from the manifests:
     turns it on, so a stock build has every package (ADR 0136 decision 3:
     no `[packages]` key means every package).
   - `packages-<device>` for each device feature written by hand outside the
-    block (`audio`, `gamepad`, `dialogs`), which turns it on: the features
+    block (`sound`, `gamepad`, `dialogs`), which turns it on: the features
     of the packages' crates that each manifest's `[rust.devices]` names for
     it, weakly (`flint-music?/device`), so a device reaches a package's crate
     only where the package is in the build.
@@ -328,7 +328,7 @@ player = "flint-toy"
 cli = "flint-toy-cli"
 
 [rust.devices]
-audio = ["flint-toy/device"]
+sound = ["flint-toy/device"]
 dialogs = ["flint-toy-cli/dialogs"]
 
 [with.debug-hud]
@@ -402,8 +402,8 @@ def self_test():
                 player.get("toy") == '["music", "dep:flint-toy", "flint-toy?/player"]',
             )
             expect(
-                "player: its device line is in packages-audio, weakly",
-                '"flint-toy?/device"' in player.get("packages-audio", ""),
+                "player: its device line is in packages-sound, weakly",
+                '"flint-toy?/device"' in player.get("packages-sound", ""),
             )
             expect(
                 "player: its [with.debug-hud] line is on debug-hud's feature",
@@ -416,7 +416,7 @@ def self_test():
             )
             expect(
                 "cli: a line flint-player's part has is not written again",
-                "flint-toy?/" not in cli.get("packages-audio", "") + cli.get("debug-hud", ""),
+                "flint-toy?/" not in cli.get("packages-sound", "") + cli.get("debug-hud", ""),
             )
             expect(
                 "cli: a device of a crate only it links is written",
@@ -457,11 +457,11 @@ def self_test():
                     "a device feature that doesn't turn on its packages' part",
                     lambda r: (r / PLAYER).write_text(
                         (r / PLAYER).read_text(encoding="utf-8").replace(
-                            '"flint-audio/device", "packages-audio"', '"flint-audio/device"'
+                            'sound = ["packages-sound"]', 'sound = []'
                         ),
                         encoding="utf-8",
                     ),
-                    ("`audio` feature doesn't turn on `packages-audio`",),
+                    ("`sound` feature doesn't turn on `packages-sound`",),
                 ),
             ]
             for i, (what, edit, words) in enumerate(cases):

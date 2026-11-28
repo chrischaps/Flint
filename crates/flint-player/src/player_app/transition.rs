@@ -428,9 +428,11 @@ impl PlayerApp {
         self.style.preloaded_looks.clear();
 
         // Clear all systems
+        // The sound forgot the scene at its subsystem's `scene_unloading`,
+        // after the music's (#1619)
         self.core.script.clear();
-        self.audio.clear();
-        // Physics cleared itself as its subsystem heard the scene go (#1617)
+        // Physics cleared itself as its subsystem heard the scene go (#1617),
+        // and the sound as audio's did, after the music's (#1619)
         self.core.forget_player_view();
         // The old scene's contacts name entities that are going; a script's
         // or an extension's own events go on to the next scene's scripts

@@ -533,10 +533,18 @@ mod tests {
         );
         // Procgen is used, so it isn't named to leave out; nothing scanned
         // animates (#1620), emits (#1622) or poses (#1621), so animation,
-        // flipbook, particles and rig are, and the grove has no terrain (#1623)
+        // flipbook, particles and rig are, the grove has no terrain (#1623)
+        // and makes no sound (#1619)
         assert_eq!(
             left_out_lines(&engine_packages(), &found, None),
-            ["animation", "flipbook", "particles", "rig", "terrain"]
+            [
+                "animation",
+                "audio",
+                "flipbook",
+                "particles",
+                "rig",
+                "terrain"
+            ]
         );
     }
 
@@ -553,6 +561,7 @@ mod tests {
             left_out_lines(&packages, &found, None),
             [
                 "animation",
+                "audio",
                 "first-person",
                 "flipbook",
                 "particles",

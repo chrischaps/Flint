@@ -42,7 +42,7 @@ mode = "below"
 [[params.height_layers]]
 op = "erosion"
 kind = "hydraulic"
-iterations = 30
+rainfall = 0.8
 strength = 0.3
 
 # Layer 0: grass on the low, gentle ground (slopes are rise over run:

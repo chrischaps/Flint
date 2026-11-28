@@ -12,7 +12,7 @@ use flint_ecs::FlintWorld;
 /// `PlayerApp` (and the CLI's headless commands) calls each by its concrete
 /// type, in the order `PlayerApp::tick` sets out, and asks the top game
 /// state whether it runs by the name in [`crate::state`] (`SCRIPTS`,
-/// `AUDIO`, ...). Physics isn't one: it steps at the fixed rate
+/// `ANIMATION`, ...). Physics isn't one: it steps at the fixed rate
 /// (`PhysicsSystem::fixed_update`, which pushes collisions into the player's
 /// [`EventBus`](crate::EventBus)). The player's optional parts are its
 /// `Subsystem`s (ADR 0117), not this trait.

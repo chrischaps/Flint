@@ -19,6 +19,7 @@ pub mod common_args;
 pub mod dxc;
 pub mod edit_router;
 pub mod entity;
+pub mod entity_field;
 pub mod env;
 pub mod examples;
 pub mod export;
@@ -38,7 +39,6 @@ pub mod look;
 pub mod look_measure;
 pub mod mesh_seq;
 pub mod package;
-
 pub mod play;
 pub mod playtest;
 pub mod prefab;

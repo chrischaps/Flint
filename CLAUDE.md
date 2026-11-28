@@ -101,7 +101,7 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-player/CLAUDE.md` | extensions, UI, input, touch, capture, perf, web |
 | `crates/flint-script/CLAUDE.md` | Rhai detail, callbacks, script UI |
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear, project manifest, env switches |
-| `crates/flint-audio/CLAUDE.md` | audio clock, decoding, device features |
+| `packages/audio/crates/flint-audio/CLAUDE.md` | audio clock, decoding, devices |
 | `packages/physics/crates/flint-physics/CLAUDE.md` | Rapier, joints |
 | `packages/{animation/crates/flint-animation,rig/crates/flint-rig}/CLAUDE.md` | animator, kinds; skeletons, IK |
 | `packages/particles/crates/flint-particles/CLAUDE.md` | particles |

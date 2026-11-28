@@ -136,7 +136,9 @@ impl PlayOptions {
         if let Some(gpu) = self.perf {
             app.enable_perf(gpu);
         }
-        app.audio.set_old_mix(self.old_mix);
+        if let Some(sound) = app.sound() {
+            sound.set_old_mix(self.old_mix);
+        }
     }
 
     /// Read a render scale word over `base` (the host's default: the
@@ -379,13 +381,14 @@ mod tests {
             None,
         );
         options.apply(&mut app);
+        let old_mix = app.sound().is_some_and(|s| s.old_mix());
         format!(
             "{:?}\ntouch {:?}\nframe step {:?}\nscript timing {}\nold mix {}",
             app.launch,
             app.input.touch_controls().mode(),
             app.core.clock.frame_step,
             app.core.script.timing(),
-            app.audio.engine.old_mix(),
+            old_mix,
         )
     }
 
