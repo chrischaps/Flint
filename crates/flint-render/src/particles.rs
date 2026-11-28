@@ -114,6 +114,76 @@ pub struct ParticleDraw<'a> {
     pub stretch: f32,
 }
 
+/// A scene's particles, as a host that draws them steps them (#1622): the
+/// particles package's system, which the player's frame, `flint render`'s
+/// captures and the scene viewer reach through this, so none of them names
+/// the package's crate. The package makes one
+/// (`flint_package::particles::Particles`) and is the one implementation.
+///
+/// Every call is what the host did on the system itself before the
+/// package was one, so a frame steps, packs and draws the same.
+pub trait ParticleSource: std::any::Any + Send {
+    /// The effects the scene at `scene_path` can see (`particles/*.particles.toml`,
+    /// through the project's search), then the world's emitters found.
+    fn load(
+        &mut self,
+        project: &flint_core::project::Project,
+        scene_path: &str,
+        world: &flint_ecs::FlintWorld,
+    ) -> flint_core::Result<()>;
+
+    /// Every texture the emitters and effects name, for the renderer to
+    /// load (`load_scene_particle_textures`).
+    fn texture_names(&self) -> Vec<String>;
+
+    /// Pick up the world's emitters (a component edited, an entity gone)
+    /// without moving time on.
+    fn sync_from_world(&mut self, world: &flint_ecs::FlintWorld);
+
+    /// One step of `dt` seconds: the world's emitters picked up, then every
+    /// particle moved on.
+    fn step(&mut self, world: &flint_ecs::FlintWorld, dt: f32);
+
+    /// `seconds` on from where it stands, in fixed steps of `dt` (the count
+    /// rounded, ADR 0068), so a capture at a time is the same run to run.
+    fn simulate_to(&mut self, world: &flint_ecs::FlintWorld, seconds: f32, dt: f32);
+
+    /// The clock emitters under a `motion_hold` emit on (#873), and the
+    /// frame's whole hold rate.
+    fn set_motion(&mut self, seconds: f64, whole_hold: Option<f32>);
+
+    /// Pack the alive particles for the upload, sorted from `eye`.
+    fn pack(&mut self, eye: Option<[f32; 3]>);
+
+    /// Each emitter's draw, as packed last.
+    fn draw_data(&self) -> Vec<ParticleDraw<'_>>;
+
+    /// Particles alive.
+    fn total_alive(&self) -> usize;
+
+    /// Emitters, across every effect instance.
+    fn emitter_count(&self) -> usize;
+
+    /// Effect instances: an entity's emitter or effect, or a detached one.
+    fn instance_count(&self) -> usize;
+
+    /// Each entity whose instance plays an effect asset, with the effect's
+    /// name (the viewer's F4 offers to edit each).
+    fn entity_effects(&self) -> Vec<(EntityId, String)>;
+
+    /// Every instance started again from its beginning.
+    fn restart_all(&mut self);
+
+    /// Every instance and particle dropped, for a new scene.
+    fn clear(&mut self);
+
+    /// Itself, for the package's own code to read back.
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Itself, for the package's own code to change.
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

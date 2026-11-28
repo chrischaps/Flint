@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 40-member Cargo workspace (39 crates, 23 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 40-member Cargo workspace (39 crates, 22 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -14,8 +14,6 @@ flint/
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
 │   ├── flint-widgets/      # The kernel's egui: widgets, a headless frame, F4's Rendering & Effects panel
-
-│   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
 │   ├── flint-audio-worklet/# Kira mixer for the browser's AudioWorklet (its own small wasm)
 │   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus, GameStateMachine, pads)
@@ -58,6 +56,8 @@ flint/
 │   │   └── flint-terrain/      # Heightmap ground: chunks, splat layers, grass, the scene binder, the terrain editor
 │   ├── vehicle/crates/
 │   │   └── flint-vehicle/      # Vehicles: Rapier's raycast wheels with arcade assists, driven each fixed step
+│   ├── particles/crates/
+│   │   └── flint-particles/    # Particles: emitters and effects on a fixed seeded step, and the package's player, panel and editor parts
 │   └── engine/             # The kernel's manifest and schemas
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
@@ -249,10 +249,10 @@ The kernel's egui (#1583), drawn by the CLI's windows, the scene viewer and the 
 The `debug-hud` package's crate (`packages/debug-hud/crates/flint-debug-ui`, #1559): the player's summonable debug overlay:
 - The `DebugPanel` trait (`name`, `ui`, `sync(&mut PanelCtx)`, `weight`, `is_open`, `toggle`, `layout`, `outlives_scene`, dirty tracking), `PanelLayout::{SideRight, Bottom}`, `DebugPanels` and `ScenePanels`, re-exported from `flint_package::panels`: the vocabulary is the kernel's, so a package (the living package's Living Props panel, #1558) or the player adds a panel without naming this crate
 - `assign_columns()` balances open panels across three side columns by each panel's `weight()`
-- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4, `flint-widgets`' own), Ocean, Camera, Grass, Particles, Styles, and `ComponentPanel`, drawn from any component schema whose fields say `panel = ...` (#744)
+- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4, `flint-widgets`' own), Ocean, Camera, Grass, Styles, and `ComponentPanel`, drawn from any component schema whose fields say `panel = ...` (#744)
 - `widgets`: `flint-widgets` re-exported, so a package's panel names either
 - `player` feature: `player::PACKAGE`, a `flint_package::Package` that registers the run's `DebugHud` (`flint_package::hud`): it makes the engine's panels at each scene, syncs them each frame, lays them out over the game, drives F3 and F4, paints the corner cards (scripts and styles that fail) and draws F2's graph from the frames the player hands it. flint-player's `debug-hud` feature turns it on and its build script lists it from the manifest's `[rust]`
-- Depends on `flint-package`, `flint-widgets`, `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-particles`, `flint-schema`, `flint-scene` and, with `player`, `flint-script`
+- Depends on `flint-package`, `flint-widgets`, `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-schema`, `flint-scene` and, with `player`, `flint-script`. The Particles panel is the particles package's since #1622, at the kernel's `ScenePanels` point
 - A game drops it with `debug-hud = false`: the run has no panels, and F3, F4 and the graph are not offered. The game's `flint` leaves it out too (flint-cli's `debug-hud` feature, #1583), and its editors are the same without it
 
 ### flint-vehicle
@@ -356,12 +356,15 @@ The `flipbook` package's crate (`packages/flipbook/crates/flint-flipbook`, ADR 0
 
 ### flint-particles
 
-GPU-instanced particle system for visual effects:
+The `particles` package's crate (`packages/particles/crates/flint-particles`, #1622): the particle simulation for visual effects. The renderer keeps the GPU half (`flint_render::particles`: the instance, the blend, `ParticleDraw`, and `ParticleSource`, what a host steps); this crate builds the draws:
 - **ParticlePool** --- swap-remove array for O(1) particle death, contiguous alive iteration
 - **ParticleSync** --- bridges ECS `particle_emitter` components to the simulation, auto-discovers new emitters each frame
 - **ParticleSystem** --- top-level `RuntimeSystem` that ticks simulation in `update()` (variable-rate, not fixed-step)
 - **ParticlePipeline** --- wgpu render pipeline with alpha and additive variants, storage buffer for instances
 - Emission shapes: point, sphere, cone, box. Value-over-lifetime interpolation for size and color.
+- `player` feature: `player::PACKAGE`, which puts the run's `ParticleSystem` in its resources, a subsystem that loads each scene's effects and steps them at `Stage::Animation`, the `particle` script module (its calls are module commands the subsystem takes) and the F3 Particles panel
+- `cli` feature: `cli::extensions()`, which registers the effect editor `flint edit <x>.particles.toml` opens and the `flint_package::particles::Particles` point the render's captures, `flint check`'s `bad-emitter` and the scene viewer step through
+- A game drops it with `particles = false`: neither binary links it, a scene's emitters emit nothing (said once), and `flint check` names the package for one
 
 ### flint-script
 

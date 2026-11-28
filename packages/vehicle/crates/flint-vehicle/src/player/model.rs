@@ -58,6 +58,8 @@ pub struct Tuning {
     pub yaw_assist: f32,
     pub upright: f32,
     pub scrub: f32,
+    pub air_control: f32,
+    pub air_drag: f32,
     pub tyre_grip: f32,
     pub suspension_stiffness: f32,
     pub suspension_damping: f32,
@@ -87,6 +89,8 @@ impl Tuning {
             yaw_assist: v.f32("yaw_assist", 10.0),
             upright: v.f32("upright", 60.0),
             scrub: v.f32("scrub", 0.0),
+            air_control: v.f32("air_control", 0.0).clamp(0.0, 1.0),
+            air_drag: v.f32("air_drag", 1.0).clamp(0.0, 1.0),
             tyre_grip: v.f32("tyre_grip", 1.8),
             suspension_stiffness: v.f32("suspension_stiffness", 40.0),
             suspension_damping: v.f32("suspension_damping", 3.5),
@@ -489,7 +493,19 @@ impl Vehicle {
                 b = b.max(mass * tuning.brake * dt / hand_wheels);
             }
             wheel.brake = b;
-            wheel.side_friction_stiffness = if locked { HANDBRAKE_SIDE_FRICTION } else { 1.0 };
+            // A slip target (a drift) slides the tyres too: their side
+            // friction takes the grip assist's scale, so a nose held off
+            // its travel isn't braked by four tyres gripping sideways
+            let side = if input.slip_target != 0.0 {
+                input.grip_scale.clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            wheel.side_friction_stiffness = if locked {
+                HANDBRAKE_SIDE_FRICTION.min(side)
+            } else {
+                side
+            };
         }
 
         // Rapier's raycast wheels, against the last step's colliders, the
@@ -558,8 +574,15 @@ impl Vehicle {
         } else {
             fwd
         };
-        if tuning.drag > 0.0 {
-            body.apply_impulse(-fwd_flat * (speed * tuning.drag * mass * dt), true);
+        // Off the ground only air_drag's share of the drag slows it (an
+        // arcade kart's drag balances its drive, and a hop costs nothing)
+        let drag = if grounded > 0 {
+            tuning.drag
+        } else {
+            tuning.drag * tuning.air_drag
+        };
+        if drag > 0.0 {
+            body.apply_impulse(-fwd_flat * (speed * drag * mass * dt), true);
         }
         let over = speed.abs() - cap;
         if over > 0.0 && tuning.overspeed_decay > 0.0 {
@@ -579,18 +602,9 @@ impl Vehicle {
                 }
             }
             if tuning.yaw_assist > 0.0 {
-                let sign = if speed < -0.5 { -1.0 } else { 1.0 };
-                let mut target = -steer * sign * rate;
-                if want != 0.0 {
-                    target -= SLIP_HOLD * (want - slip);
-                }
-                if input.spin != 0.0 {
-                    target = input.spin.to_radians();
-                }
-                yaw_target = target.to_degrees();
-                let wy = angvel.dot(&n);
-                let dw = (target - wy) * (tuning.yaw_assist * dt).clamp(0.0, 1.0);
-                body.apply_torque_impulse(n * (dw * inertia.y), true);
+                yaw_target = yaw_assist(
+                    body, tuning, input, n, steer, speed, rate, slip, angvel, inertia.y, 1.0, dt,
+                );
             }
             let grip = tuning.grip * input.grip_scale;
             if grip > 0.0 {
@@ -617,6 +631,36 @@ impl Vehicle {
                 let c = 2.0 * k.sqrt();
                 let torque = (axis * k - perp * c) * (inertia.y * dt);
                 body.apply_torque_impulse(torque, true);
+            }
+        }
+        if grounded < 2 && tuning.yaw_assist > 0.0 && tuning.air_control > 0.0 {
+            // Off the ground (a hop, a jump, a wheel or none down) only
+            // air_control's share of the yaw assist steers, about the
+            // world's up: the arcade's steer in the air
+            yaw_target = yaw_assist(
+                body,
+                tuning,
+                input,
+                V3::y(),
+                steer,
+                speed,
+                rate,
+                slip,
+                angvel,
+                inertia.y,
+                tuning.air_control,
+                dt,
+            );
+            // and the travel turns with the nose, by the same share, so a
+            // steered hop lands going where it points rather than sideways
+            // (the tyres would scrub the slip away, and the speed with it)
+            if grounded == 0 {
+                let turn = UnitQuaternion::from_axis_angle(
+                    &Vector::y_axis(),
+                    angvel.y * dt * tuning.air_control,
+                );
+                let v = *body.linvel();
+                body.set_linvel(turn * v, true);
             }
         }
         let [px, py, pz] = input.push;
@@ -661,6 +705,39 @@ impl Vehicle {
         };
         true
     }
+}
+
+/// The yaw assist: the yaw rate about `n` pulled toward the turn-rate
+/// curve's (or the slip target's, or a `spin`'s) at `yaw_assist` per second,
+/// times `share`. The target it pulled toward, degrees a second.
+#[allow(clippy::too_many_arguments)]
+fn yaw_assist(
+    body: &mut RigidBody,
+    tuning: &Tuning,
+    input: &Input,
+    n: V3,
+    steer: f32,
+    speed: f32,
+    rate: f32,
+    slip: f32,
+    angvel: V3,
+    inertia: f32,
+    share: f32,
+    dt: f32,
+) -> f32 {
+    let sign = if speed < -0.5 { -1.0 } else { 1.0 };
+    let mut target = -steer * sign * rate;
+    let want = input.slip_target.to_radians();
+    if want != 0.0 {
+        target -= SLIP_HOLD * (want - slip);
+    }
+    if input.spin != 0.0 {
+        target = input.spin.to_radians();
+    }
+    let wy = angvel.dot(&n);
+    let dw = (target - wy) * (tuning.yaw_assist * share.clamp(0.0, 1.0) * dt).clamp(0.0, 1.0);
+    body.apply_torque_impulse(n * (dw * inertia), true);
+    target.to_degrees()
 }
 
 /// Rapier's wheel tuning from the vehicle's.

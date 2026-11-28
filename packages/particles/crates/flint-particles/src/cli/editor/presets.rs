@@ -4,8 +4,8 @@
 
 use std::path::Path;
 
+use crate::{load_effect_from_str, ParticleEffect};
 use anyhow::{Context, Result};
-use flint_particles::{load_effect_from_str, ParticleEffect};
 
 pub const PRESETS: &[(&str, &str)] = &[
     ("fire", include_str!("../../../presets/fire.particles.toml")),
@@ -43,7 +43,7 @@ pub fn bootstrap(path: &Path, preset_name: &str) -> Result<ParticleEffect> {
                 names().collect::<Vec<_>>().join(", ")
             )
         })?;
-    let stem = flint_particles::loader::effect_stem(path).unwrap_or_else(|| "effect".to_string());
+    let stem = crate::loader::effect_stem(path).unwrap_or_else(|| "effect".to_string());
     let text = text.replacen(
         &format!("name = \"{preset_name}\""),
         &format!("name = \"{stem}\""),

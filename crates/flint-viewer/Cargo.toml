@@ -23,7 +23,6 @@ flint-scene = { workspace = true }
 flint-package = { workspace = true }
 flint-schema = { workspace = true }
 flint-render = { workspace = true }
-flint-particles = { workspace = true }
 # The widgets, the Rendering & Effects panel (F4) and the style cards: the
 # kernel's (#1583), so the viewer links no debug-hud package
 flint-widgets = { workspace = true }

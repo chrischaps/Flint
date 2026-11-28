@@ -68,8 +68,8 @@ default = ["audio", "gamepad", "dialogs", "packages"]
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
 packages = [
-    "ai", "animation", "debug-hud", "flipbook", "living", "music", "procgen", "rhythm",
-    "terrain", "vehicle",
+    "ai", "animation", "debug-hud", "flipbook", "living", "music", "particles", "procgen",
+    "rhythm", "terrain", "vehicle",
 ]
 packages-audio = []
 packages-dialogs = ["flint-procgen-cli?/dialogs"]
@@ -80,6 +80,7 @@ debug-hud = ["flint-player/debug-hud"]
 flipbook = ["animation", "flint-player/flipbook"]
 living = ["procgen", "flint-player/living", "dep:flint-living", "flint-living?/cli"]
 music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
+particles = ["flint-player/particles", "dep:flint-particles", "flint-particles?/cli"]
 procgen = ["flint-player/procgen", "dep:flint-procgen-cli", "flint-procgen-cli?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
 terrain = ["flint-player/terrain", "dep:flint-terrain", "flint-terrain?/cli"]
@@ -115,7 +116,6 @@ flint-package = { workspace = true, features = ["gif"] }
 # it) is `flint script check` (#694). Both stay on with
 # `--no-default-features`
 flint-script = { workspace = true, features = ["metadata", "check"] }
-flint-particles = { workspace = true }
 flint-viewer = { workspace = true }
 # The widgets `frame open`, its profiler and the particle editor draw
 # with: the kernel's (#1583), not the debug-hud package's
@@ -149,6 +149,7 @@ tracing-subscriber = { workspace = true }
 flint-asset-gen = { workspace = true, optional = true }
 flint-living = { workspace = true, optional = true }
 flint-music = { workspace = true, optional = true }
+flint-particles = { workspace = true, optional = true }
 flint-procgen-cli = { workspace = true, optional = true }
 flint-rhythm-game = { workspace = true, optional = true }
 flint-terrain = { workspace = true, optional = true }
@@ -184,6 +185,9 @@ flint-procgen = { workspace = true }
 # `tests/gen_cli.rs` bakes a terrain spec with the terrain package's own
 # bake, to hold `flint gen`'s maps to it (#1168), in any build (#1623)
 flint-terrain = { workspace = true }
+# `tests/particle_tie_order.rs` steps a scene's emitters with it: here as
+# well, so the test builds without the particles package (#1622)
+flint-particles = { workspace = true }
 # `check::LIVING_PROP` is the living package's component name, held to its
 # crate's (#1558), in every build
 flint-living = { workspace = true }

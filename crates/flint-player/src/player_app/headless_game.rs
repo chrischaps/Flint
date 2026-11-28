@@ -31,7 +31,6 @@ use std::collections::BTreeSet;
 use flint_core::project::Project;
 use flint_core::quality::QualitySettings;
 use flint_ecs::FlintWorld;
-use flint_particles::ParticleSystem;
 use flint_render::{Camera, FrameInputs, PostProcessConfig, SceneRenderer};
 use flint_runtime::{InputState, RuntimeSystem};
 use flint_script::context::ScriptCommand;
@@ -112,14 +111,6 @@ pub const PRESENTATION_ONLY: &[Skipped] = &[
     noted("set_velocity_2d", "physics doesn't step in a capture"),
 ];
 
-/// The particle commands, which a capture drawing no particles drops.
-const PARTICLE_COMMANDS: &[&str] = &[
-    "emit_burst",
-    "play_effect",
-    "stop_effect",
-    "set_effect_param",
-];
-
 /// What a capture asks of its scene's subsystems (#1252), handed to each
 /// file's `for_scene` as [`SceneCtx::capture`]: a builder that builds
 /// otherwise in a capture reads it, and one that doesn't never looks. A
@@ -159,9 +150,6 @@ pub struct HeadlessGame {
     screen: (f32, f32),
     /// The scene's post-processing as it loaded, for `reset_post_style`.
     authored: PostProcessConfig,
-    /// Whether the capture draws particles: if not, what the scripts emit
-    /// is dropped with a note.
-    particles_drawn: bool,
     /// `--anim-time` (#307), stepped where the player's animation is: the
     /// animation package's (`flint_animation::player::HeadlessAnimation`),
     /// which the command makes (#1620).
@@ -206,7 +194,6 @@ impl HeadlessGame {
             input: InputState::new(),
             screen: (1.0, 1.0),
             authored: PostProcessConfig::default(),
-            particles_drawn: false,
             animation: None,
             notes: BTreeSet::new(),
             skipped: BTreeSet::new(),
@@ -358,6 +345,7 @@ impl HeadlessGame {
             post: self.scene.post_process.as_ref(),
             script: &mut core.script,
             renderer: None,
+            gpu: None,
             pads: None,
             capture: Some(&capture),
             packages: core.packages.as_ref(),
@@ -453,23 +441,40 @@ impl HeadlessGame {
         }
     }
 
-    /// The particles the scripts' commands reach, to load and step. Until
+    /// The particles the scripts' commands reach, to load and step: the
+    /// particles package's system, through the kernel's point (#1622);
+    /// `None` in a run without the package. Until
     /// [`Self::set_particles_drawn`], what scripts emit is dropped with a note.
-    pub fn particles(&self) -> &ParticleSystem {
-        &self.core.particles
+    pub fn particles(&self) -> Option<&dyn flint_render::ParticleSource> {
+        let point = crate::packages::registry().point::<flint_package::particles::Particles>()?;
+        (point.of)(&self.core.resources)
     }
 
-    pub fn particles_mut(&mut self) -> &mut ParticleSystem {
-        &mut self.core.particles
+    pub fn particles_mut(&mut self) -> Option<&mut dyn flint_render::ParticleSource> {
+        super::frame::particles_mut(&mut self.core.resources)
     }
 
     /// The world and the particles, to step them on.
-    pub fn world_and_particles(&mut self) -> (&mut FlintWorld, &mut ParticleSystem) {
-        (&mut self.core.world, &mut self.core.particles)
+    pub fn world_and_particles(
+        &mut self,
+    ) -> (
+        &mut FlintWorld,
+        Option<&mut dyn flint_render::ParticleSource>,
+    ) {
+        (
+            &mut self.core.world,
+            super::frame::particles_mut(&mut self.core.resources),
+        )
     }
 
+    /// Whether the capture draws particles, so its scripts' particle calls
+    /// reach them (the package's subsystem drops them, saying so, until then).
     pub fn set_particles_drawn(&mut self, drawn: bool) {
-        self.particles_drawn = drawn;
+        if let Some(point) =
+            crate::packages::registry().point::<flint_package::particles::Particles>()
+        {
+            (point.set_drawn)(&mut self.core.resources, drawn);
+        }
     }
 
     /// `--anim-time`'s animation, stepped with the game, after its scripts.
@@ -637,13 +642,6 @@ impl FrameHost for CaptureFrame<'_> {
             return false;
         };
         let game = &mut *self.game;
-        if !game.particles_drawn && PARTICLE_COMMANDS.contains(&name) {
-            game.note(
-                "particles: a still with no --time draws none; give it --time or \
-                 --particle-time to see what the scripts emit",
-            );
-            return true;
-        }
         let Some(skipped) = PRESENTATION_ONLY.iter().find(|s| s.command == name) else {
             return false;
         };

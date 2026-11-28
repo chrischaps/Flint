@@ -28,11 +28,11 @@ fn a_game_binary_without_a_listed_package_names_flint_build() {
     assert!(flint_player::packages::launch(&[]));
     let dir = std::env::temp_dir().join(format!("flint-game-binary-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    // living brings procgen; the debug HUD, animation, flipbook and terrain,
-    // standard, are left out
+    // living brings procgen; the debug HUD, animation, flipbook, particles
+    // and terrain, standard, are left out
     let listed =
         "[packages]\nliving = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false\n\
-         terrain = false";
+         particles = false\nterrain = false";
     let scene = project(&dir.join("listed"), listed);
 
     // The resolver's answer handed over, as cave_game does
@@ -59,7 +59,7 @@ fn a_game_binary_without_a_listed_package_names_flint_build() {
     let kernel = project(
         &dir.join("kernel"),
         "[packages]\ndebug-hud = false\nprocgen = false\nanimation = false\nflipbook = false\n\
-         terrain = false",
+         particles = false\nterrain = false",
     );
     assert_eq!(app(&kernel).unbuilt_packages(), None);
     assert_eq!(

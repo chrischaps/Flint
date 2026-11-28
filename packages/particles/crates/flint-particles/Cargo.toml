@@ -1,0 +1,63 @@
+[package]
+name = "flint-particles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The particles package (ADR 0068, #1622): emitters and reusable effects, simulated on a fixed seeded step, as plain draws the renderer takes"
+publish = false
+
+[features]
+default = []
+# Its player part (`player::PACKAGE`): the run's `ParticleSystem` as a
+# resource, its subsystem (loaded at each scene, stepped at
+# `Stage::Animation`), the `particle` script module and the F3 Particles
+# panel at the kernel's `ScenePanels` point. flint-player's generated
+# `particles` feature turns it on.
+player = [
+    "dep:flint-package", "dep:flint-script", "dep:flint-widgets", "dep:rhai",
+    "dep:egui",
+]
+# Its CLI part (`cli::extensions()`): the effect editor `flint edit
+# <x>.particles.toml` opens, and the `Particles` point `flint render`'s
+# captures and the scene viewer step. flint-cli's generated `particles`
+# feature turns it on.
+cli = [
+    "dep:flint-package", "dep:flint-viewer", "dep:flint-widgets", "dep:egui",
+    "dep:anyhow", "dep:clap", "dep:toml_edit", "dep:winit", "dep:wgpu", "dep:image",
+]
+
+[dependencies]
+flint-core = { workspace = true }
+flint-ecs = { workspace = true }
+flint-runtime = { workspace = true }
+# The plain data the renderer draws (#1615, ADR 0138 decision 5): the GPU
+# instance, the blend and an emitter's draw are flint-render's types, which
+# this crate builds, and `ParticleSource`, what a host steps (#1622). The
+# allowed direction: a package on the kernel.
+flint-render = { workspace = true }
+toml = { workspace = true }
+bytemuck = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+# The parts' kernel crates: the Package API (its subsystem, contexts,
+# panels and points), the scripts' module builder, the widgets the panel
+# and the editor draw with, and the editors' host
+flint-package = { workspace = true, optional = true }
+flint-script = { workspace = true, optional = true }
+flint-widgets = { workspace = true, optional = true }
+flint-viewer = { workspace = true, optional = true }
+rhai = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+toml_edit = { workspace = true, optional = true }
+winit = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+
+[dev-dependencies]
+flint-scene = { workspace = true }
+flint-schema = { workspace = true }
+
+[lints]
+workspace = true

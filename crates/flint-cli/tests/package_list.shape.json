@@ -31,6 +31,7 @@
     ["animation", "standard"],
     ["debug-hud", "standard"],
     ["flipbook", "standard"],
+    ["particles", "standard"],
     ["procgen", "standard"],
     ["terrain", "standard"],
     ["ai", "feature"],

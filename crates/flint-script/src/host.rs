@@ -107,18 +107,6 @@ pub trait ScriptHost {
     }
 
     // ── Particles ──
-    fn emit_burst(&mut self, entity: EntityId, count: i64) {
-        self.unsupported("emit_burst");
-    }
-    fn play_effect(&mut self, handle: u64, name: String, position: (f64, f64, f64)) {
-        self.unsupported("play_effect");
-    }
-    fn stop_effect(&mut self, handle: u64) {
-        self.unsupported("stop_effect");
-    }
-    fn set_effect_param(&mut self, handle: u64, param: String, value: f64) {
-        self.unsupported("set_effect_param");
-    }
 
     // ── Styles ──
     fn set_entity_style(&mut self, entity: EntityId, style: String) {
@@ -285,18 +273,6 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
         C::SetAudioLowpass { cutoff_hz } => host.set_audio_lowpass(cutoff_hz),
         C::FireEvent { name, data } => host.fire_event(name, data),
         C::Log { level, message } => host.log(level, message),
-        C::EmitBurst { entity, count } => host.emit_burst(entity, count),
-        C::PlayEffect {
-            handle,
-            name,
-            position,
-        } => host.play_effect(handle, name, position),
-        C::StopEffect { handle } => host.stop_effect(handle),
-        C::SetEffectParam {
-            handle,
-            param,
-            value,
-        } => host.set_effect_param(handle, param, value),
         C::SetEntityStyle { entity, style } => host.set_entity_style(entity, style),
         C::SetStyleParam {
             entity,
@@ -388,10 +364,6 @@ pub fn command_name(cmd: &ScriptCommand) -> Option<&'static str> {
         C::SetAudioLowpass { .. } => "set_audio_lowpass",
         C::FireEvent { .. } => "fire_event",
         C::Log { .. } => return None,
-        C::EmitBurst { .. } => "emit_burst",
-        C::PlayEffect { .. } => "play_effect",
-        C::StopEffect { .. } => "stop_effect",
-        C::SetEffectParam { .. } => "set_effect_param",
         C::SetEntityStyle { .. } => "set_entity_style",
         C::SetStyleParam { .. } => "set_style_param",
         C::TweenStyleParam { .. } => "tween_style_param",

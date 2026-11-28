@@ -1,0 +1,41 @@
+# Particles (ADR 0068, ADR 0138; #1622, epic #1611): inline
+# `particle_emitter`s and reusable `*.particles.toml` effects, simulated on
+# the CPU with a fixed, seeded step and drawn by the renderer's particle
+# pipeline. Standard: on unless a game writes `particles = false`.
+#
+# Its crate is in this folder: crates/flint-particles. Its `player` part
+# (`flint_particles::player::PACKAGE`) puts the `ParticleSystem` into the
+# run's resources, steps it at `Stage::Animation`, takes the `particle`
+# module's commands and adds the F3 Particles panel at the kernel's
+# `ScenePanels` point. Its `cli` part (`flint_particles::cli::extensions()`)
+# registers the effect editor that `flint edit <x>.particles.toml` opens and
+# the particles `flint render --particle-time`, `--frame-capture`, `flint
+# frame replay` and the scene viewer step. The renderer's GPU half (the
+# pipeline and its plain draw, `flint_render::particles`) stays the
+# kernel's until Phase 4.
+
+[package]
+name = "particles"
+version = "0.1.0"
+tier = "standard"
+summary = "Particle emitters and reusable effects, simulated on a fixed seeded step"
+engine = "^0.1"
+
+[build]
+features = ["particles"]
+
+[rust]
+player = "flint-particles"
+cli = "flint-particles"
+
+[provides]
+crates = ["flint-particles"]
+components = ["particle_emitter", "particle_effect"]
+script_modules = ["particle"]
+
+# What a player built without it still knows (ADR 0137 decision 8): a scene
+# with the components above hears once that its emitters `does`, and a game
+# state may name the `particles` policy in any build (#727).
+[without]
+does = "emit nothing"
+policies = ["particles"]

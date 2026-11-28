@@ -492,6 +492,29 @@ pub struct TerrainEditors {
     pub open: fn(SpecEdit) -> Result<Box<dyn Editor>>,
 }
 
+/// What `flint edit <x>.particles.toml` hands the particles package's effect
+/// editor (#1622): the file, made from `preset` when it isn't there, and
+/// the editor's own flags.
+#[derive(Debug, Clone, Default)]
+pub struct EffectEdit {
+    pub file: String,
+    /// `--preset` for a new file: fire, smoke, sparks, rain.
+    pub preset: Option<String>,
+    pub no_grid: bool,
+    /// `--style` words, laid over a `--render` still's config.
+    pub styles: Vec<String>,
+    /// `--style-time`: the post time a still's animated styles see.
+    pub style_time: Option<f32>,
+}
+
+/// The editor a package opens a particle effect in (#1622): a registration
+/// point the particles package's CLI side fills, which `flint edit` asks
+/// for a `.particles.toml`. A flint without the package has none, and names
+/// the package.
+pub struct EffectEditors {
+    pub open: fn(EffectEdit) -> Result<Box<dyn Editor>>,
+}
+
 /// The host's own debug key action: show or hide the table.
 pub const SHOW_KEYS_ACTION: &str = "keys";
 

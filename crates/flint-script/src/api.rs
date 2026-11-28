@@ -49,7 +49,6 @@ mod opts;
 #[doc(hidden)]
 pub mod overhead;
 mod panels;
-mod particle;
 mod persistence;
 mod physics;
 mod post_process;
@@ -119,7 +118,6 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     style::register(api);
     style_field::register(api);
     panels::register(api);
-    particle::register(api);
     spline::register(api);
     ocean::register(api);
     chunk::register(api);

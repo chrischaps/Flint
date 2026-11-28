@@ -10,8 +10,10 @@ use flint_particles::{EmissionShape, EmitterConfig, EmitterDef, ResolveContext};
 use flint_scene::{diagnose_scene, load_scene_string, SceneFile};
 use flint_schema::SchemaRegistry;
 
+/// The engine's schemas, then this package's, as a stock build layers them
+/// (#1622: the emitter's schema is the particles package's).
 fn schemas() -> SchemaRegistry {
-    SchemaRegistry::load_from_directory("../../schemas").unwrap()
+    SchemaRegistry::load_from_directories(&["../../../../schemas", "../../schemas"]).unwrap()
 }
 
 fn scene(emitter: &str) -> String {

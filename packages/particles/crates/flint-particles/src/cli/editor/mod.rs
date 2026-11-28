@@ -11,6 +11,12 @@
 //! are bit-identical. Ctrl+S patches only the keys that changed
 //! (`save.rs`), keeping comments intact.
 
+// The editor is a CLI tool (it was flint-cli's until #1622): it reads, makes
+// and writes the one effect file it is handed, on the disk, as flint-cli's
+// commands do. The vfs rule is the runtime's, and this module never runs in
+// a player.
+#![allow(clippy::disallowed_methods)]
+
 mod gizmo;
 mod presets;
 mod save;
@@ -21,9 +27,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::{load_effect_from_file, ParticleEffect};
 use anyhow::Result;
-use clap::Args;
-use flint_particles::{load_effect_from_file, ParticleEffect};
 use flint_render::{Camera, OrbitCameraController, RendererConfig, SceneRenderer};
 use flint_viewer::host::{Editor, Flow, Gpu, InitCx, StillOptions, Target, Tick};
 use winit::event::{ElementState, WindowEvent};
@@ -32,42 +37,29 @@ use winit::window::Window;
 
 use sim::PreviewSim;
 
-// ─── CLI args ───────────────────────────────────────────────────────────────
+// ─── Args ───────────────────────────────────────────────────────────────────
 
-#[derive(Args, Debug)]
-pub struct ParticleEditArgs {
-    /// Path to a .particles.toml effect (created from --preset if missing)
-    pub file: String,
-    #[arg(long, default_value = "1500")]
-    pub width: u32,
-    #[arg(long, default_value = "940")]
-    pub height: u32,
-    #[arg(long)]
-    pub no_grid: bool,
-    #[arg(long)]
-    pub auto_orbit: bool,
-    /// Render a PNG instead of opening a window
-    #[arg(long)]
-    pub render: Option<String>,
-    /// Simulation time for --render (default 1.0 s)
-    #[arg(long)]
-    pub anim_time: Option<f32>,
-    /// Preset for a new file: fire, smoke, sparks, rain
-    #[arg(long)]
-    pub preset: Option<String>,
-    #[arg(long)]
-    pub distance: Option<f32>,
-    #[arg(long)]
-    pub yaw: Option<f32>,
-    #[arg(long)]
-    pub pitch: Option<f32>,
-    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
-    pub target: Option<[f32; 3]>,
-    #[arg(long)]
-    pub fov: Option<f32>,
-    /// `--style` / `--style-time` for --render (#271)
-    #[command(flatten)]
-    pub style: crate::commands::common_args::StyleArgs,
+/// What `flint edit` hands the editor (`flint_viewer::host::EffectEdit`,
+/// #1622): the file and the editor's own flags; the window's size, the
+/// camera flags and `--render` stay the host's.
+pub type ParticleEditArgs = flint_viewer::host::EffectEdit;
+
+/// `--style` words laid over the still's config, in order (#271), as
+/// `flint render`'s are.
+fn apply_styles(args: &ParticleEditArgs, renderer: &mut SceneRenderer, device: &wgpu::Device) {
+    if args.styles.is_empty() {
+        return;
+    }
+    let mut config = renderer.post_process_config().clone();
+    for spec in &args.styles {
+        if let Err(e) =
+            flint_render::stylize::apply_style_spec(&mut config, spec, renderer.styles())
+        {
+            tracing::warn!(target: "viewer", "--style {spec}: {e}");
+        }
+    }
+    renderer.set_post_process_config(config);
+    renderer.ensure_style_resources(device);
 }
 
 // ─── Entry ──────────────────────────────────────────────────────────────────
@@ -522,7 +514,7 @@ impl ParticleEditApp {
             .effect
             .emitters
             .get(i)
-            .and_then(|em| em.resolve(flint_particles::ResolveContext::asset()).ok())
+            .and_then(|em| em.resolve(crate::ResolveContext::asset()).ok())
             .map(|cfg| cfg.shape_offset);
         if let Some(p) = focus {
             let t = 1.0 - (-4.0 * dt).exp();
@@ -891,9 +883,9 @@ impl Editor for ParticleEditApp {
             &ctx.device,
             &ctx.queue,
             self.camera.position_array(),
-            self.args.style.look_time(),
+            self.args.style_time.map(f64::from),
         );
-        self.args.style.apply_to_renderer(renderer, &ctx.device);
+        apply_styles(&self.args, renderer, &ctx.device);
         Ok(None)
     }
 

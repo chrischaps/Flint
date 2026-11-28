@@ -21,7 +21,6 @@ members = [
     "crates/flint-audio",
     "crates/flint-audio-worklet",
     "crates/flint-script",
-    "crates/flint-particles",
     "crates/flint-cli",
     "packages/*/crates/*",
     # A game's launcher, which `flint build` writes for a game package with
@@ -57,7 +56,6 @@ default-members = [
     "crates/flint-audio",
     "crates/flint-audio-worklet",
     "crates/flint-script",
-    "crates/flint-particles",
     "crates/flint-cli",
     "packages/*/crates/*",
     "tools/arch-analyzer",
@@ -239,7 +237,7 @@ flint-animation = { path = "packages/animation/crates/flint-animation", default-
 flint-flipbook = { path = "packages/flipbook/crates/flint-flipbook", default-features = false }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "packages/ai/crates/flint-asset-gen" }
-flint-particles = { path = "crates/flint-particles" }
+flint-particles = { path = "packages/particles/crates/flint-particles" }
 # The terrain package (#1623): its `player` feature is the scene binder, the
 # subsystem and the `terrain` module; `cli` the terrain editor; `render` the
 # chunks built into a renderer, which both turn on

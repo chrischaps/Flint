@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use flint_particles::{ParticleEffect, ParticleSystem};
+use crate::{ParticleEffect, ParticleSystem};
 use flint_render::SceneRenderer;
 
 /// Fixed simulation step (120 Hz: smooth scrubbing, cheap enough to re-sim).
@@ -57,7 +57,7 @@ impl PreviewSim {
     pub fn per_emitter_alive(&self) -> Vec<(usize, usize)> {
         self.system
             .sync
-            .instance(flint_particles::InstanceKey::Detached(HANDLE))
+            .instance(crate::InstanceKey::Detached(HANDLE))
             .map(|inst| {
                 inst.emitters
                     .iter()
