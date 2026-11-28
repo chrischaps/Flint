@@ -568,6 +568,22 @@ fn color_pattern(prop: &Value) -> bool {
 
 /// The one problem with a single value, judged by its own property alone.
 fn check_value(prop: &Value, value: &toml::Value, key: &str) -> Option<ParamIssue> {
+    // A key of one of several kinds (`anyOf`, #1696): fine when any kind
+    // takes it, else the problem the kind of its own type has (a 5 is out
+    // of a layer's range, not the wrong type for "none")
+    if let Some(kinds) = prop.get("anyOf").and_then(Value::as_array) {
+        let issues: Vec<Option<ParamIssue>> =
+            kinds.iter().map(|k| check_value(k, value, key)).collect();
+        if issues.iter().any(Option::is_none) {
+            return None;
+        }
+        let mut issues: Vec<ParamIssue> = issues.into_iter().flatten().collect();
+        let own = issues
+            .iter()
+            .position(|i| !matches!(i, ParamIssue::WrongType { .. }))
+            .unwrap_or(0);
+        return (!issues.is_empty()).then(|| issues.swap_remove(own));
+    }
     let wrong = |expected: &str| {
         let bounds = NumBounds::of(prop);
         Some(ParamIssue::WrongType {

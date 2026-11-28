@@ -109,6 +109,32 @@ flint gen --describe terrain_v1                                              # e
 
 A terrain spec is a procgen spec for the `terrain_v1` generator (Flint#1168). `flint gen` reads a `.terrain.toml` as one: `[meta]` and `[seed]` stay where they are, and the other tables are its `[params]`, so `--print-spec` writes the same recipe as a `*.procgen.toml` (`generator = "terrain_v1"`, `[params.geometry]`, `[[params.height_layers]]`), which bakes the same maps. Everything a procgen spec has, a terrain spec has: `--register` keeps both maps in the project's store and hands them back while the spec, seed and generator are unchanged; `--batch` makes variants by seed; `--validate` reads the written maps back; and the AI steps write and refine recipes (`flint gen --ai-create "rolling hills with a river valley" --ai-generator terrain_v1 -o terrain/`, where a word such as hills, mountains or valley picks `terrain_v1` without the flag).
 
+### Splat rules
+
+Each `[[splat_rules]]` entry paints one `layer` (0 to 3) wherever the ground fits its bands, and a texel takes every rule it fits, their weights normalized:
+
+```toml
+# Grass on the gentle ground: full on the flat, gone at 45 degrees
+[[splat_rules]]
+layer = 0
+height_max = 0.8
+slope_max = 1.0
+
+# Rock on every cliff and gully wall: from 45 degrees up, at any height
+[[splat_rules]]
+layer = 2
+slope_min = 1.0
+
+# The sea bed is no rule's: leave it unpainted, so no grass grows there
+[splat]
+fallback = "none"
+```
+
+- **Height** is the normalized height, 0 to 1: `height_min` and `height_max`, with the weight fading in over the band's outer tenth. A band that reaches 0 or 1 doesn't fade there, so the lowest texel and the summit are painted.
+- **Slope** is rise over run: 0 is flat, 1 is 45 degrees, 2 is about 63. `slope_max` is a ceiling, the weight fading out as `1 - slope / slope_max`; `slope_min` is a floor, the weight fading in as `1 - slope_min / slope`. Leave either out and the rule has no limit that way. Two rules that meet at one slope (grass's `slope_max = 1.0`, rock's `slope_min = 1.0`) split the ground there sharply; overlap them (rock from 0.8, grass to 1.3) and they blend. Until Flint#1696 the bake measured the sine of the angle, so a slope never passed 1 and `slope_max = 1.0` was no limit at all; a recipe written before then paints steep ground differently now.
+- **Noise** (`noise_amount`, `noise_scale`) breaks up a rule's edges.
+- **`[splat] fallback`** is what a texel no rule covers gets: a layer at full weight (`fallback = 2`; layer 0 when the table is left out), or `"none"`, weights of 0. Grass reads no weight as no grass, and the terrain draws it black, so keep `"none"` for ground nobody sees, such as a sea bed. `flint gen` says how much of the map no rule covered and what it got: `coverage: layer 0 5.5%, layer 2 4.5%, ...; no rule covers 83.8%, left unpainted ([splat] fallback = "none")`.
+
 The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the same resolution, written as `<stem>_height.png` and `<stem>_splat.png`; point the `terrain` component's `heightmap` and `splat_map` at them. Both are the bytes the editor's Ctrl+E export writes (the one bake, `flint_terrain::bake`, makes both), and the same spec and seed bake the same bytes every run. The summary says how much of the ground each layer covers.
 
 The spec is checked against `terrain_v1`'s schema before anything is baked, by path. A key nothing reads is a warning with the key it was probably meant to be (``warning: `height_layers[1].octave` is not a parameter of the noise layer (did you mean `octaves`?)``), and `--strict` makes it an error. A value the bake can't use is an error that stops the run: a splat rule for a layer past 3, a `noise_type` that isn't one, a resolution over 4096. The terrain editor lists the same lines under its Save buttons while the file has them.

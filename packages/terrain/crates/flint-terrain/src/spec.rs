@@ -20,6 +20,8 @@ pub struct TerrainSpec {
     #[serde(default)]
     pub splat_rules: Vec<SplatRule>,
     #[serde(default)]
+    pub splat: SplatConfig,
+    #[serde(default)]
     pub grass: Option<GrassConfig>,
 }
 
@@ -269,7 +271,11 @@ fn default_erosion_strength() -> f64 {
     0.3
 }
 
-/// Rule for automatic splat map generation based on height/slope
+/// Rule for automatic splat map generation based on height/slope.
+///
+/// Slopes are rise over run: 0 is flat, 1 is 45 degrees, and a cliff runs
+/// toward infinity (#1696; until then the generator measured the sine of
+/// the angle, which never passes 1, while the docs said rise over run).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SplatRule {
     pub layer: u8,
@@ -277,12 +283,96 @@ pub struct SplatRule {
     pub height_min: f32,
     #[serde(default = "default_1f32")]
     pub height_max: f32,
-    #[serde(default = "default_1f32")]
-    pub slope_max: f32,
+    /// The gentlest slope the rule paints; its weight fades in above it,
+    /// as `1 - slope_min / slope`. None (the default): no floor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slope_min: Option<f32>,
+    /// The steepest slope the rule paints; its weight fades out toward it,
+    /// as `1 - slope / slope_max`. None (the default): no ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slope_max: Option<f32>,
     #[serde(default)]
     pub noise_amount: f32,
     #[serde(default = "default_4f32")]
     pub noise_scale: f32,
+}
+
+/// The spec's `[splat]` table: what the splat rules don't decide (#1696).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SplatConfig {
+    /// What a texel that no rule covers is painted.
+    #[serde(default)]
+    pub fallback: SplatFallback,
+}
+
+/// What a texel no splat rule covers gets: one layer at full weight (layer
+/// 0 by default, what every bake did before #1696), or `"none"`: weights
+/// of 0, which grass reads as no grass and the terrain shader draws black.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplatFallback {
+    /// `fallback = 2`: that layer at full weight.
+    Layer(u8),
+    /// `fallback = "none"`: no layer at all.
+    None,
+}
+
+impl Default for SplatFallback {
+    fn default() -> Self {
+        Self::Layer(0)
+    }
+}
+
+impl SplatFallback {
+    /// The layer an uncovered texel is painted, if any.
+    pub fn layer(self) -> Option<u8> {
+        match self {
+            Self::Layer(l) => Some(l),
+            Self::None => None,
+        }
+    }
+}
+
+impl Serialize for SplatFallback {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Layer(l) => s.serialize_u8(*l),
+            Self::None => s.serialize_str("none"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SplatFallback {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl serde::de::Visitor<'_> for V {
+            type Value = SplatFallback;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a layer (0 to 3) or \"none\"")
+            }
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
+                // Past 3 is refused here, not reported and skipped: a
+                // fallback that paints nothing is spelled "none"
+                match u8::try_from(v) {
+                    Ok(l @ 0..=3) => Ok(SplatFallback::Layer(l)),
+                    _ => Err(E::custom(format!(
+                        "fallback {v} is not a layer (0 to 3) or \"none\""
+                    ))),
+                }
+            }
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
+                self.visit_i64(i64::try_from(v).unwrap_or(i64::MAX))
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                match v {
+                    "none" => Ok(SplatFallback::None),
+                    _ => Err(E::custom(format!(
+                        "fallback \"{v}\" is not \"none\" or a layer (0 to 3)"
+                    ))),
+                }
+            }
+        }
+        d.deserialize_any(V)
+    }
 }
 
 fn default_1f32() -> f32 {
@@ -343,6 +433,16 @@ impl TerrainSpec {
                     ),
                 });
             }
+            if let (Some(lo), Some(hi)) = (rule.slope_min, rule.slope_max) {
+                if lo >= hi {
+                    issues.push(SpecIssue {
+                        path: format!("splat_rules[{i}].slope_min"),
+                        message: format!(
+                            "slope_min {lo} is not under slope_max {hi}; the rule paints nothing"
+                        ),
+                    });
+                }
+            }
         }
         Ok((spec, issues))
     }
@@ -375,6 +475,7 @@ impl TerrainSpec {
                 blend: BlendMode::Add,
             })],
             splat_rules: Vec::new(),
+            splat: SplatConfig::default(),
             grass: None,
         }
     }
@@ -501,6 +602,46 @@ layer = 4
             "{}",
             issues[0]
         );
+    }
+
+    #[test]
+    fn the_fallback_is_a_layer_or_none() {
+        let parse = |t: &str| {
+            TerrainSpec::parse_checked(&format!("[meta]\nname = \"x\"\n{t}")).map(|(s, i)| {
+                assert!(i.is_empty(), "{i:?}");
+                s.splat.fallback
+            })
+        };
+        assert_eq!(parse("").unwrap(), SplatFallback::Layer(0));
+        assert_eq!(
+            parse("[splat]\nfallback = 3").unwrap(),
+            SplatFallback::Layer(3)
+        );
+        assert_eq!(
+            parse("[splat]\nfallback = \"none\"").unwrap(),
+            SplatFallback::None
+        );
+        for bad in ["4", "-1", "\"sand\""] {
+            let err = parse(&format!("[splat]\nfallback = {bad}")).unwrap_err();
+            assert!(err.contains("\"none\""), "{bad}: {err}");
+        }
+        // It writes back as it was written
+        let mut spec = TerrainSpec::default_spec("x");
+        spec.splat.fallback = SplatFallback::None;
+        let text = toml::to_string(&spec).unwrap();
+        assert!(text.contains("fallback = \"none\""), "{text}");
+        let back: TerrainSpec = toml::from_str(&text).unwrap();
+        assert_eq!(back.splat.fallback, SplatFallback::None);
+    }
+
+    #[test]
+    fn a_slope_band_that_holds_nothing_is_said() {
+        let (_, issues) = TerrainSpec::parse_checked(
+            "[meta]\nname = \"x\"\n[[splat_rules]]\nlayer = 2\nslope_min = 1.5\nslope_max = 1.0\n",
+        )
+        .unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].path, "splat_rules[0].slope_min");
     }
 
     #[test]

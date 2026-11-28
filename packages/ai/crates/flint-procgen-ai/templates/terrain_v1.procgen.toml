@@ -45,11 +45,12 @@ kind = "hydraulic"
 iterations = 30
 strength = 0.3
 
-# Layer 0: grass on the low, gentle ground
+# Layer 0: grass on the low, gentle ground (slopes are rise over run:
+# 1.0 is 45 degrees)
 [[params.splat_rules]]
 layer = 0
 height_max = 0.6
-slope_max = 0.6
+slope_max = 0.9
 noise_amount = 0.2
 
 # Layer 1: bare earth along the valley floor
@@ -58,13 +59,12 @@ layer = 1
 height_max = 0.15
 noise_amount = 0.3
 
-# Layer 2: rock on the upper slopes (a rule fades toward its slope_max,
-# so rock takes the band where grass has given out)
+# Layer 2: rock wherever the ground is steep, from about 35 degrees (a
+# rule fades in above its slope_min, so rock takes over as grass gives out)
 [[params.splat_rules]]
 layer = 2
-height_min = 0.45
-height_max = 0.85
-slope_max = 4.0
+height_min = 0.1
+slope_min = 0.7
 noise_amount = 0.1
 
 # Layer 3: scree on the high ground

@@ -415,6 +415,10 @@ fn reference_text(schema: &Value, prefix: &str, indent: usize, out: &mut String)
 
 /// "number ≥ 0", "integer 1–8", "`a` \| `b`", "hex colour" and so on.
 fn type_cell(prop: &Value) -> String {
+    // A key of one of several kinds (#1696: a layer or `none`)
+    if let Some(kinds) = prop.get("anyOf").and_then(Value::as_array) {
+        return kinds.iter().map(type_cell).collect::<Vec<_>>().join(" or ");
+    }
     // A pipeline op's `type`: the one value it may have
     if let Some(c) = prop.get("const") {
         return format!("`{c}`");

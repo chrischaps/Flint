@@ -20,6 +20,9 @@ pub struct TerrainMaps {
     pub splat: Vec<u8>,
     /// Texels a side of both maps.
     pub resolution: u32,
+    /// Splat texels no rule covered, which took the spec's `[splat]
+    /// fallback` (#1696).
+    pub uncovered: usize,
     /// The seed both were made from.
     pub seed: u64,
 }
@@ -35,21 +38,13 @@ pub fn map_resolution(spec: &TerrainSpec) -> u32 {
 pub fn bake(spec: &TerrainSpec, seed: u64) -> TerrainMaps {
     let resolution = map_resolution(spec);
     let heights = generate_heightmap(spec, seed);
-    let geo = &spec.geometry;
-    let splat = generate_splat_map(
-        &heights,
-        resolution,
-        resolution, // the splat map is made at the heightmap's size
-        &spec.splat_rules,
-        geo.width,
-        geo.depth,
-        geo.height_scale,
-        seed,
-    );
+    // The splat map is made at the heightmap's size
+    let splat = generate_splat_map(&heights, resolution, resolution, spec, seed);
     TerrainMaps {
         heights,
-        splat,
+        splat: splat.rgba,
         resolution,
+        uncovered: splat.uncovered,
         seed,
     }
 }
@@ -65,8 +60,15 @@ impl TerrainMaps {
         encode_splat_png(&self.splat, self.resolution, self.resolution)
     }
 
+    /// How much of the terrain no splat rule covers, in [0, 1]: the share
+    /// the spec's `[splat] fallback` painted (#1696).
+    pub fn uncovered_share(&self) -> f64 {
+        self.uncovered as f64 / (self.splat.len() / 4).max(1) as f64
+    }
+
     /// How much of the terrain each layer covers: the mean of its channel
-    /// over every texel, in [0, 1]. The four sum to about 1.
+    /// over every texel, in [0, 1]. The four sum to about 1, less the
+    /// uncovered share when the fallback is `"none"`.
     pub fn splat_coverage(&self) -> [f64; 4] {
         let mut sums = [0u64; 4];
         for texel in self.splat.as_chunks::<4>().0 {
@@ -210,6 +212,27 @@ height_min = 0.4
         assert!((c.iter().sum::<f64>() - 1.0).abs() < 0.01, "{c:?}");
         assert!(c[0] > 0.0 && c[2] > 0.0, "{c:?}");
         assert_eq!(c[1], 0.0, "no rule paints layer 1: {c:?}");
+    }
+
+    /// A sea bed no rule paints: with `fallback = "none"` its share of the
+    /// coverage is missing, not grass, and the bake says how much it is.
+    #[test]
+    fn a_none_fallback_leaves_the_uncovered_share_out_of_the_coverage() {
+        let mut spec = small_spec();
+        spec.splat_rules.retain(|r| r.layer == 2); // only heights over 0.4
+        let grass = bake(&spec, 7);
+        spec.splat.fallback = crate::spec::SplatFallback::None;
+        let none = bake(&spec, 7);
+        assert_eq!(grass.uncovered, none.uncovered);
+        let share = none.uncovered_share();
+        assert!(share > 0.05 && share < 0.95, "{share}");
+        let (g, n) = (grass.splat_coverage(), none.splat_coverage());
+        assert!(
+            (g[0] - share).abs() < 0.01,
+            "layer 0 was the fallback: {g:?}"
+        );
+        assert!(n[0] < 1e-9, "{n:?}");
+        assert!((n.iter().sum::<f64>() + share - 1.0).abs() < 0.01, "{n:?}");
     }
 
     /// The editor's export used to save the splat map with `RgbaImage::save`;

@@ -320,6 +320,7 @@ mod tests {
                 blend: BlendMode::Add,
             })],
             splat_rules: Vec::new(),
+            splat: Default::default(),
             grass: None,
         }
     }
