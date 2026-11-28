@@ -434,6 +434,7 @@ impl PlayerApp {
         self.core.script.clear();
         self.audio.clear();
         self.core.physics.clear();
+        self.core.forget_player_view();
         // The old scene's contacts name entities that are going; a script's
         // or an extension's own events go on to the next scene's scripts
         // (#727: they used to be lost with physics' queue).

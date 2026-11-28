@@ -64,7 +64,9 @@ fn started(step: f64, script: &str) -> PlayerApp {
     app.focus.cursor_captured = true;
     app.enter_scene(SceneEntry::Start)
         .expect("the scene starts");
-    assert!(app.core.physics.has_player_entity());
+    // Physics' controller said who the player is at the entry (#1614)
+    let view = app.core.player_view();
+    assert!(view.player.is_some() && view.mouse_look);
     app
 }
 
@@ -93,11 +95,9 @@ fn a_turn_is_the_same_from_24_to_240_frames_a_second() {
                 for _ in 0..frames_for(step, 2.0) {
                     frame(&mut app);
                 }
-                (
-                    step,
-                    app.core.physics.camera_yaw(),
-                    app.core.physics.camera_pitch(),
-                )
+                // Where the controller placed the eye last frame (#1614)
+                let eye = app.core.player_view().eye.expect("the player's eye");
+                (step, eye.yaw, eye.pitch)
             })
         })
         .collect();
@@ -194,5 +194,80 @@ fn a_click_catches_the_cursor_only_while_the_game_runs() {
         app.core.state_machine.pop_state();
         press(&mut app);
         assert!(app.is_cursor_captured());
+    });
+}
+
+/// `ROOM` with its player's controller taken off: a scene nobody walks.
+fn without_a_player() -> MemorySource {
+    let mut files = game();
+    let still = ROOM.replace(
+        "[entities.player.character_controller]\nmove_speed = 5.0\n",
+        "",
+    );
+    assert_ne!(still, ROOM);
+    files.insert("game/scenes/room.scene.toml", still.as_str());
+    files
+}
+
+/// `path` loaded and entered with the cursor free, no frame played.
+fn entered() -> PlayerApp {
+    let path = "game/scenes/room.scene.toml";
+    let registry = flint_schema::SchemaRegistry::new();
+    let (world, file) = flint_scene::load_scene(path, &registry).expect("the scene loads");
+    let mut app = PlayerApp::new(world, path.into(), false, None, None);
+    app.apply_scene_settings(&file);
+    app.core.clock.frame_step = Some(1.0 / 60.0);
+    app.enter_scene(SceneEntry::Start)
+        .expect("the scene starts");
+    app
+}
+
+/// #1614's risk: the cursor and the controls line ask who the player is
+/// while the scene comes up, so physics' controller writes the view before
+/// either, and before the first frame. One frame later the eye is placed
+/// and the camera stands in it.
+#[test]
+fn the_players_view_is_settled_at_the_entry_before_the_first_frame() {
+    vfs::scoped(Arc::new(game()), || {
+        let mut app = entered();
+        let player = app.core.world.get_id("player");
+        let view = app.core.player_view();
+        assert_eq!(view.player, player);
+        assert!(view.mouse_look);
+        assert_eq!(view.controls, &flint_physics::character::ACTIONS);
+        assert_eq!(view.eye, None, "no eye before the first frame");
+        assert!(app.is_cursor_captured(), "the entry caught the cursor");
+        let said = app.input_layers.said_controls.clone().unwrap_or_default();
+        assert!(
+            said.contains("move_forward W") && said.contains("mouse look"),
+            "{said}"
+        );
+
+        frame(&mut app);
+        let eye = app.core.player_view().eye.expect("the eye after a frame");
+        assert_eq!(app.camera.position, eye.position);
+        assert_eq!(app.camera.target, eye.target);
+        // At eye height, 85% of the default 1.8 m capsule's 1.5 fallback
+        assert!(eye.position.y > 1.0, "{eye:?}");
+    });
+}
+
+/// A scene with no character controller has no player: the cursor stays
+/// free, the controls line has no walk and no mouse look, and the camera
+/// stays where the scene put it.
+#[test]
+fn a_scene_nobody_walks_has_no_player_and_leaves_the_cursor_free() {
+    vfs::scoped(Arc::new(without_a_player()), || {
+        let mut app = entered();
+        assert_eq!(*app.core.player_view(), flint_runtime::PlayerView::NONE);
+        assert!(!app.is_cursor_captured());
+        let said = app.input_layers.said_controls.clone().unwrap_or_default();
+        assert!(!said.contains("mouse look"), "{said}");
+        assert!(!said.contains("move_forward"), "{said}");
+
+        let before = app.camera.position;
+        frame(&mut app);
+        assert_eq!(app.core.player_view().eye, None);
+        assert_eq!(app.camera.position, before);
     });
 }

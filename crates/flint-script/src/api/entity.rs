@@ -618,7 +618,8 @@ pub(crate) fn register(api: &mut ScriptApi) {
         "#{entity, prompt_text, interaction_type, distance}, or () when none is in range",
     )
     .run(|call, ()| {
-        Ok(match crate::engine::find_nearest_interactable(call.world()?) {
+        let player = call.ctx_ref().player;
+        Ok(match crate::engine::find_nearest_interactable(call.world()?, player) {
             Some(nearest) => {
                 let mut map = rhai::Map::new();
                 map.insert(

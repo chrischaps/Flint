@@ -27,10 +27,9 @@ mod nav_tests;
 mod order_tests;
 
 use character::CharacterController;
-use flint_core::components as comp;
-use flint_core::{EntityId, Result, Vec3};
+use flint_core::{EntityId, Result};
 use flint_ecs::FlintWorld;
-use flint_runtime::{EventBus, GameEvent, InputState};
+use flint_runtime::{EventBus, Eye, GameEvent, InputState, PlayerView};
 pub use layers::{CollisionLayers, LayerError, LayerMask};
 pub use nav::{NavGrid, NavSettings, NavStats};
 use rapier3d::control::{CharacterLength, KinematicCharacterController};
@@ -591,28 +590,58 @@ impl PhysicsSystem {
         self.character = CharacterController::new();
     }
 
-    /// Whether a player entity has been assigned to the character controller
-    pub fn has_player_entity(&self) -> bool {
-        self.character.player_entity().is_some()
+    /// Who the scene is played as, written into the kernel's view at the
+    /// scene's entry, after [`initialize`](Self::initialize) found the
+    /// player (ADR 0138 decision 4, #1614): the player, mouse look, and the
+    /// controller's six actions for the controls line. Nothing without a
+    /// player. The `first-person` package takes this over (#1618).
+    pub fn enter_player_view(&self, view: &mut PlayerView) {
+        let Some(player) = self.character.player_entity() else {
+            return;
+        };
+        view.player = Some(player);
+        view.mouse_look = true;
+        view.controls = &character::ACTIONS;
+    }
+
+    /// The player's eye after the frame's fixed steps: the entity's
+    /// position at eye height, looking along the controller's yaw and
+    /// pitch. Nothing without a player, so the camera stays where the scene
+    /// and the scripts put it.
+    pub fn place_eye(&self, world: &FlintWorld, view: &mut PlayerView) {
+        if self.character.player_entity().is_none() {
+            return;
+        }
+        let position = self.character.camera_position(world);
+        view.eye = Some(Eye {
+            position,
+            target: self.character.camera_target(position),
+            yaw: self.character.yaw,
+            pitch: self.character.pitch,
+        });
     }
 
     /// Camera yaw angle in radians (horizontal look)
-    pub fn camera_yaw(&self) -> f32 {
+    #[cfg(test)]
+    pub(crate) fn camera_yaw(&self) -> f32 {
         self.character.yaw
     }
 
     /// Camera pitch angle in radians (vertical look)
-    pub fn camera_pitch(&self) -> f32 {
+    #[cfg(test)]
+    pub(crate) fn camera_pitch(&self) -> f32 {
         self.character.pitch
     }
 
     /// Camera position derived from the player entity's transform + eye height
-    pub fn camera_position(&self, world: &FlintWorld) -> Vec3 {
+    #[cfg(test)]
+    pub(crate) fn camera_position(&self, world: &FlintWorld) -> flint_core::Vec3 {
         self.character.camera_position(world)
     }
 
     /// Camera look-at target from yaw/pitch
-    pub fn camera_target(&self, camera_pos: Vec3) -> Vec3 {
+    #[cfg(test)]
+    pub(crate) fn camera_target(&self, camera_pos: flint_core::Vec3) -> flint_core::Vec3 {
         self.character.camera_target(camera_pos)
     }
 
@@ -664,6 +693,11 @@ impl PhysicsSystem {
     /// player's fixed loop; look and jump presses come from
     /// `character_frame_input`)
     pub fn update_character(&mut self, input: &InputState, world: &mut FlintWorld, dt: f64) {
+        // Nothing to step, and no scope, without a player (the kernel calls
+        // it every step since #1614)
+        if self.character.player_entity().is_none() {
+            return;
+        }
         flint_core::scope!("physics::character");
         self.character.update(
             input,
@@ -686,14 +720,9 @@ impl PhysicsSystem {
         self.sync.sync_joints(world, &mut self.physics_world);
 
         // Find the player entity (entity with character_controller component)
-        for entity in world.all_entities() {
-            if let Some(components) = world.get_components(entity.id) {
-                if components.has(comp::CHARACTER_CONTROLLER) {
-                    self.character.set_player_entity(entity.id);
-                    self.character.face_start(world);
-                    break;
-                }
-            }
+        if let Some(player) = character::find_player(world) {
+            self.character.set_player_entity(player);
+            self.character.face_start(world);
         }
 
         Ok(())

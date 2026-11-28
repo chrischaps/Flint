@@ -1,0 +1,4 @@
+### A game's Rust reads the player from `PlayerView`, not from physics (#1614)
+**Package.** engine
+**What changed.** `PhysicsSystem::has_player_entity`, `camera_position`, `camera_target`, `camera_yaw` and `camera_pitch` are gone from physics' public API. Who the game is played as, and where it is seen from, is `flint_runtime::PlayerView` (`player`, `mouse_look`, `controls`, and each frame's `eye` and `listener`), a run resource that physics' character controller writes at the scene's entry and after each frame's fixed steps. Scenes, scripts and play are unchanged: a walk plays the same frames to the pixel, and `on_interact` and `find_nearest_interactable` find the same player.
+**What to do.** Nothing, unless a game binary's own Rust called those methods: read `PlayerView` instead (`player.is_some()` for `has_player_entity`, `eye` for the camera's pose).
