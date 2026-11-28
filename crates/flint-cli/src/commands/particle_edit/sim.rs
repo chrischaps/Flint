@@ -151,6 +151,7 @@ impl PreviewSim {
         look_time: Option<f64>,
     ) {
         self.system.pack(Some(camera_pos));
+        let draws = self.system.sync.draw_data();
         renderer.prepare(
             device,
             queue,
@@ -158,7 +159,7 @@ impl PreviewSim {
             &flint_render::FrameInputs {
                 look_time: Some(look_time.unwrap_or(0.0)),
                 grass_time: Some(0.0),
-                particles: Some(&self.system.sync),
+                particles: Some(&draws),
                 ..Default::default()
             },
         );
@@ -181,7 +182,7 @@ impl PreviewSim {
             renderer,
             device,
             queue,
-            &self.system.sync,
+            &self.system.sync.texture_names(),
             &scope.project,
             &scope.scene_dir,
         );

@@ -25,14 +25,10 @@ flint-render = { workspace = true }
 # (#1556); a scene file a package settles (`Registry::settle_scene`) and the
 # tables `flint check` asks a package to judge (`cli::TableChecks`), #1558
 flint-scene = { workspace = true }
-flint-audio = { workspace = true }
-# What the fixed-step hook lends (ADR 0137 section 3a, #1551); a kernel
-# crate until Phase 3 makes physics a package.
-flint-physics = { workspace = true }
-# What the F3/F4 panels are lent each frame (`panels::PanelCtx`) and the
-# grass a scene's panel tunes (`hud::GrassPanel`), #1559
-flint-particles = { workspace = true }
-flint-terrain = { workspace = true }
+# No standard package's crate (#1616): physics, the sound and the particles
+# are run resources (ADR 0138 decision 1), which a package that requires one
+# names by its type, and the grass a scene's panel tunes (`hud::GrassPanel`)
+# is the renderer's `GrassConfig` since #1615.
 # The registry `cli::TableChecks` judges a scene's tables against (#1558)
 flint-schema = { workspace = true }
 # `flint render --report json`'s props (`cli::render`)

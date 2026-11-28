@@ -685,7 +685,7 @@ impl CameraState {
 /// `particles.bin` read back (#1089): its instances, and each emitter's
 /// draw as the renderer uploads it.
 pub struct ReplayParticles {
-    pub instances: Vec<flint_particles::ParticleInstance>,
+    pub instances: Vec<crate::ParticleInstance>,
     pub emitters: Vec<EmitterDraw>,
 }
 
@@ -694,7 +694,7 @@ impl ReplayParticles {
     /// `emitters` index into it. An emitter past the stream's end is left
     /// out.
     pub fn read(bytes: &[u8], emitters: &[EmitterDraw]) -> Self {
-        let size = std::mem::size_of::<flint_particles::ParticleInstance>();
+        let size = std::mem::size_of::<crate::ParticleInstance>();
         let whole = bytes.len() / size * size;
         Self {
             instances: bytemuck::pod_collect_to_vec(&bytes[..whole]),
@@ -702,23 +702,36 @@ impl ReplayParticles {
         }
     }
 
-    /// What [`SceneRenderer::update_particles`](crate::SceneRenderer::update_particles) takes.
-    pub fn draws(&self) -> Vec<crate::ParticleDrawData<'_>> {
-        use flint_particles::ParticleBlendMode as B;
+    /// What [`SceneRenderer::update_particles`](crate::SceneRenderer::update_particles) takes:
+    /// each emitter's draw as it was captured (a capture names its entity,
+    /// so `entity_id` is `None`).
+    pub fn draws(&self) -> Vec<crate::ParticleDraw<'_>> {
+        use crate::ParticleBlendMode as B;
         self.emitters
             .iter()
             .filter_map(|e| {
                 let (first, count) = (e.first as usize, e.count as usize);
-                Some(crate::ParticleDrawData {
+                Some(crate::ParticleDraw {
+                    entity_id: None,
+                    emitter_index: e.emitter_index,
+                    emitter_name: &e.emitter,
                     instances: self.instances.get(first..first + count)?,
-                    texture: &e.texture,
-                    blend: match e.blend.as_str() {
+                    blend_mode: match e.blend.as_str() {
                         "Additive" => B::Additive,
                         "Premultiplied" => B::Premultiplied,
                         "Multiply" => B::Multiply,
                         _ => B::Alpha,
                     },
+                    texture: &e.texture,
+                    frames_x: e.frames[0],
+                    frames_y: e.frames[1],
                     sort_key: e.sort_key,
+                    soft_distance: e.soft_distance,
+                    fade_near: e.fade_near,
+                    fade_far: e.fade_far,
+                    lighting: e.lighting,
+                    fog: e.fog,
+                    stretch: e.stretch,
                 })
             })
             .collect()
@@ -761,12 +774,12 @@ pub struct ParticlesState {
 }
 
 impl ParticlesState {
-    /// What `sync` packed for this frame, named from `world`.
-    pub fn of(sync: &flint_particles::ParticleSync, world: &FlintWorld) -> Self {
+    /// The frame's particle draws (`FrameInputs::particles`), named from
+    /// `world`.
+    pub fn of(draws: &[crate::ParticleDraw<'_>], world: &FlintWorld) -> Self {
         let mut out = Self::default();
-        for d in sync.draw_data() {
-            let first =
-                (out.bytes.len() / std::mem::size_of::<flint_particles::ParticleInstance>()) as u32;
+        for d in draws {
+            let first = (out.bytes.len() / std::mem::size_of::<crate::ParticleInstance>()) as u32;
             out.bytes
                 .extend_from_slice(bytemuck::cast_slice(d.instances));
             out.emitters.push(EmitterDraw {

@@ -10,6 +10,7 @@
 //! - `bundle` - Game bundles: a game's files in one fetchable blob for the vfs
 //! - `project` - A project's root and its `flint.toml` manifest, found through the vfs
 //! - `package` - A package's `package.toml`: what one feature owns (ADR 0136)
+//! - `resources` - The run's typed values, one per Rust type, through which one package lends state to another (ADR 0137, ADR 0138)
 //! - `step_clock` - The stepped hold-and-glide clock everything drawn on ticks reads (#747)
 //! - `frame_notes` - What the engine did on a frame (loads, builds, reloads), for the hitch detector (#1077)
 //! - `profile` - `scope!`, one profiler scope reaching Tracy and Flint's own recorder (ADR 0128)
@@ -41,6 +42,7 @@ pub mod project;
 pub mod projection;
 pub mod quality;
 pub mod quat;
+pub mod resources;
 pub mod step_clock;
 pub mod style_field;
 pub mod toml_util;

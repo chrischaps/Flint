@@ -84,6 +84,33 @@ impl Resources {
         }
     }
 
+    /// `value` as the resource of its type while `f` runs, then back in
+    /// `value` (#1616): how a host lends state it still owns (the player's
+    /// sound, until the audio package owns it, #1619) to hooks that find
+    /// it by type. `stand_in` makes what `value` holds meanwhile, once a
+    /// run: it is kept here between lends, under its own key. A lend inside
+    /// a lend of the same type lends the outer one's value.
+    pub fn lend<T: Any, R>(
+        &mut self,
+        value: &mut T,
+        stand_in: impl FnOnce() -> T,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if self.contains::<T>() {
+            return f(self);
+        }
+        let spare = self
+            .remove::<StandIn<T>>()
+            .map_or_else(stand_in, |spare| spare.0);
+        self.insert(std::mem::replace(value, spare));
+        let out = f(self);
+        // A hook that took it out leaves the stand-in where it was
+        if let Some(lent) = self.remove::<T>() {
+            self.insert(StandIn(std::mem::replace(value, lent)));
+        }
+        out
+    }
+
     /// How many values are here.
     pub fn len(&self) -> usize {
         self.map.len()
@@ -101,6 +128,9 @@ impl std::fmt::Debug for Resources {
             .finish()
     }
 }
+
+/// What a lent value's owner holds while [`Resources::lend`] lends it.
+struct StandIn<T>(T);
 
 /// Passes a `TypeId`'s own hash through. `TypeId` writes its hash as one
 /// `u64`; any other write folds its bytes in (FNV-1a), so the hasher is
@@ -174,6 +204,49 @@ mod tests {
         r.get_or_insert_with(|| Props(4)).0 += 1;
         r.get_or_insert_with(|| Props(100)).0 += 1;
         assert_eq!(r.get::<Props>(), Some(&Props(6)));
+    }
+
+    #[test]
+    fn a_lend_is_found_by_type_and_given_back() {
+        let mut r = Resources::new();
+        let mut owned = Props(5);
+        let mut stand_ins = 0;
+        for round in 0..3 {
+            let seen = r.lend(
+                &mut owned,
+                || {
+                    stand_ins += 1;
+                    Props(0)
+                },
+                |r| {
+                    let lent = r.get_mut::<Props>().expect("lent");
+                    lent.0 += 1;
+                    lent.0
+                },
+            );
+            assert_eq!(seen, 6 + round);
+            assert!(!r.contains::<Props>(), "given back");
+        }
+        assert_eq!(owned, Props(8), "the owner's value, changed by each hook");
+        assert_eq!(stand_ins, 1, "one stand-in a run, kept between lends");
+    }
+
+    #[test]
+    fn a_lend_inside_a_lend_lends_the_outer_value() {
+        let mut r = Resources::new();
+        let (mut outer, mut inner) = (Props(1), Props(100));
+        r.lend(
+            &mut outer,
+            || Props(0),
+            |r| {
+                r.lend(
+                    &mut inner,
+                    || Props(0),
+                    |r| r.get_mut::<Props>().unwrap().0 += 1,
+                );
+            },
+        );
+        assert_eq!((outer, inner), (Props(2), Props(100)));
     }
 
     #[test]

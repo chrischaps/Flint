@@ -674,7 +674,10 @@ fn bind_capture_scene(
     let binding = binding
         .clone()
         .with_environment(scene_file.environment.as_ref());
-    let bound = renderer.bind_scene(&ctx.device, &ctx.queue, world, &binding);
+    let mut bound = renderer.bind_scene(&ctx.device, &ctx.queue, world, &binding);
+    // The scene's terrain: the terrain package builds it after the bind (#1615)
+    let terrain =
+        flint_terrain::scene::bind_terrain(renderer, &ctx.device, &ctx.queue, world, &mut bound);
     if let Some(grass) = bound
         .grass
         .as_ref()
@@ -686,7 +689,7 @@ fn bind_capture_scene(
             grass.config.max_distance
         );
     }
-    if let Some(terrain) = &bound.terrain {
+    if let Some(terrain) = &terrain {
         say!(
             "[terrain] Loaded terrain: {}x{} heightmap, {} chunks",
             terrain.heightmap_size.0,

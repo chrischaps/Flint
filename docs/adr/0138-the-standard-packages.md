@@ -299,7 +299,13 @@ pub struct Eye { pub position: Vec3, pub target: Vec3, pub yaw: f32, pub pitch: 
   `flint_first_person::ACTIONS`.
 - **#1614 comes before the package.** Physics' built-in controller writes
   `PlayerView` from inside physics until #1618 moves it, so the readers
-  move once.
+  move once. *As built (#1614):* `PhysicsSystem::enter_player_view` at
+  the scene's entry and `place_eye` after the steps; the view is a run
+  resource from `GameCore::new`. A capture steps no physics, so it sets
+  `player` alone (`flint_physics::character::find_player`), which
+  `find_nearest_interactable` reads as well as `is_near_player`. The
+  script camera's listener keeps its old pitch sign (`Eye::looking`, #1666),
+  and `set_player` is #1667.
 - **Room for other controllers and cameras.** A script controller that calls
   `move_character` sets `player` through a kernel script function
   (`set_player(id)`, in the kernel's `camera` module) and gets the cursor,
@@ -555,3 +561,85 @@ Each one is Chris's. The recommendation is written first.
    Recommended: five, restating the gate as ADR 0137 decision 5 did.
 9. **Sizes reported as context, gated nowhere.** Already Chris's
    (2026-11-27); recorded here.
+
+## As built: the renderer's plain data (#1615)
+
+Decision 5 as it landed. `cargo tree -p flint-render -e normal` shows
+neither flint-terrain nor flint-particles, and no golden moved.
+
+- **Particles, as written.** `ParticleInstance` (unchanged: the same fields
+  and `repr(C)`, 64 bytes, which `particle_shader.wgsl` and a capture's
+  `particles.bin` read), `ParticleBlendMode` and `ParticleDraw` are
+  `flint_render::particles`'s; flint-particles depends on flint-render and
+  re-exports them. `FrameInputs::particles` is `Option<&[ParticleDraw]>`,
+  from `ParticleSync::draw_data()`, and `ParticlesState::of` writes
+  `particles.bin` from the same slice. The renderer's own upload type
+  (`ParticleDrawData`, four fields) went into `ParticleDraw`, so a replay
+  and a host's own draws take the one type. The hosts build the slice where
+  they built the frame's inputs, not in a `frame_inputs` hook: the
+  particles aren't a package yet (#1622 moves them).
+- **`TerrainChunk` and `GrassConfig` are flint-geometry's**
+  (`terrain_chunk`, `grass`), re-exported from `flint_render` and
+  `flint_terrain`, not defined in flint-render as the table says. Defined in
+  the renderer, they would make flint-terrain link the renderer in every
+  build, and so flint-physics, flint-script and flint-procgen (which read
+  heights, never draw) would carry wgpu. flint-geometry is the kernel's
+  plain data both sides read (the ocean's spectrum is there already), where
+  `GroundField` is going too.
+- **The terrain loader is in flint-terrain behind a `render` feature, called
+  by the hosts.** `flint_terrain::scene::bind_terrain(renderer, device,
+  queue, world, &mut bound) -> Option<LoadedTerrain>` is `load_scene_terrain`
+  moved; `bind_scene` loads only the `grass_ground`, and the terrain's grass
+  goes into `bound.grass` unless that holds one, as before. It is not yet
+  an asset maker: a maker is a `flint_package::assets::AssetMaker`, and
+  flint-package still depends on flint-terrain (through flint-script's
+  `GroundField`), so flint-terrain can't depend on it without a cycle. The
+  player (`stage_scene_in_renderer`), the viewer (`stage_scene`) and
+  `flint render` (`bind_capture_scene`) call it right after `bind_scene`,
+  where it ran. #1623 makes it the maker once #1616 and the `GroundField`
+  move end the cycle, and drops these calls.
+- **Edges this adds and ends.** flint-viewer (kernel) gains a normal edge
+  to flint-terrain, beside the flint-particles one it has (#1622); #1623
+  ends both terrain calls' edges. Ended here as well as flint-render's:
+  flint-living's and flint-debug-ui's edges to flint-terrain (they read only
+  `GrassConfig`, now `flint_render::GrassConfig`), and flint-package's direct
+  one, assigned to #1616 in the Context's table, for the same reason.
+
+## As built: the API names no standard crate (#1616)
+
+Decision 1's API half as it landed. `crates/flint-package/Cargo.toml` names
+none of flint-physics, flint-audio, flint-particles or flint-terrain, and
+`cargo tree -p flint-package -e normal` shows no flint-audio and no
+flint-particles at all. flint-physics and flint-terrain are still in that
+tree, one level down, through flint-script, whose `physics`, `nav` and
+ground-field modules #1617 and #1623 move; the API itself reaches neither.
+
+- **`Resources` is flint-core's** (`flint_core::resources`), re-exported as
+  `flint_package::Resources`, as written. It gains `Resources::lend(&mut
+  value, stand_in, f)`: `value` is the resource of its type while `f` runs,
+  then back where it was, with a stand-in made once a run and kept between
+  lends under its own key. That is how a host lends state it still owns.
+- **Physics, as written.** `FixedCtx::physics` and `pub use flint_physics
+  as physics` are gone. `PhysicsSystem` is a run resource for the whole
+  run: `GameCore::new` puts it in and the player reads it through
+  `GameCore::physics()` / `physics_mut()` (or `physics_of_mut(&mut
+  core.resources)` beside another field's borrow). `flint_physics::of` /
+  `of_mut` are the lookups, and `PhysicsSystem::fixed_update_in(resources,
+  world, dt, events, between)` runs the sync-in, `between` lent the
+  resources, then Rapier's step, as `fixed_update_with` did. Every
+  `StageCtx` now lends physics too, so #1647's after-steps read is there
+  for #1617 to use. Vehicle, the test toy and the fixture toy package moved
+  in this PR.
+- **The sound is lent, not yet resident.** `SceneCtx::audio` and
+  `StageCtx::audio` are gone. The engine stays inside the player's
+  `AudioSystem` (17 player files use it, which is #1619's move), and the
+  player lends it for each hook with `flint_audio::engine::lend`, a silent
+  engine standing in meanwhile. Music and rhythm read
+  `flint_audio::engine::of_mut(ctx.resources)`. Moving the engine is cheap
+  because its mixer is boxed (the kira manager never moves), and the lend
+  happens only when a scene has subsystems.
+- **The particles are lent to the panels.** `PanelCtx::particles` became
+  `PanelCtx::resources`. The player holds `DebugPanels` out of the
+  resources while the panels sync and lends `GameCore::particles` in as the
+  `ParticleSystem` the Particles panel reads. #1622 makes it resident.
+- **Terrain** was already off the API's own list (#1615).

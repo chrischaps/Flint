@@ -3,23 +3,9 @@
 use crate::heightmap::Heightmap;
 use crate::terrain::TerrainConfig;
 
-/// A single chunk of terrain geometry
-pub struct TerrainChunk {
-    /// Grid position (column, row) in the chunk grid
-    pub grid_pos: (u32, u32),
-    /// Vertex positions in world space
-    pub positions: Vec<[f32; 3]>,
-    /// Vertex normals
-    pub normals: Vec<[f32; 3]>,
-    /// UV coordinates (normalized over entire terrain for splat map lookup)
-    pub uvs: Vec<[f32; 2]>,
-    /// Triangle indices (CCW winding)
-    pub indices: Vec<u32>,
-    /// AABB minimum corner
-    pub aabb_min: [f32; 3],
-    /// AABB maximum corner
-    pub aabb_max: [f32; 3],
-}
+/// The chunk's mesh data: plain data in flint-geometry, which the renderer
+/// takes as a slice without linking this crate (#1615).
+pub use flint_geometry::terrain_chunk::TerrainChunk;
 
 /// Generate mesh data for a single terrain chunk.
 ///

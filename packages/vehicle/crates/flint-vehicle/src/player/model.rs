@@ -16,11 +16,11 @@
 use crate::{VEHICLE, VEHICLE_INPUT, VEHICLE_WHEEL};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_package::physics::rapier::control::{DynamicRayCastVehicleController, WheelTuning};
-use flint_package::physics::rapier::parry::query as parry_query;
-use flint_package::physics::rapier::prelude::nalgebra::{Unit, UnitQuaternion};
-use flint_package::physics::rapier::prelude::*;
-use flint_package::physics::PhysicsSystem;
+use flint_physics::rapier::control::{DynamicRayCastVehicleController, WheelTuning};
+use flint_physics::rapier::parry::query as parry_query;
+use flint_physics::rapier::prelude::nalgebra::{Unit, UnitQuaternion};
+use flint_physics::rapier::prelude::*;
+use flint_physics::PhysicsSystem;
 
 type V3 = Vector<Real>;
 

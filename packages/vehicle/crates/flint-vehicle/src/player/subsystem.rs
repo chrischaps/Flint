@@ -294,7 +294,11 @@ impl Subsystem for Vehicles {
                 *spec = WheelSpec::read(ctx.world, spec.entity, spec.attach);
             }
             let size = chassis_size(ctx.world, v.entity);
-            if !v.step(ctx.physics, &tuning, &input, size, dt) {
+            // Physics is the run's resource (ADR 0138 decision 1, #1616)
+            let Some(physics) = flint_physics::of_mut(ctx.resources) else {
+                return;
+            };
+            if !v.step(physics, &tuning, &input, size, dt) {
                 continue;
             }
             if input.push != [0.0; 3] {

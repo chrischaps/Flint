@@ -1,5 +1,6 @@
 //! The vehicle on a plane, stepped as the player steps it: physics'
-//! `fixed_update_with`, the subsystem's `fixed_update` inside it, and the
+//! `fixed_update_in` over the run's resources it is in (#1616), the
+//! subsystem's `fixed_update` inside it, and the
 //! frame's stages around the steps.
 
 use super::model::Vehicle;
@@ -7,8 +8,8 @@ use super::Vehicles;
 use crate::{VEHICLE_INPUT, VEHICLE_STATE, VEHICLE_WHEEL};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_package::physics::PhysicsSystem;
 use flint_package::{FixedCtx, Resources, Subsystem};
+use flint_physics::PhysicsSystem;
 use flint_runtime::{EventBus, InputState, StateConfig};
 
 const STEP: f64 = 1.0 / 60.0;
@@ -98,7 +99,6 @@ fn kart(world: &mut FlintWorld, name: &str, at: [f32; 3], extra: &str) -> Entity
 
 struct Run {
     world: FlintWorld,
-    physics: PhysicsSystem,
     events: EventBus,
     input: InputState,
     policy: StateConfig,
@@ -111,11 +111,15 @@ impl Run {
         let vehicles = Vehicles::new(&world);
         Self {
             world,
-            physics: PhysicsSystem::new(),
             events: EventBus::new(),
             input: InputState::new(),
             policy: StateConfig::playing(),
-            resources: Resources::new(),
+            resources: {
+                // Physics is the run's resource, as the player keeps it
+                let mut resources = Resources::new();
+                resources.insert(PhysicsSystem::new());
+                resources
+            },
             vehicles,
         }
     }
@@ -126,22 +130,26 @@ impl Run {
         self.vehicles.write_state(&mut self.world);
         self.vehicles
             .write_player_input(&mut self.world, &self.input);
-        self.physics.begin_frame_steps(steps as usize);
+        flint_physics::of_mut(&mut self.resources)
+            .expect("physics")
+            .begin_frame_steps(steps as usize);
         for i in 0..steps {
             let Self {
                 world,
-                physics,
                 events,
                 input,
                 policy,
                 resources,
                 vehicles,
             } = self;
-            physics
-                .fixed_update_with(world, STEP, events, |physics, world, events| {
+            PhysicsSystem::fixed_update_in(
+                resources,
+                world,
+                STEP,
+                events,
+                |resources, world, events| {
                     vehicles.fixed_update(&mut FixedCtx {
                         world,
-                        physics,
                         dt: STEP,
                         step: (i, steps),
                         input,
@@ -149,8 +157,9 @@ impl Run {
                         policy,
                         resources,
                     });
-                })
-                .unwrap();
+                },
+            )
+            .unwrap();
         }
         self.vehicles.after_steps(&mut self.world);
     }

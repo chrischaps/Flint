@@ -27,10 +27,10 @@ mod nav_tests;
 mod order_tests;
 
 use character::CharacterController;
-use flint_core::components as comp;
-use flint_core::{EntityId, Result, Vec3};
+use flint_core::resources::Resources;
+use flint_core::{EntityId, Result};
 use flint_ecs::FlintWorld;
-use flint_runtime::{EventBus, GameEvent, InputState};
+use flint_runtime::{EventBus, Eye, GameEvent, InputState, PlayerView};
 pub use layers::{CollisionLayers, LayerError, LayerMask};
 pub use nav::{NavGrid, NavSettings, NavStats};
 use rapier3d::control::{CharacterLength, KinematicCharacterController};
@@ -40,8 +40,20 @@ use sync::PhysicsSync;
 use world::PhysicsWorld;
 
 /// Rapier, as this crate builds it, so a package reaches the same version
-/// (`flint_package::physics::rapier`, ADR 0137 section 3a).
+/// (ADR 0137 section 3a; `flint_package::physics::rapier` until #1616).
 pub use rapier3d as rapier;
+
+/// Physics' state in the run's resources (ADR 0138 decision 1, #1616):
+/// what a package that requires physics reads at any stage, and what the
+/// player keeps it in. `None` in a run without physics.
+pub fn of(resources: &Resources) -> Option<&PhysicsSystem> {
+    resources.get::<PhysicsSystem>()
+}
+
+/// [`of`], to change: a fixed step's forces, a vehicle's controller.
+pub fn of_mut(resources: &mut Resources) -> Option<&mut PhysicsSystem> {
+    resources.get_mut::<PhysicsSystem>()
+}
 
 /// Rapier's sets, lent at once by [`PhysicsSystem::rapier_mut`]: the
 /// bodies to change, beside the colliders and the queries to read.
@@ -591,28 +603,58 @@ impl PhysicsSystem {
         self.character = CharacterController::new();
     }
 
-    /// Whether a player entity has been assigned to the character controller
-    pub fn has_player_entity(&self) -> bool {
-        self.character.player_entity().is_some()
+    /// Who the scene is played as, written into the kernel's view at the
+    /// scene's entry, after [`initialize`](Self::initialize) found the
+    /// player (ADR 0138 decision 4, #1614): the player, mouse look, and the
+    /// controller's six actions for the controls line. Nothing without a
+    /// player. The `first-person` package takes this over (#1618).
+    pub fn enter_player_view(&self, view: &mut PlayerView) {
+        let Some(player) = self.character.player_entity() else {
+            return;
+        };
+        view.player = Some(player);
+        view.mouse_look = true;
+        view.controls = &character::ACTIONS;
+    }
+
+    /// The player's eye after the frame's fixed steps: the entity's
+    /// position at eye height, looking along the controller's yaw and
+    /// pitch. Nothing without a player, so the camera stays where the scene
+    /// and the scripts put it.
+    pub fn place_eye(&self, world: &FlintWorld, view: &mut PlayerView) {
+        if self.character.player_entity().is_none() {
+            return;
+        }
+        let position = self.character.camera_position(world);
+        view.eye = Some(Eye {
+            position,
+            target: self.character.camera_target(position),
+            yaw: self.character.yaw,
+            pitch: self.character.pitch,
+        });
     }
 
     /// Camera yaw angle in radians (horizontal look)
-    pub fn camera_yaw(&self) -> f32 {
+    #[cfg(test)]
+    pub(crate) fn camera_yaw(&self) -> f32 {
         self.character.yaw
     }
 
     /// Camera pitch angle in radians (vertical look)
-    pub fn camera_pitch(&self) -> f32 {
+    #[cfg(test)]
+    pub(crate) fn camera_pitch(&self) -> f32 {
         self.character.pitch
     }
 
     /// Camera position derived from the player entity's transform + eye height
-    pub fn camera_position(&self, world: &FlintWorld) -> Vec3 {
+    #[cfg(test)]
+    pub(crate) fn camera_position(&self, world: &FlintWorld) -> flint_core::Vec3 {
         self.character.camera_position(world)
     }
 
     /// Camera look-at target from yaw/pitch
-    pub fn camera_target(&self, camera_pos: Vec3) -> Vec3 {
+    #[cfg(test)]
+    pub(crate) fn camera_target(&self, camera_pos: flint_core::Vec3) -> flint_core::Vec3 {
         self.character.camera_target(camera_pos)
     }
 
@@ -664,6 +706,11 @@ impl PhysicsSystem {
     /// player's fixed loop; look and jump presses come from
     /// `character_frame_input`)
     pub fn update_character(&mut self, input: &InputState, world: &mut FlintWorld, dt: f64) {
+        // Nothing to step, and no scope, without a player (the kernel calls
+        // it every step since #1614)
+        if self.character.player_entity().is_none() {
+            return;
+        }
         flint_core::scope!("physics::character");
         self.character.update(
             input,
@@ -686,14 +733,9 @@ impl PhysicsSystem {
         self.sync.sync_joints(world, &mut self.physics_world);
 
         // Find the player entity (entity with character_controller component)
-        for entity in world.all_entities() {
-            if let Some(components) = world.get_components(entity.id) {
-                if components.has(comp::CHARACTER_CONTROLLER) {
-                    self.character.set_player_entity(entity.id);
-                    self.character.face_start(world);
-                    break;
-                }
-            }
+        if let Some(player) = character::find_player(world) {
+            self.character.set_player_entity(player);
+            self.character.face_start(world);
         }
 
         Ok(())
@@ -730,6 +772,30 @@ impl PhysicsSystem {
         self.sync_in(world);
         between(self, world, events);
         self.step_and_publish(world, dt, events);
+        Ok(())
+    }
+
+    /// [`fixed_update_with`](Self::fixed_update_with) for physics' state in
+    /// the run's resources (ADR 0138 decision 1, #1616): `between` is lent
+    /// the resources, physics among them ([`of_mut`]), so a package's
+    /// fixed step finds it by type where it found a `FixedCtx::physics`.
+    /// Nothing is stepped when the resources hold no physics.
+    pub fn fixed_update_in(
+        resources: &mut Resources,
+        world: &mut FlintWorld,
+        dt: f64,
+        events: &mut EventBus,
+        between: impl FnOnce(&mut Resources, &mut FlintWorld, &mut EventBus),
+    ) -> Result<()> {
+        flint_core::scope!("physics::fixed_update");
+        let Some(physics) = of_mut(resources) else {
+            return Ok(());
+        };
+        physics.sync_in(world);
+        between(resources, world, events);
+        if let Some(physics) = of_mut(resources) {
+            physics.step_and_publish(world, dt, events);
+        }
         Ok(())
     }
 

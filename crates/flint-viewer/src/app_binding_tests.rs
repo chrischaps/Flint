@@ -56,13 +56,13 @@ fn staged(
     state: &mut ViewerState,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-) -> (SceneRenderer, flint_render::BoundScene) {
+) -> (SceneRenderer, Option<flint_terrain::scene::LoadedTerrain>) {
     let mut renderer =
         SceneRenderer::new_headless(device, queue, FORMAT, SIZE, SIZE, RendererConfig::default());
     let config = ModelLoadConfig::from_scene_path(&state.scene_path);
     let binding = scene_binding(&state.scene_path);
-    let bound = stage_scene(&mut renderer, device, queue, state, binding, &config);
-    (renderer, bound)
+    let (_, terrain) = stage_scene(&mut renderer, device, queue, state, binding, &config);
+    (renderer, terrain)
 }
 
 fn gpu_renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> SceneRenderer {
@@ -175,10 +175,8 @@ fn the_viewer_draws_a_scenes_terrain_in_the_style_mask() {
         return;
     };
     let mut state = viewer_state("style_terrain.scene.toml");
-    let (mut renderer, bound) = staged(&mut state, device, queue);
-    let terrain = bound
-        .terrain
-        .expect("the viewer loaded the scene's terrain");
+    let (mut renderer, terrain) = staged(&mut state, device, queue);
+    let terrain = terrain.expect("the viewer loaded the scene's terrain");
     assert_eq!(state.world.get_name(terrain.entity), Some("ground"));
     assert_eq!(renderer.collect_stats().terrain_total_chunks, 16);
 

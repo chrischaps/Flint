@@ -20,7 +20,8 @@ pub enum PanelLayout {
 }
 
 /// What a panel's [`sync`](DebugPanel::sync) reaches each frame: the world,
-/// the renderer and its device, the camera and the particles (#744). The
+/// the renderer and its device, the camera and the run's resources, the
+/// particles' `ParticleSystem` among them (#744, #1616). The
 /// player builds one a frame and hands it to every panel in one loop, so it
 /// never asks a panel its name to know what to do with it.
 pub struct PanelCtx<'a> {
@@ -28,7 +29,10 @@ pub struct PanelCtx<'a> {
     pub renderer: &'a mut flint_render::SceneRenderer,
     pub device: &'a wgpu::Device,
     pub camera: &'a mut flint_render::Camera,
-    pub particles: &'a mut flint_particles::ParticleSync,
+    /// The run's resources but the panels themselves, which the host holds
+    /// out of them while they sync: what a package's panel reads of its
+    /// package (the Particles panel's `ParticleSystem`).
+    pub resources: &'a mut crate::Resources,
     /// What the panels tell the player, and the player's own switches.
     pub host: &'a mut PanelHost,
 }

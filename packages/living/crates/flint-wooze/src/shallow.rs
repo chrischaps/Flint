@@ -218,7 +218,7 @@ pub struct GrassWooze {
 impl GrassWooze {
     /// Move on by `dt` at `time` with the viewer at `viewer`, if the grass asks
     /// for it: `comb` is its authored `(amplitude, wavelength)`
-    /// (`flint_terrain::GrassConfig::wooze_comb`). Grass that doesn't ask goes
+    /// (`flint_geometry::grass::GrassConfig::wooze_comb`). Grass that doesn't ask goes
     /// back to the wall clock.
     pub fn advance(
         &mut self,

@@ -30,7 +30,6 @@ flint-script = { workspace = true, optional = true }
 flint-core = { workspace = true }
 flint-geometry = { workspace = true }
 flint-render = { workspace = true }
-flint-terrain = { workspace = true }
 flint-scene = { workspace = true }
 flint-ecs = { workspace = true }
 flint-particles = { workspace = true }

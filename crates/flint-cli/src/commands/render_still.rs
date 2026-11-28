@@ -237,7 +237,7 @@ pub(super) fn render_still(
             &mut renderer,
             &ctx.device,
             &ctx.queue,
-            &particles.sync,
+            &particles.sync.texture_names(),
             project,
             Path::new(&args.scene).parent().unwrap_or(Path::new(".")),
         );
@@ -253,12 +253,13 @@ pub(super) fn render_still(
     }
 
     // The frame's inputs, and the world read into the draw lists (#739)
+    let particle_draws = particle_sim.as_ref().map(|p| p.sync.draw_data());
     renderer.prepare(
         &ctx.device,
         &ctx.queue,
         &world,
         &FrameInputs {
-            particles: particle_sim.as_ref().map(|p| &p.sync),
+            particles: particle_draws.as_deref(),
             ..still_inputs(args, &camera, time)
         },
     );
@@ -354,7 +355,7 @@ pub(super) fn render_still(
                     Some(crate::commands::render_frame_dump::ReplayFacts {
                         inputs: flint_render::frame_replay::FrameInputsState::of(
                             &FrameInputs {
-                                particles: particle_sim.as_ref().map(|p| &p.sync),
+                                particles: particle_draws.as_deref(),
                                 ..still_inputs(args, &camera, time)
                             },
                             &world,

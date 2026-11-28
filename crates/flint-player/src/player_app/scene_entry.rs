@@ -16,6 +16,7 @@ use super::scene_loading::{
     LoadedGrassInfo,
 };
 use super::PlayerApp;
+use crate::player_app::game_core::{physics_of, physics_of_mut};
 use anyhow::{Context, Result};
 use flint_core::frame_notes::{self, NoteKind};
 use flint_core::load_report::{self, Stage};
@@ -113,14 +114,14 @@ impl PlayerApp {
         self.load_brought_up();
 
         // On Android the cursor always counts as captured, so touch input
-        // flows without a click-to-capture gate; elsewhere a first-person
-        // player captures it.
+        // flows without a click-to-capture gate; elsewhere a player who
+        // looks with the mouse captures it.
         #[cfg(target_os = "android")]
         {
             self.focus.cursor_captured = true;
         }
         #[cfg(not(target_os = "android"))]
-        if self.core.physics.has_player_entity() && !self.focus.cursor_captured {
+        if self.core.player_view().mouse_look && !self.focus.cursor_captured {
             self.capture_cursor();
         }
         Ok(())
@@ -182,7 +183,16 @@ impl PlayerApp {
             .take()
             .unwrap_or_else(|| flint_render::SceneBinding::new(self.kept_asset_scope()))
             .with_archetypes(&schemas);
-        let bound = renderer.bind_scene(device, queue, &self.core.world, &binding);
+        let mut bound = renderer.bind_scene(device, queue, &self.core.world, &binding);
+        // The scene's terrain, which the renderer built in `bind_scene`
+        // until #1615: the terrain package's, before the models as it was
+        let terrain = flint_terrain::scene::bind_terrain(
+            renderer,
+            device,
+            queue,
+            &self.core.world,
+            &mut bound,
+        );
         // The core's registry is the scene's (#742), and a game style an
         // extension added since the binding was made is in it
         renderer.set_styles(self.core.styles.clone());
@@ -231,7 +241,7 @@ impl PlayerApp {
             queue,
         );
         for c in splines.colliders {
-            self.core.physics.register_static_trimesh(
+            physics_of_mut(&mut self.core.resources).register_static_trimesh(
                 c.entity,
                 c.vertices,
                 c.triangles,
@@ -299,10 +309,10 @@ impl PlayerApp {
             self.scene.post_process.as_ref(),
         );
 
-        // The terrain `bind_scene` loaded: its collider, and its heights for
-        // scripts
-        if let Some(loaded) = bound.terrain {
-            register_terrain_collider(&mut self.core.physics, &loaded);
+        // The terrain loaded after the bind: its collider, and its heights
+        // for scripts
+        if let Some(loaded) = terrain {
+            register_terrain_collider(physics_of_mut(&mut self.core.resources), &loaded);
             self.terrain = Some((loaded.terrain, loaded.config));
         }
         bound.grass.map(|grass| LoadedGrassInfo {
@@ -319,7 +329,7 @@ impl PlayerApp {
         // Each system's start is a frame note (#1092): a transition's
         // hitch names them, and a load report times them
         let physics = frame_notes::timed(NoteKind::PhysicsBuild, String::new, || {
-            self.core.physics.initialize(&mut self.core.world)
+            physics_of_mut(&mut self.core.resources).initialize(&mut self.core.world)
         })
         .context("Failed to initialize physics");
         match (physics, entry) {
@@ -327,6 +337,10 @@ impl PlayerApp {
             (Err(e), SceneEntry::Transition) => tracing::warn!("{e:#}"),
             (Ok(()), _) => {}
         }
+        // Who the scene is played as, before anything reads it: the cursor
+        // and the controls line at the end of the entry, `on_init`'s
+        // interactables (ADR 0138, #1614)
+        self.core.enter_player_view();
 
         let audio_note = frame_notes::begin(NoteKind::AudioLoad, String::new);
         load_audio_from_world(
@@ -407,7 +421,7 @@ impl PlayerApp {
             let _state_scope = self.core.script.state_scope(
                 &mut self.core.state_machine,
                 &mut self.core.store,
-                &self.core.physics,
+                physics_of(&self.core.resources),
             );
             self.core
                 .script

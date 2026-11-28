@@ -9,6 +9,10 @@ description = "GPU-instanced particle system for Flint"
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }
 flint-runtime = { workspace = true }
+# The plain data the renderer draws (#1615, ADR 0138 decision 5): the GPU
+# instance, the blend and an emitter's draw are flint-render's types, which
+# this crate builds. The allowed direction: a package on the kernel.
+flint-render = { workspace = true }
 toml = { workspace = true }
 bytemuck = { workspace = true }
 serde = { workspace = true }

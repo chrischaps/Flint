@@ -165,7 +165,7 @@ fn every_main_and_shadow_pipeline_has_a_name_of_its_own() {
         }
         main.push(MainPipe::Echo { lighten: woozy });
     }
-    main.extend(flint_particles::ParticleBlendMode::ALL.map(MainPipe::Particles));
+    main.extend(crate::particles::ParticleBlendMode::ALL.map(MainPipe::Particles));
     let mut casters = Vec::new();
     for woozy in bools {
         for double_sided in bools {

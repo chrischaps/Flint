@@ -49,6 +49,7 @@ pub mod orbit_controller;
 pub mod palette;
 pub mod panels;
 pub(crate) mod particle_pipeline;
+pub mod particles;
 pub mod pass_knobs;
 mod pipeline;
 pub mod pipeline_cache;
@@ -86,6 +87,9 @@ pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
 pub use context::{resolve_present_mode, PresentOptions, RenderContext, RenderError, Vsync};
 pub use debug::{DebugMode, DebugState};
+/// A terrain's chunks and its grass, as the renderer draws them: plain data
+/// in flint-geometry, so the renderer links no terrain crate (#1615).
+pub use flint_geometry::{grass::GrassConfig, terrain_chunk::TerrainChunk};
 pub use frustum::Frustum;
 pub use glyph_atlas::{
     EdgeGlyphs, GlyphAtlas, GlyphError, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphAtlas, RampMap,
@@ -102,7 +106,7 @@ pub use ground_fog::GroundFog;
 pub use headless::HeadlessContext;
 pub use ocean_pipeline::{OceanTint, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
-pub use particle_pipeline::{ParticleBlendMode, ParticleDrawData, ParticleInstance};
+pub use particles::{ParticleBlendMode, ParticleDraw, ParticleInstance};
 pub use pass_knobs::PassKnobs;
 pub use pipeline::LightUniforms;
 pub use postprocess::{post_process_config_from_def, PostProcessConfig, HDR_FORMAT};
@@ -117,8 +121,8 @@ pub use render_stats::{format_count, RenderStats};
 pub use scene_renderer::{
     load_grass_ground_in, load_scene_grass_ground, load_scene_particle_textures,
     load_scene_splines, BoundGrass, BoundScene, DrawControls, DrawLimit, DrawTimesRead, FrameHost,
-    FrameInputs, HeldFrameCapture, LightingLevers, LoadedGrassGround, LoadedSplines, LoadedTerrain,
-    LodSettings, RendererConfig, SceneBinding, SceneRenderer, SplineCollider, SteppedPass, View2d,
+    FrameInputs, HeldFrameCapture, LightingLevers, LoadedGrassGround, LoadedSplines, LodSettings,
+    RendererConfig, SceneBinding, SceneRenderer, SplineCollider, SteppedPass, View2d,
     DEFAULT_CLEAR_COLOR,
 };
 /// The most bones one skinned mesh's buffer holds.

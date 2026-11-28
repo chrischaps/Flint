@@ -2216,7 +2216,7 @@ impl StyleMaskPass {
             pass.set_bind_group(1, pp.instance_bind_group(), &[]);
             let mut additive = None;
             for d in particles.draws {
-                let is_additive = d.blend == flint_particles::ParticleBlendMode::Additive;
+                let is_additive = d.blend == crate::particles::ParticleBlendMode::Additive;
                 if additive != Some(is_additive) {
                     pass.set_pipeline(if is_additive {
                         &pipelines.additive

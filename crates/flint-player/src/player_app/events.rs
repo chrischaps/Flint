@@ -428,13 +428,13 @@ impl Escape {
     }
 }
 
-/// Whether a left click catches the cursor for mouse look: in a scene with
-/// a first-person player, while the cursor is free and the game state runs
-/// physics. A pause menu's state stops physics (`menu::toggle_pause` pushes
+/// Whether a left click catches the cursor for mouse look: in a scene whose
+/// player looks with the mouse (`PlayerView::mouse_look`), while the cursor
+/// is free and the game state runs physics. A pause menu's state stops physics (`menu::toggle_pause` pushes
 /// `paused`), and then a click is the menu's: catching the cursor there
 /// would hide the pointer over the buttons it was meant for (#1228).
-pub(crate) fn click_captures(cursor_captured: bool, has_player: bool, physics_runs: bool) -> bool {
-    !cursor_captured && has_player && physics_runs
+pub(crate) fn click_captures(cursor_captured: bool, mouse_look: bool, physics_runs: bool) -> bool {
+    !cursor_captured && mouse_look && physics_runs
 }
 
 /// The axes read again when the window regains focus.
@@ -1075,7 +1075,7 @@ impl PlayerApp {
             .runs(flint_runtime::state::PHYSICS);
         if click_captures(
             self.focus.cursor_captured,
-            self.core.physics.has_player_entity(),
+            self.core.player_view().mouse_look,
             physics_runs,
         ) && state == ElementState::Pressed
             && button == MouseButton::Left

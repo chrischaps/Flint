@@ -3759,12 +3759,20 @@ fn a_styled_terrain_is_masked_around_the_props_on_it() {
         SIZE,
         RendererConfig::default(),
     );
-    // Binding the scene loads its terrain and names it for the mask (#739)
+    // Binding the scene and then its terrain loads the terrain and names it
+    // for the mask (#739; the terrain package's since #1615)
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/scenes/style_terrain.scene.toml");
     let binding = flint_render::SceneBinding::for_scene(&fixtures);
-    let bound = renderer.bind_scene(gpu.device, gpu.queue, &world, &binding);
-    assert_eq!(bound.terrain.map(|t| t.entity), Some(ground));
+    let mut bound = renderer.bind_scene(gpu.device, gpu.queue, &world, &binding);
+    let terrain = flint_terrain::scene::bind_terrain(
+        &mut renderer,
+        gpu.device,
+        gpu.queue,
+        &world,
+        &mut bound,
+    );
+    assert_eq!(terrain.map(|t| t.entity), Some(ground));
     let plain = gpu.frame(&mut renderer, &world);
 
     set_entity_style(
