@@ -1217,8 +1217,8 @@ mod tests {
         assert!(line.contains("flint-player/debug-hud"), "{line}");
         assert!(line.contains("flint-cli/procgen"), "{line}");
         // The build options are kept, the `packages` bundle is not one
-        assert_eq!(plan.player.options, ["audio", "gamepad", "frame-history"]);
-        assert_eq!(plan.cli.options, ["audio", "gamepad", "dialogs"]);
+        assert_eq!(plan.player.options, ["sound", "gamepad", "frame-history"]);
+        assert_eq!(plan.cli.options, ["sound", "gamepad", "dialogs"]);
         assert_eq!(
             plan.left_out,
             ["ai", "living", "music", "rhythm", "vehicle"]
@@ -1338,6 +1338,7 @@ mod tests {
             player,
             [
                 "animation",
+                "audio",
                 "debug-hud",
                 "flipbook",
                 "living",
@@ -1358,6 +1359,7 @@ mod tests {
             [
                 "ai",
                 "animation",
+                "audio",
                 "debug-hud",
                 "flipbook",
                 "living",

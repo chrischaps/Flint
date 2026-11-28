@@ -84,7 +84,7 @@ Changelog: none (reason)
 
 ## Architecture
 
-The project is a 41-member Cargo workspace: 21 crates under `crates/`, 19 in their packages' folders (`packages/<name>/crates/`: ai's three, animation's one, flipbook's one, rig's one, music's one, procgen's two, rhythm's three, living's two, debug-hud's one, vehicle's one, particles' one, physics' one, terrain's one), and the `tools/arch-analyzer` static analyzer. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
+The project is a 41-member Cargo workspace: 19 crates under `crates/`, 21 in their packages' folders (`packages/<name>/crates/`: ai's three, animation's one, audio's two, flipbook's one, rig's one, music's one, procgen's two, rhythm's three, living's two, debug-hud's one, vehicle's one, particles' one, physics' one, terrain's one), and the `tools/arch-analyzer` static analyzer. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
 
 - Dependencies flow in one direction (binary crates at the top, `flint-core` at the bottom)
 - Components are dynamic `toml::Value`, not Rust types --- schemas are runtime data

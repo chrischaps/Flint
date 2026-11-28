@@ -147,8 +147,9 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
             c.requests.post.get("fog_color"),
             Some(flint_schema::post_effects::PostValue::Rgb([1.0, 0.0, 0.0]))
         );
-        // The sound (the velocity is the physics package's, #1617)
-        assert_eq!(c.commands.len(), 1, "the sound");
+        // No command: the velocity is the physics package's (#1617), the
+        // sound the audio package's (#1619)
+        assert!(c.commands.is_empty());
     }
     // A fractional float is not an int
     let err = eval::<()>(&engine, &mut world, "is_mouse_pressed(0.5)").unwrap_err();

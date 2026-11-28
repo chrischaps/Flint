@@ -29,6 +29,7 @@
   "packages": [
     ["engine", "kernel"],
     ["animation", "standard"],
+    ["audio", "standard"],
     ["debug-hud", "standard"],
     ["flipbook", "standard"],
     ["particles", "standard"],

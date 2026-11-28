@@ -1851,6 +1851,8 @@ mod tests {
         "\n[wooze]\namplitude = 0.5\n\n[entities.oak]\nliving_prop = { lineage_seed = 3 }\n\n\
                         [entities.elm]\nliving_prop = { lineage_seed = 4 }\n";
     const ANIMATION: &str = "engine/packages/animation/schemas";
+    // A standard package (#1619): in unless a list says `audio = false`
+    const AUDIO: &str = "engine/packages/audio/schemas";
     const FLIPBOOK: &str = "engine/packages/flipbook/schemas";
     const RIG: &str = "engine/packages/rig/schemas";
     const LIVING: &str = "engine/packages/living/schemas";
@@ -1883,6 +1885,7 @@ mod tests {
             [
                 "engine/schemas",
                 ANIMATION,
+                AUDIO,
                 FLIPBOOK,
                 LIVING,
                 PARTICLES,
@@ -1905,6 +1908,7 @@ mod tests {
             [
                 "engine/schemas",
                 ANIMATION,
+                AUDIO,
                 FLIPBOOK,
                 PARTICLES,
                 PHYSICS,
@@ -1915,6 +1919,7 @@ mod tests {
         assert!(!gathered.files.keys().any(|k| {
             k.starts_with("engine/packages/")
                 && !k.starts_with(&format!("{ANIMATION}/"))
+                && !k.starts_with(&format!("{AUDIO}/"))
                 && !k.starts_with(&format!("{FLIPBOOK}/"))
                 && !k.starts_with(&format!("{RIG}/"))
                 && !k.starts_with(&format!("{PARTICLES}/"))
@@ -1929,6 +1934,7 @@ mod tests {
         let feature = |k: &String| {
             k.contains("packages/")
                 && !k.contains("packages/animation/")
+                && !k.contains("packages/audio/")
                 && !k.contains("packages/flipbook/")
                 && !k.contains("packages/rig/")
                 && !k.contains("packages/particles/")
@@ -2001,6 +2007,7 @@ mod tests {
             [
                 "engine/schemas",
                 ANIMATION,
+                AUDIO,
                 FLIPBOOK,
                 LIVING,
                 MUSIC,
