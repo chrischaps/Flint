@@ -526,10 +526,11 @@ mod tests {
             ["procgen = \"*\"", "living = \"*\""]
         );
         // Procgen is used, so it isn't named to leave out; nothing scanned
-        // animates, so animation and flipbook are (#1620)
+        // animates (#1620) or emits (#1622), so animation, flipbook and
+        // particles are
         assert_eq!(
             left_out_lines(&engine_packages(), &found, None),
-            ["animation", "flipbook"]
+            ["animation", "flipbook", "particles"]
         );
     }
 
@@ -544,7 +545,7 @@ mod tests {
         assert!(found.is_empty(), "{found:?}");
         assert_eq!(
             left_out_lines(&packages, &found, None),
-            ["animation", "flipbook", "procgen"]
+            ["animation", "flipbook", "particles", "procgen"]
         );
         assert_eq!(
             left_out_line("procgen"),
@@ -555,7 +556,8 @@ mod tests {
         assert!(!seen_by_scan(debug_hud));
 
         // A line [packages] already has, or a listed package that needs
-        // procgen, keeps it from being named
+        // procgen, keeps it from being named; particles, which nothing
+        // there needs, is named still (#1622)
         let list = |lines: &[(&str, Wanted)]| PackageList {
             file: PathBuf::from("flint.toml"),
             entries: lines
@@ -583,7 +585,7 @@ mod tests {
         // A listed package that needs nothing standard leaves it named
         assert_eq!(
             left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
-            ["animation", "flipbook", "procgen"]
+            ["animation", "flipbook", "particles", "procgen"]
         );
     }
 }

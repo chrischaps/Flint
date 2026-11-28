@@ -102,7 +102,7 @@ fn checkout_of(scene: &std::path::Path) -> (Option<String>, Option<bool>) {
 pub(super) struct ReplayFacts<'a> {
     pub inputs: flint_render::frame_replay::FrameInputsState,
     /// The particles the frame drew, when it drew any.
-    pub particles: Option<&'a flint_particles::ParticleSync>,
+    pub particles: Option<&'a dyn flint_render::ParticleSource>,
 }
 
 /// What [`arm`] changed, for [`write`] to put back.

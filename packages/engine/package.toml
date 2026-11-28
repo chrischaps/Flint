@@ -2,9 +2,10 @@
 #
 # Every game links this package. It holds the kernel and the standard
 # packages that have no Cargo feature until Phase 3 (physics, audio,
-# particles, terrain; animation left with #1620), and the render features
-# that live inside flint-render until Phase 4 (ocean, grass, stylize, panels). Each list is
-# grouped by the package it will become, so the split is a move of lines.
+# terrain; animation left with #1620, particles with #1622), and the
+# render features that live inside flint-render until Phase 4 (ocean,
+# grass, stylize, panels). Each list is grouped by the package it will
+# become, so the split is a move of lines.
 # `flint package list` reads this file; a test in flint-cli holds every
 # crate, schema, script module and command of the tree to one manifest.
 
@@ -27,8 +28,6 @@ crates = [
     "flint-physics",
     # audio
     "flint-audio", "flint-audio-worklet",
-    # particles
-    "flint-particles",
     # terrain
     "flint-terrain",
 ]
@@ -43,8 +42,6 @@ components = [
     "collider", "rigidbody", "character_controller", "joint",
     # audio
     "audio_source", "audio_trigger",
-    # particles
-    "particle_emitter", "particle_effect",
     # terrain
     "terrain",
     # ocean
@@ -79,8 +76,6 @@ script_modules = [
     "physics", "physics_2d", "nav",
     # audio
     "audio",
-    # particles
-    "particle",
     # terrain
     "terrain",
     # ocean

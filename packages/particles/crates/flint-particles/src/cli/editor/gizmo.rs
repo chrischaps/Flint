@@ -3,7 +3,7 @@
 
 use std::hash::{Hash, Hasher};
 
-use flint_particles::{effect::ShapeField, EmitterDef, ParticleEffect, ResolveContext, ShapeDef};
+use crate::{effect::ShapeField, EmitterDef, ParticleEffect, ResolveContext, ShapeDef};
 use flint_render::{Mesh, Vertex};
 
 use super::EmitterView;
@@ -96,16 +96,16 @@ fn emitter_lines(em: &EmitterDef, color: [f32; 4], mesh: &mut Mesh) {
     };
     let origin = cfg.shape_offset;
     let dir = normalize(cfg.direction);
-    let (right, up, _) = flint_particles::rand::perpendicular_basis(dir);
+    let (right, up, _) = crate::rand::perpendicular_basis(dir);
 
     match cfg.shape {
-        flint_particles::EmissionShape::Point => {
+        crate::EmissionShape::Point => {
             let s = 0.12;
             for axis in [[s, 0.0, 0.0], [0.0, s, 0.0], [0.0, 0.0, s]] {
                 line(mesh, sub(origin, axis), add(origin, axis), color);
             }
         }
-        flint_particles::EmissionShape::Sphere { radius } => {
+        crate::EmissionShape::Sphere { radius } => {
             circle(
                 mesh,
                 origin,
@@ -131,7 +131,7 @@ fn emitter_lines(em: &EmitterDef, color: [f32; 4], mesh: &mut Mesh) {
                 color,
             );
         }
-        flint_particles::EmissionShape::Cone { radius, angle } => {
+        crate::EmissionShape::Cone { radius, angle } => {
             let base_r = radius.max(0.02);
             circle(mesh, origin, right, up, base_r, color);
             // Silhouette of the emission cone: the disc edge grows by tan(angle)
@@ -148,10 +148,9 @@ fn emitter_lines(em: &EmitterDef, color: [f32; 4], mesh: &mut Mesh) {
                 line(mesh, p0, p1, color);
             }
         }
-        flint_particles::EmissionShape::Box { extents } => {
-            let (u, v, w) =
-                flint_particles::sim::oriented_basis(cfg.shape_axis_u, cfg.shape_axis_v)
-                    .unwrap_or(([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]));
+        crate::EmissionShape::Box { extents } => {
+            let (u, v, w) = crate::sim::oriented_basis(cfg.shape_axis_u, cfg.shape_axis_v)
+                .unwrap_or(([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]));
             let corner = |sx: f32, sy: f32, sz: f32| {
                 add(
                     origin,
@@ -251,5 +250,5 @@ fn scale(a: [f32; 3], s: f32) -> [f32; 3] {
     [a[0] * s, a[1] * s, a[2] * s]
 }
 fn normalize(v: [f32; 3]) -> [f32; 3] {
-    flint_particles::rand::normalize(v)
+    crate::rand::normalize(v)
 }

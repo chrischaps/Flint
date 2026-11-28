@@ -1342,6 +1342,7 @@ mod tests {
                 "flipbook",
                 "living",
                 "music",
+                "particles",
                 "procgen",
                 "rhythm",
                 "vehicle"
@@ -1358,6 +1359,7 @@ mod tests {
                 "flipbook",
                 "living",
                 "music",
+                "particles",
                 "procgen",
                 "rhythm",
                 "vehicle"

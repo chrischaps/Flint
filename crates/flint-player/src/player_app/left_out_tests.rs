@@ -31,6 +31,10 @@ const MANIFESTS: &[(&str, &str)] = &[
         include_str!("../../../../packages/music/package.toml"),
     ),
     (
+        "particles",
+        include_str!("../../../../packages/particles/package.toml"),
+    ),
+    (
         "procgen",
         include_str!("../../../../packages/procgen/package.toml"),
     ),

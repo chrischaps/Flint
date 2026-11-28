@@ -45,6 +45,7 @@ pub mod hud;
 mod launch;
 pub mod note;
 pub mod panels;
+pub mod particles;
 mod registry;
 mod stage;
 mod subsystem;

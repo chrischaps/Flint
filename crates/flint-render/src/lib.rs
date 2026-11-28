@@ -106,7 +106,7 @@ pub use ground_fog::GroundFog;
 pub use headless::HeadlessContext;
 pub use ocean_pipeline::{OceanTint, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
-pub use particles::{ParticleBlendMode, ParticleDraw, ParticleInstance};
+pub use particles::{ParticleBlendMode, ParticleDraw, ParticleInstance, ParticleSource};
 pub use pass_knobs::PassKnobs;
 pub use pipeline::LightUniforms;
 pub use postprocess::{post_process_config_from_def, PostProcessConfig, HDR_FORMAT};
