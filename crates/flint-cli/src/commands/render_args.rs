@@ -70,8 +70,12 @@ pub struct RenderArgs {
     /// lists every key with its kind and range), or `<style>.<key>=v`, a key
     /// of a style's table, leaving the style on or off as it was
     /// (`ascii.cell=12`; `--style` turns a style on, `--list-styles` lists
-    /// its keys). The keys `--sweep` takes, one value each. Over the scene
-    /// and the look, in the order given; --style applies after
+    /// its keys), or `<entity>.<component>.<field>=v`, one field of an
+    /// entity's component, written before the scene is bound
+    /// (`island.terrain.grass.density=60`, `sun.light.direction=0.8,0.1,-0.3`;
+    /// `flint schema <component>` lists its fields). The keys `--sweep`
+    /// takes, one value each. Over the scene and the look, in the order
+    /// given; --style applies after
     #[arg(long, value_name = "KEY=VALUE", value_parser = super::render_post::parse_set,
           action = clap::ArgAction::Append, help_heading = POST)]
     pub set: Vec<super::render_post::Set>,
@@ -460,7 +464,10 @@ pub struct SweepArgs {
     /// `wooze.glide=0,0.5,1` (#216: .amplitude, .step, .glide, .jitter and
     /// .preset; it sets the scene's global value, and zones still apply), or
     /// `living.echoes.spread=0,0.9,1.8` (#531: .count, .spread and .alpha,
-    /// each column drawing what the scene would with that `[living] echoes`).
+    /// each column drawing what the scene would with that `[living] echoes`),
+    /// or an entity's field, `island.terrain.grass.density=10,30,60` (#1699:
+    /// `<entity>.<component>.<field>`, a world a column, so what the scene
+    /// builds from it at load, a terrain's grass, differs too).
     /// --width/--height size each cell. Give it twice for a grid (#358):
     /// the first key across, the second down
     #[arg(long, value_parser = super::sweep::parse_sweep, action = clap::ArgAction::Append,
