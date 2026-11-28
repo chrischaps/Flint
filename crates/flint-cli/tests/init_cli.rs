@@ -787,6 +787,18 @@ fn subtree_prints_the_git_commands_and_works_once_the_engine_is_there() {
         &repo().join("scripts/lib"),
         &game.join("engine/scripts/lib"),
     );
+    // And each package's manifest and schemas, which a subtree brings
+    // beside the engine's: the walk's bodies are the physics package's
+    // (#1617)
+    for package in std::fs::read_dir(repo().join("packages")).unwrap() {
+        let from = package.unwrap().path();
+        let to = game.join("engine/packages").join(from.file_name().unwrap());
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::copy(from.join("package.toml"), to.join("package.toml")).unwrap();
+        if from.join("schemas").is_dir() {
+            copy_dir(&from.join("schemas"), &to.join("schemas"));
+        }
+    }
     for step in steps.iter().filter(|s| s.starts_with("flint ")) {
         let _ = run_line(&game, step);
     }

@@ -194,7 +194,6 @@ impl PlayerApp {
             schema_dirs: Default::default(),
             packages_held: false,
             schemas: Default::default(),
-            terrain: None,
             scene_binding: None,
             particles_render_enabled: true,
             stats: Default::default(),
@@ -926,45 +925,6 @@ impl PlayerApp {
         );
         self.hud.egui_winit = Some(egui_winit);
         self.hud.egui_renderer = Some(egui_renderer);
-    }
-
-    /// Update the terrain height callback on the script system.
-    /// Call after terrain loading or clearing.
-    pub(super) fn update_terrain_height_fn(&mut self) {
-        if let Some((ref terrain, ref config)) = self.terrain {
-            let heights = terrain.heightmap.clone_heights();
-            let hm_w = terrain.heightmap.width;
-            let hm_d = terrain.heightmap.depth;
-            let world_w = config.width;
-            let world_d = config.depth;
-            let height_scale = config.height_scale;
-            self.core
-                .script
-                .set_terrain_height_fn(Some(Box::new(move |x: f32, z: f32| {
-                    // Convert world coords to normalized UV
-                    let u = x / world_w;
-                    let v = z / world_d;
-                    // Bilinear sample from heights array
-                    let fx = u * (hm_w as f32 - 1.0);
-                    let fz = v * (hm_d as f32 - 1.0);
-                    let ix = (fx as u32).min(hm_w - 2);
-                    let iz = (fz as u32).min(hm_d - 2);
-                    let tx = fx - ix as f32;
-                    let tz = fz - iz as f32;
-                    let idx = |col: u32, row: u32| -> f32 { heights[(row * hm_w + col) as usize] };
-                    let h00 = idx(ix, iz);
-                    let h10 = idx(ix + 1, iz);
-                    let h01 = idx(ix, iz + 1);
-                    let h11 = idx(ix + 1, iz + 1);
-                    let h = h00 * (1.0 - tx) * (1.0 - tz)
-                        + h10 * tx * (1.0 - tz)
-                        + h01 * (1.0 - tx) * tz
-                        + h11 * tx * tz;
-                    h * height_scale
-                })));
-        } else {
-            self.core.script.set_terrain_height_fn(None);
-        }
     }
 
     pub(super) fn configure_input_bindings(&mut self) -> Result<()> {

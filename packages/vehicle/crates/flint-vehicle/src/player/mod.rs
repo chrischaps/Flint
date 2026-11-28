@@ -8,7 +8,7 @@
 //! |---|---|
 //! | `scene_loaded` | one [`model::Vehicle`] per `vehicle`, its wheels its children with `vehicle_wheel` |
 //! | `Stage::PreScripts` | `vehicle_state` and each wheel's state from the last step; a player's driving input from the actions |
-//! | `scene_loaded` | the vehicle with a `chase_camera` is the kernel's player (`PlayerView`) |
+//! | the builder (`for_scene`) | the vehicle with a `chase_camera` is the kernel's player (`PlayerView`) |
 //! | `fixed_update`, each step | the chase camera's step for the step before, if this frame ran one; the tuning and `vehicle_input` read, Rapier's raycast wheels updated, the assists and the push applied |
 //! | `Stage::View` | the chase camera's step for the frame's last step, then the eye (`PlayerView::eye`); its modifiers back to neutral |
 //! | `Stage::Physics` | the wheel children's poses; the modifiers back to neutral |

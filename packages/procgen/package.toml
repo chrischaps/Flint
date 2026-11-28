@@ -25,6 +25,12 @@ cli = "flint-procgen-cli"
 [rust.devices]
 dialogs = ["flint-procgen-cli/dialogs"]
 
+# With the terrain package listed too (#1623): the `terrain_v1` generator,
+# which `flint gen x.terrain.toml` runs (#1168), wraps terrain's bake. The
+# launchers turn the feature on when a game lists both.
+[with.terrain]
+features = ["flint-procgen/terrain"]
+
 [provides]
 crates = ["flint-procgen", "flint-procgen-cli"]
 # `flint edit` on a `.procgen.toml` opens its previewers, the two hidden

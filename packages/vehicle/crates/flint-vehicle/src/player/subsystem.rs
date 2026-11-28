@@ -39,7 +39,12 @@ pub fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     if ctx.world.entities_with_component(VEHICLE).is_empty() {
         return None;
     }
-    Some(Box::new(Vehicles::new(ctx.world)))
+    let vehicles = Vehicles::new(ctx.world);
+    // The chased vehicle is who the game is played as, before the scripts'
+    // `on_init` and the first frame (the cursor and the controls line read
+    // it at the entry), as physics' builder says its walker (#1617)
+    vehicles.enter_view(ctx.resources);
+    Some(Box::new(vehicles))
 }
 
 /// The neutral modifiers, written back after each frame's steps.
@@ -348,12 +353,6 @@ impl Subsystem for Vehicles {
 
     fn script_modules(&self) -> &[&'static str] {
         &[super::module::MODULE]
-    }
-
-    /// The chased vehicle is who the game is played as, before the first
-    /// frame (the cursor and the controls line read it at the entry).
-    fn scene_loaded(&mut self, ctx: &mut SceneCtx) {
-        self.enter_view(ctx.resources);
     }
 
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {

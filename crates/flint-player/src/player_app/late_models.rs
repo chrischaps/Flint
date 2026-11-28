@@ -132,7 +132,16 @@ impl PlayerApp {
 
         // The asset makers before the file (procgen, for the names it has a
         // spec of), each mesh's triangles kept for the colliders naming it
-        for maker in self.core.asset_makers() {
+        let makers = self.core.asset_makers();
+        let mut made = if makers.is_empty() {
+            Default::default()
+        } else {
+            self.core
+                .resources
+                .remove::<flint_package::surfaces::MadeTriangles>()
+                .unwrap_or_default()
+        };
+        for &maker in &makers {
             maker.spawned(
                 &mut flint_package::assets::MakeCtx {
                     world: &mut self.core.world,
@@ -144,7 +153,7 @@ impl PlayerApp {
                         device,
                         queue,
                     },
-                    colliders: &mut self.core.collider_sources,
+                    colliders: &mut made,
                     resources: &mut self.core.resources,
                     registry: crate::packages::registry(),
                     packages: self.core.packages.as_ref(),
@@ -152,6 +161,9 @@ impl PlayerApp {
                 },
                 ids,
             );
+        }
+        if !makers.is_empty() {
+            self.core.resources.insert(made);
         }
 
         let wanted = model_loader::model_assets_of(&self.core.world, ids);

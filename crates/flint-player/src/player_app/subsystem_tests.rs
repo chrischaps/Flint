@@ -150,7 +150,7 @@ fn a_scene_with_no_subsystem_has_none() {
         assert!(
             app.core.subsystems.own_names().is_empty(),
             "{:?}",
-            app.core.subsystems.names()
+            app.core.subsystems.own_names()
         );
     });
 }
@@ -481,7 +481,7 @@ fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {
         assert!(
             app.core.subsystems.own_names().is_empty(),
             "{:?}",
-            app.core.subsystems.names()
+            app.core.subsystems.own_names()
         );
     });
 }

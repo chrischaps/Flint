@@ -268,10 +268,11 @@ fn package_used_on_the_woozy_grove_reports_living_and_procgen() {
         .iter()
         .map(|p| p["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["procgen", "living"], "{doc:#}");
+    // Its bodies are the physics package's (#1617)
+    assert_eq!(names, ["physics", "procgen", "living"], "{doc:#}");
     assert_eq!(
         doc["lines"],
-        serde_json::json!(["procgen = \"*\"", "living = \"*\""])
+        serde_json::json!(["physics = \"*\"", "procgen = \"*\"", "living = \"*\""])
     );
     let text = stdout(&flint(&game, &["package", "used"]));
     assert!(
@@ -292,7 +293,7 @@ fn package_used_on_the_woozy_grove_reports_living_and_procgen() {
     assert!(o.status.success(), "{}", said(&o));
     let manifest = std::fs::read_to_string(game.join("flint.toml")).unwrap();
     assert!(
-        manifest.contains("[packages]\nprocgen = \"*\"\nliving = \"*\"\n"),
+        manifest.contains("[packages]\nphysics = \"*\"\nprocgen = \"*\"\nliving = \"*\"\n"),
         "{manifest}"
     );
     // init's comment above the table is kept
@@ -368,25 +369,32 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     let o = flint(&game, &["package", "used", "--json"]);
     assert!(o.status.success(), "{}", said(&o));
     let doc = json(&o);
-    assert_eq!(doc["lines"], serde_json::json!([]), "{doc:#}");
-    // The blank template animates nothing (#1620) and has no emitters
-    // (#1622) either, so animation, flipbook and particles are named too
+    // Its ground is a body: physics is the one package used (#1617)
+    assert_eq!(
+        doc["lines"],
+        serde_json::json!(["physics = \"*\""]),
+        "{doc:#}"
+    );
+    // The blank template animates nothing (#1620), has no emitters (#1622)
+    // and no terrain (#1623), so animation, flipbook, particles and terrain
+    // are named
     assert_eq!(
         doc["leave_out"],
         serde_json::json!([
             { "name": "animation", "line": "animation = false" },
             { "name": "flipbook", "line": "flipbook = false" },
             { "name": "particles", "line": "particles = false" },
-            { "name": "procgen", "line": "procgen = false" }
+            { "name": "procgen", "line": "procgen = false" },
+            { "name": "terrain", "line": "terrain = false" }
         ]),
         "{doc:#}"
     );
 
     let text = stdout(&flint(&game, &["package", "used"]));
-    assert!(text.contains("no package but the kernel is used"), "{text}");
     assert!(
-        text.contains("[packages]\nanimation = false   # nothing scanned uses it\n")
-            && text.contains("\nprocgen = false   # nothing scanned uses it\n"),
+        text.contains(
+            "[packages]\nphysics = \"*\"\nanimation = false   # nothing scanned uses it\n"
+        ) && text.contains("\nprocgen = false   # nothing scanned uses it\n"),
         "{text}"
     );
     assert!(!text.contains("debug-hud"), "{text}");
@@ -405,7 +413,8 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     // Added by hand, the line is kept and nothing more is named
     set_packages(
         &game,
-        "procgen = false\nanimation = false\nflipbook = false\nparticles = false\n",
+        "procgen = false\nanimation = false\nflipbook = false\nparticles = false\n\
+         terrain = false\n",
     );
     let doc = json(&flint(&game, &["package", "used", "--json"]));
     assert_eq!(doc["leave_out"], serde_json::json!([]), "{doc:#}");
@@ -413,7 +422,8 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     assert!(o.status.success(), "{}", said(&o));
     assert!(
         stdout(&o).contains(
-            "left out  animation, flipbook, particles, procgen, ai, living, music, rhythm"
+            "left out  animation, flipbook, particles, procgen, terrain, ai, living, music, rhythm, \
+             vehicle"
         ),
         "{}",
         said(&o)
@@ -459,11 +469,19 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
         .collect();
     assert_eq!(
         packages,
-        ["animation", "debug-hud", "flipbook", "particles", "procgen"],
+        [
+            "animation",
+            "debug-hud",
+            "flipbook",
+            "particles",
+            "physics",
+            "procgen",
+            "terrain"
+        ],
         "{doc:#}"
     );
     // The launcher (#1552): the kernel, then the packages with a part in
-    // the player (debug-hud, animation, flipbook and particles are
+    // the player (debug-hud, animation, flipbook, particles and terrain are
     // standard: in unless set false)
     assert_eq!(
         doc["launcher"]["packages"],
@@ -473,7 +491,9 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
             "debug-hud",
             "flipbook",
             "particles",
-            "procgen"
+            "physics",
+            "procgen",
+            "terrain"
         ]),
         "{doc:#}"
     );
@@ -491,7 +511,8 @@ fn build_dry_run_names_a_launcher_holding_only_the_listed_package() {
     let game = game("build_launcher");
     set_packages(
         &game,
-        "procgen = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false\nparticles = false\n",
+        "procgen = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false\n\
+         particles = false\nphysics = false\nterrain = false\n",
     );
     let o = flint(&game, &["build", "--dry-run"]);
     assert!(o.status.success(), "{}", said(&o));
@@ -512,6 +533,79 @@ fn build_dry_run_names_a_launcher_holding_only_the_listed_package() {
     let line = doc["commands"][0].as_str().unwrap();
     assert!(line.contains("flint-player/procgen"), "{line}");
     assert!(!line.contains("debug-hud"), "{line}");
+}
+
+/// #1623's done-when: in a project with `terrain = false`, a scene with a
+/// terrain and a script that asks its height are each `unlisted-package`
+/// naming `terrain`, and the build it plans leaves the terrain package out
+/// of both launchers, so neither links `flint-terrain` (the CI headless
+/// job's `cargo tree` holds the crate side).
+#[test]
+fn a_project_that_leaves_terrain_out_names_it_and_builds_without_it() {
+    let game = game("terrain_out");
+    std::fs::write(
+        game.join("scenes/hills.scene.toml"),
+        "[scene]\nname = \"hills\"\n\n[entities.ground]\narchetype = \"terrain\"\n\n\
+         [entities.ground.transform]\nposition = [0.0, 0.0, 0.0]\n\n\
+         [entities.ground.terrain]\nheightmap = \"hills.png\"\n\n\
+         [entities.walker.script]\nsource = \"walk.rhai\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        game.join("scripts/walk.rhai"),
+        "fn on_update() {\n    let y = terrain_height(1.0, 2.0);\n}\n",
+    )
+    .unwrap();
+    set_packages(&game, "living = \"*\"\nterrain = false\n");
+
+    let o = flint(&game, &["check", "--json"]);
+    assert_eq!(o.status.code(), Some(1), "{}", said(&o));
+    let doc = json(&o);
+    let unlisted = with_code(&doc, "unlisted-package");
+    let ground = unlisted
+        .iter()
+        .find(|d| d["component"] == "terrain")
+        .unwrap_or_else(|| panic!("{doc:#}"));
+    assert_eq!(ground["entity"], "ground");
+    assert_eq!(ground["file"], "scenes/hills.scene.toml");
+    assert!(
+        ground["hint"]
+            .as_str()
+            .unwrap()
+            .starts_with("remove `terrain = false` from [packages] in "),
+        "{ground:#}"
+    );
+    let call = unlisted
+        .iter()
+        .find(|d| d["file"] == "scripts/walk.rhai")
+        .unwrap_or_else(|| panic!("{doc:#}"));
+    assert!(
+        call["message"]
+            .as_str()
+            .unwrap()
+            .contains("`terrain_height`"),
+        "{call:#}"
+    );
+
+    // Its build: neither launcher has the package's feature
+    let doc = json(&flint(&game, &["build", "--dry-run", "--json"]));
+    for launcher in ["flint-player", "flint-cli"] {
+        let packages: Vec<&str> = doc["features"][launcher]["packages"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{launcher}: {doc:#}"))
+            .iter()
+            .map(|f| f.as_str().unwrap())
+            .collect();
+        assert!(!packages.contains(&"terrain"), "{launcher}: {doc:#}");
+    }
+    let line = doc["commands"][0].as_str().unwrap();
+    assert!(!line.contains("terrain"), "{line}");
+
+    // Listing it again: the terrain and the call are the package's
+    set_packages(&game, "living = \"*\"\n");
+    let doc = json(&flint(&game, &["check", "--json"]));
+    assert!(with_code(&doc, "unlisted-package").is_empty(), "{doc:#}");
+    assert!(with_code(&doc, "unknown-component").is_empty(), "{doc:#}");
 }
 
 /// The default build has every package, so a project listing `living`

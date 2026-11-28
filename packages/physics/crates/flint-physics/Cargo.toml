@@ -1,0 +1,47 @@
+[package]
+name = "flint-physics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The physics package (#1617): Rapier 3D bodies, colliders and joints on Flint's fixed step"
+
+[features]
+default = []
+# Its player part (`player::PACKAGE`, ADR 0138, #1617): physics' state as
+# the run's resource, the subsystem every scene has, and the `physics`,
+# `physics_2d` and `nav` script modules. flint-player's generated `physics`
+# feature turns it on.
+player = [
+    "dep:flint-package", "dep:flint-script", "dep:flint-render", "dep:flint-import",
+    "dep:rhai",
+]
+
+# The kernel only (#1624's rule): Rapier and the kernel's plain data below;
+# the player part adds the Package API, the scripts' builder and the model
+# loader's search, all kernel crates.
+[dependencies]
+flint-core = { workspace = true }
+flint-ecs = { workspace = true }
+# A collider mesh is the kernel's plain triangles (`ColliderMesh`, #1617)
+flint-geometry = { workspace = true }
+flint-runtime = { workspace = true }
+rapier3d = { workspace = true }
+crossbeam = "0.8"
+thiserror = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+flint-package = { workspace = true, optional = true }
+flint-script = { workspace = true, optional = true }
+flint-render = { workspace = true, optional = true }
+flint-import = { workspace = true, optional = true }
+rhai = { workspace = true, optional = true }
+
+[dev-dependencies]
+# A scene loaded from text, as a game's is (order_tests.rs, #688)
+flint-scene = { workspace = true }
+flint-schema = { workspace = true }
+# Real terrain chunks, for the heightfield against their trimesh (#1219)
+flint-terrain = { workspace = true }
+
+[lints]
+workspace = true

@@ -9,7 +9,6 @@ use flint_core::project::{AssetKind, Project};
 use flint_core::vfs;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_physics::PhysicsSystem;
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
 use flint_script::ScriptSystem;
@@ -76,34 +75,30 @@ pub fn scene_post_process_in(
 /// The grass a scene loaded, for its debug panel. The fields are only read
 /// by the `debug-hud` grass panel construction.
 pub(super) struct LoadedGrassInfo {
-    pub config: flint_terrain::GrassConfig,
+    pub config: flint_render::GrassConfig,
     pub terrain_entity_name: String,
     /// The component holding the `grass.*` fields: `terrain` or `grass_ground`.
     pub component: &'static str,
 }
 
-/// The static collider of a terrain `SceneRenderer::bind_scene` loaded: a
-/// heightfield of its chunks' vertex grid where its transform puts it
-/// (#1219), the same surface as the chunks' triangles with no seams.
-pub(super) fn register_terrain_collider(
-    physics: &mut PhysicsSystem,
-    loaded: &flint_terrain::scene::LoadedTerrain,
-) {
-    physics.register_static_heightfield(loaded.entity, &terrain_heightfield(loaded), 0.8, 0.1);
-}
-
-/// A loaded terrain's heights as physics takes them.
-fn terrain_heightfield(
-    loaded: &flint_terrain::scene::LoadedTerrain,
-) -> flint_physics::StaticHeightfield {
-    let grid = loaded.terrain.height_grid();
-    flint_physics::StaticHeightfield {
+/// The surface of the ground a scene binder made (the terrain package's,
+/// #1623): its drawn vertex grid where its transform puts it, which the
+/// physics package makes a heightfield collider of (#1219, #1617), the same
+/// surface as the chunks' triangles with no seams.
+pub(super) fn terrain_surface(
+    ground: &flint_geometry::ground::SceneGround,
+) -> flint_package::surfaces::SurfaceGrid {
+    let grid = &ground.grid;
+    flint_package::surfaces::SurfaceGrid {
+        entity: ground.entity,
         columns: grid.columns,
         rows: grid.rows,
-        heights: grid.heights,
+        heights: grid.heights.clone(),
         width: grid.width,
         depth: grid.depth,
-        origin: loaded.offset,
+        origin: ground.origin,
+        friction: 0.8,
+        restitution: 0.1,
     }
 }
 

@@ -230,12 +230,12 @@ pub fn warn_dropped_schemas(dirs: &flint_schema::SchemaDirs) {
     }
 }
 
-/// The value of a `--max-cost` flag (dollars, `$` allowed, not negative),
-/// and a seed from the clock for an editor's "new seed": the Package API's
-/// (#1557), since the procgen package's commands read them too. Not in
+/// The value of a `--max-cost` flag (dollars, `$` allowed, not negative):
+/// the Package API's (#1557), since the procgen package's commands read it
+/// too, as they and the terrain editor read its `random_seed`. Not in
 /// `ai_costs`, so the flag parses alike in a build without the ai package
 /// (#1333), whose command then names the package.
-pub use flint_package::cli::{gen::parse_usd, random_seed};
+pub use flint_package::cli::gen::parse_usd;
 
 #[cfg(test)]
 mod tests {

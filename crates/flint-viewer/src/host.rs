@@ -483,6 +483,15 @@ pub struct SpecEditors {
     pub open: fn(SpecKind, SpecEdit) -> Result<Box<dyn Editor>>,
 }
 
+/// The editor a `.terrain.toml` opens in (#1623): a registration point the
+/// terrain package's CLI side fills, which `flint edit` and `flint
+/// terrain-edit` ask for (as a `flint_package::cli::Points` value). A flint
+/// without the package has none, and names the package.
+pub struct TerrainEditors {
+    /// The editor for the spec (`SpecEdit::auto_orbit` is not read).
+    pub open: fn(SpecEdit) -> Result<Box<dyn Editor>>,
+}
+
 /// What `flint edit <x>.particles.toml` hands the particles package's effect
 /// editor (#1622): the file, made from `preset` when it isn't there, and
 /// the editor's own flags.

@@ -63,7 +63,15 @@ fn viewer(path: &Path, device: &wgpu::Device, queue: &wgpu::Queue) -> ViewerApp 
         SceneRenderer::new_headless(device, queue, FORMAT, SIZE, SIZE, RendererConfig::default());
     let config = ModelLoadConfig::from_scene_path(&scene_path);
     let binding = scene_binding(&scene_path);
-    stage_scene(&mut renderer, device, queue, &mut state, binding, &config);
+    stage_scene(
+        &mut renderer,
+        device,
+        queue,
+        &mut state,
+        binding,
+        &config,
+        &Default::default(),
+    );
     let authored =
         post_process_config_from_def(state.scene_post.as_ref().unwrap(), renderer.styles());
     renderer.set_post_process_config(authored);

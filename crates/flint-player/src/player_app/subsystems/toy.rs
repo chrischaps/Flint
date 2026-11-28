@@ -14,7 +14,7 @@
 //! as a suspension's force is. Its script module's `toy_steps()` reads the
 //! steps it has heard.
 
-use super::{FixedCtx, Lasts, SceneCtx, Stage, StageCtx, Subsystem};
+use super::{own_modules, FixedCtx, Lasts, SceneCtx, Stage, StageCtx, Subsystem};
 use crate::player_app::PlayerApp;
 use flint_core::project::{SchemaDirs, SchemaSource};
 use flint_core::vfs::{self, MemorySource};
@@ -307,19 +307,14 @@ fn on_update() { set_field(self_entity(), "probe", "seen", toy_frames()); }
                 .and_then(|v| v.as_integer())
         };
         let mut app = app_in("toys/scenes/with.scene.toml");
-        assert_eq!(
-            crate::player_app::subsystem::own_modules(app.core.script.enabled_modules()),
-            ["toy"]
-        );
+        assert_eq!(own_modules(app.core.script.enabled_modules()), ["toy"]);
         assert_eq!(probe(&app, "init"), Some(0), "on_init reached the module");
         app.tick();
         app.tick();
         assert_eq!(probe(&app, "seen"), Some(1), "last frame's count");
 
         let mut app = app_in("toys/scenes/without.scene.toml");
-        assert!(
-            crate::player_app::subsystem::own_modules(app.core.script.enabled_modules()).is_empty()
-        );
+        assert!(own_modules(app.core.script.enabled_modules()).is_empty());
         app.tick();
         assert_eq!(probe(&app, "init"), Some(-1), "the call was an error");
         assert_eq!(probe(&app, "seen"), Some(-1));
@@ -482,8 +477,15 @@ fn spring_run(
             app.tick();
             if let Some(k) = once_a_frame {
                 let id = app.core.world.get_id("bob").unwrap();
-                if let Some(handle) = app.core.physics_mut().body_of(id) {
-                    let body = app.core.physics_mut().bodies_mut().get_mut(handle).unwrap();
+                if let Some(handle) = flint_physics::of_mut(&mut app.core.resources)
+                    .unwrap()
+                    .body_of(id)
+                {
+                    let body = flint_physics::of_mut(&mut app.core.resources)
+                        .unwrap()
+                        .bodies_mut()
+                        .get_mut(handle)
+                        .unwrap();
                     let x = body.translation().x;
                     body.apply_impulse(Vector::new(-x * k * frame_step as f32, 0.0, 0.0), true);
                 }

@@ -13,9 +13,9 @@
 //!   terrain and its grass), then loads the scene's `grass_ground` from its
 //!   world. The player, the viewer and `flint render` call it; before #739
 //!   each wired these by hand, and the viewer loaded no terrain at all.
-//!   The terrain is built by the terrain package since #1615
-//!   (`flint_terrain::scene::bind_terrain`, which each host calls next): the
-//!   renderer draws the chunks it is handed and links no terrain crate.
+//!   The terrain is built by the terrain package since #1615, the scene
+//!   binder it registers (#1623), which each host runs next: the renderer
+//!   draws the chunks it is handed and links no terrain crate.
 //!
 //! What changes every frame is [`FrameInputs`](super::FrameInputs), in
 //! `frame.rs`.
@@ -161,8 +161,8 @@ impl SceneRenderer {
     ///    and the archetypes' placeholder boxes in place of the last
     ///    scene's ([`SceneBinding::with_archetypes`]);
     /// 3. the last scene's terrain and grass unloaded, then this scene's
-    ///    `grass_ground` loaded. The terrain is the host's next call
-    ///    (`flint_terrain::scene::bind_terrain`, #1615), which masks its
+    ///    `grass_ground` loaded. The terrain is the packages' scene binders',
+    ///    which the host runs next (#1615, #1623), and which masks its
     ///    chunks when the entity is styled (#310) and grows its grass unless
     ///    a `grass_ground`'s is in (ADR 0089).
     pub fn bind_scene(

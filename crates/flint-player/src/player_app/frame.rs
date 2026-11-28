@@ -9,7 +9,6 @@ use super::offscreen::HudTarget;
 use super::subsystem::{EncodeCtx, FrameCtx};
 use super::PlayerApp;
 use super::TransitionPhase;
-use crate::player_app::game_core::physics_of_mut;
 use flint_render::{FrameInputs, GrassEntityPosition, View2d};
 use flint_runtime::state::AUDIO;
 use flint_runtime::{RuntimeSystem, StateConfig};
@@ -972,19 +971,8 @@ impl PlayerApp {
             _pad: 0.0,
         }];
         // A hull on a dynamic body foams with the velocity the solver gave
-        // it (#749); the rest have their drawn motion differenced
-        let contact_velocities: Vec<_> = self
-            .core
-            .world
-            .entities_with_component(flint_geometry::components::OCEAN_CONTACT)
-            .iter()
-            .filter_map(|&id| {
-                Some((
-                    id,
-                    physics_of_mut(&mut self.core.resources).dynamic_velocity(id)?,
-                ))
-            })
-            .collect();
+        // it (#749): the physics package's share of the inputs, below
+        // (#1617); the rest have their drawn motion differenced
         // Each emitter's draw, as the renderer takes it (#1615)
         let particle_draws = if self.particles_render_enabled {
             particle_draws(&self.core.resources)
@@ -1009,7 +997,6 @@ impl PlayerApp {
             world_lines: &self.hud.world_lines,
             style_field: self.hud.style_field.shapes(),
             grass_benders: &benders,
-            contact_velocities: &contact_velocities,
             // The deprecated render mode's sea (#746): a frame behind its
             // drain, as the stamp that sets it lands after this
             ocean_tint: self.post.ocean_tint(),

@@ -13,7 +13,6 @@ mod camera_cut;
 mod catalog_root_tests;
 #[cfg(test)]
 mod collider_mesh_tests;
-mod collider_meshes;
 #[cfg(test)]
 mod made_collider_mesh_tests;
 // A spec's asset in a project whose `[packages]` leaves procgen out (#1578)
@@ -475,9 +474,6 @@ pub struct PlayerApp {
     // uses it as it is, a transition re-reads only for other directories,
     // and a failed read keeps it
     schemas: schemas::HeldSchemas,
-
-    // Terrain data for height queries
-    terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
 
     /// The scene as the renderer binds it (#739): made when the scene's
     /// settings are read, which registers its user styles, and taken by
