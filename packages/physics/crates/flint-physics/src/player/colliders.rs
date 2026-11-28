@@ -1,21 +1,22 @@
-//! What the player gives physics for its bodies (#729, #1222): the
-//! project's collision layers, and the triangles of every `mesh` and
-//! `convex` collider, from wherever the model it names came from.
+//! The triangles of every `mesh` and `convex` collider (#729, #1222), from
+//! wherever the model it names came from: the player's until #1617, the
+//! physics package's since.
 //!
-//! **A model's file.** The requests are read before the renderer loads the
-//! scene's models: a model of several nodes is expanded into child entities
-//! and its parent loses its `model`, so afterwards the parent no longer says
-//! which model it drew. The triangles come from the model file by the
-//! project's one search (the model loader's own `resolve_model_path`),
-//! through `flint_import::import_gltf_geometry`, which skips the textures; a
-//! model used by several colliders is read once a scene.
+//! **A model's file.** The requests are read before the host loads the
+//! scene's models ([`read_requests`], the package's `scene_read`): a model
+//! of several nodes is expanded into child entities and its parent loses
+//! its `model`, so afterwards the parent no longer says which model it
+//! drew. The triangles come from the model file by the project's one search
+//! (the model loader's own `resolve_model_path`), through
+//! `flint_import::import_gltf_geometry`, which skips the textures; a model
+//! used by several colliders is read once a scene.
 //!
-//! **A procgen spec** (catalog > procgen > file, #32). The resolver's
-//! uploads go through [`Recording`], which keeps each generated mesh's
-//! positions and indices in [`ColliderSources`] by name before the mesh is
-//! drawn; a request names one of those ahead of a file. One the queue
-//! finishes later (`ProcGenMode::Deferred`) reaches physics on the next
-//! frame, and its body's collider is made again.
+//! **A made mesh** (catalog > procgen > file, #32). An asset maker leaves
+//! each mesh's triangles in the kernel's
+//! [`MadeTriangles`](flint_package::surfaces::MadeTriangles) by name before
+//! the mesh is drawn; a request names one of those ahead of a file. One
+//! the queue finishes later (`ProcGenMode::Deferred`) reaches physics on
+//! the next frame, and its body's collider is made again.
 //!
 //! **A runtime mesh** (`model.runtime = true`, `ExtensionGpu::upload_mesh`).
 //! The renderer already keeps the triangles of a mesh uploaded as a ray
@@ -26,99 +27,95 @@
 //! uploaded without `ray_target` keeps no triangles, and that is warned
 //! about once on the entity.
 //!
-//! Each frame [`PlayerApp`]'s core asks [`ColliderSources::refresh`] before
-//! the physics steps. It walks the colliders only when something could have
-//! changed: a procgen mesh made, a runtime mesh uploaded or removed (the
-//! renderer's `runtime_mesh_generation`), or an entity spawned.
+//! Each frame the package's subsystem asks [`Colliders::refresh`] at
+//! `Stage::Scripts`, before the fixed steps. It walks the colliders only
+//! when something could have changed: a made mesh, a runtime mesh uploaded
+//! or removed (the renderer's `runtime_mesh_generation`), or an entity
+//! spawned.
 
-use super::scene_loading::build_model_load_config;
-use super::PlayerApp;
-use crate::player_app::game_core::physics_of_mut;
+use crate::{ColliderMesh, PhysicsSystem};
 use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_geometry::ray_mesh::RayMesh;
-use flint_physics::{ColliderMesh, CollisionLayers, PhysicsSystem};
+use flint_package::surfaces::MadeTriangles;
 use flint_render::model_loader::{resolve_model_path, ModelLoadConfig};
 use flint_render::SceneRenderer;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Every `mesh` or `convex` collider and the model it names, read now.
-pub(super) fn requests(world: &FlintWorld) -> Vec<(EntityId, String)> {
-    PhysicsSystem::collider_mesh_requests(world)
-}
-
-/// The triangles of meshes the player made or was handed rather than read
-/// from a file, for the colliders that name them (#1222). Kept for the run,
-/// as the renderer keeps the meshes: a later scene that names a procgen
-/// model already drawn generates nothing, and finds its triangles here.
+/// What physics keeps of the scene's mesh colliders between a scene's
+/// models and its bodies, and for the run: a run resource.
 #[derive(Default)]
-pub(crate) struct ColliderSources {
-    /// Each procgen mesh's triangles, by its spec's name
-    made: HashMap<String, Arc<ColliderMesh>>,
-    /// Bumped whenever `made` changes
-    made_generation: u64,
+pub struct Colliders {
+    /// Every `mesh` or `convex` collider and the model it names, read
+    /// before the models loaded; taken by the entry or the chunk's load
+    pub(crate) requests: Vec<(EntityId, String)>,
     /// Each runtime mesh's triangles, from the ray target they were taken
     /// from, so many entities drawing one mesh share one set
     runtime: HashMap<String, (Arc<RayMesh>, Arc<ColliderMesh>)>,
-    /// What the colliders were last walked at: `made_generation`, the
-    /// renderer's runtime mesh generation, the world's next id. `None`
+    /// What the colliders were last walked at: the made meshes' generation,
+    /// the renderer's runtime mesh generation, the world's next id. `None`
     /// walks at the next refresh (a scene was just entered).
     walked_at: Option<(u64, u64, u64)>,
     /// Entities told their runtime mesh keeps no triangles
     warned: HashSet<EntityId>,
 }
 
-/// What the asset makers (procgen's, #1557) tell the colliders: a mesh
-/// made under a name, or a name a placeholder or a file took back.
-impl flint_package::assets::MadeMeshes for ColliderSources {
-    fn made(&mut self, name: &str, positions: Vec<[f32; 3]>, triangles: Vec<[u32; 3]>) {
-        self.made.insert(
-            name.to_string(),
-            Arc::new(ColliderMesh {
-                positions,
-                triangles,
-            }),
-        );
-        self.made_generation += 1;
+/// The package's `scene_read`: which model each mesh collider takes its
+/// triangles from, before the host expands a model of several nodes and
+/// its parent loses its `model` (#729). A chunk's: its entities' alone.
+pub(crate) fn read_requests(
+    world: &FlintWorld,
+    ids: Option<&[EntityId]>,
+    resources: &mut flint_package::Resources,
+) {
+    let mut requests = PhysicsSystem::collider_mesh_requests(world);
+    if let Some(ids) = ids {
+        requests.retain(|(id, _)| ids.contains(id));
     }
-
-    fn forget(&mut self, name: &str) {
-        if self.made.remove(name).is_some() {
-            self.made_generation += 1;
-        }
-    }
+    resources.get_or_insert_with(Colliders::default).requests = requests;
 }
 
-impl ColliderSources {
-    /// The triangles a procgen spec made under `name`, if it made a mesh.
-    pub(crate) fn made(&self, name: &str) -> Option<&Arc<ColliderMesh>> {
-        self.made.get(name)
-    }
-
+impl Colliders {
     /// Walk every collider again at the next refresh, whatever changed.
     pub(crate) fn walk_again(&mut self) {
         self.walked_at = None;
         self.warned.clear();
     }
 
-    /// Hand physics the triangles that arrived since the last call: a
-    /// procgen mesh finished, a runtime mesh uploaded or replaced, or an
-    /// entity spawned that names one. One comparison when none of those
-    /// moved.
+    /// Whether [`refresh`](Self::refresh) has anything to look at: the
+    /// made meshes, the runtime meshes or the world's ids moved since the
+    /// last walk.
+    pub(crate) fn due(
+        &self,
+        world: &FlintWorld,
+        renderer: Option<&SceneRenderer>,
+        made_generation: u64,
+    ) -> bool {
+        self.walked_at != Some(Self::stamp(world, renderer, made_generation))
+    }
+
+    fn stamp(world: &FlintWorld, renderer: Option<&SceneRenderer>, made: u64) -> (u64, u64, u64) {
+        (
+            made,
+            renderer.map_or(0, SceneRenderer::runtime_mesh_generation),
+            world.next_id().raw(),
+        )
+    }
+
+    /// Hand physics the triangles that arrived since the last call: a made
+    /// mesh, a runtime mesh uploaded or replaced, or an entity spawned that
+    /// names one. One comparison when none of those moved.
     pub(crate) fn refresh(
         &mut self,
         world: &FlintWorld,
         physics: &mut PhysicsSystem,
         renderer: Option<&SceneRenderer>,
+        made: &MadeTriangles,
     ) {
-        let now = (
-            self.made_generation,
-            renderer.map_or(0, SceneRenderer::runtime_mesh_generation),
-            world.next_id().raw(),
-        );
+        let now = Self::stamp(world, renderer, made.generation());
         let before = self.walked_at.replace(now);
         if before == Some(now) {
             return;
@@ -128,14 +125,14 @@ impl ColliderSources {
             // Only spawns since: ids are never reused, so the new ones are
             // the ids from the last walk's next id on (a game spawning a
             // bullet a frame walks one id, not every collider)
-            Some((made, meshes, from)) if made == now.0 && meshes == now.1 => {
+            Some((made_at, meshes, from)) if made_at == now.0 && meshes == now.1 => {
                 for raw in from..now.2 {
-                    self.offer(EntityId::from_raw(raw), world, physics, renderer);
+                    self.offer(EntityId::from_raw(raw), world, physics, renderer, made);
                 }
             }
             _ => {
                 for &entity in world.entities_with_component(comp::COLLIDER) {
-                    self.offer(entity, world, physics, renderer);
+                    self.offer(entity, world, physics, renderer, made);
                 }
                 // Runtime meshes no longer ray targets aren't kept
                 if let Some(renderer) = renderer {
@@ -147,15 +144,16 @@ impl ColliderSources {
         }
     }
 
-    /// Hand physics an entity's procgen or runtime triangles, when its
-    /// `mesh` or `convex` collider names a model that has some it doesn't
-    /// hold yet.
+    /// Hand physics an entity's made or runtime triangles, when its `mesh`
+    /// or `convex` collider names a model that has some it doesn't hold
+    /// yet.
     fn offer(
         &mut self,
         entity: EntityId,
         world: &FlintWorld,
         physics: &mut PhysicsSystem,
         renderer: Option<&SceneRenderer>,
+        made: &MadeTriangles,
     ) {
         let col = world.view(entity, comp::COLLIDER);
         if !matches!(col.opt_str("shape"), Some("mesh" | "convex")) {
@@ -173,7 +171,7 @@ impl ColliderSources {
         let mesh = if runtime {
             self.runtime_mesh(entity, name, world, renderer)
         } else {
-            self.made.get(name).cloned()
+            made.get(name).cloned()
         };
         let Some(mesh) = mesh else {
             return;
@@ -186,7 +184,7 @@ impl ColliderSources {
         }
         tracing::debug!(target: "load", kind = "collider",
             "Collider mesh: {} '{name}' for {} ({} triangles)",
-            // An asset maker's (procgen's, #1557): the kernel names none
+            // An asset maker's (procgen's, #1557): physics names none
             if runtime { "runtime mesh" } else { "made mesh" },
             world.get_name(entity).unwrap_or("?"),
             mesh.triangles.len()
@@ -236,20 +234,20 @@ impl ColliderSources {
     }
 }
 
-/// The triangles of each requested model, handed to `physics`: a procgen
-/// mesh of the name first (unless the catalog names a file for it), then
-/// the model's file. A model that isn't found is warned about with every
-/// path tried; one that doesn't read is warned about with why.
-pub(super) fn hand_over(
+/// The triangles of each requested model, handed to `physics`: a made mesh
+/// of the name first (unless the catalog names a file for it), then the
+/// model's file. A model that isn't found is warned about with every path
+/// tried; one that doesn't read is warned about with why.
+pub(crate) fn hand_over(
     physics: &mut PhysicsSystem,
     requests: &[(EntityId, String)],
     config: &ModelLoadConfig,
-    sources: &ColliderSources,
+    made: &MadeTriangles,
 ) {
     let mut read: HashMap<PathBuf, Option<Arc<ColliderMesh>>> = HashMap::new();
     for (entity, asset) in requests {
         if !config.overrides.contains_key(asset) {
-            if let Some(mesh) = sources.made(asset) {
+            if let Some(mesh) = made.get(asset) {
                 tracing::debug!(target: "load", kind = "collider",
                     "Collider mesh: made mesh '{asset}' ({} triangles)",
                     mesh.triangles.len()
@@ -289,49 +287,5 @@ pub(super) fn hand_over(
         if let Some(mesh) = mesh {
             physics.set_collider_mesh(*entity, mesh);
         }
-    }
-}
-
-impl PlayerApp {
-    /// The project's collision layers (`[project.physics] layers`), and
-    /// the triangles of the mesh colliders `requests` names, for the
-    /// bodies the scene's physics is about to make.
-    pub(super) fn prepare_physics(&mut self, requests: &[(EntityId, String)]) {
-        let layers = CollisionLayers::new(&self.core.project.physics_layers).unwrap_or_else(|e| {
-            // The manifest's reader refuses these first; a project made
-            // in code might not have been
-            tracing::warn!("physics layers: {e}; only `default` is used");
-            CollisionLayers::default()
-        });
-        physics_of_mut(&mut self.core.resources).set_layers(layers);
-        // A new scene's (or chunk's) colliders are walked at the next frame,
-        // for the runtime meshes the renderer already holds
-        self.core.collider_sources.walk_again();
-        if requests.is_empty() {
-            return;
-        }
-        let mut config = build_model_load_config(
-            &self.core.project,
-            &self.core.scene_path,
-            &self.core.world,
-            self.assets.of(&self.core.project),
-        );
-        super::scene_loading::say_makers_asked(&mut config, !self.core.asset_makers().is_empty());
-        // A model still being made (procgen's queue, `ProcGenMode::Deferred`)
-        // has no triangles yet: they come when it's made, and physics waits
-        // for them quietly rather than warn or read a file in its place
-        let (queued, requests): (Vec<_>, Vec<_>) = {
-            let makers = self.core.asset_makers();
-            let resources = &self.core.resources;
-            requests
-                .iter()
-                .cloned()
-                .partition(|(_, asset)| makers.iter().any(|maker| maker.pending(resources, asset)))
-        };
-        let physics = physics_of_mut(&mut self.core.resources);
-        for (entity, _) in &queued {
-            physics.expect_collider_mesh(*entity);
-        }
-        hand_over(physics, &requests, &config, &self.core.collider_sources);
     }
 }

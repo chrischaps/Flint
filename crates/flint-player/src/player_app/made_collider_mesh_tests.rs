@@ -160,7 +160,10 @@ fn reports(app: &PlayerApp) -> Vec<String> {
 
 fn the_rock_is_its_hull(app: &PlayerApp) {
     let rock = app.core.world.get_id("rock").unwrap();
-    match app.core.physics().get_entity_collider_extents(rock) {
+    match flint_physics::of(&app.core.resources)
+        .unwrap()
+        .get_entity_collider_extents(rock)
+    {
         Some(ColliderExtents::Convex {
             half_extents,
             centre,
@@ -215,7 +218,9 @@ fn a_procgen_rock_the_queue_makes_later_gets_its_hull_then() {
         let rock = app.core.world.get_id("rock").unwrap();
         assert!(
             matches!(
-                app.core.physics().get_entity_collider_extents(rock),
+                flint_physics::of(&app.core.resources)
+                    .unwrap()
+                    .get_entity_collider_extents(rock),
                 Some(ColliderExtents::Box { .. })
             ),
             "a placeholder stands at load, and the collider waits as a box"
@@ -263,11 +268,17 @@ fn apply_queue(app: &mut PlayerApp, gpu: &HeadlessContext) {
         queue: &gpu.queue,
         config: &config,
     };
+    let mut made = app
+        .core
+        .resources
+        .remove::<flint_package::surfaces::MadeTriangles>()
+        .unwrap_or_default();
     let mut recording = flint_procgen::player::Recording {
         sink: &mut sink,
-        colliders: &mut app.core.collider_sources,
+        colliders: &mut made,
     };
     flint_procgen::player::apply_completed(&completed, &mut recording);
+    app.core.resources.insert(made);
 }
 
 /// A 2 x 1 x 2 block with its base at y = 0, as a game would build it.
@@ -345,7 +356,9 @@ fn a_runtime_mesh_collider_is_hit_by_raycast_where_it_draws() {
         assert_eq!(&seen[3..], ["hut 2.0", "hut 2.0"], "{seen:?}");
         let hut = app.core.world.get_id("hut").unwrap();
         assert!(matches!(
-            app.core.physics().get_entity_collider_extents(hut),
+            flint_physics::of(&app.core.resources)
+                .unwrap()
+                .get_entity_collider_extents(hut),
             Some(ColliderExtents::Mesh { .. })
         ));
 

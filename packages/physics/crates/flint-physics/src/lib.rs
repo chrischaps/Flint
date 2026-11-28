@@ -10,6 +10,9 @@
 pub mod character;
 pub mod layers;
 pub mod nav;
+/// The package's share of the player (#1617): what `[rust] player` names.
+#[cfg(feature = "player")]
+pub mod player;
 pub mod sync;
 pub mod world;
 
@@ -66,12 +69,10 @@ pub struct RapierSets<'a> {
 /// The triangles of a `mesh` or `convex` collider, in the entity's own
 /// space (where its model's vertices are drawn, before the entity's
 /// transform). A host reads them from the entity's model and hands them
-/// over with [`PhysicsSystem::set_collider_mesh`] (#729).
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ColliderMesh {
-    pub positions: Vec<[f32; 3]>,
-    pub triangles: Vec<[u32; 3]>,
-}
+/// over with [`PhysicsSystem::set_collider_mesh`] (#729). The kernel's
+/// plain triangles (#1617), so a made mesh's reach physics as the maker
+/// left them, shared and never copied.
+pub use flint_geometry::triangles::Triangles as ColliderMesh;
 
 /// A grid of heights for a fixed heightfield collider
 /// ([`PhysicsSystem::register_static_heightfield`], #1219): the terrain's.
@@ -800,8 +801,9 @@ impl PhysicsSystem {
     }
 
     /// A step's first half: new bodies and joints in, then kinematic poses,
-    /// colliders and joint targets from the world.
-    fn sync_in(&mut self, world: &mut FlintWorld) {
+    /// colliders and joint targets from the world (`StepStage::SyncIn`,
+    /// #1617).
+    pub fn sync_in(&mut self, world: &mut FlintWorld) {
         {
             flint_core::scope!("physics::sync_in");
             // Sync any new entities to Rapier, then any joints whose bodies now exist
@@ -829,8 +831,9 @@ impl PhysicsSystem {
     }
 
     /// A step's second half: Rapier's step, this step's collisions and
-    /// triggers onto `events`, then dynamic poses back to the world.
-    fn step_and_publish(&mut self, world: &mut FlintWorld, dt: f64, events: &mut EventBus) {
+    /// triggers onto `events`, then dynamic poses back to the world
+    /// (`StepStage::Integrate`, #1617).
+    pub fn step_and_publish(&mut self, world: &mut FlintWorld, dt: f64, events: &mut EventBus) {
         // Step physics
         {
             flint_core::scope!("physics::step", self.physics_world.rigid_body_set.len());

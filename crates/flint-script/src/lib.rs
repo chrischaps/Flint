@@ -295,15 +295,17 @@ impl ScriptSystem {
         self.pending_events = events.to_vec();
     }
 
-    /// Create an RAII guard that sets state_machine, persistent_store, and physics
-    /// pointers for the duration of a scope. All three are cleared on Drop.
+    /// Create an RAII guard that sets the state machine, the persistent
+    /// store and the run's resources (a package's module reads its state
+    /// there, physics' rays among them, #1617) for the duration of a scope.
+    /// All three are cleared on Drop.
     pub fn state_scope(
         &mut self,
         sm: &mut flint_runtime::GameStateMachine,
         store: &mut flint_runtime::PersistentStore,
-        physics: &flint_physics::PhysicsSystem,
+        resources: &flint_core::resources::Resources,
     ) -> StateScope {
-        StateScope::new(&self.engine.ctx, sm, store, physics)
+        StateScope::new(&self.engine.ctx, sm, store, resources)
     }
 
     /// Set transition state for script access
@@ -744,6 +746,20 @@ impl ScriptSystem {
     /// feature, registered closures must be `Send + Sync`.
     pub fn rhai_engine_mut(&mut self) -> &mut rhai::Engine {
         self.engine.rhai_engine_mut()
+    }
+
+    /// `f` with the engine and `world` lent to its calls, as a callback
+    /// batch lends it: what a package's tests evaluate its module's
+    /// functions under (physics' rays, #1617). Pair it with
+    /// [`state_scope`](Self::state_scope) for the run's resources.
+    #[doc(hidden)]
+    pub fn with_world<R>(
+        &mut self,
+        world: &mut FlintWorld,
+        f: impl FnOnce(&rhai::Engine) -> R,
+    ) -> R {
+        let _world = context::WorldScope::new(&self.engine.ctx, world);
+        f(self.engine.rhai_engine())
     }
 
     /// Declare functions through the builder (ADR 0116): registered like

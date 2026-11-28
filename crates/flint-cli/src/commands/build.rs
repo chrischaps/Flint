@@ -1343,6 +1343,7 @@ mod tests {
                 "living",
                 "music",
                 "particles",
+                "physics",
                 "procgen",
                 "rhythm",
                 "vehicle"
@@ -1360,6 +1361,7 @@ mod tests {
                 "living",
                 "music",
                 "particles",
+                "physics",
                 "procgen",
                 "rhythm",
                 "vehicle"

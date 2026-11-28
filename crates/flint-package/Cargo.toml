@@ -18,6 +18,9 @@ gif = ["dep:gif", "dep:color_quant", "dep:miniz_oxide", "image/gif"]
 [dependencies]
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }
+# A made mesh's triangles and a scene's surfaces (`surfaces`, #1617): plain
+# data the physics package reads
+flint-geometry = { workspace = true }
 flint-runtime = { workspace = true }
 flint-script = { workspace = true }
 flint-render = { workspace = true }

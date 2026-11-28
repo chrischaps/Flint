@@ -40,9 +40,6 @@ mod math;
 mod music;
 #[cfg(test)]
 mod naming_tests;
-mod nav;
-#[cfg(test)]
-mod nav_tests;
 mod ocean;
 mod opts;
 #[cfg(not(target_arch = "wasm32"))]
@@ -50,7 +47,6 @@ mod opts;
 pub mod overhead;
 mod panels;
 mod persistence;
-mod physics;
 mod post_process;
 #[cfg(test)]
 mod post_process_tests;
@@ -98,8 +94,8 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     input::register(api);
     time::register(api);
     audio::register(api);
-    physics::register(api);
-    nav::register(api);
+    // `physics`, `physics_2d` and `nav` are the physics package's modules
+    // since #1617 (`flint_physics::player`), declared by the launcher
     camera::register(api);
     camera_rig::register(api);
     post_process::register(api);

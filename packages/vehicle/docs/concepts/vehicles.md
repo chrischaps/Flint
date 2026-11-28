@@ -1,6 +1,6 @@
 # Vehicles
 
-> **Package:** `vehicle`, a feature package: a game has `vehicle`, `vehicle_wheel`, `vehicle_input`, `vehicle_state` and the `vehicle` script module only when its `[packages]` lists `vehicle = "*"` ([Packages](packages.md)).
+> **Package:** `vehicle`, a feature package: a game has `vehicle`, `vehicle_wheel`, `vehicle_input`, `vehicle_state` and the `vehicle` script module only when its `[packages]` lists `vehicle = "*"` ([Packages](packages.md)). It requires the `physics` package, whose `rigidbody` and `collider` carry it.
 
 A vehicle is a body on wheels that physics carries. It is a dynamic `rigidbody` with a `collider` for its chassis, and its children with `vehicle_wheel` are its wheels. Once each fixed physics step, the `vehicle` package casts a ray down from every wheel, pushes the body up on a spring, and turns the tyres' friction into drive, braking and cornering, through Rapier's raycast vehicle. On top of that sit **assists**, forces that pull the body toward arcade handling: a turn rate it holds, sideways grip, staying upright. Each assist is a tuning field, and 0 turns it off. With every assist at 0 the vehicle is a plain raycast car.
 

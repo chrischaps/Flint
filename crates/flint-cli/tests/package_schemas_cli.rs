@@ -236,6 +236,7 @@ fn a_bundle_packs_and_lists_the_packages_schemas() {
             "engine/packages/living/schemas",
             "engine/packages/music/schemas",
             "engine/packages/particles/schemas",
+            "engine/packages/physics/schemas",
             "engine/packages/vehicle/schemas",
             "schemas"
         ]

@@ -65,7 +65,7 @@ flint-player        Standalone player: the game loop, the subsystems, egui HUD
   ├── flint-audio    Kira spatial audio
   ├── flint-audio-worklet Kira in the browser's AudioWorklet
   ├── flint-terrain  Heightmap terrain with splat-map blending
-  ├── flint-physics  Rapier 3D (character controller, bodies, joints)
+  ├── flint-physics  Rapier, joints
   ├── flint-runtime  Clock, input, events, game states, saves, pads
   ├── flint-viewer   egui inspector: gizmos, undo/redo, TOML write-back
   ├── flint-widgets  egui widgets, F4's render panel
@@ -100,7 +100,7 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-script/CLAUDE.md` | Rhai detail, callbacks, script UI |
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear, project manifest, env switches |
 | `crates/flint-audio/CLAUDE.md` | audio clock, decoding, device features |
-| `crates/flint-{physics,terrain}/CLAUDE.md` | joints, terrain |
+| `{crates/flint-terrain,packages/physics/crates/flint-physics}/CLAUDE.md` | terrain, Rapier |
 | `packages/animation/crates/flint-animation/CLAUDE.md` | animator keys, IK |
 | `packages/particles/crates/flint-particles/CLAUDE.md` | particles |
 | `flint-examples/film/CLAUDE.md` | the film: shots, score, editor (flint-examples, #1195) |

@@ -290,7 +290,7 @@ pub struct Eye { pub position: Vec3, pub target: Vec3, pub yaw: f32, pub pitch: 
 | flint-script `is_near_player`: the first `character_controller` it finds | `player` |
 
 - **A `first-person` package** (standard, `[requires] physics`) takes
-  `crates/flint-physics/src/character.rs` and its camera. Its builder finds
+  `packages/physics/crates/flint-physics/src/character.rs` and its camera. Its builder finds
   the player as today (the first `character_controller` by name, ADR 0134
   decision 1) and sets `player`, `mouse_look = true` and `controls` before
   the scene's first frame, so the cursor and the controls line are right at
@@ -702,3 +702,72 @@ flint-viewer and flint-debug-ui name it in no build.
   `particles/` folder (flint-core's resolver and `flint check`'s
   reference walk) and the load report's `particles` row. Each is the name
   of a folder or a load stage, not the package.
+## As built: physics as a package (#1617)
+
+Decisions 1 to 3 for physics, as they landed. `packages/physics/` holds the
+crate (`crates/flint-physics`), the `collider`, `rigidbody` and `joint`
+schemas and a manifest (`tier = "standard"`, `[build] features =
+["physics"]`, `[without] policies = ["physics"]`). A project with `physics =
+false` builds a player and a CLI whose `cargo tree -e normal` has neither
+flint-physics nor Rapier: 28 crates fewer for the player (353 against
+381 with the other standard packages), 27 for the CLI (370 against 397).
+`flint check` and `flint play` name the package for a scene's `collider`
+there (`unlisted-package`), and the player says once that its bodies stand
+where they are written.
+
+- **The player names no physics.** `flint_physics::player::PACKAGE` puts the
+  `PhysicsSystem` in each run's resources, and its subsystem is built for
+  every scene. The builder does what `enter_scene` did by name, in the same
+  order: the host's surfaces, the layers and the mesh colliders' triangles,
+  `initialize`, then the player into `PlayerView`. The builders now run
+  after audio starts, and physics' after the animation and particles
+  packages' builders. None of those writes the world, so the bodies are
+  made from the same poses. `initialize` returned
+  only `Ok`, so a start no longer fails on it; it warns.
+- **Three kernel seams the record didn't name.** `Registry::scene_read` is a
+  package's look at the scene before the models load. A model of several
+  nodes takes its parent's `model`, so physics reads its mesh colliders'
+  model names there. `flint_package::surfaces` is plain data the renderer's
+  share of the entry leaves in the resources: the splines' swept triangles
+  (`Surfaces::meshes`) and each terrain's height grid (`grids`). The builder
+  takes it, so no package names flint-render's spline type or
+  flint-terrain. `MadeTriangles` is the asset makers' `MadeMeshes`, kept in
+  the resources; the player takes it out around a maker's call.
+  `ColliderMesh` is now the kernel's `flint_geometry::triangles::Triangles`,
+  so a made mesh's `Arc` reaches physics unconverted, and the same `Arc`
+  again is still a no-op. `Subsystem::chunk_loaded` / `chunk_unloading` and
+  `SceneCtx::model_config` carry a chunk's bodies and the mesh files'
+  search.
+- **The step, as written.** `StepStage` (`Control`, `SyncIn`, `Forces`,
+  `Integrate`) and `Subsystem::step`, whose default calls `fixed_update` at
+  `Forces`; the kernel's loop walks the four over the subsystems on each
+  step that steps. `Stage::View` comes between the steps and the camera,
+  with the view's eye cleared just before. Physics' frame share is at
+  `Stage::Scripts`: the triangles, `begin_frame` and the character's look.
+  The ocean hulls' velocities are read at `Stage::MadeAssets` and lent
+  through `frame_inputs`.
+- **Scripts read the resources** (decision 3): `ScriptCallContext::resources`
+  and `Call::resource::<T>()` replace the physics pointer, and
+  `ScriptSystem::state_scope` takes `&Resources`. `physics`, `physics_2d` and
+  `nav` are the package's `ScriptModule`s, enabled in every scene of a run
+  with it. `get_joint_position` moved from `entity` to `physics`: it asks the
+  simulation. `set_velocity_2d` is a module command the subsystem takes at
+  the same drain (`ScriptCommand::SetVelocity2D` is gone), and a capture
+  still refuses it by name.
+- **Not done here.** `contacts_of` (#1649) and `ModuleCommand::before_steps`
+  (#1648) stay open. A capture still runs no physics: its subsystem only
+  finds the player by the controller's rule and enables the modules. The
+  character controller and `character_controller` stay in this crate and the
+  kernel's schemas until #1618. Vehicle has `[requires] physics`, as its
+  manifest's note said it would, and stays a package of its own (ADR 0140).
+- **Measured, before and after** (debug builds, `main` at `eb4a7126`):
+  the walk template's playtest (walk, turn, sprint, strafe, two jumps, a ray
+  over the plinth every 15 frames) has the same report at 1/60, 1/30 and
+  1/144 s frames. The vehicle lap is 12.092, 12.104 and 12.094 s, identical
+  reports. A 30 s FlintKart race (`oval_plus`, five AI karts, rendered) has
+  the same 360 kart positions and the same 334,691 draw calls. A run with
+  FlintKart's old manifests, which don't know a `physics` package, left
+  physics out and differed. That run was the control. All three hold again
+  after merging `main` with #1620's animation package and #1622's
+  particles package, whose builders now run before physics' (the
+  registry's order by name): both only read the world.

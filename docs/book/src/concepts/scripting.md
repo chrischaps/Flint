@@ -716,6 +716,8 @@ Rhai's own `print(x)` and `debug(x)` go to the same log, at info level, naming t
 
 ### Physics API
 
+> **Package:** `physics`, a standard package: the rays, layers, character moves and joint coordinates are its `physics` module (#1617); the camera and joint-target functions in the table are every game's.
+
 Physics functions provide raycasting and camera access for combat, line-of-sight checks, and interaction targeting:
 
 <!-- script-api:begin raycast collision_layers set_collision_layer set_collision_mask move_character get_collider_extents set_joint_target get_joint_target get_joint_position get_camera_position get_camera_direction set_camera_position set_camera_target set_camera_fov set_camera_orthographic set_camera_ortho_height set_camera_roll -->

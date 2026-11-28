@@ -6,7 +6,6 @@
 
 use super::scene_loading::resolve_scene_path;
 use super::PlayerApp;
-use crate::player_app::game_core::{physics_of, physics_of_mut};
 use flint_core::components as comp;
 use flint_core::vfs;
 use flint_ecs::FlintWorld;
@@ -248,19 +247,16 @@ impl PlayerApp {
             }
         }
 
-        // Re-sync physics for new entities, the chunk's mesh colliders
-        // given their models' triangles first (#729)
-        let collider_meshes: Vec<_> = super::collider_meshes::requests(&self.core.world)
-            .into_iter()
-            .filter(|(id, _)| spawned_ids.contains(id))
-            .collect();
+        // What a package reads of the chunk before its models load (the
+        // physics package's mesh colliders, #729, #1617)
+        self.read_scene_for_packages(Some(&spawned_ids));
         // The chunk's models (#1107), after the colliders have asked for
         // their triangles (a model of several nodes leaves its parent with
         // no `model`) and inside the chunk's note and load report
         self.load_late_models();
-        self.prepare_physics(&collider_meshes);
-        physics_of_mut(&mut self.core.resources)
-            .sync_new_entities(&mut self.core.world, &spawned_ids);
+        // Each subsystem takes the chunk's entities in: physics their mesh
+        // colliders' triangles, then their bodies
+        self.subsystems_chunk_loaded(&spawned_ids);
 
         // Re-sync scripts for new entities: each found by the project's one
         // rule (`AssetKind::Scripts`), searched for from the chunk's folder
@@ -336,8 +332,9 @@ impl PlayerApp {
     pub(super) fn unload_chunk(&mut self, chunk_id: &str) {
         if let Some(entity_ids) = self.loaded_chunks.remove(chunk_id) {
             let count = entity_ids.len();
+            // Each subsystem lets the chunk's entities go (physics' bodies)
+            self.subsystems_chunk_unloading(&entity_ids);
             for id in &entity_ids {
-                physics_of_mut(&mut self.core.resources).remove_entity(*id);
                 self.core.script.remove_entity(*id);
                 let _ = self.core.world.despawn(*id);
             }
@@ -413,7 +410,7 @@ impl PlayerApp {
             let _state_scope = self.core.script.state_scope(
                 &mut self.core.state_machine,
                 &mut self.core.store,
-                physics_of(&self.core.resources),
+                &self.core.resources,
             );
             self.core.script.call_scene_exits(&mut self.core.world);
         }
@@ -433,7 +430,7 @@ impl PlayerApp {
         // Clear all systems
         self.core.script.clear();
         self.audio.clear();
-        physics_of_mut(&mut self.core.resources).clear();
+        // Physics cleared itself as its subsystem heard the scene go (#1617)
         self.core.forget_player_view();
         // The old scene's contacts name entities that are going; a script's
         // or an extension's own events go on to the next scene's scripts
