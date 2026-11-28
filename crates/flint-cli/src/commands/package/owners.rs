@@ -582,11 +582,11 @@ fn the_inventory_sees_the_whole_tree() {
     assert!(inv.crates.len() >= 34, "{}", inv.crates.len());
     assert!(inv.commands.len() >= 26);
     // The script API is this build's player's: a package's modules are
-    // there exactly when flint-cli was built with it (#1333). `music` is
-    // flint-script's, declared in every build.
-    // 33 with no package at all, since particle (#1622), animation's two (#1620),
-    // physics' three (#1617) and terrain (#1623) moved out
-    assert!(inv.script_modules.len() >= 33, "{:?}", inv.script_modules);
+    // there exactly when flint-cli was built with it (#1333).
+    // 31 with no package at all, since particle (#1622), animation's two (#1620),
+    // physics' three (#1617), terrain (#1623), and audio and music (#1619)
+    // moved out
+    assert!(inv.script_modules.len() >= 31, "{:?}", inv.script_modules);
     for (module, package) in [
         ("living", "living"),
         ("wooze", "living"),
@@ -595,7 +595,8 @@ fn the_inventory_sees_the_whole_tree() {
         ("physics_2d", "physics"),
         ("nav", "physics"),
         ("conducted", "rhythm"),
-        ("music", "engine"),
+        ("audio", "audio"),
+        ("music", "music"),
     ] {
         let built = package == "engine" || crate::commands::absent::built_with(package);
         assert_eq!(
