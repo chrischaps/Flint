@@ -509,7 +509,7 @@ mod tests {
         let found = scan(&root, &files, &engine_packages());
         assert_eq!(
             found.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["living", "procgen"]
+            ["living", "physics", "procgen"]
         );
         let living = &found["living"];
         assert!(living
@@ -523,14 +523,14 @@ mod tests {
         assert!(found["procgen"].required_by.contains("living"));
         assert_eq!(
             lines(&engine_packages(), &found),
-            ["procgen = \"*\"", "living = \"*\""]
+            ["physics = \"*\"", "procgen = \"*\"", "living = \"*\""]
         );
         // Procgen is used, so it isn't named to leave out; nothing scanned
         // animates (#1620), emits (#1622) or poses (#1621), so animation,
-        // flipbook, particles and rig are
+        // flipbook, particles and rig are, and the grove has no terrain (#1623)
         assert_eq!(
             left_out_lines(&engine_packages(), &found, None),
-            ["animation", "flipbook", "particles", "rig"]
+            ["animation", "flipbook", "particles", "rig", "terrain"]
         );
     }
 
@@ -545,7 +545,15 @@ mod tests {
         assert!(found.is_empty(), "{found:?}");
         assert_eq!(
             left_out_lines(&packages, &found, None),
-            ["animation", "flipbook", "particles", "procgen", "rig"]
+            [
+                "animation",
+                "flipbook",
+                "particles",
+                "physics",
+                "procgen",
+                "rig",
+                "terrain"
+            ]
         );
         assert_eq!(
             left_out_line("procgen"),
@@ -575,6 +583,7 @@ mod tests {
             list(&[("ai", any())]),
             list(&[("living", any())]),
         ] {
+            // Procgen isn't named once listed, or needed by what is
             assert!(
                 !left_out_lines(&packages, &found, Some(&listed))
                     .iter()
@@ -585,7 +594,15 @@ mod tests {
         // A listed package that needs nothing standard leaves it named
         assert_eq!(
             left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
-            ["animation", "flipbook", "particles", "procgen", "rig"]
+            [
+                "animation",
+                "flipbook",
+                "particles",
+                "physics",
+                "procgen",
+                "rig",
+                "terrain"
+            ]
         );
     }
 }

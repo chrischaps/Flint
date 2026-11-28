@@ -38,6 +38,9 @@ pub(super) struct StillRender<'a> {
     pub(super) wants_flips: bool,
     /// A reference grid scores frames by their glyphs: each grid is read.
     pub(super) reads_glyphs: bool,
+    /// The packages the project's `[packages]` lets in (#1623: a left-out
+    /// package's scene binder builds nothing).
+    pub(super) packages: Option<flint_core::package::InUse>,
 }
 
 /// A render with no clocks (#1145): the scene drawn as authored on one
@@ -70,6 +73,7 @@ pub(super) fn render_still(
         wants_text,
         wants_flips,
         reads_glyphs,
+        packages,
     } = still;
     // A still draws the scene as authored, before any script (#371): said, as
     // the clocked path says it, since a look a script sets is otherwise missing
@@ -161,7 +165,15 @@ pub(super) fn render_still(
     renderer.set_pass_knobs(args.measure.pass_knobs.knobs()?);
 
     // The scene bound, its levers set (#739), as every stage does
-    bind_capture_scene(args, ctx, &mut renderer, &world, &scene_file, &binding);
+    bind_capture_scene(
+        args,
+        ctx,
+        &mut renderer,
+        &world,
+        &scene_file,
+        binding,
+        packages.as_ref(),
+    );
 
     // Load models and textures from the scene
     let config = ModelLoadConfig::in_project(assets.project.clone(), &args.scene);

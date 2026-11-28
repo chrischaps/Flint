@@ -1,0 +1,53 @@
+# A chase camera (#1631, ADR 0138 decision 4, epic #1626): on a vehicle,
+# the camera follows it from behind and above, looking a little ahead, and
+# the game is played as it. The vehicle package places the kernel's eye at
+# the frame's `View` stage, so the camera, the listener and the scripts'
+# player follow it with no camera script.
+#
+# It moves once a fixed physics step, from the pose that step left, so a
+# lap looks the same at 30 and 144 Hz and the vehicle stays still on the
+# screen between steps. The defaults are FlintKart's chase camera's, and
+# each tuning field is read every step, so an inspector edit or a script's
+# `set_field` takes effect at once.
+#
+# The modifiers are how a game shapes the shot without forking it (a
+# drift's swing, a boost's kick, an impact's shake): the package puts them
+# back to neutral after each frame's eye is placed, so a game writes them
+# every frame it wants them, in `on_update`. `release` hands the frame to
+# the scripts' own camera (a start-line flyover, a finish orbit) while the
+# chase camera keeps following, ready to take over again.
+
+[component.chase_camera]
+description = "The camera follows this vehicle from behind, and the game is played as it (the vehicle package)"
+
+[component.chase_camera.fields]
+# Where it sits
+distance = { type = "f32", default = 8.0, min = 0.0, description = "Metres behind the vehicle, along its heading" }
+height = { type = "f32", default = 4.0, description = "Metres above the vehicle" }
+look_ahead = { type = "f32", default = 4.0, description = "Metres ahead of the vehicle it looks at" }
+aim_height = { type = "f32", default = 1.0, description = "Metres above the vehicle it looks at" }
+speed_pullback = { type = "f32", default = 1.2, description = "Extra metres behind at top speed" }
+speed_drop = { type = "f32", default = 0.5, description = "Metres lower at top speed" }
+travel = { type = "f32", default = 1.0, min = 0.0, max = 1.0, description = "How far it follows the direction of travel rather than the body, once moving forward (1: travel, so a drift's slide doesn't swing it out over the inside of the turn)" }
+# How it moves
+lag = { type = "f32", default = 5.0, min = 0.0, description = "How fast it closes on where it wants to be, a second (0: it never moves)" }
+lead = { type = "f32", default = 0.7, min = 0.0, description = "The share of the lag's trail it makes up by aiming ahead of the motion (0 trails by speed / lag)" }
+cut_distance = { type = "f32", default = 6.0, min = 0.0, description = "A move further than this in one step, past what the speed explains, is a respawn: the camera cuts instead of flying there" }
+# Field of view and roll
+fov = { type = "f32", default = 62.0, min = 1.0, max = 179.0, description = "The field of view at rest, degrees" }
+fov_speed = { type = "f32", default = 16.0, description = "Degrees wider at top speed" }
+fov_attack = { type = "f32", default = 6.0, min = 0.0, description = "How fast the field of view widens toward its target, a second" }
+fov_release = { type = "f32", default = 3.0, min = 0.0, description = "How fast it narrows back, a second" }
+steer_roll = { type = "f32", default = 0.012, description = "Radians it leans against the steering at top speed" }
+roll_rate = { type = "f32", default = 5.0, min = 0.0, description = "How fast the roll follows its target, a second" }
+# Looking back
+look_back = { type = "string", default = "look_back", description = "The action that swings it round in front, looking back (\"\": none)" }
+look_back_lag = { type = "f32", default = 8.0, min = 0.0, description = "The lag while it swings round and back" }
+# Modifiers, neutral again after each frame's eye
+offset = { type = "vec3", default = [0.0, 0.0, 0.0], description = "Metres added to where it wants to be, along the heading: x right, y up, z further back (a drift's swing out)" }
+roll = { type = "f32", default = 0.0, description = "Radians added to the roll's target (a lean into a drift)" }
+fov_bonus = { type = "f32", default = 0.0, description = "Degrees added to the field of view's target (a boost, a brake's narrowing)" }
+fov_kick = { type = "f32", default = 0.0, description = "Degrees added on top, unsmoothed (a boost's punch, which the game eases itself)" }
+shake = { type = "vec3", default = [0.0, 0.0, 0.0], description = "A shake on top, in the camera's own frame: x metres right, y metres up, z radians of roll" }
+cut = { type = "bool", default = false, description = "Cut to where it wants to be this frame rather than ease there" }
+release = { type = "bool", default = false, description = "Place no eye this frame: the scripts' camera has the shot and the listener (a start-line flyover, a finish orbit); it keeps following, ready to take over" }

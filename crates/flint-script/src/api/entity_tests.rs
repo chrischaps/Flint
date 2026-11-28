@@ -892,9 +892,9 @@ fn query_orders(names: &[&str]) -> Vec<Vec<String>> {
         store.set(&format!("seen_{name}"), toml::Value::Boolean(true));
     }
     let mut sm = flint_runtime::GameStateMachine::new();
-    let physics = flint_physics::PhysicsSystem::new();
+    let resources = flint_core::resources::Resources::new();
     let _world = crate::context::WorldScope::new(&engine.ctx, &mut world);
-    let _state = crate::context::StateScope::new(&engine.ctx, &mut sm, &mut store, &physics);
+    let _state = crate::context::StateScope::new(&engine.ctx, &mut sm, &mut store, &resources);
     let out: rhai::Array = engine
         .rhai_engine()
         .eval(

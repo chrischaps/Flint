@@ -1,8 +1,8 @@
 # Physics and Runtime
 
-> **Package:** `engine`: every game has it. Its physics is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+> **Package:** `engine`: every game has it: the game loop, the events and the input. The physics sections say their own package ([Packages](packages.md)).
 
-Flint's runtime layer transforms static scenes into interactive, playable experiences. The `flint-runtime` crate provides the game loop infrastructure, and `flint-physics` integrates the Rapier 3D physics engine for collision detection and character movement.
+Flint's runtime layer transforms static scenes into interactive, playable experiences. The `flint-runtime` crate provides the game loop infrastructure, and `flint-physics` (the physics package's crate, `packages/physics/`) integrates the Rapier 3D physics engine for collision detection and character movement.
 
 ## The Game Loop
 
@@ -25,13 +25,15 @@ The frame's events live in one `EventBus`, which the player owns. Each fixed phy
 
 ## Physics with Rapier 3D
 
+> **Package:** `physics`: a standard package, in every game unless its `[packages]` says `physics = false`, and then no body falls, collides or is cast against and the player and CLI link no Rapier ([Packages](packages.md)).
+
 The `flint-physics` crate wraps Rapier 3D and bridges it to Flint's TOML-based component system:
 
 - **PhysicsWorld** --- manages Rapier's rigid body set, collider set, and simulation pipeline
 - **PhysicsSync** --- reads `rigidbody` and `collider` components from entities and creates corresponding Rapier bodies. Static bodies for world geometry (walls, floors, furniture), kinematic bodies for the player.
 - **CharacterController** --- kinematic first-person movement with gravity, jumping, ground detection, and sprint
 
-## Physics Schemas
+### Physics Schemas
 
 Four component schemas define physics properties:
 
@@ -87,7 +89,7 @@ WARN warning[needs-component] entity 'wall' component 'collider': a collider wit
 
 **A value the physics cannot read is reported, then defaulted.** An unknown `body_type` makes a static body, an unknown `shape` a box and an unknown joint `type` a hinge, each with one warning naming the entity, the allowed values and the nearest one; a value of the wrong type (`friction = "low"`) takes the field's default the same way. Whole numbers are fine wherever a number is read: `move_speed = 8` is 8. See [Diagnostics while the game runs](schemas.md#diagnostics-while-the-game-runs).
 
-## Adding Physics to a Scene
+### Adding Physics to a Scene
 
 To make a scene playable, add physics components to entities:
 
@@ -124,7 +126,7 @@ Then play the scene:
 flint play my_scene.scene.toml
 ```
 
-## Joints
+### Joints
 
 Joints ([ADR 0069](https://github.com/chrischaps/Flint/blob/main/docs/adr/0069-physics-joints-and-world-space-bodies.md)) connect a **dynamic** body to a parent body so that Rapier
 supplies the secondary motion --- overshoot, settle, bounce --- while scripts
@@ -200,7 +202,7 @@ driven spherical motor, and a cylinder wheel.
 
 ![Joint test bench at rest: pendulum anchor and bob on the left, slider base and block in the middle, gimbal base and pod on the right, wheel on the floor](../images/joint-test-bench.png)
 
-## Scaled colliders
+### Scaled colliders
 
 A collider is the size its entity is drawn: `size` is multiplied by the
 entity's world scale, and so are `offset` and the `bounds` centre (points in
@@ -222,7 +224,7 @@ top. A change under a part in a thousand from the size the shape was made
 at keeps the shape, and a `mesh` or `convex` remade at a scale another
 entity of its model already has takes that entity's shape.
 
-## Mesh and convex colliders
+### Mesh and convex colliders
 
 `shape = "mesh"` makes the collider from the triangles of the entity's
 model, from TOML alone:
@@ -274,7 +276,7 @@ Several entities of one model and one scale share one shape.
 Terrain and swept splines make their own triangle colliders and need none of
 this.
 
-## Collision layers
+### Collision layers
 
 A game names its layers once, in its `flint.toml`:
 
@@ -356,7 +358,7 @@ character's collider meets: a player whose mask leaves out `pickup` walks
 through pickups. `move_character(id, dx, dy, dz, mask)` moves against the
 layers of `mask` instead.
 
-## Raycasting
+### Raycasting
 
 The physics system provides raycasting for line-of-sight checks, hitscan weapons, and interaction targeting. `PhysicsSystem::raycast()` casts a ray through the Rapier collision world and returns the first hit, and `raycast_masked()` meets only the colliders on a layer of a `LayerMask` (`PhysicsSystem::layer_mask(&["world", "enemy"])`):
 
@@ -373,7 +375,7 @@ The function resolves Rapier collider handles back to Flint `EntityId`s through 
 
 Raycasting is exposed to scripts via the `raycast()` function, whose eighth argument is a mask: a layer's name or an array of names (`raycast(x, y, z, dx, dy, dz, 50.0, ["world", "enemy"])`; an unknown name is a script error naming the nearest). `collision_layers()` lists the names. See [Scripting: Physics API](scripting.md#physics-api) for the script-level interface and examples.
 
-## Navigation
+### Navigation
 
 A script can ask for the way from one point of a scene to another and walk it (#969, [ADR 0130](https://github.com/chrischaps/Flint/blob/main/docs/adr/0130-navigation-is-a-lazy-grid-of-floors.md)). `find_path` answers with points on the floor, round walls and up ramps and steps; `move_along_path` walks an entity along them:
 
@@ -586,6 +588,8 @@ Bindings can be remapped at runtime from Rust (scripts have no rebinding functio
 4. User overrides are automatically saved to `<config>/flint/input_{game_id}.toml`, or back to the project-local `.flint/input.user.toml` if that's the one that was loaded. The user override is looked up once the game default has set `game_id`, so a game's rebinds are found on the next start
 
 ## Runtime Physics Updates
+
+> **Package:** `physics`.
 
 The physics system handles several runtime updates beyond the core simulation:
 

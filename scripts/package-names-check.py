@@ -81,9 +81,43 @@ EXCEPTIONS = {
     ("flint-script", "string", "music", "crates/flint-script/src/api/music.rs"): "the "
     "`music` script module, declared here until Phase 3 (the music manifest says so): "
     "#1619 moves it to the music package",
+    ("flint-core", "string", "terrain", "crates/flint-core/src/components.rs"): "the "
+    "`terrain` component's name (`components::TERRAIN`), the one spelling the kernel's "
+    "readers of a terrain use: the renderer's terrain draws and replay, the scene check's "
+    "lone-collider rule, the CLI's asset fields. The component is the terrain package's "
+    "(#1623); its GPU half leaves the renderer in Phase 4 (ADR 0138 decision 5)",
+    ("flint-render", "string", "terrain", "crates/flint-render/src/scene_renderer/render_passes.rs"):
+    "the terrain pipeline's name in a frame's description (`MainPipe::Terrain`): the "
+    "renderer's GPU half of terrain, which stays in flint-render until Phase 4's "
+    "render-feature seam (ADR 0138 decision 5)",
+    ("flint-cli", "string", "terrain", "crates/flint-cli/src/check/references.rs"): "a "
+    "folder the reference check looks a bare file name up in (`ASSET_DIRS`), where "
+    "projects keep their heightmaps: a folder name, not the package",
     ("flint-audio", "string", "music", "crates/flint-audio/src/bus.rs"): "the built-in "
     "`music` bus, which every game's audio has: #1619 makes flint-audio the audio "
     "package's, out of the kernel",
+    # The frame's fixed-step part is named `physics` wherever the kernel
+    # times or labels it, whichever package steps in it (#1617): the word,
+    # not the package
+    ("flint-player", "string", "physics", "crates/flint-player/src/player_app/perf.rs"): "the "
+    "frame's `physics` phase (the fixed steps and the eye), as the perf line and the frame "
+    "history have always named it",
+    ("flint-package", "string", "physics", "crates/flint-package/src/stage.rs"): "`Stage::Physics`'s "
+    "label, the stage after the fixed steps, which a profiler scope's detail names",
+    ("flint-package", "string", "physics", "crates/flint-package/src/hud.rs"): "the frame graph's "
+    "`physics` band, the frame's fixed-step phase",
+    ("flint-cli", "string", "physics", "crates/flint-cli/src/commands/frame/open/timing.rs"): "a "
+    "capture's `physics` phase, read into the frame graph's band",
+    ("flint-cli", "string", "physics", "crates/flint-cli/src/commands/trace/profile.rs"): "a "
+    "trace's `physics::*` scopes, banded with the frame's fixed-step phase",
+    ("flint-core", "string", "physics", "crates/flint-core/src/load_report.rs"): "the load "
+    "report's `physics` row (`NoteKind::PhysicsBuild`'s stage), which the package's build notes",
+    ("flint-core", "string", "physics", "crates/flint-core/src/project.rs"): "the manifest's "
+    "`[project.physics] layers`, a game's own collision layers, which `flint check` reads in "
+    "every build",
+    ("flint-runtime", "string", "physics", "crates/flint-runtime/src/state.rs"): "the `physics` "
+    "policy name, kept as a constant of the name (ADR 0138 decision 7): a game state that names "
+    "it registers in every build",
 }
 
 

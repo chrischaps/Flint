@@ -29,8 +29,17 @@ pub(super) const ASSET_FIELDS: &[(&str, &str, AssetKind)] = &[
     ("sprite", "texture", AssetKind::Textures),
     ("audio_source", "file", AssetKind::Audio),
     ("script", "source", AssetKind::Scripts),
-    ("terrain", "heightmap", AssetKind::Files),
-    ("terrain", "splat_map", AssetKind::Files),
+    // The terrain package's component (#1623), by the kernel's name for it
+    (
+        flint_core::components::TERRAIN,
+        "heightmap",
+        AssetKind::Files,
+    ),
+    (
+        flint_core::components::TERRAIN,
+        "splat_map",
+        AssetKind::Files,
+    ),
     ("grass_ground", "mask", AssetKind::Files),
     ("spline", "file", AssetKind::Files),
     ("particle_emitter", "texture", AssetKind::ParticleTextures),

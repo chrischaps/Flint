@@ -1343,9 +1343,11 @@ mod tests {
                 "living",
                 "music",
                 "particles",
+                "physics",
                 "procgen",
                 "rhythm",
                 "rig",
+                "terrain",
                 "vehicle"
             ]
         );
@@ -1361,9 +1363,11 @@ mod tests {
                 "living",
                 "music",
                 "particles",
+                "physics",
                 "procgen",
                 "rhythm",
                 "rig",
+                "terrain",
                 "vehicle"
             ]
         );

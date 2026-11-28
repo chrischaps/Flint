@@ -32,7 +32,7 @@ Flint uses an **edit -> validate -> play** loop (examples and flags: `crates/fli
    ```
 2. **`flint edit <file>`** -- Editor for a scene (hot-reload), a `.glb` or a spec.
 3. **`flint gen <spec>`** -- A procgen spec to a GLB or PNG.
-4. **`flint play <scene>`** -- Full game runtime with physics, scripting, audio, and input (`cargo run --bin flint -- play <scene>`).
+4. **`flint play <scene>`** -- Full game runtime with physics, scripting, audio, and input.
 5. **`flint capture <shots.toml>`** -- A shot list as deterministic frame sequences.
 
 **For AI agents:** before playing, rendering or bundling, `flint check <dir|scene> [--json]` is the pre-flight (#687): every problem of a project in one run. Every command that opens no window takes the global `--json` (#710): one JSON document on stdout; read answers from it. After a gameplay change, `flint playtest <scene> --input-script <file>` (#714) plays it headless and fails on what didn't happen. After visual changes, always run `flint render` to verify before moving on.
@@ -65,8 +65,8 @@ flint-player        Standalone player: the game loop, the subsystems, egui HUD
   ├── flint-rig      Skeletons, node clips, IK, previewer
   ├── flint-audio    Kira spatial audio
   ├── flint-audio-worklet Kira in an AudioWorklet
-  ├── flint-terrain  Heightmap terrain, splat maps
-  ├── flint-physics  Rapier 3D: bodies, joints, controller
+  ├── flint-terrain  Heightmap ground, its editor
+  ├── flint-physics  Rapier, joints
   ├── flint-runtime  Clock, input, events, game states, saves, pads
   ├── flint-viewer   egui inspector: gizmos, undo, write-back
   ├── flint-widgets  egui widgets, F4's render panel
@@ -101,9 +101,10 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-script/CLAUDE.md` | Rhai detail, callbacks, script UI |
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear, project manifest, env switches |
 | `crates/flint-audio/CLAUDE.md` | audio clock, decoding, device features |
-| `crates/flint-{physics,terrain}/CLAUDE.md` | joints, terrain |
+| `packages/physics/crates/flint-physics/CLAUDE.md` | Rapier, joints |
 | `packages/{animation/crates/flint-animation,rig/crates/flint-rig}/CLAUDE.md` | animator, kinds; skeletons, IK |
 | `packages/particles/crates/flint-particles/CLAUDE.md` | particles |
+| `packages/terrain/crates/flint-terrain/CLAUDE.md` | terrain |
 | `flint-examples/film/CLAUDE.md` | the film: shots, score, editor (flint-examples, #1195) |
 | `showcase_game/CLAUDE.md` | the example game |
 | `docs/CLAUDE.md` | the book, its checks, design notes, ADRs |

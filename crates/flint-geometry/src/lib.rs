@@ -16,9 +16,14 @@
 //! - [`terrain_chunk`] and [`grass`] - a terrain chunk's mesh and the grass
 //!   settings, the plain data the terrain package makes and the renderer
 //!   draws, so the renderer links no terrain crate (#1615)
+//! - [`heightmap`] and [`ground`] - a grid of heights, placed in the world as
+//!   a [`ground::GroundField`] scripts pick against (ADR 0095), and the
+//!   [`ground::SceneGround`] the terrain package hands its host (#1623)
 
 pub mod components;
 pub mod grass;
+pub mod ground;
+pub mod heightmap;
 pub mod ocean;
 pub mod point_path;
 pub mod ray_mesh;
@@ -26,3 +31,4 @@ pub mod spline;
 pub mod spline_file;
 pub mod sweep;
 pub mod terrain_chunk;
+pub mod triangles;

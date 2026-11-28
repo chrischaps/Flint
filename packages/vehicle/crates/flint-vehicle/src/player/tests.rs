@@ -10,7 +10,7 @@ use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_package::{FixedCtx, Resources, Subsystem};
 use flint_physics::PhysicsSystem;
-use flint_runtime::{EventBus, InputState, StateConfig};
+use flint_runtime::{EventBus, Eye, InputState, PlayerView, StateConfig};
 
 const STEP: f64 = 1.0 / 60.0;
 
@@ -161,7 +161,22 @@ impl Run {
             )
             .unwrap();
         }
+        // `Stage::View`: the kernel forgets last frame's eye, then the
+        // chase camera places this one
+        self.resources
+            .get_or_insert_with(PlayerView::default)
+            .new_frame();
+        self.vehicles.place_eye(
+            &mut self.world,
+            &self.input,
+            STEP as f32,
+            &mut self.resources,
+        );
         self.vehicles.after_steps(&mut self.world);
+    }
+
+    fn eye(&self) -> Option<Eye> {
+        self.resources.get::<PlayerView>().and_then(|v| v.eye)
     }
 
     fn seconds(&mut self, seconds: f64) {
@@ -667,4 +682,153 @@ fn a_player_vehicle_reads_its_actions() {
         run.state(k).f32("speed", 0.0) > 5.0,
         "the player's key drives it"
     );
+}
+
+// --- The chase camera (#1631) ---------------------------------------------
+
+/// A kart with a chase camera, driven by its script input.
+fn chased_kart(world: &mut FlintWorld, camera: &str) -> EntityId {
+    let k = kart(world, "kart", [0.0, 0.0, 0.0], "top_speed = 24.0");
+    put(world, k, crate::CHASE_CAMERA, camera);
+    k
+}
+
+fn table_vec(v: [f64; 3]) -> toml::Value {
+    toml::Value::Array(v.iter().map(|c| f(*c)).collect())
+}
+
+#[test]
+fn a_chase_camera_sits_behind_and_above_and_looks_ahead() {
+    let mut world = FlintWorld::new();
+    ground(&mut world);
+    let k = chased_kart(&mut world, "");
+    let mut run = Run::new(world);
+    run.seconds(1.0);
+    let eye = run.eye().expect("the chase camera placed the eye");
+    let [x, y, z] = run.position(k);
+    // The kart faces -Z, so behind it is +Z: FlintKart's 8 m back, 4 m up
+    assert!((eye.position.x - x).abs() < 0.01, "{eye:?}");
+    assert!(
+        (eye.position.z - (z + 8.0)).abs() < 0.05,
+        "{eye:?} kart {z}"
+    );
+    assert!(
+        (eye.position.y - (y + 4.0)).abs() < 0.05,
+        "{eye:?} kart {y}"
+    );
+    assert!(
+        (eye.target.z - (z - 4.0)).abs() < 0.05,
+        "4 m ahead: {eye:?}"
+    );
+    assert!(
+        (eye.fov.unwrap() - 62.0).abs() < 0.01,
+        "at rest, 62 degrees"
+    );
+    let view = run.resources.get::<PlayerView>().unwrap();
+    assert_eq!(view.player, Some(k), "the game is played as the kart");
+}
+
+/// The camera moves once a step from the pose the step left, so a drive
+/// seen at 30, 60 and 144 frames a second ends on one eye, to the bit, and
+/// at 144 a frame with no step leaves it where it was.
+#[test]
+fn a_chase_camera_frames_one_drive_alike_at_30_60_and_144_hz() {
+    fn drive(frame_rate: u32) -> (Eye, u64) {
+        let mut world = FlintWorld::new();
+        ground(&mut world);
+        let k = chased_kart(&mut world, "");
+        let mut run = Run::new(world);
+        run.set_input(k, "throttle", f(1.0));
+        run.set_input(k, "steer", f(0.4));
+        let mut done = 0u32;
+        let mut frame = 0u32;
+        while done < 180 {
+            frame += 1;
+            let due = frame * 60 / frame_rate;
+            let steps = due - done;
+            let before = run.eye();
+            run.frame(steps);
+            if steps == 0 && before.is_some() {
+                assert_eq!(run.eye(), before, "a frame with no step moves nothing");
+            }
+            done = due;
+        }
+        (run.eye().unwrap(), run.vehicles.chase().unwrap().steps)
+    }
+    let (at30, steps30) = drive(30);
+    let (at60, steps60) = drive(60);
+    let (at144, steps144) = drive(144);
+    assert_eq!((steps30, steps60, steps144), (180, 180, 180));
+    assert_eq!(at30, at60);
+    assert_eq!(at60, at144);
+    // It drove: the camera is well away from the start, and wider with the
+    // speed
+    assert!(at60.position.z < -10.0, "{at60:?}");
+    assert!(at60.fov.unwrap() > 66.0, "{at60:?}");
+}
+
+#[test]
+fn a_respawn_cuts_and_release_hands_the_shot_back() {
+    let mut world = FlintWorld::new();
+    ground(&mut world);
+    let k = chased_kart(&mut world, "");
+    let mut run = Run::new(world);
+    run.seconds(0.5);
+    let cuts = run.vehicles.chase().unwrap().cuts;
+    assert!(run.vehicles.place(k, [40.0, 0.7, 0.0], 0.0));
+    run.seconds(0.1);
+    assert_eq!(run.vehicles.chase().unwrap().cuts, cuts + 1, "one cut");
+    let eye = run.eye().unwrap();
+    assert!(
+        (eye.position.x - 40.0).abs() < 0.1,
+        "cut, not flown: {eye:?}"
+    );
+
+    // A finish camera: the script has the shot, and the modifiers last a frame
+    run.world
+        .set_field(
+            k,
+            crate::CHASE_CAMERA,
+            "release",
+            toml::Value::Boolean(true),
+        )
+        .unwrap();
+    run.world
+        .set_field(k, crate::CHASE_CAMERA, "fov_kick", f(9.0))
+        .unwrap();
+    run.frame(1);
+    assert_eq!(run.eye(), None, "released: no eye");
+    let cam = run.world.view(k, crate::CHASE_CAMERA);
+    assert!(!cam.bool("release", true) && cam.f32("fov_kick", 1.0) == 0.0);
+    run.frame(1);
+    assert!(run.eye().is_some(), "and back the next frame");
+}
+
+#[test]
+fn the_modifiers_shape_the_shot_for_a_frame() {
+    let mut world = FlintWorld::new();
+    ground(&mut world);
+    // No lag: the shot is where it wants to be, so the frames compare
+    let k = chased_kart(&mut world, "lag = 1000.0");
+    let mut run = Run::new(world);
+    run.seconds(1.0);
+    let plain = run.eye().unwrap();
+    run.world
+        .set_field(k, crate::CHASE_CAMERA, "shake", table_vec([0.5, 0.25, 0.1]))
+        .unwrap();
+    run.world
+        .set_field(k, crate::CHASE_CAMERA, "fov_kick", f(10.0))
+        .unwrap();
+    run.frame(0);
+    let shaken = run.eye().unwrap();
+    // Looking down -Z, the camera's right is +X
+    assert!(
+        (shaken.position.x - plain.position.x - 0.5).abs() < 1e-4,
+        "{shaken:?}"
+    );
+    assert!((shaken.position.y - plain.position.y - 0.25).abs() < 1e-4);
+    assert!((shaken.roll - plain.roll - 0.1).abs() < 1e-6);
+    assert!((shaken.fov.unwrap() - plain.fov.unwrap() - 10.0).abs() < 1e-4);
+    run.frame(0);
+    assert_eq!(run.eye(), Some(plain), "neutral again: the plain shot");
 }

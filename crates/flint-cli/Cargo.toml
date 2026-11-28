@@ -68,8 +68,8 @@ default = ["audio", "gamepad", "dialogs", "packages"]
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
 packages = [
-    "ai", "animation", "debug-hud", "flipbook", "living", "music", "particles", "procgen",
-    "rhythm", "rig", "vehicle",
+    "ai", "animation", "debug-hud", "flipbook", "living", "music", "particles", "physics",
+    "procgen", "rhythm", "rig", "terrain", "vehicle",
 ]
 packages-audio = []
 packages-dialogs = ["flint-procgen-cli?/dialogs"]
@@ -81,10 +81,12 @@ flipbook = ["animation", "flint-player/flipbook"]
 living = ["procgen", "flint-player/living", "dep:flint-living", "flint-living?/cli"]
 music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
 particles = ["flint-player/particles", "dep:flint-particles", "flint-particles?/cli"]
+physics = ["flint-player/physics"]
 procgen = ["flint-player/procgen", "dep:flint-procgen-cli", "flint-procgen-cli?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
 rig = ["animation", "flint-player/rig", "dep:flint-rig", "flint-rig?/cli"]
-vehicle = ["flint-player/vehicle"]
+terrain = ["flint-player/terrain", "dep:flint-terrain", "flint-terrain?/cli"]
+vehicle = ["physics", "flint-player/vehicle"]
 # package-sync:end
 audio = ["flint-player/audio", "packages-audio"]
 gamepad = ["flint-player/gamepad", "packages-gamepad"]
@@ -102,7 +104,6 @@ flint-constraint = { workspace = true }
 flint-asset = { workspace = true }
 flint-import = { workspace = true }
 flint-runtime = { workspace = true }
-flint-physics = { workspace = true }
 flint-player = { workspace = true, features = ["frame-history"] }
 # `CliExtension` and the one output path (#1553): a package's commands
 # build against it, and `run_with` composes them
@@ -112,8 +113,6 @@ flint-package = { workspace = true, features = ["gif"] }
 # it) is `flint script check` (#694). Both stay on with
 # `--no-default-features`
 flint-script = { workspace = true, features = ["metadata", "check"] }
-# `render`: a scene's terrain built into `flint render`'s renderer (#1615)
-flint-terrain = { workspace = true, features = ["render"] }
 flint-viewer = { workspace = true }
 # The widgets `frame open`, its profiler and the particle editor draw
 # with: the kernel's (#1583), not the debug-hud package's
@@ -151,6 +150,7 @@ flint-particles = { workspace = true, optional = true }
 flint-procgen-cli = { workspace = true, optional = true }
 flint-rhythm-game = { workspace = true, optional = true }
 flint-rig = { workspace = true, optional = true }
+flint-terrain = { workspace = true, optional = true }
 # package-sync:end
 
 # `flint capture` asks the disk under `out` for its free space (#1196): std
@@ -180,6 +180,9 @@ flint-audio = { workspace = true }
 # well, so the test builds without the procgen package (#1543) and
 # `cargo tree -e normal` shows none
 flint-procgen = { workspace = true }
+# `tests/gen_cli.rs` bakes a terrain spec with the terrain package's own
+# bake, to hold `flint gen`'s maps to it (#1168), in any build (#1623)
+flint-terrain = { workspace = true }
 # `tests/particle_tie_order.rs` steps a scene's emitters with it: here as
 # well, so the test builds without the particles package (#1622)
 flint-particles = { workspace = true }

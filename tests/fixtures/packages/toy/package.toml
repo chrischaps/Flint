@@ -18,6 +18,10 @@ tier = "feature"
 summary = "A spring on a body, pulled each fixed physics step: the Package API's gate"
 engine = "^0.1"
 
+# Its spring pulls a Rapier body (#1617: physics is a package of its own)
+[requires]
+physics = "*"
+
 [build]
 features = ["toy"]
 

@@ -513,6 +513,7 @@ pub(super) fn render(
             wants_text,
             wants_flips,
             reads_glyphs,
+            packages: registry.packages().cloned(),
         },
     )
 }
@@ -707,14 +708,26 @@ fn bind_capture_scene(
     world: &flint_ecs::FlintWorld,
     scene_file: &flint_scene::SceneFile,
     binding: &flint_render::SceneBinding,
+    packages: Option<&flint_core::package::InUse>,
 ) {
     let binding = binding
         .clone()
         .with_environment(scene_file.environment.as_ref());
     let mut bound = renderer.bind_scene(&ctx.device, &ctx.queue, world, &binding);
-    // The scene's terrain: the terrain package builds it after the bind (#1615)
-    let terrain =
-        flint_terrain::scene::bind_terrain(renderer, &ctx.device, &ctx.queue, world, &mut bound);
+    // The packages' share of the bind (#1615, #1623): the terrain's chunks
+    // and grass, from the scene binders the run's packages registered
+    let terrain = flint_player::packages::registry().bind_scene(
+        packages,
+        &mut flint_package::bind::BindCtx {
+            gpu: flint_package::assets::Gpu {
+                renderer: &mut *renderer,
+                device: &ctx.device,
+                queue: &ctx.queue,
+            },
+            world,
+            bound: &mut bound,
+        },
+    );
     if let Some(grass) = bound
         .grass
         .as_ref()
@@ -729,9 +742,9 @@ fn bind_capture_scene(
     if let Some(terrain) = &terrain {
         say!(
             "[terrain] Loaded terrain: {}x{} heightmap, {} chunks",
-            terrain.heightmap_size.0,
-            terrain.heightmap_size.1,
-            terrain.terrain.chunks.len()
+            terrain.heightmap.width,
+            terrain.heightmap.depth,
+            terrain.chunks
         );
     }
     if bound

@@ -39,6 +39,7 @@
 //! decision 5).
 
 pub mod assets;
+pub mod bind;
 pub mod cli;
 mod context;
 pub mod hud;
@@ -49,6 +50,7 @@ pub mod particles;
 mod registry;
 mod stage;
 mod subsystem;
+pub mod surfaces;
 
 pub use context::{
     find, find_mut, Button, Capture, CaptureGame, CaptureGameMut, CapturePose, CapturePoses,
@@ -63,9 +65,10 @@ pub use launch::PackageFlags;
 pub use note::Note;
 pub use panels::{DebugPanel, DebugPanels};
 pub use registry::{
-    left_out_line, BuildForScene, LeftOutLine, Package, Registry, RunResources, SettleScene,
+    left_out_line, BuildForScene, LeftOutLine, Package, Registry, RunResources, SceneRead,
+    SettleScene,
 };
-pub use stage::Stage;
+pub use stage::{Stage, StepStage};
 pub use subsystem::Subsystem;
 
 /// The engine's egui, so a package's `ui` builds against the same version

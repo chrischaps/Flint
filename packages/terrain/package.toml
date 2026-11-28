@@ -1,0 +1,46 @@
+# Terrain (#1623, epic #1611, ADR 0138 decision 5): heightmap ground for
+# outdoor 3D games. A `terrain` entity's heightmap made into chunks, drawn
+# with its splat map's four layers and its grass, a static heightfield
+# under it, and `terrain_height` for scripts. A standard package: on unless
+# a game writes `terrain = false`.
+#
+# Its crate is in this folder: crates/flint-terrain. Without a feature it is
+# the heights, the bake and the spec (what physics' tests and procgen's
+# `terrain_v1` read); `render` builds a scene's terrain into a renderer;
+# `player` registers that as the kernel's scene binder (`Registry::
+# scene_binder`: right after `bind_scene`, in the player, the viewer and
+# `flint render` alike), the subsystem and the `terrain` script module
+# (`flint_terrain::player::PACKAGE`); `cli` is the terrain editor (`flint
+# edit x.terrain.toml`, `flint terrain-edit`) on the kernel's
+# `TerrainEditors` point. The binder hands the host the kernel's ground
+# (`flint_geometry::ground::SceneGround`), which physics' heightfield and
+# the debug HUD's grass panel read, so the terrain names no physics crate.
+#
+# Procgen's `terrain_v1` generator (`flint gen x.terrain.toml`) is procgen's
+# `[with.terrain]` part: it wraps this crate's bake.
+
+[package]
+name = "terrain"
+version = "0.1.0"
+tier = "standard"
+summary = "Heightmap ground: chunks, splat-map layers, grass, a heightfield and terrain_height"
+engine = "^0.1"
+
+[build]
+features = ["terrain"]
+
+[rust]
+player = "flint-terrain"
+cli = "flint-terrain"
+
+[provides]
+crates = ["flint-terrain"]
+components = ["terrain"]
+archetypes = ["terrain"]
+script_modules = ["terrain"]
+commands = ["terrain-edit"]
+
+# What a player built without it still knows (ADR 0137 decision 8): a
+# scene with a terrain hears once that it is neither drawn nor stood on.
+[without]
+does = "draw nothing and hold nothing up"

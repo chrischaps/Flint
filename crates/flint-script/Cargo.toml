@@ -21,8 +21,6 @@ flint-core = { workspace = true }
 flint-geometry = { workspace = true }
 flint-ecs = { workspace = true }
 flint-runtime = { workspace = true }
-flint-physics = { workspace = true }
-flint-terrain = { workspace = true }
 # The [post_process] keys `set_post` takes (#853)
 flint-schema = { workspace = true }
 # `internals` for the top-level statements (#692): a callback is called on

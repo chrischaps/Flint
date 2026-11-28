@@ -1,13 +1,14 @@
 //! The vehicles' subsystem: a scene's vehicles, driven each fixed step and
 //! handed to scripts and the screen at the frame's stages.
 
+use super::chase::{self, Chase, ChaseModifiers, ChaseTuning, Followed};
 use super::model::{wheel_pose, Input, Tuning, Vehicle, WheelSpec};
 use super::module::Place;
-use crate::{VEHICLE, VEHICLE_INPUT, VEHICLE_STATE, VEHICLE_WHEEL};
+use crate::{CHASE_CAMERA, VEHICLE, VEHICLE_INPUT, VEHICLE_STATE, VEHICLE_WHEEL};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_package::{FixedCtx, SceneCtx, Stage, StageCtx, Subsystem};
-use flint_runtime::InputState;
+use flint_package::{FixedCtx, Resources, SceneCtx, Stage, StageCtx, Subsystem};
+use flint_runtime::{InputState, PlayerView};
 use flint_script::context::ScriptCommand;
 use toml::Value;
 
@@ -23,14 +24,27 @@ pub struct Vehicles {
     looked_at: EntityId,
     /// The fixed steps it has heard.
     steps: u64,
+    /// The chase camera, on the vehicle the game is played as (#1631)
+    chase: Option<Chase>,
+    /// The fixed steps since the last `Stage::View`
+    frame_steps: u32,
 }
+
+/// The actions a player's vehicle reads unless its `vehicle.actions` says
+/// others: what the controls line lists for the player it chases.
+pub const ACTIONS: [&str; 4] = ["accelerate", "brake", "steering", "drift"];
 
 /// The subsystem for a scene with any `vehicle`.
 pub fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     if ctx.world.entities_with_component(VEHICLE).is_empty() {
         return None;
     }
-    Some(Box::new(Vehicles::new(ctx.world)))
+    let vehicles = Vehicles::new(ctx.world);
+    // The chased vehicle is who the game is played as, before the scripts'
+    // `on_init` and the first frame (the cursor and the controls line read
+    // it at the entry), as physics' builder says its walker (#1617)
+    vehicles.enter_view(ctx.resources);
+    Some(Box::new(vehicles))
 }
 
 /// The neutral modifiers, written back after each frame's steps.
@@ -75,6 +89,8 @@ impl Vehicles {
             vehicles: Vec::new(),
             looked_at: EntityId::from_raw(0),
             steps: 0,
+            chase: None,
+            frame_steps: 0,
         };
         vehicles.find(world);
         vehicles
@@ -111,6 +127,95 @@ impl Vehicles {
             self.vehicles.push(Vehicle::new(entity, wheels));
         }
         self.looked_at = world.next_id();
+        // The chased vehicle, kept while it has its camera
+        let ids: Vec<EntityId> = self.vehicles.iter().map(|v| v.entity).collect();
+        let chased = chase::chased(world, &ids);
+        if self.chase.as_ref().map(|c| c.entity) != chased {
+            self.chase = chased.map(Chase::new);
+        }
+    }
+
+    /// The chase camera, for a test or a panel.
+    pub fn chase(&self) -> Option<&Chase> {
+        self.chase.as_ref()
+    }
+
+    /// Who the game is played as, into the kernel's view: the chased
+    /// vehicle, which doesn't look with the mouse and reads the vehicle's
+    /// actions. Nothing without a chase camera, so a scene's other
+    /// controller keeps the view.
+    fn enter_view(&self, resources: &mut Resources) {
+        let Some(chase) = &self.chase else {
+            return;
+        };
+        if let Some(view) = resources.get_mut::<PlayerView>() {
+            view.player = Some(chase.entity);
+            view.mouse_look = false;
+            view.controls = &ACTIONS;
+        }
+    }
+
+    /// One step of the chase camera from where the vehicle is now.
+    fn step_chase(&mut self, world: &FlintWorld, input: &InputState, dt: f32) {
+        let Some(chase) = &mut self.chase else {
+            return;
+        };
+        let Some(at) = Followed::read(world, chase.entity) else {
+            return;
+        };
+        let tuning = ChaseTuning::read(world, chase.entity);
+        let mods = ChaseModifiers::read(world, chase.entity);
+        chase.step(&at, &tuning, &mods, chase::looking_back(input, &tuning), dt);
+    }
+
+    /// The frame's eye (`Stage::View`): the camera's last step for the
+    /// frame's steps, or its first placement, then the eye with the
+    /// frame's shake on top unless the game released it, and the modifiers
+    /// back to neutral.
+    pub fn place_eye(
+        &mut self,
+        world: &mut FlintWorld,
+        input: &InputState,
+        fixed_dt: f32,
+        resources: &mut Resources,
+    ) {
+        let steps = std::mem::take(&mut self.frame_steps);
+        let Some(entity) = self.chase.as_ref().map(|c| c.entity) else {
+            return;
+        };
+        if !world.contains(entity) {
+            return;
+        }
+        if steps > 0 {
+            self.step_chase(world, input, fixed_dt);
+        }
+        let mods = ChaseModifiers::read(world, entity);
+        if let (Some(view), false) = (resources.get_mut::<PlayerView>(), mods.release) {
+            view.player = Some(entity);
+            view.eye = match self.chase.as_ref() {
+                // Before its first step (a frame with none, a capture,
+                // which steps nothing): where it would be placed, kept for
+                // nothing, so the first step still places it
+                Some(c) if c.shot.is_none() => {
+                    let mut first = c.clone();
+                    let at = Followed::read(world, entity);
+                    let tuning = ChaseTuning::read(world, entity);
+                    at.and_then(|at| {
+                        first.step(&at, &tuning, &mods, false, fixed_dt);
+                        first.eye(&mods)
+                    })
+                }
+                Some(c) => c.eye(&mods),
+                None => None,
+            };
+        }
+        if mods != ChaseModifiers::default() {
+            if let Some(mut c) = world.get_components_mut(entity) {
+                for (field, neutral) in chase::neutral() {
+                    c.set_field(CHASE_CAMERA, field, neutral);
+                }
+            }
+        }
     }
 
     /// The vehicles, for a test or a panel.
@@ -256,6 +361,12 @@ impl Subsystem for Vehicles {
                 self.write_state(ctx.world);
                 self.write_player_input(ctx.world, ctx.input);
             }
+            Stage::View => self.place_eye(
+                ctx.world,
+                ctx.input,
+                ctx.clock.fixed_timestep as f32,
+                ctx.resources,
+            ),
             Stage::Physics => self.after_steps(ctx.world),
             _ => {}
         }
@@ -279,10 +390,16 @@ impl Subsystem for Vehicles {
     /// assists applied for Rapier's step to integrate (ADR 0137 section 3a).
     fn fixed_update(&mut self, ctx: &mut FixedCtx) {
         self.steps += 1;
+        let dt = ctx.dt as f32;
+        // The chase camera's step for the step before this one in the
+        // frame, from the pose it left (the frame's last is at `View`)
+        if ctx.step.0 > 0 {
+            self.step_chase(ctx.world, ctx.input, dt);
+        }
+        self.frame_steps += 1;
         if ctx.world.next_id() != self.looked_at {
             self.find(ctx.world);
         }
-        let dt = ctx.dt as f32;
         for v in &mut self.vehicles {
             if !ctx.world.contains(v.entity) {
                 continue;

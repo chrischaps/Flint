@@ -1,10 +1,10 @@
 # The kernel, and with it what can't be left out yet (ADR 0136 decision 8).
 #
 # Every game links this package. It holds the kernel and the standard
-# packages that have no Cargo feature until Phase 3 (physics, audio,
-# terrain; animation left with #1620, particles with #1622, rig with
-# #1621), and the render features that live inside flint-render until
-# Phase 4 (ocean, grass, stylize, panels). Each list is grouped by the
+# packages that have no Cargo feature until Phase 3 (audio; animation left
+# with #1620, particles with #1622, physics with #1617, rig with #1621,
+# terrain with #1623), and the render features that live inside flint-render
+# until Phase 4 (ocean, grass, stylize, panels). Each list is grouped by the
 # package it will become, so the split is a move of lines.
 # `flint package list` reads this file; a test in flint-cli holds every
 # crate, schema, script module and command of the tree to one manifest.
@@ -24,12 +24,8 @@ crates = [
     "flint-runtime", "flint-render", "flint-script", "flint-constraint",
     "flint-package", "flint-player", "flint-android", "flint-viewer",
     "flint-widgets", "flint-cli",
-    # physics
-    "flint-physics",
     # audio
     "flint-audio", "flint-audio-worklet",
-    # terrain
-    "flint-terrain",
 ]
 components = [
     # kernel
@@ -38,12 +34,11 @@ components = [
     "interactable", "camera_tuning", "screen_anchor", "ui_fill", "ui_text",
     "sprite", "parallax", "spline", "spline_mesh",
     "motion_hold",
-    # physics
-    "collider", "rigidbody", "character_controller", "joint",
+    # first-person (#1618): the character controller stays in
+    # flint-physics until then, its component here
+    "character_controller",
     # audio
     "audio_source", "audio_trigger",
-    # terrain
-    "terrain",
     # ocean
     "ocean", "ocean_contact", "water_body",
     # grass
@@ -54,10 +49,8 @@ components = [
 archetypes = [
     # kernel
     "sprite", "character",
-    # physics
+    # first-person (#1618)
     "player",
-    # terrain
-    "terrain",
 ]
 scene_tables = [
     # kernel
@@ -72,12 +65,8 @@ script_modules = [
     "draw_world", "ui", "screen_ui", "touch", "sprite", "view",
     "post_process", "quality", "test", "expression", "chunk", "spline",
     "field",
-    # physics
-    "physics", "physics_2d", "nav",
     # audio
     "audio",
-    # terrain
-    "terrain",
     # ocean
     "ocean",
     # stylize
@@ -93,5 +82,5 @@ commands = [
     "asset import", "asset list", "asset info", "asset resolve", "asset where",
     # hidden aliases of `flint edit` (`preview`, the model previewer, is
     # the rig package's, #1621)
-    "serve", "spline-edit", "terrain-edit",
+    "serve", "spline-edit",
 ]

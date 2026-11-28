@@ -20,5 +20,7 @@ pub fn register_built_in_generators(registry: &mut GeneratorRegistry) {
     registry.register(Box::new(creature::CreatureGenerator));
     registry.register(Box::new(form::FormGenerator));
     registry.register(Box::new(sweep::SweepGenerator));
+    // The procgen package's `[with.terrain]` part (#1623)
+    #[cfg(feature = "terrain")]
     registry.register(Box::new(terrain::TerrainGenerator));
 }

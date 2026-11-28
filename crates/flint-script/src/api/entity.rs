@@ -592,21 +592,8 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .returns(Num, "0 when it has none")
         .run(|call, (id,)| Ok(call.world()?.view(id, comp::JOINT).f64("motor_target", 0.0)));
 
-    m.func(
-        "get_joint_position",
-        "The simulated joint coordinate from its rest pose: hinge degrees or prismatic metres.",
-    )
-    .arg("id", Entity)
-    .returns(
-        Num,
-        "the coordinate, or () when there is no physics or no such joint",
-    )
-    .run(
-        |call, (id,)| match call.physics().and_then(|p| p.joint_position(id)) {
-            Some(v) => Dynamic::from(v as f64),
-            None => Dynamic::UNIT,
-        },
-    );
+    // `get_joint_position` is the physics package's (`physics`, #1617):
+    // it asks the simulation
 
     // ── Interactables ──
     m.func(
