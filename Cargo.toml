@@ -17,8 +17,6 @@ members = [
     "crates/flint-runtime",
     "crates/flint-package",
     "crates/flint-player",
-    "crates/flint-audio",
-    "crates/flint-audio-worklet",
     "crates/flint-script",
     "crates/flint-cli",
     "packages/*/crates/*",
@@ -51,8 +49,6 @@ default-members = [
     "crates/flint-runtime",
     "crates/flint-package",
     "crates/flint-player",
-    "crates/flint-audio",
-    "crates/flint-audio-worklet",
     "crates/flint-script",
     "crates/flint-cli",
     "packages/*/crates/*",
@@ -223,8 +219,8 @@ flint-package = { path = "crates/flint-package" }
 # flint-audio, flint-music, flint-rhythm and flint-rhythm-game, `gamepad` on
 # flint-input-capture and flint-rhythm-game, and
 # `audio` / `gamepad` / `debug-hud` on flint-player.
-flint-audio = { path = "crates/flint-audio", default-features = false }
-flint-audio-worklet = { path = "crates/flint-audio-worklet" }
+flint-audio = { path = "packages/audio/crates/flint-audio", default-features = false }
+flint-audio-worklet = { path = "packages/audio/crates/flint-audio-worklet" }
 flint-music = { path = "packages/music/crates/flint-music", default-features = false }
 flint-rhythm = { path = "packages/rhythm/crates/flint-rhythm", default-features = false }
 flint-input-capture = { path = "packages/rhythm/crates/flint-input-capture", default-features = false }
@@ -366,7 +362,7 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 
-# The AudioWorklet's mixer (#136, crates/flint-audio-worklet): its own small
+# The AudioWorklet's mixer (#136, packages/audio/crates/flint-audio-worklet): its own small
 # wasm, run on the audio thread against a deadline, so it is built for speed,
 # not bytes, in every build of the page (Trunk.toml's pre_build hook).
 [profile.worklet]

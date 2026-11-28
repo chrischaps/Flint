@@ -496,6 +496,46 @@ mod tests {
         }
     }
 
+    /// The terrain's uniforms (#1692): the frame writes its flags at
+    /// `TerrainUniforms::FRAME_OFFSET` as one struct, so the WGSL's members
+    /// must sit where the Rust struct puts them, `chunks` (a `vec2`,
+    /// aligned to 8) included.
+    #[test]
+    fn the_terrain_uniforms_are_laid_out_as_the_rust_struct() {
+        use crate::terrain_pipeline::{TerrainFrameFlags, TerrainUniforms};
+        let (module, _) = module("terrain_shader.wgsl", TERRAIN);
+        let (_, t) = module
+            .types
+            .iter()
+            .find(|(_, t)| t.name.as_deref() == Some("TerrainUniforms"))
+            .expect("TerrainUniforms");
+        assert_eq!(
+            t.inner.size(module.to_ctx()) as usize,
+            std::mem::size_of::<TerrainUniforms>()
+        );
+        let naga::TypeInner::Struct { members, .. } = &t.inner else {
+            panic!("TerrainUniforms is a struct");
+        };
+        let offset = |name: &str| {
+            members
+                .iter()
+                .find(|m| m.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("no member {name}"))
+                .offset as usize
+        };
+        let frame = TerrainUniforms::FRAME_OFFSET as usize;
+        assert_eq!(std::mem::offset_of!(TerrainUniforms, frame), frame);
+        assert_eq!(offset("enable_tonemapping"), frame);
+        assert_eq!(
+            offset("debug_mode"),
+            frame + std::mem::offset_of!(TerrainFrameFlags, debug_mode)
+        );
+        assert_eq!(
+            offset("chunks"),
+            frame + std::mem::offset_of!(TerrainFrameFlags, chunks)
+        );
+    }
+
     /// The meshes' two modules draw one surface: every fragment stage the
     /// static mesh has, the skinned mesh has too, but the entry that takes
     /// `front_facing` (`fs_main` against `fs_skinned`), so a veil, fog veil

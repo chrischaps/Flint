@@ -7,8 +7,9 @@
 //! reads, is in [`Resources`]: procgen's resolver, living's props, the
 //! debug-hud's panels, and the standard packages' state (ADR 0138 decision
 //! 1, #1616): physics' `PhysicsSystem` in every context of a run that has
-//! the physics package (`flint_physics::of_mut`, #1617), the sound's
-//! `AudioEngine` while the host has one (`flint_audio::engine::of_mut`).
+//! the physics package (`flint_physics::of_mut`, #1617), the sound once
+//! the host opened one (`flint_package::sound`, the engine itself through
+//! `flint_audio::engine::of_mut`, #1619).
 
 use crate::{Note, Registry, Resources, Subsystem};
 use flint_core::package::InUse;
@@ -77,10 +78,14 @@ pub struct SceneCtx<'a> {
     /// through [`Subsystem::late_models`](crate::Subsystem::late_models).
     pub models: Option<&'a ModelLoadResult>,
     /// The run's resources: what one package lends another. The sound is
-    /// here while the host has one (`flint_audio::engine::of_mut`): a
+    /// here once the host opened one (`flint_audio::engine::of_mut`): a
     /// subsystem that plays on the shared kira manager (the music, ADR
     /// 0017) starts there.
     pub resources: &'a mut Resources,
+    /// The scene's `[scene] preload_audio`: false skips the blanket load of
+    /// every file under `audio/` (a silent scene starts at once), for the
+    /// package that loads sounds.
+    pub preload_audio: bool,
     /// What the run's packages registered: a builder reads another
     /// package's registration point here (music's chart judge, which
     /// rhythm fills, #1555), and asks whether a package is in the build.
@@ -178,8 +183,13 @@ pub struct StageCtx<'a> {
     pub quit: Option<&'a mut bool>,
     /// The run's resources: what one package lends another. Physics'
     /// state is here at every stage (`flint_physics::of`), and the sound
-    /// while the host has one (`flint_audio::engine::of_mut`).
+    /// once the host opened one (`flint_audio::engine::of_mut`).
     pub resources: &'a mut Resources,
+    /// The frame's game events (last frame's contacts, this frame's input,
+    /// what scripts and extensions fired), as scripts got them: audio's
+    /// triggers play from them at [`Stage::Sound`](crate::Stage::Sound).
+    /// Empty outside a frame's stages.
+    pub events: &'a [flint_runtime::GameEvent],
     /// The frame's event bus: what a subsystem raises here (a tween's
     /// `tween_done`) reaches the scripts with the next frame's events, as
     /// the physics contacts do.

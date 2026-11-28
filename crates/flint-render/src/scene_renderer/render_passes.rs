@@ -81,6 +81,12 @@ struct MainPassState<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MainPipe {
     Terrain,
+    /// A terrain chunk under a debug view (#1692): normals, depth, UV,
+    /// unlit or metal/rough, through `fs_debug`.
+    TerrainDebug,
+    /// A terrain chunk lit, pushed back a little in depth, under the
+    /// wireframe overlay's lines (#1692).
+    TerrainUnderLines,
     /// An opaque wireframe box.
     Line,
     /// An opaque mesh: through the woozy vertex stage (#215), and culling
@@ -130,6 +136,8 @@ impl MainPipe {
             | MainPipe::Skinned { woozy, .. }
             | MainPipe::SkinnedBlended { woozy, .. } => woozy,
             MainPipe::Terrain
+            | MainPipe::TerrainDebug
+            | MainPipe::TerrainUnderLines
             | MainPipe::Line
             | MainPipe::SkinnedSoftEdge
             | MainPipe::Billboard
@@ -144,6 +152,8 @@ impl MainPipe {
         use crate::pipeline::BlendMode as M;
         match self {
             MainPipe::Terrain => "terrain",
+            MainPipe::TerrainDebug => "terrain debug",
+            MainPipe::TerrainUnderLines => "terrain under lines",
             MainPipe::Line => "line",
             MainPipe::Mesh {
                 woozy: true,
@@ -233,6 +243,8 @@ impl MainPipe {
         let m = &p.main;
         Some(match self {
             MainPipe::Terrain => one(&p.terrain.as_ref()?.pipeline),
+            MainPipe::TerrainDebug => one(&p.terrain_debug.as_ref()?.shaded),
+            MainPipe::TerrainUnderLines => one(&p.terrain_debug.as_ref()?.lit_under_lines),
             MainPipe::Line => one(&m.line_pipeline),
             MainPipe::Mesh {
                 woozy: true,
@@ -1104,10 +1116,20 @@ impl SceneRenderer {
             queue.write_buffer_counted(buf, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
-        // Update terrain material buffer (tonemapping flag)
+        // The terrain material's frame flags: tonemapping, the debug view
+        // and the chunk grid (#1692), after texture_tile, metallic, roughness
         if let Some(buf) = &self.terrain.material_buffer {
-            // enable_tonemapping is at byte offset 12 (texture_tile(4) + metallic(4) + roughness(4))
-            queue.write_buffer_counted(buf, 12, bytemuck::cast_slice(&[tonemapping_u32]));
+            let flags = crate::terrain_pipeline::TerrainFrameFlags {
+                enable_tonemapping: tonemapping_u32,
+                debug_mode: debug_mode_u32,
+                _pad: 0,
+                chunks: self.terrain.grid,
+            };
+            queue.write_buffer_counted(
+                buf,
+                crate::terrain_pipeline::TerrainUniforms::FRAME_OFFSET,
+                bytemuck::bytes_of(&flags),
+            );
         }
 
         // Update ocean uniforms (wave phases in f64, grid follows the camera).
@@ -1348,6 +1370,10 @@ impl SceneRenderer {
     /// Wireframe-only mode rendering: wireframe lines. The selection is
     /// outlined over the finished image (#602).
     fn render_wireframe_only_pass<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        // The terrain first, its depth then its lines (#1692), so its hills
+        // hide what stands behind them
+        self.draw_terrain_wires(render_pass, true);
+
         // Wireframe lines: the overlay pipeline (LessEqual, unbiased since #944)
         render_pass.set_pipeline(&self.pipelines.main.overlay_line_pipeline);
         for draw in &self.wireframe_overlay_draws {
@@ -1546,7 +1572,58 @@ impl SceneRenderer {
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
             self.draw_skinned_wireframes(render_pass);
+            self.draw_terrain_wires(render_pass, false);
             group.close(render_pass);
+        }
+    }
+
+    /// The terrain's triangles as lines (#1692), for the wireframe views:
+    /// each chunk the camera sees through `fs_wire`, ink with its chunk's
+    /// border in amber. `depth_first` draws every such chunk's depth before
+    /// the lines, for the wireframe view, which has no lit terrain under them.
+    /// Nothing until `update_from_world` has made the pipelines and edges.
+    fn draw_terrain_wires<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, depth_first: bool) {
+        let (Some(debug), Some(material)) = (
+            self.pipelines.terrain_debug.as_deref(),
+            &self.terrain.material_bind_group,
+        ) else {
+            return;
+        };
+        let chunks = || {
+            self.draws
+                .layer(Layer::Terrain)
+                .iter()
+                .filter(|item| item.drawn())
+                .filter_map(|item| match &item.draw {
+                    Draw::Terrain(n) => self.terrain_chunk_in_view(*n),
+                    Draw::Static(_)
+                    | Draw::Skinned(_)
+                    | Draw::Echo(_)
+                    | Draw::Billboard(_)
+                    | Draw::Particles(_) => None,
+                })
+        };
+        render_pass.set_bind_group(1, material, &[]);
+        render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
+        if depth_first {
+            render_pass.set_pipeline(&debug.depth);
+            for draw in chunks() {
+                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+        }
+        render_pass.set_pipeline(&debug.wire);
+        for draw in chunks() {
+            let Some((wire, count)) = self.terrain.wire_of(draw) else {
+                continue;
+            };
+            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(wire.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..count, 0, 0..1);
         }
     }
 
@@ -1702,7 +1779,19 @@ impl SceneRenderer {
         let woozy_skinned = woozy && self.pipelines.wooze_skinned.is_some();
         let opaque = item.blend == Blend::Opaque;
         let mode = item.blend.mesh_mode();
+        let terrain_debug = self.pipelines.terrain_debug.is_some();
         Some(match &item.draw {
+            // A debug view draws a chunk through `fs_debug`, and the
+            // wireframe overlay lit under its lines (#1692); their pipelines
+            // are made the frame the view is first asked for
+            Draw::Terrain(_) if terrain_debug && self.debug_state.mode.as_u32() != 0 => {
+                MainPipe::TerrainDebug
+            }
+            Draw::Terrain(_)
+                if terrain_debug && self.debug_state.mode == DebugMode::WireframeOverlay =>
+            {
+                MainPipe::TerrainUnderLines
+            }
             Draw::Terrain(_) => MainPipe::Terrain,
             Draw::Static(d) if d.is_wireframe => {
                 if !opaque {

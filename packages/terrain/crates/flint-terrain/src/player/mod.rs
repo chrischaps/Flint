@@ -11,13 +11,15 @@
 //! scene without a terrain, as it always did, and a capture (which binds no
 //! ground into its game's resources) reads 0.0 too.
 
+mod live;
 mod module;
 
 use crate::scene::bind_terrain;
 use flint_core::components as comp;
 use flint_package::bind::{BindCtx, SceneGround};
-use flint_package::{Package, Registry, SceneCtx, Subsystem};
+use flint_package::{Package, Registry, SceneCtx, Stage, StageCtx, Subsystem};
 
+pub use live::LIVE_FIELDS;
 pub use module::{TerrainHeight, TerrainModule, TERRAIN_MODULE};
 
 /// The package's name, as its manifest gives it.
@@ -77,11 +79,17 @@ fn left_out(ctx: &SceneCtx) -> Option<String> {
 pub fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     let height = TerrainHeight::of(ctx.resources.get::<SceneGround>());
     ctx.script.set_module_state(height);
-    Some(Box::new(TerrainSubsystem))
+    Some(Box::new(TerrainSubsystem {
+        live: live::LiveTerrain::of(ctx.world),
+    }))
 }
 
-/// The scene's terrain, as its scripts read it: the `terrain` module.
-pub struct TerrainSubsystem;
+/// The scene's terrain, as its scripts read it (the `terrain` module) and
+/// change it: what they set on its material and grass reaches the renderer
+/// at the frame's sync (#1698, [`live`]).
+pub struct TerrainSubsystem {
+    live: Option<live::LiveTerrain>,
+}
 
 impl Subsystem for TerrainSubsystem {
     fn name(&self) -> &'static str {
@@ -90,6 +98,18 @@ impl Subsystem for TerrainSubsystem {
 
     fn script_modules(&self) -> &[&'static str] {
         &[module::MODULE]
+    }
+
+    /// After every script of the frame, before it is drawn: what they
+    /// changed on the terrain goes to the renderer.
+    fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
+        if stage != Stage::Sync {
+            return;
+        }
+        if let Some(live) = &mut self.live {
+            let ground = ctx.resources.get::<SceneGround>();
+            live.sync(ctx.world, ctx.renderer.as_deref_mut(), ctx.gpu, ground);
+        }
     }
 
     /// The scene's heights go with it.

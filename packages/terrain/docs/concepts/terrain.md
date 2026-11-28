@@ -97,7 +97,7 @@ Splat maps can be painted manually in any image editor that supports RGBA channe
 
 ## Generating Terrain From a Spec
 
-A `.terrain.toml` spec describes both maps as a recipe: `[geometry]` (size, height and resolution), a list of `[[height_layers]]` run in order (`op = "noise"`, `"flatten"` or `"erosion"`), and `[[splat_rules]]` that paint each layer by height, slope and noise. [`flint-examples/rolling_meadow.terrain.toml`](https://github.com/chrischaps/flint-examples/blob/main/rolling_meadow.terrain.toml) is one. Shape it by eye in the terrain editor (`flint edit x.terrain.toml`), or bake it from the command line:
+A `.terrain.toml` spec describes both maps as a recipe: `[geometry]` (size, height and resolution), a list of `[[height_layers]]` run in order (`op = "noise"`, `"flatten"`, `"erosion"` or `"falloff"`), and `[[splat_rules]]` that paint each layer by height, slope and noise. [`flint-examples/rolling_meadow.terrain.toml`](https://github.com/chrischaps/flint-examples/blob/main/rolling_meadow.terrain.toml) is one. Shape it by eye in the terrain editor (`flint edit x.terrain.toml`), or bake it from the command line:
 
 ```bash
 flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png   # terrain/meadow_height.png + meadow_splat.png
@@ -110,6 +110,8 @@ flint gen --describe terrain_v1                                              # e
 A terrain spec is a procgen spec for the `terrain_v1` generator (Flint#1168). `flint gen` reads a `.terrain.toml` as one: `[meta]` and `[seed]` stay where they are, and the other tables are its `[params]`, so `--print-spec` writes the same recipe as a `*.procgen.toml` (`generator = "terrain_v1"`, `[params.geometry]`, `[[params.height_layers]]`), which bakes the same maps. Everything a procgen spec has, a terrain spec has: `--register` keeps both maps in the project's store and hands them back while the spec, seed and generator are unchanged; `--batch` makes variants by seed; `--validate` reads the written maps back; and the AI steps write and refine recipes (`flint gen --ai-create "rolling hills with a river valley" --ai-generator terrain_v1 -o terrain/`, where a word such as hills, mountains or valley picks `terrain_v1` without the flag).
 
 The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the same resolution, written as `<stem>_height.png` and `<stem>_splat.png`; point the `terrain` component's `heightmap` and `splat_map` at them. Both are the bytes the editor's Ctrl+E export writes (the one bake, `flint_terrain::bake`, makes both), and the same spec and seed bake the same bytes every run. The summary says how much of the ground each layer covers.
+
+The spec is checked against `terrain_v1`'s schema before anything is baked, by path. A key nothing reads is a warning with the key it was probably meant to be (``warning: `height_layers[1].octave` is not a parameter of the noise layer (did you mean `octaves`?)``), and `--strict` makes it an error. A value the bake can't use is an error that stops the run: a splat rule for a layer past 3, a `noise_type` that isn't one, a resolution over 4096. The terrain editor lists the same lines under its Save buttons while the file has them.
 
 ### Noise has a sign
 
@@ -127,7 +129,46 @@ range = [0.0, 1.0]    # -1..1 onto 0..1: the swell scales the land, never flips 
 
 `[1.0, 0.0]` inverts. A layer without `range` blends its raw values, as before. In the terrain editor it is the **Range** box under Amplitude, which shows the raw range while it's off.
 
-The spec is checked against `terrain_v1`'s schema before anything is baked, by path. A key nothing reads is a warning with the key it was probably meant to be (``warning: `height_layers[1].octave` is not a parameter of the noise layer (did you mean `octaves`?)``), and `--strict` makes it an error. A value the bake can't use is an error that stops the run: a splat rule for a layer past 3, a `noise_type` that isn't one, a resolution over 4096. The terrain editor lists the same lines under its Save buttons while the file has them.
+### Saying where the land is
+
+Noise is the same everywhere, so on its own a recipe can't ask for an island or for mountains in the north, and its hills run up to the map's edge and end there in a cut cliff. A `falloff` layer says where the land is: a shape over the map that keeps the heights so far where it is 1 and sinks them where it is 0. Put it after the noise and before any erosion, so the shore it leaves is worn too; a noise layer after it would bring land back to the border.
+
+```toml
+[[height_layers]]
+op = "noise"
+octaves = 6
+frequency = 3.0
+
+[[height_layers]]
+op = "falloff"
+shape = "island"     # "island", "edge", "radial" or "gradient"
+center = [0.5, 0.5]  # map coordinates: u along +X, v along +Z, 0 to 1
+radius = 0.25        # whole this far from the center...
+width = 0.2          # ...and gone this much further out
+
+[[height_layers]]
+op = "erosion"
+kind = "thermal"
+iterations = 30
+```
+
+![The same recipe and seed without a falloff (left) and with an island falloff (right)](../images/terrain-island-falloff.png)
+
+That is [`tests/fixtures/scenes/terrain/island.terrain.toml`](https://github.com/chrischaps/Flint/blob/main/tests/fixtures/scenes/terrain/island.terrain.toml)'s recipe. With the falloff, every seed is an island: its border bakes to height 0 (`an_island_falloff_keeps_every_seeds_border_under_the_sea` checks 20 seeds). Without it, no seed's border was under the sea in 40 tried.
+
+| Key | Default | What it does |
+|-----|---------|--------------|
+| `shape` | `"island"` | `island`: a disc that also fades out at the map's border, so the land never reaches the edge wherever the disc is. `edge`: only the border fades; the land fills the map but stops short of its edge. `radial`: a disc that may cross the border (a mountain in a corner). `gradient`: the land rises toward `direction` from the line through `center` (a coast along one side, mountains in the north) |
+| `center` | `[0.5, 0.5]` | The disc's middle, or the line the gradient rises from |
+| `radius` | `0.25` | How far from `center` the land is kept whole (`island`, `radial`) |
+| `width` | `0.2` | How far the shape fades out: past `radius`, in from the border (`island`, `edge`), or past the line (`gradient`) |
+| `curve` | `1.0` | The fade's exponent: above 1 shrinks the land toward where it is whole (steeper shores), below 1 widens it |
+| `direction` | `[0, -1]` | Which way a `gradient` rises, as `[u, v]`; `[0, -1]` is toward -Z |
+| `invert` | `false` | Keep the land outside the shape instead: a crater, a lake, a bay |
+| `blend` | `"sink"` | `sink` pulls the heights toward the lowest of them where the shape is 0, so the border lands on the map's floor whatever the noise's sign. `multiply` scales the heights by the shape, which leaves the border mid-height where the noise around it is below 0. `add` raises the heights by the shape times `amplitude`: a plateau |
+| `amplitude` | `1.0` | What `add` raises the shape by |
+
+The terrain editor's generate mode has a **+ Falloff** button, which puts the layer before the first erosion, and shows each field only for the shapes that read it (the gradient's direction as a compass angle).
 
 ## Texture Tiling
 
@@ -223,6 +264,25 @@ The grass isn't tied to a terrain. A game with mesh ground gives it a density ma
 
 The **Grass Debug** panel (`F3` in the player, see [Debug Panels](../guides/debug-panels.md)) exposes every field above live and can commit them back to the scene file, which is how the meadow demo's numbers were found.
 
+### Changing the grass and the ground while the game runs
+
+A script changes the terrain's grass and material the way it changes a light: with `set_field`, or eased over time with `tween`. The terrain package reads the fields again after every frame's scripts and hands the renderer what moved, so the next frame draws it. `terrain_live_fields()` lists them: every `grass.*` key above, `texture_tile`, `metallic` and `roughness`.
+
+```rust
+fn on_update() {
+    let island = get_entity("island");
+    // A gust: wind that rises over three seconds and swings round
+    if total_time() > 10.0 && total_time() < 10.1 {
+        tween(island, "terrain.grass.wind_strength", 0.6, 3.0);
+        tween(island, "terrain.grass.wind_direction", [0.2, 0.0, 1.0], 3.0);
+    }
+    // Dusk: the dry tint rises as the sun goes down
+    set_field(island, "terrain", "grass.dry_amount", 0.15 + 0.5 * (total_time() / 60.0).min(1.0));
+}
+```
+
+`grass.enabled = false` stops the blades and `true` brings them back. A scene whose grass was off when it loaded grows its field the first time a script turns it on. A denser field or a longer `max_distance` remakes the blades' buffer before the next frame, which is a moment's work, so change those rarely and the colours and wind as often as you like. A `grass_ground` holds the scene's grass when there is one, and then the terrain's `grass.*` changes nothing (the player says so once).
+
 ## Physics Collision
 
 Terrain automatically gets a **heightfield physics collider** via Rapier: the chunks' vertex grid as one grid of heights, on a fixed (immovable) rigid body. This means:
@@ -271,6 +331,15 @@ Terrain uses its own `TerrainPipeline` with full PBR lighting --- the same Cook-
 The rendering order places terrain early in the pass (after the skybox, before entity geometry) to fill the depth buffer for efficient occlusion culling of objects behind hills.
 
 When [post-processing](post-processing.md) is active, the terrain outputs linear HDR values like all other scene geometry. The composite pass handles tonemapping, bloom, fog, and other effects.
+
+The renderer's [debug views](rendering.md#debug-visualization) draw the terrain as they draw meshes. The wireframe shows every triangle, with each chunk's border in amber, which makes it the view to use for tuning `chunk_resolution`, chasing a seam, or seeing which chunks the camera culled:
+
+```bash
+flint render levels/island.scene.toml --debug-mode wireframe --output chunks.png --no-grid
+flint render levels/island.scene.toml --debug-mode normals --output normals.png --no-grid
+```
+
+Normals, depth, UV, unlit (the splat's blend of the layers, unlit) and metal/rough work as well. These views use pipelines of their own, built the first time one is asked for, so a game that never opens them builds none of them, and its normal frame is drawn exactly as before.
 
 ## Scene Transitions
 

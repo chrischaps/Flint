@@ -1719,14 +1719,18 @@ dependencies = [
 name = "flint-audio"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "cpal",
  "flint-audio-worklet",
  "flint-core",
  "flint-ecs",
+ "flint-package",
  "flint-runtime",
+ "flint-script",
  "glam",
  "js-sys",
  "kira",
+ "rhai",
  "send_wrapper",
  "symphonia",
  "toml",
@@ -2395,6 +2399,7 @@ dependencies = [
  "noise",
  "rand 0.9.2",
  "rand_chacha",
+ "rhai",
  "serde",
  "toml",
  "tracing",

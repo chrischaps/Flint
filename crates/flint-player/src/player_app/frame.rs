@@ -10,15 +10,7 @@ use super::subsystem::{EncodeCtx, FrameCtx};
 use super::PlayerApp;
 use super::TransitionPhase;
 use flint_render::{FrameInputs, GrassEntityPosition, View2d};
-use flint_runtime::state::AUDIO;
-use flint_runtime::{RuntimeSystem, StateConfig};
 use std::collections::HashSet;
-
-/// Frame time given to decoding sounds while a late audio bundle settles in
-/// (#124). A song is 85 to 190 ms of decoding in Chrome; at 2 ms a frame it
-/// spreads over a second or two, and Float's 10 ms frames stay inside one
-/// 16.7 ms vsync (at 4 ms they slipped to 33 ms now and then).
-const AUDIO_DECODE_BUDGET: std::time::Duration = std::time::Duration::from_millis(2);
 
 impl PlayerApp {
     /// The screen in points as scripts see it (`screen_width()` and
@@ -793,7 +785,7 @@ impl PlayerApp {
                 camera: &self.camera,
                 gpu,
                 persist: &mut self.core.store,
-                audio: crate::extension::ExtensionAudio::new(&mut self.audio),
+                resources: &mut self.core.resources,
                 rays: rays.clone(),
                 scene_tables: &self.scene.tables,
                 fired_events: &mut fired_events,
@@ -814,10 +806,8 @@ impl PlayerApp {
     }
 
     fn finish_frame(&mut self) {
-        // Apply audio low-pass filter override from scripts
-        if let Some(cutoff) = self.core.script_requests.audio_lowpass.take() {
-            self.audio.set_filter_cutoff(cutoff);
-        }
+        // A script's master low-pass is the audio package's, at
+        // `Stage::Sync` (#1619)
 
         // A menu put the touch controls away, or play brought them back.
         if let Some(enabled) = self.core.script_requests.touch_controls.take() {
@@ -1485,7 +1475,6 @@ impl super::game_core::FrameHost for PlayerApp {
                 cursor_captured: self.focus.cursor_captured,
                 scene_file_writable: self.launch.scene_file_writable,
                 note: &mut self.hud.key_note,
-                audio: Some(&mut self.audio.engine),
                 pads: Some(super::subsystem::Pads::new(
                     &mut self.gilrs,
                     &mut self.pad_rumble,
@@ -1573,21 +1562,9 @@ impl super::game_core::FrameHost for PlayerApp {
         let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();
         script.set_loaded_chunk_ids(chunk_ids);
 
-        // Where each audio_source is in its sound (#658), read every frame,
-        // paused or not: loops play on under a pause menu.
-        self.audio.sample_positions();
-        script.set_audio_clock(self.audio.sync.positions(), self.audio.output_latency());
-        // And which of the sounds scripts started still play (#1000): a
-        // command from last frame's batch is in the engine by now
-        script.set_sounds_playing(self.audio.engine.playing_keys());
-        // The music clock and the conducted snapshot are the music
-        // subsystem's, set at `Stage::PreScripts`, just before this
-    }
-
-    fn listener(&mut self, at: flint_runtime::Eye) {
-        // The first-person eye, or a script-driven camera's (chase cam,
-        // etc.): `PlayerView::listener`, which the kernel chose (ADR 0138)
-        self.audio.update_listener(at.position, at.yaw, at.pitch);
+        // The sounds' clocks (#658, #1000) are the audio package's, the
+        // music clock and the conducted snapshot the music subsystem's:
+        // each set at `Stage::PreScripts`, just before this
     }
 
     fn host_command(&mut self, command: flint_script::context::ScriptCommand) {
@@ -1615,36 +1592,6 @@ impl super::game_core::FrameHost for PlayerApp {
         self.add_panel_world_lines();
         // World text (ADR 0104) is laid out in the HUD's egui pass.
         self.hud.world_texts = self.core.script.drain_world_texts();
-    }
-
-    fn sound(&mut self, config: &StateConfig, game_events: &[flint_runtime::GameEvent]) {
-        flint_core::scope!("sound");
-        // A late bundle (audio, #98) landed: queue what wasn't there at
-        // start. Already-loaded sounds are skipped, and an autoplay source
-        // that was waiting for its file starts on the update after its
-        // sound is decoded.
-        let generation = flint_core::vfs::generation();
-        if generation != self.audio_vfs_generation {
-            self.audio_vfs_generation = generation;
-            super::scene_loading::load_audio_from_world(
-                &self.core.world,
-                &mut self.audio,
-                &self.core.project,
-                &self.core.scene_path,
-                self.scene.preload_audio,
-                true,
-            );
-        }
-        // ...and decode it a few milliseconds a frame (#124).
-        self.audio.engine.decode_queued(AUDIO_DECODE_BUDGET);
-
-        // Audio triggers from game events (skip when paused)
-        if config.runs(AUDIO) {
-            self.audio.process_events(game_events, &self.core.world);
-            self.audio
-                .update(&mut self.core.world, self.core.clock.delta_time)
-                .ok();
-        }
     }
 
     fn late_models(&mut self) {

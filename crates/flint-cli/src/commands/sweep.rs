@@ -9,6 +9,8 @@
 //! --sweep ascii.cell=6,8,12               any registered style's param or option
 //! --sweep wooze.glide=0,0.25,0.5,1        a Living Props wooze knob (#216)
 //! --sweep living.echoes.spread=0,0.9,1.8  the scene's `[living] echoes` (#531)
+//! --sweep island.terrain.grass.density=10,30,60
+//!                                         an entity's field (#1699)
 //! ```
 //!
 //! What a key means is decided here, before a scene loads or a GPU wakes, so a
@@ -20,7 +22,9 @@
 //! `render.rs`'s stages, a world and renderer a column (#487); an echoes column
 //! is written into its own copy of the scene's `[living]` table by the same
 //! part ([`SweepGrid::table_axes`], `StagePart::lay_tables`, #1595) before its
-//! stage loads, so it draws what a scene with that table draws. A render
+//! stage loads, so it draws what a scene with that table draws; an entity
+//! column (`super::entity_field`) is written into its own world after the
+//! scene loads and before the stage's renderer binds it. A render
 //! without the part refuses either, naming the package whose manifest lists
 //! `render --sweep <key>` ([`SweepGrid::package_key`]). The sheet the
 //! columns land on is [`super::style_sheet::compose`] for every family.
@@ -44,6 +48,10 @@ pub enum SweepKey {
     /// `living.echoes.<knob>=...`: one field of the scene's `[living] echoes`
     /// table (#531), as a scene would write it.
     Echoes { knob: String },
+    /// `<entity>.<component>.<field>=...`: one field of one entity's
+    /// component (#1699), written into each cell's world before its
+    /// renderer binds it.
+    Entity(super::entity_field::EntityField),
 }
 
 /// `--sweep KEY=V1,V2,...`, parsed and checked.
@@ -83,6 +91,8 @@ pub enum Family<'a> {
     Wooze(&'a str),
     /// `living.<field>`: a scene's, written into its table
     Living(&'a str),
+    /// `<entity>.<component>.<field>`: three parts or more (#1699)
+    Entity,
     /// `<style>.<key>`
     Style(&'a str, &'a str),
     /// None of them
@@ -99,6 +109,8 @@ impl<'a> Family<'a> {
             Family::Wooze(knob)
         } else if let Some(field) = key.strip_prefix("living.") {
             Family::Living(field)
+        } else if super::entity_field::EntityField::spelled(key) {
+            Family::Entity
         } else if let Some((style, k)) = key.split_once('.') {
             Family::Style(style, k)
         } else {
@@ -143,11 +155,18 @@ impl Sweep {
             Family::Post(field) => parse_post(field, &values)?,
             Family::Wooze(knob) => parse_wooze(knob, &values)?,
             Family::Living(field) => parse_living(field, &values)?,
+            // What it names is checked once the scene loads
+            Family::Entity => {
+                SweepKey::Entity(super::entity_field::EntityField::parse(key).ok_or_else(|| {
+                    format!("--sweep: '{key}' has an empty part: <entity>.<component>.<field>")
+                })?)
+            }
             Family::Style(style, k) => parse_style(key, style, k, &values)?,
             Family::Unknown => {
                 return Err(format!(
-                    "--sweep: '{key}' is not look, post.<field>, <style>.<key>, wooze.<knob> or \
-                     living.echoes.<knob> (e.g. ascii.cell; `--style help` lists the keys)"
+                    "--sweep: '{key}' is not look, post.<field>, <style>.<key>, wooze.<knob>, \
+                     living.echoes.<knob> or <entity>.<component>.<field> (e.g. ascii.cell; \
+                     `--style help` lists the keys)"
                 ))
             }
         };
@@ -162,6 +181,7 @@ impl Sweep {
             SweepKey::Post { field } => format!("post.{field}"),
             SweepKey::Wooze { knob } => format!("wooze.{knob}"),
             SweepKey::Echoes { knob } => format!("living.echoes.{knob}"),
+            SweepKey::Entity(field) => field.name(),
         }
     }
 
@@ -173,6 +193,7 @@ impl Sweep {
         match &self.key {
             SweepKey::Wooze { knob } if knob != "preset" => format!("{knob} {value}"),
             SweepKey::Echoes { knob } => format!("{knob} {value}"),
+            SweepKey::Entity(field) => field.label(value),
             _ => value.clone(),
         }
     }
@@ -237,6 +258,10 @@ impl Sweep {
             }
             SweepKey::Post { .. } => {
                 "the effect this field tunes is off, or nothing on screen shows it"
+            }
+            SweepKey::Entity(_) => {
+                "nothing on screen shows this field from here, or what reads it reads it \
+                 only as the scene plays (a render binds the scene once a cell)"
             }
             SweepKey::Look => "the two looks change nothing this scene shows differently",
         };
@@ -421,6 +446,29 @@ impl SweepGrid {
             .into_iter()
             .filter(|(s, _)| matches!(s.key, SweepKey::Echoes { .. }))
             .map(|(s, i)| (s.name(), s.values[i].as_str()))
+            .collect()
+    }
+
+    /// Whether either axis turns an entity's field (#1699), which each
+    /// cell's world is given before its renderer binds it.
+    pub fn writes_entities(&self) -> bool {
+        self.axes(0, 0)
+            .iter()
+            .any(|(s, _)| matches!(s.key, SweepKey::Entity(_)))
+    }
+
+    /// The cell's entity fields and the value each axis gives it.
+    pub fn entity_axes(
+        &self,
+        column: usize,
+        row: usize,
+    ) -> Vec<(&super::entity_field::EntityField, &str)> {
+        self.axes(column, row)
+            .into_iter()
+            .filter_map(|(s, i)| match &s.key {
+                SweepKey::Entity(field) => Some((field, s.values[i].as_str())),
+                _ => None,
+            })
             .collect()
     }
 
@@ -957,6 +1005,25 @@ mod tests {
         );
         assert_eq!(Family::of("ascii.cell"), Family::Style("ascii", "cell"));
         assert_eq!(Family::of("cell"), Family::Unknown);
+        // Three parts or more, no other family's head: an entity's field (#1699)
+        assert_eq!(Family::of("sun.light.direction"), Family::Entity);
+        assert_eq!(Family::of("island.terrain.grass.density"), Family::Entity);
+        let s = Sweep::parse("island.terrain.grass.density=10,30,60").unwrap();
+        assert_eq!(s.name(), "island.terrain.grass.density");
+        assert_eq!(s.label(1), "density 30");
+        let grid = SweepGrid::new(&[s]).unwrap().unwrap();
+        assert!(grid.writes_entities());
+        let axes = grid.entity_axes(2, 0);
+        assert_eq!(
+            (axes[0].0.field.as_str(), axes[0].1),
+            ("grass.density", "60")
+        );
+        let s = Sweep::parse("sun.light.direction=0,1,0|1,0.2,0").unwrap();
+        assert_eq!(s.values, ["0,1,0", "1,0.2,0"]);
+        assert!(!SweepGrid::new(&[Sweep::parse("ascii.cell=6,8").unwrap()])
+            .unwrap()
+            .unwrap()
+            .writes_entities());
     }
 
     #[test]

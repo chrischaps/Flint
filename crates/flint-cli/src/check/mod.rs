@@ -394,11 +394,14 @@ fn from_here(path: &Path) -> PathBuf {
 fn project_of(path: &Path) -> (Project, Vec<Diagnostic>) {
     match Project::for_path(path) {
         // The manifest's `[audio.buses]` too (#730), which the player reads
-        // at start and keeps its buses when it doesn't
+        // at start and keeps its buses when it doesn't: the audio package's
+        // to read (#1619), in a build that has it
         Ok(project) => {
-            let buses = match flint_player::Buses::for_project(&project) {
-                Ok(_) => Vec::new(),
-                Err(e) => vec![Diagnostic::error(codes::BAD_MANIFEST, e.to_string())
+            let point =
+                flint_player::packages::registry().point::<flint_package::sound::SoundPoint>();
+            let buses = match point.map_or(Ok(()), |p| (p.check_buses)(&project)) {
+                Ok(()) => Vec::new(),
+                Err(e) => vec![Diagnostic::error(codes::BAD_MANIFEST, e)
                     .file(from_here(&project.manifest_path()))
                     .hint("the game plays with the built-in buses, sfx and music")],
             };

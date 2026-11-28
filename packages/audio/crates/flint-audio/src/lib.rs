@@ -24,6 +24,10 @@ pub mod handle;
 pub mod meter;
 pub mod page;
 pub mod pan;
+/// The package's player part (`player::PACKAGE`, #1619): the scene's
+/// subsystem, the `audio` script module and the host's view of the sound.
+#[cfg(feature = "player")]
+pub mod player;
 pub mod remote;
 pub mod sync;
 pub mod trigger;

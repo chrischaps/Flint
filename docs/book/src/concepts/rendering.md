@@ -368,6 +368,8 @@ The renderer provides eight shading modes, selected from the **Shading** combo i
 
 Both wireframe modes draw skinned meshes in their animated pose; rigged models used to get no lines at all in the overlay and vanished in wireframe-only.
 
+A terrain takes every shading mode too. In the two wireframe modes its triangles are dark lines and each chunk's border is amber, so the chunk grid can be seen, along with which chunks the camera culled. In wireframe-only the hills still hide the lines and meshes behind them. Normals, depth, UV, unlit and metal/rough show what the meshes' modes show: the UV is the terrain-wide one the splat map reads, and unlit is the splat's blend of the four layers. Until #1692 the terrain ignored all of these: wireframe-only dropped it, and the others drew it lit. See [Terrain](terrain.md#rendering).
+
 Additional overlays:
 
 - **Normal arrows** (F3 in the viewer, `--show-normals` in render) --- draws face-normal direction arrows

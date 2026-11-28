@@ -394,7 +394,11 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
             anyhow::bail!("--screenshot-every must be over 0 (got {every})");
         }
     }
-    let scene = options.scene.clone();
+    // Cleaned, as `flint play` cleans it (#1703): `../x.scene.toml` from a
+    // subfolder is the project's scene, seen from where it really is
+    let scene = flint_core::project::clean_path(Path::new(&options.scene))
+        .to_string_lossy()
+        .into_owned();
     let scene_path = Path::new(&scene);
     // Only the packages this player has bring their schemas (#1529)
     let schema_dirs = crate::packages::built_schema_dirs(flint_core::project::schema_dirs(
@@ -442,7 +446,7 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
         false,
         None,
         scene_file.scene.input_config.clone(),
-        flint_audio::AudioSystem::silent(),
+        flint_package::sound::Output::Silent,
     );
     let launch = &mut app.launch;
     launch.saves_in_memory = true;

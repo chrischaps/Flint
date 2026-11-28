@@ -107,7 +107,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 mod tests {
     use super::*;
 
-    use flint_runtime::state::{AUDIO, PHYSICS, SCRIPTS};
+    use flint_runtime::state::{PHYSICS, SCRIPTS};
     use flint_runtime::{GameStateMachine, PersistentStore};
 
     #[test]
@@ -117,7 +117,7 @@ mod tests {
         config.insert("audio".into(), "Run".into());
         let c = state_config(&config).unwrap();
         assert!(!c.runs(PHYSICS));
-        assert!(c.runs(AUDIO));
+        assert!(c.runs("audio"));
         assert!(c.runs(SCRIPTS));
     }
 

@@ -36,13 +36,14 @@ impl TerrainConfig {
     /// component and field. `grass` is left for [`GrassConfig::from_component`].
     pub fn from_component(view: &flint_ecs::ComponentView<'_>) -> Self {
         let text = |key: &str| view.str(key, "").to_string();
+        let [texture_tile, metallic, roughness] = Self::material_of(view);
         Self {
             heightmap_path: text("heightmap"),
             width: view.f32("width", 256.0),
             depth: view.f32("depth", 256.0),
             height_scale: view.f32("height_scale", 50.0),
             chunk_resolution: view.i64("chunk_resolution", 64) as i32 as u32,
-            texture_tile: view.f32("texture_tile", 16.0),
+            texture_tile,
             splat_map_path: text("splat_map"),
             layer_textures: [
                 text("layer0_texture"),
@@ -50,10 +51,22 @@ impl TerrainConfig {
                 text("layer2_texture"),
                 text("layer3_texture"),
             ],
-            metallic: view.f32("metallic", 0.0),
-            roughness: view.f32("roughness", 0.85),
+            metallic,
+            roughness,
             grass: None,
         }
+    }
+
+    /// The material's three numbers, `[texture_tile, metallic, roughness]`,
+    /// with the defaults the bind draws: what the terrain package's
+    /// subsystem reads again each frame for a script's change (#1698),
+    /// without the strings [`from_component`](Self::from_component) copies.
+    pub fn material_of(view: &flint_ecs::ComponentView<'_>) -> [f32; 3] {
+        [
+            view.f32("texture_tile", 16.0),
+            view.f32("metallic", 0.0),
+            view.f32("roughness", 0.85),
+        ]
     }
 }
 

@@ -124,11 +124,15 @@ impl PlayerApp {
     /// True while the page is hidden. The first frame after it was hidden
     /// skips the gap: game time stopped when the sound did (#162).
     fn follow_page_sleep(&mut self) -> bool {
-        flint_audio::page::listen();
-        if flint_audio::page::hidden() {
+        // The page's sleep is its sound's: the audio package's (#1619)
+        let Some(point) = crate::packages::registry().point::<flint_package::sound::SoundPoint>()
+        else {
+            return false;
+        };
+        let (hidden, sleeps) = (point.page)();
+        if hidden {
             return true;
         }
-        let sleeps = flint_audio::page::sleeps();
         if SLEEPS_SEEN.with(|s| s.replace(sleeps)) != sleeps {
             self.core.clock.resync();
             tracing::info!(
@@ -144,7 +148,9 @@ impl PlayerApp {
     fn follow_page_hold(&mut self) -> bool {
         let held = page_holds();
         if HELD.with(|h| h.replace(held)) != held {
-            self.audio.engine.set_held(held);
+            if let Some(sound) = self.sound() {
+                sound.hold(held);
+            }
             if held {
                 tracing::info!("[hold] the page holds the game");
             } else {

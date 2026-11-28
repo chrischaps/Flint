@@ -1028,6 +1028,20 @@ name = "style-terrain-mask"
 scene = "tests/fixtures/scenes/style_terrain.scene.toml"
 args = ["--no-grid", "--debug-mode", "style"]
 
+# The debug views draw the terrain (#1692): its triangles as lines, each
+# chunk's border in amber, the hill hiding the lines behind it; then its
+# normals. Before, the wireframe was the sky and a black barrel, and the
+# normals the lit terrain.
+[[case]]
+name = "terrain-wireframe"
+scene = "tests/fixtures/scenes/terrain_debug.scene.toml"
+args = ["--no-grid", "--debug-mode", "wireframe"]
+
+[[case]]
+name = "terrain-normals"
+scene = "tests/fixtures/scenes/terrain_debug.scene.toml"
+args = ["--no-grid", "--debug-mode", "normals"]
+
 # --- the editor's selection outline (#602) ---------------------------------
 #
 # Not a style, but it is drawn over the finished image, after every style,

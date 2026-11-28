@@ -132,7 +132,7 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
         &mut world,
         &format!(
             "set_render_mode(1.0, 1); set_camera_fov(60); set_time_scale(2); \
-             play_sound(\"blip\", 1, 2); set_fog_color(1, 0, 0)"
+             set_fog_color(1, 0, 0)"
         ),
     )
     .unwrap();
@@ -147,8 +147,9 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
             c.requests.post.get("fog_color"),
             Some(flint_schema::post_effects::PostValue::Rgb([1.0, 0.0, 0.0]))
         );
-        // The sound (the velocity is the physics package's, #1617)
-        assert_eq!(c.commands.len(), 1, "the sound");
+        // No command: the velocity is the physics package's (#1617), the
+        // sound the audio package's (#1619)
+        assert!(c.commands.is_empty());
     }
     // A fractional float is not an int
     let err = eval::<()>(&engine, &mut world, "is_mouse_pressed(0.5)").unwrap_err();
@@ -333,7 +334,6 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
     // The ported modules' entity functions are all here
     for name in [
         "set_position",
-        "audio_position",
         "set_sprite_tint",
         "get_sprite_layer",
         "set_text",
@@ -526,11 +526,10 @@ fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
     .unwrap();
     assert!(gap.is_unit(), "no spline_data: no attribute");
     // A fractional float is not an int
-    let err = eval::<()>(&engine, &mut world, &format!("set_sound_volume(2.5, 0.5)")).unwrap_err();
-    assert!(
-        err.contains("`handle`") && err.contains("an integer"),
-        "{err}"
-    );
+    // (`rumble`'s pad: `set_sound_volume`'s handle was the case until it
+    // moved to the audio package, #1619)
+    let err = eval::<()>(&engine, &mut world, "rumble(2.5, 1.0, 0.5)").unwrap_err();
+    assert!(err.contains("`pad`") && err.contains("an integer"), "{err}");
     // A tween's seconds must be a number: an error now, not a warning queued
     let err = eval::<()>(
         &engine,

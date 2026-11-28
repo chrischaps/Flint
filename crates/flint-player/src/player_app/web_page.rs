@@ -97,7 +97,10 @@ pub fn begin() {
     if !touch_first() {
         request_lock();
     }
-    flint_audio::worklet::unlock();
+    // The AudioContext opens inside the gesture: the audio package's
+    if let Some(point) = crate::packages::registry().point::<flint_package::sound::SoundPoint>() {
+        (point.unlock)();
+    }
     BEGIN_REQUESTED.with(|b| b.set(true));
 }
 
