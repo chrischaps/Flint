@@ -1,0 +1,54 @@
+# Terrain Debug: a hillside for the renderer's debug views (#1692). It
+# renders as is:
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/terrain_debug.scene.toml --debug-mode wireframe --output wire.png --no-grid
+#   cargo run --bin flint -- render tests/fixtures/scenes/terrain_debug.scene.toml --debug-mode normals --output normals.png --no-grid
+#
+# The ground is style_terrain's hills with no style, from its heightmap
+# cut to 33 px (`terrain/heightmap_33.png`) so the mesh is coarse: 8 quads
+# a chunk, 4 x 4 chunks, so each triangle and each chunk's border can be
+# told apart at a golden's size. A barrel stands on the slope so
+# the wireframe shows the hill hiding what stands behind it.
+
+[scene]
+name = "Terrain Debug"
+version = "1.0"
+description = "A coarse terrain and a barrel, for the debug views (#1692)"
+
+[camera]
+position = [-30.0, 26.0, 34.0]
+target = [2.0, 0.0, 0.0]
+fov = 50.0
+
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [-0.4, 0.8, 0.3]
+intensity = 3.0
+
+[entities.ground]
+archetype = "terrain"
+[entities.ground.transform]
+position = [-32, 0, -32]
+[entities.ground.terrain]
+heightmap = "./terrain/heightmap_33.png"
+splat_map = "./terrain/splatmap.png"
+layer0_texture = "./terrain/grass.png"
+layer1_texture = "./terrain/dirt.png"
+layer2_texture = "./terrain/rock.png"
+layer3_texture = "./terrain/sand.png"
+width = 64.0
+depth = 64.0
+height_scale = 6.0
+chunk_resolution = 8
+texture_tile = 8.0
+roughness = 0.85
+metallic = 0.0
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [-2.6, 2.72, 13.2]
+scale = [1.5, 1.5, 1.5]
+[entities.barrel.model]
+asset = "./models/barrel.glb"

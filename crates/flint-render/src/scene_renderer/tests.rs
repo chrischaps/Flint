@@ -144,6 +144,8 @@ fn every_main_and_shadow_pipeline_has_a_name_of_its_own() {
     let modes = [BlendMode::Alpha, BlendMode::Additive, BlendMode::Multiply];
     let mut main = vec![
         MainPipe::Terrain,
+        MainPipe::TerrainDebug,
+        MainPipe::TerrainUnderLines,
         MainPipe::Line,
         MainPipe::SkinnedSoftEdge,
         MainPipe::Billboard,
@@ -189,5 +191,5 @@ fn every_main_and_shadow_pipeline_has_a_name_of_its_own() {
         assert!(!name.is_empty());
         assert!(seen.insert(*name), "two pipelines are named {name:?}");
     }
-    assert_eq!(names.len(), 30 + 8);
+    assert_eq!(names.len(), 32 + 8);
 }

@@ -1537,6 +1537,15 @@ impl SceneRenderer {
             self.apply_shallow_wooze(device);
         }
 
+        // A debug view of a terrain (#1692): its pipelines and, for the two
+        // wireframes, each chunk shape's edges, made the first frame one draws
+        if !self.terrain.draws.is_empty() && (need_overlay || self.debug_state.mode.as_u32() != 0) {
+            self.pipelines.ensure_terrain_debug(device);
+            if need_overlay {
+                self.terrain.ensure_wires(device);
+            }
+        }
+
         // Drop cached resources nothing used this frame (despawned entities,
         // entities that changed shape/model).
         flint_core::scope!("extract::retire_caches");
