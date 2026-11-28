@@ -1,0 +1,4 @@
+### `draw_text` draws arrows in the default font, and names a glyph it can't draw (#1701)
+**Package.** engine
+**What changed.** egui's proportional faces have no arrows, so a key hint such as `draw_text(x, y, "← →  stations", ..)` drew two empty boxes, in the player and in `flint render --scripts`, with no warning. Flint's fonts now end every family (the default, `"proportional"`, and each one under `fonts/`) with egui's monospace face, Hack, so ← ↑ → ↓ ↔ ↵ ⇧ ⇥ draw. A glyph a face before it has still draws in that face, so nothing that drew before looks different. A character no face has (⌫, ⏎, ✓) still draws as a box, but `draw_text` and world text now warn once per character and font, naming the string and the code point: `draw_text "⌫": font `proportional` has no glyph for U+232B '⌫'`.
+**What to do.** Nothing. A game that spelled its hints out ("Left, Right") can use the arrows again. For a symbol that warns, add a font that has it under `fonts/`.
