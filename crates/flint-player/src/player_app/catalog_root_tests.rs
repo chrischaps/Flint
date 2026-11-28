@@ -157,7 +157,7 @@ fn a_model_only_in_the_projects_catalog_loads_when_run_from_outside_the_project(
         let ramp = app.core.world.get_id("ramp").unwrap();
         // The game's two steps at scale 2: x and z 0..2, y 0..6. The
         // working directory's slab would be y 0..0.
-        match app.core.physics.get_entity_collider_extents(ramp) {
+        match app.core.physics().get_entity_collider_extents(ramp) {
             Some(ColliderExtents::Mesh {
                 half_extents,
                 centre,

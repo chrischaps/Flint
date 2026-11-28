@@ -604,3 +604,42 @@ neither flint-terrain nor flint-particles, and no golden moved.
   flint-living's and flint-debug-ui's edges to flint-terrain (they read only
   `GrassConfig`, now `flint_render::GrassConfig`), and flint-package's direct
   one, assigned to #1616 in the Context's table, for the same reason.
+
+## As built: the API names no standard crate (#1616)
+
+Decision 1's API half as it landed. `crates/flint-package/Cargo.toml` names
+none of flint-physics, flint-audio, flint-particles or flint-terrain, and
+`cargo tree -p flint-package -e normal` shows no flint-audio and no
+flint-particles at all. flint-physics and flint-terrain are still in that
+tree, one level down, through flint-script, whose `physics`, `nav` and
+ground-field modules #1617 and #1623 move; the API itself reaches neither.
+
+- **`Resources` is flint-core's** (`flint_core::resources`), re-exported as
+  `flint_package::Resources`, as written. It gains `Resources::lend(&mut
+  value, stand_in, f)`: `value` is the resource of its type while `f` runs,
+  then back where it was, with a stand-in made once a run and kept between
+  lends under its own key. That is how a host lends state it still owns.
+- **Physics, as written.** `FixedCtx::physics` and `pub use flint_physics
+  as physics` are gone. `PhysicsSystem` is a run resource for the whole
+  run: `GameCore::new` puts it in and the player reads it through
+  `GameCore::physics()` / `physics_mut()` (or `physics_of_mut(&mut
+  core.resources)` beside another field's borrow). `flint_physics::of` /
+  `of_mut` are the lookups, and `PhysicsSystem::fixed_update_in(resources,
+  world, dt, events, between)` runs the sync-in, `between` lent the
+  resources, then Rapier's step, as `fixed_update_with` did. Every
+  `StageCtx` now lends physics too, so #1647's after-steps read is there
+  for #1617 to use. Vehicle, the test toy and the fixture toy package moved
+  in this PR.
+- **The sound is lent, not yet resident.** `SceneCtx::audio` and
+  `StageCtx::audio` are gone. The engine stays inside the player's
+  `AudioSystem` (17 player files use it, which is #1619's move), and the
+  player lends it for each hook with `flint_audio::engine::lend`, a silent
+  engine standing in meanwhile. Music and rhythm read
+  `flint_audio::engine::of_mut(ctx.resources)`. Moving the engine is cheap
+  because its mixer is boxed (the kira manager never moves), and the lend
+  happens only when a scene has subsystems.
+- **The particles are lent to the panels.** `PanelCtx::particles` became
+  `PanelCtx::resources`. The player holds `DebugPanels` out of the
+  resources while the panels sync and lends `GameCore::particles` in as the
+  `ParticleSystem` the Particles panel reads. #1622 makes it resident.
+- **Terrain** was already off the API's own list (#1615).

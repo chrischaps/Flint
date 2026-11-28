@@ -14,6 +14,7 @@ use super::scene_loading::{
     register_terrain_collider, LoadedGrassInfo,
 };
 use super::PlayerApp;
+use crate::player_app::game_core::{physics_of, physics_of_mut};
 use anyhow::{Context, Result};
 use flint_core::frame_notes::{self, NoteKind};
 use flint_core::load_report::{self, Stage};
@@ -238,7 +239,7 @@ impl PlayerApp {
             queue,
         );
         for c in splines.colliders {
-            self.core.physics.register_static_trimesh(
+            physics_of_mut(&mut self.core.resources).register_static_trimesh(
                 c.entity,
                 c.vertices,
                 c.triangles,
@@ -309,7 +310,7 @@ impl PlayerApp {
         // The terrain loaded after the bind: its collider, and its heights
         // for scripts
         if let Some(loaded) = terrain {
-            register_terrain_collider(&mut self.core.physics, &loaded);
+            register_terrain_collider(physics_of_mut(&mut self.core.resources), &loaded);
             self.terrain = Some((loaded.terrain, loaded.config));
         }
         bound.grass.map(|grass| LoadedGrassInfo {
@@ -326,7 +327,7 @@ impl PlayerApp {
         // Each system's start is a frame note (#1092): a transition's
         // hitch names them, and a load report times them
         let physics = frame_notes::timed(NoteKind::PhysicsBuild, String::new, || {
-            self.core.physics.initialize(&mut self.core.world)
+            physics_of_mut(&mut self.core.resources).initialize(&mut self.core.world)
         })
         .context("Failed to initialize physics");
         match (physics, entry) {
@@ -398,7 +399,7 @@ impl PlayerApp {
             let _state_scope = self.core.script.state_scope(
                 &mut self.core.state_machine,
                 &mut self.core.store,
-                &self.core.physics,
+                physics_of(&self.core.resources),
             );
             self.core
                 .script

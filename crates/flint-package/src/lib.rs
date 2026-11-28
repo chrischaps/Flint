@@ -11,7 +11,10 @@
 //!   [`EncodeCtx`], [`ReportCtx`]. Every field is a kernel type.
 //! - [`Resources`]: the run's typed values, one per Rust type, through which
 //!   one package lends state to another (procgen's resolver to living)
-//!   without the kernel naming either.
+//!   without the kernel naming either. A standard package's state is one
+//!   too (ADR 0138 decision 1, #1616): physics' `PhysicsSystem`, the
+//!   particles' `ParticleSystem`, and the sound's `AudioEngine`, lent for
+//!   each hook. This crate names none of them.
 //!
 //! - [`Package`] and [`Registry`]: a launcher lists its packages, and each
 //!   one registers its scene subsystems, policy names, script modules and
@@ -43,7 +46,6 @@ mod launch;
 pub mod note;
 pub mod panels;
 mod registry;
-mod resources;
 mod stage;
 mod subsystem;
 
@@ -51,6 +53,9 @@ pub use context::{
     find, find_mut, Button, Capture, CaptureGame, CaptureGameMut, CapturePose, EncodeCtx,
     ExitReport, FixedCtx, FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, StageCtx,
 };
+/// The run's typed values: flint-core's since #1616, so flint-script can
+/// lend them to a script call (ADR 0138 decision 1).
+pub use flint_core::resources::Resources;
 pub use hud::DebugHud;
 pub use launch::PackageFlags;
 pub use note::Note;
@@ -58,15 +63,9 @@ pub use panels::{DebugPanel, DebugPanels};
 pub use registry::{
     left_out_line, BuildForScene, LeftOutLine, Package, Registry, RunResources, SettleScene,
 };
-pub use resources::Resources;
 pub use stage::Stage;
 pub use subsystem::Subsystem;
 
 /// The engine's egui, so a package's `ui` builds against the same version
 /// (ADR 0137 decision 6).
 pub use egui;
-
-/// The engine's physics, which [`FixedCtx::physics`] lends, with Rapier as
-/// `physics::rapier` (ADR 0137 section 3a), so a package's forces and rays
-/// build against the same version.
-pub use flint_physics as physics;

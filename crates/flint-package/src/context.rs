@@ -5,14 +5,14 @@
 //!
 //! Every field is a kernel type. What a package owns, and another package
 //! reads, is in [`Resources`]: procgen's resolver, living's props, the
-//! debug-hud's panels.
+//! debug-hud's panels, and the standard packages' state (ADR 0138 decision
+//! 1, #1616): physics' `PhysicsSystem` in every context, the sound's
+//! `AudioEngine` while the host has one (`flint_audio::engine::of_mut`).
 
 use crate::{Note, Registry, Resources, Subsystem};
-use flint_audio::engine::AudioEngine;
 use flint_core::package::InUse;
 use flint_core::project::Project;
 use flint_ecs::FlintWorld;
-use flint_physics::PhysicsSystem;
 use flint_render::model_loader::ModelLoadResult;
 use flint_render::stylize::StyleRegistry;
 use flint_render::{Camera, SceneRenderer};
@@ -50,9 +50,6 @@ pub struct SceneCtx<'a> {
     pub script: &'a mut ScriptSystem,
     /// `None` in a headless test and a capture.
     pub renderer: Option<&'a mut SceneRenderer>,
-    /// The sound, when the host has it: a subsystem that plays on the
-    /// shared kira manager (the music, ADR 0017) starts there.
-    pub audio: Option<&'a mut AudioEngine>,
     /// The pads, when the host has them.
     pub pads: Option<Pads<'a>>,
     /// `Some` when the host is a capture (`flint render`'s `HeadlessGame`,
@@ -69,7 +66,10 @@ pub struct SceneCtx<'a> {
     /// ([`CapturePose`]). A model spawned later reaches the subsystems
     /// through [`Subsystem::late_models`](crate::Subsystem::late_models).
     pub models: Option<&'a ModelLoadResult>,
-    /// The run's resources: what one package lends another.
+    /// The run's resources: what one package lends another. The sound is
+    /// here while the host has one (`flint_audio::engine::of_mut`): a
+    /// subsystem that plays on the shared kira manager (the music, ADR
+    /// 0017) starts there.
     pub resources: &'a mut Resources,
     /// What the run's packages registered: a builder reads another
     /// package's registration point here (music's chart judge, which
@@ -161,14 +161,14 @@ pub struct StageCtx<'a> {
     /// at [`Stage::MadeAssets`](crate::Stage::MadeAssets), before the renderer's
     /// sync).
     pub requests: &'a mut FrameRequests,
-    /// The sound, when the host has it.
-    pub audio: Option<&'a mut AudioEngine>,
     /// The pads, when the host has them.
     pub pads: Option<Pads<'a>>,
     /// Set to end the run as closing the window would (`quit_on_finish`);
     /// `None` for a host with no run to end.
     pub quit: Option<&'a mut bool>,
-    /// The run's resources: what one package lends another.
+    /// The run's resources: what one package lends another. Physics'
+    /// state is here at every stage (`flint_physics::of`), and the sound
+    /// while the host has one (`flint_audio::engine::of_mut`).
     pub resources: &'a mut Resources,
     /// The frame's event bus: what a subsystem raises here (a tween's
     /// `tween_done`) reaches the scripts with the next frame's events, as
@@ -189,15 +189,16 @@ impl StageCtx<'_> {
 /// after the character controller and the physics sync-in, before Rapier's
 /// step. What it applies to a body here, that step integrates.
 ///
+/// Physics itself is the run's resource, not a field (ADR 0138 decision 1,
+/// #1616): `flint_physics::of_mut(ctx.resources)` lends bodies by entity
+/// (`PhysicsSystem::body_of`) and Rapier's sets, with Rapier as
+/// `flint_physics::rapier`, so this crate names no physics.
+///
 /// A step is not a frame: it lends no scripts, renderer, camera or sound. A
 /// package hands its step's results to scripts and the screen at the
 /// frame's stages (vehicle state at `PreScripts`, wheel poses at `Physics`).
 pub struct FixedCtx<'a> {
     pub world: &'a mut FlintWorld,
-    /// Bodies by entity ([`PhysicsSystem::body_of`]), Rapier's sets
-    /// ([`PhysicsSystem::rapier_mut`]); Rapier itself is
-    /// [`physics::rapier`](crate::physics::rapier).
-    pub physics: &'a mut PhysicsSystem,
     /// The step's length, in seconds (the clock's fixed timestep).
     pub dt: f64,
     /// This step's index in the frame (from 0) and the steps the frame
@@ -211,7 +212,8 @@ pub struct FixedCtx<'a> {
     /// lets physics run; a subsystem with its own policy name asks
     /// [`FixedCtx::runs`].
     pub policy: &'a StateConfig,
-    /// The run's resources: what one package lends another.
+    /// The run's resources: what one package lends another, physics' state
+    /// among them (`flint_physics::of_mut`).
     pub resources: &'a mut Resources,
 }
 

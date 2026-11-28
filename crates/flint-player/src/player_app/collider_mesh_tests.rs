@@ -122,7 +122,7 @@ fn started(gpu: Option<&'static HeadlessContext>) -> PlayerApp {
 }
 
 fn check(app: &PlayerApp) {
-    let physics = &app.core.physics;
+    let physics = app.core.physics();
     assert_eq!(
         physics.layers().names().collect::<Vec<_>>(),
         ["default", "world", "ghost"],
@@ -171,8 +171,7 @@ fn a_model_entity_gets_a_mesh_collider_from_toml_alone() {
     vfs::scoped(Arc::new(yard()), || {
         let mut app = started(None);
         // The query pipeline is filled by the first step
-        app.core
-            .physics
+        crate::player_app::game_core::physics_of_mut(&mut app.core.resources)
             .fixed_update(
                 &mut app.core.world,
                 1.0 / 60.0,
@@ -196,8 +195,7 @@ fn a_mesh_collider_keeps_its_triangles_when_the_renderer_expands_its_model() {
             app.core.world.get_component(ramp, "model").is_none(),
             "the renderer expanded the two-node model into children"
         );
-        app.core
-            .physics
+        crate::player_app::game_core::physics_of_mut(&mut app.core.resources)
             .fixed_update(
                 &mut app.core.world,
                 1.0 / 60.0,

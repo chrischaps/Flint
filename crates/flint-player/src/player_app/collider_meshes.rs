@@ -33,6 +33,7 @@
 
 use super::scene_loading::build_model_load_config;
 use super::PlayerApp;
+use crate::player_app::game_core::physics_of_mut;
 use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -302,7 +303,7 @@ impl PlayerApp {
             tracing::warn!("physics layers: {e}; only `default` is used");
             CollisionLayers::default()
         });
-        self.core.physics.set_layers(layers);
+        physics_of_mut(&mut self.core.resources).set_layers(layers);
         // A new scene's (or chunk's) colliders are walked at the next frame,
         // for the runtime meshes the renderer already holds
         self.core.collider_sources.walk_again();
@@ -319,27 +320,18 @@ impl PlayerApp {
         // A model still being made (procgen's queue, `ProcGenMode::Deferred`)
         // has no triangles yet: they come when it's made, and physics waits
         // for them quietly rather than warn or read a file in its place
-        let requests: Vec<(EntityId, String)> = {
+        let (queued, requests): (Vec<_>, Vec<_>) = {
             let makers = self.core.asset_makers();
             let resources = &self.core.resources;
-            let physics = &mut self.core.physics;
             requests
                 .iter()
-                .filter(|(entity, asset)| {
-                    let queued = makers.iter().any(|maker| maker.pending(resources, asset));
-                    if queued {
-                        physics.expect_collider_mesh(*entity);
-                    }
-                    !queued
-                })
                 .cloned()
-                .collect()
+                .partition(|(_, asset)| makers.iter().any(|maker| maker.pending(resources, asset)))
         };
-        hand_over(
-            &mut self.core.physics,
-            &requests,
-            &config,
-            &self.core.collider_sources,
-        );
+        let physics = physics_of_mut(&mut self.core.resources);
+        for (entity, _) in &queued {
+            physics.expect_collider_mesh(*entity);
+        }
+        hand_over(physics, &requests, &config, &self.core.collider_sources);
     }
 }

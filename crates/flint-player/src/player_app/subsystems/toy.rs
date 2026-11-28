@@ -18,7 +18,7 @@ use super::{FixedCtx, Lasts, SceneCtx, Stage, StageCtx, Subsystem};
 use crate::player_app::PlayerApp;
 use flint_core::project::{SchemaDirs, SchemaSource};
 use flint_core::vfs::{self, MemorySource};
-use flint_package::physics::rapier::math::Vector;
+use flint_physics::rapier::math::Vector;
 use std::sync::Arc;
 
 /// The toy package, which a test build's stock list ends with
@@ -148,10 +148,14 @@ impl Subsystem for Toy {
         let Some(id) = ctx.world.get_id(&spring.body) else {
             return;
         };
-        let Some(handle) = ctx.physics.body_of(id) else {
+        // Physics is the run's resource (#1616), as a package finds it
+        let Some(physics) = flint_physics::of_mut(ctx.resources) else {
             return;
         };
-        let Some(body) = ctx.physics.bodies_mut().get_mut(handle) else {
+        let Some(handle) = physics.body_of(id) else {
+            return;
+        };
+        let Some(body) = physics.bodies_mut().get_mut(handle) else {
             return;
         };
         let at = *body.translation();
@@ -478,8 +482,8 @@ fn spring_run(
             app.tick();
             if let Some(k) = once_a_frame {
                 let id = app.core.world.get_id("bob").unwrap();
-                if let Some(handle) = app.core.physics.body_of(id) {
-                    let body = app.core.physics.bodies_mut().get_mut(handle).unwrap();
+                if let Some(handle) = app.core.physics_mut().body_of(id) {
+                    let body = app.core.physics_mut().bodies_mut().get_mut(handle).unwrap();
                     let x = body.translation().x;
                     body.apply_impulse(Vector::new(-x * k * frame_step as f32, 0.0, 0.0), true);
                 }

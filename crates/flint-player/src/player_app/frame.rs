@@ -9,6 +9,7 @@ use super::offscreen::HudTarget;
 use super::subsystem::{EncodeCtx, FrameCtx};
 use super::PlayerApp;
 use super::TransitionPhase;
+use crate::player_app::game_core::physics_of_mut;
 use flint_render::{FrameInputs, GrassEntityPosition, View2d};
 use flint_runtime::state::AUDIO;
 use flint_runtime::{RuntimeSystem, StateConfig};
@@ -126,24 +127,38 @@ impl PlayerApp {
         // Every panel applies its edits and reads back what it shows (#744):
         // one loop, no panel asked its name, by the run's debug HUD (#1559).
         // What they tell the player comes back through `PanelHost`.
-        if let (Some(hud), Some(panels)) = (
-            self.hud.debug.as_mut(),
-            super::debug_panels::panels_mut_of(&mut self.core.resources),
-        ) {
+        // The panels are held out of the resources while they sync, and the
+        // particles lent in, so a panel finds its package's state by type
+        // (#1616: the Package API names no standard package)
+        let panels = match self.hud.debug {
+            Some(_) => self.core.resources.remove::<flint_package::DebugPanels>(),
+            None => None,
+        };
+        if let (Some(hud), Some(mut panels)) = (self.hud.debug.as_mut(), panels) {
             flint_core::scope!("sync_debug_panels", panels.len());
             let mut host = flint_package::panels::PanelHost {
                 particles_render: self.particles_render_enabled,
                 ..Default::default()
             };
-            let mut ctx = flint_package::panels::PanelCtx {
-                world: &mut self.core.world,
-                renderer: &mut *renderer,
-                device: &context.device,
-                camera: &mut self.camera,
-                particles: &mut self.core.particles.sync,
-                host: &mut host,
-            };
-            hud.sync(panels, &mut ctx);
+            let (world, camera) = (&mut self.core.world, &mut self.camera);
+            self.core.resources.lend(
+                &mut self.core.particles,
+                flint_particles::ParticleSystem::new,
+                |resources| {
+                    hud.sync(
+                        &mut panels,
+                        &mut flint_package::panels::PanelCtx {
+                            world,
+                            renderer: &mut *renderer,
+                            device: &context.device,
+                            camera,
+                            resources,
+                            host: &mut host,
+                        },
+                    )
+                },
+            );
+            self.core.resources.insert(panels);
             if let Some(freeze) = host.freeze_scripts {
                 self.post.debug_freeze = freeze;
             }
@@ -967,7 +982,12 @@ impl PlayerApp {
             .world
             .entities_with_component(flint_geometry::components::OCEAN_CONTACT)
             .iter()
-            .filter_map(|&id| Some((id, self.core.physics.dynamic_velocity(id)?)))
+            .filter_map(|&id| {
+                Some((
+                    id,
+                    physics_of_mut(&mut self.core.resources).dynamic_velocity(id)?,
+                ))
+            })
             .collect();
         // Each emitter's draw, as the renderer takes it (#1615)
         let particle_draws = if self.particles_render_enabled {
