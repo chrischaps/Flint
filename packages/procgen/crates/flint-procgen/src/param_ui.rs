@@ -254,7 +254,7 @@ fn condition_groups(
 /// `properties`, the `items` of an array of tables, or the
 /// `additionalProperties` of a table of named tables. A tagged array
 /// (`items` a `oneOf`, a pipeline's `ops`) isn't one: each branch has its
-/// own reference (`op_schema`).
+/// own reference (`op_schema`), or asks to be listed ([`listed_branches`]).
 enum Nested<'a> {
     /// `[params.key]`: one table
     Table(&'a Value),
@@ -279,6 +279,30 @@ fn nested(prop: &Value) -> Option<Nested<'_>> {
             .filter(|e| has_keys(e))
             .map(Nested::Named)
     }
+}
+
+/// The branches of a tagged array whose items ask to be listed in the
+/// reference (`"x-reference": "branches"`, terrain's `height_layers`), as
+/// the discriminator, then each branch's tag and schema. A pipeline's `ops`
+/// doesn't ask: each op has its own section.
+fn listed_branches(prop: &Value) -> Option<(&str, Vec<(String, &Value)>)> {
+    let items = prop.get("items")?;
+    if items.get("x-reference").and_then(|r| r.as_str()) != Some("branches") {
+        return None;
+    }
+    let tag = items
+        .get("discriminator")
+        .and_then(|d| d.get("propertyName"))
+        .and_then(|p| p.as_str())?;
+    let branches = items.get("oneOf")?.as_array()?;
+    let listed = branches
+        .iter()
+        .filter_map(|b| {
+            let value = b.get("properties")?.get(tag)?.get("const")?;
+            Some((value.to_string(), b))
+        })
+        .collect();
+    Some((tag, listed))
 }
 
 /// Whether `schema`'s `required` names `key`.
@@ -335,6 +359,16 @@ pub fn param_reference_markdown_in(schema: &Value, table: &str) -> String {
             ));
         }
         for (key, prop) in rows {
+            if let Some((tag, branches)) = listed_branches(prop) {
+                let path = format!("{table}.{key}");
+                for (value, branch) in branches {
+                    out.push_str(&format!(
+                        "\nEach `[[{path}]]` entry with `{tag} = {value}`:\n\n"
+                    ));
+                    out.push_str(&param_reference_markdown_in(branch, &path));
+                }
+                continue;
+            }
             let (path, title, inner) = match nested(prop) {
                 None => continue,
                 Some(Nested::Table(s)) => {
@@ -401,6 +435,13 @@ fn reference_text(schema: &Value, prefix: &str, indent: usize, out: &mut String)
             out.push('\n');
             if let Some(text) = prop.get("description").and_then(|d| d.as_str()) {
                 out.push_str(&format!("{pad:indent$}{pad:width$}    {text}\n"));
+            }
+            if let Some((tag, branches)) = listed_branches(prop) {
+                for (value, branch) in branches {
+                    out.push_str(&format!("\n{pad:indent$}{name}[] with {tag} = {value}:\n"));
+                    reference_text(branch, &format!("{name}[]."), indent + 2, out);
+                }
+                continue;
             }
             let (inner_prefix, inner) = match nested(prop) {
                 None => continue,
@@ -957,5 +998,29 @@ mod tests {
         let md = param_reference_markdown(&nested_schema());
         assert!(!md.contains("[[params.ops]]"), "{md}");
         assert!(md.contains("Each `[params.materials.<name>]` table:"));
+    }
+
+    #[test]
+    fn a_tagged_array_that_asks_lists_each_branch() {
+        // terrain's `height_layers` (#1693): no reference of their own, so
+        // each op's keys go under its key, `x-when` groups and all
+        let mut schema = nested_schema();
+        schema["properties"]["ops"]["items"]["x-reference"] = json!("branches");
+        schema["properties"]["ops"]["items"]["oneOf"][0]["properties"]["columns"]["x-when"] =
+            json!({ "mode": ["grid"] });
+        let md = param_reference_markdown(&schema);
+        assert!(
+            md.contains("Each `[[params.ops]]` entry with `type = \"grid\"`:"),
+            "{md}"
+        );
+        assert!(
+            md.contains("Each `[[params.ops]]` entry with `type = \"open\"`:"),
+            "{md}"
+        );
+        assert!(md.contains("Each `[[params.ops.stops]]` entry:"), "{md}");
+        let text = param_reference_text(&schema);
+        assert!(text.contains("ops[] with type = \"grid\":"), "{text}");
+        assert!(text.contains("ops[].columns"), "{text}");
+        assert!(text.contains("Only when mode is \"grid\""), "{text}");
     }
 }

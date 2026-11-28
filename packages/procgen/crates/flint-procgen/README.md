@@ -309,6 +309,51 @@ The `[params.grass]` table:
 | `wooze_amplitude` | number | `0.11999999731779099` |  |
 | `wooze_wavelength` | number | `2.5` |  |
 
+Each `[[params.height_layers]]` entry with `op = "noise"`:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `amplitude` | number | `1.0` | Scale of this layer's noise (which runs about -1..1) before it is blended in |
+| `blend` | `add` \| `multiply` \| `max` \| `min` \| `overlay` | `"add"` | How the noise combines with the heights so far |
+| `frequency` | number > 0 | `2.0` | Features across the whole terrain in the first octave: 1 to 2 is one or two big hills, 8 is many small ones |
+| `lacunarity` | number > 0 | `2.0` | Frequency multiplier from one octave to the next |
+| `noise_type` | `perlin` \| `simplex` \| `value` \| `ridged` | `"perlin"` | perlin and simplex roll; value is blockier; ridged makes sharp crests (mountain ridges) |
+| `octaves` | integer 1–16 | `6` | Noise layers summed, each finer than the last; more adds small detail |
+| `op` | `"noise"` | required | Fractal noise, octaves summed and blended into the heights |
+| `persistence` | number 0–1 | `0.5` | Amplitude multiplier from one octave to the next; lower is smoother |
+
+Each `[[params.height_layers]]` entry with `op = "flatten"`:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `falloff` | number ≥ 0 | `0.05` | Distance from the level over which the pull fades in; 0 cuts flat |
+| `height` | number | `0.1` | The level, in the heights' units so far (normalizing comes after the last layer) |
+| `mode` | `below` \| `above` | `"below"` | below raises what is under the level (a flat floor); above lowers what is over it (a plateau) |
+| `op` | `"flatten"` | required | Pull heights below (or above) a level toward it: valley floors, plateaus, lake beds |
+
+Each `[[params.height_layers]]` entry with `op = "erosion"`:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `kind` | `thermal` \| `hydraulic` | `"thermal"` | thermal softens slopes steeper than talus_angle (reads iterations, talus_angle); hydraulic carves gullies and fans (reads rainfall, radius, rain_min_height) |
+| `op` | `"erosion"` | required | Wear the heights: thermal slumps steep slopes, hydraulic rolls seeded droplets downhill to carve branching gullies and lay fans |
+| `strength` | number 0–1 | `0.3` | Thermal: the share of the excess each pass moves. Hydraulic: how fast a droplet picks up soil |
+
+Only when `kind` is `hydraulic`:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `radius` | number ≥ 0.5 | `3.0` | The radius in texels a droplet erodes over; wider is broader, softer gullies |
+| `rain_min_height` | number |  | Droplets start only where the height is at least this, in the heights' units so far (as flatten's height), so the rain falls on land and not the sea floor. Unset: anywhere |
+| `rainfall` | number ≥ 0 | `1.0` | Droplets rained for each texel of the map (1.0 is one per texel, so a value wears any resolution alike); 0.3 is light wear, 1 clear gullies, 3 badlands; the bake's cost grows with it |
+
+Only when `kind` is `thermal`:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `iterations` | integer ≥ 0 | `50` | Passes over the whole map; the bake's cost grows with it |
+| `talus_angle` | number ≥ 0 | `0.6` | The steepest slope left alone |
+
 Each `[[params.splat_rules]]` entry:
 
 | Key | Type | Default | What it does |

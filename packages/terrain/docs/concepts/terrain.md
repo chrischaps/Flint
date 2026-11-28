@@ -109,6 +109,24 @@ flint gen --describe terrain_v1                                              # e
 
 A terrain spec is a procgen spec for the `terrain_v1` generator (Flint#1168). `flint gen` reads a `.terrain.toml` as one: `[meta]` and `[seed]` stay where they are, and the other tables are its `[params]`, so `--print-spec` writes the same recipe as a `*.procgen.toml` (`generator = "terrain_v1"`, `[params.geometry]`, `[[params.height_layers]]`), which bakes the same maps. Everything a procgen spec has, a terrain spec has: `--register` keeps both maps in the project's store and hands them back while the spec, seed and generator are unchanged; `--batch` makes variants by seed; `--validate` reads the written maps back; and the AI steps write and refine recipes (`flint gen --ai-create "rolling hills with a river valley" --ai-generator terrain_v1 -o terrain/`, where a word such as hills, mountains or valley picks `terrain_v1` without the flag).
 
+### Erosion
+
+An `op = "erosion"` layer wears the heights so far, in one of two ways:
+
+- **`kind = "thermal"`** (the default) slumps every slope steeper than `talus_angle`, `iterations` passes over the whole map, each moving `strength` of the excess downhill. It softens; it doesn't carve.
+- **`kind = "hydraulic"`** rains seeded droplets that roll downhill with a little inertia, pick soil up over a `radius`-texel brush (3 by default) while they speed up, and set it down as they slow, climb or dry out (Flint#1693). Droplets that follow one another deepen one path, so the slopes come out cut by branching gullies, with fans of soil at their feet. **`rainfall`** is droplets for each texel of the map, so one value wears a 256² map and a 2048² one alike: 0.3 is light wear, 1 (the default) clear gullies, 3 badlands. `strength` (0.3) is how fast a droplet picks soil up. **`rain_min_height`** starts droplets only where the height is at least that, in the heights' units so far (as `flatten`'s `height`), so a map that is mostly sea floor spends its rain on the land; the bake is faster for it. The map's edge is the base level: droplets run off there carrying their soil, and its texels are never worn lower.
+
+```toml
+[[height_layers]]
+op = "erosion"
+kind = "hydraulic"
+rainfall = 1.0          # droplets per texel; the bake's cost grows with it
+radius = 3.0            # texels; wider is broader, softer gullies
+rain_min_height = 0.15  # optional: no rain on the sea floor
+```
+
+A 513² hydraulic layer at the default rainfall bakes in about 0.4 s in a release build. A key that only the other kind reads (`iterations` or `talus_angle` on a hydraulic layer, `rainfall` on a thermal one) is a warning naming the keys the layer does read: before Flint#1693, hydraulic's `iterations` counted single raindrops, and a recipe that still sets it gets the default rainfall.
+
 The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the same resolution, written as `<stem>_height.png` and `<stem>_splat.png`; point the `terrain` component's `heightmap` and `splat_map` at them. Both are the bytes the editor's Ctrl+E export writes (the one bake, `flint_terrain::bake`, makes both), and the same spec and seed bake the same bytes every run. The summary says how much of the ground each layer covers.
 
 The spec is checked against `terrain_v1`'s schema before anything is baked, by path. A key nothing reads is a warning with the key it was probably meant to be (``warning: `height_layers[1].octave` is not a parameter of the noise layer (did you mean `octaves`?)``), and `--strict` makes it an error. A value the bake can't use is an error that stops the run: a splat rule for a layer past 3, a `noise_type` that isn't one, a resolution over 4096. The terrain editor lists the same lines under its Save buttons while the file has them.

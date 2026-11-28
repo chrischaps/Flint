@@ -781,9 +781,7 @@ impl TerrainEditApp {
                                                 spec.height_layers.push(HeightLayer::Erosion(
                                                     ErosionLayer {
                                                         kind: ErosionKind::Thermal,
-                                                        iterations: 50,
-                                                        talus_angle: 0.6,
-                                                        strength: 0.3,
+                                                        ..ErosionLayer::default()
                                                     },
                                                 ));
                                                 dirty = true;
@@ -1330,12 +1328,21 @@ fn render_height_layer_ui(ui: &mut egui::Ui, layer: &mut HeightLayer, _idx: usiz
                     dirty = true;
                 }
             });
-            let mut iters = e.iterations as i64;
-            if drag_i64(ui, "Iterations", &mut iters, 1, 0..=1000) {
-                e.iterations = iters as u32;
-                dirty = true;
+            match e.kind {
+                ErosionKind::Thermal => {
+                    let mut iters = e.iterations as i64;
+                    if drag_i64(ui, "Iterations", &mut iters, 1, 0..=1000) {
+                        e.iterations = iters as u32;
+                        dirty = true;
+                    }
+                    dirty |= drag_f64(ui, "Talus Angle", &mut e.talus_angle, 0.01, 0.0..=2.0);
+                }
+                ErosionKind::Hydraulic => {
+                    // Droplets per texel (#1693), so it reads the same at any size
+                    dirty |= drag_f64(ui, "Rainfall", &mut e.rainfall, 0.05, 0.0..=8.0);
+                    dirty |= drag_f64(ui, "Radius", &mut e.radius, 0.1, 0.5..=12.0);
+                }
             }
-            dirty |= drag_f64(ui, "Talus Angle", &mut e.talus_angle, 0.01, 0.0..=2.0);
             dirty |= drag_f64(ui, "Strength", &mut e.strength, 0.01, 0.0..=2.0);
         }
     }
