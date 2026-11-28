@@ -90,7 +90,7 @@ does = "stand still"
 policies = ["living"]
 ```
 
-Cargo can't read a manifest, so one script writes the lines it needs. `scripts/package-sync.py` writes a generated block in `crates/flint-player/Cargo.toml` and `crates/flint-cli/Cargo.toml`: the `packages` feature (every package, which both binaries' defaults turn on), and for each package its feature and an optional dependency on its crate. Two more manifest tables become lines there. `[rust.devices]` names what the launchers' device features turn on in the package's crates, as `crate/feature`. The sound card, gamepads and the editors' file dialogs are the features `audio`, `gamepad` and `dialogs`, and a build without one has no such device library. `[with.<other>]` names a part that needs another package listed too, and it's turned on only when both are:
+Cargo can't read a manifest, so one script writes the lines it needs. `scripts/package-sync.py` writes a generated block in `crates/flint-player/Cargo.toml` and `crates/flint-cli/Cargo.toml`: the `packages` feature (every package, which both binaries' defaults turn on), and for each package its feature and an optional dependency on its crate. Two more manifest tables become lines there. `[rust.devices]` names what the launchers' device features turn on in the package's crates, as `crate/feature`. The sound card, gamepads and the editors' file dialogs are the features `sound`, `gamepad` and `dialogs`, and a build without one has no such device library. (The sound card's was `audio` until the audio package took that name.) `[with.<other>]` names a part that needs another package listed too, and it's turned on only when both are:
 
 ```toml
 [rust]
@@ -98,7 +98,7 @@ player = "flint-rhythm-game"
 cli = "flint-rhythm-game"
 
 [rust.devices]
-audio = ["flint-rhythm-game/device"]
+sound = ["flint-rhythm-game/device"]
 gamepad = ["flint-rhythm-game/gamepad"]
 
 [with.debug-hud]

@@ -33,11 +33,9 @@ pub mod user_files;
 pub mod window_args;
 
 pub use capture_args::FrameCaptureArgs;
-pub use extension::{
-    ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension,
-    SoundOptions, Stage,
-};
-pub use flint_audio::{Bus, Buses};
+// The sound an extension plays (ADR 0084) is the audio package's since
+// #1619: `flint_audio::player::{audio, ExtensionAudio, SoundOptions}`
+pub use extension::{ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension, Stage};
 pub use flint_core::quality::{GpuInfo, QualitySettings, QualityValue};
 pub use flint_geometry::ray_mesh::{RayHit, RayMesh, RayScene};
 pub use flint_render::{

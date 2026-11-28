@@ -431,8 +431,9 @@ impl PlayerApp {
         self.style.preloaded_looks.clear();
 
         // Clear all systems
+        // The sound forgot the scene at its subsystem's `scene_unloading`,
+        // after the music's (#1619)
         self.core.script.clear();
-        self.audio.clear();
         physics_of_mut(&mut self.core.resources).clear();
         self.core.forget_player_view();
         // The old scene's contacts name entities that are going; a script's

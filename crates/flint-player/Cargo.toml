@@ -30,7 +30,7 @@ name = "flint-web"
 path = "src/bin/flint_web.rs"
 
 [features]
-default = ["packages", "audio", "gamepad", "frame-history"]
+default = ["packages", "sound", "gamepad", "frame-history"]
 # Written by `scripts/package-sync.py` from packages/*/package.toml (ADR 0137
 # section 5, #1560, #1568): `packages` is every package this crate has a
 # part of; each package's feature turns on its crate's `player` part (the
@@ -42,17 +42,18 @@ default = ["packages", "audio", "gamepad", "frame-history"]
 # is its manifest's to say (packages/<name>/package.toml). Don't edit
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
-packages = ["debug-hud", "living", "music", "procgen", "rhythm", "vehicle"]
-packages-audio = ["flint-music?/device", "flint-rhythm-game?/device"]
+packages = ["audio", "debug-hud", "living", "music", "procgen", "rhythm", "vehicle"]
 packages-gamepad = ["flint-rhythm-game?/gamepad"]
+packages-sound = ["flint-audio?/device", "flint-music?/device", "flint-rhythm-game?/device"]
+audio = ["dep:flint-audio", "flint-audio?/player"]
 debug-hud = [
     "dep:flint-debug-ui", "flint-debug-ui?/player", "flint-living?/debug-hud",
     "flint-rhythm-game?/debug-hud",
 ]
 living = ["procgen", "dep:flint-living", "flint-living?/player"]
-music = ["dep:flint-music", "flint-music?/player"]
+music = ["audio", "dep:flint-music", "flint-music?/player"]
 procgen = ["dep:flint-procgen", "flint-procgen?/player"]
-rhythm = ["music", "dep:flint-rhythm-game", "flint-rhythm-game?/player"]
+rhythm = ["audio", "music", "dep:flint-rhythm-game", "flint-rhythm-game?/player"]
 vehicle = ["dep:flint-vehicle", "flint-vehicle?/player"]
 # package-sync:end
 # The always-on frame history (#1076): every frame's phases, clock, present,
@@ -62,10 +63,13 @@ vehicle = ["dep:flint-vehicle", "flint-vehicle?/player"]
 # each of the frame's calls a branch. `FLINT_FRAME_HISTORY=0|1` overrides
 # either way at run time.
 frame-history = []
-# The sound card (kira's cpal backend: ALSA on Linux). Off, the player runs
-# silent and a music session's stems don't play, as on a machine without a
-# device (its beat still counts, on the game clock).
-audio = ["flint-audio/device", "packages-audio"]
+# The sound card (kira's cpal backend: ALSA on Linux), in the packages that
+# play sound (`[rust.devices] sound`: audio's mixer, music's and rhythm's
+# sessions). Off, the player runs silent and a music session's stems don't
+# play, as on a machine without a device (its beat still counts, on the game
+# clock). It was `audio` until #1619, when `audio` became the package's own
+# feature: with `audio = false` there is no mixer to open at all.
+sound = ["packages-sound"]
 # Gamepads (gilrs: libudev on Linux). Off, no pad is ever seen; keyboard,
 # mouse, touch and --input-script's pad still work (#221).
 gamepad = ["flint-runtime/gamepad", "packages-gamepad"]
@@ -95,7 +99,6 @@ flint-physics = { workspace = true }
 # The Package API (ADR 0137, #1550): the subsystem trait and its contexts
 flint-package = { workspace = true }
 flint-import = { workspace = true }
-flint-audio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 skrifa = { workspace = true }
@@ -123,6 +126,7 @@ tracing-subscriber = { workspace = true }
 # Each package's `[rust] player` crate, written by `scripts/package-sync.py`
 # (#1560, #1568)
 # package-sync:dependencies
+flint-audio = { workspace = true, optional = true }
 flint-debug-ui = { workspace = true, optional = true }
 flint-living = { workspace = true, optional = true }
 flint-music = { workspace = true, optional = true }
@@ -143,8 +147,11 @@ hound = { workspace = true }
 # package's player part, whose layout a game's panel test draws through
 # (it runs where the run's launcher lists debug-hud, #1559).
 flint-debug-ui = { workspace = true, features = ["player"] }
-# The browser's mixer, fed what a scene's scripts sent (#730's bus test).
+# The browser's mixer, fed what a scene's scripts sent (#730's bus test),
+# and the audio package's player part, which the sound tests drive through
+# the player (they run where the run's launcher lists audio, #1619).
 flint-audio-worklet = { workspace = true }
+flint-audio = { workspace = true, features = ["player"] }
 # The procgen package's player part, named by the tests that make assets
 # through it (a game's generators, made meshes as colliders): they run
 # only where the run's launcher lists it, which a build without `procgen`

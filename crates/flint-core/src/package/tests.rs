@@ -399,7 +399,7 @@ fn the_engines_manifests_read() {
     let read = Packages::read(&dir);
     let lines: Vec<String> = read.problems.iter().map(Diagnostic::one_line).collect();
     assert!(lines.is_empty(), "{lines:#?}");
-    assert_eq!(read.packages.len(), 8);
+    assert_eq!(read.packages.len(), 9);
     assert_eq!(read.packages[0].name, "engine");
     assert_eq!(read.packages[0].tier, Tier::Kernel);
 }

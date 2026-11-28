@@ -18,3 +18,10 @@ Web audio (the worklet mixer): `crates/flint-player/CLAUDE.md`. The device-featu
 
 - Kira v0.11: `Decibels(f32)` and `PlaybackRate(f64)` are tuple structs; uses `glam` via `mint`
 - `AudioManager::new()` / `Gilrs::new()` may fail in headless/CI -- wrap in `Option`
+
+## The audio package (#1619)
+
+- **The crate is the `audio` package's** (`packages/audio/package.toml`, standard): `audio = false` leaves flint-audio, the worklet, kira and symphonia out of the player; music and rhythm `[require]` it. The sound card is the launchers' `sound` build option (`[rust.devices] sound`), not `audio`.
+- **`player` feature** (`src/player/`): `PACKAGE` registers a scene subsystem built for every scene (`AudioSubsystem`: sounds load at its build, the clocks at `PreScripts`, the listener at `Physics`/`PostPhysics` from `PlayerView::listener`, triggers and sources at `Stage::Sound` from `StageCtx::events`, `set_audio_lowpass` at `Sync`, script sounds in `script_command`; `clear` at `scene_unloading`, after music's), the `audio` policy, the `audio` module (`every_scene_modules`), `VolumeArgs` (`--music-volume`, `--sfx-volume`, applied at the first build) and `flint_package::sound::SoundPoint`.
+- **The sound is the run's resource**: `Box<dyn flint_package::sound::Sound>` (the host's view: start, hold, buses, meter, user volumes), concretely `AudioSystem`; `player::system_of_mut` downcasts, and `engine::of_mut` (behind `player`) is what music and rhythm call. A host with none opened (a capture, a test core) leaves every hook a no-op, and script sound commands go on to the host.
+- Player tests that read the engine use `PlayerApp::test_audio()` (`script_sound_tests.rs`); the module's own tests run on a bare `ScriptSystem` with the module declared.

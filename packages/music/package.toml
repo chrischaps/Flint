@@ -1,7 +1,8 @@
 # A scene's music (#745, #754): a `music_session`'s stems on their buses and
-# the beat its scripts read. A feature: off unless a game lists it. Until
-# Phase 3 the `music` script module is declared in flint-script, answering
-# -1 in a build without the package.
+# the beat its scripts read. A feature: off unless a game lists it. Its
+# `music` script module (`music_beat()` and the rest) is its own since
+# #1619, on in every scene of a run with the package, answering -1 where no
+# music plays; a build without the package has no such functions.
 #
 # Its crate is in this folder (#1555): crates/flint-music, whose `player`
 # feature is the scene subsystem (`flint_music::player::PACKAGE`) and `cli`
@@ -16,6 +17,11 @@ tier = "feature"
 summary = "Music sessions: stems on buses, the conductor and the beat"
 engine = "^0.1"
 
+# It plays on the audio package's mixer (`flint_audio::engine::of_mut`, ADR
+# 0017), so a game that leaves audio out leaves music out too (#1619).
+[requires]
+audio = "*"
+
 [build]
 features = ["music"]
 
@@ -23,11 +29,11 @@ features = ["music"]
 player = "flint-music"
 cli = "flint-music"
 
-# The sound card (#221, #1568): the launchers' `audio` turns on the crate's
-# `device` (kira's cpal backend), so a build without `audio` plays silent.
-# `scripts/package-sync.py` writes it into their `packages-audio`.
+# The sound card (#221, #1568): the launchers' `sound` turns on the crate's
+# `device` (kira's cpal backend), so a build without `sound` plays silent.
+# `scripts/package-sync.py` writes it into their `packages-sound`.
 [rust.devices]
-audio = ["flint-music/device"]
+sound = ["flint-music/device"]
 
 [provides]
 crates = ["flint-music"]

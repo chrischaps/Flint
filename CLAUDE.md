@@ -98,7 +98,7 @@ Feature notes go in the nearest scoped CLAUDE.md, not in this file. When a ticke
 | `crates/flint-player/CLAUDE.md` | extensions, UI, input, touch, capture, perf, web |
 | `crates/flint-script/CLAUDE.md` | Rhai detail, callbacks, script UI |
 | `crates/flint-core/CLAUDE.md` | vfs, hot reload, shear, project manifest, env switches |
-| `crates/flint-audio/CLAUDE.md` | audio clock, decoding, device features |
+| `packages/audio/crates/flint-audio/CLAUDE.md` | audio clock, decoding, devices |
 | `crates/flint-{physics,animation,particles,terrain}/CLAUDE.md` | joints, IK, particles, terrain |
 | `flint-examples/film/CLAUDE.md` | the film: shots, score, editor (flint-examples, #1195) |
 | `showcase_game/CLAUDE.md` | the example game |

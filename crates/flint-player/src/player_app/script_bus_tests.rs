@@ -74,19 +74,23 @@ fn a_bus_declared_in_flint_toml_is_made_played_on_and_turned_down_by_name() {
             .unwrap();
         let link = Link::default();
         engine.start_remote(link.clone());
-        app.audio.engine = engine;
+        app.test_audio().engine = engine;
         app.enter_scene(SceneEntry::Start)
             .expect("the scene starts");
 
         // The manifest's buses, numbered after the built-in two.
-        let voice = app.audio.engine.bus("voice").expect("voice is a bus");
-        let ui = app.audio.engine.bus("ui").expect("ui is a bus");
+        let voice = app
+            .test_audio()
+            .engine
+            .bus("voice")
+            .expect("voice is a bus");
+        let ui = app.test_audio().engine.bus("ui").expect("ui is a bus");
         assert_eq!(
             (ui.index(), voice.index()),
             (2, 3),
             "by name, parents first"
         );
-        let names: Vec<&str> = app.audio.engine.buses().names().collect();
+        let names: Vec<&str> = app.test_audio().engine.buses().names().collect();
         assert_eq!(names, ["sfx", "music", "ui", "voice"]);
 
         let mut mixer = flint_audio_worklet::Mixer::new(48_000).unwrap();
@@ -160,7 +164,7 @@ fn a_bus_declared_in_flint_toml_is_made_played_on_and_turned_down_by_name() {
         // 0.8 of a 0.5 tone, then a quarter of the tone.
         assert!((before - 0.4).abs() < 0.03, "before: {before}");
         assert!((after - 0.125).abs() < 0.02, "after: {after}");
-        assert_eq!(app.audio.engine.bus_volume(voice), Some(0.25));
-        assert_eq!(app.audio.engine.bus_volume(Bus::SFX), Some(1.0));
+        assert_eq!(app.test_audio().engine.bus_volume(voice), Some(0.25));
+        assert_eq!(app.test_audio().engine.bus_volume(Bus::SFX), Some(1.0));
     });
 }

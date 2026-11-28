@@ -46,6 +46,7 @@ mod launch;
 pub mod note;
 pub mod panels;
 mod registry;
+pub mod sound;
 mod stage;
 mod subsystem;
 

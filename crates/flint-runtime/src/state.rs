@@ -21,12 +21,11 @@ pub const SCRIPTS: &str = "scripts";
 pub const ANIMATION: &str = "animation";
 /// The particle simulation.
 pub const PARTICLES: &str = "particles";
-/// Audio triggers, source sync and the FPS listener.
-pub const AUDIO: &str = "audio";
-
 /// The systems every host that has a state machine runs, by the names a
-/// state's policy uses.
-pub const BUILTIN_SYSTEMS: &[&str] = &[PHYSICS, SCRIPTS, ANIMATION, PARTICLES, AUDIO];
+/// state's policy uses. Audio's is the audio package's since #1619 (ADR
+/// 0138 decision 7): registered with the package, and known in a build
+/// without it from its manifest's `[without] policies`.
+pub const BUILTIN_SYSTEMS: &[&str] = &[PHYSICS, SCRIPTS, ANIMATION, PARTICLES];
 
 /// Whether a system runs under a state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,7 +418,7 @@ mod tests {
     fn a_state_names_only_the_systems_it_changes_and_the_rest_run() {
         let config = StateConfig::parse([("physics", "pause"), ("audio", "Run")]).unwrap();
         assert_eq!(config.policy(PHYSICS), SystemPolicy::Pause);
-        assert_eq!(config.policy(AUDIO), SystemPolicy::Run);
+        assert_eq!(config.policy("audio"), SystemPolicy::Run);
         assert_eq!(config.policy(SCRIPTS), SystemPolicy::Run);
         assert_eq!(config.named().count(), 2);
     }

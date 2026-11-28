@@ -361,6 +361,8 @@ impl HeadlessGame {
             capture: Some(&capture),
             packages: core.packages.as_ref(),
             resources: &mut core.resources,
+            // A capture loads no sounds
+            preload_audio: false,
             registry: crate::packages::registry(),
         });
         let mut left_out = Vec::new();
@@ -597,7 +599,6 @@ impl FrameHost for CaptureFrame<'_> {
                 cursor_captured: false,
                 scene_file_writable: false,
                 note: &mut game.key_note,
-                audio: None,
                 pads: None,
                 quit: None,
             },

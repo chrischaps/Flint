@@ -1,7 +1,7 @@
 # The kernel, and with it what can't be left out yet (ADR 0136 decision 8).
 #
 # Every game links this package. It holds the kernel and the standard
-# packages that have no Cargo feature until Phase 3 (physics, audio,
+# packages that have no Cargo feature until Phase 3 (physics,
 # animation, particles, terrain), and the render features that live inside
 # flint-render until Phase 4 (ocean, grass, stylize, panels). Each list is
 # grouped by the package it will become, so the split is a move of lines.
@@ -25,8 +25,6 @@ crates = [
     "flint-widgets", "flint-cli",
     # physics
     "flint-physics",
-    # audio
-    "flint-audio", "flint-audio-worklet",
     # animation
     "flint-animation",
     # particles
@@ -43,8 +41,6 @@ components = [
     "motion_hold",
     # physics
     "collider", "rigidbody", "character_controller", "joint",
-    # audio
-    "audio_source", "audio_trigger",
     # animation
     "animator", "skeleton", "ik_two_bone", "bone_probe",
     # particles
@@ -81,8 +77,6 @@ script_modules = [
     "field",
     # physics
     "physics", "physics_2d", "nav",
-    # audio
-    "audio",
     # animation
     "animation", "tween",
     # particles

@@ -34,6 +34,12 @@ pub enum Stage {
     PostPhysics,
     /// After `on_draw_ui` and the draw commands.
     ScriptUi,
+    /// After the late models, before the animation clock (ADR 0138's
+    /// `Sound`, #1619): where the audio package reloads changed sounds,
+    /// plays the frame's triggers ([`StageCtx::events`](crate::StageCtx::events))
+    /// and updates the scene's sources. A capture runs it too, with no
+    /// sound to play.
+    Sound,
     /// After audio triggers, animation and particles.
     Animation,
     /// After the asset makers' frame (`flint_package::assets`: the procgen
@@ -63,6 +69,7 @@ impl Stage {
             Stage::Physics => "physics",
             Stage::PostPhysics => "post_physics",
             Stage::ScriptUi => "script_ui",
+            Stage::Sound => "sound",
             Stage::Animation => "animation",
             Stage::MadeAssets => "made_assets",
             Stage::Sync => "sync",
@@ -72,7 +79,7 @@ impl Stage {
 
     /// Every stage `update` hears in the player's frame, in order: the
     /// host's [`Stage::Clock`], then the core's.
-    pub const UPDATES: [Stage; 10] = [
+    pub const UPDATES: [Stage; 11] = [
         Stage::Clock,
         Stage::Input,
         Stage::PreScripts,
@@ -80,6 +87,7 @@ impl Stage {
         Stage::Physics,
         Stage::PostPhysics,
         Stage::ScriptUi,
+        Stage::Sound,
         Stage::Animation,
         Stage::MadeAssets,
         Stage::Sync,

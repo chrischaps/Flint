@@ -442,7 +442,7 @@ fn start(options: &PlaytestOptions) -> anyhow::Result<PlayerApp> {
         false,
         None,
         scene_file.scene.input_config.clone(),
-        flint_audio::AudioSystem::silent(),
+        flint_package::sound::Output::Silent,
     );
     let launch = &mut app.launch;
     launch.saves_in_memory = true;

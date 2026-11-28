@@ -13,9 +13,9 @@ use super::AndroidGamepadTracker;
 use super::TransitionPhase;
 use super::{CaptureConfig, LaunchOptions, PlayerApp, SceneSettings};
 use anyhow::{Context, Result};
-use flint_audio::AudioSystem;
 use flint_core::vfs;
 use flint_ecs::FlintWorld;
+use flint_package::sound::{Output, SoundPoint};
 use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::pad::Gilrs;
 use flint_runtime::{InputConfig, InputState};
@@ -114,24 +114,20 @@ impl PlayerApp {
             fullscreen,
             input_config_override,
             scene_input_config,
-            // Opening the sound device can take a second (#1092)
-            flint_core::load_report::timed(
-                flint_core::load_report::Stage::AudioDevice,
-                String::new,
-                AudioSystem::new,
-            ),
+            Output::Device,
         )
     }
 
-    /// [`new`](Self::new) with its sound given: `AudioSystem::silent()`
-    /// for a run that must open no device (a headless playtest, #714).
+    /// [`new`](Self::new) with its sound given: `Output::Silent` for a run
+    /// that must open no device (a headless playtest, #714). A build
+    /// without the audio package opens none either way (#1619).
     pub fn with_audio(
         world: FlintWorld,
         scene_path: String,
         fullscreen: bool,
         input_config_override: Option<String>,
         scene_input_config: Option<String>,
-        audio: AudioSystem,
+        output: Output,
     ) -> Self {
         // The profiler's client, before the first scope (ADR 0109). Tracy's
         // viewer connects to it while the game runs; starting it twice is
@@ -142,6 +138,11 @@ impl PlayerApp {
         // later): `refresh_project` asks again when the scene loads.
         let project = flint_core::project::Project::for_scene(Path::new(&scene_path));
         let mut core = super::GameCore::new(world, scene_path, project);
+        // The run's sound, the audio package's resource (#1619): opening
+        // the device can take a second (#1092)
+        if let Some(point) = crate::packages::registry().point::<SoundPoint>() {
+            flint_package::sound::open(point, &mut core.resources, output);
+        }
         // The run's debug HUD, when the launcher lists the package (#1559),
         // and the F3/F4 panels with it, lent to every subsystem through its
         // context's resources (ADR 0137, #1550): a capture has neither
@@ -153,7 +154,6 @@ impl PlayerApp {
         Self {
             core,
             input: InputState::new(),
-            audio,
             launch: LaunchOptions {
                 fullscreen,
                 ..Default::default()
@@ -177,7 +177,6 @@ impl PlayerApp {
             assets: AssetSources::default(),
             focus: Default::default(),
             post: Default::default(),
-            audio_vfs_generation: flint_core::vfs::generation(),
             capture: CaptureConfig::default(),
             frame_captures: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1094,10 +1093,16 @@ impl PlayerApp {
     /// with another table adds its buses. A manifest that doesn't read is
     /// said and the buses stay as they are.
     pub(crate) fn declare_audio_buses(&mut self) {
-        match flint_audio::Buses::for_project(&self.core.project) {
-            Ok(buses) => self.audio.engine.set_buses(&buses),
-            Err(e) => tracing::error!(target: "load", "audio buses: {e}"),
+        let project = &self.core.project;
+        if let Some(sound) = flint_package::sound::of_mut(&mut self.core.resources) {
+            sound.declare_buses(project);
         }
+    }
+
+    /// The run's sound, when this build has one and the run opened it
+    /// (`flint_package::sound`, #1619).
+    pub(crate) fn sound(&mut self) -> Option<&mut dyn flint_package::sound::Sound> {
+        flint_package::sound::of_mut(&mut self.core.resources)
     }
 
     /// Load image files referenced by particle_emitter texture fields into

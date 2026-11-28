@@ -79,7 +79,7 @@ fn start(config: &Path, link: &Link) -> PlayerApp {
     app.saves.user_config_dir = Some(config.to_path_buf());
     let mut engine = AudioEngine::silent();
     engine.start_remote(link.clone());
-    app.audio.engine = engine;
+    app.test_audio().engine = engine;
     app.enter_scene(SceneEntry::Start)
         .expect("the scene starts");
     app
@@ -126,7 +126,7 @@ fn a_players_music_volume_is_kept_for_the_next_run_and_a_fade_is_heard_under_it(
             "0.5 x 0.4 is heard"
         );
         assert_eq!(
-            app.audio.engine.user_bus_volume("music"),
+            app.test_audio().engine.user_bus_volume("music"),
             0.4,
             "the fade kept it"
         );
@@ -139,14 +139,14 @@ fn a_players_music_volume_is_kept_for_the_next_run_and_a_fade_is_heard_under_it(
 
         // ── Run two: the same user directory ──
         let link = Link::default();
-        let app = start(&config, &link);
+        let mut app = start(&config, &link);
         assert_eq!(
             music_db(&link),
             Some(amplitude_to_db(0.4).0),
             "music opens at 0.4 before the first frame"
         );
         assert_eq!(
-            app.audio.engine.bus_volume(flint_audio::Bus::MUSIC),
+            app.test_audio().engine.bus_volume(flint_audio::Bus::MUSIC),
             Some(1.0)
         );
         assert_eq!(
@@ -182,7 +182,7 @@ fn a_run_with_saves_in_memory_touches_no_audio_file() {
         for _ in 0..3 {
             app.tick();
         }
-        assert_eq!(app.audio.engine.user_bus_volume("music"), 0.4);
+        assert_eq!(app.test_audio().engine.user_bus_volume("music"), 0.4);
         app.flush_persistent_store(true, "exit");
     });
     assert!(

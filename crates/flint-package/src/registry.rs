@@ -73,6 +73,7 @@ pub struct Registry {
     left_out: Vec<(&'static str, LeftOutLine)>,
     policies: Vec<&'static str>,
     modules: Vec<(&'static str, &'static dyn ScriptModule)>,
+    everywhere: Vec<(&'static str, &'static str)>,
     debug_keys: Vec<(&'static str, DebugKeyGroup)>,
     run_resources: Vec<(&'static str, RunResources)>,
     settles: Vec<(&'static str, SettleScene)>,
@@ -293,6 +294,18 @@ impl Registry {
             .map(|(_, line)| *line)
     }
 
+    /// Script modules enabled in every scene while the package is in,
+    /// with no subsystem to own them (#1619): the music's `music_beat()`,
+    /// which reads -1 in a scene with no music. Declared as
+    /// [`script_modules`](Registry::script_modules) are.
+    pub fn every_scene_modules(&mut self, modules: &[&'static dyn ScriptModule]) -> &mut Self {
+        for module in modules {
+            self.modules.push((self.current, *module));
+            self.everywhere.push((self.current, module.name()));
+        }
+        self
+    }
+
     /// The names a game state's policy may give.
     pub fn policies(&self) -> &[&'static str] {
         &self.policies
@@ -301,6 +314,19 @@ impl Registry {
     /// Every registered script module, in order.
     pub fn modules(&self) -> impl Iterator<Item = &'static dyn ScriptModule> + '_ {
         self.modules.iter().map(|(_, m)| *m)
+    }
+
+    /// The modules every scene has enabled
+    /// ([`every_scene_modules`](Registry::every_scene_modules)), less those
+    /// of a package `packages` leaves out.
+    pub fn modules_everywhere<'a>(
+        &'a self,
+        packages: Option<&'a InUse>,
+    ) -> impl Iterator<Item = &'static str> + 'a {
+        self.everywhere
+            .iter()
+            .filter(move |(p, _)| packages.is_none_or(|in_use| in_use.is_on(p)))
+            .map(|(_, m)| *m)
     }
 
     /// The debug HUD a package registered, to make once a run; `None` in a

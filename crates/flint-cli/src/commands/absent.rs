@@ -253,7 +253,7 @@ const PACKAGE_FEATURES: &[(&str, bool)] =
 
 /// The device features.
 const DEVICE_FEATURES: &[(&str, bool)] = &[
-    ("audio", cfg!(feature = "audio")),
+    ("sound", cfg!(feature = "sound")),
     ("gamepad", cfg!(feature = "gamepad")),
     ("dialogs", cfg!(feature = "dialogs")),
 ];

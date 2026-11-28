@@ -423,29 +423,32 @@ Every script can read every key, so keep secrets such as session tokens in a fil
 
 ### Sound
 
-`ctx.audio` is an `ExtensionAudio`, a handle on the player's audio engine. Sounds are cached by name, in the same cache that scripts' `play_sound` and `audio_source.file` read. A sound an extension loads can be played by a script, and a file the scene preloaded (`audio/<file>`) can be played from Rust.
+The sound is the audio package's (`flint-audio`): an extension asks for it with `flint_audio::player::audio(ctx.resources)`, an `ExtensionAudio` on the run's audio engine, or `None` in a build without the package. A game crate that plays sound depends on `flint-audio` with its `player` feature. Sounds are cached by name, in the same cache that scripts' `play_sound` and `audio_source.file` read. A sound an extension loads can be played by a script, and a file the scene preloaded (`audio/<file>`) can be played from Rust.
 
 ```rust
-use flint_player::{Bus, SoundOptions};
+use flint_audio::player::SoundOptions;
+use flint_audio::Bus;
+
+let Some(mut audio) = flint_audio::player::audio(ctx.resources) else { return };
 
 // Once: a sound made in code (one channel, or two for left and right).
-ctx.audio.load_samples("blip", 44_100, &[&samples])?;
+audio.load_samples("blip", 44_100, &[&samples])?;
 // Or an encoded one held in memory: WAV, OGG, FLAC or MP3.
-ctx.audio.load_bytes("door", include_bytes!("door.ogg").to_vec())?;
+audio.load_bytes("door", include_bytes!("door.ogg").to_vec())?;
 
 // Any frame:
-ctx.audio.play("blip", &SoundOptions::new().volume(0.5).pitch(1.2))?;
-ctx.audio.play("door", &SoundOptions::new().at(pos).distances(2.0, 60.0))?;
-ctx.audio.play("bell", &SoundOptions::new().at(pos).distances(20.0, 600.0).rolloff(0.7))?;
-ctx.audio.set_bus_volume(Bus::MUSIC, 0.4);
+audio.play("blip", &SoundOptions::new().volume(0.5).pitch(1.2))?;
+audio.play("door", &SoundOptions::new().at(pos).distances(2.0, 60.0))?;
+audio.play("bell", &SoundOptions::new().at(pos).distances(20.0, 600.0).rolloff(0.7))?;
+audio.set_bus_volume(Bus::MUSIC, 0.4);
 // A bus the game declares in flint.toml ([audio.buses.voice]):
-if let Some(voice) = ctx.audio.bus("voice") {
-    ctx.audio.play("line_04", &SoundOptions::new().bus(voice))?;
-    ctx.audio.set_bus_volume(voice, 0.8);
+if let Some(voice) = audio.bus("voice") {
+    audio.play("line_04", &SoundOptions::new().bus(voice))?;
+    audio.set_bus_volume(voice, 0.8);
 }
 ```
 
-- **`play`** plays a sound once. Without `at`, it plays flat, from nowhere. With `at`, it pans and fades with distance from the listener: full volume within `distances`' first value and silent past its second (by default 1 and 25, the same as a script's `play_sound_at`). `rolloff` sets the curve between them: the default 2 holds a sound up and drops it near the far distance, and a value below 1 fades it like a sound in the open (see [Audio](../concepts/audio.md#scripting-integration)). `bus` routes it through `Bus::SFX` (the default), `Bus::MUSIC` or a bus the game declares, found by name with `ctx.audio.bus("voice")` ([Audio: Mixer Buses](../concepts/audio.md#mixer-buses)). An unknown sound name is an error.
+- **`play`** plays a sound once. Without `at`, it plays flat, from nowhere. With `at`, it pans and fades with distance from the listener: full volume within `distances`' first value and silent past its second (by default 1 and 25, the same as a script's `play_sound_at`). `rolloff` sets the curve between them: the default 2 holds a sound up and drops it near the far distance, and a value below 1 fades it like a sound in the open (see [Audio](../concepts/audio.md#scripting-integration)). `bus` routes it through `Bus::SFX` (the default), `Bus::MUSIC` or a bus the game declares, found by name with `audio.bus("voice")` ([Audio: Mixer Buses](../concepts/audio.md#mixer-buses)). An unknown sound name is an error.
 - **`load_samples`** and **`load_bytes`** replace any sound already cached under the name. A sound that's already playing carries on with the old data. A looping `audio_source` whose sound isn't cached yet stays silent, so load the sound before spawning the entity that plays it.
 - **`set_bus_volume`** scales everything on the bus, including scripts' sounds and `audio_source`s, on top of each sound's own volume. It holds across scene transitions. A game's volume settings belong here rather than in each sound's volume. `set_buses` declares buses in code, as `flint.toml`'s `[audio.buses]` does, for a mix built at run time.
 

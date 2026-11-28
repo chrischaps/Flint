@@ -94,6 +94,7 @@ __pycache__/
 # list. Edit a page in its package's folder, never the copy.
 /docs/book/src/cli-reference/music.md
 /docs/book/src/concepts/ai-generation.md
+/docs/book/src/concepts/audio.md
 /docs/book/src/concepts/music-sessions.md
 /docs/book/src/concepts/procgen.md
 /docs/book/src/concepts/vehicles.md

@@ -27,7 +27,7 @@ use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, SceneRenderer};
-use flint_runtime::state::{ANIMATION, AUDIO, PARTICLES, PHYSICS, SCRIPTS};
+use flint_runtime::state::{ANIMATION, PARTICLES, PHYSICS, SCRIPTS};
 use flint_runtime::{
     EventBus, Eye, GameClock, GameEvent, GameStateMachine, InputState, PersistentStore, PlayerView,
     RuntimeSystem, StateConfig,
@@ -161,6 +161,12 @@ impl GameCore {
     /// extension that declares one too.
     pub(crate) fn enable_script_modules(&mut self) {
         let mut modules = self.subsystems.script_modules();
+        let registry = crate::packages::registry();
+        for name in registry.modules_everywhere(self.packages.as_ref()) {
+            if !modules.contains(&name) {
+                modules.push(name);
+            }
+        }
         for name in &self.extension_modules {
             if !modules.contains(name) {
                 modules.push(name);
@@ -212,10 +218,6 @@ pub(crate) struct Lent<'a> {
     pub scene_file_writable: bool,
     /// What a debug key says when it has nothing to act on (#367).
     pub note: &'a mut super::key_note::KeyNote,
-    /// The sound engine, when the host has one (the music plays on it):
-    /// lent to a stage's subsystems through the resources
-    /// (`flint_audio::engine::lend`, #1616).
-    pub audio: Option<&'a mut flint_audio::engine::AudioEngine>,
     /// The pads, when the host has them.
     pub pads: Option<super::subsystem::Pads<'a>>,
     /// The run's exit flag, when the host has a run to end.
@@ -259,10 +261,6 @@ pub(crate) trait FrameHost {
     /// those at `Stage::PreScripts`).
     fn window_for_scripts(&mut self) {}
 
-    /// The camera moved the sound's listener there
-    /// (`PlayerView::listener`, ADR 0138).
-    fn listener(&mut self, _at: Eye) {}
-
     /// Whether this host is a capture (`flint render`): it steps no
     /// physics, and steps its own animation and particles on fixed steps
     /// (`bones_posed` is where its animation goes), and nothing goes to
@@ -297,10 +295,6 @@ pub(crate) trait FrameHost {
     /// entities spawned since the last frame (a script's `spawn_entity`)
     /// load, before animation and the renderer's sync see them (#1107).
     fn late_models(&mut self) {}
-
-    /// The frame's sound, before animation moves on: its triggers from the
-    /// game events, and the sources' update.
-    fn sound(&mut self, _policy: &StateConfig, _events: &[GameEvent]) {}
 
     /// Animation has posed the skeletons: their bones to the GPU.
     fn bones_posed(&mut self) {}
@@ -366,7 +360,7 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     // Fixed-timestep physics + FPS camera/listener follow, against the
     // poses and joint targets the scripts just wrote
     let steps_physics = !host.capture();
-    let moved = {
+    {
         let (core, lent) = host.lend();
         // Triangles that came since the last frame (a procgen model the
         // queue finished, a mesh an extension uploaded), for the bodies
@@ -378,10 +372,9 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
                 lent.renderer.as_deref(),
             );
         }
-        core.tick_fixed_physics(config, steps_physics, lent.input, lent.camera)
-    };
-    if let Some(at) = moved {
-        host.listener(at);
+        // The listener's move is `PlayerView::listener`, which the audio
+        // package reads at `Stage::Physics` (#1619)
+        core.tick_fixed_physics(config, steps_physics, lent.input, lent.camera);
     }
     host.phase_done(Phase::Physics);
     run_stage(host, Stage::Physics, Some(config));
@@ -416,12 +409,11 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     // The camera is final for this frame then: on_draw_ui gets the one the
     // frame renders with, so world_to_screen / screen_to_ground there line
     // up with the drawn world instead of trailing it by a frame.
-    let moved = {
+    {
         let (core, lent) = host.lend();
-        core.apply_script_camera(lent.camera)
-    };
-    if let Some(at) = moved {
-        host.listener(at);
+        // The listener moves to it at `Stage::PostPhysics` (the audio
+        // package), where no controller placed an eye
+        core.apply_script_camera(lent.camera);
     }
     run_stage(host, Stage::PostPhysics, Some(config));
 
@@ -438,11 +430,12 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     run_stage(host, Stage::ScriptUi, Some(config));
     host.late_models();
 
-    // Sound triggers, animations + sprite-end callbacks, bone matrices,
-    // bone probes, IK, particles
-    // A capture keeps its own animation, on a fixed step, in `bones_posed`
+    // Sound triggers (the audio package's `Stage::Sound`, #1619),
+    // animations + sprite-end callbacks, bone matrices, bone probes, IK,
+    // particles. A capture keeps its own animation, on a fixed step, in
+    // `bones_posed`
     let capture = host.capture();
-    host.sound(config, &game_events);
+    run_stage_on(host, Stage::Sound, config, &game_events);
     if !capture {
         host.core().animate(config);
     }
@@ -473,10 +466,29 @@ pub(crate) fn run_stage<H: FrameHost + ?Sized>(
     stage: Stage,
     policy: Option<&StateConfig>,
 ) {
+    run_stage_with(host, stage, policy, &[]);
+}
+
+/// [`run_stage`] with the frame's game events lent (`StageCtx::events`).
+fn run_stage_on<H: FrameHost + ?Sized>(
+    host: &mut H,
+    stage: Stage,
+    policy: &StateConfig,
+    events: &[GameEvent],
+) {
+    run_stage_with(host, stage, Some(policy), events);
+}
+
+fn run_stage_with<H: FrameHost + ?Sized>(
+    host: &mut H,
+    stage: Stage,
+    policy: Option<&StateConfig>,
+    events: &[GameEvent],
+) {
     if !host.core().subsystems.is_empty() {
         flint_core::scope!("subsystems", stage.label());
         let (core, lent) = host.lend();
-        core.with_subsystems(lent, policy, |subsystems, ctx| {
+        core.with_subsystems_on(lent, policy, events, |subsystems, ctx| {
             subsystems.update(stage, ctx)
         });
     }
@@ -493,8 +505,20 @@ impl GameCore {
         policy: Option<&StateConfig>,
         f: impl FnOnce(&mut Subsystems, &mut StageCtx) -> R,
     ) -> R {
-        // The sound is lent through the resources (#1616): the Package API
-        // names no standard package's type
+        self.with_subsystems_on(lent, policy, &[], f)
+    }
+
+    /// [`with_subsystems`](Self::with_subsystems), the frame's `events`
+    /// lent too (audio's triggers at `Stage::Sound`).
+    pub(crate) fn with_subsystems_on<R>(
+        &mut self,
+        lent: Lent<'_>,
+        policy: Option<&StateConfig>,
+        events: &[GameEvent],
+        f: impl FnOnce(&mut Subsystems, &mut StageCtx) -> R,
+    ) -> R {
+        // The sound is the run's resource (#1619), lent with the rest: the
+        // Package API names no standard package's type
         let Lent {
             input,
             camera,
@@ -504,11 +528,10 @@ impl GameCore {
             cursor_captured,
             scene_file_writable,
             note,
-            audio,
             pads,
             quit,
         } = lent;
-        flint_audio::engine::lend(&mut self.resources, audio, |resources| {
+        {
             let mut ctx = StageCtx {
                 world: &mut self.world,
                 clock: &self.clock,
@@ -527,10 +550,11 @@ impl GameCore {
                 requests: &mut self.script_requests,
                 pads,
                 quit,
-                resources,
+                resources: &mut self.resources,
+                events,
             };
             f(&mut self.subsystems, &mut ctx)
-        })
+        }
     }
 
     /// The bus's events (the last frame's physics contacts, extension,
@@ -601,8 +625,8 @@ impl GameCore {
 
     /// The fixed-timestep physics loop (skipped while paused, but still
     /// consuming steps to avoid a spiral), then the eye a controller placed
-    /// (ADR 0138's `View`). Returns where the listener goes, when the
-    /// sound runs and a controller placed the eye.
+    /// (ADR 0138's `View`). Returns where the listener goes, when a
+    /// controller placed the eye (`PlayerView::listener`).
     fn tick_fixed_physics(
         &mut self,
         config: &StateConfig,
@@ -681,7 +705,9 @@ impl GameCore {
         let eye = view.eye?;
         camera.update_first_person(eye.position, eye.yaw, eye.pitch);
         camera.target = eye.target;
-        view.listener = config.runs(AUDIO).then_some(eye);
+        // The audio package moves its listener there at `Stage::Physics`,
+        // when its policy runs (#1619)
+        view.listener = Some(eye);
         view.listener
     }
 

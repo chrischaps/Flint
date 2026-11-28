@@ -657,7 +657,7 @@ buffer, on the main thread. `?perf=1` now counts what it mixes: a
 really mixes, and the one-shots it skipped or stole; the `audio` line
 gains the mean time to mix one buffer.
 
-**Where the time goes.** `crates/flint-audio/examples/mix_bench.rs` builds Float's mixer on
+**Where the time goes.** `packages/audio/crates/flint-audio/examples/mix_bench.rs` builds Float's mixer on
 kira's mock backend and times one 2048-frame buffer natively. Pausing the
 six loops Float keeps at volume 0 (four songs, rain, storm) saved only
 7%: a paused-or-not plain voice costs about 0.013 ms. A kira **spatial
@@ -1793,7 +1793,7 @@ isolated, and GitHub Pages can't send the COOP/COEP headers that takes. So
 the worklet runs **a second wasm** with its own copy of kira, and the main
 thread talks to it by `postMessage`:
 
-- `crates/flint-audio-worklet` is that wasm: kira with no features (no cpal,
+- `packages/audio/crates/flint-audio-worklet` is that wasm: kira with no features (no cpal,
   no decoders), a `Mixer` set up as `AudioEngine` sets kira up on the
   desktop, and a C ABI with **no imports**, so the processor instantiates it
   with `{}` and needs no wasm-bindgen glue (a worklet has no `TextDecoder`

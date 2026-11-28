@@ -13,8 +13,10 @@ path = "src/main.rs"
 # flint-cli --no-default-features` builds every command with no ALSA or
 # libudev headers, and without rfd's async D-Bus stack; `flint render`,
 # `gen`, `bundle` and the rest never needed them. What each costs when off:
-#   audio    `play` runs silent; `music calibrate` and `music chart play`
-#            won't start (`music render` renders offline either way)
+#   sound    the sound card (`audio` until #1619, when that became the audio
+#            package's feature): off, `play` runs silent; `music calibrate`
+#            and `music chart play` won't start (`music render` renders
+#            offline either way)
 #   gamepad  no pads; the rumble spike reports it
 #   dialogs  the editors' Save As / Export / Browse buttons say so instead
 #
@@ -28,6 +30,9 @@ path = "src/main.rs"
 #            viewer's boil and sway: the package's own crate's `cli` part
 #            since #1558 (`packages/living/crates/flint-living`), which
 #            fills the kernel commands' points, listed by `build.rs`
+#   audio    the audio package (#1619): the mixer, `audio_source` and the
+#            `audio` script module, through flint-player's `audio`; music
+#            and rhythm require it
 #   music    `music validate`, `music play`, `music render`: the package's
 #            own crate's `cli` part since #1555, so without it the parser
 #            has no `music` at all, and a line asking is told to add it
@@ -53,11 +58,11 @@ path = "src/main.rs"
 #            the viewer's F4 are the kernel's (flint-widgets), so `flint
 #            edit` and `frame open` are the same without it
 #
-# `packages` is all six: CI's headless job checks the book against
+# `packages` is all of them: CI's headless job checks the book against
 # `--no-default-features --features packages`, every command and script
 # module with no device crate.
 [features]
-default = ["audio", "gamepad", "dialogs", "packages"]
+default = ["sound", "gamepad", "dialogs", "packages"]
 # Written by `scripts/package-sync.py` from packages/*/package.toml (ADR 0137
 # section 5, #1560, #1568): `packages` is every package this crate has a
 # feature for; each package's feature turns on flint-player's of that name
@@ -67,19 +72,23 @@ default = ["audio", "gamepad", "dialogs", "packages"]
 # (`[rust.devices]`) that flint-player's doesn't already turn on. Don't edit
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
-packages = ["ai", "debug-hud", "living", "music", "procgen", "rhythm", "vehicle"]
-packages-audio = []
+packages = ["ai", "audio", "debug-hud", "living", "music", "procgen", "rhythm", "vehicle"]
 packages-dialogs = ["flint-procgen-cli?/dialogs"]
 packages-gamepad = []
+packages-sound = []
 ai = ["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli"]
+audio = ["flint-player/audio"]
 debug-hud = ["flint-player/debug-hud"]
 living = ["procgen", "flint-player/living", "dep:flint-living", "flint-living?/cli"]
-music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
+music = ["audio", "flint-player/music", "dep:flint-music", "flint-music?/cli"]
 procgen = ["flint-player/procgen", "dep:flint-procgen-cli", "flint-procgen-cli?/cli"]
-rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
+rhythm = [
+    "audio", "music", "flint-player/rhythm", "dep:flint-rhythm-game",
+    "flint-rhythm-game?/cli",
+]
 vehicle = ["flint-player/vehicle"]
 # package-sync:end
-audio = ["flint-player/audio", "packages-audio"]
+sound = ["flint-player/sound", "packages-sound"]
 gamepad = ["flint-player/gamepad", "packages-gamepad"]
 dialogs = ["flint-viewer/dialogs", "packages-dialogs"]
 

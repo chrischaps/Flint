@@ -10,10 +10,9 @@
 //! `teardown_current_scene` in `transition.rs`.
 
 use super::scene_loading::{
-    build_model_load_config, load_animations_from_world, load_audio_from_world,
-    load_scripts_from_world, load_sequences_from_world, load_sprite_animations_from_world,
-    register_node_animation_data, register_skeletal_data, register_terrain_collider,
-    LoadedGrassInfo,
+    build_model_load_config, load_animations_from_world, load_scripts_from_world,
+    load_sequences_from_world, load_sprite_animations_from_world, register_node_animation_data,
+    register_skeletal_data, register_terrain_collider, LoadedGrassInfo,
 };
 use super::PlayerApp;
 use crate::player_app::game_core::{physics_of, physics_of_mut};
@@ -342,22 +341,8 @@ impl PlayerApp {
         // interactables (ADR 0138, #1614)
         self.core.enter_player_view();
 
-        let audio_note = frame_notes::begin(NoteKind::AudioLoad, String::new);
-        load_audio_from_world(
-            &self.core.world,
-            &mut self.audio,
-            &self.core.project,
-            &self.core.scene_path,
-            self.scene.preload_audio,
-            // In the browser the audio may already be here, and decoding it
-            // all in one frame is the stall #124 removed: queue it. The
-            // desktop decodes up front, as a load can afford.
-            cfg!(target_arch = "wasm32"),
-        );
-        self.audio
-            .initialize(&mut self.core.world)
-            .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
-        drop(audio_note);
+        // The scene's sounds load as the audio package's subsystem is
+        // built, below (#1619)
 
         let animation_note = frame_notes::begin(NoteKind::AnimationLoad, String::new);
         load_animations_from_world(
