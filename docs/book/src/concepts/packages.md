@@ -10,16 +10,21 @@ Each package has a manifest, `packages/<name>/package.toml`, that says what it o
 
 | Package | Tier | What it brings | Comes with |
 |---|---|---|---|
-| `engine` | kernel | The kernel: the ECS, scenes, schemas, the renderer, scripting, the player and the CLI. It also holds, for now, the parts that have no switch yet (physics, audio, terrain, and the ocean, grass, stylize and panels render features) | |
+| `engine` | kernel | The kernel: the ECS, scenes, schemas, sprites, cameras, input, UI, the renderer, scripting, the player and the CLI. It also holds, for now, the render features that have no switch yet (the ocean, grass, stylize and panels) | |
+| `physics` | standard | Rapier bodies, colliders and joints on the fixed step (`collider`, `rigidbody`, `joint`), and the `physics`, `physics_2d` and `nav` script modules | |
+| `first-person` | standard | A first-person walker on Rapier's character controller (`character_controller`, the `player` archetype), and the eye the camera and listener follow | `physics` |
+| `audio` | standard | Sound: the mixer and its buses, `audio_source` and `audio_trigger`, the `audio` script module, and the web's AudioWorklet | |
 | `animation` | standard | Clips on one clock: `animator`, property clips, layers, crossfades, sequences and cues, `tween`, and the `animation` and `tween` script modules | |
 | `flipbook` | standard | Sprite-sheet clips (`.sprite.toml`) played through `animator`, the `animated_sprite` archetype and the `flipbook` script module ([2D Sprites](sprites-2d.md)) | `animation` |
 | `particles` | standard | Particle emitters and reusable effects: `particle_emitter`, `particle_effect`, the `particle` script module, the F3 Particles panel and the effect editor | |
 | `rig` | standard | Skeletons and their clips from glTF, node clips, layers composed joint by joint, two-bone IK and bone probes (`skeleton`, `ik_two_bone`, `bone_probe`), and the model previewer, `flint edit <model>.glb` ([Animation](animation.md)) | `animation` |
+| `terrain` | standard | Heightmap ground: chunks, splat-map layers, grass, a heightfield, the `terrain` component and script module, and the terrain editor | |
 | `procgen` | standard | Models and textures made from procgen specs, at load and with `flint gen` | |
 | `debug-hud` | standard | The player's F3/F4 debug panels | |
 | `living` | feature | Living props and the wooze field: `living_prop`, `shallow_wooze`, `[living]`, `[wooze]`, and the `living`, `wooze` and `debug` script modules | `procgen` |
-| `music` | feature | Music sessions: `music_session`, stems on buses, the conductor and the beat, the `music` script module | |
-| `rhythm` | feature | Charts judged against the music, with 1 kHz pad capture, and the `conducted` script module | `music` |
+| `music` | feature | Music sessions: `music_session`, stems on buses, the conductor and the beat, the `music` script module | `audio` |
+| `rhythm` | feature | Charts judged against the music, with 1 kHz pad capture, and the `conducted` script module | `music`, `audio` |
+| `vehicle` | feature | Raycast-wheel vehicles on a Rapier body, with arcade assists, and the `vehicle` script module | `physics` |
 | `ai` | feature | AI asset generation, AI-written procgen specs and the cost ledger | `procgen` |
 
 The **tier** says who has a package without asking:
@@ -32,7 +37,7 @@ The **tier** says who has a package without asking:
 
 ## A game lists what it uses
 
-`[packages]` in `flint.toml` lists the packages the game uses. `flint init` writes it empty, with a comment, so a new game is the kernel and the standard packages:
+`[packages]` in `flint.toml` lists the packages the game uses. `flint init` writes it empty, with a comment, so a new game is the kernel and the standard packages. The 2d template writes five `= false` lines instead (`physics`, `first-person`, `rig`, `particles` and `terrain`), each with a comment saying what deleting it brings back, so a 2D game starts without what a flat game has no use for and keeps sound, animation, flipbooks, procgen and the F3 panels:
 
 ```toml
 [packages]
@@ -119,9 +124,29 @@ python3 scripts/package-sync.py
 
 Until the script runs, the launchers have no feature for the new package, and both binaries name the script. A `flint` built from the tree reads the folder's manifest, so a command the package provides exits 2: the package's folder is in `packages/`, neither launcher has a feature for it yet, and the step is `python3 scripts/package-sync.py` from the engine's root, then a build. `flint build` for a game that lists the package is refused the same way: neither flint-player nor flint-cli has its feature, so run the script in the engine it names, then `flint build` again. A game that lists the package hears the same from the checks that hold a list to the binary: `flint check` reports `unbuilt-package`, and `flint play`, `flint-player` and `flint render` refuse to run, each naming the script and the engine first and `flint build` after. A package the launchers already have, which the game left out, still gets the advice above: list it under `[packages]` and run `flint build`.
 
-Removing one is deleting the folder and running the script again. Nothing else is edited by hand: no kernel crate's source names a package, the player's and the CLI's included (`scripts/package-names-check.py` holds every crate the engine's manifest lists, with a short list of exceptions, each waiting on the issue that removes it), and `scripts/ci.sh` fails on a stale block with `package-sync.py --check`, naming the command. The six packages above are written the same way: no package's feature is written by hand in either `Cargo.toml`, and the script refuses one that is.
+Removing one is deleting the folder and running the script again. Nothing else is edited by hand: no kernel crate's source names a package, the player's and the CLI's included (`scripts/package-names-check.py` holds every crate the engine's manifest lists, with a short list of exceptions, each waiting on the issue that removes it), and `scripts/ci.sh` fails on a stale block with `package-sync.py --check`, naming the command. The packages above are written the same way: no package's feature is written by hand in either `Cargo.toml`, and the script refuses one that is.
 
 CI holds this on every pull request with a toy package (`tests/fixtures/packages/toy`). It has one component, a spring pulled in each fixed physics step, its own script module and a command, which is what a vehicle package needs. `scripts/package-toy.py` copies it into `packages/toy/`, runs the script, builds the stock binaries and plays a scene that uses it. Then it deletes the folder, builds again, and checks that the checkout is back byte for byte. A package that would need an edit anywhere else fails that build.
+
+## One rule over the crate graph
+
+What a package's crates may depend on is one rule, and `scripts/package-deps-check.py` holds the whole workspace to it on every pull request ([ADR 0138](https://github.com/chrischaps/Flint/blob/main/docs/adr/0138-the-standard-packages.md), decision 6). It reads `cargo metadata --no-deps` and every manifest: a crate belongs to the package whose `[provides] crates` names it, and the `engine` manifest's crates are the kernel's. Every normal and build dependency counts, optional or not, on any target; a dev-dependency doesn't, since a test links what it tests.
+
+1. **A kernel crate depends on no package's crate.** The one allowance is the stock launchers' list: a line inside the `# package-sync:dependencies` block of `crates/flint-player/Cargo.toml` or `crates/flint-cli/Cargo.toml`, which the script writes, and it must be `optional`.
+2. **A package's crate depends only on** the kernel, its own package's crates, the crates of a package its `[requires]` names, and, as an optional dependency that only the features its `[with.<other>]` lists turn on, the crates of that other package. `[requires]` is read as written: rhythm uses audio's crate, so rhythm lists `audio` although `music` already brings it.
+3. **Exceptions** are one list in the script, each naming the issue that ends it. One fails when its edge is gone, and when its issue is closed. One is left: procgen's wooze-field check, which reaches living's `flint-wooze` until #1659 moves it into living.
+
+A failure names both crates, both packages and the fix:
+
+```text
+package-deps-check: flint-music (the `music` package) has a dependency on flint-rhythm (the `rhythm` package), which packages/music/package.toml's [requires] doesn't list: add `rhythm = "*"` to its [requires], or make the dependency optional under `[with.rhythm]`
+```
+
+`scripts/package-check.sh` builds what the rule allows: the player and the CLI with no package, the standard tier, each package alone with what it requires, and all of them.
+
+## The kernel alone
+
+A game can leave every package out. CI's `kernel 2d` job (`scripts/package-kernel-2d.py`) runs `flint init --template 2d`, sets the rest of the standard tier to `false` too, and runs `flint build`. Then it checks that the build's cargo tree holds no package's crate and that `flint check` passes, and it plays the scene with `flint playtest` and an input script: WASD moves the sprite and the HUD draws. Built with no device option, the player links 298 crates with no package, 356 with the standard tier and 364 with every package.
 
 ## Where the commands are
 

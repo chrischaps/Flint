@@ -183,6 +183,24 @@ impl Template {
         }
     }
 
+    /// The lines under flint.toml's `[packages]` (ADR 0138 decision 7,
+    /// #1624). A 2D game leaves out the standard packages a flat game has
+    /// no use for, each line saying what it takes; it keeps sound, procgen,
+    /// the F3 panels, animation and flipbooks. The others write none: every
+    /// standard package is in.
+    fn packages(self) -> &'static str {
+        match self {
+            Template::TwoD => concat!(
+                "physics = false        # bodies, colliders, joints, raycasts, 2D velocity, nav: delete to get physics back\n",
+                "first-person = false   # the walker and its eye (needs physics): delete with physics' line\n",
+                "rig = false            # skeletons, node clips, IK: delete for a skinned model\n",
+                "particles = false      # emitters and effects: delete to get particles back\n",
+                "terrain = false        # heightmap ground: delete to get terrain back\n",
+            ),
+            _ => "",
+        }
+    }
+
     /// What the guide's file table adds about `scripts/`.
     fn scripts_note(self) -> &'static str {
         match self {
@@ -379,6 +397,7 @@ pub fn run(args: InitArgs) -> Result<()> {
         ("controls", template.controls()),
         ("menu_lib", menu_lib),
         ("template", template.name()),
+        ("packages", template.packages()),
         ("engine", engine_dir.as_deref().unwrap_or("")),
         ("schemas", &schemas),
         ("name", &name),
@@ -707,6 +726,48 @@ mod tests {
         }
     }
 
+    /// ADR 0138 decision 7 (#1624): the 2d template leaves out physics,
+    /// first-person, rig, particles and terrain, each a standard package of
+    /// the engine's manifests; walk and blank list nothing, so every
+    /// standard package is in. CI's `kernel 2d` job builds and plays the
+    /// 2d project with the rest of the tier set false too.
+    #[test]
+    fn the_2d_template_leaves_out_five_standard_packages() {
+        let flint_toml = SHARED[0].1;
+        let listed = |t: Template| -> toml::Table {
+            let text = fill(
+                flint_toml,
+                &[("packages", t.packages()), ("id", "x"), ("schemas", "[]")],
+            );
+            let doc: toml::Table = text.parse().unwrap();
+            doc["packages"].as_table().unwrap().clone()
+        };
+        let two_d = listed(Template::TwoD);
+        let mut off: Vec<&str> = two_d
+            .iter()
+            .filter(|(_, v)| v.as_bool() == Some(false))
+            .map(|(k, _)| k.as_str())
+            .collect();
+        off.sort();
+        assert_eq!(
+            off,
+            ["first-person", "particles", "physics", "rig", "terrain"]
+        );
+        assert_eq!(two_d.len(), 5, "{two_d:?}");
+        let packages = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+        for name in off {
+            let manifest = std::fs::read_to_string(packages.join(name).join("package.toml"))
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(
+                manifest.contains("tier = \"standard\""),
+                "{name} is no standard package"
+            );
+        }
+        for t in [Template::Walk, Template::Blank] {
+            assert!(listed(t).is_empty(), "{}", t.name());
+        }
+    }
+
     #[test]
     fn no_template_file_leaves_a_key_unfilled() {
         // Every `{{key}}` a template file uses is one `run` fills
@@ -720,6 +781,7 @@ mod tests {
             "controls",
             "menu_lib",
             "template",
+            "packages",
             "engine",
             "schemas",
             "name",

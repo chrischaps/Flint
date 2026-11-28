@@ -4,7 +4,7 @@ The guide to this project for a coding agent is `CLAUDE.md`, in this folder: the
 
 ## Packages
 
-The game has only the engine packages it lists under `[packages]` in `flint.toml`. `flint init` wrote that table at the end of the file, empty. The kernel is always in, and so are the standard packages `procgen` and `debug-hud` unless set to `false`. The feature packages `living`, `music`, `rhythm` and `ai` are in only when listed. `flint package list` shows each one and what it owns.
+The game has only the engine packages it lists under `[packages]` in `flint.toml`. `flint init` wrote that table at the end of the file: empty, or for the 2d template five `= false` lines. The kernel is always in, and so are the standard packages (`physics`, `first-person`, `audio`, `animation`, `flipbook`, `rig`, `particles`, `terrain`, `procgen`, `debug-hud`) unless set to `false`. The feature packages `living`, `music`, `rhythm`, `vehicle` and `ai` are in only when listed. `flint package list` shows each one and what it owns.
 
 To add one, `living` for example, from this folder:
 

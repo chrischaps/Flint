@@ -340,7 +340,9 @@ fn each_template_runs_the_commands_it_prints() {
         let entities = ok(&flint(&game, &["query", "entities", "--scene", SCENE]));
         assert!(entities.contains("hud_controller"), "{entities}");
         ok(&flint(&game, &["schema", "transform"]));
-        ok(&flint(&game, &["schema", "player"]));
+        // The kernel's archetype: `player` is first-person's, which the 2d
+        // template leaves out (#1624)
+        ok(&flint(&game, &["schema", "character"]));
         let where_ = ok(&flint(
             &game,
             &["asset", "where", "scripts", "hud.rhai", "--scene", SCENE],
