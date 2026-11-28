@@ -187,6 +187,7 @@ mod tests {
     /// The Overgrown Ruins' layer names only `pause`; its player walks on
     /// the built-in bindings the character controller reads
     #[test]
+    #[cfg(feature = "first-person")]
     fn a_first_person_game_lists_the_walk_beside_its_own_actions() {
         let mut merged = InputConfig::built_in_defaults();
         let game = InputConfig::from_toml_str(
