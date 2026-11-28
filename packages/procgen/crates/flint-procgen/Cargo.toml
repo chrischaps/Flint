@@ -20,6 +20,10 @@ living = ["dep:flint-wooze"]
 # upload of what a generator made (`src/player/`). flint-player's `procgen`
 # feature turns it on; the CLI's `gen` and the specs' own checks need none
 # of it.
+# The `[with.terrain]` part (#1623): the `terrain_v1` generator, which wraps
+# the terrain package's bake (#1168), so a `.terrain.toml` is a spec like any
+# other. The launchers turn it on when a game lists both packages.
+terrain = ["dep:flint-terrain"]
 player = ["dep:flint-package", "dep:flint-render", "dep:flint-ecs", "dep:flint-asset", "dep:wgpu"]
 
 [dependencies]
@@ -38,9 +42,8 @@ wgpu = { workspace = true, optional = true }
 # through a `SceneDocument`.
 flint-scene = { workspace = true }
 flint-schema = { workspace = true }
-# terrain_v1 (#1168) wraps the terrain bake, so a .terrain.toml is a spec
-# like any other: one bake for the editor, the CLI and the cache.
-flint-terrain = { workspace = true }
+# terrain_v1 (#1168) wraps the terrain bake: the `terrain` feature
+flint-terrain = { workspace = true, optional = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

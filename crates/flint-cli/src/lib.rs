@@ -330,6 +330,9 @@ fn points_of(extensions: &[Box<dyn CliExtension>]) -> flint_package::cli::Points
     points.insert(flint_package::cli::gen::ModelStill(
         commands::preview::render_model,
     ));
+    // The packages' scene binders (#1623), from the player's registry, for
+    // the hosts that have none of their own (the scene viewer)
+    points.insert(flint_player::packages::registry().scene_binders());
     for extension in extensions {
         extension.register(&mut points);
     }
@@ -346,6 +349,14 @@ pub(crate) fn points() -> &'static flint_package::cli::Points {
 /// the package refuses the command naming the package instead.
 fn procgen_editors() -> bool {
     points().get::<flint_viewer::host::SpecEditors>().is_some()
+}
+
+/// Whether this run opens the terrain package's editor (#1623), as
+/// [`procgen_editors`] asks of procgen's.
+fn terrain_editors() -> bool {
+    points()
+        .get::<flint_viewer::host::TerrainEditors>()
+        .is_some()
 }
 
 /// The stock `flint`'s whole command tree: the engine's commands with
@@ -563,7 +574,7 @@ impl Commands {
             // A flint without the procgen package opens no window: the
             // command names the package, under --json too
             Commands::GenPreview(_) if procgen_editors() => "gen-preview",
-            Commands::TerrainEdit(_) => "terrain-edit",
+            Commands::TerrainEdit(_) if terrain_editors() => "terrain-edit",
             Commands::TexEdit(_) if procgen_editors() => "tex-edit",
             Commands::Prefab(_) => "prefab view",
             Commands::Frame(args) => match &args.command {

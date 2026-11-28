@@ -1,7 +1,8 @@
 //! A height field placed in the world, and a ray against it (ADR 0095).
 //!
-//! [`Heightmap`] knows its samples but not where it lies: the editor and
-//! [`Terrain`](crate::Terrain) put it at the origin, `width` by `depth`.
+//! [`Heightmap`] knows its samples but not where it lies: the terrain
+//! editor and the terrain package's `Terrain` put it at the origin, `width`
+//! by `depth`.
 //! A game that builds its own ground (from a function, a server, a mesh it
 //! makes itself) needs to ask the same questions of it at any place and
 //! scale: how high is the ground here, and where does this ray meet it.
@@ -12,8 +13,14 @@
 //! in x and z, as `Heightmap::sample` reads them: column 0 at `origin[0]`,
 //! the last column at `origin[0] + size[0]`. Between them the ground is
 //! bilinear. World y is `sample × height_scale + base_y`.
+//!
+//! It was flint-terrain's until #1623 made terrain a package: the kernel's
+//! scripts (`screen_to_heightfield`, `ground_height`) read it, so it is the
+//! kernel's plain data, as ADR 0138 decision 5 says. [`SceneGround`] is the
+//! other half: the ground a package built for a scene, handed to the host.
 
-use crate::heightmap::Heightmap;
+use crate::heightmap::{HeightGrid, Heightmap};
+use flint_core::EntityId;
 
 /// A [`Heightmap`] placed in the world. Build it once (it scans the samples
 /// for their range) and share it; every query takes `&self`.
@@ -142,10 +149,35 @@ impl GroundField {
     }
 }
 
+/// A scene's ground as the package that built it hands it to the host
+/// (#1623, ADR 0138 decision 5): the terrain's, made when the renderer binds
+/// the scene. The player registers physics' static heightfield over
+/// [`grid`](Self::grid) where [`origin`](Self::origin) puts it (#1219), and
+/// the terrain package's `terrain_height` samples
+/// [`heightmap`](Self::heightmap); `flint render` says its size.
+#[derive(Debug, Clone)]
+pub struct SceneGround {
+    /// The entity it was built from.
+    pub entity: EntityId,
+    pub name: String,
+    /// The drawn surface's vertex grid, in the ground's own frame.
+    pub grid: HeightGrid,
+    /// Where the entity's transform puts the grid's first corner.
+    pub origin: [f32; 3],
+    /// The samples the ground was made from.
+    pub heightmap: Heightmap,
+    /// The world extent the samples span, x then z, from the grid's corner.
+    pub size: [f32; 2],
+    /// World y of a sample of 1.0.
+    pub height_scale: f32,
+    /// How many chunks it is drawn in.
+    pub chunks: usize,
+}
+
 /// The first point where a ray comes down onto the ground `height(x, z)`,
 /// within the box `lo..hi`. `step` is the ground's texel: the ray advances
 /// that far over the ground per sample, then the crossing step is bisected.
-pub(crate) fn march(
+pub fn march(
     origin: [f32; 3],
     dir: [f32; 3],
     lo: [f32; 3],

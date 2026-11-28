@@ -6,18 +6,24 @@
 //! its [`GrassConfig`]: plain data the renderer draws without linking this
 //! crate (#1615).
 //!
-//! The `render` feature adds [`scene`]: a scene's terrain built into a
-//! renderer, which the hosts call after `SceneRenderer::bind_scene`. The
-//! renderer built it itself until #1615; without the feature this crate links
-//! no renderer, so physics, scripts and procgen don't either.
+//! The terrain package's crate (#1623, `packages/terrain/`). The `render`
+//! feature adds [`scene`]: a scene's terrain built into a renderer, after
+//! `SceneRenderer::bind_scene` (the renderer built it itself until #1615).
+//! `player` is the package's player part ([`player::PACKAGE`]: that build
+//! as the kernel's scene binder, and the `terrain` script module), `cli` its
+//! CLI part (the terrain editor). Without a feature this crate links no
+//! renderer, so procgen's `terrain_v1` doesn't either.
 
 pub mod bake;
 pub mod brush;
 pub mod chunk;
 /// The grass settings, flint-geometry's since #1615.
 pub use flint_geometry::grass as grass_config;
-pub mod ground;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod heightmap;
+#[cfg(feature = "player")]
+pub mod player;
 pub mod procgen;
 #[cfg(feature = "render")]
 pub mod scene;
@@ -31,9 +37,10 @@ pub use brush::{
     SplatBrushMode,
 };
 pub use chunk::TerrainChunk;
+/// The kernel's ground, flint-geometry's since #1623.
+pub use flint_geometry::ground::{GroundField, SceneGround};
 pub use grass_config::GrassConfig;
-pub use ground::GroundField;
-pub use heightmap::Heightmap;
+pub use heightmap::{Heightmap, HeightmapFiles};
 pub use procgen::generate_heightmap;
 pub use spec::{SpecIssue, TerrainSpec};
 pub use splatgen::generate_splat_map;

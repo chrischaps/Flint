@@ -820,11 +820,9 @@ pub struct ScriptCallContext {
     pub ui_system: UiSystem,
     /// Parsed TOML data files, keyed by resolved path (`load_data`)
     pub data_cache: std::collections::HashMap<String, toml::Value>,
-    /// Terrain height sampling callback — set by PlayerApp if terrain is loaded
-    pub terrain_height_fn: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>,
     /// The game's ground, for `screen_to_heightfield` and `ground_height`
     /// (ADR 0095). Set through `Projector::set_ground`; survives `clear()`.
-    pub ground: Option<Arc<flint_terrain::GroundField>>,
+    pub ground: Option<Arc<flint_geometry::ground::GroundField>>,
     /// The meshes drawn as ray targets, where the last frame drew them, for
     /// `raycast_meshes` and `screen_to_mesh` (ADR 0105). Set by the host
     /// after each render update (`ScriptSystem::set_ray_scene`).
@@ -970,7 +968,6 @@ impl ScriptCallContext {
             project: None,
             ui_system: UiSystem::new(),
             data_cache: std::collections::HashMap::new(),
-            terrain_height_fn: None,
             ground: None,
             ray_scene: Arc::default(),
             style_reader: None,

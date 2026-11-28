@@ -60,9 +60,10 @@ Not recorded in the surviving text.
   [`9821ad9`](https://github.com/chrischaps/Flint/commit/9821ad98b820445844e23eb75ecf9dc7cffc8bec)
   "Pick a ground that isn't flat: a ray against a placed height field (ADR 0095)"
 - Vault: "The Capitol - picking the ground on a hill (GH-201, W8) - 2026-10-18"
-- Code now: `crates/flint-terrain/src/ground.rs` (`GroundField`),
-  `crates/flint-terrain/src/brush.rs` (`ray_heightmap_intersect`),
+- Code now: `crates/flint-geometry/src/ground.rs` (`GroundField`, the
+  kernel's since #1623), `packages/terrain/crates/flint-terrain/src/brush.rs`
+  (`ray_heightmap_intersect`),
   `crates/flint-script/src/projector.rs`, `crates/flint-script/src/api/view.rs`
 - Book: [Player Extensions](../book/src/guides/player-extensions.md), "Picking
   a ground that isn't flat"; [Scripting](../book/src/concepts/scripting.md);
-  [Terrain](../book/src/concepts/terrain.md)
+  [Terrain](../../packages/terrain/docs/concepts/terrain.md)

@@ -5,6 +5,7 @@
 //! the debug keys here, never by a package's name.
 
 use crate::assets::AssetMaker;
+use crate::bind::{BindScene, SceneBinders};
 use crate::{PackageFlags, Resources, SceneCtx, Subsystem};
 use flint_core::package::InUse;
 use flint_runtime::DebugKeyGroup;
@@ -83,6 +84,7 @@ pub struct Registry {
     run_resources: Vec<(&'static str, RunResources)>,
     settles: Vec<(&'static str, SettleScene)>,
     makers: Vec<(&'static str, &'static dyn AssetMaker)>,
+    binders: Vec<(&'static str, BindScene)>,
     scene_reads: Vec<(&'static str, SceneRead)>,
     hud: Option<(&'static str, crate::hud::MakeHud)>,
     player_args: Vec<(&'static str, FlagGroup)>,
@@ -202,6 +204,14 @@ impl Registry {
     /// load, for spawned entities and each frame, after those before it.
     pub fn asset_maker(&mut self, maker: &'static dyn AssetMaker) -> &mut Self {
         self.makers.push((self.current, maker));
+        self
+    }
+
+    /// A package's share of a scene the renderer binds (`crate::bind`,
+    /// #1623): run right after `bind_scene`, before the models, in every
+    /// host that binds a scene.
+    pub fn scene_binder(&mut self, bind: BindScene) -> &mut Self {
+        self.binders.push((self.current, bind));
         self
     }
 
@@ -386,6 +396,22 @@ impl Registry {
             .map(|(_, m)| *m)
     }
 
+    /// Every scene binder, each with its package, in the order registered:
+    /// what a host without this registry is handed (the scene viewer).
+    pub fn scene_binders(&self) -> SceneBinders {
+        SceneBinders(self.binders.clone())
+    }
+
+    /// Run the scene binders of the packages `packages` lets in on `ctx`
+    /// (`None`: every package is in), and hand back the ground one built.
+    pub fn bind_scene(
+        &self,
+        packages: Option<&InUse>,
+        ctx: &mut crate::bind::BindCtx,
+    ) -> Option<crate::bind::SceneGround> {
+        crate::bind::bind_with(self.binders.iter().copied(), packages, ctx)
+    }
+
     /// The packages that registered an asset maker `packages` leaves out,
     /// each once, in the order registered.
     pub fn asset_makers_left_out(&self, packages: Option<&InUse>) -> Vec<&'static str> {
@@ -408,6 +434,7 @@ impl std::fmt::Debug for Registry {
             .field("built_with", &self.built)
             .field("builders", &self.builders.len())
             .field("asset_makers", &self.makers.len())
+            .field("scene_binders", &self.binders.len())
             .field("policies", &self.policies)
             .field(
                 "modules",

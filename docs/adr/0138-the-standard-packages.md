@@ -771,3 +771,50 @@ where they are written.
   after merging `main` with #1620's animation package and #1622's
   particles package, whose builders now run before physics' (the
   registry's order by name): both only read the world.
+
+## As built: terrain is a package (#1623)
+
+Decision 5's terrain half as it landed. `flint-terrain` is
+`packages/terrain/crates/flint-terrain`, with the `terrain` component and
+archetype (`packages/terrain/schemas/`), the `terrain` script module and the
+terrain editor. A player and a `flint` built with every package but terrain
+have no flint-terrain in `cargo tree -e normal`, and flint-package and
+flint-script link none at all.
+
+- **`GroundField` and its height grid are flint-geometry's, as written**
+  (`ground`, `heightmap`), and so is `HeightGrid`. The grid there is plain
+  (`from_raw`, `sample`, `compute_normal`); reading and writing its PNG and
+  sampling it in a terrain's frame stay with the terrain, as the
+  `HeightmapFiles` trait, so flint-geometry gains no image codec.
+- **The scene's terrain is a scene binder, not an asset maker.** A maker
+  runs only where a host makes assets: the player always, `flint render`
+  only with living props or `--procgen`, the viewer never, and it is lent no
+  `BoundScene`, whose grass a terrain's yields to. `Registry::scene_binder`
+  (`flint_package::bind`: `BindCtx { gpu, world, bound }`, returning the
+  scene's ground) runs right after `bind_scene` in all three, and the hosts
+  name no package. A binder belongs to its package, so a project that
+  leaves terrain out builds none. The viewer has no player registry: flint-cli
+  puts the registry's binders in its points (`SceneBinders`), which the
+  viewer reads.
+- **"Publishes each terrain's `GroundField`" became the kernel's
+  `SceneGround`** (flint-geometry): the entity, the drawn vertex grid and
+  where it lies, the heightmap and its world size and scale. The player
+  pushes its grid into the kernel's `Surfaces` (#1617), which the physics
+  package makes a static heightfield of, and keeps the ground as a run
+  resource, which the terrain's subsystem hands `terrain_height` as module
+  state. It is not given to the projector: `screen_to_heightfield`
+  and `ground_height` still read only a game's own ground (ADR 0095), as
+  before; #1681 asks whether a terrain should be the default ground. Three
+  spellings of `"terrain"` stay in kernel source as scoped
+  `package-names-check.py` exceptions, which #1680 removes.
+- **`terrain_v1` is procgen's `[with.terrain]` part, not terrain's
+  `[with.procgen]`.** The generator is registered by
+  `GeneratorRegistry::with_built_ins`, which every host asks; as terrain's
+  part it would need every host to register it from outside, and terrain's
+  crate would depend on procgen's. As procgen's (`flint-procgen/terrain`),
+  the hosts stay as they were, and procgen without it says which package a
+  `.terrain.toml` needs.
+- **The editor is terrain's `cli` part**, on a kernel point
+  (`flint_viewer::host::TerrainEditors`) as procgen's spec editors are; the
+  kernel keeps `flint terrain-edit`'s arguments and names the package
+  without it, so `flint --help` is the same in every build.

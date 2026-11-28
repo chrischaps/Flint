@@ -2,6 +2,7 @@
 //! Supports an optional spline editor mode for interactive track editing.
 
 use crate::edits::FieldEdits;
+use flint_package::bind::{BindCtx, SceneBinders, SceneGround};
 // Living props' tables, checked and the preset `[wooze]` names filled in
 // (#686), by the living package when the build has it (#1558)
 use crate::field_clocks::{field_of, settle, FieldClocks, SceneField};
@@ -573,8 +574,9 @@ impl SceneWatch {
 /// levers; its terrain, masked when styled, and its grass, a grass_ground's
 /// over a terrain's, #332), then its models. The viewer loaded no terrain
 /// and read no `[environment]` before. The terrain is the terrain package's
-/// to build since #1615 (`flint_terrain::scene::bind_terrain`), right after
-/// the bind, as the player and `flint render` do.
+/// to build (#1615, #1623): its scene binder runs right after the bind, as
+/// in the player and `flint render`, one of `binders` (the CLI's, from
+/// [`scene_binders`]) for each package the scene's `[packages]` lets in.
 fn stage_scene(
     renderer: &mut SceneRenderer,
     device: &wgpu::Device,
@@ -582,18 +584,35 @@ fn stage_scene(
     state: &mut ViewerState,
     binding: SceneBinding,
     config: &ModelLoadConfig,
-) -> (
-    flint_render::BoundScene,
-    Option<flint_terrain::scene::LoadedTerrain>,
-) {
+    binders: &SceneBinders,
+) -> (flint_render::BoundScene, Option<SceneGround>) {
     let binding = binding
         .with_environment(state.environment.as_ref())
         .with_archetypes(&state.registry);
     let mut bound = renderer.bind_scene(device, queue, &state.world, &binding);
-    let terrain =
-        flint_terrain::scene::bind_terrain(renderer, device, queue, &state.world, &mut bound);
+    let ground = binders.bind(
+        state.registry.packages(),
+        &mut BindCtx {
+            gpu: flint_package::assets::Gpu {
+                renderer: &mut *renderer,
+                device,
+                queue,
+            },
+            world: &state.world,
+            bound: &mut bound,
+        },
+    );
     model_loader::load_models_from_world(&mut state.world, renderer, device, queue, config);
-    (bound, terrain)
+    (bound, ground)
+}
+
+/// The packages' scene binders (#1623): what the CLI registered from the
+/// player's registry (`flint_package::cli::points()`), or none.
+fn scene_binders() -> SceneBinders {
+    flint_package::cli::points()
+        .get::<SceneBinders>()
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// The scene as the renderer binds it (#739), which registers the
@@ -892,6 +911,7 @@ impl ViewerApp {
                 &mut state,
                 self.bound_scene(&config),
                 &config,
+                &scene_binders(),
             );
 
             // Particles (ADR 0068): effects next to the scene, then textures.
@@ -2338,6 +2358,7 @@ impl ViewerApp {
                             &mut state,
                             binding,
                             &config,
+                            &scene_binders(),
                         );
 
                         // Particles: effects may have changed on disk too

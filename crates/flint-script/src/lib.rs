@@ -805,12 +805,6 @@ impl ScriptSystem {
         }
     }
 
-    /// Set the terrain height sampling callback for scripts
-    pub fn set_terrain_height_fn(&mut self, f: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>) {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.terrain_height_fn = f;
-    }
-
     /// Install (or clear) the host's real text measurer used by
     /// `measure_text` / `measure_text_ex`.
     pub fn set_text_measurer(&mut self, f: Option<context::TextMeasurer>) {

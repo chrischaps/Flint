@@ -1,11 +1,13 @@
-//! Heightmap loading and sampling
-
-use flint_core::vfs;
-use std::path::Path;
-
-use crate::terrain::TerrainConfig;
+//! A grid of heights and its bilinear sampling: the plain half of the
+//! terrain package's heightmap (#1623, ADR 0138 decision 5).
+//!
+//! It was flint-terrain's, where reading and writing its PNG still are
+//! (`flint_terrain::HeightmapFiles`). Here it is what the kernel's ground
+//! ([`GroundField`](crate::ground::GroundField)) samples, so flint-script and
+//! a game's own ground need no terrain crate.
 
 /// A grayscale heightmap with bilinear sampling
+#[derive(Debug, Clone, PartialEq)]
 pub struct Heightmap {
     /// Row-major height values normalized to [0..1]
     heights: Vec<f32>,
@@ -16,37 +18,7 @@ pub struct Heightmap {
 }
 
 impl Heightmap {
-    /// Load a heightmap from a grayscale PNG file.
-    /// Values are normalized to [0..1] regardless of bit depth.
-    pub fn from_png(path: &Path) -> Result<Self, String> {
-        flint_core::scope!("terrain::heightmap", path);
-        let fail = |e: &dyn std::fmt::Display| {
-            format!("Failed to load heightmap '{}': {}", path.display(), e)
-        };
-        let bytes = vfs::read(path).map_err(|e| fail(&e))?;
-        // Decode from memory, trusting the extension the way `image::open`
-        // does and sniffing the bytes only when it names no format.
-        let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes));
-        match image::ImageFormat::from_path(path) {
-            Ok(format) => reader.set_format(format),
-            Err(_) => reader = reader.with_guessed_format().map_err(|e| fail(&e))?,
-        }
-        let img = reader.decode().map_err(|e| fail(&e))?;
-
-        let gray = img.into_luma16();
-        let width = gray.width();
-        let depth = gray.height();
-
-        let heights: Vec<f32> = gray.pixels().map(|p| p.0[0] as f32 / 65535.0).collect();
-
-        Ok(Self {
-            heights,
-            width,
-            depth,
-        })
-    }
-
-    /// Create a heightmap from raw float data (for testing)
+    /// A heightmap of `width` x `depth` samples, row by row.
     pub fn from_raw(heights: Vec<f32>, width: u32, depth: u32) -> Self {
         assert_eq!(heights.len(), (width * depth) as usize);
         Self {
@@ -82,14 +54,6 @@ impl Heightmap {
         let h1 = h01 * (1.0 - tx) + h11 * tx;
 
         h0 * (1.0 - tz) + h1 * tz
-    }
-
-    /// Sample height at world coordinates, returning world-space Y.
-    /// Terrain origin is at (0, 0) in XZ; extends to (width, depth).
-    pub fn sample_world(&self, x: f32, z: f32, config: &TerrainConfig) -> f32 {
-        let u = x / config.width;
-        let v = z / config.depth;
-        self.sample(u, v) * config.height_scale
     }
 
     /// Compute the surface normal at a UV position using finite differences.
@@ -142,14 +106,25 @@ impl Heightmap {
         self.heights = heights;
     }
 
-    /// Export the heightmap as a 16-bit grayscale PNG.
-    pub fn save_png(&self, path: &std::path::Path) -> Result<(), String> {
-        let png = crate::bake::encode_heightmap_png(&self.heights, self.width, self.depth)?;
-        std::fs::write(path, png)
-            .map_err(|e| format!("Failed to write '{}': {}", path.display(), e))
-    }
-
     fn get(&self, x: u32, z: u32) -> f32 {
         self.heights[(z * self.width + x) as usize]
     }
+}
+
+/// A drawn ground's heights on its vertex grid, in the ground's own frame:
+/// column 0 at x = 0, the last at x = `width`; row 0 at z = 0, the last at
+/// z = `depth`. A terrain's is `flint_terrain::Terrain::height_grid`, the
+/// grid physics' heightfield follows (#1219).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeightGrid {
+    /// Samples along X.
+    pub columns: usize,
+    /// Samples along Z.
+    pub rows: usize,
+    /// World heights, row by row: `heights[row * columns + column]`.
+    pub heights: Vec<f32>,
+    /// The X extent the columns span.
+    pub width: f32,
+    /// The Z extent the rows span.
+    pub depth: f32,
 }
