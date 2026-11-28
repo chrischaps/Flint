@@ -258,9 +258,11 @@ impl ComponentSchema {
     }
 
     /// Whether the schema declares no field: it names the component and
-    /// checks nothing in it (a game's script-only component).
+    /// checks nothing in it (a game's script-only component). One that
+    /// retired fields isn't open even with none left (`sprite_animator`,
+    /// ADR 0139): a scene still writing them hears why they went.
     pub fn is_open(&self) -> bool {
-        self.fields.is_empty()
+        self.fields.is_empty() && self.retired.is_empty()
     }
 }
 

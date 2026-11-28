@@ -1,6 +1,6 @@
 # Animation
 
-> **Package:** `engine`: every game has it. Its animation is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+> **Package:** `animation`, a standard package: every game has it, with the `animator` component, the `animation` and `tween` script modules, and (until #1621 moves them to `rig`) `skeleton`, `ik_two_bone` and `bone_probe`, unless its `[packages]` writes `animation = false`. Sprite-sheet clips are the `flipbook` package's, which requires it ([2D Sprites](sprites-2d.md), [Packages](packages.md)).
 
 Flint's animation system provides two tiers of animation through the `flint-animation` crate: **property tweens** for simple transform animations defined in TOML, and **skeletal animation** for character rigs imported from glTF files with GPU vertex skinning.
 

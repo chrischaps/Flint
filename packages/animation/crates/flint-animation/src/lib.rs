@@ -1,10 +1,16 @@
-//! Animation system for Flint engine
+//! The animation package's core (ADR 0139, #1620): clips on one clock.
 //!
-//! Provides four tiers of animation:
-//! - **Tier 1**: Property tweens — animate any TOML component field via keyframes
-//! - **Tier 2**: Skeletal animation — glTF skin/joint hierarchies with GPU skinning
-//! - **Tier 3**: Node animation — per-node transform animation for scene graphs
-//! - **Tier 4**: Sprite sheet animation — frame-based sprite animation from `.sprite.toml` clips
+//! - **Property clips** (`.anim.toml`): any TOML component field via keyframes
+//! - **Sequences** (`.sequence.toml`): timed `animator` writes and cues
+//! - **Skeletal and node clips** from glTF, blending and two-bone IK: the
+//!   `rig` package's once #1621 moves them
+//! - **Clip kinds** ([`kind::ClipKind`]) other packages register: the
+//!   `flipbook` package's sprite-sheet clips
+//! - **`tween`**'s field tweens ([`tween::FieldTweens`])
+//!
+//! Its `player` feature is the package's player part (`player::PACKAGE`):
+//! the subsystem, the `animation` and `tween` script modules, and the
+//! `player::ClipKinds` point.
 
 pub mod animator;
 pub mod blend;
@@ -12,23 +18,27 @@ pub mod clip;
 #[cfg(test)]
 mod clip_rules_tests;
 pub mod ik_pass;
+pub mod kind;
 pub mod loader;
 pub mod node_clip;
 pub mod node_sync;
 pub mod playback_state;
-pub mod player;
+pub mod property;
 pub mod sampler;
 pub mod sequence;
 pub mod skeletal_clip;
 pub mod skeletal_sampler;
 pub mod skeletal_sync;
 pub mod skeleton;
-pub mod sprite_clip;
-pub mod sprite_sync;
 pub mod sync;
+pub mod tween;
+
+#[cfg(feature = "player")]
+pub mod player;
 
 pub use animator::{Animator, LAYER_MODES};
 pub use ik_pass::IkPass;
+pub use kind::{ClipEnd, ClipKind};
 pub use playback_state::{AnimLayer, ClipPlaybackState, LayerMode};
 pub use sequence::{
     load_sequence_from_file, AnimSequence, SequenceCueEvent, SequenceEvent, SequenceRuntime,
@@ -45,27 +55,35 @@ use flint_runtime::RuntimeSystem;
 use clip::AnimationClip;
 use node_clip::NodeClip;
 use node_sync::{NodePlaybackState, NodeSync};
-use player::AnimationPlayer;
+use property::AnimationPlayer;
 use sequence::SequenceSync;
 use skeletal_clip::SkeletalClip;
 use skeletal_sync::{SkeletalPlaybackState, SkeletalSync};
 use skeleton::Skeleton;
-use sprite_clip::SpriteAnimClip;
-use sprite_sync::{SpriteAnimEndEvent, SpriteAnimSync};
 use sync::AnimationSync;
+
+/// The game state's policy name for animation (ADR 0138 decision 7): a
+/// state that pauses it holds every clip, sequence and flipbook. Registered
+/// by the package; its manifest's `[without] policies` keeps it a known
+/// name in a build without it.
+pub const POLICY: &str = "animation";
 
 /// Top-level animation system integrating clip playback with the ECS world.
 ///
-/// Supports property tweens (Tier 1), skeletal animation (Tier 2),
-/// node animation (Tier 3), and sprite sheet animation (Tier 4).
-/// Implements `RuntimeSystem`, bridges TOML components via the various Sync types.
+/// Plays property clips, sequences, skeletal and node clips itself, and the
+/// clip kinds other packages register ([`AnimationSystem::add_kind`]) after
+/// them. Implements `RuntimeSystem`, bridges TOML components via the
+/// various Sync types.
 #[derive(Default)]
 pub struct AnimationSystem {
     pub(crate) player: AnimationPlayer,
     pub(crate) sync: AnimationSync,
     pub(crate) skeletal_sync: SkeletalSync,
     pub(crate) node_sync: NodeSync,
-    pub(crate) sprite_sync: SpriteAnimSync,
+    /// The registered kinds, in the order they were added (the flipbook's)
+    pub(crate) kinds: Vec<Box<dyn ClipKind>>,
+    /// One-shots of the registered kinds that ended since the last drain
+    pub(crate) ends: Vec<ClipEnd>,
     pub(crate) sequence_sync: SequenceSync,
     pub(crate) ik: IkPass,
 }
@@ -77,7 +95,8 @@ impl AnimationSystem {
             sync: AnimationSync::new(),
             skeletal_sync: SkeletalSync::new(),
             node_sync: NodeSync::new(),
-            sprite_sync: SpriteAnimSync::new(),
+            kinds: Vec::new(),
+            ends: Vec::new(),
             sequence_sync: SequenceSync::new(),
             ik: IkPass::new(),
         }
@@ -89,7 +108,10 @@ impl AnimationSystem {
         self.sync.clear();
         self.skeletal_sync.clear();
         self.node_sync.clear();
-        self.sprite_sync.clear();
+        for kind in &mut self.kinds {
+            kind.clear();
+        }
+        self.ends.clear();
         self.sequence_sync.clear();
         self.ik.clear();
     }
@@ -165,8 +187,9 @@ impl AnimationSystem {
     }
 
     /// Seek an entity's sequence to `t` by deterministic replay: reset the
-    /// skeletal state, restart the sequence, and step sequence + skeletal
-    /// tiers together in `step_dt` increments. The caller must first
+    /// skeletal state and the registered kinds' playback, restart the
+    /// sequence, and step the sequence with the skeletal clips and every
+    /// registered kind together in `step_dt` increments. The caller must first
     /// restore the animator component to its pre-sequence state (the
     /// sequence only ever *adds* writes). Cues fired during the replay
     /// are discarded. Returns the number of events fired.
@@ -179,6 +202,9 @@ impl AnimationSystem {
     ) -> usize {
         let step_dt = if step_dt > 0.0 { step_dt } else { 1.0 / 120.0 };
         self.skeletal_sync.reset_state(&entity_id);
+        for kind in &mut self.kinds {
+            kind.reset(entity_id);
+        }
         self.sequence_sync.restart(&entity_id);
         self.sequence_sync.set_playing(&entity_id, true);
 
@@ -190,12 +216,17 @@ impl AnimationSystem {
             self.skeletal_sync.sync_from_world(world);
             self.skeletal_sync.advance_and_compute(dt.max(0.0));
             self.skeletal_sync.write_back(world);
+            for kind in &mut self.kinds {
+                kind.sync_from_world(world);
+                kind.advance(world, dt.max(0.0), &mut self.ends);
+            }
             elapsed += dt;
             if dt <= 0.0 || elapsed >= target {
                 break;
             }
         }
         self.sequence_sync.drain_cues();
+        self.ends.clear();
         self.sequence_sync
             .state(&entity_id)
             .map(|s| s.fired_count())
@@ -238,9 +269,20 @@ impl AnimationSystem {
         self.node_sync.register_entity(entity_id, node_map);
     }
 
-    /// Register a sprite sheet animation clip
-    pub fn add_sprite_clip(&mut self, clip: SpriteAnimClip) {
-        self.sprite_sync.add_clip(clip);
+    /// Play a package's kind of clip after the core's own (ADR 0139
+    /// section 5): the flipbook package's sprite-sheet clips.
+    pub fn add_kind(&mut self, kind: Box<dyn ClipKind>) {
+        self.kinds.push(kind);
+    }
+
+    /// The registered kinds, in the order they run.
+    pub fn kinds(&self) -> impl Iterator<Item = &dyn ClipKind> {
+        self.kinds.iter().map(|k| k.as_ref())
+    }
+
+    /// The registered kind called `name`.
+    pub fn kind(&self, name: &str) -> Option<&dyn ClipKind> {
+        self.kinds().find(|k| k.name() == name)
     }
 
     // ── Runtime queries ──
@@ -282,9 +324,10 @@ impl AnimationSystem {
         self.skeletal_sync.joint_position(entity_id, joint)
     }
 
-    /// Drain sprite animation end events
-    pub fn drain_sprite_events(&mut self) -> Vec<SpriteAnimEndEvent> {
-        self.sprite_sync.drain_events()
+    /// The one-shots of the registered kinds (a flipbook's) that ended
+    /// since the last drain: scripts' `on_animation_end(clip)`.
+    pub fn drain_clip_ends(&mut self) -> Vec<ClipEnd> {
+        std::mem::take(&mut self.ends)
     }
 
     // ── Sync & advance (player/preview update loops) ──
@@ -403,19 +446,32 @@ impl RuntimeSystem for AnimationSystem {
         self.sync.sync_from_world(world, &self.player);
         self.skeletal_sync.sync_from_world(world);
         self.node_sync.sync_from_world(world);
-        self.sprite_sync.sync_from_world(world);
+        for kind in &mut self.kinds {
+            kind.sync_from_world(world);
+        }
         self.sequence_sync.sync_from_world(world);
+        let kinds: String = self
+            .kinds
+            .iter()
+            .map(|k| {
+                format!(
+                    ", {} {} clips, {} {} entities",
+                    k.clip_count(),
+                    k.name(),
+                    k.active_count(),
+                    k.name()
+                )
+            })
+            .collect();
         log::debug!(target: "load",
-            "Animation system initialized ({} property clips, {} skeletal clips, {} node clips, {} sprite clips, {} sequences, {} property entities, {} skeletal entities, {} node entities, {} sprite entities, {} sequence entities)",
+            "Animation system initialized ({} property clips, {} skeletal clips, {} node clips, {} sequences, {} property entities, {} skeletal entities, {} node entities, {} sequence entities{kinds})",
             self.player.clip_count(),
             self.skeletal_sync.clip_count(),
             self.node_sync.clip_count(),
-            self.sprite_sync.clip_count(),
             self.sequence_sync.sequence_count(),
             self.sync.active_count(),
             self.skeletal_sync.active_count(),
             self.node_sync.active_count(),
-            self.sprite_sync.active_count(),
             self.sequence_sync.active_count()
         );
         Ok(())
@@ -454,11 +510,11 @@ impl RuntimeSystem for AnimationSystem {
             self.node_sync.advance_and_apply(world, dt);
         }
 
-        // Tier 4: Sprite sheet animation
-        {
-            flint_core::scope!("animation::sprite");
-            self.sprite_sync.sync_from_world(world);
-            self.sprite_sync.advance_and_write(world, dt);
+        // The registered kinds, in their order: the flipbook's slot
+        for kind in &mut self.kinds {
+            flint_core::scope!("animation::kind", kind.name());
+            kind.sync_from_world(world);
+            kind.advance(world, dt, &mut self.ends);
         }
 
         Ok(())

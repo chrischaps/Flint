@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 39-member Cargo workspace (38 crates, 25 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 40-member Cargo workspace (39 crates, 24 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -16,7 +16,6 @@ flint/
 │   ├── flint-widgets/      # The kernel's egui: widgets, a headless frame, F4's Rendering & Effects panel
 
 │   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
-│   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
 │   ├── flint-audio-worklet/# Kira mixer for the browser's AudioWorklet (its own small wasm)
 │   ├── flint-terrain/      # Heightmap terrain with splat-map blending
@@ -34,6 +33,10 @@ flint/
 │   ├── flint-geometry/     # Ocean waves, splines, ray meshes
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
 ├── packages/               # One folder a package: its package.toml, and its schemas/ and crates/
+│   ├── animation/crates/
+│   │   └── flint-animation/    # Clips on one clock: property clips, sequences and cues, tween, the clip-kind seam (skeletal and node clips until #1621)
+│   ├── flipbook/crates/
+│   │   └── flint-flipbook/     # Sprite-sheet clips (.sprite.toml) as a clip kind on animation's clock
 │   ├── ai/crates/
 │   │   ├── flint-asset-gen/    # AI asset generation: providers, style guides, batch resolution
 │   │   ├── flint-procgen-ai/   # AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
@@ -333,13 +336,22 @@ The `rhythm` package's two parts on the Package API (`packages/rhythm/crates/fli
 
 ### flint-animation
 
-Two-tier animation system:
-- **Tier 1: Property tweens** --- `AnimationClip` with keyframe tracks targeting transform properties (position, rotation, scale) or custom fields. Step, Linear, and CubicSpline interpolation. Clips defined in `.anim.toml` files.
-- **Tier 2: Skeletal animation** --- `Skeleton` and `SkeletalClip` types for glTF skin/joint hierarchies. GPU vertex skinning via bone matrix storage buffer. Crossfade blending between clips.
+The `animation` package's crate (`packages/animation/crates/flint-animation`, ADR 0139, #1620): clips on one clock.
+- **Property clips** --- `AnimationClip` with keyframe tracks targeting transform properties (position, rotation, scale) or custom fields. Step, Linear, and CubicSpline interpolation. Clips defined in `.anim.toml` files.
+- **Skeletal and node clips** (#1621 moves them out to `rig`) --- `Skeleton` and `SkeletalClip` types for glTF skin/joint hierarchies. GPU vertex skinning via bone matrix storage buffer. Crossfade blending between clips.
+- **Clip kinds** --- `ClipKind`, which another package registers on the `player::ClipKinds` point (the flipbook's), played after the core's own on the same `animator` rules
+- `player` feature: the subsystem (`Stage::Tweens`, `Stage::Animate`, `Stage::Pose`), the `animation` and `tween` script modules and `HeadlessAnimation` for `flint render --anim-time`
 - `AnimationSync` bridges ECS `animator` components to property playback
 - `SkeletalSync` bridges ECS to skeletal playback with bone matrix computation
 - Layer stack (additive / override, per-joint masks, weight fades) and timed `.sequence.toml` playback with `on_sequence_cue` callbacks
 - glTF `CUBICSPLINE` samplers import with tangents and hemisphere-continuous quaternion keys
+
+### flint-flipbook
+
+The `flipbook` package's crate (`packages/flipbook/crates/flint-flipbook`, ADR 0139 section 6): sprite-sheet clips as a clip kind on the animation package's clock.
+- `SpriteAnimClip` --- `.sprite.toml` clips: frames on a sheet, each with its `duration_ms`, and a loop mode (`loop`, `ping_pong`, `once`)
+- `FlipbookKind` --- follows each sprite's `animator` (or the retired `sprite_animator`, for one release), steps its frames and writes `sprite.source_rect` when the frame changes
+- `player` feature: the kind on animation's `ClipKinds` point and the `flipbook` script module (`play_sprite`, `stop_sprite`, `set_sprite_speed`, `is_sprite_playing`)
 
 ### flint-particles
 

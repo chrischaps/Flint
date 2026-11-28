@@ -66,8 +66,13 @@ pub struct Animator<'a> {
 
 impl<'a> Animator<'a> {
     /// `entity`'s animator; all defaults when it has none.
+    ///
+    /// For one release an entity with no `animator` that still writes the
+    /// retired `sprite_animator` is read from that (ADR 0139 section 7): its
+    /// `clip`, `playing` and `speed` are an animator's, so an old 2D scene
+    /// keeps animating while it warns.
     pub fn of(world: &'a FlintWorld, entity: EntityId) -> Self {
-        Self::read(&world.view(entity, comp::ANIMATOR))
+        Self::read(&world.view(entity, home_of(world.get_components(entity))))
     }
 
     pub fn read(view: &ComponentView<'a>) -> Self {
@@ -261,21 +266,40 @@ pub fn component(clip: &str, playing: bool, looping: bool, speed: f64) -> toml::
     toml::Value::Table(a)
 }
 
+/// The component an entity's animator is read from and written to:
+/// `animator`, or for one release the retired `sprite_animator` on an
+/// entity that writes it and no `animator` (ADR 0139 section 7).
+fn home_of(components: Option<&flint_ecs::DynamicComponents>) -> &'static str {
+    match components {
+        Some(c) if !c.has(comp::ANIMATOR) && c.has(comp::SPRITE_ANIMATOR) => comp::SPRITE_ANIMATOR,
+        _ => comp::ANIMATOR,
+    }
+}
+
+/// Whether the entity has an animator to play: an `animator`, or the
+/// retired `sprite_animator` read as one ([`Animator::of`]).
+pub fn has_animator(components: &flint_ecs::DynamicComponents) -> bool {
+    components.has(comp::ANIMATOR) || components.has(comp::SPRITE_ANIMATOR)
+}
+
 /// Write fields of the entity's `animator` (made if it has none), which
 /// the animation system follows next frame:
-/// `write(&mut comps).clip("wave").playing(true)`.
+/// `write(&mut comps).clip("wave").playing(true)`. An entity read through
+/// the retired `sprite_animator` ([`Animator::of`]) is written there.
 pub fn write<'c, 'w>(comps: &'c mut ComponentsMut<'w>) -> AnimatorWrite<'c, 'w> {
-    AnimatorWrite { comps }
+    let home = home_of(Some(&**comps));
+    AnimatorWrite { comps, home }
 }
 
 /// What [`write`] returns; each setter writes one field.
 pub struct AnimatorWrite<'c, 'w> {
     comps: &'c mut ComponentsMut<'w>,
+    home: &'static str,
 }
 
 impl AnimatorWrite<'_, '_> {
     fn set(&mut self, field: &str, value: toml::Value) -> &mut Self {
-        self.comps.set_field(comp::ANIMATOR, field, value);
+        self.comps.set_field(self.home, field, value);
         self
     }
 

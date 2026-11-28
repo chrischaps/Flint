@@ -1850,6 +1850,8 @@ mod tests {
     const OAKS: &str =
         "\n[wooze]\namplitude = 0.5\n\n[entities.oak]\nliving_prop = { lineage_seed = 3 }\n\n\
                         [entities.elm]\nliving_prop = { lineage_seed = 4 }\n";
+    const ANIMATION: &str = "engine/packages/animation/schemas";
+    const FLIPBOOK: &str = "engine/packages/flipbook/schemas";
     const LIVING: &str = "engine/packages/living/schemas";
     const MUSIC: &str = "engine/packages/music/schemas";
     const VEHICLE: &str = "engine/packages/vehicle/schemas";
@@ -1867,26 +1869,37 @@ mod tests {
     fn a_bundle_packs_only_the_packages_flint_toml_lists() {
         let listed = package_game("listed", Some("living = \"*\"\n"), "");
         let gathered = gather_game(&args(&listed)).unwrap();
-        assert_eq!(gathered.schemas, ["engine/schemas", LIVING]);
+        // Animation and flipbook are standard (#1620): in unless set false
+        assert_eq!(
+            gathered.schemas,
+            ["engine/schemas", ANIMATION, FLIPBOOK, LIVING]
+        );
         assert!(packed_under(&gathered, LIVING));
         assert!(!packed_under(&gathered, MUSIC), "music isn't listed");
         assert!(gathered.packages.as_ref().unwrap().is_on("living"));
 
-        // An empty table: the feature packages are all out
+        // An empty table: the feature packages are all out, the standard
+        // ones with schemas (animation, flipbook) in
         let game = package_game("none_listed", Some(""), "");
         let gathered = gather_game(&args(&game)).unwrap();
-        assert_eq!(gathered.schemas, ["engine/schemas"]);
-        assert!(!gathered
-            .files
-            .keys()
-            .any(|k| k.starts_with("engine/packages/")));
+        assert_eq!(gathered.schemas, ["engine/schemas", ANIMATION, FLIPBOOK]);
+        assert!(!gathered.files.keys().any(|k| {
+            k.starts_with("engine/packages/")
+                && !k.starts_with(&format!("{ANIMATION}/"))
+                && !k.starts_with(&format!("{FLIPBOOK}/"))
+        }));
 
         // A scene packed alone reads the same list
         let mut one = args(&game);
         one.game = game.join("scenes/main.scene.toml");
         let gathered = gather_scene(&one).unwrap();
-        assert!(!gathered.files.keys().any(|k| k.contains("packages/")));
-        assert!(!gathered.schemas.iter().any(|s| s.contains("packages/")));
+        let feature = |k: &String| {
+            k.contains("packages/")
+                && !k.contains("packages/animation/")
+                && !k.contains("packages/flipbook/")
+        };
+        assert!(!gathered.files.keys().any(feature));
+        assert!(!gathered.schemas.iter().any(feature));
         let _ = std::fs::remove_dir_all(&listed);
         let _ = std::fs::remove_dir_all(&game);
     }
@@ -1946,7 +1959,17 @@ mod tests {
         let every = package_game("every", Some(all), OAKS);
         let none = gather_game(&args(&no_table)).unwrap();
         let listed = gather_game(&args(&every)).unwrap();
-        assert_eq!(none.schemas, ["engine/schemas", LIVING, MUSIC, VEHICLE]);
+        assert_eq!(
+            none.schemas,
+            [
+                "engine/schemas",
+                ANIMATION,
+                FLIPBOOK,
+                LIVING,
+                MUSIC,
+                VEHICLE
+            ]
+        );
         assert_eq!(none.schemas, listed.schemas);
         assert!(none.packages.is_none());
         let engine_files = |g: &Gathered| -> BTreeMap<String, Vec<u8>> {

@@ -379,7 +379,7 @@ impl ScriptEngine {
     pub fn call_sequence_cues(
         &mut self,
         world: &mut FlintWorld,
-        cues: &[flint_animation::SequenceCueEvent],
+        cues: &[(EntityId, String, String)],
     ) {
         if cues.is_empty() {
             return;
@@ -388,37 +388,30 @@ impl ScriptEngine {
         flint_core::scope!("script::on_sequence_cue", cues.len());
         let _world_scope = self.lend(world);
 
-        for cue in cues {
-            if self.defines(cue.entity_id, |s| s.defines(Callback::SequenceCue)) {
+        for (entity, sequence, cue) in cues {
+            if self.defines(*entity, |s| s.defines(Callback::SequenceCue)) {
                 self.call(
-                    cue.entity_id,
+                    *entity,
                     cb::ON_SEQUENCE_CUE,
-                    (cue.sequence.clone(), cue.cue.clone()),
+                    (sequence.clone(), cue.clone()),
                 );
             }
         }
     }
 
-    /// Call on_animation_end(clip_name) for entities whose sprite animation completed.
-    pub fn call_sprite_anim_ends(
-        &mut self,
-        world: &mut FlintWorld,
-        events: &[flint_animation::sprite_sync::SpriteAnimEndEvent],
-    ) {
-        if events.is_empty() {
+    /// Call on_animation_end(clip_name) for each `(entity, clip)` one-shot
+    /// that ended, of any kind of clip (ADR 0139 section 8).
+    pub fn call_animation_ends(&mut self, world: &mut FlintWorld, ends: &[(EntityId, String)]) {
+        if ends.is_empty() {
             return;
         }
 
-        flint_core::scope!("script::on_animation_end", events.len());
+        flint_core::scope!("script::on_animation_end", ends.len());
         let _world_scope = self.lend(world);
 
-        for event in events {
-            if self.defines(event.entity_id, |s| s.defines(Callback::AnimationEnd)) {
-                self.call(
-                    event.entity_id,
-                    cb::ON_ANIMATION_END,
-                    (event.clip_name.clone(),),
-                );
+        for (entity, clip) in ends {
+            if self.defines(*entity, |s| s.defines(Callback::AnimationEnd)) {
+                self.call(*entity, cb::ON_ANIMATION_END, (clip.clone(),));
             }
         }
     }

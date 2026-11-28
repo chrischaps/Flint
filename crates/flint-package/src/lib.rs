@@ -48,8 +48,8 @@ mod stage;
 mod subsystem;
 
 pub use context::{
-    find, find_mut, Button, Capture, CaptureGame, CaptureGameMut, EncodeCtx, ExitReport, FixedCtx,
-    FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, StageCtx,
+    find, find_mut, Button, Capture, CaptureGame, CaptureGameMut, CapturePose, EncodeCtx,
+    ExitReport, FixedCtx, FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, StageCtx,
 };
 pub use hud::DebugHud;
 pub use launch::PackageFlags;

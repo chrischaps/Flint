@@ -14,7 +14,7 @@ use crate::clip::AnimationClip;
 use crate::node_clip::NodeClip;
 use crate::node_sync::NodeSync;
 use crate::playback_state::ClipPlaybackState;
-use crate::player::AnimationPlayer;
+use crate::property::AnimationPlayer;
 use crate::skeletal_clip::SkeletalClip;
 use crate::skeletal_sync::SkeletalSync;
 use crate::skeleton::{JointPose, Skeleton};

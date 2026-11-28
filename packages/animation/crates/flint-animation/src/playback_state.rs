@@ -166,6 +166,28 @@ impl ClipPlaybackState {
         self.unpublished
     }
 
+    /// A one-shot reached the end it plays toward, `time` seconds in, by a
+    /// kind that steps its own frames (a flipbook's): it stops there, and
+    /// the animator must be told, as [`Self::advance_time`]'s `Finished`.
+    pub fn finish_at(&mut self, time: f64) {
+        self.time = time;
+        self.playing = false;
+        self.unpublished = true;
+    }
+
+    /// Cut to `clip` (`duration` seconds long) from its start, by a kind
+    /// that can't crossfade (a flipbook's frames are discrete): the
+    /// crossfade asked for is the cut, and the animator must be told which
+    /// clip plays now.
+    pub fn cut_to(&mut self, clip: &str, duration: f64) {
+        self.clip_name = clip.to_string();
+        self.time = start_time(duration, self.speed);
+        self.blend_target.clear();
+        self.blend_elapsed = 0.0;
+        self.fired_events.clear();
+        self.unpublished = true;
+    }
+
     /// Clear fired event tracking so events can fire again on replay.
     pub fn clear_fired_events(&mut self) {
         self.fired_events.clear();

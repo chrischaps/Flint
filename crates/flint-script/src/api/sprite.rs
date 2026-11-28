@@ -1,10 +1,11 @@
 //! The `sprite` module: an entity's `sprite` component (its source
-//! rectangle, flip, tint, layer, visibility) and its `sprite_animator`
-//! clips (ADR 0116). The sprite setters change an entity that has a
+//! rectangle, flip, tint, layer, visibility) (ADR 0116). Its clips are the
+//! flipbook package's `flipbook` module since #1620 (`play_sprite` and its
+//! family, ADR 0139 section 7). The sprite setters change an entity that has a
 //! `sprite` and leave one without it alone.
 
-use super::builder::kind::{Bool, Entity, Int, Num, Str};
-use super::builder::{CallResult, ScriptApi};
+use super::builder::kind::{Bool, Entity, Int, Num};
+use super::builder::ScriptApi;
 use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -23,19 +24,6 @@ fn set_sprite(world: &mut FlintWorld, id: EntityId, fields: &[(&str, toml::Value
 
 fn floats(v: [f64; 4]) -> toml::Value {
     toml::Value::Array(v.into_iter().map(toml::Value::Float).collect())
-}
-
-fn set_animator(
-    call: &mut super::Call<'_>,
-    id: EntityId,
-    fields: &[(&str, toml::Value)],
-) -> CallResult<()> {
-    if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
-        for (key, value) in fields {
-            comps.set_field(comp::SPRITE_ANIMATOR, key, value.clone());
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn register(api: &mut ScriptApi) {
@@ -120,67 +108,4 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .arg("id", Entity)
         .returns(Int, "0 without a sprite or a layer")
         .run(|call, (id,)| Ok(call.world()?.view(id, comp::SPRITE).i64("layer", 0)));
-
-    // ── sprite_animator ──
-    // Verb first, like play_clip; each under its name and, for one
-    // release, its old one (#702)
-    for (name, old) in [
-        ("play_sprite", None),
-        ("sprite_play", Some("use play_sprite")),
-    ] {
-        m.func(name, "Play one of an entity's sprite_animator clips.")
-            .arg("id", Entity)
-            .arg("clip", Str)
-            .deprecated(old)
-            .run(|call, (id, clip)| {
-                set_animator(
-                    call,
-                    id,
-                    &[
-                        ("clip", toml::Value::String(clip.to_string())),
-                        ("playing", toml::Value::Boolean(true)),
-                    ],
-                )
-            });
-    }
-
-    for (name, old) in [
-        ("stop_sprite", None),
-        ("sprite_stop", Some("use stop_sprite")),
-    ] {
-        m.func(name, "Stop an entity's sprite animation.")
-            .arg("id", Entity)
-            .deprecated(old)
-            .run(|call, (id,)| set_animator(call, id, &[("playing", toml::Value::Boolean(false))]));
-    }
-
-    for (name, old) in [
-        ("set_sprite_speed", None),
-        ("sprite_set_speed", Some("use set_sprite_speed")),
-    ] {
-        m.func(
-            name,
-            "Set an entity's sprite animation playback speed (1 is the clip's own).",
-        )
-        .arg("id", Entity)
-        .arg("speed", Num)
-        .deprecated(old)
-        .run(|call, (id, speed)| set_animator(call, id, &[("speed", toml::Value::Float(speed))]));
-    }
-
-    for (name, old) in [
-        ("is_sprite_playing", None),
-        ("sprite_is_playing", Some("use is_sprite_playing")),
-    ] {
-        m.func(name, "Whether an entity's sprite animation is playing.")
-            .arg("id", Entity)
-            .returns(Bool, "false without a sprite_animator")
-            .deprecated(old)
-            .run(|call, (id,)| {
-                Ok(call
-                    .world()?
-                    .view(id, comp::SPRITE_ANIMATOR)
-                    .bool("playing", false))
-            });
-    }
 }

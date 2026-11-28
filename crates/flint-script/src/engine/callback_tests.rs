@@ -96,12 +96,7 @@ fn a_cue_callback_at_the_wrong_count_warns_and_is_never_called() {
         "{log}"
     );
     assert!(!engine.scripts[&id].defines(Callback::SequenceCue));
-    let cue = flint_animation::SequenceCueEvent {
-        entity_id: id,
-        sequence: "door".into(),
-        cue: "open".into(),
-        time: 0.0,
-    };
+    let cue = (id, "door".to_string(), "open".to_string());
     engine.call_sequence_cues(&mut world, std::slice::from_ref(&cue));
     assert_eq!(probe_float(&world, id, "lx"), -1.0, "not called");
 
@@ -116,12 +111,32 @@ fn a_cue_callback_at_the_wrong_count_warns_and_is_never_called() {
         }"#,
     );
     assert!(!log.contains("warning"), "{log}");
-    let cue = flint_animation::SequenceCueEvent {
-        entity_id: id,
-        ..cue
-    };
+    let cue = (id, cue.1, cue.2);
     engine.call_sequence_cues(&mut world, std::slice::from_ref(&cue));
     assert_eq!(probe_float(&world, id, "lx"), 2.0);
+}
+
+/// A one-shot's end reaches the entity's own script as
+/// `on_animation_end(clip)`, whichever kind of clip ended (the animation
+/// package hands the kernel plain `(entity, clip)` pairs since #1620), and
+/// never another entity's.
+#[test]
+fn an_animation_end_reaches_its_entitys_script_with_the_clip() {
+    let mut engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let (id, log) = load(
+        &mut engine,
+        &mut world,
+        r#"fn on_animation_end(clip) {
+            if clip == "jump" { set_field(self_entity(), "probe", "lx", 3.0); }
+        }"#,
+    );
+    assert!(!log.contains("warning"), "{log}");
+    let other = world.spawn("bystander").unwrap();
+    engine.call_animation_ends(&mut world, &[(other, "jump".to_string())]);
+    assert_eq!(probe_float(&world, id, "lx"), -1.0, "not another entity's");
+    engine.call_animation_ends(&mut world, &[(id, "jump".to_string())]);
+    assert_eq!(probe_float(&world, id, "lx"), 3.0);
 }
 
 #[test]

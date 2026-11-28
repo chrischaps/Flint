@@ -438,7 +438,6 @@ impl PlayerApp {
         // or an extension's own events go on to the next scene's scripts
         // (#727: they used to be lost with physics' queue).
         self.core.events.retain(|event| !event.is_contact());
-        self.core.animation.clear();
         self.core.particles.clear();
         // What the asset makers queued for the scene going (procgen's)
         for maker in self.core.asset_makers() {
@@ -459,15 +458,14 @@ impl PlayerApp {
         }
 
         // Clear transient rendering state
-        self.skeletal_entity_assets.clear();
+        self.scene_models = None;
         self.hud.textures.clear();
         self.hud.draw_commands.clear();
         self.hud.world_texts.clear();
         self.loaded_chunks.clear();
-        // Style tweens name the old scene's entities (#370), as field
-        // tweens do (#734)
+        // Style tweens name the old scene's entities (#370); the field
+        // tweens (#734) go with the animation subsystem, which is the scene's
         self.core.style_tweens.clear();
-        self.core.field_tweens.clear();
     }
 
     /// The registry for `scene`, after asking the one resolver (ADR 0114)

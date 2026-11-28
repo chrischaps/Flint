@@ -42,13 +42,17 @@ default = ["packages", "audio", "gamepad", "frame-history"]
 # is its manifest's to say (packages/<name>/package.toml). Don't edit
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
-packages = ["debug-hud", "living", "music", "procgen", "rhythm", "vehicle"]
+packages = [
+    "animation", "debug-hud", "flipbook", "living", "music", "procgen", "rhythm", "vehicle",
+]
 packages-audio = ["flint-music?/device", "flint-rhythm-game?/device"]
 packages-gamepad = ["flint-rhythm-game?/gamepad"]
+animation = ["dep:flint-animation", "flint-animation?/player"]
 debug-hud = [
     "dep:flint-debug-ui", "flint-debug-ui?/player", "flint-living?/debug-hud",
     "flint-rhythm-game?/debug-hud",
 ]
+flipbook = ["animation", "dep:flint-flipbook", "flint-flipbook?/player"]
 living = ["procgen", "dep:flint-living", "flint-living?/player"]
 music = ["dep:flint-music", "flint-music?/player"]
 procgen = ["dep:flint-procgen", "flint-procgen?/player"]
@@ -99,7 +103,6 @@ flint-audio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 skrifa = { workspace = true }
-flint-animation = { workspace = true }
 flint-particles = { workspace = true }
 flint-terrain = { workspace = true }
 flint-script = { workspace = true }
@@ -121,7 +124,9 @@ tracing-subscriber = { workspace = true }
 # Each package's `[rust] player` crate, written by `scripts/package-sync.py`
 # (#1560, #1568)
 # package-sync:dependencies
+flint-animation = { workspace = true, optional = true }
 flint-debug-ui = { workspace = true, optional = true }
+flint-flipbook = { workspace = true, optional = true }
 flint-living = { workspace = true, optional = true }
 flint-music = { workspace = true, optional = true }
 flint-procgen = { workspace = true, optional = true }
@@ -153,6 +158,9 @@ flint-procgen = { workspace = true, features = ["player"] }
 # where the run's launcher lists living, as the stock one does with `living`.
 flint-living = { workspace = true, features = ["player", "debug-hud"] }
 flint-wooze = { workspace = true }
+# The animation package's loaders, which the asset-search tests hold to
+# the project's one search (#1620)
+flint-animation = { workspace = true, features = ["player"] }
 
 # The hitch log's marks on a sampler's ETW timeline (#1250,
 # player_app/sampler_marks.rs)

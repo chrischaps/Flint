@@ -2,8 +2,8 @@
 #
 # Every game links this package. It holds the kernel and the standard
 # packages that have no Cargo feature until Phase 3 (physics, audio,
-# animation, particles, terrain), and the render features that live inside
-# flint-render until Phase 4 (ocean, grass, stylize, panels). Each list is
+# particles, terrain; animation left with #1620), and the render features
+# that live inside flint-render until Phase 4 (ocean, grass, stylize, panels). Each list is
 # grouped by the package it will become, so the split is a move of lines.
 # `flint package list` reads this file; a test in flint-cli holds every
 # crate, schema, script module and command of the tree to one manifest.
@@ -27,8 +27,6 @@ crates = [
     "flint-physics",
     # audio
     "flint-audio", "flint-audio-worklet",
-    # animation
-    "flint-animation",
     # particles
     "flint-particles",
     # terrain
@@ -39,14 +37,12 @@ components = [
     "transform", "visibility", "bounds", "model", "material",
     "material_overrides", "light", "sky", "lod", "asset_def", "script",
     "interactable", "camera_tuning", "screen_anchor", "ui_fill", "ui_text",
-    "sprite", "sprite_animator", "parallax", "spline", "spline_mesh",
+    "sprite", "parallax", "spline", "spline_mesh",
     "motion_hold",
     # physics
     "collider", "rigidbody", "character_controller", "joint",
     # audio
     "audio_source", "audio_trigger",
-    # animation
-    "animator", "skeleton", "ik_two_bone", "bone_probe",
     # particles
     "particle_emitter", "particle_effect",
     # terrain
@@ -60,7 +56,7 @@ components = [
 ]
 archetypes = [
     # kernel
-    "sprite", "animated_sprite", "character",
+    "sprite", "character",
     # physics
     "player",
     # terrain
@@ -83,8 +79,6 @@ script_modules = [
     "physics", "physics_2d", "nav",
     # audio
     "audio",
-    # animation
-    "animation", "tween",
     # particles
     "particle",
     # terrain
