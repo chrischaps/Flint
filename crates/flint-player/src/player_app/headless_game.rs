@@ -25,6 +25,7 @@
 //! showing. So is a scene subsystem that is the window's alone
 //! ([`Subsystem::presentation_only`](super::subsystem::Subsystem::presentation_only)).
 
+use crate::player_app::game_core::physics_of;
 use std::collections::BTreeSet;
 
 use flint_core::project::Project;
@@ -356,7 +357,6 @@ impl HeadlessGame {
             post: self.scene.post_process.as_ref(),
             script: &mut core.script,
             renderer: None,
-            audio: None,
             pads: None,
             capture: Some(&capture),
             packages: core.packages.as_ref(),
@@ -440,9 +440,11 @@ impl HeadlessGame {
         core.script
             .set_current_scene(&core.scene_path, &core.project);
         core.script.set_screen_size(screen.0, screen.1);
-        let _scope =
-            core.script
-                .state_scope(&mut core.state_machine, &mut core.store, &core.physics);
+        let _scope = core.script.state_scope(
+            &mut core.state_machine,
+            &mut core.store,
+            physics_of(&core.resources),
+        );
         if let Err(e) = core.script.initialize(&mut core.world) {
             tracing::warn!("Script init failed: {e:?}");
         }

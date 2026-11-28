@@ -6,6 +6,7 @@
 
 use super::scene_loading::resolve_scene_path;
 use super::PlayerApp;
+use crate::player_app::game_core::{physics_of, physics_of_mut};
 use flint_core::components as comp;
 use flint_core::vfs;
 use flint_ecs::FlintWorld;
@@ -258,8 +259,7 @@ impl PlayerApp {
         // no `model`) and inside the chunk's note and load report
         self.load_late_models();
         self.prepare_physics(&collider_meshes);
-        self.core
-            .physics
+        physics_of_mut(&mut self.core.resources)
             .sync_new_entities(&mut self.core.world, &spawned_ids);
 
         // Re-sync scripts for new entities: each found by the project's one
@@ -337,7 +337,7 @@ impl PlayerApp {
         if let Some(entity_ids) = self.loaded_chunks.remove(chunk_id) {
             let count = entity_ids.len();
             for id in &entity_ids {
-                self.core.physics.remove_entity(*id);
+                physics_of_mut(&mut self.core.resources).remove_entity(*id);
                 self.core.script.remove_entity(*id);
                 let _ = self.core.world.despawn(*id);
             }
@@ -413,7 +413,7 @@ impl PlayerApp {
             let _state_scope = self.core.script.state_scope(
                 &mut self.core.state_machine,
                 &mut self.core.store,
-                &self.core.physics,
+                physics_of(&self.core.resources),
             );
             self.core.script.call_scene_exits(&mut self.core.world);
         }
@@ -433,7 +433,7 @@ impl PlayerApp {
         // Clear all systems
         self.core.script.clear();
         self.audio.clear();
-        self.core.physics.clear();
+        physics_of_mut(&mut self.core.resources).clear();
         self.core.forget_player_view();
         // The old scene's contacts name entities that are going; a script's
         // or an extension's own events go on to the next scene's scripts

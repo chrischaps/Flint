@@ -160,7 +160,7 @@ fn reports(app: &PlayerApp) -> Vec<String> {
 
 fn the_rock_is_its_hull(app: &PlayerApp) {
     let rock = app.core.world.get_id("rock").unwrap();
-    match app.core.physics.get_entity_collider_extents(rock) {
+    match app.core.physics().get_entity_collider_extents(rock) {
         Some(ColliderExtents::Convex {
             half_extents,
             centre,
@@ -215,7 +215,7 @@ fn a_procgen_rock_the_queue_makes_later_gets_its_hull_then() {
         let rock = app.core.world.get_id("rock").unwrap();
         assert!(
             matches!(
-                app.core.physics.get_entity_collider_extents(rock),
+                app.core.physics().get_entity_collider_extents(rock),
                 Some(ColliderExtents::Box { .. })
             ),
             "a placeholder stands at load, and the collider waits as a box"
@@ -345,7 +345,7 @@ fn a_runtime_mesh_collider_is_hit_by_raycast_where_it_draws() {
         assert_eq!(&seen[3..], ["hut 2.0", "hut 2.0"], "{seen:?}");
         let hut = app.core.world.get_id("hut").unwrap();
         assert!(matches!(
-            app.core.physics.get_entity_collider_extents(hut),
+            app.core.physics().get_entity_collider_extents(hut),
             Some(ColliderExtents::Mesh { .. })
         ));
 

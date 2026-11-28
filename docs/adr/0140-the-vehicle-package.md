@@ -481,7 +481,9 @@ These are the vehicle package's own, in #1628's scope:
   drift, items, slipstream and surface stay its own and drive the modifiers.
   The A/B is against the prototype's lap above and a control run.
 - When #1616 and #1617 move `FixedCtx::physics` into physics' resource, the
-  vehicle moves with them in the same PR, as those tickets say.
+  vehicle moves with them in the same PR, as those tickets say. #1616 did:
+  the vehicle depends on flint-physics, reads `flint_physics::of_mut(ctx.resources)`
+  in its step, and builds on `flint_physics::rapier`.
 - The chase camera stays in FlintKart's scripts until #1614's player and
   view, and moves in #1631.
 

@@ -391,7 +391,7 @@ impl Subsystem for MusicSubsystem {
     }
 
     fn scene_loaded(&mut self, ctx: &mut SceneCtx) {
-        self.start(ctx.audio.as_deref_mut());
+        self.start(flint_audio::engine::of_mut(ctx.resources));
     }
 
     fn scene_unloading(&mut self, ctx: &mut SceneCtx) {
@@ -402,7 +402,7 @@ impl Subsystem for MusicSubsystem {
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
         match stage {
             // A device that arrived since (the web's Begin click)
-            Stage::Clock => self.start(ctx.audio.as_deref_mut()),
+            Stage::Clock => self.start(flint_audio::engine::of_mut(ctx.resources)),
             Stage::PreScripts => {
                 let clock = self.clock(ctx);
                 ctx.script.set_music(clock);

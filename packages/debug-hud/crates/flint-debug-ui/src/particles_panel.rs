@@ -100,7 +100,11 @@ impl DebugPanel for ParticlesDebugPanel {
 
     /// Apply what was pressed; while nothing was, mirror the live counts.
     fn sync(&mut self, ctx: &mut crate::PanelCtx) {
-        let sync = &mut *ctx.particles;
+        // The particles are the run's resource, lent to the panels (#1616)
+        let Some(particles) = ctx.resources.get_mut::<flint_particles::ParticleSystem>() else {
+            return;
+        };
+        let sync = &mut particles.sync;
         if self.dirty {
             for action in self.take_actions() {
                 use ParticlePanelAction as A;
