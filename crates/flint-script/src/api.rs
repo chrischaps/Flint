@@ -13,7 +13,6 @@
 //! `conducted`) isn't declared here: the feature's crate declares it
 //! through a [`crate::ScriptModule`] (#698, `crate::module`).
 
-mod audio;
 pub mod builder;
 mod camera;
 mod camera_2d;
@@ -37,7 +36,6 @@ mod host_io_tests;
 mod input;
 mod log;
 mod math;
-mod music;
 #[cfg(test)]
 mod naming_tests;
 mod ocean;
@@ -92,7 +90,6 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     entity::register(api);
     input::register(api);
     time::register(api);
-    audio::register(api);
     // `physics`, `physics_2d` and `nav` are the physics package's modules
     // since #1617 (`flint_physics::player`), declared by the launcher
     camera::register(api);
@@ -122,6 +119,5 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     persistence::register(api);
     data::register(api);
     expression::register(api);
-    music::register(api);
     test::register(api);
 }

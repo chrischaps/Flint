@@ -78,9 +78,6 @@ EXCEPTIONS = {
     ("flint-player", "string", "music", "crates/flint-player/src/logging.rs"): "a log "
     "target the engine's warnings are counted under (`flint_target`), as `load` and "
     "`perf` are: the music package logs as `music`, and so did the player before it",
-    ("flint-script", "string", "music", "crates/flint-script/src/api/music.rs"): "the "
-    "`music` script module, declared here until Phase 3 (the music manifest says so): "
-    "#1619 moves it to the music package",
     ("flint-core", "string", "terrain", "crates/flint-core/src/components.rs"): "the "
     "`terrain` component's name (`components::TERRAIN`), the one spelling the kernel's "
     "readers of a terrain use: the renderer's terrain draws and replay, the scene check's "
@@ -93,9 +90,6 @@ EXCEPTIONS = {
     ("flint-cli", "string", "terrain", "crates/flint-cli/src/check/references.rs"): "a "
     "folder the reference check looks a bare file name up in (`ASSET_DIRS`), where "
     "projects keep their heightmaps: a folder name, not the package",
-    ("flint-audio", "string", "music", "crates/flint-audio/src/bus.rs"): "the built-in "
-    "`music` bus, which every game's audio has: #1619 makes flint-audio the audio "
-    "package's, out of the kernel",
     # The frame's fixed-step part is named `physics` wherever the kernel
     # times or labels it, whichever package steps in it (#1617): the word,
     # not the package
@@ -118,6 +112,22 @@ EXCEPTIONS = {
     ("flint-runtime", "string", "physics", "crates/flint-runtime/src/state.rs"): "the `physics` "
     "policy name, kept as a constant of the name (ADR 0138 decision 7): a game state that names "
     "it registers in every build",
+    # `audio` is a kind of asset as well as a package (#1619): the files a
+    # scene finds under `audio/`, which the kernel's asset search, `flint
+    # asset`, `flint check` and `flint bundle` know whatever the build has
+    ("flint-core", "string", "audio", "crates/flint-core/src/project/assets.rs"): "the "
+    "`audio` asset kind and its `audio/` folder (`AssetKind::Audio`), which the "
+    "project's one asset search resolves in any build, as it does `models`",
+    ("flint-core", "string", "audio", "crates/flint-core/src/load_report.rs"): "the "
+    "load report's `audio` row, the scene's sounds loading (`NoteKind::AudioLoad`, "
+    "the audio package's builder times it), named for what is loaded as `models` is",
+    ("flint-cli", "string", "audio", "crates/flint-cli/src/check/references.rs"): "the "
+    "`audio/` folder among the asset folders `flint check` reads a reference from",
+    ("flint-cli", "string", "audio", "crates/flint-cli/src/commands/asset.rs"): "the "
+    "`audio` asset type of the asset catalog (`flint asset list --type audio`)",
+    ("flint-cli", "string", "audio", "crates/flint-cli/src/commands/bundle.rs"): "the "
+    "late bundle part `flint bundle` makes of a game's sound files (`<game>.audio."
+    "flintpack`, #98): a part of the bundle, named for the files in it",
 }
 
 

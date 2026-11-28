@@ -1,6 +1,6 @@
 # Audio
 
-> **Package:** `engine`: every game has it. Its audio is grouped in the engine's manifest as the package it becomes in a later phase, with no switch yet ([Packages](packages.md)).
+> **Package:** `audio`, a standard package: a game has it unless its `[packages]` sets `audio = false`, which leaves out `audio_source`, `audio_trigger`, the `audio` script module and the mixer, and the `music` and `rhythm` packages that require it. A build with the package and without the `sound` build option plays silent ([Packages](packages.md)).
 
 Flint's audio system provides spatial 3D sound via the `flint-audio` crate, built on [Kira](https://github.com/tesselode/kira) 0.11. Sounds can be positioned in 3D space with distance attenuation, played as ambient loops, or triggered by game events like collisions.
 
@@ -346,7 +346,7 @@ A name that finds nothing plays nothing. The warning names the nearest cached so
 WARN script: play_sound error: AudioError("Sound not cached: whosh (nearest: \"audio/whoosh.ogg\")")
 ```
 
-Extensions' `ctx.audio.play` resolves names the same way.
+An extension's `flint_audio::player::audio(ctx.resources)` resolves names the same way.
 
 A placed sound is at full volume within `min_distance` and silent past `max_distance`. Between them it is `-60·r^rolloff` dB, where `r` is how far the listener is along the way from one to the other. The default `rolloff` of 2 holds a sound up most of the way and drops it near `max_distance`, which suits a small room. A sound heard across open ground wants a rolloff below 1: it falls away soon after `min_distance` and then tails off slowly, close to a real sound's inverse-distance fade. For example, `rolloff: 0.6` between 32 m and 1250 m stays within 1.5 dB of `(32/d)^1.2` out to 300 m.
 

@@ -196,7 +196,7 @@ fn a_callback_ending_in_a_value_is_no_failure() {
             "ends.rhai",
             "let t = 0.0;\n\
              fn on_init() { 7 }\n\
-             fn on_update() {\n    t += 1.0;\n    if t >= 1.0 { play_sound(\"a.ogg\", 0.5) }\n}\n\
+             fn on_update() {\n    t += 1.0;\n    if t >= 1.0 { delta_time() }\n}\n\
              fn on_draw_ui() { random() }\n",
         )],
     );

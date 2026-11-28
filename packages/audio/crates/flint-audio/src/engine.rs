@@ -95,39 +95,10 @@ pub(crate) const FRAME_TWEEN: Tween = Tween {
     start_time: kira::StartTime::Immediate,
 };
 
-/// What the mixer is doing, for the perf readout (#138): the sounds and
-/// spatial tracks kira holds, and how many of each are paused because
-/// nobody can hear them. A paused track skips its sounds and its
-/// spatialisation; a paused sound skips its resampling.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MixCounts {
-    /// Sounds on the buses and on spatial tracks.
-    pub voices: usize,
-    /// Of those, paused ones, and ones on a paused track.
-    pub paused_voices: usize,
-    /// Spatial tracks: `audio_source`s' and placed one-shots'.
-    pub tracks: usize,
-    /// Of those, paused ones.
-    pub paused_tracks: usize,
-    /// Placed one-shots never started because the listener was past their
-    /// `max` distance.
-    pub skipped_oneshots: u64,
-    /// One-shots stopped early to make room under
-    /// [`MAX_ONESHOTS_PER_SOUND`].
-    pub stolen_oneshots: u64,
-}
-
-impl MixCounts {
-    /// Voices the mixer runs.
-    pub fn live_voices(&self) -> usize {
-        self.voices.saturating_sub(self.paused_voices)
-    }
-
-    /// Spatial tracks the mixer runs.
-    pub fn live_tracks(&self) -> usize {
-        self.tracks.saturating_sub(self.paused_tracks)
-    }
-}
+/// What the mixer is doing, for the perf readout (#138): plain data in the
+/// kernel (`flint_core::sound`, #1619), so the player reads it without
+/// naming this crate.
+pub use flint_core::sound::MixCounts;
 
 /// Where the browser mixes (#136). The worklet is the default; the main
 /// thread is the fallback when it can't start, and `?mixer=main` asks for it.
@@ -200,29 +171,15 @@ impl OneShot {
     }
 }
 
-/// The sound in the run's resources, while a host lends it
-/// ([`lend`]): what a package's hook plays on (the music hosts its suite
-/// on the shared mixer, ADR 0017). `None` with no sound (a capture, a
-/// headless test), or outside a lend.
+/// The run's engine, once a host opened the sound (#1619): what a
+/// package's hook plays on (the music hosts its suite on the shared mixer,
+/// ADR 0017). `None` with no sound (a capture, a headless test). The
+/// engine is the audio package's resource, inside the host's
+/// `flint_package::sound::Sound`, so a package that requires audio asks
+/// for it here by type.
+#[cfg(feature = "player")]
 pub fn of_mut(resources: &mut flint_core::resources::Resources) -> Option<&mut AudioEngine> {
-    resources.get_mut::<AudioEngine>()
-}
-
-/// `engine` in the run's resources while `f` runs, then back in place
-/// (#1616): how the player lends its sound to the package hooks, which
-/// find it by type ([`of_mut`]) since the Package API names no standard
-/// package. A silent engine stands in meanwhile, made once a run. With no
-/// engine, `f` runs on the resources as they are. The audio package owns
-/// the engine as a resource instead (#1619).
-pub fn lend<R>(
-    resources: &mut flint_core::resources::Resources,
-    engine: Option<&mut AudioEngine>,
-    f: impl FnOnce(&mut flint_core::resources::Resources) -> R,
-) -> R {
-    match engine {
-        Some(engine) => resources.lend(engine, AudioEngine::silent, f),
-        None => f(resources),
-    }
+    crate::player::system_of_mut(resources).map(|system| &mut system.engine)
 }
 
 /// Wraps Kira's AudioManager with sound caching and listener management

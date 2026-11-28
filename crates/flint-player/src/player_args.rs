@@ -46,16 +46,8 @@ pub struct PlayerArgs {
     #[arg(long)]
     pub input_config: Option<String>,
 
-    /// Scales the music bus's starting volume (linear, 0.0 = muted, 1.0 = the
-    /// volume the game's flint.toml gives it, or full)
-    #[arg(long, default_value_t = 1.0)]
-    pub music_volume: f64,
-
-    /// Scales the SFX bus's starting volume (linear, 0.0 = muted, 1.0 = the
-    /// volume the game's flint.toml gives it, or full)
-    #[arg(long, default_value_t = 1.0)]
-    pub sfx_volume: f64,
-
+    // `--music-volume` and `--sfx-volume` are the audio package's flags
+    // since #1619 (`flint_audio::player::VolumeArgs`)
     /// MSAA sample count for the scene passes: 1 (off) or 4 (ADR 0058)
     #[arg(long, default_value_t = 1)]
     pub msaa: u32,
@@ -698,16 +690,9 @@ impl PlayerArgs {
         // own type, for its builder to read when the first scene is built
         args.packages.put_in(&mut app.core.resources);
 
-        // The game's buses (#730), then the flags over them: each scales
-        // the volume its bus starts at (`--music-volume 0` mutes it)
+        // The game's buses (#730). The audio package's `--music-volume` and
+        // `--sfx-volume` scale them when the first scene is built (#1619)
         app.refresh_project();
-        for (bus, scale) in [
-            (flint_audio::Bus::MUSIC, args.music_volume),
-            (flint_audio::Bus::SFX, args.sfx_volume),
-        ] {
-            let declared = app.audio.engine.bus_volume(bus).unwrap_or(1.0);
-            app.audio.set_bus_volume(bus, declared * scale);
-        }
 
         // The registry and its directories, kept for transitions and chunks
         app.set_schemas(registry, schema_dirs);

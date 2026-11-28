@@ -24,6 +24,9 @@ summary = "Charts judged against the music, with 1 kHz pad capture"
 engine = "^0.1"
 
 [requires]
+# Rhythm stamps the pad against the audio clock (ADR 0018) and names
+# audio's crate itself (#1619)
+audio = "*"
 music = "*"
 
 [build]
@@ -33,10 +36,10 @@ features = ["rhythm"]
 player = "flint-rhythm-game"
 cli = "flint-rhythm-game"
 
-# Sound and pads (#221, #1568): the launchers' `audio` and `gamepad` turn on
+# Sound and pads (#221, #1568): the launchers' `sound` and `gamepad` turn on
 # the crate's `device` and `gamepad`, the 1 kHz capture's devices.
 [rust.devices]
-audio = ["flint-rhythm-game/device"]
+sound = ["flint-rhythm-game/device"]
 gamepad = ["flint-rhythm-game/gamepad"]
 
 # With the debug-hud package listed too (ADR 0137 decision 9): the Music

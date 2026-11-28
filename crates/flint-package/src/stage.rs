@@ -45,6 +45,12 @@ pub enum Stage {
     PostPhysics,
     /// After `on_draw_ui` and the draw commands.
     ScriptUi,
+    /// After the late models, before the animation clock (ADR 0138's
+    /// `Sound`, #1619): where the audio package reloads changed sounds,
+    /// plays the frame's triggers ([`StageCtx::events`](crate::StageCtx::events))
+    /// and updates the scene's sources. A capture runs it too, with no
+    /// sound to play.
+    Sound,
     /// After the frame's sound, before the bones go to the GPU: the clock
     /// clips run on (the animation package's clips, layers, sequences and
     /// the kinds other packages register, flipbooks among them), and one-shot
@@ -86,6 +92,7 @@ impl Stage {
             Stage::Tweens => "tweens",
             Stage::PostPhysics => "post_physics",
             Stage::ScriptUi => "script_ui",
+            Stage::Sound => "sound",
             Stage::Animate => "animate",
             Stage::Pose => "pose",
             Stage::Animation => "animation",
@@ -97,7 +104,7 @@ impl Stage {
 
     /// Every stage `update` hears in the player's frame, in order: the
     /// host's [`Stage::Clock`], then the core's.
-    pub const UPDATES: [Stage; 14] = [
+    pub const UPDATES: [Stage; 15] = [
         Stage::Clock,
         Stage::Input,
         Stage::PreScripts,
@@ -107,6 +114,7 @@ impl Stage {
         Stage::Tweens,
         Stage::PostPhysics,
         Stage::ScriptUi,
+        Stage::Sound,
         Stage::Animate,
         Stage::Pose,
         Stage::Animation,
