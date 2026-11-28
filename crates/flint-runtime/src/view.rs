@@ -25,6 +25,13 @@ pub struct Eye {
     /// [`Eye::looking`] counts down, as the script camera's listener always
     /// has (#1666): kept so the listener moves as it did.
     pub pitch: f32,
+    /// The camera's vertical field of view, degrees; `None` leaves it as
+    /// the scene and the scripts set it (a first-person eye). A chase
+    /// camera widens it with speed (#1631).
+    pub fov: Option<f32>,
+    /// Radians the camera turns about the way it looks (as
+    /// `set_camera_roll`); 0 is level. A script's roll that frame wins.
+    pub roll: f32,
 }
 
 impl Eye {
@@ -46,6 +53,8 @@ impl Eye {
             target,
             yaw,
             pitch,
+            fov: None,
+            roll: 0.0,
         }
     }
 }

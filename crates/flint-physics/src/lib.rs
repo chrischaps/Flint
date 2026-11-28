@@ -631,6 +631,8 @@ impl PhysicsSystem {
             target: self.character.camera_target(position),
             yaw: self.character.yaw,
             pitch: self.character.pitch,
+            fov: None,
+            roll: 0.0,
         });
     }
 

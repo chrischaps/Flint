@@ -27,7 +27,13 @@ pub enum Stage {
     /// with a [`FixedCtx`](crate::FixedCtx), once a step, not through
     /// `update`; named here so the schedule is whole in one place.
     FixedStep,
-    /// After the physics steps and the first-person camera.
+    /// After the physics steps, where a controller places the frame's eye
+    /// (ADR 0138 decision 2, #1631): physics' first-person eye is in
+    /// `PlayerView::eye` by now, and a package's camera (the vehicle's
+    /// chase camera) writes its own there. The kernel moves the camera to
+    /// the eye straight after, and sets the listener.
+    View,
+    /// After the camera followed the frame's eye.
     Physics,
     /// After the style tweens move on with game time, before the frame's
     /// script commands: where the animation package moves `tween`'s field
@@ -74,6 +80,7 @@ impl Stage {
             Stage::PreScripts => "pre_scripts",
             Stage::Scripts => "scripts",
             Stage::FixedStep => "fixed_step",
+            Stage::View => "view",
             Stage::Physics => "physics",
             Stage::Tweens => "tweens",
             Stage::PostPhysics => "post_physics",
@@ -89,11 +96,12 @@ impl Stage {
 
     /// Every stage `update` hears in the player's frame, in order: the
     /// host's [`Stage::Clock`], then the core's.
-    pub const UPDATES: [Stage; 13] = [
+    pub const UPDATES: [Stage; 14] = [
         Stage::Clock,
         Stage::Input,
         Stage::PreScripts,
         Stage::Scripts,
+        Stage::View,
         Stage::Physics,
         Stage::Tweens,
         Stage::PostPhysics,

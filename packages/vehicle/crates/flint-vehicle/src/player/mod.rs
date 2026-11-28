@@ -8,18 +8,21 @@
 //! |---|---|
 //! | `scene_loaded` | one [`model::Vehicle`] per `vehicle`, its wheels its children with `vehicle_wheel` |
 //! | `Stage::PreScripts` | `vehicle_state` and each wheel's state from the last step; a player's driving input from the actions |
-//! | `fixed_update`, each step | the tuning and `vehicle_input` read, Rapier's raycast wheels updated, the assists and the push applied |
+//! | `scene_loaded` | the vehicle with a `chase_camera` is the kernel's player (`PlayerView`) |
+//! | `fixed_update`, each step | the chase camera's step for the step before, if this frame ran one; the tuning and `vehicle_input` read, Rapier's raycast wheels updated, the assists and the push applied |
+//! | `Stage::View` | the chase camera's step for the frame's last step, then the eye (`PlayerView::eye`); its modifiers back to neutral |
 //! | `Stage::Physics` | the wheel children's poses; the modifiers back to neutral |
 
+pub mod chase;
 pub mod model;
 mod module;
 mod panel;
 mod subsystem;
 
-use crate::{PACKAGE_NAME, VEHICLE, VEHICLE_INPUT, VEHICLE_STATE, VEHICLE_WHEEL};
+use crate::{CHASE_CAMERA, PACKAGE_NAME, VEHICLE, VEHICLE_INPUT, VEHICLE_STATE, VEHICLE_WHEEL};
 use flint_package::{Package, Registry, SceneCtx};
 
-pub use subsystem::Vehicles;
+pub use subsystem::{Vehicles, ACTIONS};
 
 /// The `vehicle` package (`packages/vehicle/package.toml`).
 pub static PACKAGE: VehiclePackage = VehiclePackage;
@@ -50,10 +53,16 @@ impl Package for VehiclePackage {
 /// `vehicle` out.
 fn left_out(ctx: &SceneCtx) -> Option<String> {
     let in_use = ctx.packages?;
-    let uses: Vec<&str> = [VEHICLE, VEHICLE_WHEEL, VEHICLE_INPUT, VEHICLE_STATE]
-        .into_iter()
-        .filter(|c| !ctx.world.entities_with_component(c).is_empty())
-        .collect();
+    let uses: Vec<&str> = [
+        VEHICLE,
+        VEHICLE_WHEEL,
+        VEHICLE_INPUT,
+        VEHICLE_STATE,
+        CHASE_CAMERA,
+    ]
+    .into_iter()
+    .filter(|c| !ctx.world.entities_with_component(c).is_empty())
+    .collect();
     flint_package::left_out_line(in_use, PACKAGE_NAME, &uses, "sit undriven")
 }
 

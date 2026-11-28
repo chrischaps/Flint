@@ -356,10 +356,10 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     host.phase_done(Phase::Scripts);
     run_stage(host, Stage::Scripts, Some(config));
 
-    // Fixed-timestep physics + FPS camera/listener follow, against the
-    // poses and joint targets the scripts just wrote
+    // Fixed-timestep physics and the first-person eye, against the poses
+    // and joint targets the scripts just wrote
     let steps_physics = !host.capture();
-    let moved = {
+    {
         let (core, lent) = host.lend();
         // Triangles that came since the last frame (a procgen model the
         // queue finished, a mesh an extension uploaded), for the bodies
@@ -371,7 +371,16 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
                 lent.renderer.as_deref(),
             );
         }
-        core.tick_fixed_physics(config, steps_physics, lent.input, lent.camera)
+        core.tick_fixed_physics(config, steps_physics, lent.input);
+    }
+    // Where the frame is seen from (ADR 0138 decision 2, #1631): physics'
+    // first-person eye is placed by now, and a package's camera (the
+    // vehicle's chase camera) places its own here. Then the camera follows
+    // the eye, and the listener when the sound runs.
+    run_stage(host, Stage::View, Some(config));
+    let moved = {
+        let (core, lent) = host.lend();
+        core.follow_eye(config, lent.camera)
     };
     if let Some(at) = moved {
         host.listener(at);
@@ -602,16 +611,10 @@ impl GameCore {
     }
 
     /// The fixed-timestep physics loop (skipped while paused, but still
-    /// consuming steps to avoid a spiral), then the eye a controller placed
-    /// (ADR 0138's `View`). Returns where the listener goes, when the
-    /// sound runs and a controller placed the eye.
-    fn tick_fixed_physics(
-        &mut self,
-        config: &StateConfig,
-        steps: bool,
-        input: &InputState,
-        camera: &mut Camera,
-    ) -> Option<Eye> {
+    /// consuming steps to avoid a spiral), then physics' first-person eye,
+    /// if it has a player. The camera follows the frame's eye after
+    /// `Stage::View` ([`follow_eye`](Self::follow_eye)).
+    fn tick_fixed_physics(&mut self, config: &StateConfig, steps: bool, input: &InputState) {
         flint_core::scope!("tick_fixed_physics");
         physics_of_mut(&mut self.resources).begin_frame(self.clock.pending_fixed_ratio());
         self.fixed_steps = 0;
@@ -678,11 +681,21 @@ impl GameCore {
                 physics.place_eye(&self.world, view);
             }
         }
+    }
+
+    /// The camera to the frame's eye, after `Stage::View` (ADR 0138
+    /// decision 2): whichever controller placed it, physics' first-person
+    /// eye or a package's camera (#1631). Returns where the listener goes,
+    /// when the sound runs and an eye was placed; with none the camera
+    /// stays where the scene and the scripts put it.
+    fn follow_eye(&mut self, config: &StateConfig, camera: &mut Camera) -> Option<Eye> {
         let view = self.resources.get_or_insert_with(PlayerView::default);
-        // The camera follows it, and the listener when the sound runs
         let eye = view.eye?;
         camera.update_first_person(eye.position, eye.yaw, eye.pitch);
         camera.target = eye.target;
+        if let Some(fov) = eye.fov {
+            camera.fov = fov;
+        }
         view.listener = config.runs(AUDIO).then_some(eye);
         view.listener
     }
@@ -776,7 +789,16 @@ impl GameCore {
     /// where it is now. Returns the listener's move for a script-driven
     /// camera (chase cam etc.) that set a position.
     fn apply_script_camera(&mut self, camera: &mut Camera) -> Option<Eye> {
-        let cam = std::mem::take(&mut self.script_requests.camera);
+        let mut cam = std::mem::take(&mut self.script_requests.camera);
+        // An eye's roll (a chase camera's lean, #1631) where the scripts
+        // set none this frame: the overrides level the camera otherwise
+        if cam.roll.is_none() {
+            cam.roll = self
+                .player_view()
+                .eye
+                .map(|eye| eye.roll)
+                .filter(|roll| *roll != 0.0);
+        }
         super::script_commands::apply_camera_overrides(camera, &cam);
         self.script
             .set_camera(camera.position_array(), camera.forward_vector());

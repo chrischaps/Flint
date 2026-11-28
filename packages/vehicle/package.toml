@@ -29,7 +29,7 @@ player = "flint-vehicle"
 
 [provides]
 crates = ["flint-vehicle"]
-components = ["vehicle", "vehicle_wheel", "vehicle_input", "vehicle_state"]
+components = ["vehicle", "vehicle_wheel", "vehicle_input", "vehicle_state", "chase_camera"]
 script_modules = ["vehicle"]
 
 # What a player built without it still knows (ADR 0137 decision 8): a
