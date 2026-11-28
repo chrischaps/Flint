@@ -169,7 +169,7 @@ impl PlayerApp {
             style: Default::default(),
             quality: Default::default(),
             frame_pacer: None,
-            skeletal_entity_assets: HashMap::new(),
+            scene_models: None,
             hud: super::state::Hud {
                 debug,
                 ..Default::default()

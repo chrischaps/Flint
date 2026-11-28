@@ -91,7 +91,7 @@ callbacks! {
     SceneExit, ON_SCENE_EXIT = "on_scene_exit"() "The scene is about to be left.";
     SceneEnter, ON_SCENE_ENTER = "on_scene_enter"() "A scene was entered.";
     AnimationEnd, ON_ANIMATION_END = "on_animation_end"("clip")
-        "A once sprite clip finished.";
+        "A one-shot clip finished (a flipbook's among them).";
     SequenceCue, ON_SEQUENCE_CUE = "on_sequence_cue"("sequence", "cue")
         "An animation sequence passed a cue event.";
     Event, ON_EVENT = "on_event"("name", "data")

@@ -55,7 +55,7 @@ Scripts define behavior through callback functions. The engine detects which cal
 | `fn on_interact()` | The player pressed Interact within this entity's interactable range. |
 | `fn on_scene_exit()` | The scene is about to be left. |
 | `fn on_scene_enter()` | A scene was entered. |
-| `fn on_animation_end(clip)` | A once sprite clip finished. |
+| `fn on_animation_end(clip)` | A one-shot clip finished (a flipbook's among them). |
 | `fn on_sequence_cue(sequence, cue)` | An animation sequence passed a cue event. |
 | `fn on_event(name, data)` | A game event fired by a script, the engine or a player extension. |
 | `fn on_expression(state)` | A new state arrived from outside the process (a timeline or a socket). |
@@ -357,6 +357,8 @@ heard further away sets `max_distance` in the options map, and usually a
 [Audio: Scripting](audio.md#scripting-integration).
 
 ### Animation API
+
+> **Package:** `animation`, a standard package: a game has the `animation` module unless its `[packages]` writes `animation = false` ([Packages](packages.md)).
 
 Animation functions write directly to the `animator` component on the target entity. The `AnimationSync` system picks up changes on the next frame:
 
@@ -1119,6 +1121,8 @@ fn on_event(name, data) {
 [`flint-examples/reveal_tear.scene.toml`](https://github.com/chrischaps/flint-examples/blob/main/reveal_tear.scene.toml) tears into pencil and pulls the live frame back with a wipe, on a loop.
 
 ### Tween API
+
+> **Package:** `animation`, a standard package: a game has the `tween` module unless its `[packages]` writes `animation = false` ([Packages](packages.md)).
 
 One call eases any number a component holds (#734): a light's `intensity` or `color`, a material's `emissive`, a transform's `position` or `rotation`, a game's own component field. It is what a hand-written lerp in `on_update` used to be, done by the engine on game time.
 
@@ -2173,10 +2177,6 @@ Runtime control of the `sprite` component on 2D entities (see [2D Sprites](sprit
 | `set_sprite_layer(id: entity, layer: int)` | — | Set an entity's sprite layer (higher draws in front). |
 | `set_sprite_visible(id: entity, visible: bool)` | — | Show or hide an entity's sprite. |
 | `get_sprite_layer(id: entity)` | `int`: 0 without a sprite or a layer | An entity's sprite layer. |
-| `play_sprite(id: entity, clip: str)` | — | Play one of an entity's `sprite_animator` clips. |
-| `stop_sprite(id: entity)` | — | Stop an entity's sprite animation. |
-| `set_sprite_speed(id: entity, speed: num)` | — | Set an entity's sprite animation playback speed (1 is the clip's own). |
-| `is_sprite_playing(id: entity)` | `bool`: false without a `sprite_animator` | Whether an entity's sprite animation is playing. |
 
 <!-- script-api:end -->
 

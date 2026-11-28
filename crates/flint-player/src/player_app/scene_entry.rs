@@ -10,10 +10,8 @@
 //! `teardown_current_scene` in `transition.rs`.
 
 use super::scene_loading::{
-    build_model_load_config, load_animations_from_world, load_audio_from_world,
-    load_scripts_from_world, load_sequences_from_world, load_sprite_animations_from_world,
-    register_node_animation_data, register_skeletal_data, register_terrain_collider,
-    LoadedGrassInfo,
+    build_model_load_config, load_audio_from_world, load_scripts_from_world,
+    register_terrain_collider, LoadedGrassInfo,
 };
 use super::PlayerApp;
 use crate::player_app::game_core::{physics_of, physics_of_mut};
@@ -226,10 +224,10 @@ impl PlayerApp {
             queue,
             &config,
         );
-        register_skeletal_data(&load_result, &mut self.core.animation);
-        register_node_animation_data(&load_result, &mut self.core.animation);
         self.late_models.remember_expanded(&load_result);
-        self.skeletal_entity_assets = load_result.skinned_entities;
+        // The skeletons and clips the models brought, for the scene's
+        // subsystems' builders (the animation package's, #1620)
+        self.scene_models = Some(load_result);
 
         // Meshes swept along the scene's splines (#750), each with its
         // collider unless it says `collider = false`
@@ -359,28 +357,8 @@ impl PlayerApp {
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
         drop(audio_note);
 
-        let animation_note = frame_notes::begin(NoteKind::AnimationLoad, String::new);
-        load_animations_from_world(
-            &self.core.project,
-            &self.core.scene_path,
-            &mut self.core.animation,
-        );
-        load_sprite_animations_from_world(
-            &self.core.project,
-            &self.core.scene_path,
-            &mut self.core.animation,
-        );
-        load_sequences_from_world(
-            &self.core.project,
-            &self.core.scene_path,
-            &mut self.core.animation,
-        );
-        self.core
-            .animation
-            .initialize(&mut self.core.world)
-            .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
-        drop(animation_note);
-
+        // The animation's load is the animation package's builder now
+        // (#1620), with the scene's subsystems below
         // `particles/*.particles.toml` registered first, so `particle_effect`
         // components resolve on the first sync
         self.refresh_project();

@@ -13,10 +13,6 @@ pub(crate) const RENAMES: &[(&str, &str)] = &[
     ("current_scene", "get_current_scene"),
     ("current_state", "get_current_state"),
     ("state_stack", "get_state_stack"),
-    ("sprite_play", "play_sprite"),
-    ("sprite_stop", "stop_sprite"),
-    ("sprite_set_speed", "set_sprite_speed"),
-    ("sprite_is_playing", "is_sprite_playing"),
     ("camera_follow", "follow_with_camera"),
     ("camera_follow_position", "get_camera_follow_position"),
     ("camera_follow_set", "set_camera_follow_position"),
@@ -42,7 +38,6 @@ const TO_OPTS: &[(&str, usize, &str, usize)] = &[
     ("draw_line_ex", 10, "draw_line", 5),
     ("draw_sprite_ex", 14, "draw_sprite", 6),
     ("draw_line_3d_ex", 12, "draw_line_3d", 7),
-    ("set_anim_layer_ex", 6, "set_anim_layer", 5),
 ];
 
 #[test]

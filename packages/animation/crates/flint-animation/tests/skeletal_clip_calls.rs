@@ -98,6 +98,7 @@ impl Rig {
         let (mut world, _) = load_scene_string(SCENE, &SchemaRegistry::new()).unwrap();
         let hero = world.get_id("hero").unwrap();
         let mut engine = ScriptEngine::new();
+        engine.declare_enabled_module(&flint_animation::player::ANIMATION_MODULE);
         let ast = engine.compile(SCRIPT).unwrap();
         engine.add_script(hero, ast, "hero.rhai".into());
         engine.call_inits(&mut world);
