@@ -557,7 +557,9 @@ impl SceneWatch {
 /// from, #265, ADR 0114; nothing of a last load; its `[environment]`
 /// levers; its terrain, masked when styled, and its grass, a grass_ground's
 /// over a terrain's, #332), then its models. The viewer loaded no terrain
-/// and read no `[environment]` before.
+/// and read no `[environment]` before. The terrain is the terrain package's
+/// to build since #1615 (`flint_terrain::scene::bind_terrain`), right after
+/// the bind, as the player and `flint render` do.
 fn stage_scene(
     renderer: &mut SceneRenderer,
     device: &wgpu::Device,
@@ -565,13 +567,18 @@ fn stage_scene(
     state: &mut ViewerState,
     binding: SceneBinding,
     config: &ModelLoadConfig,
-) -> flint_render::BoundScene {
+) -> (
+    flint_render::BoundScene,
+    Option<flint_terrain::scene::LoadedTerrain>,
+) {
     let binding = binding
         .with_environment(state.environment.as_ref())
         .with_archetypes(&state.registry);
-    let bound = renderer.bind_scene(device, queue, &state.world, &binding);
+    let mut bound = renderer.bind_scene(device, queue, &state.world, &binding);
+    let terrain =
+        flint_terrain::scene::bind_terrain(renderer, device, queue, &state.world, &mut bound);
     model_loader::load_models_from_world(&mut state.world, renderer, device, queue, config);
-    bound
+    (bound, terrain)
 }
 
 /// The scene as the renderer binds it (#739), which registers the
@@ -882,7 +889,7 @@ impl ViewerApp {
                 &mut scene_renderer,
                 &render_context.device,
                 &render_context.queue,
-                &self.particles.sync,
+                &self.particles.sync.texture_names(),
                 project,
                 scene_dir_of(&state.scene_path),
             );
@@ -1099,6 +1106,12 @@ impl ViewerApp {
         renderer.set_selected_entity(self.scene_tree.selected_entity());
         let state = self.state.lock().unwrap();
         let woozy = state.wooze.is_some();
+        // Each emitter's draw, as the renderer takes it (#1615)
+        let particles = if self.show_particles {
+            self.particles.sync.draw_data()
+        } else {
+            Vec::new()
+        };
         let inputs = FrameInputs {
             time: self.motion_clock.elapsed().as_secs_f64(),
             // History styles decay by the frame's time (#342)
@@ -1117,7 +1130,7 @@ impl ViewerApp {
                 .window
                 .as_ref()
                 .map_or(1.0, |w| w.scale_factor() as f32),
-            particles: self.show_particles.then_some(&self.particles.sync),
+            particles: self.show_particles.then_some(particles.as_slice()),
             ..Default::default()
         };
         renderer.prepare(&context.device, &context.queue, &state.world, &inputs);
@@ -2330,7 +2343,7 @@ impl ViewerApp {
                             renderer,
                             &context.device,
                             &context.queue,
-                            &self.particles.sync,
+                            &self.particles.sync.texture_names(),
                             project,
                             scene_dir_of(&state.scene_path),
                         );

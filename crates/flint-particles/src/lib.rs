@@ -43,7 +43,7 @@ pub use loader::{
 };
 pub use particle::{Particle, ParticleInstance, ParticlePool};
 pub use sim::EmitterFrame;
-pub use sync::{EffectInstance, EffectSource, InstanceKey, ParticleDrawData, ParticleSync};
+pub use sync::{EffectInstance, EffectSource, InstanceKey, ParticleDraw, ParticleSync};
 
 /// Default RNG seed for systems created with [`ParticleSystem::new`].
 pub const DEFAULT_SEED: u32 = 0xDEAD_BEEF;

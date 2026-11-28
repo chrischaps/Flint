@@ -92,13 +92,15 @@ pub(super) struct LoadedGrassInfo {
 /// (#1219), the same surface as the chunks' triangles with no seams.
 pub(super) fn register_terrain_collider(
     physics: &mut PhysicsSystem,
-    loaded: &flint_render::LoadedTerrain,
+    loaded: &flint_terrain::scene::LoadedTerrain,
 ) {
     physics.register_static_heightfield(loaded.entity, &terrain_heightfield(loaded), 0.8, 0.1);
 }
 
 /// A loaded terrain's heights as physics takes them.
-fn terrain_heightfield(loaded: &flint_render::LoadedTerrain) -> flint_physics::StaticHeightfield {
+fn terrain_heightfield(
+    loaded: &flint_terrain::scene::LoadedTerrain,
+) -> flint_physics::StaticHeightfield {
     let grid = loaded.terrain.height_grid();
     flint_physics::StaticHeightfield {
         columns: grid.columns,
@@ -415,7 +417,7 @@ pub(super) fn load_particle_textures_from_world(
         renderer,
         device,
         queue,
-        &particles.sync,
+        &particles.sync.texture_names(),
         project,
         scene_dir_of(scene_path),
     );

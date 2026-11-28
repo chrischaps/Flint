@@ -12,61 +12,9 @@ use crate::particle::ParticlePool;
 use crate::rand::ParticleRng;
 use serde::{Deserialize, Serialize};
 
-/// Blend mode for particle rendering
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
-#[serde(rename_all = "lowercase")]
-pub enum ParticleBlendMode {
-    #[default]
-    Alpha,
-    Additive,
-    /// Texture colour is already multiplied by alpha (`One, OneMinusSrcAlpha`).
-    Premultiplied,
-    /// Darkens what is behind it (`Dst, OneMinusSrcAlpha`).
-    Multiply,
-}
-
-impl ParticleBlendMode {
-    pub const ALL: [ParticleBlendMode; 4] = [
-        ParticleBlendMode::Alpha,
-        ParticleBlendMode::Additive,
-        ParticleBlendMode::Premultiplied,
-        ParticleBlendMode::Multiply,
-    ];
-
-    /// Stable index into per-blend pipeline arrays.
-    pub fn index(self) -> usize {
-        match self {
-            ParticleBlendMode::Alpha => 0,
-            ParticleBlendMode::Additive => 1,
-            ParticleBlendMode::Premultiplied => 2,
-            ParticleBlendMode::Multiply => 3,
-        }
-    }
-
-    /// Additive blending is order-independent and is always drawn last.
-    pub fn is_order_independent(self) -> bool {
-        matches!(self, ParticleBlendMode::Additive)
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "alpha" => Some(Self::Alpha),
-            "additive" => Some(Self::Additive),
-            "premultiplied" => Some(Self::Premultiplied),
-            "multiply" => Some(Self::Multiply),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ParticleBlendMode::Alpha => "alpha",
-            ParticleBlendMode::Additive => "additive",
-            ParticleBlendMode::Premultiplied => "premultiplied",
-            ParticleBlendMode::Multiply => "multiply",
-        }
-    }
-}
+/// Blend mode for particle rendering: the renderer's since #1615, which keys
+/// its pipelines by it (ADR 0138 decision 5); an emitter names one.
+pub use flint_render::ParticleBlendMode;
 
 /// Per-emitter draw ordering of alive particles.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]

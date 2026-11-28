@@ -172,11 +172,10 @@ impl Gpu {
             renderer.update_particles(
                 self.device,
                 self.queue,
-                &[flint_render::ParticleDrawData {
+                &[flint_render::ParticleDraw {
                     instances: &extras.particles,
-                    texture: "",
-                    blend: flint_render::ParticleBlendMode::Additive,
-                    sort_key: 0.0,
+                    blend_mode: flint_render::ParticleBlendMode::Additive,
+                    ..Default::default()
                 }],
             );
         }

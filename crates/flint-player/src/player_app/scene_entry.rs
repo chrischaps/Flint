@@ -182,7 +182,16 @@ impl PlayerApp {
             .take()
             .unwrap_or_else(|| flint_render::SceneBinding::new(self.kept_asset_scope()))
             .with_archetypes(&schemas);
-        let bound = renderer.bind_scene(device, queue, &self.core.world, &binding);
+        let mut bound = renderer.bind_scene(device, queue, &self.core.world, &binding);
+        // The scene's terrain, which the renderer built in `bind_scene`
+        // until #1615: the terrain package's, before the models as it was
+        let terrain = flint_terrain::scene::bind_terrain(
+            renderer,
+            device,
+            queue,
+            &self.core.world,
+            &mut bound,
+        );
         // The core's registry is the scene's (#742), and a game style an
         // extension added since the binding was made is in it
         renderer.set_styles(self.core.styles.clone());
@@ -299,9 +308,9 @@ impl PlayerApp {
             self.scene.post_process.as_ref(),
         );
 
-        // The terrain `bind_scene` loaded: its collider, and its heights for
-        // scripts
-        if let Some(loaded) = bound.terrain {
+        // The terrain loaded after the bind: its collider, and its heights
+        // for scripts
+        if let Some(loaded) = terrain {
             register_terrain_collider(&mut self.core.physics, &loaded);
             self.terrain = Some((loaded.terrain, loaded.config));
         }

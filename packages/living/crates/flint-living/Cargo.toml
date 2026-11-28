@@ -22,7 +22,7 @@ description = "Living props at run time: rings of poses on a frame budget, their
 # turns it on; its build script lists `PACKAGE` from the manifest's `[rust]`.
 player = [
     "dep:flint-package", "dep:flint-render", "dep:flint-ecs", "dep:flint-script",
-    "dep:flint-runtime", "dep:flint-scene", "dep:flint-terrain", "dep:egui", "dep:wgpu",
+    "dep:flint-runtime", "dep:flint-scene", "dep:egui", "dep:wgpu",
     "dep:toml", "dep:rhai", "dep:clap", "flint-procgen/player",
 ]
 # With the debug-hud package too (the manifest's `[with.debug-hud]`, ADR 0137
@@ -53,7 +53,6 @@ flint-ecs = { workspace = true, optional = true }
 flint-script = { workspace = true, optional = true }
 flint-runtime = { workspace = true, optional = true }
 flint-scene = { workspace = true, optional = true }
-flint-terrain = { workspace = true, optional = true }
 flint-debug-ui = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }

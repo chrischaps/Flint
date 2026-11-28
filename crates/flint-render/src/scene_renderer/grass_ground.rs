@@ -12,7 +12,7 @@ use std::path::Path;
 /// What [`load_grass_ground_in`] set: the grass settings and the entity
 /// they came from (the player's grass panel edits them).
 pub struct LoadedGrassGround {
-    pub config: flint_terrain::GrassConfig,
+    pub config: flint_geometry::grass::GrassConfig,
     pub entity_name: String,
 }
 
@@ -51,7 +51,7 @@ pub fn load_grass_ground_in(
         if !ground.exists() {
             continue;
         }
-        let config = flint_terrain::GrassConfig::from_component(&ground, true);
+        let config = flint_geometry::grass::GrassConfig::from_component(&ground, true);
         if !config.enabled {
             return None;
         }
