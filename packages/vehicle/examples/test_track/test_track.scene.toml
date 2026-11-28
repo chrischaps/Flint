@@ -23,8 +23,8 @@ version = "1.0"
 description = "The vehicle package's example: a lap with a straight, a hairpin, a ramp and a change of surface"
 input_config = "input.toml"
 
-# The whole lap from above the closing turn; scripts/chase_camera.rhai
-# follows the kart once the game runs.
+# The whole lap from above the closing turn; the kart's chase camera
+# (the package's `chase_camera`, #1631) takes over once the game runs.
 [camera]
 position = [18.0, 34.0, 38.0]
 target = [-7.0, 0.0, -24.0]
@@ -77,6 +77,8 @@ rigidbody = { body_type = "dynamic", gravity_scale = 2.04 }
 collider = { shape = "box", size = [1.2, 0.5, 2.0], friction = 0.3 }
 vehicle = { top_speed = 24.0 }
 vehicle_input = {}
+# The camera follows it, closer than FlintKart's 8 m for a smaller kart
+chase_camera = { distance = 7.0, height = 3.2 }
 
 [entities.kart_seat]
 parent = "kart"
@@ -118,13 +120,10 @@ bounds = { min = [-0.12, -0.275, -0.275], max = [0.12, 0.275, 0.275] }
 material = { color = [0.06, 0.06, 0.07, 1.0], roughness = 0.8 }
 vehicle_wheel = { drive = true, handbrake = true }
 
-# The game's own logic: the sand's grip and speed (scripts/surfaces.rhai)
-# and the chase camera (scripts/chase_camera.rhai)
+# The game's own logic: the sand's grip and speed (scripts/surfaces.rhai).
+# The camera is the package's: no script.
 [entities.track_rules]
 script = { source = "surfaces.rhai" }
-
-[entities.chase_camera]
-script = { source = "chase_camera.rhai" }
 
 # ---------------------------------------------------------------- the track
 

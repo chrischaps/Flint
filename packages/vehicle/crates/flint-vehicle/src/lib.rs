@@ -9,6 +9,8 @@
 //! - `vehicle_input`, which a player's bindings (`vehicle.driver =
 //!   "player"`) and an AI's script both write: driving, modifiers, a push.
 //! - `vehicle_state`, written for scripts at the frame's `PreScripts`.
+//! - `chase_camera`, on the vehicle the game is played as: the package
+//!   places the kernel's eye behind it at the frame's `View` stage (#1631).
 //! - [`player`]: the package's player part, [`player::PACKAGE`]: the
 //!   subsystem (its hand in each fixed step), the `vehicle` script module
 //!   (`vehicle_place`, `vehicle_wheels`, `vehicle_ids`) and the Vehicles
@@ -25,6 +27,9 @@ pub const VEHICLE_WHEEL: &str = "vehicle_wheel";
 pub const VEHICLE_INPUT: &str = "vehicle_input";
 /// What it is doing, for scripts: `vehicle_state.toml`.
 pub const VEHICLE_STATE: &str = "vehicle_state";
+/// The camera follows it, and the game is played as it:
+/// `chase_camera.toml` (#1631).
+pub const CHASE_CAMERA: &str = "chase_camera";
 
 /// The package's name, as its manifest (`packages/vehicle/package.toml`)
 /// says it.

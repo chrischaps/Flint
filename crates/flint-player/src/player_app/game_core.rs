@@ -351,8 +351,8 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     host.phase_done(Phase::Scripts);
     run_stage(host, Stage::Scripts, Some(config));
 
-    // Fixed-timestep physics + FPS camera/listener follow, against the
-    // poses and joint targets the scripts just wrote
+    // Fixed-timestep physics and the first-person eye, against the poses
+    // and joint targets the scripts just wrote
     let steps_physics = !host.capture();
     // The physics package's frame share (its triangles, `begin_frame`, the
     // character's look) is at `Stage::Scripts`, just above (#1617)
@@ -632,14 +632,20 @@ impl GameCore {
         }
     }
 
-    /// The camera follows the eye a controller placed at `Stage::View`, and
-    /// the listener goes there when the sound runs. Returns where the
-    /// listener goes, when it does.
+    /// The camera to the frame's eye, after `Stage::View` (ADR 0138
+    /// decision 2): whichever controller placed it, physics' first-person
+    /// eye or a package's camera (the vehicle's chase camera, #1631).
+    /// Returns where the listener goes, when the sound runs and an eye was
+    /// placed; with none the camera stays where the scene and the scripts
+    /// put it.
     fn follow_eye(&mut self, config: &StateConfig, camera: &mut Camera) -> Option<Eye> {
         let view = self.resources.get_or_insert_with(PlayerView::default);
         let eye = view.eye?;
         camera.update_first_person(eye.position, eye.yaw, eye.pitch);
         camera.target = eye.target;
+        if let Some(fov) = eye.fov {
+            camera.fov = fov;
+        }
         view.listener = config.runs(AUDIO).then_some(eye);
         view.listener
     }
@@ -721,7 +727,16 @@ impl GameCore {
     /// where it is now. Returns the listener's move for a script-driven
     /// camera (chase cam etc.) that set a position.
     fn apply_script_camera(&mut self, camera: &mut Camera) -> Option<Eye> {
-        let cam = std::mem::take(&mut self.script_requests.camera);
+        let mut cam = std::mem::take(&mut self.script_requests.camera);
+        // An eye's roll (a chase camera's lean, #1631) where the scripts
+        // set none this frame: the overrides level the camera otherwise
+        if cam.roll.is_none() {
+            cam.roll = self
+                .player_view()
+                .eye
+                .map(|eye| eye.roll)
+                .filter(|roll| *roll != 0.0);
+        }
         super::script_commands::apply_camera_overrides(camera, &cam);
         self.script
             .set_camera(camera.position_array(), camera.forward_vector());

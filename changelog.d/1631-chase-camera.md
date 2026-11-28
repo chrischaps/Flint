@@ -1,0 +1,4 @@
+### A vehicle's `chase_camera` follows it with no camera script, at a new `Stage::View` (#1631)
+**Package.** vehicle
+**What changed.** A `chase_camera` component on a vehicle makes it the player and places the camera behind it, looking ahead, once a fixed physics step (FlintKart's chase camera's tuning as the defaults). Per-frame modifiers (`offset`, `roll`, `fov_bonus`, `fov_kick`, `shake`, `cut`, `release`) let a game swing, kick or shake it, or take the shot for a frame. The kernel gains `Stage::View`, between the physics steps and `Stage::Physics`, where a package places `PlayerView::eye`; `flint_runtime::Eye` gains `fov` and `roll`. Extensions and subsystems now hear one more stage. The vehicle package's test track drops its `chase_camera.rhai`.
+**What to do.** A racing game can replace its chase-camera script with `chase_camera = {}` on the player's vehicle, keeping its own shots behind `release`. Code that builds an `Eye` literal adds `fov: None, roll: 0.0`.

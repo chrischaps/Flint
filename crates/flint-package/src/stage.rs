@@ -30,10 +30,11 @@ pub enum Stage {
     /// After the fixed steps, before the camera follows the player: where
     /// a controller places the eye in the kernel's `PlayerView` (ADR 0138
     /// decision 2; physics' character controller until the first-person
-    /// package takes it, #1618). The kernel clears the view's last eye just
-    /// before.
+    /// package takes it, #1618, and the vehicle package's chase camera,
+    /// #1631). The kernel clears the view's last eye just before, and
+    /// moves the camera and the listener to the eye straight after.
     View,
-    /// After the physics steps and the first-person camera.
+    /// After the camera followed the frame's eye.
     Physics,
     /// After the style tweens move on with game time, before the frame's
     /// script commands: where the animation package moves `tween`'s field
