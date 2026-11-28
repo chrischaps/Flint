@@ -131,6 +131,22 @@ The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the sa
 
 The spec is checked against `terrain_v1`'s schema before anything is baked, by path. A key nothing reads is a warning with the key it was probably meant to be (``warning: `height_layers[1].octave` is not a parameter of the noise layer (did you mean `octaves`?)``), and `--strict` makes it an error. A value the bake can't use is an error that stops the run: a splat rule for a layer past 3, a `noise_type` that isn't one, a resolution over 4096. The terrain editor lists the same lines under its Save buttons while the file has them.
 
+### Noise has a sign
+
+A noise layer's raw values are signed: perlin, simplex and value lie in -1..1, ridged in 0..1 (`flint gen --describe terrain_v1` gives each type's range). `blend = "add"` doesn't mind, since the heights are normalized after the last layer. `multiply`, `min`, `max` and `overlay` do. Multiplying the hills by a slow perlin swell, to gather the mountains on one side, turns the land upside down wherever the swell is negative, and for some seeds that is the whole map: the hills sink under a `flatten` floor and erosion's per-texel speckle is all that normalizes (Flint#1695). `range = [from, to]` maps a layer's raw range onto `from..to` and holds it there before `amplitude` scales it, so a multiplier is never negative:
+
+```toml
+[[height_layers]]
+op = "noise"
+noise_type = "perlin"
+octaves = 2
+frequency = 0.55
+blend = "multiply"
+range = [0.0, 1.0]    # -1..1 onto 0..1: the swell scales the land, never flips it
+```
+
+`[1.0, 0.0]` inverts. A layer without `range` blends its raw values, as before. In the terrain editor it is the **Range** box under Amplitude, which shows the raw range while it's off.
+
 ### Saying where the land is
 
 Noise is the same everywhere, so on its own a recipe can't ask for an island or for mountains in the north, and its hills run up to the map's edge and end there in a cut cliff. A `falloff` layer says where the land is: a shape over the map that keeps the heights so far where it is 1 and sinks them where it is 0. Put it after the noise and before any erosion, so the shore it leaves is worn too; a noise layer after it would bring land back to the border.

@@ -326,17 +326,16 @@ pub fn param_schema() -> Json {
                     "type": "object",
                     "required": ["op"],
                     "discriminator": { "propertyName": "op" },
-                    // `--describe` and the README list each op's keys
-                    "x-reference": "branches",
                     "oneOf": [
                         height_op("noise", "Fractal noise, octaves summed and blended into the heights", json!({
-                            "noise_type": { "type": "string", "enum": ["perlin", "simplex", "value", "ridged"], "default": "perlin", "description": "perlin and simplex roll; value is blockier; ridged makes sharp crests (mountain ridges)" },
+                            "noise_type": { "type": "string", "enum": ["perlin", "simplex", "value", "ridged"], "default": "perlin", "description": "perlin and simplex roll; value is blockier; ridged makes sharp crests (mountain ridges). Raw range: perlin, simplex and value -1..1 (signed), ridged 0..1; `range` remaps it" },
                             "octaves": { "type": "integer", "minimum": 1, "maximum": 16, "default": 6, "description": "Noise layers summed, each finer than the last; more adds small detail" },
                             "frequency": { "type": "number", "exclusiveMinimum": 0.0, "default": 2.0, "description": "Features across the whole terrain in the first octave: 1 to 2 is one or two big hills, 8 is many small ones" },
                             "lacunarity": { "type": "number", "exclusiveMinimum": 0.0, "default": 2.0, "description": "Frequency multiplier from one octave to the next" },
                             "persistence": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5, "description": "Amplitude multiplier from one octave to the next; lower is smoother" },
-                            "amplitude": { "type": "number", "default": 1.0, "description": "Scale of this layer's noise (which runs about -1..1) before it is blended in" },
-                            "blend": { "type": "string", "enum": ["add", "multiply", "max", "min", "overlay"], "default": "add", "description": "How the noise combines with the heights so far" }
+                            "amplitude": { "type": "number", "default": 1.0, "description": "Scale of this layer's noise before it is blended in: of its raw range, or of `range` when it has one" },
+                            "range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2, "description": "[from, to]: the noise's raw range mapped onto it and held inside, before amplitude; [1.0, 0.0] inverts. Give a multiply layer [0.0, 1.0]: raw perlin is negative over about half the map, and multiplying by it turns that land upside down. Unset blends the raw values" },
+                            "blend": { "type": "string", "enum": ["add", "multiply", "max", "min", "overlay"], "default": "add", "description": "How the noise combines with the heights so far. multiply, max, min and overlay read the noise's sign: shape a region with multiply and range = [0.0, 1.0]" }
                         })),
                         height_op("flatten", "Pull heights below (or above) a level toward it: valley floors, plateaus, lake beds", json!({
                             "height": { "type": "number", "default": 0.1, "description": "The level, in the heights' units so far (normalizing comes after the last layer)" },
@@ -639,5 +638,60 @@ height_min = 0.4
         let meadow = g.estimate_cost(&from_terrain_toml(MEADOW).unwrap());
         assert_eq!(small.estimated_texture_bytes, 24 * 24 * 6);
         assert!(meadow.estimated_generation_ms > small.estimated_generation_ms);
+    }
+
+    /// #1695: `--describe terrain_v1` prints the noise layer's keys, `range`
+    /// among them, and each noise type's raw range as the bake has it.
+    #[test]
+    fn describe_gives_each_noise_types_raw_range() {
+        use flint_terrain::spec::NoiseType;
+        let schema = param_schema();
+        let branches = crate::tagged_branches(&schema);
+        let noise = branches
+            .iter()
+            .find(|b| b.key == "height_layers" && b.value == "noise")
+            .expect("the noise layer is a tagged branch");
+        let text = crate::param_reference_text(noise.schema);
+        assert!(text.contains("range        list of numbers"), "{text}");
+        let shown = |t: NoiseType| {
+            let [lo, hi] = t.raw_range();
+            format!("{lo}..{hi}")
+        };
+        let signed = [NoiseType::Perlin, NoiseType::Simplex, NoiseType::Value];
+        assert!(signed.iter().all(|&t| shown(t) == shown(NoiseType::Perlin)));
+        let said = format!(
+            "perlin, simplex and value {} (signed), ridged {}",
+            shown(NoiseType::Perlin),
+            shown(NoiseType::Ridged)
+        );
+        assert!(text.contains(&said), "{said} not in:\n{text}");
+        // Every op is a branch, so flatten, erosion and falloff print their
+        // keys too
+        let ops: Vec<&str> = branches.iter().map(|b| b.value).collect();
+        assert_eq!(ops, ["noise", "flatten", "erosion", "falloff"]);
+    }
+
+    /// A layer's `range` reaches the bake: the procgen spelling with it
+    /// bakes what the terrain types do, and differently from without.
+    #[test]
+    fn a_range_reaches_the_bake() {
+        let ranged = format!(
+            "{}\n[[height_layers]]\nop = \"noise\"\nblend = \"multiply\"\nrange = [0.0, 1.0]\n",
+            small()
+        );
+        let raw = ranged.replace("range = [0.0, 1.0]\n", "");
+        let spec = from_terrain_toml(&ranged).unwrap();
+        assert!(validate_params(&param_schema(), &spec.params).is_empty());
+        let terrain = terrain_spec(&spec, 3).unwrap();
+        let flint_terrain::spec::HeightLayer::Noise(n) = terrain.height_layers.last().unwrap()
+        else {
+            panic!("the last layer is noise")
+        };
+        assert_eq!(n.range, Some([0.0, 1.0]));
+        assert_ne!(
+            generate(&spec),
+            generate(&from_terrain_toml(&raw).unwrap()),
+            "range changed nothing"
+        );
     }
 }
