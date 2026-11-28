@@ -238,6 +238,7 @@ mod tests {
         package: "grove",
         components: &["grove_tree", "grove_moss"],
         scene_tables: &["grove", "breeze"],
+        archetypes: &[],
         does: Some("stand still"),
         policies: &["grove"],
     };
@@ -316,6 +317,7 @@ mod tests {
             let m = manifests.get(without.package).unwrap();
             assert_eq!(without.components, m.provides.components);
             assert_eq!(without.scene_tables, m.provides.scene_tables);
+            assert_eq!(without.archetypes, m.provides.archetypes);
             assert_eq!(without.does, m.without.does.as_deref());
             assert_eq!(without.policies, m.without.policies);
         }

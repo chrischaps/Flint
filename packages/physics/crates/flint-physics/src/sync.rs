@@ -195,6 +195,9 @@ pub struct PhysicsSync {
     /// frame; the scripted target is reached by interpolating from here across
     /// the frame's steps (see `update_kinematic_bodies`)
     kin_frame_start: HashMap<RigidBodyHandle, Isometry<f32>>,
+    /// Kinematic bodies a controller moves itself (`PhysicsSystem::drive`,
+    /// #1618): their next pose is never read from the transform
+    pub(crate) driven: HashSet<EntityId>,
 }
 
 impl PhysicsSync {
@@ -225,6 +228,7 @@ impl PhysicsSync {
         self.lone_reported.clear();
         self.kin_start.clear();
         self.kin_frame_start.clear();
+        self.driven.clear();
     }
 
     /// Push Flint entities with rigidbody/collider components into Rapier
@@ -965,12 +969,13 @@ impl PhysicsSync {
                 continue;
             }
 
-            let Some(components) = world.get_components(entity_id) else {
+            if world.get_components(entity_id).is_none() {
                 continue;
-            };
+            }
 
-            // Skip entities driven by the character controller (player)
-            if components.has(comp::CHARACTER_CONTROLLER) {
+            // Skip a body its controller moves itself (`drive`: the
+            // first-person package's player, #1618)
+            if self.driven.contains(&entity_id) {
                 continue;
             }
 

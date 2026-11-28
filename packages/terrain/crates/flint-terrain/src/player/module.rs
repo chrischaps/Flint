@@ -2,6 +2,7 @@
 //! package's since #1623 (ADR 0138 decision 3): it was flint-script's,
 //! reading a sampler the player installed.
 
+use flint_geometry::heightmap::Heightmap;
 use flint_package::bind::SceneGround;
 use flint_script::api::builder::kind::Num;
 use flint_script::api::Module;
@@ -29,7 +30,7 @@ impl ScriptModule for TerrainModule {
     fn declare(&self, m: &mut Module<'_>) {
         m.func(
             "terrain_height",
-            "The world-space height of the terrain at world (x, z).",
+            "The world-space height of the terrain's drawn surface at world (x, z), wherever its transform puts it.",
         )
         .arg("x", Num)
         .arg("z", Num)
@@ -48,12 +49,11 @@ impl ScriptModule for TerrainModule {
 #[derive(Default, Clone)]
 pub struct TerrainHeight(Option<Arc<Samples>>);
 
-/// What `terrain_height` samples: the heightmap's samples spread over the
-/// terrain's world size, as the player sampled them before #1623.
+/// What `terrain_height` samples: the heightmap spread over the terrain's
+/// world size, where the entity's transform puts its first corner.
 struct Samples {
-    heights: Vec<f32>,
-    columns: u32,
-    rows: u32,
+    heightmap: Heightmap,
+    origin: [f32; 3],
     size: [f32; 2],
     height_scale: f32,
 }
@@ -63,9 +63,8 @@ impl TerrainHeight {
     pub fn of(ground: Option<&SceneGround>) -> Self {
         Self(ground.map(|g| {
             Arc::new(Samples {
-                heights: g.heightmap.clone_heights(),
-                columns: g.heightmap.width,
-                rows: g.heightmap.depth,
+                heightmap: g.heightmap.clone(),
+                origin: g.origin,
                 size: g.size,
                 height_scale: g.height_scale,
             })
@@ -74,34 +73,18 @@ impl TerrainHeight {
 
     /// The terrain's height at world (x, z); 0.0 with no terrain.
     ///
-    /// The bits the player's sampler gave since it was written: (x, z) is
-    /// read from the heightmap's corner (the terrain's transform is not
-    /// taken off), and a point off the map extrapolates its edge cell.
+    /// The drawn surface (#1691): (x, z) is taken into the terrain's own
+    /// frame by its transform's position, sampled as `sample_world` and the
+    /// mesh sample it, and the position's y added. A point off the map reads
+    /// the nearest edge's height. Until #1691 it read world (x, z) from the
+    /// map's corner, right only for a terrain at the origin.
     pub fn at(&self, x: f32, z: f32) -> f32 {
         let Some(s) = &self.0 else {
             return 0.0;
         };
-        let (hm_w, hm_d) = (s.columns, s.rows);
-        // Convert world coords to normalized UV
-        let u = x / s.size[0];
-        let v = z / s.size[1];
-        // Bilinear sample from heights array
-        let fx = u * (hm_w as f32 - 1.0);
-        let fz = v * (hm_d as f32 - 1.0);
-        let ix = (fx as u32).min(hm_w - 2);
-        let iz = (fz as u32).min(hm_d - 2);
-        let tx = fx - ix as f32;
-        let tz = fz - iz as f32;
-        let idx = |col: u32, row: u32| -> f32 { s.heights[(row * hm_w + col) as usize] };
-        let h00 = idx(ix, iz);
-        let h10 = idx(ix + 1, iz);
-        let h01 = idx(ix, iz + 1);
-        let h11 = idx(ix + 1, iz + 1);
-        let h = h00 * (1.0 - tx) * (1.0 - tz)
-            + h10 * tx * (1.0 - tz)
-            + h01 * (1.0 - tx) * tz
-            + h11 * tx * tz;
-        h * s.height_scale
+        let u = (x - s.origin[0]) / s.size[0];
+        let v = (z - s.origin[2]) / s.size[1];
+        s.heightmap.sample(u, v) * s.height_scale + s.origin[1]
     }
 }
 
@@ -111,6 +94,10 @@ mod tests {
     use flint_geometry::heightmap::{HeightGrid, Heightmap};
 
     fn ground(heights: Vec<f32>, n: u32, size: f32, scale: f32) -> SceneGround {
+        placed(heights, n, size, scale, [0.0; 3])
+    }
+
+    fn placed(heights: Vec<f32>, n: u32, size: f32, scale: f32, origin: [f32; 3]) -> SceneGround {
         SceneGround {
             entity: flint_core::EntityId::from_raw(1),
             name: "hills".into(),
@@ -121,7 +108,7 @@ mod tests {
                 width: size,
                 depth: size,
             },
-            origin: [0.0; 3],
+            origin,
             heightmap: Heightmap::from_raw(heights, n, n),
             size: [size, size],
             height_scale: scale,
@@ -142,5 +129,59 @@ mod tests {
         assert_eq!(h.at(0.0, 0.0), 0.0);
         assert_eq!(h.at(10.0, 5.0), 20.0);
         assert!((h.at(2.5, 7.0) - 5.0).abs() < 1e-5);
+    }
+
+    /// A terrain away from the origin, centred and sunk as a game puts an
+    /// island (#1691): `terrain_height` is the drawn surface there, which is
+    /// `sample_world` in the terrain's own frame, moved by its transform.
+    #[test]
+    fn a_placed_terrain_reads_the_surface_its_transform_puts_there() {
+        use crate::{HeightmapFiles, Terrain, TerrainConfig};
+        let n = 9u32;
+        let heights: Vec<f32> = (0..n * n)
+            .map(|i| ((i * 37 % 101) as f32) / 100.0)
+            .collect();
+        let (size, scale, origin) = (64.0, 20.0, [-32.0, -5.0, -32.0]);
+        let h = TerrainHeight::of(Some(&placed(heights.clone(), n, size, scale, origin)));
+        let config = TerrainConfig {
+            heightmap_path: String::new(),
+            width: size,
+            depth: size,
+            height_scale: scale,
+            chunk_resolution: 4,
+            texture_tile: 1.0,
+            splat_map_path: String::new(),
+            layer_textures: Default::default(),
+            metallic: 0.0,
+            roughness: 1.0,
+            grass: None,
+        };
+        let map = Heightmap::from_raw(heights, n, n);
+        let drawn =
+            |x: f32, z: f32| map.sample_world(x - origin[0], z - origin[2], &config) + origin[1];
+        for (x, z) in [
+            (0.0, 0.0),
+            (-31.0, -17.5),
+            (-3.25, 12.0),
+            (20.0, -30.0),
+            (31.9, 31.9),
+            (-32.0, 32.0),
+        ] {
+            let (got, want) = (h.at(x, z), drawn(x, z));
+            assert!(
+                (got - want).abs() < 1e-4,
+                "({x}, {z}): {got} vs the surface's {want}"
+            );
+        }
+        // Every vertex of the drawn mesh, where the transform puts it
+        let terrain = Terrain::generate(&map, &config);
+        for p in terrain.chunks.iter().flat_map(|c| &c.positions) {
+            let (x, y, z) = (p[0] + origin[0], p[1] + origin[1], p[2] + origin[2]);
+            let got = h.at(x, z);
+            assert!((got - y).abs() < 1e-4, "vertex ({x}, {y}, {z}): {got}");
+        }
+        // Off the map, the edge's height: the drawn surface ends there
+        assert!((h.at(-100.0, 0.0) - drawn(-32.0, 0.0)).abs() < 1e-4);
+        assert!((h.at(0.0, 500.0) - drawn(0.0, 32.0)).abs() < 1e-4);
     }
 }

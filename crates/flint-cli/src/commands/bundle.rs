@@ -1863,6 +1863,8 @@ mod tests {
     const PARTICLES: &str = "engine/packages/particles/schemas";
     // A standard package (#1617): in unless a list says `physics = false`
     const PHYSICS: &str = "engine/packages/physics/schemas";
+    // A standard package (#1618): in unless a list says `first-person = false`
+    const FIRST_PERSON: &str = "engine/packages/first-person/schemas";
 
     fn packed_under(gathered: &Gathered, dir: &str) -> bool {
         gathered
@@ -1878,14 +1880,15 @@ mod tests {
         let listed = package_game("listed", Some("living = \"*\"\n"), "");
         let gathered = gather_game(&args(&listed)).unwrap();
         // Animation, flipbook (#1620), particles (#1622), physics (#1617), rig
-        // (#1621) and terrain (#1623)
-        // are standard: in unless set false
+        // (#1621), terrain (#1623) and first person (#1618) are standard: in
+        // unless set false
         assert_eq!(
             gathered.schemas,
             [
                 "engine/schemas",
                 ANIMATION,
                 AUDIO,
+                FIRST_PERSON,
                 FLIPBOOK,
                 LIVING,
                 PARTICLES,
@@ -1899,8 +1902,8 @@ mod tests {
         assert!(gathered.packages.as_ref().unwrap().is_on("living"));
 
         // An empty table: the feature packages are all out, the standard
-        // ones with schemas (animation, flipbook, particles, physics, rig,
-        // terrain) in
+        // ones with schemas (animation, first person, flipbook, particles,
+        // physics, rig, terrain) in
         let game = package_game("none_listed", Some(""), "");
         let gathered = gather_game(&args(&game)).unwrap();
         assert_eq!(
@@ -1909,6 +1912,7 @@ mod tests {
                 "engine/schemas",
                 ANIMATION,
                 AUDIO,
+                FIRST_PERSON,
                 FLIPBOOK,
                 PARTICLES,
                 PHYSICS,
@@ -1920,6 +1924,7 @@ mod tests {
             k.starts_with("engine/packages/")
                 && !k.starts_with(&format!("{ANIMATION}/"))
                 && !k.starts_with(&format!("{AUDIO}/"))
+                && !k.starts_with(&format!("{FIRST_PERSON}/"))
                 && !k.starts_with(&format!("{FLIPBOOK}/"))
                 && !k.starts_with(&format!("{RIG}/"))
                 && !k.starts_with(&format!("{PARTICLES}/"))
@@ -1935,6 +1940,7 @@ mod tests {
             k.contains("packages/")
                 && !k.contains("packages/animation/")
                 && !k.contains("packages/audio/")
+                && !k.contains("packages/first-person/")
                 && !k.contains("packages/flipbook/")
                 && !k.contains("packages/rig/")
                 && !k.contains("packages/particles/")
@@ -2008,6 +2014,7 @@ mod tests {
                 "engine/schemas",
                 ANIMATION,
                 AUDIO,
+                FIRST_PERSON,
                 FLIPBOOK,
                 LIVING,
                 MUSIC,

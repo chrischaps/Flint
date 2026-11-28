@@ -8,18 +8,19 @@
 //! | when | what |
 //! |---|---|
 //! | `scene_read` (before the models load) | which model each mesh collider names |
-//! | the builder (the scene's entry) | the host's surfaces, the project's layers, the mesh colliders' triangles, the bodies (`initialize`), who the player is |
-//! | `Stage::Scripts` | the made and runtime meshes' triangles, the frame's span for kinematic bodies (`begin_frame`), the character's look and jump press |
-//! | step `Control` | the character's walk |
+//! | the builder (the scene's entry) | the host's surfaces, the project's layers, the mesh colliders' triangles, the bodies (`initialize`) |
+//! | `Stage::Scripts` | the made and runtime meshes' triangles, the frame's span for kinematic bodies (`begin_frame`) |
 //! | step `SyncIn` | new bodies and joints, kinematic poses, colliders, joint targets |
 //! | step `Integrate` | Rapier's step, the contacts onto the bus, poses back |
-//! | `Stage::View` | the player's eye |
 //! | `Stage::MadeAssets` | the ocean hulls' velocities, for the frame's foam |
 //! | `scene_unloading` | everything cleared |
 //!
 //! A capture (`flint render --scripts`) steps no physics: its subsystem
-//! finds the player by the controller's rule and enables the modules, and
-//! nothing else.
+//! enables the modules and nothing else.
+//!
+//! The character controller, its walk at step `Control` and its eye at
+//! `Stage::View` are the first-person package's (#1618), which requires
+//! this one and runs after it at each stage.
 
 mod colliders;
 mod module;

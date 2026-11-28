@@ -509,7 +509,8 @@ mod tests {
         let found = scan(&root, &files, &engine_packages());
         assert_eq!(
             found.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["living", "physics", "procgen"]
+            // Its walker is the first-person package's (#1618)
+            ["first-person", "living", "physics", "procgen"]
         );
         let living = &found["living"];
         assert!(living
@@ -523,7 +524,12 @@ mod tests {
         assert!(found["procgen"].required_by.contains("living"));
         assert_eq!(
             lines(&engine_packages(), &found),
-            ["physics = \"*\"", "procgen = \"*\"", "living = \"*\""]
+            [
+                "first-person = \"*\"",
+                "physics = \"*\"",
+                "procgen = \"*\"",
+                "living = \"*\""
+            ]
         );
         // Procgen is used, so it isn't named to leave out; nothing scanned
         // animates (#1620), emits (#1622) or poses (#1621), so animation,
@@ -556,6 +562,7 @@ mod tests {
             [
                 "animation",
                 "audio",
+                "first-person",
                 "flipbook",
                 "particles",
                 "physics",
@@ -605,6 +612,7 @@ mod tests {
             left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
             [
                 "animation",
+                "first-person",
                 "flipbook",
                 "particles",
                 "physics",

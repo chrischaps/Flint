@@ -211,6 +211,8 @@ flint-widgets = { path = "crates/flint-widgets" }
 flint-runtime = { path = "crates/flint-runtime" }
 # The physics package (#1617): its crate in its folder
 flint-physics = { path = "packages/physics/crates/flint-physics" }
+# The first-person package (#1618): the character controller, on physics
+flint-first-person = { path = "packages/first-person/crates/flint-first-person" }
 flint-package = { path = "crates/flint-package" }
 # The crates that open devices take default-features = false here, so a
 # dependent says which devices it wants (#221): `device` (sound) on

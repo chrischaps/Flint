@@ -341,7 +341,7 @@ impl PlayerApp {
     /// subsystems hear the scene loaded, before the scripts' first frame.
     fn start_scene_systems(&mut self, entry: SceneEntry) -> Result<()> {
         // Who the scene is played as starts over: a controller's builder
-        // says it below (physics' character controller, #1617), before the
+        // says it below (the first-person package's, #1618), before the
         // cursor and the controls line at the end of the entry and
         // `on_init`'s interactables read it (ADR 0138, #1614). The scene's
         // bodies are the physics package's builder's too. Each system's
