@@ -717,7 +717,7 @@ Each module belongs to a package ([Packages](../concepts/packages.md)). A game w
 
 | Function | Returns | Description |
 |---|---|---|
-| `terrain_height(x: num, z: num)` | `num`: metres; 0.0 when no terrain is loaded | The world-space height of the terrain at world (x, z). |
+| `terrain_height(x: num, z: num)` | `num`: metres; 0.0 when no terrain is loaded | The world-space height of the terrain's drawn surface at world (x, z), wherever its transform puts it. |
 
 ## The `living` package
 

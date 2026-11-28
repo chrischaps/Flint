@@ -246,7 +246,7 @@ This is useful for:
 - **Camera clamping** --- prevent the camera from going below ground
 - **Vegetation scattering** --- place objects at correct heights
 
-The function uses bilinear interpolation on the heightmap data, matching the rendered surface exactly. It returns 0.0 if no terrain is loaded.
+The function uses bilinear interpolation on the heightmap data, matching the rendered surface exactly wherever the terrain entity's `transform.position` puts it: a terrain centred at `[-128, 0, -128]` answers for world (0, 0) with the height at the middle of its map, and one sunk to y = -51 answers 51 m lower. A point off the map reads the nearest edge's height. It returns 0.0 if no terrain is loaded.
 
 ## Rendering
 
