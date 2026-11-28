@@ -33,6 +33,7 @@
     ["ai", "feature"],
     ["living", "feature"],
     ["music", "feature"],
-    ["rhythm", "feature"]
+    ["rhythm", "feature"],
+    ["vehicle", "feature"]
   ]
 }

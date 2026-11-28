@@ -113,6 +113,28 @@ Most of a vehicle is in its components. The module adds what a component can't s
 
 With the debug-hud package in the build, F3 has a Vehicles panel in a scene with a vehicle. It shows each vehicle's speed, slip and yaw rate against the assist's target, and each wheel's contact, spring and slip. It also has sliders for the drive, assists, tyres and springs, which write `vehicle` and so drive the next step. A build without debug-hud has no panel.
 
+## The Test Track
+
+The package ships an example, `packages/vehicle/examples/test_track/`: one small lap that a playtest drives, and the regression test every change to the package runs. A start straight north, a hairpin, a back straight with a 12 degree ramp on it, a patch of sand, and a closing turn back over the line. Every piece is a static box, so the playtest needs no `--render`. The sand is the game's, not the package's: `scripts/surfaces.rhai` scales each vehicle's `grip_scale`, `speed_scale` and `accel_bonus` by the share of its wheels on it, every frame, which is how a game shapes the drive without forking it. A chase camera follows the kart in `flint play`.
+
+![The kart halfway round the test track's hairpin, its front wheels steered](../images/vehicle-mid-corner.png)
+
+*The kart 4.9 s into the playtest's lap, at 12.3 m/s halfway round the hairpin, the front wheels steered and each wheel posed on its spring by the package. The pose is the playtest's, written into a frozen copy of the scene, and the picture is the golden `vehicle-mid-corner`.*
+
+```bash
+flint play packages/vehicle/examples/test_track/test_track.scene.toml
+flint playtest packages/vehicle/examples/test_track/test_track.scene.toml \
+  --input-script packages/vehicle/examples/test_track/playtests/lap.input \
+  --test-script packages/vehicle/examples/test_track/playtests/referee.rhai \
+  --timeout 30
+```
+
+`playtests/lap.input` is one lap on a pad: the left stick steers (`axis LeftStickX`), the triggers drive and brake (`pull`). `playtests/referee.rhai` fails the run when the kart leaves the track (a wheel's `ground` is the runoff around it), flips (its up more than 60 degrees from the world's) or doesn't take the hairpin, the back straight and the closing turn in order and cross the line within 20 s. At the line it logs `lap_time`, `top_speed`, `longest_airtime`, `slowest_on_sand`, `least_up` and `widest_off_centre` and passes. Pass `--timeout`: a playtest with neither it nor `--exit-after` passes at 10 s, before the lap ends.
+
+CI's headless job plays the lap at 1/60, 1/30 and 1/144 s frames (`playtests/lap_check.py`) and fails on any failed run or on laps more than 0.1 s apart, ADR 0140's tolerance. Measured when it was written: 12.092, 12.104 and 12.094 s, the kart at most 0.84 m off the centre line of a 7 m road and 0.67 s in the air off the ramp.
+
+The input is a recording. A key script tuned by hand left the hairpin 3 degrees off and was on the runoff 40 m later, since nothing open-loop corrects. `playtests/pilot.rhai` is a closed-loop driver (pure pursuit on the centre line, a speed held for each part of it) that writes what it does as input-script lines, changing them only every 0.1 s and 20 ms before a 1/30 s frame. When a change to the handling is meant to move the lap, record it again (`pilot.rhai` says how) and check the referee still passes it.
+
 ## Not Yet
 
 - The chassis' contacts are found by the package against the last step's colliders, since a fixed step can't read Rapier's contact manifolds ([#1649](https://github.com/chrischaps/Flint/issues/1649)).
