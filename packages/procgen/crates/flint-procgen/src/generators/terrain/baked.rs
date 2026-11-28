@@ -312,7 +312,7 @@ pub fn param_schema() -> Json {
             })),
             "height_layers": {
                 "type": "array",
-                "description": "The height recipe, run in order on a grid starting at 0: `noise` adds fractal noise, `flatten` pulls heights toward a level, `erosion` wears them",
+                "description": "The height recipe, run in order on a grid starting at 0: `noise` adds fractal noise, `flatten` pulls heights toward a level, `erosion` wears them, `falloff` says where the land is (an island, a coast)",
                 "items": {
                     "type": "object",
                     "required": ["op"],
@@ -337,6 +337,17 @@ pub fn param_schema() -> Json {
                             "iterations": { "type": "integer", "minimum": 0, "default": 50, "description": "Passes (thermal) or hundreds of droplets (hydraulic); the bake's cost grows with it" },
                             "talus_angle": { "type": "number", "minimum": 0.0, "default": 0.6, "description": "The steepest slope thermal erosion leaves alone; hydraulic doesn't read it" },
                             "strength": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3, "description": "How much each pass moves" }
+                        })),
+                        height_op("falloff", "Say where the land is: a shape over the map keeps the heights so far where it is 1 and sinks them where it is 0. Map coordinates run 0..1, u along +X and v along +Z. Put it after the noise and before erosion; a noise layer after it brings land back to the border", json!({
+                            "shape": { "type": "string", "enum": ["island", "edge", "radial", "gradient"], "default": "island", "description": "island: a disc that also fades out at the border, so the land never reaches the edge for any seed; edge: only the border fades; radial: a disc that may cross the border; gradient: land rises toward `direction`" },
+                            "center": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2, "default": [0.5, 0.5], "description": "[u, v]: the disc's middle (island, radial) or the line the gradient rises from" },
+                            "radius": { "type": "number", "minimum": 0.0, "default": 0.25, "description": "How far from center the land is kept whole (island, radial)" },
+                            "width": { "type": "number", "minimum": 0.0, "default": 0.2, "description": "How far the shape fades out: past radius, in from the border (island, edge) or past the line (gradient)" },
+                            "curve": { "type": "number", "minimum": 0.0, "default": 1.0, "description": "The fade's exponent: above 1 shrinks the land toward where it is whole (steeper shores), below 1 widens it" },
+                            "direction": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2, "default": [0.0, -1.0], "description": "[u, v] the gradient rises toward; [0, -1] is toward -Z" },
+                            "invert": { "type": "boolean", "default": false, "description": "Keep the land outside the shape instead: a crater, a lake, a bay" },
+                            "blend": { "type": "string", "enum": ["sink", "multiply", "add"], "default": "sink", "description": "sink pulls the heights toward the lowest of them where the shape is 0, whatever the noise's sign; multiply scales them by the shape; add raises them by the shape times amplitude (a plateau)" },
+                            "amplitude": { "type": "number", "default": 1.0, "description": "What add raises the shape by, in the heights' units so far; only add reads it" }
                         }))
                     ]
                 }
@@ -378,6 +389,8 @@ mod tests {
     const MEADOW: &str = include_str!(
         "../../../../../../../tests/fixtures/scenes/terrain/rolling_meadow.terrain.toml"
     );
+    const ISLAND: &str =
+        include_str!("../../../../../../../tests/fixtures/scenes/terrain/island.terrain.toml");
 
     fn small() -> &'static str {
         r#"
@@ -491,7 +504,7 @@ height_min = 0.4
     #[test]
     fn the_fixture_and_the_editors_default_have_nothing_unread() {
         let default = toml::to_string(&TerrainSpec::default_spec("d")).unwrap();
-        for text in [MEADOW, small(), default.as_str()] {
+        for text in [MEADOW, ISLAND, small(), default.as_str()] {
             let spec = from_terrain_toml(text).unwrap();
             let issues = validate_params(&param_schema(), &spec.params);
             assert!(issues.is_empty(), "{issues:?}");
@@ -509,6 +522,7 @@ height_min = 0.4
             toml::from_str("op = \"noise\"").unwrap(),
             toml::from_str("op = \"flatten\"").unwrap(),
             toml::from_str("op = \"erosion\"").unwrap(),
+            toml::from_str("op = \"falloff\"").unwrap(),
         ];
         full.splat_rules = vec![toml::from_str("layer = 1").unwrap()];
         full.grass = Some(GrassConfig::default());

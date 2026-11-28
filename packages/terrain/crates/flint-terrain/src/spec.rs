@@ -157,6 +157,7 @@ pub enum HeightLayer {
     Noise(NoiseLayer),
     Flatten(FlattenLayer),
     Erosion(ErosionLayer),
+    Falloff(FalloffLayer),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +268,105 @@ fn default_talus() -> f64 {
 }
 fn default_erosion_strength() -> f64 {
     0.3
+}
+
+/// Where the land is (#1694): a shape over the map, 1 where the heights so
+/// far are kept and 0 where they go, applied by `blend`. Map coordinates run
+/// 0 to 1: `[u, v]`, u along +X (the terrain's width), v along +Z (its depth),
+/// `[0, 0]` the corner at the terrain's origin.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FalloffLayer {
+    #[serde(default)]
+    pub shape: FalloffShape,
+    /// The shape's middle (`island`, `radial`) or the line the land rises
+    /// from (`gradient`), in map coordinates.
+    #[serde(default = "default_falloff_center")]
+    pub center: [f64; 2],
+    /// How far from `center` the land is kept whole (`island`, `radial`).
+    #[serde(default = "default_falloff_radius")]
+    pub radius: f64,
+    /// How far the shape fades from whole to nothing: past `radius`, in from
+    /// the border (`island`, `edge`), or past the line (`gradient`).
+    #[serde(default = "default_falloff_width")]
+    pub width: f64,
+    /// The fade's exponent: 1 is a smooth S, above 1 shrinks the land toward
+    /// where it is whole (steeper shores), below 1 widens it.
+    #[serde(default = "default_1f")]
+    pub curve: f64,
+    /// Which way the land rises (`gradient`), as `[u, v]`; `[0, -1]` is
+    /// toward -Z.
+    #[serde(default = "default_falloff_direction")]
+    pub direction: [f64; 2],
+    /// Keep the land outside the shape instead: a crater, a lake, a bay.
+    #[serde(default)]
+    pub invert: bool,
+    #[serde(default)]
+    pub blend: FalloffBlend,
+    /// What `add` raises the whole shape by, in the heights' units so far.
+    #[serde(default = "default_1f")]
+    pub amplitude: f64,
+}
+
+impl Default for FalloffLayer {
+    fn default() -> Self {
+        Self {
+            shape: FalloffShape::default(),
+            center: default_falloff_center(),
+            radius: default_falloff_radius(),
+            width: default_falloff_width(),
+            curve: 1.0,
+            direction: default_falloff_direction(),
+            invert: false,
+            blend: FalloffBlend::default(),
+            amplitude: 1.0,
+        }
+    }
+}
+
+fn default_falloff_center() -> [f64; 2] {
+    [0.5, 0.5]
+}
+fn default_falloff_radius() -> f64 {
+    0.25
+}
+fn default_falloff_width() -> f64 {
+    0.2
+}
+fn default_falloff_direction() -> [f64; 2] {
+    [0.0, -1.0]
+}
+
+/// A falloff's shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FalloffShape {
+    /// A disc that also fades to nothing at the map's border, whatever its
+    /// center and radius: the land never reaches the edge.
+    #[default]
+    Island,
+    /// Only the border, faded in over `width`: the land fills the map but
+    /// stops short of its edge.
+    Edge,
+    /// A disc around `center`, which may cross the border (a corner
+    /// mountain).
+    Radial,
+    /// A straight rise toward `direction` from the line through `center`:
+    /// mountains in the north, a coast along one side.
+    Gradient,
+}
+
+/// How a falloff's shape meets the heights so far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FalloffBlend {
+    /// Pull the heights toward the lowest of them where the shape is 0: the
+    /// border lands on the map's floor whatever the noise's sign.
+    #[default]
+    Sink,
+    /// Multiply the heights by the shape (0 is height 0, not the floor).
+    Multiply,
+    /// Raise the heights by the shape times `amplitude`: a plateau, a ridge.
+    Add,
 }
 
 /// Rule for automatic splat map generation based on height/slope
@@ -605,6 +705,39 @@ height_max = 0.5
             HeightLayer::Erosion(e) => assert_eq!(e.kind, ErosionKind::Hydraulic),
             _ => panic!("Expected erosion layer"),
         }
+    }
+
+    #[test]
+    fn a_falloff_reads_its_fields_and_defaults_the_rest() {
+        let (spec, issues) = TerrainSpec::parse_checked(
+            r#"
+[meta]
+name = "coast"
+
+[[height_layers]]
+op = "falloff"
+shape = "gradient"
+direction = [1.0, 0.0]
+invert = true
+
+[[height_layers]]
+op = "falloff"
+"#,
+        )
+        .unwrap();
+        assert!(issues.is_empty(), "{issues:?}");
+        let HeightLayer::Falloff(coast) = &spec.height_layers[0] else {
+            panic!("not a falloff: {:?}", spec.height_layers[0]);
+        };
+        assert_eq!(coast.shape, FalloffShape::Gradient);
+        assert_eq!(coast.direction, [1.0, 0.0]);
+        assert!(coast.invert);
+        assert_eq!(coast.blend, FalloffBlend::Sink);
+        let HeightLayer::Falloff(island) = &spec.height_layers[1] else {
+            panic!("not a falloff");
+        };
+        assert_eq!(island, &FalloffLayer::default());
+        assert_eq!(island.shape, FalloffShape::Island);
     }
 
     #[test]

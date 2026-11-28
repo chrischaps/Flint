@@ -97,7 +97,7 @@ Splat maps can be painted manually in any image editor that supports RGBA channe
 
 ## Generating Terrain From a Spec
 
-A `.terrain.toml` spec describes both maps as a recipe: `[geometry]` (size, height and resolution), a list of `[[height_layers]]` run in order (`op = "noise"`, `"flatten"` or `"erosion"`), and `[[splat_rules]]` that paint each layer by height, slope and noise. [`flint-examples/rolling_meadow.terrain.toml`](https://github.com/chrischaps/flint-examples/blob/main/rolling_meadow.terrain.toml) is one. Shape it by eye in the terrain editor (`flint edit x.terrain.toml`), or bake it from the command line:
+A `.terrain.toml` spec describes both maps as a recipe: `[geometry]` (size, height and resolution), a list of `[[height_layers]]` run in order (`op = "noise"`, `"flatten"`, `"erosion"` or `"falloff"`), and `[[splat_rules]]` that paint each layer by height, slope and noise. [`flint-examples/rolling_meadow.terrain.toml`](https://github.com/chrischaps/flint-examples/blob/main/rolling_meadow.terrain.toml) is one. Shape it by eye in the terrain editor (`flint edit x.terrain.toml`), or bake it from the command line:
 
 ```bash
 flint gen flint-examples/rolling_meadow.terrain.toml -o terrain/meadow.png   # terrain/meadow_height.png + meadow_splat.png
@@ -112,6 +112,47 @@ A terrain spec is a procgen spec for the `terrain_v1` generator (Flint#1168). `f
 The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the same resolution, written as `<stem>_height.png` and `<stem>_splat.png`; point the `terrain` component's `heightmap` and `splat_map` at them. Both are the bytes the editor's Ctrl+E export writes (the one bake, `flint_terrain::bake`, makes both), and the same spec and seed bake the same bytes every run. The summary says how much of the ground each layer covers.
 
 The spec is checked against `terrain_v1`'s schema before anything is baked, by path. A key nothing reads is a warning with the key it was probably meant to be (``warning: `height_layers[1].octave` is not a parameter of the noise layer (did you mean `octaves`?)``), and `--strict` makes it an error. A value the bake can't use is an error that stops the run: a splat rule for a layer past 3, a `noise_type` that isn't one, a resolution over 4096. The terrain editor lists the same lines under its Save buttons while the file has them.
+
+### Saying where the land is
+
+Noise is the same everywhere, so on its own a recipe can't ask for an island or for mountains in the north, and its hills run up to the map's edge and end there in a cut cliff. A `falloff` layer says where the land is: a shape over the map that keeps the heights so far where it is 1 and sinks them where it is 0. Put it after the noise and before any erosion, so the shore it leaves is worn too; a noise layer after it would bring land back to the border.
+
+```toml
+[[height_layers]]
+op = "noise"
+octaves = 6
+frequency = 3.0
+
+[[height_layers]]
+op = "falloff"
+shape = "island"     # "island", "edge", "radial" or "gradient"
+center = [0.5, 0.5]  # map coordinates: u along +X, v along +Z, 0 to 1
+radius = 0.25        # whole this far from the center...
+width = 0.2          # ...and gone this much further out
+
+[[height_layers]]
+op = "erosion"
+kind = "thermal"
+iterations = 30
+```
+
+![The same recipe and seed without a falloff (left) and with an island falloff (right)](../images/terrain-island-falloff.png)
+
+That is [`tests/fixtures/scenes/terrain/island.terrain.toml`](https://github.com/chrischaps/Flint/blob/main/tests/fixtures/scenes/terrain/island.terrain.toml)'s recipe. With the falloff, every seed is an island: its border bakes to height 0 (`an_island_falloff_keeps_every_seeds_border_under_the_sea` checks 20 seeds). Without it, no seed's border was under the sea in 40 tried.
+
+| Key | Default | What it does |
+|-----|---------|--------------|
+| `shape` | `"island"` | `island`: a disc that also fades out at the map's border, so the land never reaches the edge wherever the disc is. `edge`: only the border fades; the land fills the map but stops short of its edge. `radial`: a disc that may cross the border (a mountain in a corner). `gradient`: the land rises toward `direction` from the line through `center` (a coast along one side, mountains in the north) |
+| `center` | `[0.5, 0.5]` | The disc's middle, or the line the gradient rises from |
+| `radius` | `0.25` | How far from `center` the land is kept whole (`island`, `radial`) |
+| `width` | `0.2` | How far the shape fades out: past `radius`, in from the border (`island`, `edge`), or past the line (`gradient`) |
+| `curve` | `1.0` | The fade's exponent: above 1 shrinks the land toward where it is whole (steeper shores), below 1 widens it |
+| `direction` | `[0, -1]` | Which way a `gradient` rises, as `[u, v]`; `[0, -1]` is toward -Z |
+| `invert` | `false` | Keep the land outside the shape instead: a crater, a lake, a bay |
+| `blend` | `"sink"` | `sink` pulls the heights toward the lowest of them where the shape is 0, so the border lands on the map's floor whatever the noise's sign. `multiply` scales the heights by the shape, which leaves the border mid-height where the noise around it is below 0. `add` raises the heights by the shape times `amplitude`: a plateau |
+| `amplitude` | `1.0` | What `add` raises the shape by |
+
+The terrain editor's generate mode has a **+ Falloff** button, which puts the layer before the first erosion, and shows each field only for the shapes that read it (the gradient's direction as a compass angle).
 
 ## Texture Tiling
 
