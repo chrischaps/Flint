@@ -20,7 +20,7 @@ use crate::skinned_pipeline::SkinnedPipeline;
 use crate::sky_pipeline::SkyPipeline;
 use crate::skybox_pipeline::SkyboxPipeline;
 use crate::sprite2d_pipeline::Sprite2dPipeline;
-use crate::terrain_pipeline::TerrainPipeline;
+use crate::terrain_pipeline::{TerrainDebugPipelines, TerrainPipeline};
 use crate::wooze_pipeline::WoozePipelineSet;
 use std::sync::Arc;
 
@@ -32,6 +32,7 @@ use std::sync::Arc;
 pub(crate) struct Present {
     pub wooze_standard: bool,
     pub wooze_skinned: bool,
+    pub terrain_debug: bool,
     pub grass: bool,
     pub ocean: bool,
     pub sky: bool,
@@ -42,6 +43,7 @@ impl Present {
     pub const NEW: Self = Self {
         wooze_standard: false,
         wooze_skinned: false,
+        terrain_debug: false,
         grass: true,
         ocean: true,
         sky: true,
@@ -68,6 +70,9 @@ pub(crate) struct ScenePipelines {
     pub wooze_skinned: Option<Arc<WoozePipelineSet>>,
     pub billboard: Option<Arc<BillboardPipeline>>,
     pub terrain: Option<Arc<TerrainPipeline>>,
+    /// The terrain's debug views (#1692): built the first frame a debug
+    /// view draws a terrain.
+    pub terrain_debug: Option<Arc<TerrainDebugPipelines>>,
     pub grass: Option<Arc<GrassPipeline>>,
     pub ocean: Option<Arc<OceanPipeline>>,
     pub sky: Option<Arc<SkyPipeline>>,
@@ -165,21 +170,27 @@ impl ScenePipelines {
             })
             .flatten();
 
+        let terrain = shared(device, "scene: terrain", key, || {
+            TerrainPipeline::new(
+                device,
+                format,
+                &layouts.transform_bind_group_layout,
+                &layouts.light_bind_group_layout,
+                samples,
+            )
+        });
+        let terrain_debug = present
+            .terrain_debug
+            .then(|| terrain_debug(device, &terrain, format, samples));
+
         Self {
             samples,
             format,
             billboard: Some(shared(device, "scene: billboard", key, || {
                 BillboardPipeline::new(device, format, samples)
             })),
-            terrain: Some(shared(device, "scene: terrain", key, || {
-                TerrainPipeline::new(
-                    device,
-                    format,
-                    &layouts.transform_bind_group_layout,
-                    &layouts.light_bind_group_layout,
-                    samples,
-                )
-            })),
+            terrain: Some(terrain),
+            terrain_debug,
             particle: Some(shared(device, "scene: particles", key, || {
                 ParticlePipeline::new(device, format, samples)
             })),
@@ -220,6 +231,7 @@ impl ScenePipelines {
             wooze_skinned,
             billboard: _,
             terrain: _,
+            terrain_debug,
             grass,
             ocean,
             sky,
@@ -230,6 +242,7 @@ impl ScenePipelines {
         Present {
             wooze_standard: wooze_standard.is_some(),
             wooze_skinned: wooze_skinned.is_some(),
+            terrain_debug: terrain_debug.is_some(),
             grass: grass.is_some(),
             ocean: ocean.is_some(),
             sky: sky.is_some(),
@@ -253,6 +266,28 @@ impl ScenePipelines {
             }
         }
     }
+
+    /// Build the terrain's debug views' pipelines if not built yet (#1692).
+    pub fn ensure_terrain_debug(&mut self, device: &wgpu::Device) {
+        if self.terrain_debug.is_none() {
+            if let Some(terrain) = &self.terrain {
+                self.terrain_debug =
+                    Some(terrain_debug(device, terrain, self.format, self.samples));
+            }
+        }
+    }
+}
+
+/// The terrain's debug views over `terrain`, keyed as it is.
+fn terrain_debug(
+    device: &wgpu::Device,
+    terrain: &TerrainPipeline,
+    format: wgpu::TextureFormat,
+    samples: u32,
+) -> Arc<TerrainDebugPipelines> {
+    shared(device, "scene: terrain debug", (format, samples), || {
+        terrain.debug_pipelines(device)
+    })
 }
 
 /// Shallow wooze's standard set over `main`, which is itself keyed by the

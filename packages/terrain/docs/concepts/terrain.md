@@ -256,6 +256,15 @@ The rendering order places terrain early in the pass (after the skybox, before e
 
 When [post-processing](post-processing.md) is active, the terrain outputs linear HDR values like all other scene geometry. The composite pass handles tonemapping, bloom, fog, and other effects.
 
+The renderer's [debug views](rendering.md#debug-visualization) draw the terrain as they draw meshes. The wireframe shows every triangle, with each chunk's border in amber, which makes it the view to use for tuning `chunk_resolution`, chasing a seam, or seeing which chunks the camera culled:
+
+```bash
+flint render levels/island.scene.toml --debug-mode wireframe --output chunks.png --no-grid
+flint render levels/island.scene.toml --debug-mode normals --output normals.png --no-grid
+```
+
+Normals, depth, UV, unlit (the splat's blend of the layers, unlit) and metal/rough work as well. These views use pipelines of their own, built the first time one is asked for, so a game that never opens them builds none of them, and its normal frame is drawn exactly as before.
+
 ## Scene Transitions
 
 Terrain is fully cleared and reloaded during [scene transitions](scripting.md). When `load_scene()` is called:
