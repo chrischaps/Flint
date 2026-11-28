@@ -998,9 +998,13 @@ flint capture flint-examples/film/film.toml --shot 02_type --scale 0.5 --dry-run
 | `--encode mp4` | Also an MP4 a take (H.264, BT.709, no sound; needs ffmpeg on `PATH`) |
 | `--dry-run` | Print each take's frames and `flint play` command line; capture nothing |
 | `--no-disk-check` | Capture even when the estimate (8 MB a 4K frame) passes 90% of the free space under `--out`; without it such a run stops before any take |
+| `--strict` | Fail a take whose player found no schemas or had a script error; without it the summary names such takes and the run passes |
 | `--schemas <dir>` | Schema directories for the player (repeatable; default: the scene's project's) |
 
 Words after `--` are added to every take's `flint play` command line.
+Paths in the list are from its folder, so a list in `shots/` names its
+scene `../x.scene.toml`; each take is handed the path with the `..`
+folded away.
 
 ## The `render` Command
 

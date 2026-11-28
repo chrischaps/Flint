@@ -72,12 +72,20 @@ an error, fails the run (exit 1) and names its log.
 | `--encode mp4` | Also `<shot>/<take>.mp4` from each take: H.264, BT.709, no sound (needs ffmpeg on `PATH`) |
 | `--dry-run` | Print the takes, their frames and each command line; capture nothing |
 | `--no-disk-check` | Capture even when the estimate passes 90% of the disk's free space |
+| `--strict` | Fail a take whose player found no schemas or had a script error |
 | `--schemas DIR` | Schema directories for the player (default: the scene's project's `flint.toml`) |
 | `-- FLAGS` | Anything after `--` goes to every take's `flint play` |
 
+A take can make every frame and still be wrong: a scene that played
+outside its project (the player found no `flint.toml` above it, so no
+schemas, and `load_data` read from the wrong folder) or whose scripts
+failed. Its line says `ok, but ...`, its `take.json` lists the
+`warnings`, and the run's summary names it (`captured 10 takes; 9 of them
+warned ...`). `--strict` fails such a take, for a run nobody watches.
+
 With `--json` the answer is one document: each take's record (`take.json`'s
-fields, its folder, `ok`, and `verify` with `--verify`), `failed` and a
-summary. The run prints a disk estimate first, at about 8 MB a 4K frame,
+fields, its folder, `ok`, `warnings`, and `verify` with `--verify`),
+`warned`, `failed` and a summary. The run prints a disk estimate first, at about 8 MB a 4K frame,
 and the free space of the disk under `out`: the film's 10,940 frames at
 60 fps were 77 GB, so big runs go outside the repository
 (`out = "~/flint-film"`; `captures/` is in `.gitignore`).

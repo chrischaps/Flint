@@ -1081,6 +1081,9 @@ fn same_dir_key(dir: &Path) -> String {
 /// `schemas/` beside a scene and one level up, appended where they exist
 /// and aren't listed yet. The whole of what "discovery" means for a scene.
 fn add_dirs_beside(scene: &Path, dirs: &mut Vec<PathBuf>) {
+    // `shots/../x.scene.toml`'s folder one level up is the game's parent,
+    // not `shots` (#1703)
+    let scene = clean_path(scene);
     let scene_dir = scene.parent().unwrap_or_else(|| Path::new("."));
     for dir in [Some(scene_dir), scene_dir.parent()].into_iter().flatten() {
         let schemas = dir.join("schemas");
@@ -1227,23 +1230,64 @@ fn kind_of(value: &toml::Value) -> &'static str {
     }
 }
 
-/// Where a path is walked from. An absolute path is itself. A relative one
-/// is taken from the working directory when that directory is in the file
-/// source (the disk), and otherwise is the source's own: cleaned of `.` and
-/// folded `..`, with `.` for the source's root.
+/// A path with its `.` parts dropped and each `..` folded into the part
+/// before it, without asking the disk (#1703). A `..` with nothing before it
+/// to fold stays, so a relative path stays relative and means the same; one
+/// at a root (`/..`, `C:\..`) is dropped, as the system takes it. Nothing is
+/// read, so a link is not followed: `a/link/..` is `a`. The empty path, and
+/// one that folds away whole, is `.`. A path with no `.` or `..` part comes
+/// back as it was spelled, slashes and all.
+///
+/// What a walk up from a file starts from: `shots/../x.scene.toml`'s folder
+/// is spelled `shots/..`, which has no parent by its spelling, so a walk
+/// from it stopped at once and found no project.
+pub fn clean_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let dotted = path
+        .components()
+        .any(|c| matches!(c, Component::CurDir | Component::ParentDir));
+    if dotted || path.as_os_str().is_empty() {
+        fold_parts(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// [`clean_path`]'s folding, the path always put back together by part.
+fn fold_parts(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut parts: Vec<Component> = Vec::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => match parts.last() {
+                Some(Component::Normal(_)) => {
+                    parts.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => parts.push(part),
+            },
+            other => parts.push(other),
+        }
+    }
+    if parts.is_empty() {
+        return PathBuf::from(".");
+    }
+    parts.iter().collect()
+}
+
+/// Where a path is walked from, [`clean_path`]ed so its spelling is where it
+/// really is. An absolute path is itself. A relative one is taken from the
+/// working directory when that directory is in the file source (the disk),
+/// and otherwise is the source's own: cleaned of `.` and folded `..`, with
+/// `.` for the source's root.
 fn anchor(p: &Path) -> PathBuf {
     if p.is_absolute() {
-        return p.to_path_buf();
+        return clean_path(p);
     }
     match std::env::current_dir() {
-        Ok(mut cwd) if vfs::is_dir(&cwd) => {
-            // Pushed by component, so `.` is the working directory itself.
-            cwd.extend(
-                p.components()
-                    .filter(|c| !matches!(c, std::path::Component::CurDir)),
-            );
-            cwd
-        }
+        // Put back together by part, so `.` is the working directory itself
+        Ok(cwd) if vfs::is_dir(&cwd) => fold_parts(&cwd.join(p)),
         _ => {
             let clean = vfs::normalize(p);
             if clean.is_empty() {
@@ -2360,7 +2404,8 @@ save_version = 1.5
         assert_eq!(anchor(Path::new(".")), cwd);
         assert_eq!(anchor(Path::new("")), cwd);
         assert_eq!(anchor(Path::new("./src")), cwd.join("src"));
-        assert_eq!(anchor(Path::new("../x")), cwd.join("..").join("x"));
+        assert_eq!(anchor(Path::new("../x")), cwd.parent().unwrap().join("x"));
+        assert_eq!(anchor(&cwd.join("a/../b/./c")), cwd.join("b").join("c"));
     }
 
     #[test]
@@ -2372,6 +2417,69 @@ save_version = 1.5
         assert!(p.root.is_absolute());
         assert!(here.starts_with(&p.root));
         assert_ne!(p.found, Found::Fallback);
+    }
+
+    #[test]
+    fn a_path_is_cleaned_by_its_spelling_alone() {
+        let clean = |p: &str| clean_path(Path::new(p));
+        assert_eq!(
+            clean("a/shots/../x.scene.toml"),
+            Path::new("a/x.scene.toml")
+        );
+        assert_eq!(clean("./a/./b/"), Path::new("a/b"));
+        assert_eq!(clean("../x"), Path::new("../x"));
+        assert_eq!(clean("a/../../x"), Path::new("../x"));
+        assert_eq!(clean("a/.."), Path::new("."));
+        assert_eq!(clean(""), Path::new("."));
+        assert_eq!(clean("/.."), Path::new("/"));
+        assert_eq!(clean("/a/b/../../../c"), Path::new("/c"));
+        if cfg!(windows) {
+            assert_eq!(clean(r"C:\a\shots\..\x"), Path::new(r"C:\a\x"));
+            assert_eq!(clean(r"C:\.."), Path::new(r"C:\"));
+        }
+    }
+
+    /// #1703: a shot list in `demos/relief/shots/` names its scene
+    /// `../relief.scene.toml`, and `flint capture` joined that to the list's
+    /// folder. The walk up from `<game>/demos/relief/shots/..` stopped at
+    /// once (a spelling ending in `..` has no parent), so the flint.toml at
+    /// the game's root was never found: no schemas, and `load_data` read
+    /// under `shots/`.
+    #[test]
+    fn a_scene_spelled_through_a_subfolder_and_back_finds_its_project() {
+        let game = std::env::temp_dir().join(format!("flint-1703-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&game);
+        let relief = game.join("demos").join("relief");
+        std::fs::create_dir_all(relief.join("shots")).unwrap();
+        std::fs::create_dir_all(game.join("schemas")).unwrap();
+        std::fs::write(
+            game.join("flint.toml"),
+            "[project]\nschemas = [\"schemas\"]\n",
+        )
+        .unwrap();
+        std::fs::write(relief.join("x.scene.toml"), "[scene]\nname = \"x\"\n").unwrap();
+        let through = relief.join("shots").join("..").join("x.scene.toml");
+        let found = Project::discover_with_home(&through, None).unwrap();
+        assert_eq!(found.found, Found::Manifest, "{}", found.root.display());
+        assert!(same_path(&found.root, &game), "{}", found.root.display());
+        let for_path = Project::for_path(&through).unwrap();
+        assert!(
+            same_path(&for_path.root, &game),
+            "{}",
+            for_path.root.display()
+        );
+        let dirs = schema_dirs(Some(&through), &[] as &[&Path]).unwrap();
+        assert!(
+            matches!(dirs.source, SchemaSource::Manifest(_)),
+            "{:?}",
+            dirs.source
+        );
+        assert!(
+            same_path(&dirs.dirs[0], &game.join("schemas")),
+            "{:?}",
+            dirs.dirs
+        );
+        let _ = std::fs::remove_dir_all(&game);
     }
 
     /// A player without a package drops that package's schema folders

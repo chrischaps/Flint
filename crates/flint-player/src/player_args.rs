@@ -721,7 +721,11 @@ impl PlayerArgs {
 /// saying so, or an error that says what to pass.
 fn resolve_scene(scene: String) -> Result<String> {
     if !scene.is_empty() {
-        return Ok(scene);
+        // `shots/../x.scene.toml` is `x.scene.toml`: everything that walks
+        // up from the scene, or reads its folder's parent, sees where it
+        // really is (#1703)
+        let clean = flint_core::project::clean_path(Path::new(&scene));
+        return Ok(clean.to_string_lossy().into_owned());
     }
     let project = flint_core::project::Project::current()?;
     let default = flint_core::project::shown(&project.default_scene()?);
