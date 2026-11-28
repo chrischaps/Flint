@@ -181,6 +181,10 @@ flint-physics = { workspace = true, features = ["player"] }
 # The animation package's loaders, which the asset-search tests hold to
 # the project's one search (#1620)
 flint-animation = { workspace = true, features = ["player"] }
+# The first-person package's actions, which the controls-line and
+# character tests compare the player's view against (#1618): they run
+# where the run's launcher lists first-person, as the stock one does.
+flint-first-person = { workspace = true }
 
 # The hitch log's marks on a sampler's ETW timeline (#1250,
 # player_app/sampler_marks.rs)
