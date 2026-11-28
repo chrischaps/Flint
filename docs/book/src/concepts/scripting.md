@@ -2071,7 +2071,11 @@ draw_text(24.0, 24.0, "seed  = 42", 18.0, #{ font: "monospace" });
 draw_rect(24.0 + cell * 10.0, 24.0, cell, 18.0, #{ color: [0.6, 1.0, 0.7, 1.0] }); // the cursor
 ```
 
-Each named family keeps egui's built-in fonts behind it, for glyphs the file lacks. The player logs the loaded families at startup (`RUST_LOG=info`). Text without a `font` — and the data-driven UI's default — uses egui's built-in proportional font, unless the manifest names another ([ADR 0081](https://github.com/chrischaps/Flint/blob/main/docs/adr/0081-project-fonts-name-egui-defaults.md)):
+Each named family keeps egui's built-in fonts behind it, for glyphs the file lacks.
+
+**Arrows and key symbols** (#1701). egui's proportional faces have no arrows, so every family ends with egui's monospace face, which has them: a hint such as `draw_text(40.0, 70.0, "← →  stations", 30.0, #{})` draws ← ↑ → ↓ ↔ ↵ ⇧ ⇥ with no font of your own. A character no face of the family has (⌫, ⏎, ✓ among them) draws as an empty box, and the first time it does `draw_text` (or world text) warns, naming the string, the font and the code point: `draw_text "⌫": font `proportional` has no glyph for U+232B '⌫'`. Once a character and font, so a label drawn every frame says it once; a font under `fonts/` that has the glyph fixes it.
+
+The player logs the loaded families at startup (`RUST_LOG=info`). Text without a `font` — and the data-driven UI's default — uses egui's built-in proportional font, unless the manifest names another ([ADR 0081](https://github.com/chrischaps/Flint/blob/main/docs/adr/0081-project-fonts-name-egui-defaults.md)):
 
 ```toml
 [egui]
