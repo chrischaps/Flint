@@ -18,6 +18,9 @@ mod made_collider_mesh_tests;
 // A spec's asset in a project whose `[packages]` leaves procgen out (#1578)
 #[cfg(test)]
 mod made_left_out_tests;
+// A sequence cue on a flipbook's frame reaches its script (#1620)
+#[cfg(test)]
+mod flipbook_cue_tests;
 // The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
@@ -54,7 +57,6 @@ mod frame_history;
 mod frame_notes_tests;
 pub mod frame_rate;
 pub mod game_core;
-pub mod headless_animation;
 pub mod headless_game;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod headless_hud;
@@ -396,8 +398,10 @@ pub struct PlayerApp {
     /// every one, as the desktop always does. See `set_frame_rate`.
     frame_pacer: Option<frame_rate::FramePacer>,
 
-    // Skeletal animation: entity_id → asset name for bone matrix updates
-    skeletal_entity_assets: HashMap<flint_core::EntityId, String>,
+    /// What the model loader made of the scene's models (skeletons, clips),
+    /// kept from the renderer's share of the entry until the scene's
+    /// subsystems are built (`SceneCtx::models`, #1620)
+    scene_models: Option<flint_render::model_loader::ModelLoadResult>,
 
     /// egui, the scripts' 2D draw commands and world text, and their fonts
     hud: state::Hud,

@@ -13,7 +13,6 @@
 //! `conducted`) isn't declared here: the feature's crate declares it
 //! through a [`crate::ScriptModule`] (#698, `crate::module`).
 
-mod animation;
 mod audio;
 pub mod builder;
 mod camera;
@@ -65,13 +64,24 @@ mod terrain;
 mod test;
 mod time;
 mod touch;
-mod tween;
 mod ui;
 mod view;
 
 pub use builder::{Call, CallError, CallResult, Func, Module, ScriptApi};
 pub use convert::{dynamic_to_toml, map_to_toml, toml_to_dynamic};
 pub use registry::ApiRegistry;
+
+/// A call's `mode` and `mask` options, each problem warned once per
+/// function and key as the kernel's own options are: what a package's
+/// layer call reads (the animation package's `set_anim_layer`, #1620).
+pub fn mode_and_mask(
+    c: &mut crate::context::ScriptCallContext,
+    func: &'static str,
+    map: &rhai::Map,
+) -> (Option<String>, Option<String>) {
+    let o = opts::read_opts(c, func, map, &["mode", "mask"]);
+    (o.mode, o.mask)
+}
 
 /// Declare the deterministic run's `timestamp()`, which fails (see
 /// `ScriptSystem::make_deterministic`).
@@ -85,7 +95,6 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     input::register(api);
     time::register(api);
     audio::register(api);
-    animation::register(api);
     // `physics`, `physics_2d` and `nav` are the physics package's modules
     // since #1617 (`flint_physics::player`), declared by the launcher
     camera::register(api);
@@ -119,5 +128,4 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     expression::register(api);
     music::register(api);
     test::register(api);
-    tween::register(api);
 }

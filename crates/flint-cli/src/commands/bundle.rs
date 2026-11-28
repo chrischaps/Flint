@@ -1850,6 +1850,8 @@ mod tests {
     const OAKS: &str =
         "\n[wooze]\namplitude = 0.5\n\n[entities.oak]\nliving_prop = { lineage_seed = 3 }\n\n\
                         [entities.elm]\nliving_prop = { lineage_seed = 4 }\n";
+    const ANIMATION: &str = "engine/packages/animation/schemas";
+    const FLIPBOOK: &str = "engine/packages/flipbook/schemas";
     const LIVING: &str = "engine/packages/living/schemas";
     const MUSIC: &str = "engine/packages/music/schemas";
     const VEHICLE: &str = "engine/packages/vehicle/schemas";
@@ -1869,29 +1871,43 @@ mod tests {
     fn a_bundle_packs_only_the_packages_flint_toml_lists() {
         let listed = package_game("listed", Some("living = \"*\"\n"), "");
         let gathered = gather_game(&args(&listed)).unwrap();
-        assert_eq!(gathered.schemas, ["engine/schemas", LIVING, PHYSICS]);
+        // Animation, flipbook (#1620) and physics (#1617) are standard: in
+        // unless set false
+        assert_eq!(
+            gathered.schemas,
+            ["engine/schemas", ANIMATION, FLIPBOOK, LIVING, PHYSICS]
+        );
         assert!(packed_under(&gathered, LIVING));
         assert!(!packed_under(&gathered, MUSIC), "music isn't listed");
         assert!(gathered.packages.as_ref().unwrap().is_on("living"));
 
         // An empty table: the feature packages are all out, the standard
-        // ones in (physics' schemas, #1617)
+        // ones with schemas (animation, flipbook, physics) in
         let game = package_game("none_listed", Some(""), "");
         let gathered = gather_game(&args(&game)).unwrap();
-        assert_eq!(gathered.schemas, ["engine/schemas", PHYSICS]);
-        assert!(!gathered
-            .files
-            .keys()
-            .any(|k| k.starts_with("engine/packages/") && !k.starts_with(PHYSICS)));
+        assert_eq!(
+            gathered.schemas,
+            ["engine/schemas", ANIMATION, FLIPBOOK, PHYSICS]
+        );
+        assert!(!gathered.files.keys().any(|k| {
+            k.starts_with("engine/packages/")
+                && !k.starts_with(&format!("{ANIMATION}/"))
+                && !k.starts_with(&format!("{FLIPBOOK}/"))
+                && !k.starts_with(&format!("{PHYSICS}/"))
+        }));
 
         // A scene packed alone reads the same list
         let mut one = args(&game);
         one.game = game.join("scenes/main.scene.toml");
         let gathered = gather_scene(&one).unwrap();
-        let a_feature_package =
-            |k: &String| k.contains("packages/") && !k.contains("packages/physics/");
-        assert!(!gathered.files.keys().any(a_feature_package));
-        assert!(!gathered.schemas.iter().any(a_feature_package));
+        let feature = |k: &String| {
+            k.contains("packages/")
+                && !k.contains("packages/animation/")
+                && !k.contains("packages/flipbook/")
+                && !k.contains("packages/physics/")
+        };
+        assert!(!gathered.files.keys().any(feature));
+        assert!(!gathered.schemas.iter().any(feature));
         let _ = std::fs::remove_dir_all(&listed);
         let _ = std::fs::remove_dir_all(&game);
     }
@@ -1953,7 +1969,15 @@ mod tests {
         let listed = gather_game(&args(&every)).unwrap();
         assert_eq!(
             none.schemas,
-            ["engine/schemas", LIVING, MUSIC, PHYSICS, VEHICLE]
+            [
+                "engine/schemas",
+                ANIMATION,
+                FLIPBOOK,
+                LIVING,
+                MUSIC,
+                PHYSICS,
+                VEHICLE
+            ]
         );
         assert_eq!(none.schemas, listed.schemas);
         assert!(none.packages.is_none());

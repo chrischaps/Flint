@@ -651,8 +651,8 @@ crate (`crates/flint-physics`), the `collider`, `rigidbody` and `joint`
 schemas and a manifest (`tier = "standard"`, `[build] features =
 ["physics"]`, `[without] policies = ["physics"]`). A project with `physics =
 false` builds a player and a CLI whose `cargo tree -e normal` has neither
-flint-physics nor Rapier: 28 crates fewer for the player (352 against 380
-with debug-hud and procgen), 27 for the CLI. `flint check` and `flint play`
+flint-physics nor Rapier: 28 crates fewer for the player (353 against 381
+with the other standard packages), 27 for the CLI (370 against 397). `flint check` and `flint play`
 name the package for a scene's `collider` there (`unlisted-package`), and
 the player says once that its bodies stand where they are written.
 
@@ -707,4 +707,7 @@ the player says once that its bodies stand where they are written.
   reports. A 30 s FlintKart race (`oval_plus`, five AI karts, rendered) has
   the same 360 kart positions and the same 334,691 draw calls. A run with
   FlintKart's old manifests, which don't know a `physics` package, left
-  physics out and differed. That run was the control.
+  physics out and differed. That run was the control. All three hold again
+after merging `main` with #1620's animation package, whose builder now
+runs before physics' (the registry's order by name): it only reads the
+world.

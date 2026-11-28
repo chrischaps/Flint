@@ -14,9 +14,7 @@
 //! frame reads it once. A model that wasn't found is not looked for again
 //! this scene (it would warn a frame).
 
-use super::scene_loading::{
-    build_model_load_config_of, register_node_animation_data, register_skeletal_data,
-};
+use super::scene_loading::build_model_load_config_of;
 use super::PlayerApp;
 use flint_core::components as comp;
 use flint_core::EntityId;
@@ -169,7 +167,7 @@ impl PlayerApp {
         }
 
         let wanted = model_loader::model_assets_of(&self.core.world, ids);
-        let mut loaded = model_loader::load_models_of(
+        let loaded = model_loader::load_models_of(
             &mut self.core.world,
             ids,
             renderer,
@@ -184,28 +182,11 @@ impl PlayerApp {
             }
         }
 
-        // A skinned mesh already cached gives its new entity no import to
-        // build a skeleton from: it takes a copy of one an entity drawing
-        // the same asset has, in that entity's pose until it animates
-        loaded.models.retain(|model| {
-            if !model.is_skinned || model.import_result.is_some() {
-                return true;
-            }
-            let donor = self
-                .skeletal_entity_assets
-                .iter()
-                .filter(|(_, asset)| **asset == model.asset_name)
-                .find_map(|(id, _)| self.core.animation.skeleton(id).cloned());
-            match donor {
-                Some(skeleton) => {
-                    self.core.animation.add_skeleton(model.entity_id, skeleton);
-                    false
-                }
-                None => true,
-            }
-        });
-        register_skeletal_data(&loaded, &mut self.core.animation);
-        register_node_animation_data(&loaded, &mut self.core.animation);
-        self.skeletal_entity_assets.extend(loaded.skinned_entities);
+        // What the models brought (a skinned one's skeleton, clips) to the
+        // subsystems: the animation package's (#1620), before the frame's
+        // animation sees them
+        self.core
+            .subsystems
+            .late_models(&mut self.core.world, &loaded);
     }
 }

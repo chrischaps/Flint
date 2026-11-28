@@ -38,7 +38,6 @@ use flint_script::{PostProcessOverrides, ScriptHost};
 
 use super::expression_feed::{ExpressionFeed, ExpressionSubsystem, ExpressionTimeline};
 use super::game_core::{self, FrameHost, GameCore, Lent};
-use super::headless_animation::HeadlessAnimation;
 use super::style_commands::SceneStyles;
 use super::subsystem::{FrameCtx, SceneCtx};
 use super::SceneSettings;
@@ -162,8 +161,10 @@ pub struct HeadlessGame {
     /// Whether the capture draws particles: if not, what the scripts emit
     /// is dropped with a note.
     particles_drawn: bool,
-    /// `--anim-time` (#307), stepped where the player's animation is.
-    animation: Option<HeadlessAnimation>,
+    /// `--anim-time` (#307), stepped where the player's animation is: the
+    /// animation package's (`flint_animation::player::HeadlessAnimation`),
+    /// which the command makes (#1620).
+    animation: Option<Box<dyn flint_package::CapturePose>>,
     /// What the scripts asked for and didn't get, once each.
     notes: BTreeSet<String>,
     /// The commands of [`PRESENTATION_ONLY`] the scripts asked for.
@@ -360,6 +361,8 @@ impl HeadlessGame {
             capture: Some(&capture),
             packages: core.packages.as_ref(),
             model_config: None,
+            // A capture's animation is its own (`CapturePose`, #307)
+            models: None,
             resources: &mut core.resources,
             registry: crate::packages::registry(),
         });
@@ -468,12 +471,14 @@ impl HeadlessGame {
     }
 
     /// `--anim-time`'s animation, stepped with the game, after its scripts.
-    pub fn set_animation(&mut self, animation: Option<HeadlessAnimation>) {
+    pub fn set_animation(&mut self, animation: Option<Box<dyn flint_package::CapturePose>>) {
         self.animation = animation;
     }
 
-    pub fn animation(&self) -> Option<&HeadlessAnimation> {
-        self.animation.as_ref()
+    /// The capture's animation, as the command made it (it reads its own
+    /// type back through [`flint_package::CapturePose::as_any`]).
+    pub fn animation(&self) -> Option<&dyn flint_package::CapturePose> {
+        self.animation.as_deref()
     }
 
     /// One frame of the game, `dt` game seconds after the last, in the

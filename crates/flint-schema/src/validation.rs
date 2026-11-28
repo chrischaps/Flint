@@ -281,8 +281,9 @@ fn problems(schema: &ComponentSchema, data: &toml::Value) -> Vec<Problem> {
     };
     let mut found = Vec::new();
     // A schema that declares no field at all is open: it names the
-    // component and checks nothing in it
-    if !schema.fields.is_empty() {
+    // component and checks nothing in it (unless it retired some, which
+    // are still reported, #1620)
+    if !schema.is_open() {
         table_problems(&schema.fields, table, None, &mut found);
     }
     found
@@ -906,6 +907,37 @@ mod tests {
         assert_eq!(
             validate_component(&schema, &toml::Value::Boolean(true)).len(),
             1
+        );
+    }
+
+    /// A schema whose every field retired (`sprite_animator`, ADR 0139) is
+    /// not open: a scene still writing one hears why it went, and anything
+    /// else it writes is unknown too.
+    #[test]
+    fn a_schema_of_retired_fields_alone_still_reports_them() {
+        let mut retired = std::collections::BTreeMap::new();
+        retired.insert("clip".to_string(), "it is animator's now".to_string());
+        let schema = ComponentSchema {
+            name: "sprite_animator".to_string(),
+            description: None,
+            fields: HashMap::new(),
+            panel: None,
+            retired,
+        };
+        assert!(!schema.is_open());
+        let data: toml::Value = toml::from_str("clip = \"idle\"\n").unwrap();
+        let found = validate_component(&schema, &data);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, codes::UNKNOWN_FIELD);
+        assert!(
+            found[0].message.contains("any more"),
+            "{}",
+            found[0].message
+        );
+        assert_eq!(
+            found[0].hint.as_deref(),
+            Some("it is animator's now"),
+            "the schema's reason"
         );
     }
 

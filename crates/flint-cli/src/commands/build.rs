@@ -1337,7 +1337,9 @@ mod tests {
         assert_eq!(
             player,
             [
+                "animation",
                 "debug-hud",
+                "flipbook",
                 "living",
                 "music",
                 "physics",
@@ -1352,7 +1354,9 @@ mod tests {
             cli,
             [
                 "ai",
+                "animation",
                 "debug-hud",
+                "flipbook",
                 "living",
                 "music",
                 "physics",

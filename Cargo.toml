@@ -19,7 +19,6 @@ members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-audio-worklet",
-    "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
     "crates/flint-terrain",
@@ -56,7 +55,6 @@ default-members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-audio-worklet",
-    "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
     "crates/flint-terrain",
@@ -235,7 +233,11 @@ flint-input-capture = { path = "packages/rhythm/crates/flint-input-capture", def
 # The rhythm package's parts (#1556): `player`, the chart judge's
 # subsystem, and `cli`, `flint music calibrate|chart`
 flint-rhythm-game = { path = "packages/rhythm/crates/flint-rhythm-game", default-features = false }
-flint-animation = { path = "crates/flint-animation" }
+# The animation package's core (ADR 0139, #1620): its `player` feature is the
+# subsystem, the `animation` and `tween` modules and the clip-kind point
+flint-animation = { path = "packages/animation/crates/flint-animation", default-features = false }
+# The flipbook package (ADR 0139 section 6): sprite-sheet clips on its clock
+flint-flipbook = { path = "packages/flipbook/crates/flint-flipbook", default-features = false }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "packages/ai/crates/flint-asset-gen" }
 flint-particles = { path = "crates/flint-particles" }

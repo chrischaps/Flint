@@ -84,13 +84,17 @@ The state comes from the body as the last fixed step began, so it is one step (1
 
 | Group | Fields |
 |---|---|
-| Drive | `top_speed`, `accel`, `brake`, `reverse` (a fraction of top speed and accel), `drag` (with `accel` it sets the top speed: 16.5 / 0.5 = 33 m/s), `overspeed_decay`, `mass`, `center_of_mass` |
+| Drive | `top_speed`, `accel`, `brake`, `reverse` (a fraction of top speed and accel), `drag` (with `accel` it sets the top speed: 16.5 / 0.5 = 33 m/s), `air_drag` (the share of `drag` kept with no wheel down: 1 by default; 0 for an arcade kart, whose hop or jump then costs no speed), `overspeed_decay`, `mass`, `center_of_mass` |
 | Steering | `turn_rate_low` and `turn_rate_high` (degrees a second, at standstill and at top speed), `min_turn_radius`, `steer_response` (full locks a second), `steer_curve` |
-| Assists | `grip` (sideways speed scrubbed a second), `yaw_assist` (how fast the yaw rate is pulled to the turn-rate curve), `upright`, `scrub` (speed lost to slip, 0 by default) |
+| Assists | `grip` (sideways speed scrubbed a second), `yaw_assist` (how fast the yaw rate is pulled to the turn-rate curve), `air_control` (the share of the yaw assist that still steers with fewer than two wheels down, about the world's up, and with no wheel down the travel turns with the nose by the same share, so a steered hop lands going where it points: 0 by default; 1 steers a hop as on the ground), `upright`, `scrub` (speed lost to slip, 0 by default) |
 | Tyres and springs | `tyre_grip`, `suspension_stiffness`, `suspension_damping`, `suspension_travel` |
 | Control | `driver`, `actions` |
 
 The steering geometry asks for the path the turn-rate curve would drive, and the yaw assist holds it there. FlintKart's `kart_physics` names carry over: `top_speed` is its `max_speed`, `accel` its `acceleration`, `brake` its `brake_decel`.
+
+A drift is a `slip_target` with a lower `grip_scale`. While a slip target is held, `grip_scale` also slides the tyres: their side friction takes the same scale, so the nose held off its travel isn't braked by four tyres gripping sideways. Without a slip target (sand, grass) the tyres grip as they always do.
+
+FlintKart drives every kart on the package (#1630): the drift, hop, boost, items, slipstream and surface are its own script on top, through the modifiers, with `air_control = 1` and `air_drag = 0` so its hop steers and keeps its speed as its arcade kart's did. Its chassis is a capsule laid along the kart over the tyres: a box flush against a wall can't turn without a corner going into it, and a chassis shorter than the tyres lets a front wheel's ray stand on the wall.
 
 ## The `vehicle` Module
 

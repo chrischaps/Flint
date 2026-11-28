@@ -67,12 +67,17 @@ default = ["audio", "gamepad", "dialogs", "packages"]
 # (`[rust.devices]`) that flint-player's doesn't already turn on. Don't edit
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
-packages = ["ai", "debug-hud", "living", "music", "physics", "procgen", "rhythm", "vehicle"]
+packages = [
+    "ai", "animation", "debug-hud", "flipbook", "living", "music", "physics", "procgen",
+    "rhythm", "vehicle",
+]
 packages-audio = []
 packages-dialogs = ["flint-procgen-cli?/dialogs"]
 packages-gamepad = []
 ai = ["procgen", "dep:flint-asset-gen", "flint-asset-gen?/cli"]
+animation = ["flint-player/animation"]
 debug-hud = ["flint-player/debug-hud"]
+flipbook = ["animation", "flint-player/flipbook"]
 living = ["procgen", "flint-player/living", "dep:flint-living", "flint-living?/cli"]
 music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
 physics = ["flint-player/physics"]
@@ -95,7 +100,10 @@ flint-render = { workspace = true }
 flint-constraint = { workspace = true }
 flint-asset = { workspace = true }
 flint-import = { workspace = true }
-flint-animation = { workspace = true }
+# The model previewer and `--anim-time` (`HeadlessAnimation`) name the
+# animation package directly until #1621 puts them behind registration
+# (`scripts/package-names-check.py` lists the exception)
+flint-animation = { workspace = true, features = ["player"] }
 flint-runtime = { workspace = true }
 flint-player = { workspace = true, features = ["frame-history"] }
 # `CliExtension` and the one output path (#1553): a package's commands

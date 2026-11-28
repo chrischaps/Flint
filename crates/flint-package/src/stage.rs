@@ -35,11 +35,25 @@ pub enum Stage {
     View,
     /// After the physics steps and the first-person camera.
     Physics,
+    /// After the style tweens move on with game time, before the frame's
+    /// script commands: where the animation package moves `tween`'s field
+    /// tweens (#734, #1620), while the game state lets scripts run.
+    Tweens,
     /// After script commands and camera overrides: the camera is final for
     /// the frame.
     PostPhysics,
     /// After `on_draw_ui` and the draw commands.
     ScriptUi,
+    /// After the frame's sound, before the bones go to the GPU: the clock
+    /// clips run on (the animation package's clips, layers, sequences and
+    /// the kinds other packages register, flipbooks among them), and one-shot
+    /// ends and sequence cues to the scripts (ADR 0139, #1620). A capture
+    /// keeps its own animation and doesn't run it.
+    Animate,
+    /// After the bones go to the GPU, before the particles: bone probes,
+    /// then two-bone IK, the last writers of transforms (ADR 0138's `Pose`).
+    /// A capture doesn't run it.
+    Pose,
     /// After audio triggers, animation and particles.
     Animation,
     /// After the asset makers' frame (`flint_package::assets`: the procgen
@@ -68,8 +82,11 @@ impl Stage {
             Stage::FixedStep => "fixed_step",
             Stage::View => "view",
             Stage::Physics => "physics",
+            Stage::Tweens => "tweens",
             Stage::PostPhysics => "post_physics",
             Stage::ScriptUi => "script_ui",
+            Stage::Animate => "animate",
+            Stage::Pose => "pose",
             Stage::Animation => "animation",
             Stage::MadeAssets => "made_assets",
             Stage::Sync => "sync",
@@ -79,15 +96,18 @@ impl Stage {
 
     /// Every stage `update` hears in the player's frame, in order: the
     /// host's [`Stage::Clock`], then the core's.
-    pub const UPDATES: [Stage; 11] = [
+    pub const UPDATES: [Stage; 14] = [
         Stage::Clock,
         Stage::Input,
         Stage::PreScripts,
         Stage::Scripts,
         Stage::View,
         Stage::Physics,
+        Stage::Tweens,
         Stage::PostPhysics,
         Stage::ScriptUi,
+        Stage::Animate,
+        Stage::Pose,
         Stage::Animation,
         Stage::MadeAssets,
         Stage::Sync,

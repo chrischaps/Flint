@@ -126,11 +126,21 @@ pub(crate) fn build_for_scene(ctx: &mut SceneCtx) -> Vec<Box<dyn Subsystem>> {
 }
 
 /// The subsystems, and the script modules they enable, that every scene of
-/// a stock build has: the physics package's (#1617). A test of a scene's
-/// own leaves them out.
+/// a stock build has: the animation package's (its clips and `tween`), the
+/// flipbook package's (#1620) and the physics package's (#1617). A test of
+/// a scene's own leaves them out.
 #[cfg(test)]
-pub(crate) const EVERY_SCENE: (&[&str], &[&str]) =
-    (&["physics"], &["physics", "physics_2d", "nav"]);
+pub(crate) const EVERY_SCENE: (&[&str], &[&str]) = (
+    &["animation", "flipbook", "physics"],
+    &[
+        "animation",
+        "tween",
+        "flipbook",
+        "physics",
+        "physics_2d",
+        "nav",
+    ],
+);
 
 /// The enabled script modules less those [`EVERY_SCENE`] enables.
 #[cfg(test)]
@@ -153,17 +163,6 @@ impl Subsystems {
         self.list.is_empty()
     }
 
-    /// [`Self::names`] less the subsystems every scene of a stock build has
-    /// (the standard packages', [`EVERY_SCENE`]): what a test of a scene's
-    /// own subsystems compares.
-    #[cfg(test)]
-    pub(crate) fn own_names(&self) -> Vec<&'static str> {
-        self.names()
-            .into_iter()
-            .filter(|n| !EVERY_SCENE.0.contains(n))
-            .collect()
-    }
-
     /// Add one; it runs after those already here and is torn down before
     /// them.
     pub(crate) fn push(&mut self, subsystem: Box<dyn Subsystem>) {
@@ -174,6 +173,17 @@ impl Subsystems {
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {
         self.list.iter().map(|s| s.name()).collect()
+    }
+
+    /// [`Self::names`] less the subsystems every scene of a stock build has
+    /// (the standard packages', [`EVERY_SCENE`]): what a test of a scene's
+    /// own subsystems compares.
+    #[cfg(test)]
+    pub(crate) fn own_names(&self) -> Vec<&'static str> {
+        self.names()
+            .into_iter()
+            .filter(|n| !EVERY_SCENE.0.contains(n))
+            .collect()
     }
 
     /// Drop the scene's subsystems, last added first, keeping the run's.
@@ -227,6 +237,17 @@ impl Subsystems {
     pub(crate) fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
         for s in &mut self.list {
             s.update(stage, ctx);
+        }
+    }
+
+    /// The late models loaded (#1107): what the loader made of them.
+    pub(crate) fn late_models(
+        &mut self,
+        world: &mut flint_ecs::FlintWorld,
+        models: &flint_render::model_loader::ModelLoadResult,
+    ) {
+        for s in &mut self.list {
+            s.late_models(world, models);
         }
     }
 
@@ -366,6 +387,7 @@ macro_rules! with_stage_ctx {
                     )),
                     quit: Some(&mut $app.outcome.exit_requested),
                     resources,
+                    bus: &mut $app.core.events,
                 };
                 $body
             },
@@ -401,6 +423,7 @@ macro_rules! with_scene_ctx {
                     capture: None,
                     packages: $app.core.packages.as_ref(),
                     model_config: None,
+                    models: None,
                     resources,
                     registry: $crate::packages::registry(),
                 };
@@ -441,10 +464,14 @@ impl super::PlayerApp {
             }
         }
         // Where the scene's models were found, for a package that reads a
-        // model's file itself (physics' mesh colliders, #1617)
+        // model's file itself (physics' mesh colliders, #1617), and the
+        // models as the loader made them (skeletons, clips), kept from the
+        // renderer's share of the entry for the builders (#1620)
         let config = self.scene_model_config();
+        let models = self.scene_models.take();
         let built = with_scene_ctx!(self, |ctx| {
             ctx.model_config = Some(&config);
+            ctx.models = models.as_ref();
             build_for_scene(&mut ctx)
         });
         for subsystem in built {

@@ -432,7 +432,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.trim_end().ends_with("9 packages in ") || text.contains("9 packages in "),
+            text.trim_end().ends_with("11 packages in ") || text.contains("11 packages in "),
             "{text}"
         );
     }

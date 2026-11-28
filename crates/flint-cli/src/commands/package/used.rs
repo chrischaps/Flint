@@ -525,8 +525,12 @@ mod tests {
             lines(&engine_packages(), &found),
             ["physics = \"*\"", "procgen = \"*\"", "living = \"*\""]
         );
-        // Procgen is used, so nothing is named to leave out
-        assert!(left_out_lines(&engine_packages(), &found, None).is_empty());
+        // Procgen is used, so it isn't named to leave out; nothing scanned
+        // animates, so animation and flipbook are (#1620)
+        assert_eq!(
+            left_out_lines(&engine_packages(), &found, None),
+            ["animation", "flipbook"]
+        );
     }
 
     /// #1536: a scene that names no procgen spec gives `procgen = false`
@@ -540,7 +544,7 @@ mod tests {
         assert!(found.is_empty(), "{found:?}");
         assert_eq!(
             left_out_lines(&packages, &found, None),
-            ["physics", "procgen"]
+            ["animation", "flipbook", "physics", "procgen"]
         );
         assert_eq!(
             left_out_line("procgen"),
@@ -569,17 +573,18 @@ mod tests {
             list(&[("ai", any())]),
             list(&[("living", any())]),
         ] {
-            // Physics stays named: nothing scanned uses it either
-            assert_eq!(
-                left_out_lines(&packages, &found, Some(&listed)),
-                ["physics"],
+            // Procgen isn't named once listed, or needed by what is
+            assert!(
+                !left_out_lines(&packages, &found, Some(&listed))
+                    .iter()
+                    .any(|p| p == "procgen"),
                 "{listed:?}"
             );
         }
         // A listed package that needs nothing standard leaves it named
         assert_eq!(
             left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
-            ["physics", "procgen"]
+            ["animation", "flipbook", "physics", "procgen"]
         );
     }
 }

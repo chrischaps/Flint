@@ -6,6 +6,8 @@ use crate::{
     StageCtx, StepStage,
 };
 use flint_core::EntityId;
+use flint_ecs::FlintWorld;
+use flint_render::model_loader::ModelLoadResult;
 use flint_render::FrameInputs;
 use flint_runtime::DebugKey;
 use flint_script::context::ScriptCommand;
@@ -48,6 +50,11 @@ pub trait Subsystem: Any {
             self.fixed_update(ctx);
         }
     }
+    /// The models of entities spawned since the last frame have loaded
+    /// (#1107), before the frame's animation: what the loader made of them
+    /// (a skinned model's skeleton, a model's clips), as a scene's models
+    /// reach a builder through [`SceneCtx::models`](crate::SceneCtx::models).
+    fn late_models(&mut self, _world: &mut FlintWorld, _models: &ModelLoadResult) {}
 
     /// One fixed physics step ([`Stage::FixedStep`], ADR 0137 section 3a):
     /// once for each step that steps, so twice in a frame at 30 Hz and on

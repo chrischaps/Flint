@@ -288,59 +288,6 @@ fn test_play_sound_pitch_and_falloff() {
 }
 
 #[test]
-fn test_animation_api_play_clip() {
-    let mut engine = ScriptEngine::new();
-    let mut world = FlintWorld::new();
-    let id = world.spawn("anim_test").unwrap();
-
-    // Set up an animator component
-    world
-        .set_component(
-            id,
-            "animator",
-            toml::Value::Table({
-                let mut m = toml::map::Map::new();
-                m.insert("clip".into(), toml::Value::String("idle".into()));
-                m.insert("playing".into(), toml::Value::Boolean(false));
-                m
-            }),
-        )
-        .unwrap();
-
-    let ast = engine
-        .compile(
-            r#"
-        fn on_init() {
-            let me = self_entity();
-            play_clip(me, "run");
-        }
-    "#,
-        )
-        .unwrap();
-
-    engine.add_script(id, ast, "test.rhai".into());
-    engine.call_inits(&mut world);
-
-    let clip = world
-        .get_components(id)
-        .unwrap()
-        .get_field("animator", "clip")
-        .unwrap()
-        .as_str()
-        .unwrap()
-        .to_string();
-    let playing = world
-        .get_components(id)
-        .unwrap()
-        .get_field("animator", "playing")
-        .unwrap()
-        .as_bool()
-        .unwrap();
-    assert_eq!(clip, "run");
-    assert!(playing);
-}
-
-#[test]
 fn test_persist_api_without_store() {
     // persist_set with null store should not crash, just silently fail
     let mut engine = ScriptEngine::new();

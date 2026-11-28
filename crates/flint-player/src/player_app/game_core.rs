@@ -20,14 +20,13 @@
 use super::perf::Phase;
 use super::style_commands::StyleApplied;
 use super::subsystem::{FixedCtx, Stage, StageCtx, Subsystems};
-use flint_animation::AnimationSystem;
 use flint_core::project::Project;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_package::surfaces::MadeTriangles;
 use flint_particles::ParticleSystem;
 use flint_render::{Camera, SceneRenderer};
-use flint_runtime::state::{ANIMATION, AUDIO, PARTICLES, PHYSICS, SCRIPTS};
+use flint_runtime::state::{AUDIO, PARTICLES, PHYSICS, SCRIPTS};
 use flint_runtime::{
     EventBus, Eye, GameClock, GameEvent, GameStateMachine, InputState, PersistentStore, PlayerView,
     RuntimeSystem, StateConfig,
@@ -52,7 +51,6 @@ pub struct GameCore {
     /// own, and the frame drains them before scripts run. Physics' `clear`
     /// at a transition leaves it alone.
     pub(crate) events: EventBus,
-    pub animation: AnimationSystem,
     pub particles: ParticleSystem,
     pub script: ScriptSystem,
     /// Game states and the persistent store survive scene transitions. The
@@ -67,8 +65,6 @@ pub struct GameCore {
     pub styles: flint_render::stylize::StyleRegistry,
     /// Entity style tweens (#370), stepped with game time.
     pub(crate) style_tweens: super::style_commands::StyleTweens,
-    /// Scripts' `tween`s of component fields (#734), stepped with them.
-    pub(crate) field_tweens: flint_script::FieldTweens,
     /// The renderer's config generation the scripts' style reader was
     /// last made from (#372).
     pub(crate) style_reader_generation: Option<u64>,
@@ -126,14 +122,12 @@ impl GameCore {
             project,
             clock: GameClock::new(),
             events: EventBus::new(),
-            animation: AnimationSystem::new(),
             particles: ParticleSystem::new(),
             script: crate::script_system(),
             state_machine: super::subsystem::state_machine(),
             store: PersistentStore::new(),
             styles: Default::default(),
             style_tweens: Default::default(),
-            field_tweens: Default::default(),
             style_reader_generation: None,
             resources,
             script_requests: Default::default(),
@@ -398,6 +392,9 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     // a tween asked for now starts moving next frame, and a
     // set_style_param this frame overrides (and stops) it.
     host.core().step_style_tweens();
+    // The field tweens (#734), the animation package's at its stage
+    // (#1620), between the entity styles' and the whole frame's
+    run_stage(host, Stage::Tweens, Some(config));
     // And whole-frame styles' (#406), on the renderer's config
     {
         let (core, lent) = host.lend();
@@ -434,16 +431,19 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     run_stage(host, Stage::ScriptUi, Some(config));
     host.late_models();
 
-    // Sound triggers, animations + sprite-end callbacks, bone matrices,
-    // bone probes, IK, particles
-    // A capture keeps its own animation, on a fixed step, in `bones_posed`
+    // Sound triggers, the animation clock and its ends and cues to the
+    // scripts (`Stage::Animate`, the animation package's, #1620), the
+    // clock poses are held on, bone matrices, bone probes and IK
+    // (`Stage::Pose`), then particles. A capture keeps its own animation,
+    // on a fixed step, in `bones_posed`, and runs neither stage
     let capture = host.capture();
     host.sound(config, &game_events);
     if !capture {
-        host.core().animate(config);
+        run_stage(host, Stage::Animate, Some(config));
     }
     host.bones_posed();
     if !capture {
+        run_stage(host, Stage::Pose, Some(config));
         host.core().after_animation(config);
     }
     host.phase_done(Phase::AnimFx);
@@ -524,6 +524,7 @@ impl GameCore {
                 pads,
                 quit,
                 resources,
+                bus: &mut self.events,
             };
             f(&mut self.subsystems, &mut ctx)
         })
@@ -670,8 +671,9 @@ impl GameCore {
         self.script.set_player(None);
     }
 
-    /// Move the style tweens (#370) and the field tweens (#734) on by this
-    /// frame's game time, while scripts run.
+    /// Move the style tweens (#370) on by this frame's game time, while
+    /// scripts run (the field tweens are the animation package's, at
+    /// `Stage::Tweens` right after, #1620).
     fn step_style_tweens(&mut self) {
         if self.state_machine.active_config().runs(SCRIPTS) {
             flint_core::scope!("step_style_tweens");
@@ -682,11 +684,6 @@ impl GameCore {
             }
             for message in step.failures {
                 tracing::warn!(target: "script", "{message}");
-            }
-            if !self.field_tweens.is_empty() {
-                for event in self.field_tweens.step(&mut self.world, dt) {
-                    self.events.push(event);
-                }
             }
         }
     }
@@ -740,57 +737,9 @@ impl GameCore {
         Some(eye)
     }
 
-    /// Animations, then the sprite animations' ends and sequence cues to
-    /// the scripts (skipped while the game state pauses animation).
-    fn animate(&mut self, config: &StateConfig) {
-        flint_core::scope!("animate");
-        if !config.runs(ANIMATION) {
-            return;
-        }
-        self.animation
-            .update(&mut self.world, self.clock.delta_time)
-            .ok();
-
-        // Deliver sprite animation end events to scripts
-        let sprite_events = self.animation.drain_sprite_events();
-        if !sprite_events.is_empty() {
-            self.script
-                .call_sprite_anim_ends(&mut self.world, &sprite_events);
-        }
-
-        // Deliver animation sequence cues to the owning entity's script
-        let cues = self.animation.drain_sequence_cues();
-        if !cues.is_empty() {
-            for cue in &cues {
-                // Each cue is the script's to say (`on_sequence_cue`);
-                // `RUST_LOG=script=debug` lists them (#716)
-                tracing::debug!(
-                    target: "script",
-                    "[sequence] {:?} '{}' cue '{}' at {:.2}s",
-                    cue.entity_id, cue.sequence, cue.cue, cue.time
-                );
-            }
-            self.script.call_sequence_cues(&mut self.world, &cues);
-        }
-    }
-
-    /// Bone probes, IK, then the particles.
+    /// The particles, after the pose (`Stage::Pose`: bone probes and IK).
     fn after_animation(&mut self, config: &StateConfig) {
         flint_core::scope!("after_animation");
-        // Publish bone_probe joints: model-local joint positions written
-        // into the component right after the pose computation, so scripts
-        // read this frame's pose (e.g. seat_camera following the eye).
-        {
-            flint_core::scope!("publish_bone_probes");
-            super::headless_animation::publish_bone_probes(&self.animation, &mut self.world);
-        }
-
-        // Two-bone IK (ADR 0070): pin chain tips to their targets now that
-        // scripts, physics and animation have all posed the world; the
-        // renderer reads world matrices on demand, so this is the last
-        // writer it sees.
-        self.animation.run_ik(&mut self.world);
-
         // Advance particle simulation (skip when paused)
         if config.runs(PARTICLES) {
             self.particles
@@ -1214,25 +1163,6 @@ impl ScriptHost for CoreCommands<'_> {
             )
         };
         self.style_applied(applied);
-    }
-
-    fn tween(
-        &mut self,
-        entity: EntityId,
-        path: String,
-        target: toml::Value,
-        seconds: f64,
-        easing: flint_core::tween::Easing,
-    ) {
-        let core = &mut *self.core;
-        let started =
-            (core.field_tweens).start(&mut core.world, entity, &path, &target, seconds, easing);
-        match started {
-            Ok(Some(done)) => core.events.push(done),
-            Ok(None) => {}
-            // The world changed between the call, which checked, and now
-            Err(message) => tracing::warn!(target: "script", "{message}"),
-        }
     }
 
     fn clear_entity_style(&mut self, entity: EntityId) {

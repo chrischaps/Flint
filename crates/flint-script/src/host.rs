@@ -137,16 +137,6 @@ pub trait ScriptHost {
     ) {
         self.unsupported("tween_style_param");
     }
-    fn tween(
-        &mut self,
-        entity: EntityId,
-        path: String,
-        target: toml::Value,
-        seconds: f64,
-        easing: flint_core::tween::Easing,
-    ) {
-        self.unsupported("tween");
-    }
     fn clear_entity_style(&mut self, entity: EntityId) {
         self.unsupported("clear_entity_style");
     }
@@ -315,13 +305,6 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
             seconds,
             easing,
         } => host.tween_style_param(entity, param, target, seconds, easing),
-        C::Tween {
-            entity,
-            path,
-            target,
-            seconds,
-            easing,
-        } => host.tween(entity, path, target, seconds, easing),
         C::ClearEntityStyle { entity } => host.clear_entity_style(entity),
         C::SetPostStyle { style, enabled } => host.set_post_style(style, enabled),
         C::SetPostStyleParam {
@@ -406,7 +389,6 @@ pub fn command_name(cmd: &ScriptCommand) -> Option<&'static str> {
         C::SetEntityStyle { .. } => "set_entity_style",
         C::SetStyleParam { .. } => "set_style_param",
         C::TweenStyleParam { .. } => "tween_style_param",
-        C::Tween { .. } => "tween",
         C::ClearEntityStyle { .. } => "clear_entity_style",
         C::SetPostStyle { .. } => "set_post_style",
         C::SetPostStyleParam { .. } => "set_post_style_param",

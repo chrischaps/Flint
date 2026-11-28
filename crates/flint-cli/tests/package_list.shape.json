@@ -28,7 +28,9 @@
   },
   "packages": [
     ["engine", "kernel"],
+    ["animation", "standard"],
     ["debug-hud", "standard"],
+    ["flipbook", "standard"],
     ["physics", "standard"],
     ["procgen", "standard"],
     ["ai", "feature"],
