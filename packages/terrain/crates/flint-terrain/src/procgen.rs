@@ -42,7 +42,12 @@ fn apply_noise(buffer: &mut [f32], res: usize, layer: &crate::spec::NoiseLayer, 
         .map(|idx| {
             let x = (idx % res) as f64 / res as f64;
             let y = (idx / res) as f64 / res as f64;
-            fbm_sample(x, y, layer, &octaves) as f32 * layer.amplitude as f32
+            let raw = fbm_sample(x, y, layer, &octaves);
+            let shaped = match layer.range {
+                Some(to) => remap(raw, layer.noise_type.raw_range(), to),
+                None => raw,
+            };
+            shaped as f32 * layer.amplitude as f32
         })
         .collect();
 
@@ -103,6 +108,16 @@ fn fbm_sample(x: f64, y: f64, layer: &crate::spec::NoiseLayer, octaves: &[Octave
     } else {
         0.0
     }
+}
+
+/// `v` from `[from_lo, from_hi]` onto `[to_lo, to_hi]`, held inside the
+/// target so a `[0, 1]` multiplier is never negative, whatever the noise
+/// does at a lattice edge. A reversed target inverts.
+fn remap(v: f64, [from_lo, from_hi]: [f64; 2], [to_lo, to_hi]: [f64; 2]) -> f64 {
+    let t = (v - from_lo) / (from_hi - from_lo);
+    let out = to_lo + t * (to_hi - to_lo);
+    // max/min, not clamp: a `nan` in the spec mustn't panic a bake
+    out.max(to_lo.min(to_hi)).min(to_lo.max(to_hi))
 }
 
 fn blend(base: f32, value: f32, mode: BlendMode) -> f32 {
@@ -384,6 +399,7 @@ mod tests {
                 persistence: 0.5,
                 amplitude: 1.0,
                 blend: BlendMode::Add,
+                range: None,
             })],
             splat_rules: Vec::new(),
             grass: None,
@@ -439,6 +455,7 @@ mod tests {
             persistence: 0.5,
             amplitude: 1.0,
             blend: BlendMode::Add,
+            range: None,
         })];
         spec.height_layers.extend(falloff.map(HeightLayer::Falloff));
         spec.height_layers.push(HeightLayer::Erosion(ErosionLayer {
@@ -611,5 +628,144 @@ mod tests {
         let max = after.iter().copied().fold(f32::MIN, f32::max);
         assert!(min >= 0.0 - 1e-6);
         assert!(max <= 1.0 + 1e-6);
+    }
+
+    /// The mean height step between neighbouring texels of a normalized
+    /// map. Land climbs a little at a time (about 0.01 at 129²); a map that
+    /// normalized from nothing is erosion's per-texel speckle stretched over
+    /// the whole range, which steps about 0.1.
+    fn step(h: &[f32], res: usize) -> f64 {
+        let steps: f64 = (0..res)
+            .flat_map(|y| (0..res - 1).map(move |x| (y, x)))
+            .map(|(y, x)| (h[y * res + x + 1] - h[y * res + x]).abs() as f64)
+            .sum();
+        steps / (res * (res - 1)) as f64
+    }
+
+    const SPECKLE: f64 = 0.05;
+
+    fn swell() -> TerrainSpec {
+        let text = include_str!("../../../../../tests/fixtures/scenes/terrain/swell.terrain.toml");
+        let (spec, issues) = TerrainSpec::parse_checked(text).unwrap();
+        assert!(issues.is_empty(), "{issues:?}");
+        spec
+    }
+
+    /// The swell layer: the recipe's one `multiply`.
+    fn multiplier(spec: &mut TerrainSpec) -> &mut NoiseLayer {
+        spec.height_layers
+            .iter_mut()
+            .find_map(|l| match l {
+                HeightLayer::Noise(n) if n.blend == BlendMode::Multiply => Some(n),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    /// #1695's done-when: a recipe that multiplies by a remapped noise makes
+    /// land for every seed of a 16-seed batch. The same recipe multiplying
+    /// by the raw, signed swell makes speckle for some of them (Relief's
+    /// seeds 5, 7, 9 and 16 at full size), so the range is what holds it.
+    #[test]
+    fn a_ranged_multiplier_makes_land_for_every_seed() {
+        let ranged = swell();
+        let res = ranged.geometry.resolution as usize;
+        let mut raw = ranged.clone();
+        multiplier(&mut raw).range = None;
+
+        let steps = |spec: &TerrainSpec| -> Vec<(u64, f64)> {
+            (1..=16)
+                .map(|seed| (seed, step(&generate_heightmap(spec, seed), res)))
+                .collect()
+        };
+        let speckled = |s: &[(u64, f64)]| -> Vec<u64> {
+            s.iter()
+                .filter(|(_, d)| *d > SPECKLE)
+                .map(|(s, _)| *s)
+                .collect()
+        };
+
+        let with_range = steps(&ranged);
+        assert!(
+            speckled(&with_range).is_empty(),
+            "seeds {:?} made speckle with the swell in 0..1: {with_range:?}",
+            speckled(&with_range)
+        );
+        let without = steps(&raw);
+        assert!(
+            !speckled(&without).is_empty(),
+            "the raw swell made land for every seed too, so this test holds nothing: {without:?}"
+        );
+    }
+
+    #[test]
+    fn each_noise_type_lies_in_its_raw_range() {
+        for kind in [
+            NoiseType::Perlin,
+            NoiseType::Simplex,
+            NoiseType::Value,
+            NoiseType::Ridged,
+        ] {
+            let layer = NoiseLayer {
+                noise_type: kind,
+                octaves: 4,
+                frequency: 7.0,
+                ..match &minimal_spec().height_layers[0] {
+                    HeightLayer::Noise(n) => n.clone(),
+                    _ => unreachable!(),
+                }
+            };
+            let octaves: Vec<OctaveNoise> = (0..layer.octaves)
+                .map(|o| OctaveNoise::new(kind, 3 + o))
+                .collect();
+            let [lo, hi] = kind.raw_range();
+            for i in 0..4096 {
+                let (x, y) = ((i % 64) as f64 / 64.0, (i / 64) as f64 / 64.0);
+                let v = fbm_sample(x, y, &layer, &octaves);
+                assert!(
+                    (lo..=hi).contains(&v),
+                    "{kind:?} gave {v} at ({x}, {y}), outside {lo}..{hi}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_range_maps_the_raw_noise_and_holds_it_there() {
+        assert_eq!(remap(-1.0, [-1.0, 1.0], [0.0, 1.0]), 0.0);
+        assert_eq!(remap(0.0, [-1.0, 1.0], [0.0, 1.0]), 0.5);
+        assert_eq!(remap(1.0, [-1.0, 1.0], [0.2, 0.6]), 0.6);
+        // Reversed inverts; past the raw range is held at the ends
+        assert_eq!(remap(1.0, [-1.0, 1.0], [1.0, 0.0]), 0.0);
+        assert_eq!(remap(1.5, [-1.0, 1.0], [0.0, 1.0]), 1.0);
+        assert_eq!(remap(-1.5, [-1.0, 1.0], [1.0, 0.0]), 1.0);
+        // A nan in the spec bakes something instead of panicking
+        let _ = remap(0.0, [-1.0, 1.0], [f64::NAN, 1.0]);
+    }
+
+    #[test]
+    fn a_ranged_layer_never_goes_negative_and_amplitude_scales_it() {
+        let mut spec = minimal_spec();
+        let HeightLayer::Noise(n) = &mut spec.height_layers[0] else {
+            unreachable!()
+        };
+        n.range = Some([0.0, 1.0]);
+        n.amplitude = 0.5;
+        let layer = n.clone();
+        let mut buffer = vec![0.0f32; 32 * 32];
+        apply_noise(&mut buffer, 32, &layer, 42);
+        assert!(buffer.iter().all(|v| (0.0..=0.5).contains(v)), "{buffer:?}");
+        // Without a range the same noise is signed
+        let mut raw = vec![0.0f32; 32 * 32];
+        apply_noise(
+            &mut raw,
+            32,
+            &NoiseLayer {
+                range: None,
+                ..layer
+            },
+            42,
+        );
+        assert!(raw.iter().any(|v| *v < 0.0));
     }
 }

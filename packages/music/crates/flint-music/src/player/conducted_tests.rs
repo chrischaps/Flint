@@ -136,7 +136,10 @@ fn a_scene_with_no_chart_is_told_the_module_is_not_enabled() {
         "{err}"
     );
     assert!(err.contains("line 2"), "at the call: {err}");
-    // music_beat() is core: any scene asks it
+    // music_beat() is the music module's, which every scene of a run with
+    // the package has enabled (#1619): any scene asks it
+    s.declare_module(&super::super::music_module::MUSIC_MODULE);
+    s.set_enabled_modules(vec![super::super::music_module::MODULE]);
     assert_eq!(eval::<f64>(&mut s, "music_beat()"), -1.0);
 }
 

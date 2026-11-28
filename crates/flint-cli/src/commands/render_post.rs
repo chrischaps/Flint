@@ -4,7 +4,9 @@
 //! `post.<key>=v` is a `[post_process]` key (the effects' descriptors, #741,
 //! are its list and its kinds), and `<style>.<key>=v` a key of a style's
 //! table, as the scene's `[post_process.styles.<style>]` writes it, without
-//! turning the style on (`--style` does that). The per-effect flags it
+//! turning the style on (`--style` does that), and
+//! `<entity>.<component>.<field>=v` one field of an entity's component
+//! (#1699, [`lay_entity_sets`]). The per-effect flags it
 //! replaced were hidden aliases for a release and are gone (#1144);
 //! [`super::render_retired`] names each one's spelling when it is given.
 //!
@@ -36,6 +38,10 @@ pub enum SetKey {
     /// registry once the scene's user styles are in ([`Set::check`]), as
     /// `--style` is.
     Style { style: String, key: String },
+    /// `<entity>.<component>.<field>` (#1699): one field of one entity's
+    /// component, checked once the scene loads and written into its world
+    /// before the renderer binds it ([`lay_entity_sets`]).
+    Entity(super::entity_field::EntityField),
 }
 
 impl Set {
@@ -45,6 +51,7 @@ impl Set {
         match &self.key {
             SetKey::Post(key) => format!("post.{key}"),
             SetKey::Style { style, key } => format!("{style}.{key}"),
+            SetKey::Entity(field) => field.name(),
         }
     }
 
@@ -53,7 +60,7 @@ impl Set {
     fn style_word(&self) -> Option<String> {
         match &self.key {
             SetKey::Style { style, key } => Some(format!("{style}:{key}={}", self.value)),
-            SetKey::Post(_) => None,
+            SetKey::Post(_) | SetKey::Entity(_) => None,
         }
     }
 
@@ -93,6 +100,8 @@ impl Set {
                     .map_err(|e| anyhow::anyhow!("{}: {e}", self.at()))?
                     .apply_settings(config, styles);
             }
+            // The world's, not the post's: laid by `lay_entity_sets`
+            SetKey::Entity(_) => {}
         }
         Ok(())
     }
@@ -108,12 +117,15 @@ pub fn parse_set(text: &str) -> Result<Set, String> {
         .filter(|(k, v)| !k.is_empty() && !v.is_empty())
         .ok_or_else(|| {
             format!(
-                "'{text}' is not key=value: post.<key>=v (`flint render --list-effects`) or \
-                 <style>.<key>=v (`--list-styles`)"
+                "'{text}' is not key=value: post.<key>=v (`flint render --list-effects`), \
+                 <style>.<key>=v (`--list-styles`) or <entity>.<component>.<field>=v"
             )
         })?;
     let (head, key) = name.split_once('.').ok_or_else(|| {
-        format!("'{name}' is not post.<key> or <style>.<key> (`--list-effects`, `--list-styles`)")
+        format!(
+            "'{name}' is not post.<key>, <style>.<key> or <entity>.<component>.<field> \
+             (`--list-effects`, `--list-styles`)"
+        )
     })?;
     let key = if head == "post" {
         let param = post_param(key)?;
@@ -124,6 +136,9 @@ pub fn parse_set(text: &str) -> Result<Set, String> {
             .set(&super::sweep::parse_value(value))
             .map_err(|e| format!("--set {name}={value}: {} {e}", param.key))?;
         SetKey::Post(param.key)
+    } else if let Some(field) = super::entity_field::EntityField::parse(name) {
+        // What it names is checked once the scene loads
+        SetKey::Entity(field)
     } else {
         if matches!(key, "enabled" | "on" | "off") {
             return Err(format!(
@@ -154,6 +169,35 @@ fn post_param(key: &str) -> Result<&'static PostParam, String> {
     })
 }
 
+/// Every `--set <entity>.<component>.<field>` written into `world`, in
+/// the order given, and every value an entity `--sweep` turns checked
+/// against it: called on each world a render loads, after its packages
+/// settle it and before a renderer binds it, so what a package builds at
+/// bind (a terrain's chunks and grass) is built from the value (#1699).
+pub fn lay_entity_sets(
+    args: &RenderArgs,
+    world: &mut flint_ecs::FlintWorld,
+    registry: &flint_schema::SchemaRegistry,
+) -> Result<()> {
+    for s in &args.set {
+        if let SetKey::Entity(field) = &s.key {
+            field
+                .lay(world, registry, &s.value)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", s.at()))?;
+        }
+    }
+    for sweep in &args.sweeps.sweep {
+        if let super::sweep::SweepKey::Entity(field) = &sweep.key {
+            for value in &sweep.values {
+                field
+                    .resolve(world, registry, value)
+                    .map_err(|e| anyhow::anyhow!("--sweep {}={value}: {e}", sweep.name()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The deprecated render mode (#746), hidden: what `--set` and `--style`
 /// spell is in [`super::render_retired`]. These three go with the Rhai shim
 /// they share, `flint_render::render_mode` (#1036), once Float is ported.
@@ -169,7 +213,8 @@ pub struct RenderModeArgs {
     #[arg(long, hide = true)]
     pub mode_mix: Option<f32>,
     /// With --render-mode: X,Y,Z,W
-    #[arg(long, hide = true, value_parser = parse_vec4)]
+    #[arg(long, hide = true, value_name = "X,Y,Z,W", value_parser = parse_vec4,
+          allow_hyphen_values = true)]
     pub mode_params: Option<[f32; 4]>,
 }
 
@@ -311,6 +356,18 @@ mod tests {
             .unwrap()
             .check(&flint_render::stylize::StyleRegistry::new())
             .is_ok());
+        // An entity's field waits for the world (#1699), and draws no post
+        let s = parse_set("sun.light.direction=0.8,0.1,-0.3").unwrap();
+        assert!(matches!(&s.key, SetKey::Entity(f) if f.field == "direction"));
+        assert_eq!(s.name(), "sun.light.direction");
+        assert!(s
+            .check(&flint_render::stylize::StyleRegistry::new())
+            .is_ok());
+        assert_eq!(
+            config("--set island.terrain.grass.density=60"),
+            config(""),
+            "an entity's field leaves the post as it was"
+        );
     }
 
     #[test]

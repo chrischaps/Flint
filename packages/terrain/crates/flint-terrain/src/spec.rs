@@ -176,6 +176,14 @@ pub struct NoiseLayer {
     pub amplitude: f64,
     #[serde(default)]
     pub blend: BlendMode,
+    /// Where the noise lies before it blends (#1695): its raw range
+    /// ([`NoiseType::raw_range`]) mapped linearly onto `[from, to]` and held
+    /// there, then scaled by `amplitude`. `None` blends the raw, signed
+    /// values, which is what `add` wants and what `multiply` by a perlin
+    /// layer must not have: a negative multiplier turns the land upside
+    /// down. `[1.0, 0.0]` inverts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<[f64; 2]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +193,20 @@ pub enum NoiseType {
     Simplex,
     Value,
     Ridged,
+}
+
+impl NoiseType {
+    /// The values a noise layer of this type lies in before `range` and
+    /// `amplitude`: perlin, simplex and value are signed, ridged
+    /// (`1 - |perlin|`) is not. Octaves don't widen it, since the sum is
+    /// divided by the octaves' total weight. A test samples each type and
+    /// holds every sample inside.
+    pub fn raw_range(self) -> [f64; 2] {
+        match self {
+            Self::Perlin | Self::Simplex | Self::Value => [-1.0, 1.0],
+            Self::Ridged => [0.0, 1.0],
+        }
+    }
 }
 
 fn default_noise_type() -> NoiseType {
@@ -473,6 +495,7 @@ impl TerrainSpec {
                 persistence: 0.5,
                 amplitude: 1.0,
                 blend: BlendMode::Add,
+                range: None,
             })],
             splat_rules: Vec::new(),
             grass: None,

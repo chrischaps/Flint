@@ -1,0 +1,43 @@
+# Sound (ADR 0138, #1619, epic #1611): the mixer and its buses, `audio_source`
+# and `audio_trigger`, the sounds scripts play, and the browser's
+# AudioWorklet. A standard package: on unless a game writes `audio = false`,
+# which takes `music` and `rhythm` with it (they `[require]` it) and leaves
+# kira, symphonia and the worklet out of the player.
+#
+# Its crates are in this folder: crates/flint-audio, whose `player` feature
+# is the subsystem (`flint_audio::player::PACKAGE`), the `audio` script
+# module, and the host's view of the sound (`flint_package::sound::Sound`,
+# the run's resource), and crates/flint-audio-worklet, the browser's mixer.
+# The engine (`AudioEngine`) is the run's resource: music and rhythm play
+# on it through `flint_audio::engine::of_mut(ctx.resources)`.
+
+[package]
+name = "audio"
+version = "0.1.0"
+tier = "standard"
+summary = "Sound: the mixer and its buses, audio sources and triggers, script sounds, the web's AudioWorklet"
+engine = "^0.1"
+
+[build]
+features = ["audio"]
+
+[rust]
+player = "flint-audio"
+
+# The sound card (#221, #1568): the launchers' `sound` turns on the crate's
+# `device` (kira's cpal backend: ALSA on Linux), so a build with the package
+# and without `sound` plays silent, as the headless CLI does.
+[rust.devices]
+sound = ["flint-audio/device"]
+
+[provides]
+crates = ["flint-audio", "flint-audio-worklet"]
+components = ["audio_source", "audio_trigger"]
+script_modules = ["audio"]
+
+# What a player built without it still knows (ADR 0137 decision 8): a scene
+# with sounds hears once that they are silent, and a game state may name the
+# `audio` policy in any build (ADR 0138 decision 7).
+[without]
+does = "stay silent"
+policies = ["audio"]

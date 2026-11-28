@@ -43,6 +43,7 @@ pub mod projection;
 pub mod quality;
 pub mod quat;
 pub mod resources;
+pub mod sound;
 pub mod step_clock;
 pub mod style_field;
 pub mod toml_util;

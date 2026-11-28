@@ -95,6 +95,7 @@ __pycache__/
 /docs/book/src/cli-reference/music.md
 /docs/book/src/concepts/ai-generation.md
 /docs/book/src/concepts/animation.md
+/docs/book/src/concepts/audio.md
 /docs/book/src/concepts/music-sessions.md
 /docs/book/src/concepts/particles.md
 /docs/book/src/concepts/procgen.md

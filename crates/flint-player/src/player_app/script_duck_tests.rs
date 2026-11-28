@@ -74,7 +74,7 @@ impl Stage {
             }
             let link = Link::default();
             engine.start_remote(link.clone());
-            app.audio.engine = engine;
+            app.test_audio().engine = engine;
             app.enter_scene(SceneEntry::Start)
                 .expect("the scene starts");
             let mut stage = Stage {
@@ -166,10 +166,10 @@ fn music_ducks_while_a_voice_line_plays_and_comes_back_after() {
         let full = stage.loudness(8, 40);
         assert!((full - 0.3536).abs() < 0.01, "the bed, undipped: {full}");
         assert!(stage.bus_volumes().is_empty(), "no duck before the line");
-        assert!(!stage.app.audio.engine.is_ducked(Bus::MUSIC));
+        assert!(!stage.app.test_audio().engine.is_ducked(Bus::MUSIC));
 
         stage.tick(2); // frame 3 plays the line; the duck follows
-        assert!(stage.app.audio.engine.is_ducked(Bus::MUSIC));
+        assert!(stage.app.test_audio().engine.is_ducked(Bus::MUSIC));
         assert_eq!(
             stage.bus_volumes(),
             [(Bus::MUSIC.index() as u8, -12.0, 0.05)],
@@ -185,7 +185,7 @@ fn music_ducks_while_a_voice_line_plays_and_comes_back_after() {
         // the engine knows its length), and the bed comes back.
         std::thread::sleep(Duration::from_millis(300));
         stage.tick(1);
-        assert!(!stage.app.audio.engine.is_ducked(Bus::MUSIC));
+        assert!(!stage.app.test_audio().engine.is_ducked(Bus::MUSIC));
         assert_eq!(
             stage.bus_volumes(),
             [(Bus::MUSIC.index() as u8, 0.0, 0.2)],
@@ -223,7 +223,10 @@ fn set_bus_lowpass_on_sfx_muffles_sfx_and_not_music() {
         stage.tick(2); // frame 3: set_bus_lowpass("sfx", 800)
         let muffled = stage.loudness(8, 40);
         assert!(muffled < open * 0.1, "sfx muffled: {muffled} vs {open}");
-        assert_eq!(stage.app.audio.engine.bus_lowpass(Bus::SFX), Some(800.0));
+        assert_eq!(
+            stage.app.test_audio().engine.bus_lowpass(Bus::SFX),
+            Some(800.0)
+        );
 
         stage.tick(3); // frame 5: the same sound on music; 7: no such bus
         let music = stage.loudness(8, 40);
@@ -245,7 +248,7 @@ fn set_bus_lowpass_on_sfx_muffles_sfx_and_not_music() {
             "chorus is no bus"
         );
         assert_eq!(
-            stage.app.audio.engine.bus_lowpass(Bus::MUSIC),
+            stage.app.test_audio().engine.bus_lowpass(Bus::MUSIC),
             Some(20_000.0)
         );
     });

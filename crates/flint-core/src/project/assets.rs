@@ -1455,7 +1455,7 @@ impl Project {
             let above = parent_dir(&dir).or_else(|| {
                 // The spelling ran out (`.`, or it ends in `..`): carry on
                 // from where it really is, if that is anywhere.
-                let real = fold(&anchor(&dir));
+                let real = anchor(&dir);
                 parent_dir(&real).filter(|_| real != dir)
             });
             out.push(dir);
@@ -1469,7 +1469,7 @@ impl Project {
             out.truncate(1);
         }
         if self.found == Found::Fallback && out.len() == 1 {
-            let above = parent_dir(&start).or_else(|| parent_dir(&fold(&anchor(&start))));
+            let above = parent_dir(&start).or_else(|| parent_dir(&anchor(&start)));
             out.extend(above);
         }
         if !reached {
@@ -1641,26 +1641,6 @@ fn under(dir: &Path, rel: &str) -> PathBuf {
     } else {
         dir.join(rel)
     }
-}
-
-/// `path` with `.` dropped and each `..` folded into what precedes it.
-fn fold(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !out.pop() {
-                    out.push("..");
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    if out.as_os_str().is_empty() {
-        out.push(".");
-    }
-    out
 }
 
 /// TEMPORARY (see [`OrderChange`]): what the kind's old rule would have

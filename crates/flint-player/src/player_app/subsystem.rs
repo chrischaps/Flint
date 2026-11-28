@@ -125,18 +125,29 @@ pub(crate) fn build_for_scene(ctx: &mut SceneCtx) -> Vec<Box<dyn Subsystem>> {
     built
 }
 
-/// The subsystems, and the script modules they enable, that every scene of
-/// a stock build has: the animation package's (its clips and `tween`), the
+/// The subsystems, and the script modules they enable (or that are on in
+/// every scene with no subsystem of their own), that every scene of a stock
+/// build has: the animation package's (its clips and `tween`), the
 /// flipbook package's (#1620), the particles package's (#1622: an effect
-/// needs no emitter in the scene), the physics package's (#1617) and the
-/// terrain package's (`terrain_height`, #1623). A test of a scene's own
-/// leaves them out.
+/// needs no emitter in the scene), the physics package's (#1617), the
+/// terrain package's (`terrain_height`, #1623), the audio package's and the
+/// music package's `music` module (#1619). A test of a scene's own leaves
+/// them out.
 #[cfg(test)]
 pub(crate) const EVERY_SCENE: (&[&str], &[&str]) = (
-    &["animation", "flipbook", "particles", "physics", "terrain"],
+    &[
+        "animation",
+        "audio",
+        "flipbook",
+        "particles",
+        "physics",
+        "terrain",
+    ],
     &[
         "animation",
         "tween",
+        "audio",
+        "music",
         "flipbook",
         "particle",
         "physics",
@@ -360,82 +371,71 @@ impl Drop for Subsystems {
 
 /// `$body` with `$ctx` a [`StageCtx`] over `$app`'s fields, borrowed one
 /// by one, so the subsystem list (another field) can be walked while it is
-/// lent. The sound is lent through the resources for it (#1616).
+/// lent. The sound is the run's resource (#1619), lent with the rest.
 macro_rules! with_stage_ctx {
-    ($app:expr, $policy:expr, |$ctx:ident| $body:expr) => {
-        flint_audio::engine::lend(
-            &mut $app.core.resources,
-            Some(&mut $app.audio.engine),
-            |resources| {
-                #[allow(unused_mut)]
-                let mut $ctx = $crate::player_app::subsystem::StageCtx {
-                    world: &mut $app.core.world,
-                    clock: &$app.core.clock,
-                    input: &mut $app.input,
-                    script: &mut $app.core.script,
-                    camera: &$app.camera,
-                    policy: $policy,
-                    renderer: $app.scene_renderer.as_mut(),
-                    gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
-                    project: &$app.core.project,
-                    scene_path: &$app.core.scene_path,
-                    scene_file_writable: $app.launch.scene_file_writable,
-                    pixels_per_point: $app.hud.egui_ctx.pixels_per_point(),
-                    cursor_captured: $app.focus.cursor_captured,
-                    note: &mut $app.hud.key_note,
-                    requests: &mut $app.core.script_requests,
-                    pads: Some($crate::player_app::subsystem::Pads::new(
-                        &mut $app.gilrs,
-                        &mut $app.pad_rumble,
-                        &mut $app.pads_lent,
-                    )),
-                    quit: Some(&mut $app.outcome.exit_requested),
-                    resources,
-                    bus: &mut $app.core.events,
-                };
-                $body
-            },
-        )
-    };
+    ($app:expr, $policy:expr, |$ctx:ident| $body:expr) => {{
+        #[allow(unused_mut)]
+        let mut $ctx = $crate::player_app::subsystem::StageCtx {
+            world: &mut $app.core.world,
+            clock: &$app.core.clock,
+            input: &mut $app.input,
+            script: &mut $app.core.script,
+            camera: &$app.camera,
+            policy: $policy,
+            renderer: $app.scene_renderer.as_mut(),
+            gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
+            project: &$app.core.project,
+            scene_path: &$app.core.scene_path,
+            scene_file_writable: $app.launch.scene_file_writable,
+            pixels_per_point: $app.hud.egui_ctx.pixels_per_point(),
+            cursor_captured: $app.focus.cursor_captured,
+            note: &mut $app.hud.key_note,
+            requests: &mut $app.core.script_requests,
+            pads: Some($crate::player_app::subsystem::Pads::new(
+                &mut $app.gilrs,
+                &mut $app.pad_rumble,
+                &mut $app.pads_lent,
+            )),
+            quit: Some(&mut $app.outcome.exit_requested),
+            resources: &mut $app.core.resources,
+            events: &[],
+            bus: &mut $app.core.events,
+        };
+        $body
+    }};
 }
 #[allow(unused_imports)]
 pub(crate) use with_stage_ctx;
 
-/// `$body` with `$ctx` a [`SceneCtx`] over `$app`'s fields, the sound lent
-/// through the resources (#1616).
+/// `$body` with `$ctx` a [`SceneCtx`] over `$app`'s fields.
 macro_rules! with_scene_ctx {
-    ($app:expr, |$ctx:ident| $body:expr) => {
-        flint_audio::engine::lend(
-            &mut $app.core.resources,
-            Some(&mut $app.audio.engine),
-            |resources| {
-                #[allow(unused_mut)]
-                let mut $ctx = $crate::player_app::subsystem::SceneCtx {
-                    world: &mut $app.core.world,
-                    scene_path: &$app.core.scene_path,
-                    tables: &$app.scene.tables,
-                    project: &$app.core.project,
-                    styles: &$app.core.styles,
-                    post: $app.scene.post_process.as_ref(),
-                    script: &mut $app.core.script,
-                    renderer: $app.scene_renderer.as_mut(),
-                    gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
-                    pads: Some($crate::player_app::subsystem::Pads::new(
-                        &mut $app.gilrs,
-                        &mut $app.pad_rumble,
-                        &mut $app.pads_lent,
-                    )),
-                    capture: None,
-                    packages: $app.core.packages.as_ref(),
-                    model_config: None,
-                    models: None,
-                    resources,
-                    registry: $crate::packages::registry(),
-                };
-                $body
-            },
-        )
-    };
+    ($app:expr, |$ctx:ident| $body:expr) => {{
+        #[allow(unused_mut)]
+        let mut $ctx = $crate::player_app::subsystem::SceneCtx {
+            world: &mut $app.core.world,
+            scene_path: &$app.core.scene_path,
+            tables: &$app.scene.tables,
+            project: &$app.core.project,
+            styles: &$app.core.styles,
+            post: $app.scene.post_process.as_ref(),
+            script: &mut $app.core.script,
+            renderer: $app.scene_renderer.as_mut(),
+            gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
+            pads: Some($crate::player_app::subsystem::Pads::new(
+                &mut $app.gilrs,
+                &mut $app.pad_rumble,
+                &mut $app.pads_lent,
+            )),
+            capture: None,
+            packages: $app.core.packages.as_ref(),
+            model_config: None,
+            models: None,
+            resources: &mut $app.core.resources,
+            preload_audio: $app.scene.preload_audio,
+            registry: $crate::packages::registry(),
+        };
+        $body
+    }};
 }
 
 /// What the player does with its subsystems: building the list for a

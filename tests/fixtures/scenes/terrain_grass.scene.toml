@@ -1,0 +1,75 @@
+# Terrain Grass: a grassy hillside under a low sun, a barrel casting its
+# shadow across the blades (#1699). What `flint render --set` and `--sweep`
+# turn on an entity's component, a terrain's grass and the sun:
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/terrain_grass.scene.toml -o grass.png
+#   cargo run --bin flint -- render tests/fixtures/scenes/terrain_grass.scene.toml \
+#     --sweep ground.terrain.grass.density=10,30,60 -o density.png
+#   cargo run --bin flint -- render tests/fixtures/scenes/terrain_grass.scene.toml \
+#     --set sun.light.direction=-0.9,0.35,0.2 -o evening.png
+#
+# The heightmap and layer textures are style_terrain's (terrain/); the splat
+# map, grass but for a few dirt clearings, is this scene's own.
+
+[scene]
+name = "Terrain Grass"
+version = "1.0"
+description = "A grassy terrain, a sun and a barrel: the fields --set and --sweep reach (#1699)"
+
+[camera]
+position = [3.0, 4.6, 24.0]
+target = [-1.0, 2.4, 13.0]
+fov = 50.0
+
+[post_process]
+exposure = 1.0
+ssao_enabled = true
+ssao_radius = 0.5
+ssao_intensity = 0.5
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+sun_glow = 1.2
+
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [0.6, 0.8, 0.3]
+color = [1.0, 0.94, 0.84]
+intensity = 3.0
+
+[entities.ground]
+archetype = "terrain"
+[entities.ground.transform]
+position = [-32, 0, -32]
+[entities.ground.terrain]
+heightmap = "./terrain/heightmap.png"
+splat_map = "./terrain/grass_splat.png"
+layer0_texture = "./terrain/grass.png"
+layer1_texture = "./terrain/dirt.png"
+layer2_texture = "./terrain/rock.png"
+layer3_texture = "./terrain/sand.png"
+width = 64.0
+depth = 64.0
+height_scale = 6.0
+chunk_resolution = 64
+texture_tile = 8.0
+roughness = 0.85
+metallic = 0.0
+"grass.enabled" = true
+"grass.density" = 24.0
+"grass.max_distance" = 40.0
+"grass.fade_start" = 30.0
+"grass.blade_height" = 0.5
+"grass.density_threshold" = 0.05
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [-2.6, 2.72, 15.2]
+scale = [0.8, 0.8, 0.8]
+[entities.barrel.model]
+asset = "./models/barrel.glb"

@@ -29,6 +29,7 @@ use super::capture_compare::{compare_folders, Comparison};
 use super::capture_disk::{self as disk, Room};
 use crate::output::{self, progress, say};
 use anyhow::{bail, Context, Result};
+use flint_core::project::clean_path;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -91,6 +92,11 @@ pub struct CaptureArgs {
     /// Capture even when the estimate passes 90% of the disk's free space
     #[arg(long)]
     pub no_disk_check: bool,
+
+    /// Fail a take whose player found no schemas or had a script error
+    /// (without it the summary names such takes and the run still passes)
+    #[arg(long)]
+    pub strict: bool,
 
     /// Schema directories for the player (the whole list; default: the
     /// scene's project's flint.toml)
@@ -179,7 +185,8 @@ pub struct Shot {
     pub scene: String,
     pub seconds: f64,
     pub title: Option<String>,
-    #[serde(default)]
+    /// Lines kept in `take.json`: a list, or a string as one line (#1702)
+    #[serde(default, deserialize_with = "one_or_many")]
     pub notes: Vec<String>,
     pub fps: Option<u32>,
     pub width: Option<u32>,
@@ -193,6 +200,23 @@ pub struct Shot {
     pub args: Vec<String>,
     #[serde(default)]
     pub take: Vec<Take>,
+}
+
+/// `notes = "x"` reads as `notes = ["x"]`.
+fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Notes {
+        One(String),
+        Many(Vec<String>),
+    }
+    match Notes::deserialize(d) {
+        Ok(Notes::One(line)) => Ok(vec![line]),
+        Ok(Notes::Many(lines)) => Ok(lines),
+        Err(_) => Err(serde::de::Error::custom(
+            "notes must be a string or a list of strings",
+        )),
+    }
 }
 
 /// `[[shot.take]]`: one run of the shot, with what it changes.
@@ -461,7 +485,9 @@ pub fn plan(
         // full size; --scale shrinks pixels, never the canvas
         let points_wide = list_points * full_w as f64 / c.width as f64;
         let fps = shot.fps.unwrap_or(c.fps);
-        let scene = base.join(native(&shot.scene));
+        // Cleaned, so `../x.scene.toml` from a list in `shots/` is the
+        // scene where it is, and the player finds its project (#1703)
+        let scene = clean_path(&base.join(native(&shot.scene)));
         for take in takes {
             if !over.takes.is_empty() && !over.takes.contains(&take.name) {
                 continue;
@@ -470,7 +496,7 @@ pub fn plan(
                 .input
                 .as_ref()
                 .or(shot.input.as_ref())
-                .map(|p| base.join(native(p)));
+                .map(|p| clean_path(&base.join(native(p))));
             let mut args = c.args.clone();
             args.extend(shot.args.iter().cloned());
             args.extend(take.args.iter().cloned());
@@ -707,8 +733,15 @@ pub fn run(args: CaptureArgs) -> Result<()> {
                 .is_some_and(|(c, _)| !c.same_within(args.tolerance))
         })
         .count();
+    // A take that made its frames from a scene that lost its project, or
+    // whose scripts failed, is named, never passed off as a good one (#1703)
+    let warned: Vec<String> = records
+        .iter()
+        .filter(|r| r.ok && !r.warnings.is_empty())
+        .map(|r| format!("{}: {}", r.plan.label(), r.warnings.join("; ")))
+        .collect();
     let summary = if !failed {
-        format!(
+        let mut line = format!(
             "captured {} takes{}",
             records.len(),
             if args.verify {
@@ -716,7 +749,15 @@ pub fn run(args: CaptureArgs) -> Result<()> {
             } else {
                 ""
             }
-        )
+        );
+        if !warned.is_empty() {
+            line.push_str(&format!(
+                "; {} of them warned (--strict fails them): {}",
+                warned.len(),
+                warned.join(", ")
+            ));
+        }
+        line
     } else {
         let mut parts = Vec::new();
         if bad > 0 {
@@ -728,6 +769,9 @@ pub fn run(args: CaptureArgs) -> Result<()> {
         if parts.is_empty() {
             parts.push("an encode failed".into());
         }
+        if !warned.is_empty() {
+            parts.push(format!("{} warned: {}", warned.len(), warned.join(", ")));
+        }
         parts.join("; ")
     };
     say!("{summary}");
@@ -737,6 +781,7 @@ pub fn run(args: CaptureArgs) -> Result<()> {
             "title": title,
             "out": out.display().to_string(),
             "takes": records.iter().map(|r| r.json()).collect::<Vec<_>>(),
+            "warned": warned,
             "failed": failed,
             "summary": summary,
         })
@@ -897,10 +942,36 @@ struct Record {
     exit_code: Option<i32>,
     wall_seconds: f64,
     ok: bool,
+    /// What the player's log says went wrong in a take that still made its
+    /// frames (#1703): [`take_warnings`]
+    warnings: Vec<String>,
     command: Vec<String>,
     folder: PathBuf,
     verify: Option<(Comparison, Value)>,
     encoded: Option<PathBuf>,
+}
+
+/// What in a take's `player.log` means the take may not be the scene as
+/// written, though it made every frame (#1703): the player found no schema
+/// directory (so no flint.toml: the scene played outside its project, and
+/// its `load_data` / `load_ui` paths read from the wrong folder), or a
+/// script failed. Each is one line for the run's summary.
+pub fn take_warnings(log: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    if log.contains("No schemas directories found") {
+        found.push("the player found no schemas (no flint.toml above the scene?)".to_string());
+    }
+    // The exit report's `[script] N errors (M times in all)`
+    let errors = log.lines().find_map(|line| {
+        let rest = &line[line.find("[script] ")? + "[script] ".len()..];
+        let (n, after) = rest.split_once(' ')?;
+        let n: usize = n.parse().ok()?;
+        after.starts_with("error").then_some(n)
+    });
+    if let Some(n) = errors {
+        found.push(format!("{n} script error{}", if n == 1 { "" } else { "s" }));
+    }
+    found
 }
 
 impl Record {
@@ -924,6 +995,7 @@ impl Record {
             "points_wide": round(p.points_wide, 3),
             "wall_seconds": round(self.wall_seconds, 1),
             "exit_code": self.exit_code,
+            "warnings": self.warnings,
             "engine": env!("CARGO_PKG_VERSION"),
             "command": self.command,
         })
@@ -1009,7 +1081,9 @@ fn capture_take(p: &TakePlan, folder: &Path, flint: &Path, args: &CaptureArgs) -
         .with_context(|| format!("running {}", flint.display()))?;
     let wall_seconds = started.elapsed().as_secs_f64();
     let frames = frame_files(folder)?.len();
-    let ok = status.success() && frames == p.frames();
+    let warnings = take_warnings(&String::from_utf8_lossy(&std::fs::read(&log_path)?));
+    let made = status.success() && frames == p.frames();
+    let ok = made && (warnings.is_empty() || !args.strict);
     let exe = flint
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -1020,6 +1094,7 @@ fn capture_take(p: &TakePlan, folder: &Path, flint: &Path, args: &CaptureArgs) -
         exit_code: status.code(),
         wall_seconds,
         ok,
+        warnings,
         command: std::iter::once(exe).chain(words).collect(),
         folder: folder.to_path_buf(),
         verify: None,
@@ -1029,10 +1104,14 @@ fn capture_take(p: &TakePlan, folder: &Path, flint: &Path, args: &CaptureArgs) -
         folder.join("take.json"),
         serde_json::to_string_pretty(&record.take_json())?,
     )?;
-    let status_word = if ok {
+    let status_word = if ok && record.warnings.is_empty() {
         "ok".to_string()
+    } else if ok {
+        format!("ok, but {}", record.warnings.join("; "))
     } else if !status.success() {
         format!("FAILED (exit {:?})", status.code())
+    } else if made {
+        format!("FAILED (--strict: {})", record.warnings.join("; "))
     } else {
         "FAILED (frame count)".to_string()
     };
@@ -1046,7 +1125,7 @@ fn capture_take(p: &TakePlan, folder: &Path, flint: &Path, args: &CaptureArgs) -
             .replace('\\', "/"),
         p.frames()
     );
-    if !ok {
+    if !ok || !record.warnings.is_empty() {
         say!("    see {}", shown(&log_path));
     }
     Ok(record)
@@ -1190,6 +1269,59 @@ fps = 20
         assert!(plans[1].folder.ends_with("looks/noir"));
     }
 
+    /// #1703: the list is in `/game/shots/`, its scene `../relief.scene.toml`.
+    /// The player is handed `/game/relief.scene.toml`, never
+    /// `/game/shots/../relief.scene.toml`, whose walk up found no project.
+    #[test]
+    fn a_scene_named_from_a_subfolder_is_handed_over_cleaned() {
+        let list = ShotList::parse(
+            "[[shot]]\nid = \"a\"\nscene = \"../relief.scene.toml\"\nseconds = 1\n\
+             input = \"./../tour/a.input.txt\"\n",
+        )
+        .unwrap();
+        let (_, plans) = plan(&list, Path::new("/game/shots/relief.shots.toml"), &over()).unwrap();
+        // (on Windows the list's folder comes back on the working drive)
+        let scene = &plans[0].scene;
+        assert!(
+            scene.ends_with("game/relief.scene.toml"),
+            "{}",
+            scene.display()
+        );
+        assert!(!scene.ends_with("shots/../relief.scene.toml"));
+        let input = plans[0].input.as_deref().unwrap();
+        assert!(
+            input.ends_with("game/tour/a.input.txt"),
+            "{}",
+            input.display()
+        );
+        let words = plans[0].play_words(Path::new("o"), None, &[], &[]);
+        assert!(!words[1].contains(".."), "{}", words[1]);
+        // What the take still keeps: the scene as the list wrote it
+        assert_eq!(plans[0].scene_named, "../relief.scene.toml");
+    }
+
+    /// A take that made every frame but whose player found no schemas or had
+    /// a script error says so, in the player's own words as they log them
+    #[test]
+    fn a_take_whose_player_found_no_schemas_or_failed_a_script_is_named() {
+        let lost = "2026-11-27T10:00:00Z  WARN load: No schemas directories found\n\
+                    2026-11-27T10:00:01Z  WARN flint_script::api::data: load_data('tour.toml') failed\n\
+                    2026-11-27T10:00:09Z  INFO report: [script] 2 errors (40 times in all)\n\
+                    2026-11-27T10:00:09Z  INFO report: [script]   scripts/director.rhai:12: ...\n";
+        assert_eq!(
+            take_warnings(lost),
+            [
+                "the player found no schemas (no flint.toml above the scene?)",
+                "2 script errors"
+            ]
+        );
+        let one = "INFO report: [script] 1 error (1 time in all)\n";
+        assert_eq!(take_warnings(one), ["1 script error"]);
+        let clean = "INFO load: Loaded relief: 40 entities; no warnings\n\
+                     INFO report: [script] no errors\n";
+        assert!(take_warnings(clean).is_empty());
+    }
+
     #[test]
     fn scale_keeps_the_canvas_and_filters_pick_takes() {
         let list = ShotList::parse(LIST).unwrap();
@@ -1259,6 +1391,31 @@ fps = 20
             let err = format!("{:#}", ShotList::parse(text).unwrap_err());
             assert!(err.contains(says), "{text:?}: {err}");
         }
+    }
+
+    #[test]
+    fn notes_are_a_list_or_one_string() {
+        let shot = "[[shot]]
+id = \"a\"
+scene = \"s.scene.toml\"
+seconds = 2
+";
+        let notes = |line: &str| {
+            let list = ShotList::parse(&format!(
+                "{shot}{line}
+"
+            ))?;
+            let (_, plans) = plan(&list, Path::new("shots.toml"), &over())?;
+            anyhow::Ok(plans[0].notes.clone())
+        };
+        assert_eq!(
+            notes("notes = \"the whole tour\"").unwrap(),
+            ["the whole tour"]
+        );
+        assert_eq!(notes("notes = [\"one\", \"two\"]").unwrap(), ["one", "two"]);
+        assert!(notes("").unwrap().is_empty());
+        let err = format!("{:#}", notes("notes = 3").unwrap_err());
+        assert!(err.contains("a string or a list of strings"), "{err}");
     }
 
     #[test]

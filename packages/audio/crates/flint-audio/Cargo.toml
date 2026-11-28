@@ -10,6 +10,12 @@ default = ["device"]
 # The sound card: kira's cpal backend, which links ALSA on Linux. Off, the
 # engine runs silent, as it does on a machine with no device (#221).
 device = ["kira/cpal"]
+# Its player part (`player::PACKAGE`, #1619): the scene's subsystem, the
+# `audio` script module, the host's view of the sound
+# (`flint_package::sound::Sound`) and an extension's `player::audio`.
+# flint-player's generated `audio` feature turns it on; music and rhythm
+# turn it on for `engine::of_mut`.
+player = ["dep:flint-package", "dep:flint-script", "dep:rhai", "dep:clap"]
 
 [dependencies]
 flint-core = { workspace = true }
@@ -22,6 +28,12 @@ web-time = { workspace = true }
 glam = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
+# The player part's (`player`): the Package API, the script module's
+# builder and the volume flags
+flint-package = { workspace = true, optional = true }
+flint-script = { workspace = true, optional = true }
+rhai = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
 
 # The browser (#101). kira already turns on cpal's WebAudio host for wasm32;
 # naming it here keeps sound from hanging on that default, and cpal is what

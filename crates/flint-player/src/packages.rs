@@ -704,6 +704,8 @@ mod tests {
         let before = [
             "engine",
             "animation",
+            // Its own package since #1619
+            "audio",
             "debug-hud",
             "flipbook",
             "particles",
@@ -734,6 +736,7 @@ mod tests {
         // own folder when the build has it
         let expected: Vec<&str> = [
             "animation",
+            "audio",
             "debug-hud",
             "flipbook",
             "particles",
@@ -753,6 +756,7 @@ mod tests {
         assert_eq!(moved, expected);
         for name in [
             "animation",
+            "audio",
             "debug-hud",
             "flipbook",
             "particles",

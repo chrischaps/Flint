@@ -1,0 +1,65 @@
+# Relief's recipe (flint-demos, demos/relief) at a quarter of its size: hills,
+# a ridged spine, and a slow perlin swell multiplied in to gather the land on
+# one side (#1695). The swell's `range` maps its -1..1 onto 0..1, so the
+# multiplier is never negative. Without it, 4 seeds in 16 turned the hills
+# upside down, the floor swallowed them, and erosion's speckle was the map.
+# `procgen::tests::a_ranged_multiplier_makes_land_for_every_seed` holds it.
+
+[meta]
+name = "swell"
+version = "1.0.0"
+
+[seed]
+mode = "fixed"
+value = 70
+
+[geometry]
+width = 512.0
+depth = 512.0
+height_scale = 100.0
+resolution = 129
+
+[[height_layers]]
+op = "noise"
+noise_type = "perlin"
+octaves = 6
+frequency = 1.2
+amplitude = 1.0
+blend = "add"
+
+[[height_layers]]
+op = "noise"
+noise_type = "ridged"
+octaves = 5
+frequency = 1.9
+lacunarity = 2.1
+persistence = 0.45
+amplitude = 0.65
+blend = "max"
+
+[[height_layers]]
+op = "noise"
+noise_type = "perlin"
+octaves = 2
+frequency = 0.55
+blend = "multiply"
+range = [0.0, 1.0]
+
+[[height_layers]]
+op = "flatten"
+height = 0.16
+falloff = 0.08
+mode = "below"
+
+[[height_layers]]
+op = "erosion"
+kind = "hydraulic"
+iterations = 7500
+strength = 0.35
+
+[[height_layers]]
+op = "erosion"
+kind = "thermal"
+iterations = 30
+talus_angle = 0.7
+strength = 0.25

@@ -1,4 +1,0 @@
-### A script's `set_field` or `tween` on a terrain's `grass.*`, `texture_tile`, `metallic` or `roughness` is drawn the next frame (#1698)
-**Package.** terrain
-**What changed.** The terrain's grass and material were read once, when the scene loaded, so `set_field(island, "terrain", "grass.wind_strength", 0.9)` was stored and drawn nowhere. The terrain package now reads them after each frame's scripts and hands the renderer what changed, as lights are read: wind, colours, dry tint, density and the rest, and `grass.enabled` (`false` stops the grass, `true` brings it back, growing it if the scene loaded without it). `tween(id, "terrain.grass.wind_strength", 0.6, 3.0)` eases one: a tween's path now also names a key the component writes with its dots. `terrain_live_fields()` lists the fields. A scene a script doesn't change draws as before.
-**What to do.** Nothing. A game that changed the grass through `set_grass_config` from its own Rust can do it from a script instead.

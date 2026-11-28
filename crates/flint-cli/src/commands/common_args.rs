@@ -108,7 +108,19 @@ pub(crate) fn debug_mode_name(mode: flint_render::DebugMode) -> &'static str {
         .map_or("pbr", |&(name, _)| name)
 }
 
+/// A vector flag takes a value with a leading minus (`--target -60,2,120`,
+/// #1700), so a flag where its value should be (`--target --no-grid`)
+/// arrives as the value: name it, as clap's "a value is required" did.
+fn not_a_flag(s: &str) -> Result<(), String> {
+    let rest = s.strip_prefix('-').unwrap_or("");
+    if rest.starts_with('-') || rest.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return Err(format!("a value is required, not the flag '{s}'"));
+    }
+    Ok(())
+}
+
 pub(crate) fn parse_vec3(s: &str) -> Result<[f32; 3], String> {
+    not_a_flag(s)?;
     let parts: Vec<&str> = s.split(',').collect();
     if parts.len() != 3 {
         return Err(format!(
@@ -132,6 +144,7 @@ pub(crate) fn parse_vec3(s: &str) -> Result<[f32; 3], String> {
 }
 
 pub(crate) fn parse_vec4(s: &str) -> Result<[f32; 4], String> {
+    not_a_flag(s)?;
     let parts: Vec<&str> = s.split(',').collect();
     if parts.len() != 4 {
         return Err(format!(
@@ -278,3 +291,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "common_args_signed_tests.rs"]
+mod signed_tests;
