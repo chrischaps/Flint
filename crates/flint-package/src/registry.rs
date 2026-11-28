@@ -5,6 +5,7 @@
 //! the debug keys here, never by a package's name.
 
 use crate::assets::AssetMaker;
+use crate::bind::{BindScene, SceneBinders};
 use crate::{PackageFlags, Resources, SceneCtx, Subsystem};
 use flint_core::package::InUse;
 use flint_runtime::DebugKeyGroup;
@@ -34,6 +35,12 @@ pub type LeftOutLine = fn(&SceneCtx) -> Option<String>;
 /// What a package puts in every run's [`Resources`] (its resolver, its
 /// props), called for each run's core as it is made.
 pub type RunResources = fn(&mut Resources);
+
+/// A package's look at a scene as written, before its models load
+/// ([`Registry::scene_read`], #1617): the world, the entities a chunk just
+/// brought (`None`: the whole scene), and the run's resources, where what
+/// it read waits for the package's builder or chunk hook.
+pub type SceneRead = fn(&flint_ecs::FlintWorld, Option<&[flint_core::EntityId]>, &mut Resources);
 
 /// A package's settle of a scene file its tables are in (ADR 0137 section 4,
 /// #1558): check them and fill in what they name (living's `[wooze] preset`,
@@ -78,6 +85,8 @@ pub struct Registry {
     run_resources: Vec<(&'static str, RunResources)>,
     settles: Vec<(&'static str, SettleScene)>,
     makers: Vec<(&'static str, &'static dyn AssetMaker)>,
+    binders: Vec<(&'static str, BindScene)>,
+    scene_reads: Vec<(&'static str, SceneRead)>,
     hud: Option<(&'static str, crate::hud::MakeHud)>,
     player_args: Vec<(&'static str, FlagGroup)>,
     /// Registration points, one value per Rust type (ADR 0137 section 4).
@@ -181,10 +190,29 @@ impl Registry {
         self
     }
 
+    /// A look at a scene as written, before the host loads its models
+    /// (#1617): the model loader expands a model of several nodes into
+    /// child entities and takes the parent's `model`, so what an entity
+    /// named is read here (physics' mesh colliders, #729). Asked at a
+    /// scene's entry (every entity) and a chunk's load (its entities), in
+    /// the player only, never in a capture.
+    pub fn scene_read(&mut self, read: SceneRead) -> &mut Self {
+        self.scene_reads.push((self.current, read));
+        self
+    }
+
     /// A maker of assets by name (`crate::assets`), asked at each scene's
     /// load, for spawned entities and each frame, after those before it.
     pub fn asset_maker(&mut self, maker: &'static dyn AssetMaker) -> &mut Self {
         self.makers.push((self.current, maker));
+        self
+    }
+
+    /// A package's share of a scene the renderer binds (`crate::bind`,
+    /// #1623): run right after `bind_scene`, before the models, in every
+    /// host that binds a scene.
+    pub fn scene_binder(&mut self, bind: BindScene) -> &mut Self {
+        self.binders.push((self.current, bind));
         self
     }
 
@@ -361,6 +389,18 @@ impl Registry {
         Ok(())
     }
 
+    /// Every [`scene_read`](Registry::scene_read) of the packages
+    /// `packages` lets in, in the order registered.
+    pub fn scene_reads_in<'a>(
+        &'a self,
+        packages: Option<&'a InUse>,
+    ) -> impl Iterator<Item = SceneRead> + 'a {
+        self.scene_reads
+            .iter()
+            .filter(move |(package, _)| packages.is_none_or(|in_use| in_use.is_on(package)))
+            .map(|(_, read)| *read)
+    }
+
     /// Every asset maker, in the order registered. None: every name a
     /// scene gives is a file.
     pub fn asset_makers(&self) -> impl Iterator<Item = &'static dyn AssetMaker> + '_ {
@@ -380,6 +420,22 @@ impl Registry {
             .iter()
             .filter(move |(package, _)| packages.is_none_or(|in_use| in_use.is_on(package)))
             .map(|(_, m)| *m)
+    }
+
+    /// Every scene binder, each with its package, in the order registered:
+    /// what a host without this registry is handed (the scene viewer).
+    pub fn scene_binders(&self) -> SceneBinders {
+        SceneBinders(self.binders.clone())
+    }
+
+    /// Run the scene binders of the packages `packages` lets in on `ctx`
+    /// (`None`: every package is in), and hand back the ground one built.
+    pub fn bind_scene(
+        &self,
+        packages: Option<&InUse>,
+        ctx: &mut crate::bind::BindCtx,
+    ) -> Option<crate::bind::SceneGround> {
+        crate::bind::bind_with(self.binders.iter().copied(), packages, ctx)
     }
 
     /// The packages that registered an asset maker `packages` leaves out,
@@ -404,6 +460,7 @@ impl std::fmt::Debug for Registry {
             .field("built_with", &self.built)
             .field("builders", &self.builders.len())
             .field("asset_makers", &self.makers.len())
+            .field("scene_binders", &self.binders.len())
             .field("policies", &self.policies)
             .field(
                 "modules",

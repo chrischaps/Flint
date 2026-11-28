@@ -1,10 +1,12 @@
 # The kernel, and with it what can't be left out yet (ADR 0136 decision 8).
 #
 # Every game links this package. It holds the kernel and the standard
-# packages that have no Cargo feature until Phase 3 (physics,
-# animation, particles, terrain), and the render features that live inside
-# flint-render until Phase 4 (ocean, grass, stylize, panels). Each list is
-# grouped by the package it will become, so the split is a move of lines.
+# packages that had no Cargo feature until Phase 3 (all of them have left:
+# animation with #1620, particles with #1622, physics with #1617, rig with
+# #1621, terrain with #1623, audio with #1619), and the render features that
+# live inside flint-render until Phase 4 (ocean, grass, stylize, panels).
+# Each list is grouped by the package it will become, so the split is a
+# move of lines.
 # `flint package list` reads this file; a test in flint-cli holds every
 # crate, schema, script module and command of the tree to one manifest.
 
@@ -23,30 +25,17 @@ crates = [
     "flint-runtime", "flint-render", "flint-script", "flint-constraint",
     "flint-package", "flint-player", "flint-android", "flint-viewer",
     "flint-widgets", "flint-cli",
-    # physics
-    "flint-physics",
-    # animation
-    "flint-animation",
-    # particles
-    "flint-particles",
-    # terrain
-    "flint-terrain",
 ]
 components = [
     # kernel
     "transform", "visibility", "bounds", "model", "material",
     "material_overrides", "light", "sky", "lod", "asset_def", "script",
     "interactable", "camera_tuning", "screen_anchor", "ui_fill", "ui_text",
-    "sprite", "sprite_animator", "parallax", "spline", "spline_mesh",
+    "sprite", "parallax", "spline", "spline_mesh",
     "motion_hold",
-    # physics
-    "collider", "rigidbody", "character_controller", "joint",
-    # animation
-    "animator", "skeleton", "ik_two_bone", "bone_probe",
-    # particles
-    "particle_emitter", "particle_effect",
-    # terrain
-    "terrain",
+    # first-person (#1618): the character controller stays in
+    # flint-physics until then, its component here
+    "character_controller",
     # ocean
     "ocean", "ocean_contact", "water_body",
     # grass
@@ -56,11 +45,9 @@ components = [
 ]
 archetypes = [
     # kernel
-    "sprite", "animated_sprite", "character",
-    # physics
+    "sprite", "character",
+    # first-person (#1618)
     "player",
-    # terrain
-    "terrain",
 ]
 scene_tables = [
     # kernel
@@ -75,14 +62,6 @@ script_modules = [
     "draw_world", "ui", "screen_ui", "touch", "sprite", "view",
     "post_process", "quality", "test", "expression", "chunk", "spline",
     "field",
-    # physics
-    "physics", "physics_2d", "nav",
-    # animation
-    "animation", "tween",
-    # particles
-    "particle",
-    # terrain
-    "terrain",
     # ocean
     "ocean",
     # stylize
@@ -96,6 +75,7 @@ commands = [
     "export", "goldens", "prefab", "play", "playtest", "capture", "render",
     "dxc", "style", "package", "build",
     "asset import", "asset list", "asset info", "asset resolve", "asset where",
-    # hidden aliases of `flint edit`
-    "serve", "spline-edit", "preview", "terrain-edit",
+    # hidden aliases of `flint edit` (`preview`, the model previewer, is
+    # the rig package's, #1621)
+    "serve", "spline-edit",
 ]

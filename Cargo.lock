@@ -1649,11 +1649,18 @@ version = "0.1.0"
 dependencies = [
  "flint-core",
  "flint-ecs",
- "flint-import",
+ "flint-package",
+ "flint-render",
  "flint-runtime",
+ "flint-scene",
+ "flint-schema",
+ "flint-script",
  "log",
+ "rhai",
  "serde",
  "toml",
+ "tracing",
+ "wgpu",
 ]
 
 [[package]]
@@ -1754,7 +1761,6 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "exr",
- "flint-animation",
  "flint-asset",
  "flint-asset-gen",
  "flint-audio",
@@ -1767,7 +1773,6 @@ dependencies = [
  "flint-music",
  "flint-package",
  "flint-particles",
- "flint-physics",
  "flint-player",
  "flint-procgen",
  "flint-procgen-ai",
@@ -1775,6 +1780,7 @@ dependencies = [
  "flint-query",
  "flint-render",
  "flint-rhythm-game",
+ "flint-rig",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
@@ -1837,7 +1843,6 @@ dependencies = [
  "flint-ecs",
  "flint-geometry",
  "flint-package",
- "flint-particles",
  "flint-render",
  "flint-scene",
  "flint-schema",
@@ -1856,6 +1861,21 @@ dependencies = [
  "flint-schema",
  "serde",
  "thiserror 2.0.18",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "flint-flipbook"
+version = "0.1.0"
+dependencies = [
+ "flint-animation",
+ "flint-core",
+ "flint-ecs",
+ "flint-package",
+ "flint-runtime",
+ "flint-script",
+ "serde",
  "toml",
  "tracing",
 ]
@@ -1962,6 +1982,7 @@ dependencies = [
  "egui",
  "flint-core",
  "flint-ecs",
+ "flint-geometry",
  "flint-render",
  "flint-runtime",
  "flint-scene",
@@ -1982,16 +2003,28 @@ dependencies = [
 name = "flint-particles"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bytemuck",
+ "clap",
+ "egui",
  "flint-core",
  "flint-ecs",
+ "flint-package",
  "flint-render",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
+ "flint-script",
+ "flint-viewer",
+ "flint-widgets",
+ "image",
+ "rhai",
  "serde",
  "toml",
+ "toml_edit 0.22.27",
  "tracing",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]
@@ -2001,11 +2034,17 @@ dependencies = [
  "crossbeam",
  "flint-core",
  "flint-ecs",
+ "flint-geometry",
+ "flint-import",
+ "flint-package",
+ "flint-render",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
+ "flint-script",
  "flint-terrain",
  "rapier3d",
+ "rhai",
  "thiserror 2.0.18",
  "toml",
  "tracing",
@@ -2034,6 +2073,7 @@ dependencies = [
  "flint-core",
  "flint-debug-ui",
  "flint-ecs",
+ "flint-flipbook",
  "flint-geometry",
  "flint-import",
  "flint-living",
@@ -2046,6 +2086,7 @@ dependencies = [
  "flint-query",
  "flint-render",
  "flint-rhythm-game",
+ "flint-rig",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
@@ -2237,6 +2278,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-rig"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "egui",
+ "flint-animation",
+ "flint-core",
+ "flint-ecs",
+ "flint-import",
+ "flint-package",
+ "flint-render",
+ "flint-runtime",
+ "flint-scene",
+ "flint-schema",
+ "flint-script",
+ "flint-viewer",
+ "image",
+ "log",
+ "serde",
+ "toml",
+ "tracing",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "flint-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2283,16 +2351,13 @@ dependencies = [
 name = "flint-script"
 version = "0.1.0"
 dependencies = [
- "flint-animation",
  "flint-core",
  "flint-ecs",
  "flint-geometry",
- "flint-physics",
  "flint-procgen",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
- "flint-terrain",
  "rhai",
  "serde_json",
  "toml",
@@ -2306,10 +2371,16 @@ dependencies = [
 name = "flint-terrain"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
+ "egui",
  "flint-core",
  "flint-ecs",
  "flint-geometry",
+ "flint-package",
  "flint-render",
+ "flint-script",
+ "flint-viewer",
  "image",
  "noise",
  "rand 0.9.2",
@@ -2318,6 +2389,7 @@ dependencies = [
  "toml",
  "tracing",
  "wgpu",
+ "winit",
 ]
 
 [[package]]
@@ -2349,7 +2421,6 @@ dependencies = [
  "flint-geometry",
  "flint-import",
  "flint-package",
- "flint-particles",
  "flint-render",
  "flint-runtime",
  "flint-scene",

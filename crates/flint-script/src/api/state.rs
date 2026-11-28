@@ -140,8 +140,8 @@ mod tests {
     fn register_error(sm: &mut GameStateMachine, script: &str) -> String {
         let engine = crate::engine::ScriptEngine::new();
         let mut store = PersistentStore::new();
-        let physics = flint_physics::PhysicsSystem::new();
-        let _scope = crate::context::StateScope::new(&engine.ctx, sm, &mut store, &physics);
+        let resources = flint_core::resources::Resources::new();
+        let _scope = crate::context::StateScope::new(&engine.ctx, sm, &mut store, &resources);
         match engine.rhai_engine().eval::<()>(script) {
             Ok(()) => String::new(),
             Err(e) => e.to_string(),

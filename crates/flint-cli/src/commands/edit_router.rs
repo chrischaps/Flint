@@ -6,9 +6,9 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use flint_viewer::host::{self, CameraFlags, Editor, HostOptions, StillOptions};
 
-use super::{particle_edit, preview, spline_edit, terrain_edit};
+use super::{preview, spline_edit};
 use flint_package::cli::Points;
-use flint_viewer::host::{SpecEdit, SpecKind};
+use flint_viewer::host::{EffectEdit, EffectEditors, SpecEdit, SpecKind};
 
 /// Recognised file kinds that `flint edit` can route to.
 pub enum FileKind {
@@ -433,7 +433,32 @@ pub(crate) fn run_in(args: EditArgs, points: &Points) -> Result<()> {
     } else {
         None
     };
+    // A terrain spec's editor is the terrain package's (#1623), asked the
+    // same way
+    let terrain_editors = if path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().ends_with(".terrain.toml"))
+    {
+        Some(super::terrain_edit::editors(
+            points,
+            &format!("flint edit {}", args.file),
+            &["terrain-edit"],
+        )?)
+    } else {
+        None
+    };
     let file_kind = detect_file_kind(path)?;
+    // An effect's editor is the particles package's (#1622): the editor it
+    // registered, or the package named before the file is read or made
+    let effect_editors = match file_kind {
+        FileKind::ParticleEffect => Some(points.get::<EffectEditors>().ok_or_else(|| {
+            super::absent::missing_component_owner(
+                format!("flint edit {}", args.file),
+                flint_core::components::PARTICLE_EFFECT,
+            )
+        })?),
+        _ => None,
+    };
     let kind = match (file_kind, spec_editors) {
         (FileKind::Scene, _) if args.spline => K::Track,
         (FileKind::Scene, _) => K::Scene,
@@ -526,54 +551,60 @@ pub(crate) fn run_in(args: EditArgs, points: &Points) -> Result<()> {
                 },
             )?)
         }
-        K::Terrain => launch.go(terrain_edit::editor(terrain_edit::TerrainEditArgs {
-            spec: args.file,
-            seed: args.seed,
-            width: options.width,
-            height: options.height,
-            no_grid: args.no_grid,
-        })?),
-        K::Particles => launch.go(particle_edit::editor(particle_edit::ParticleEditArgs {
-            file: args.file,
-            width: options.width,
-            height: options.height,
-            no_grid: args.no_grid,
-            auto_orbit: args.auto_orbit,
-            render: args.render,
-            anim_time: args.anim_time,
-            preset: args.preset,
-            distance: args.distance,
-            yaw: args.yaw,
-            pitch: args.pitch,
-            target: args.target,
-            fov: args.fov,
-            style: args.style,
-        })?),
-        K::Model => launch.go(preview::editor(preview::PreviewArgs {
-            model: Some(args.file),
-            render: args.render,
-            width: options.width,
-            height: options.height,
-            distance: args.distance,
-            yaw: args.yaw,
-            pitch: args.pitch,
-            target: args.target,
-            fov: args.fov,
-            no_grid: args.no_grid,
-            watch: args.watch,
-            no_animate: args.no_animate,
-            clip: args.clip,
-            anim_speed: args.anim_speed.unwrap_or(1.0),
-            anim_time: args.anim_time,
-            layers: args.layers,
-            sequence: args.sequence,
-            sequence_loop: args.sequence_loop,
-            auto_orbit: args.auto_orbit,
-            style: args.style,
-            pose_bones: args.pose_bones,
-            show_skeleton: args.show_skeleton,
-            motion_hold: args.motion_hold,
-        })?),
+        K::Terrain => {
+            let editors = terrain_editors.expect("a .terrain.toml found its editor above");
+            launch.go((editors.open)(SpecEdit {
+                spec: args.file,
+                seed: args.seed,
+                width: options.width,
+                height: options.height,
+                no_grid: args.no_grid,
+                auto_orbit: false,
+            })?)
+        }
+        K::Particles => {
+            let editors = effect_editors.expect("a .particles.toml found its editor above");
+            launch.go((editors.open)(EffectEdit {
+                file: args.file,
+                preset: args.preset,
+                no_grid: args.no_grid,
+                styles: args.style.styles,
+                style_time: args.style.style_time,
+            })?)
+        }
+        // The model previewer is the rig package's (#1621)
+        K::Model => launch.go((preview::editors(
+            points,
+            &format!("flint edit {}", args.file),
+        )?
+        .open)(
+            preview::PreviewArgs {
+                model: Some(args.file),
+                render: args.render,
+                width: options.width,
+                height: options.height,
+                distance: args.distance,
+                yaw: args.yaw,
+                pitch: args.pitch,
+                target: args.target,
+                fov: args.fov,
+                no_grid: args.no_grid,
+                watch: args.watch,
+                no_animate: args.no_animate,
+                clip: args.clip,
+                anim_speed: args.anim_speed.unwrap_or(1.0),
+                anim_time: args.anim_time,
+                layers: args.layers,
+                sequence: args.sequence,
+                sequence_loop: args.sequence_loop,
+                auto_orbit: args.auto_orbit,
+                style: args.style,
+                pose_bones: args.pose_bones,
+                show_skeleton: args.show_skeleton,
+                motion_hold: args.motion_hold,
+            }
+            .edit(),
+        )?),
     }
 }
 
@@ -800,7 +831,9 @@ name = \"x\"
         .collect();
         let mut stack = vec![
             root.join("flint-viewer/src"),
-            commands.join("particle_edit"),
+            root.join("../packages/particles/crates/flint-particles/src/cli"),
+            // The model previewer, the rig package's since #1621
+            root.join("../packages/rig/crates/flint-rig/src/cli"),
         ];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {

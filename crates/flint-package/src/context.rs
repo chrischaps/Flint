@@ -6,7 +6,8 @@
 //! Every field is a kernel type. What a package owns, and another package
 //! reads, is in [`Resources`]: procgen's resolver, living's props, the
 //! debug-hud's panels, and the standard packages' state (ADR 0138 decision
-//! 1, #1616): physics' `PhysicsSystem` in every context, the sound once
+//! 1, #1616): physics' `PhysicsSystem` in every context of a run that has
+//! the physics package (`flint_physics::of_mut`, #1617), the sound once
 //! the host opened one (`flint_package::sound`, the engine itself through
 //! `flint_audio::engine::of_mut`, #1619).
 
@@ -14,6 +15,7 @@ use crate::{Note, Registry, Resources, Subsystem};
 use flint_core::package::InUse;
 use flint_core::project::Project;
 use flint_ecs::FlintWorld;
+use flint_render::model_loader::{ModelLoadConfig, ModelLoadResult};
 use flint_render::stylize::StyleRegistry;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::pad::Gilrs;
@@ -50,6 +52,10 @@ pub struct SceneCtx<'a> {
     pub script: &'a mut ScriptSystem,
     /// `None` in a headless test and a capture.
     pub renderer: Option<&'a mut SceneRenderer>,
+    /// The window's device and queue, for what a builder uploads to the
+    /// renderer at the scene's entry (the particles' textures, #1622);
+    /// `None` without a window: a headless test, a capture, a playtest.
+    pub gpu: Option<(&'a wgpu::Device, &'a wgpu::Queue)>,
     /// The pads, when the host has them.
     pub pads: Option<Pads<'a>>,
     /// `Some` when the host is a capture (`flint render`'s `HeadlessGame`,
@@ -59,6 +65,18 @@ pub struct SceneCtx<'a> {
     /// every package is in. A builder of a package it leaves out makes
     /// nothing and says so ([`SceneCtx::leaves_out`], #1528).
     pub packages: Option<&'a InUse>,
+    /// Where the host found the scene's models (its catalog, the project's
+    /// search, what it asked first), for a package that reads a model's
+    /// file itself: physics' mesh colliders (#1617). `None` in a capture
+    /// and a headless test.
+    pub model_config: Option<&'a ModelLoadConfig>,
+    /// What the model loader made of the scene's models, when the host
+    /// loaded them for this scene: the skeletons and clips a skinned or
+    /// animated model brought, and which entities are skinned (#1620).
+    /// `None` in a headless test and a capture, whose animation is its own
+    /// ([`CapturePose`]). A model spawned later reaches the subsystems
+    /// through [`Subsystem::late_models`](crate::Subsystem::late_models).
+    pub models: Option<&'a ModelLoadResult>,
     /// The run's resources: what one package lends another. The sound is
     /// here once the host opened one (`flint_audio::engine::of_mut`): a
     /// subsystem that plays on the shared kira manager (the music, ADR
@@ -172,6 +190,10 @@ pub struct StageCtx<'a> {
     /// triggers play from them at [`Stage::Sound`](crate::Stage::Sound).
     /// Empty outside a frame's stages.
     pub events: &'a [flint_runtime::GameEvent],
+    /// The frame's event bus: what a subsystem raises here (a tween's
+    /// `tween_done`) reaches the scripts with the next frame's events, as
+    /// the physics contacts do.
+    pub bus: &'a mut EventBus,
 }
 
 impl StageCtx<'_> {
@@ -222,6 +244,65 @@ impl FixedCtx<'_> {
         self.policy.runs(name)
     }
 }
+
+/// A capture's own animation (`flint render --anim-time`, #307): the
+/// clips, bone probes and IK a package steps on the capture's clock, which
+/// the command makes and hands to the capture's game. The capture steps it
+/// where the player's frame runs `Stage::Animate` and `Stage::Pose` (which
+/// a capture doesn't run), after the scripts and before the bones go up.
+pub trait CapturePose: std::any::Any {
+    /// One frame of animation, `dt` seconds on.
+    fn step(&mut self, world: &mut FlintWorld, dt: f64);
+
+    /// The pose as it stands: no time passes, the pose's readers (bone
+    /// probes, IK) run once. What a capture at time 0 draws.
+    fn settle(&mut self, world: &mut FlintWorld) {
+        self.step(world, 0.0);
+    }
+
+    /// Give the renderer every skinned entity's bones as they stand.
+    fn upload(&self, renderer: &mut SceneRenderer, device: &wgpu::Device, queue: &wgpu::Queue);
+
+    /// Seconds stepped so far.
+    fn time(&self) -> f64;
+
+    /// What it posed, for the command's report.
+    fn report(&self, world: &FlintWorld) -> PoseReport;
+
+    /// Itself, for the command that made it to read back.
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// What a [`CapturePose`] posed: `flint render --anim-time`'s line and its
+/// JSON report.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PoseReport {
+    /// The entities that animate (an `animator` or a skinned model), by name.
+    pub animated: Vec<String>,
+    /// How many skinned entities are posed.
+    pub skinned: usize,
+    /// Skinned entities with an `animator` and no `skeleton` component, by
+    /// name: their clip plays nowhere, in the player either.
+    pub unposed: Vec<String>,
+    /// What the load registered, a line each (clips, sequences, sprite clips).
+    pub loaded: Vec<String>,
+    /// Sequence cues and one-shot ends that fired with no script to hear them.
+    pub unheard: usize,
+}
+
+/// The point the animation package fills (#1621): a capture's animation
+/// for the scene at the path, whose models the model loader gave, found in
+/// the project as the player finds it, with the kinds the run's packages
+/// registered (the registry). `flint render --anim-time` asks for it and
+/// names the package without it.
+pub struct CapturePoses(
+    pub fn(&ModelLoadResult, &Project, &str, &crate::Registry) -> Box<dyn CapturePose>,
+);
+
+/// The point the rig package fills (#1621): what poses a still that steps
+/// no animation, which is two-bone IK (ADR 0070) solved once over the
+/// authored chains. A render without it draws the chains as authored.
+pub struct StillPose(pub fn(&mut FlintWorld));
 
 /// A mouse button, as [`PlayerInput::Click`] carries it: the kernel's own,
 /// so winit is not in the API (ADR 0137 section 3).

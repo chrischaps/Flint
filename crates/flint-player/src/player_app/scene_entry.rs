@@ -10,16 +10,14 @@
 //! `teardown_current_scene` in `transition.rs`.
 
 use super::scene_loading::{
-    build_model_load_config, load_animations_from_world, load_scripts_from_world,
-    load_sequences_from_world, load_sprite_animations_from_world, register_node_animation_data,
-    register_skeletal_data, register_terrain_collider, LoadedGrassInfo,
+    build_model_load_config, load_scripts_from_world, terrain_surface, LoadedGrassInfo,
 };
 use super::PlayerApp;
-use crate::player_app::game_core::{physics_of, physics_of_mut};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use flint_core::frame_notes::{self, NoteKind};
 use flint_core::load_report::{self, Stage};
 use flint_core::vfs;
+use flint_package::surfaces::{SurfaceMesh, Surfaces};
 use flint_render::model_loader;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::RuntimeSystem;
@@ -41,7 +39,8 @@ impl PlayerApp {
     /// settings `apply_scene_settings` took) up: input bindings, camera,
     /// fonts, the renderer's share (models, lights, skybox, post-processing,
     /// terrain), the debug panels, then physics, audio,
-    /// animation, particles and scripts, in that order.
+    /// animation, the subsystems (the particles package first) and scripts,
+    /// in that order.
     ///
     /// An error is a startup failure (physics would not initialize); at a
     /// transition the same failure is logged and the scene plays on.
@@ -70,17 +69,18 @@ impl PlayerApp {
             }
         });
 
-        // Which model each mesh collider takes its triangles from, before
-        // the renderer expands a model of several nodes and its parent
-        // loses its `model` (#729)
-        let collider_meshes = super::collider_meshes::requests(&self.core.world);
+        // What a package reads of the scene before the renderer expands a
+        // model of several nodes and its parent loses its `model`: physics'
+        // mesh colliders (#729, #1617)
+        self.read_scene_for_packages(None);
+        // The surfaces the renderer builds below (splines, terrains), for
+        // the physics package's builder; none the last scene's
+        self.core.resources.insert(Surfaces::default());
 
         let grass = self.stage_scene_in_renderer();
         // The run's debug HUD makes the scene's panels (#1559)
         self.create_scene_debug_panels(grass);
         self.apply_camera_tuning();
-        // The terrain height callback for scripts
-        self.update_terrain_height_fn();
 
         if entry == SceneEntry::Start {
             // The saved store (where: persist.rs) before any script's
@@ -93,12 +93,6 @@ impl PlayerApp {
             // on_init both have them. Placed by the same id as the saves.
             self.load_user_audio();
         }
-
-        // The project's collision layers and the mesh colliders' triangles,
-        // before physics makes the scene's bodies
-        frame_notes::timed(NoteKind::PhysicsBuild, String::new, || {
-            self.prepare_physics(&collider_meshes)
-        });
 
         self.start_scene_systems(entry)?;
         // The subsystems this scene uses, each told it is up
@@ -183,14 +177,20 @@ impl PlayerApp {
             .unwrap_or_else(|| flint_render::SceneBinding::new(self.kept_asset_scope()))
             .with_archetypes(&schemas);
         let mut bound = renderer.bind_scene(device, queue, &self.core.world, &binding);
-        // The scene's terrain, which the renderer built in `bind_scene`
-        // until #1615: the terrain package's, before the models as it was
-        let terrain = flint_terrain::scene::bind_terrain(
-            renderer,
-            device,
-            queue,
-            &self.core.world,
-            &mut bound,
+        // The packages' share of the bind (#1623): the terrain's chunks and
+        // grass, which the renderer built in `bind_scene` until #1615, before
+        // the models as it was, and the ground it hands back
+        let ground = crate::packages::registry().bind_scene(
+            self.core.packages.as_ref(),
+            &mut flint_package::bind::BindCtx {
+                gpu: flint_package::assets::Gpu {
+                    renderer: &mut *renderer,
+                    device,
+                    queue,
+                },
+                world: &self.core.world,
+                bound: &mut bound,
+            },
         );
         // The core's registry is the scene's (#742), and a game style an
         // extension added since the binding was made is in it
@@ -225,10 +225,10 @@ impl PlayerApp {
             queue,
             &config,
         );
-        register_skeletal_data(&load_result, &mut self.core.animation);
-        register_node_animation_data(&load_result, &mut self.core.animation);
         self.late_models.remember_expanded(&load_result);
-        self.skeletal_entity_assets = load_result.skinned_entities;
+        // The skeletons and clips the models brought, for the scene's
+        // subsystems' builders (the animation package's, #1620)
+        self.scene_models = Some(load_result);
 
         // Meshes swept along the scene's splines (#750), each with its
         // collider unless it says `collider = false`
@@ -239,14 +239,16 @@ impl PlayerApp {
             device,
             queue,
         );
+        // Each a surface for the physics package's builder (#1617)
+        let surfaces = self.core.resources.get_or_insert_with(Surfaces::default);
         for c in splines.colliders {
-            physics_of_mut(&mut self.core.resources).register_static_trimesh(
-                c.entity,
-                c.vertices,
-                c.triangles,
-                c.friction,
-                c.restitution,
-            );
+            surfaces.meshes.push(SurfaceMesh {
+                entity: c.entity,
+                vertices: c.vertices,
+                triangles: c.triangles,
+                friction: c.friction,
+                restitution: c.restitution,
+            });
         }
         // The scene's draws, read once its models and splines are in (#739:
         // the frame's own inputs replace these at its first sync)
@@ -308,11 +310,24 @@ impl PlayerApp {
             self.scene.post_process.as_ref(),
         );
 
-        // The terrain loaded after the bind: its collider, and its heights
-        // for scripts
-        if let Some(loaded) = terrain {
-            register_terrain_collider(physics_of_mut(&mut self.core.resources), &loaded);
-            self.terrain = Some((loaded.terrain, loaded.config));
+        // The ground the bind made (#1623): its surface (a heightfield
+        // collider, #1219, for the physics package, #1617), and the run
+        // resource the terrain package's subsystem hands its scripts
+        // (`terrain_height`)
+        match ground {
+            Some(ground) => {
+                self.core
+                    .resources
+                    .get_or_insert_with(Surfaces::default)
+                    .grids
+                    .push(terrain_surface(&ground));
+                self.core.resources.insert(ground);
+            }
+            None => {
+                self.core
+                    .resources
+                    .remove::<flint_geometry::ground::SceneGround>();
+            }
         }
         bound.grass.map(|grass| LoadedGrassInfo {
             config: grass.config,
@@ -325,62 +340,24 @@ impl PlayerApp {
     /// scene's music is a subsystem, started on this audio when the
     /// subsystems hear the scene loaded, before the scripts' first frame.
     fn start_scene_systems(&mut self, entry: SceneEntry) -> Result<()> {
-        // Each system's start is a frame note (#1092): a transition's
-        // hitch names them, and a load report times them
-        let physics = frame_notes::timed(NoteKind::PhysicsBuild, String::new, || {
-            physics_of_mut(&mut self.core.resources).initialize(&mut self.core.world)
-        })
-        .context("Failed to initialize physics");
-        match (physics, entry) {
-            (Err(e), SceneEntry::Start) => return Err(e),
-            (Err(e), SceneEntry::Transition) => tracing::warn!("{e:#}"),
-            (Ok(()), _) => {}
-        }
-        // Who the scene is played as, before anything reads it: the cursor
-        // and the controls line at the end of the entry, `on_init`'s
-        // interactables (ADR 0138, #1614)
+        // Who the scene is played as starts over: a controller's builder
+        // says it below (physics' character controller, #1617), before the
+        // cursor and the controls line at the end of the entry and
+        // `on_init`'s interactables read it (ADR 0138, #1614). The scene's
+        // bodies are the physics package's builder's too. Each system's
+        // start is a frame note (#1092): a transition's hitch names them,
+        // and a load report times them
         self.core.enter_player_view();
 
         // The scene's sounds load as the audio package's subsystem is
         // built, below (#1619)
 
-        let animation_note = frame_notes::begin(NoteKind::AnimationLoad, String::new);
-        load_animations_from_world(
-            &self.core.project,
-            &self.core.scene_path,
-            &mut self.core.animation,
-        );
-        load_sprite_animations_from_world(
-            &self.core.project,
-            &self.core.scene_path,
-            &mut self.core.animation,
-        );
-        load_sequences_from_world(
-            &self.core.project,
-            &self.core.scene_path,
-            &mut self.core.animation,
-        );
-        self.core
-            .animation
-            .initialize(&mut self.core.world)
-            .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
-        drop(animation_note);
-
-        // `particles/*.particles.toml` registered first, so `particle_effect`
-        // components resolve on the first sync
+        // The animation's load is the animation package's builder now
+        // (#1620), and the particles' (`particles/*.particles.toml` first, so
+        // `particle_effect` components resolve on the first sync) the
+        // particles package's (#1622), with the scene's subsystems below:
+        // the project as it stands for them
         self.refresh_project();
-        let particle_note = frame_notes::begin(NoteKind::ParticleLoad, String::new);
-        flint_particles::load_particle_effects_from_world(
-            &self.core.project,
-            &self.core.scene_path,
-            &mut self.core.particles,
-        );
-        self.core
-            .particles
-            .initialize(&mut self.core.world)
-            .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
-        self.load_particle_textures();
-        drop(particle_note);
 
         // The subsystems this scene uses, and the script modules they own
         // (#698), before the scripts that may call them load
@@ -406,7 +383,7 @@ impl PlayerApp {
             let _state_scope = self.core.script.state_scope(
                 &mut self.core.state_machine,
                 &mut self.core.store,
-                physics_of(&self.core.resources),
+                &self.core.resources,
             );
             self.core
                 .script

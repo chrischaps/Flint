@@ -96,7 +96,7 @@ The prototype lives on the branch `proto/vehicle-1627` (`974ee527`,
 `tools/vehicle-proto/`, never merged). Its README says how to run each part.
 
 - **The track** is FlintKart's Oval Plus, built in Rapier 0.22 with the
-  engine's integration parameters (`crates/flint-physics/src/world.rs`: one
+  engine's integration parameters (`packages/physics/crates/flint-physics/src/world.rs`: one
   solver iteration of four PGS iterations, gravity -9.81). It uses the same
   Catmull-Rom sampling as `flint_geometry::spline` and the scene's
   `spline_mesh` sizes: a 12 m road (friction 0.8) and 0.5 x 1.5 m walls at

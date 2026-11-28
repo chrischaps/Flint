@@ -3,8 +3,11 @@
 
 use crate::{
     EncodeCtx, ExitReport, FixedCtx, FrameCtx, Lasts, PlayerInput, ReportCtx, SceneCtx, Stage,
-    StageCtx,
+    StageCtx, StepStage,
 };
+use flint_core::EntityId;
+use flint_ecs::FlintWorld;
+use flint_render::model_loader::ModelLoadResult;
 use flint_render::FrameInputs;
 use flint_runtime::DebugKey;
 use flint_script::context::ScriptCommand;
@@ -37,13 +40,38 @@ pub trait Subsystem: Any {
     /// A stage of the frame. See [`Stage`] for where each falls.
     fn update(&mut self, _stage: Stage, _ctx: &mut StageCtx) {}
 
+    /// A stage of one fixed step ([`Stage::FixedStep`], ADR 0138 decision
+    /// 2, #1617): each step runs [`StepStage::ALL`] in order, each over
+    /// every subsystem. The default calls
+    /// [`fixed_update`](Self::fixed_update) at [`StepStage::Forces`], so a
+    /// package with forces to apply needs only that.
+    fn step(&mut self, stage: StepStage, ctx: &mut FixedCtx) {
+        if stage == StepStage::Forces {
+            self.fixed_update(ctx);
+        }
+    }
+    /// The models of entities spawned since the last frame have loaded
+    /// (#1107), before the frame's animation: what the loader made of them
+    /// (a skinned model's skeleton, a model's clips), as a scene's models
+    /// reach a builder through [`SceneCtx::models`](crate::SceneCtx::models).
+    fn late_models(&mut self, _world: &mut FlintWorld, _models: &ModelLoadResult) {}
+
     /// One fixed physics step ([`Stage::FixedStep`], ADR 0137 section 3a):
     /// once for each step that steps, so twice in a frame at 30 Hz and on
-    /// most frames none at 144. It runs after the character controller and
-    /// the physics sync-in, before Rapier's step, which integrates what it
-    /// applies. A paused state (one that stops physics) skips it, as it
-    /// skips Rapier, and so does a capture, which runs no physics.
+    /// most frames none at 144. It runs at [`StepStage::Forces`]: after the
+    /// character controller and the physics sync-in, before Rapier's step,
+    /// which integrates what it applies. A paused state (one that stops
+    /// physics) skips it, as it skips Rapier, and so does a capture, which
+    /// runs no steps.
     fn fixed_update(&mut self, _ctx: &mut FixedCtx) {}
+
+    /// A chunk's entities are in the world and their models loaded
+    /// (`load_chunk`, #1617), before their scripts load: a package with
+    /// state per entity takes them in (physics makes their bodies).
+    fn chunk_loaded(&mut self, _spawned: &[EntityId], _ctx: &mut SceneCtx) {}
+
+    /// A chunk's entities are about to be despawned (`unload_chunk`).
+    fn chunk_unloading(&mut self, _ids: &[EntityId], _ctx: &mut SceneCtx) {}
 
     /// The script modules this subsystem owns and enables while it runs
     /// (#698): their functions are a "not enabled" error in a scene

@@ -72,7 +72,6 @@ fn the_entity_module_is_declared_whole() {
         "get_rotation_quat",
         "set_shear",
         "set_material_emissive",
-        "get_joint_position",
         "entity_count_with",
     ] {
         assert!(entity.contains(&name), "{name} not declared");
@@ -127,14 +126,13 @@ fn integers_work_where_numbers_are_wanted() {
 
 #[test]
 fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
-    let (engine, mut world, id) = engine_and_world();
+    let (engine, mut world, _) = engine_and_world();
     let _: () = eval(
         &engine,
         &mut world,
         &format!(
             "set_render_mode(1.0, 1); set_camera_fov(60); set_time_scale(2); \
-             set_fog_color(1, 0, 0); \
-             set_anim_layer({id}, 1.0, \"wave\", 1); set_velocity_2d({id}, 3, 4)"
+             set_fog_color(1, 0, 0)"
         ),
     )
     .unwrap();
@@ -149,15 +147,9 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
             c.requests.post.get("fog_color"),
             Some(flint_schema::post_effects::PostValue::Rgb([1.0, 0.0, 0.0]))
         );
-        assert_eq!(c.commands.len(), 2, "the sound and the velocity");
+        // The sound (the velocity is the physics package's, #1617)
+        assert_eq!(c.commands.len(), 1, "the sound");
     }
-    let eid = flint_core::EntityId::from_raw(id as u64);
-    let layers = world
-        .get_components(eid)
-        .and_then(|c| c.get_field("animator", "layers").cloned())
-        .and_then(|v| v.as_array().cloned())
-        .unwrap();
-    assert_eq!(layers.len(), 2, "slot 0 padded, slot 1 set");
     // A fractional float is not an int
     let err = eval::<()>(&engine, &mut world, "is_mouse_pressed(0.5)").unwrap_err();
     assert!(
@@ -341,25 +333,12 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
     // The ported modules' entity functions are all here
     for name in [
         "set_position",
-        "play_clip",
-        "set_anim_layer",
-        "set_anim_layer_ex",
-        "play_sequence",
-        "set_velocity_2d",
-        "get_velocity_2d",
         "set_sprite_tint",
         "get_sprite_layer",
-        "play_sprite",
-        "sprite_play",
         "set_text",
         "set_text_color",
         "follow_with_camera",
         "camera_follow",
-        "move_character",
-        "get_collider_extents",
-        "emit_burst",
-        "start_emitter",
-        "set_emission_rate",
         "set_entity_style",
         "set_style_param",
         "tween_style_param",
@@ -519,38 +498,24 @@ fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
         &mut world,
         &format!(
             "tween_style_param({id}, \"cell\", 8, 1); \
-             tween_style_param({id}, \"cell\", 8, 1, \"linear\"); emit_burst({id}, 3.0); \
-             set_effect_param(1.0, \"scale\", 2); load_chunk(\"c.scene.toml\", 1, 2, \"c\")"
+             tween_style_param({id}, \"cell\", 8, 1, \"linear\"); \
+             load_chunk(\"c.scene.toml\", 1, 2, \"c\")"
         ),
     );
     let floats = commands(
         &mut world,
         &format!(
             "tween_style_param({id}, \"cell\", 8, 1.0); \
-             tween_style_param({id}, \"cell\", 8, 1.0, \"linear\"); emit_burst({id}, 3); \
-             set_effect_param(1, \"scale\", 2.0); load_chunk(\"c.scene.toml\", 1.0, 2.0, \"c\")"
+             tween_style_param({id}, \"cell\", 8, 1.0, \"linear\"); \
+             load_chunk(\"c.scene.toml\", 1.0, 2.0, \"c\")"
         ),
     );
-    assert_eq!(ints.len(), 5, "{ints:?}");
+    // The particle calls in this test are the particles package's since
+    // #1622 (its module's own tests hold them)
+    assert_eq!(ints.len(), 3, "{ints:?}");
     assert_eq!(ints, floats);
-    let eid = flint_core::EntityId::from_raw(id as u64);
-    assert_eq!(
-        ints[2],
-        format!(
-            "{:?}",
-            ScriptCommand::EmitBurst {
-                entity: eid,
-                count: 3
-            }
-        )
-    );
     // Pure reads take ints too
-    let h: f64 = eval(
-        &engine,
-        &mut world,
-        "terrain_height(1, 2) + ocean_height(0, 0)",
-    )
-    .unwrap();
+    let h: f64 = eval(&engine, &mut world, "ocean_height(0, 0)").unwrap();
     assert_eq!(h, 0.0);
     let gap: rhai::Dynamic = eval(
         &engine,
@@ -560,11 +525,10 @@ fn the_last_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
     .unwrap();
     assert!(gap.is_unit(), "no spline_data: no attribute");
     // A fractional float is not an int
-    let err = eval::<()>(&engine, &mut world, &format!("emit_burst({id}, 2.5)")).unwrap_err();
-    assert!(
-        err.contains("`count`") && err.contains("an integer"),
-        "{err}"
-    );
+    // (`rumble`'s pad: `set_sound_volume`'s handle was the case until it
+    // moved to the audio package, #1619)
+    let err = eval::<()>(&engine, &mut world, "rumble(2.5, 1.0, 0.5)").unwrap_err();
+    assert!(err.contains("`pad`") && err.contains("an integer"), "{err}");
     // A tween's seconds must be a number: an error now, not a warning queued
     let err = eval::<()>(
         &engine,
@@ -705,7 +669,6 @@ fn the_last_modules_are_declared_under_their_subsystems() {
         ("quality", "set_quality", 2),
         ("ocean", "ocean_normal", 2),
         ("spline", "spline_sample_at", 2),
-        ("particle", "play_effect", 4),
         ("style", "tween_style_param", 5),
         ("style", "set_look", 1),
         ("style", "set_look", 2),
@@ -715,7 +678,6 @@ fn the_last_modules_are_declared_under_their_subsystems() {
         ("scene", "quit_game", 0),
         ("persistence", "persist_slot", 1),
         ("data", "load_data", 2),
-        ("terrain", "terrain_height", 2),
         ("chunk", "is_chunk_loaded", 1),
     ] {
         let e = reg
@@ -842,12 +804,9 @@ fn the_draw_and_ui_modules_are_declared() {
         ("view", "world_to_screen", 3),
         ("ui", "load_ui", 1),
         ("screen_ui", "set_text", 2),
-        ("sprite", "play_sprite", 2),
-        ("sprite", "sprite_play", 2),
         ("camera_2d", "follow_with_camera", 6),
         ("touch", "touch_x", 1),
         ("touch", "touch_id", 1),
-        ("physics", "move_character", 4),
         ("entity", "find_nearest_interactable", 0),
     ] {
         let e = reg

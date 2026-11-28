@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 39-member Cargo workspace (38 crates, 25 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 41-member Cargo workspace (40 crates, 21 under `crates/` and the rest a package's under `packages/<name>/crates/`, plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -14,12 +14,8 @@ flint/
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
 │   ├── flint-widgets/      # The kernel's egui: widgets, a headless frame, F4's Rendering & Effects panel
-
-│   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
-│   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
 │   ├── flint-audio-worklet/# Kira mixer for the browser's AudioWorklet (its own small wasm)
-│   ├── flint-terrain/      # Heightmap terrain with splat-map blending
 │   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus, GameStateMachine, pads)
 │   ├── flint-physics/      # Rapier 3D integration (PhysicsWorld, CharacterController)
 │   ├── flint-render/       # wgpu PBR renderer with Cook-Torrance shading + skinned mesh pipeline
@@ -34,6 +30,12 @@ flint/
 │   ├── flint-geometry/     # Ocean waves, splines, ray meshes
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
 ├── packages/               # One folder a package: its package.toml, and its schemas/ and crates/
+│   ├── animation/crates/
+│   │   └── flint-animation/    # Clips on one clock: property clips, sequences and cues, tween, the clip-kind seam
+│   ├── flipbook/crates/
+│   │   └── flint-flipbook/     # Sprite-sheet clips (.sprite.toml) as a clip kind on animation's clock
+│   ├── rig/crates/
+│   │   └── flint-rig/          # Skeletons, node clips, blending, two-bone IK and bone probes as clip kinds; the model previewer
 │   ├── ai/crates/
 │   │   ├── flint-asset-gen/    # AI asset generation: providers, style guides, batch resolution
 │   │   ├── flint-procgen-ai/   # AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
@@ -52,8 +54,12 @@ flint/
 │   │   └── flint-wooze/        # The wooze field
 │   ├── debug-hud/crates/
 │   │   └── flint-debug-ui/     # The F3 panel roster (ocean, sky, ...) and the HUD the player asks
+│   ├── terrain/crates/
+│   │   └── flint-terrain/      # Heightmap ground: chunks, splat layers, grass, the scene binder, the terrain editor
 │   ├── vehicle/crates/
 │   │   └── flint-vehicle/      # Vehicles: Rapier's raycast wheels with arcade assists, driven each fixed step
+│   ├── particles/crates/
+│   │   └── flint-particles/    # Particles: emitters and effects on a fixed seeded step, and the package's player, panel and editor parts
 │   └── engine/             # The kernel's manifest and schemas
 ├── tools/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
@@ -130,7 +136,7 @@ User / AI Agent
       ├──► flint-scene     (load/save)   ├──► flint-audio     (Kira spatial audio)
       ├──► flint-render    (renderer)    ├──► flint-rhythm-game (rhythm sessions: flint-rhythm,
       ├──► flint-constraint(validation)  │      flint-input-capture's 1 kHz pad, over flint-music)
-      ├──► flint-asset     (catalog)     ├──► flint-animation (tweens + skeletal)
+      ├──► flint-asset     (catalog)     ├──► flint-animation (clips, tweens; flint-rig: skeletal)
       ├──► flint-asset-gen (AI gen)      ├──► flint-particles (GPU particles)
       ├──► flint-procgen   (proc gen)    ├──► flint-script    (Rhai scripting)
       ├──► flint-rhythm-game (chart tools) ├──► flint-terrain (heightmap terrain)
@@ -245,16 +251,16 @@ The kernel's egui (#1583), drawn by the CLI's windows, the scene viewer and the 
 The `debug-hud` package's crate (`packages/debug-hud/crates/flint-debug-ui`, #1559): the player's summonable debug overlay:
 - The `DebugPanel` trait (`name`, `ui`, `sync(&mut PanelCtx)`, `weight`, `is_open`, `toggle`, `layout`, `outlives_scene`, dirty tracking), `PanelLayout::{SideRight, Bottom}`, `DebugPanels` and `ScenePanels`, re-exported from `flint_package::panels`: the vocabulary is the kernel's, so a package (the living package's Living Props panel, #1558) or the player adds a panel without naming this crate
 - `assign_columns()` balances open panels across three side columns by each panel's `weight()`
-- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4, `flint-widgets`' own), Ocean, Camera, Grass, Particles, Styles, and `ComponentPanel`, drawn from any component schema whose fields say `panel = ...` (#744)
+- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4, `flint-widgets`' own), Ocean, Camera, Grass, Styles, and `ComponentPanel`, drawn from any component schema whose fields say `panel = ...` (#744)
 - `widgets`: `flint-widgets` re-exported, so a package's panel names either
 - `player` feature: `player::PACKAGE`, a `flint_package::Package` that registers the run's `DebugHud` (`flint_package::hud`): it makes the engine's panels at each scene, syncs them each frame, lays them out over the game, drives F3 and F4, paints the corner cards (scripts and styles that fail) and draws F2's graph from the frames the player hands it. flint-player's `debug-hud` feature turns it on and its build script lists it from the manifest's `[rust]`
-- Depends on `flint-package`, `flint-widgets`, `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-particles`, `flint-schema`, `flint-terrain`, `flint-scene` and, with `player`, `flint-script`
+- Depends on `flint-package`, `flint-widgets`, `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-schema`, `flint-scene` and, with `player`, `flint-script`. The Particles panel is the particles package's since #1622, at the kernel's `ScenePanels` point
 - A game drops it with `debug-hud = false`: the run has no panels, and F3, F4 and the graph are not offered. The game's `flint` leaves it out too (flint-cli's `debug-hud` feature, #1583), and its editors are the same without it
 
 ### flint-vehicle
 
 The `vehicle` package's crate (`packages/vehicle/crates/flint-vehicle`, [ADR 0140](https://github.com/chrischaps/Flint/blob/main/docs/adr/0140-the-vehicle-package.md), #1628): the first package written against the Package API rather than moved onto it. Book: [Vehicles](../concepts/vehicles.md).
-- `player` feature: `player::PACKAGE`, whose subsystem drives each `vehicle` in a scene. In `Subsystem::fixed_update` it sets the wheels of Rapier's `DynamicRayCastVehicleController` from `vehicle_input`, updates it against the last step's colliders (the vehicle's own body left out), and applies the assists (yaw, grip, upright, scrub), the drag, the modifiers and the one-shot push as impulses that the step about to run integrates. At `Stage::PreScripts` it writes `vehicle_state` and each wheel's state, and a player-driven vehicle's input from its actions. At `Stage::Physics` it poses the wheel children and returns the modifiers to neutral
+- `player` feature: `player::PACKAGE`, whose subsystem drives each `vehicle` in a scene. In `Subsystem::fixed_update` it sets the wheels of Rapier's `DynamicRayCastVehicleController` from `vehicle_input`, updates it against the last step's colliders (the vehicle's own body left out), and applies the assists (yaw, grip, upright, scrub), the drag, the modifiers and the one-shot push as impulses that the step about to run integrates. At `Stage::PreScripts` it writes `vehicle_state` and each wheel's state, and a player-driven vehicle's input from its actions. At `Stage::View` its chase camera (`player::chase`, #1631) places the kernel's eye behind the vehicle with a `chase_camera`, from the pose the frame's last step left (a frame's earlier steps' poses at the start of the next step's `fixed_update`), so the shot moves once a step. At `Stage::Physics` it poses the wheel children and returns the modifiers to neutral
 - The `vehicle` script module (`vehicle_place`, `vehicle_wheels`, `vehicle_ids`), and the Vehicles panel at the kernel's `ScenePanels` point, which the player fills only where it has the debug HUD
 - Depends on `flint-package` (which lends the physics, Rapier and egui), `flint-core`, `flint-ecs`, `flint-runtime` and `flint-script`: the kernel alone
 
@@ -333,22 +339,41 @@ The `rhythm` package's two parts on the Package API (`packages/rhythm/crates/fli
 
 ### flint-animation
 
-Two-tier animation system:
-- **Tier 1: Property tweens** --- `AnimationClip` with keyframe tracks targeting transform properties (position, rotation, scale) or custom fields. Step, Linear, and CubicSpline interpolation. Clips defined in `.anim.toml` files.
-- **Tier 2: Skeletal animation** --- `Skeleton` and `SkeletalClip` types for glTF skin/joint hierarchies. GPU vertex skinning via bone matrix storage buffer. Crossfade blending between clips.
+The `animation` package's crate (`packages/animation/crates/flint-animation`, ADR 0139, #1620): clips on one clock.
+- **Property clips** --- `AnimationClip` with keyframe tracks targeting transform properties (position, rotation, scale) or custom fields. Step, Linear, and CubicSpline interpolation. Clips defined in `.anim.toml` files.
+- **Clip kinds** --- `ClipKind`, which another package registers on the `player::ClipKinds` point (the rig's skeletal and node kinds, the flipbook's), each run at its slot after the core's own on the same `animator` rules; a kind's `pose` runs at `Stage::Pose` and its `skins` go to the GPU
+- `player` feature: the subsystem (`Stage::Tweens`, `Stage::Animate`, `Stage::Pose`), the `animation` and `tween` script modules and `HeadlessAnimation` for `flint render --anim-time` (the `CapturePoses` point)
 - `AnimationSync` bridges ECS `animator` components to property playback
-- `SkeletalSync` bridges ECS to skeletal playback with bone matrix computation
-- Layer stack (additive / override, per-joint masks, weight fades) and timed `.sequence.toml` playback with `on_sequence_cue` callbacks
-- glTF `CUBICSPLINE` samplers import with tangents and hemisphere-continuous quaternion keys
+- The layers' and crossfades' state and timed `.sequence.toml` playback with `on_sequence_cue` callbacks
+
+### flint-rig
+
+The `rig` package's crate (`packages/rig/crates/flint-rig`, ADR 0139, #1621): what a clip drives when it drives a pose of named parts.
+- **Skeletons and their clips** --- `Skeleton` and `SkeletalClip` types for glTF skin/joint hierarchies, sampled into bone matrices that flint-render's GPU skinning reads as plain data. glTF `CUBICSPLINE` samplers import with tangents and hemisphere-continuous quaternion keys
+- **Layers and crossfades** --- the layer stack (additive / override, per-joint masks, weight fades) composed joint by joint (`blend.rs`)
+- **Node clips** --- a model's child nodes moved by name, on the joint tracks skeletal clips use
+- **Two-bone IK and bone probes** --- `IkPass` (ADR 0070) and `publish_bone_probes`, the skeletal kind's pose
+- `SkeletalKind`, `NodeKind` and `Rig`, the rig's calls on an `AnimationSystem`
+- `player` feature: both kinds on animation's `ClipKinds` point, a spawned model's skeleton, the still's IK (`StillPose`); `cli` feature: the model previewer, `flint edit <model>.glb`, through the viewer's `ModelEditors` point
+
+### flint-flipbook
+
+The `flipbook` package's crate (`packages/flipbook/crates/flint-flipbook`, ADR 0139 section 6): sprite-sheet clips as a clip kind on the animation package's clock.
+- `SpriteAnimClip` --- `.sprite.toml` clips: frames on a sheet, each with its `duration_ms`, and a loop mode (`loop`, `ping_pong`, `once`)
+- `FlipbookKind` --- follows each sprite's `animator` (or the retired `sprite_animator`, for one release), steps its frames and writes `sprite.source_rect` when the frame changes
+- `player` feature: the kind on animation's `ClipKinds` point and the `flipbook` script module (`play_sprite`, `stop_sprite`, `set_sprite_speed`, `is_sprite_playing`)
 
 ### flint-particles
 
-GPU-instanced particle system for visual effects:
+The `particles` package's crate (`packages/particles/crates/flint-particles`, #1622): the particle simulation for visual effects. The renderer keeps the GPU half (`flint_render::particles`: the instance, the blend, `ParticleDraw`, and `ParticleSource`, what a host steps); this crate builds the draws:
 - **ParticlePool** --- swap-remove array for O(1) particle death, contiguous alive iteration
 - **ParticleSync** --- bridges ECS `particle_emitter` components to the simulation, auto-discovers new emitters each frame
 - **ParticleSystem** --- top-level `RuntimeSystem` that ticks simulation in `update()` (variable-rate, not fixed-step)
 - **ParticlePipeline** --- wgpu render pipeline with alpha and additive variants, storage buffer for instances
 - Emission shapes: point, sphere, cone, box. Value-over-lifetime interpolation for size and color.
+- `player` feature: `player::PACKAGE`, which puts the run's `ParticleSystem` in its resources, a subsystem that loads each scene's effects and steps them at `Stage::Animation`, the `particle` script module (its calls are module commands the subsystem takes) and the F3 Particles panel
+- `cli` feature: `cli::extensions()`, which registers the effect editor `flint edit <x>.particles.toml` opens and the `flint_package::particles::Particles` point the render's captures, `flint check`'s `bad-emitter` and the scene viewer step through
+- A game drops it with `particles = false`: neither binary links it, a scene's emitters emit nothing (said once), and `flint check` names the package for one
 
 ### flint-script
 
@@ -427,12 +452,14 @@ What every paid AI call in the tools goes through, shared by `flint-procgen-ai`,
 
 ### flint-terrain
 
-Heightmap terrain system:
-- Chunked mesh generation from grayscale PNG heightmaps
-- RGBA splat-map blending for up to 4 texture layers
-- Bilinear height interpolation for smooth surfaces
-- `terrain_height(x, z)` callback for script queries
-- Does NOT depend on `flint-render`; uses standard `Vertex` format
+The `terrain` package's crate (`packages/terrain/crates/flint-terrain`, #1623): heightmap ground for outdoor 3D games.
+- Chunked mesh generation from grayscale PNG heightmaps, the spec format (`.terrain.toml`) and its one bake
+- RGBA splat-map blending for up to 4 texture layers, grass over the splat map
+- The plain data it makes is the kernel's (flint-geometry): the chunk mesh, the grass settings, the height grid and `GroundField`, and the `SceneGround` it hands its host
+- `render` feature: a scene's terrain built into a renderer (`scene::bind_terrain`); with no feature it links no renderer
+- `player` feature: `player::PACKAGE`, which registers the kernel's scene binder (run after `bind_scene` in the player, the viewer and `flint render`), a subsystem and the `terrain` script module (`terrain_height`)
+- `cli` feature: the terrain editor, on the kernel's `TerrainEditors` point (`flint edit x.terrain.toml`)
+- A game drops it with `terrain = false`: neither launcher links it, and a scene's `terrain` is `unlisted-package`
 
 ### flint-android
 

@@ -1,0 +1,40 @@
+# Animation's core (ADR 0139, #1620, epic #1611): the playback every kind of
+# clip shares. The cursor (time, speed, loop, pause and resume, a one-shot's
+# end), clips and their keys, the layers' and the crossfade's state,
+# sequences and their cues, the `animator` component and its one rule set,
+# property clips (`.anim.toml`) and `tween`. A standard package: on unless a
+# game writes `animation = false`, which takes `flipbook` and `rig` with it.
+#
+# Its crate is in this folder: crates/flint-animation, whose `player` feature
+# is the subsystem (`flint_animation::player::PACKAGE`), the `animation` and
+# `tween` script modules, the clip-kind point (`ClipKinds`) that `rig` and
+# `flipbook` fill, and the `CapturePoses` point `flint render --anim-time`
+# asks for (#1621).
+
+[package]
+name = "animation"
+version = "0.1.0"
+tier = "standard"
+summary = "Clips on one clock: playback, layers, crossfades, sequences and cues, property clips and tween"
+engine = "^0.1"
+
+[build]
+features = ["animation"]
+
+[rust]
+player = "flint-animation"
+
+[provides]
+crates = ["flint-animation"]
+components = ["animator"]
+script_modules = ["animation", "tween"]
+# The render's clock for clips: the kernel's flag, served through the
+# `CapturePoses` point
+flags = ["render --anim-time"]
+
+# What a player built without it still knows (ADR 0137 decision 8): a scene
+# with an animator hears once that it holds still, and a game state may
+# name the `animation` policy in any build (ADR 0138 decision 7).
+[without]
+does = "hold still"
+policies = ["animation"]

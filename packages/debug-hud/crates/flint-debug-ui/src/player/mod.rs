@@ -12,9 +12,8 @@ mod layout;
 use crate::widgets::{band_legend, hitch_counters, FrameGraph};
 use crate::{
     CameraDebugPanel, CameraPanelConfig, ComponentPanel, GrassDebugPanel, OceanDebugPanel,
-    OceanPanelConfig, ParticlesDebugPanel, RenderDebugPanel, StylesDebugPanel, RENDER_DEBUG_PANEL,
+    OceanPanelConfig, RenderDebugPanel, StylesDebugPanel, RENDER_DEBUG_PANEL,
 };
-use flint_core::components as comp;
 use flint_core::world_line::WorldLine;
 use flint_package::hud::{Cards, DebugHud, GraphView, HudScene, HudUi, Toggle, WorldView};
 use flint_package::panels::{DebugPanel, DebugPanels, PanelCtx};
@@ -69,8 +68,9 @@ impl DebugHud for Hud {
         // A game's controllers, from their schemas (#744)
         component_panels(panels, &scene);
         panels.extend(camera_panel(&scene));
-        panels.extend(particles_panel(scene.world));
-        // The packages' own (the Living Props panel, #218)
+        // The packages' own: the particles package's Particles panel
+        // (#1622), where debug-hud made it before, then the Living Props
+        // panel (#218)
         panels.extend(std::mem::take(&mut scene.packages));
         // The F3 Styles panel (#268) when the scene uses a style: a
         // `[post_process.styles]` table, or an entity with a `style_mask`
@@ -254,19 +254,6 @@ fn camera_panel(scene: &HudScene) -> Option<Box<dyn DebugPanel>> {
         std::path::PathBuf::from(scene.scene_path),
         name,
     )))
-}
-
-/// The Particles panel when the scene has any `particle_emitter` or
-/// `particle_effect` entity (ADR 0068). Rows are refreshed each frame by
-/// its `sync`.
-fn particles_panel(world: &flint_ecs::FlintWorld) -> Option<Box<dyn DebugPanel>> {
-    let has_any = !world
-        .entities_with_component(comp::PARTICLE_EMITTER)
-        .is_empty()
-        || !world
-            .entities_with_component(comp::PARTICLE_EFFECT)
-            .is_empty();
-    has_any.then(|| Box::new(ParticlesDebugPanel::new()) as Box<dyn DebugPanel>)
 }
 
 /// A panel for each entity that carries a component whose schema puts

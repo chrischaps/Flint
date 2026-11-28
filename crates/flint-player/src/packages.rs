@@ -693,12 +693,21 @@ mod tests {
         // The order the stock list had by hand before the build script
         // wrote it (#1555): a moved package registers where it always did,
         // so its subsystem runs and tears down in the same place
+        // Animation and flipbook (#1620) are standard packages whose names
+        // sort them in before and after debug-hud; flipbook requires
+        // animation, which comes first
         let before = [
             "engine",
-            // Its own package since #1619: the standard tier, first by name
+            "animation",
+            // Its own package since #1619
             "audio",
             "debug-hud",
+            "flipbook",
+            "particles",
+            "physics",
             "procgen",
+            "rig",
+            "terrain",
             "living",
             "music",
             "rhythm",
@@ -720,9 +729,15 @@ mod tests {
         // packages by name, rhythm after the music it requires; each in its
         // own folder when the build has it
         let expected: Vec<&str> = [
+            "animation",
             "audio",
             "debug-hud",
+            "flipbook",
+            "particles",
+            "physics",
             "procgen",
+            "rig",
+            "terrain",
             "living",
             "music",
             "rhythm",
@@ -733,9 +748,15 @@ mod tests {
         .collect();
         assert_eq!(moved, expected);
         for name in [
+            "animation",
             "audio",
             "debug-hud",
+            "flipbook",
+            "particles",
+            "physics",
             "procgen",
+            "rig",
+            "terrain",
             "living",
             "music",
             "rhythm",

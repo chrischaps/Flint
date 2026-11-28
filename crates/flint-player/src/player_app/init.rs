@@ -6,7 +6,6 @@
 
 use super::input_config::{read_user_override_file, resolve_input_paths, resolve_user_override};
 use super::scene_loading;
-use super::scene_loading::load_particle_textures_from_world;
 use super::state::{AssetSources, InputLayers};
 #[cfg(target_os = "android")]
 use super::AndroidGamepadTracker;
@@ -169,7 +168,7 @@ impl PlayerApp {
             style: Default::default(),
             quality: Default::default(),
             frame_pacer: None,
-            skeletal_entity_assets: HashMap::new(),
+            scene_models: None,
             hud: super::state::Hud {
                 debug,
                 ..Default::default()
@@ -194,7 +193,6 @@ impl PlayerApp {
             schema_dirs: Default::default(),
             packages_held: false,
             schemas: Default::default(),
-            terrain: None,
             scene_binding: None,
             particles_render_enabled: true,
             stats: Default::default(),
@@ -928,45 +926,6 @@ impl PlayerApp {
         self.hud.egui_renderer = Some(egui_renderer);
     }
 
-    /// Update the terrain height callback on the script system.
-    /// Call after terrain loading or clearing.
-    pub(super) fn update_terrain_height_fn(&mut self) {
-        if let Some((ref terrain, ref config)) = self.terrain {
-            let heights = terrain.heightmap.clone_heights();
-            let hm_w = terrain.heightmap.width;
-            let hm_d = terrain.heightmap.depth;
-            let world_w = config.width;
-            let world_d = config.depth;
-            let height_scale = config.height_scale;
-            self.core
-                .script
-                .set_terrain_height_fn(Some(Box::new(move |x: f32, z: f32| {
-                    // Convert world coords to normalized UV
-                    let u = x / world_w;
-                    let v = z / world_d;
-                    // Bilinear sample from heights array
-                    let fx = u * (hm_w as f32 - 1.0);
-                    let fz = v * (hm_d as f32 - 1.0);
-                    let ix = (fx as u32).min(hm_w - 2);
-                    let iz = (fz as u32).min(hm_d - 2);
-                    let tx = fx - ix as f32;
-                    let tz = fz - iz as f32;
-                    let idx = |col: u32, row: u32| -> f32 { heights[(row * hm_w + col) as usize] };
-                    let h00 = idx(ix, iz);
-                    let h10 = idx(ix + 1, iz);
-                    let h01 = idx(ix, iz + 1);
-                    let h11 = idx(ix + 1, iz + 1);
-                    let h = h00 * (1.0 - tx) * (1.0 - tz)
-                        + h10 * tx * (1.0 - tz)
-                        + h01 * (1.0 - tx) * tz
-                        + h11 * tx * tz;
-                    h * height_scale
-                })));
-        } else {
-            self.core.script.set_terrain_height_fn(None);
-        }
-    }
-
     pub(super) fn configure_input_bindings(&mut self) -> Result<()> {
         self.input
             .load_bindings(InputConfig::built_in_defaults())
@@ -1103,24 +1062,6 @@ impl PlayerApp {
     /// (`flint_package::sound`, #1619).
     pub(crate) fn sound(&mut self) -> Option<&mut dyn flint_package::sound::Sound> {
         flint_package::sound::of_mut(&mut self.core.resources)
-    }
-
-    /// Load image files referenced by particle_emitter texture fields into
-    /// the renderer's texture cache (no-op until renderer/context exist).
-    pub(super) fn load_particle_textures(&mut self) {
-        let (Some(renderer), Some(context)) =
-            (self.scene_renderer.as_mut(), self.render_context.as_ref())
-        else {
-            return;
-        };
-        load_particle_textures_from_world(
-            &self.core.particles,
-            renderer,
-            &context.device,
-            &context.queue,
-            &self.core.project,
-            &self.core.scene_path,
-        );
     }
 
     /// (Re)load the fonts the scene sees (`fonts/`, by the project's one

@@ -51,29 +51,9 @@ impl StyleArgs {
             }
         }
     }
-
-    /// Apply the words to `renderer`'s config and build the styles they
-    /// turned on. A no-op without any, so a capture without them is
-    /// unchanged. The post time goes in with the frame's inputs
-    /// ([`look_time`](Self::look_time)).
-    pub fn apply_to_renderer(
-        &self,
-        renderer: &mut flint_render::SceneRenderer,
-        device: &wgpu::Device,
-    ) {
-        if !self.styles.is_empty() {
-            let mut config = renderer.post_process_config().clone();
-            self.apply(&mut config, renderer.styles());
-            renderer.set_post_process_config(config);
-            renderer.ensure_style_resources(device);
-        }
-    }
-
-    /// `--style-time` as the frame's `look_time`: the post time animated
-    /// styles see, held there (#328); none leaves it at the frame's clock.
-    pub fn look_time(&self) -> Option<f64> {
-        self.style_time.map(f64::from)
-    }
+    // The editors that laid the words over a renderer (the model previewer
+    // and the effect editor) are their packages' since #1621 and #1622: each
+    // is handed the words (`ModelEdit::styles`, `EffectEdit::styles`)
 }
 
 fn parse_style_spec(s: &str) -> Result<String, String> {
@@ -230,12 +210,12 @@ pub fn warn_dropped_schemas(dirs: &flint_schema::SchemaDirs) {
     }
 }
 
-/// The value of a `--max-cost` flag (dollars, `$` allowed, not negative),
-/// and a seed from the clock for an editor's "new seed": the Package API's
-/// (#1557), since the procgen package's commands read them too. Not in
+/// The value of a `--max-cost` flag (dollars, `$` allowed, not negative):
+/// the Package API's (#1557), since the procgen package's commands read it
+/// too, as they and the terrain editor read its `random_seed`. Not in
 /// `ai_costs`, so the flag parses alike in a build without the ai package
 /// (#1333), whose command then names the package.
-pub use flint_package::cli::{gen::parse_usd, random_seed};
+pub use flint_package::cli::gen::parse_usd;
 
 #[cfg(test)]
 mod tests {

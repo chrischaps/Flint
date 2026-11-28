@@ -190,6 +190,21 @@ pub fn missing_owned(what: impl Into<String>, words: &[&str]) -> anyhow::Error {
     e
 }
 
+/// `what` needs whichever package's manifest provides the component
+/// `component` (`particle_emitter`: particles', #1622), named from the
+/// manifests compiled in, as [`missing_owned`] names a command's.
+pub fn missing_component_owner(what: impl Into<String>, component: &str) -> anyhow::Error {
+    let owner = manifests()
+        .into_iter()
+        .find(|package| package.provides.components.iter().any(|c| c == component))
+        .map(|package| package.name)
+        .unwrap_or_else(|| component.to_string());
+    let package: &'static str = Box::leak(owner.into_boxed_str());
+    let mut e = missing(what, package);
+    judge(&mut e);
+    e
+}
+
 /// Whether `package`'s folder was in the tree this flint was built from
 /// while the launchers had no feature for it (#1587): a `[build] features`
 /// entry that is none of this crate's features, built or not, so
@@ -829,12 +844,70 @@ mod tests {
         assert!(help.contains("(not needed with --ai-create, --cost-report,"));
     }
 
+    /// #1622, in every build: a launcher without the particles package (no
+    /// points) names it for an effect `flint edit` is handed, before the
+    /// file is read or made from a preset, and the name comes from the
+    /// manifest that provides `particle_effect`.
+    #[test]
+    fn without_particles_the_effect_editor_names_it() {
+        use clap::Parser as _;
+        let none = flint_package::cli::Points::new();
+        let line = [
+            "flint",
+            "edit",
+            "no/such/fire.particles.toml",
+            "--render",
+            "x.png",
+        ];
+        let crate::Commands::Edit(args) = crate::Cli::parse_from(line).command else {
+            unreachable!()
+        };
+        let e = super::super::edit_router::run_in(*args, &none).expect_err("no editor");
+        let missing = e
+            .downcast_ref::<MissingPackage>()
+            .unwrap_or_else(|| panic!("{e:#}"));
+        assert_eq!(missing.package, "particles");
+        assert!(
+            e.to_string().starts_with(
+                "flint edit no/such/fire.particles.toml needs the `particles` package"
+            ),
+            "{e}"
+        );
+        assert!(!std::path::Path::new("no/such/fire.particles.toml").exists());
+    }
+
     /// The done-when of #1543, in every build since #1557: a launcher
     /// without the procgen package (no points) parses `flint gen` and the
     /// spec editors and exits 2 naming it, a spec handed to `flint edit`
     /// before the file is read, while a glyph set is still `flint gen`'s
     /// (flint-render's, the kernel's): one that isn't there fails to load,
     /// naming no package.
+    #[test]
+    fn without_rig_the_model_previewer_names_it() {
+        use clap::Parser as _;
+        // #1621: the previewer is the rig package's, through its point
+        let none = flint_package::cli::Points::new();
+        let run = |words: &[&str]| {
+            let line = std::iter::once("flint").chain(words.iter().copied());
+            let e = match crate::Cli::parse_from(line).command {
+                crate::Commands::Preview(args) => super::super::preview::run_in(*args, &none),
+                crate::Commands::Edit(args) => super::super::edit_router::run_in(*args, &none),
+                _ => unreachable!(),
+            }
+            .expect_err("no package opens it");
+            let missing = e
+                .downcast_ref::<MissingPackage>()
+                .unwrap_or_else(|| panic!("{e:#}"));
+            (missing.what.clone(), missing.package)
+        };
+        // Named before the file is read: there is none
+        assert_eq!(
+            run(&["edit", "no/such/hero.glb", "--render", "x.png"]),
+            ("flint edit no/such/hero.glb".to_string(), "rig")
+        );
+        assert_eq!(run(&["preview", "no/such/hero.gltf"]).1, "rig");
+    }
+
     #[test]
     fn without_procgen_the_spec_commands_name_it() {
         use clap::Parser as _;

@@ -100,6 +100,24 @@ impl ScriptEngine {
         api::ScriptApi::new(&mut self.engine, self.ctx.clone(), &mut self.registry)
     }
 
+    /// Declare a package's module on this engine and enable it, as a host
+    /// whose subsystem owns it does (#698): what a package's own tests run
+    /// its functions with, with no player around them.
+    pub fn declare_enabled_module(&mut self, module: &dyn crate::ScriptModule) {
+        let gate = crate::module::Gate {
+            module: module.name(),
+            enabled_when: module.enabled_when(),
+        };
+        {
+            let mut api = self.script_api();
+            let mut m = api.gated_module(gate);
+            module.declare(&mut m);
+        }
+        crate::lock_or_recover(&self.ctx)
+            .enabled_modules
+            .push(gate.module);
+    }
+
     /// Every function declared through the builder (empty on the web).
     pub fn api_registry(&self) -> &api::ApiRegistry {
         &self.registry
@@ -233,6 +251,11 @@ impl ScriptEngine {
     /// Every script error of the run (#693).
     pub fn errors(&self) -> &crate::errors::ScriptErrors {
         &self.errors
+    }
+
+    /// The run's script errors, to quiet in a test.
+    pub fn errors_mut(&mut self) -> &mut crate::errors::ScriptErrors {
+        &mut self.errors
     }
 
     /// Count an error found outside a callback: a load or compile error.

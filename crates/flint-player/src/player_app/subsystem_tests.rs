@@ -479,7 +479,7 @@ fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {
 
         assert!(app.execute_scene_transition("b.scene.toml"));
         assert!(
-            app.core.subsystems.is_empty(),
+            app.core.subsystems.own_names().is_empty(),
             "{:?}",
             app.core.subsystems.own_names()
         );

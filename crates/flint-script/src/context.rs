@@ -5,9 +5,9 @@
 //! which a [`crate::host::ScriptHost`] carries out.
 
 use crate::ui::UiSystem;
+use flint_core::resources::Resources;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_physics::PhysicsSystem;
 use flint_runtime::{GameStateMachine, PersistentStore};
 use flint_schema::post_effects::{self, PostValue};
 use std::collections::HashSet;
@@ -223,28 +223,6 @@ pub enum ScriptCommand {
         level: LogLevel,
         message: String,
     },
-    /// A live entity: `emit_burst` resolves the id before queuing.
-    EmitBurst {
-        entity: EntityId,
-        count: i64,
-    },
-    /// Spawn a detached one-shot instance of a registered particle effect
-    /// (ADR 0068). `handle` is the id `play_effect` returned to the script.
-    PlayEffect {
-        handle: u64,
-        name: String,
-        position: (f64, f64, f64),
-    },
-    /// Stop emission on a detached effect; particles in flight finish.
-    StopEffect {
-        handle: u64,
-    },
-    /// Tune a detached effect: `emission_scale`, `scale`, `playing`, `x`/`y`/`z`.
-    SetEffectParam {
-        handle: u64,
-        param: String,
-        value: f64,
-    },
     /// Draw an entity (and its descendants) in a per-entity style such as
     /// `ascii` (#269). The player adds the style's component. A live
     /// entity, as in every style command: the id was resolved before queuing.
@@ -271,17 +249,6 @@ pub enum ScriptCommand {
         /// `linear`, `smooth` (the default), `ease_in`, `ease_out` or
         /// `ease_in_out`
         easing: String,
-    },
-    /// `tween`: ease a numeric component field (`path` is
-    /// `component.field`) to `target` over `seconds` of game time (#734).
-    /// The host steps it with the scripts and fires `tween_done` at the end;
-    /// a new tween of the same field replaces the old one.
-    Tween {
-        entity: EntityId,
-        path: String,
-        target: toml::Value,
-        seconds: f64,
-        easing: flint_core::tween::Easing,
     },
     /// Take an entity's own style off again.
     ClearEntityStyle {
@@ -387,12 +354,6 @@ pub enum ScriptCommand {
     PopState,
     ReplaceState {
         name: String,
-    },
-    /// A live entity: `set_velocity_2d` resolves the id before queuing.
-    SetVelocity2D {
-        entity: EntityId,
-        vx: f64,
-        vy: f64,
     },
     LoadChunk {
         path: String,
@@ -763,8 +724,10 @@ impl DrawItem {
 pub struct ScriptCallContext {
     /// Raw pointer to the FlintWorld — valid only during call scope
     pub world: *mut FlintWorld,
-    /// Raw pointer to the PhysicsSystem — valid only during call scope
-    pub physics: *const PhysicsSystem,
+    /// Raw pointer to the run's resources (ADR 0138 decision 3, #1617) —
+    /// valid only during call scope. A package's module reads its state
+    /// here by type (physics' `PhysicsSystem`), through `Call::resource`.
+    pub resources: *const Resources,
     /// Who the game is played as (`flint_runtime::PlayerView::player`,
     /// ADR 0138): what `on_interact` and `find_nearest_interactable`
     /// measure from. The host sets it each frame (#1614).
@@ -857,11 +820,9 @@ pub struct ScriptCallContext {
     pub ui_system: UiSystem,
     /// Parsed TOML data files, keyed by resolved path (`load_data`)
     pub data_cache: std::collections::HashMap<String, toml::Value>,
-    /// Terrain height sampling callback — set by PlayerApp if terrain is loaded
-    pub terrain_height_fn: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>,
     /// The game's ground, for `screen_to_heightfield` and `ground_height`
     /// (ADR 0095). Set through `Projector::set_ground`; survives `clear()`.
-    pub ground: Option<Arc<flint_terrain::GroundField>>,
+    pub ground: Option<Arc<flint_geometry::ground::GroundField>>,
     /// The meshes drawn as ray targets, where the last frame drew them, for
     /// `raycast_meshes` and `screen_to_mesh` (ADR 0105). Set by the host
     /// after each render update (`ScriptSystem::set_ray_scene`).
@@ -965,7 +926,7 @@ impl ScriptCallContext {
     pub fn new() -> Self {
         Self {
             world: std::ptr::null_mut(),
-            physics: std::ptr::null(),
+            resources: std::ptr::null(),
             player: None,
             camera_position: [0.0; 3],
             camera_view_proj: [
@@ -1007,7 +968,6 @@ impl ScriptCallContext {
             project: None,
             ui_system: UiSystem::new(),
             data_cache: std::collections::HashMap::new(),
-            terrain_height_fn: None,
             ground: None,
             ray_scene: Arc::default(),
             style_reader: None,
@@ -1102,10 +1062,16 @@ impl ScriptCallContext {
         (!self.world.is_null()).then(|| unsafe { &mut *self.world })
     }
 
-    /// The physics system, when the host has lent one for this scope.
-    pub fn try_physics(&self) -> Option<&PhysicsSystem> {
+    /// The run's resources, when the host has lent them for this scope.
+    pub fn try_resources(&self) -> Option<&Resources> {
         // SAFETY: as `try_world`
-        (!self.physics.is_null()).then(|| unsafe { &*self.physics })
+        (!self.resources.is_null()).then(|| unsafe { &*self.resources })
+    }
+
+    /// The run's resource of type `T`, when the host has lent the
+    /// resources and holds one (physics' state in a run with physics).
+    pub fn try_resource<T: std::any::Any>(&self) -> Option<&T> {
+        self.try_resources()?.get::<T>()
     }
 
     /// Record a draw command, stamping the clip rect currently on the stack
@@ -1256,8 +1222,8 @@ impl Drop for WorldScope {
     }
 }
 
-/// RAII guard: sets state_machine, persistent_store, and physics pointers.
-/// Clears all three on Drop.
+/// RAII guard: sets the state_machine, persistent_store and resources
+/// pointers. Clears all three on Drop.
 pub struct StateScope {
     ctx: Arc<Mutex<ScriptCallContext>>,
 }
@@ -1267,13 +1233,13 @@ impl StateScope {
         ctx: &Arc<Mutex<ScriptCallContext>>,
         state_machine: &mut GameStateMachine,
         persistent_store: &mut PersistentStore,
-        physics: &PhysicsSystem,
+        resources: &Resources,
     ) -> Self {
         {
             let mut c = crate::lock_or_recover(&ctx);
             c.state_machine = state_machine as *mut GameStateMachine;
             c.persistent_store = persistent_store as *mut PersistentStore;
-            c.physics = physics as *const PhysicsSystem;
+            c.resources = resources as *const Resources;
         }
         Self { ctx: ctx.clone() }
     }
@@ -1284,7 +1250,7 @@ impl Drop for StateScope {
         let mut c = crate::lock_or_recover(&self.ctx);
         c.state_machine = std::ptr::null_mut();
         c.persistent_store = std::ptr::null_mut();
-        c.physics = std::ptr::null();
+        c.resources = std::ptr::null();
     }
 }
 

@@ -39,20 +39,24 @@
 //! decision 5).
 
 pub mod assets;
+pub mod bind;
 pub mod cli;
 mod context;
 pub mod hud;
 mod launch;
 pub mod note;
 pub mod panels;
+pub mod particles;
 mod registry;
 pub mod sound;
 mod stage;
 mod subsystem;
+pub mod surfaces;
 
 pub use context::{
-    find, find_mut, Button, Capture, CaptureGame, CaptureGameMut, EncodeCtx, ExitReport, FixedCtx,
-    FrameCtx, Lasts, Pads, PlayerInput, ReportCtx, SceneCtx, StageCtx,
+    find, find_mut, Button, Capture, CaptureGame, CaptureGameMut, CapturePose, CapturePoses,
+    EncodeCtx, ExitReport, FixedCtx, FrameCtx, Lasts, Pads, PlayerInput, PoseReport, ReportCtx,
+    SceneCtx, StageCtx, StillPose,
 };
 /// The run's typed values: flint-core's since #1616, so flint-script can
 /// lend them to a script call (ADR 0138 decision 1).
@@ -62,9 +66,10 @@ pub use launch::PackageFlags;
 pub use note::Note;
 pub use panels::{DebugPanel, DebugPanels};
 pub use registry::{
-    left_out_line, BuildForScene, LeftOutLine, Package, Registry, RunResources, SettleScene,
+    left_out_line, BuildForScene, LeftOutLine, Package, Registry, RunResources, SceneRead,
+    SettleScene,
 };
-pub use stage::Stage;
+pub use stage::{Stage, StepStage};
 pub use subsystem::Subsystem;
 
 /// The engine's egui, so a package's `ui` builds against the same version

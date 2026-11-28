@@ -9,7 +9,6 @@ use super::offscreen::HudTarget;
 use super::subsystem::{EncodeCtx, FrameCtx};
 use super::PlayerApp;
 use super::TransitionPhase;
-use crate::player_app::game_core::physics_of_mut;
 use flint_render::{FrameInputs, GrassEntityPosition, View2d};
 use std::collections::HashSet;
 
@@ -119,9 +118,9 @@ impl PlayerApp {
         // Every panel applies its edits and reads back what it shows (#744):
         // one loop, no panel asked its name, by the run's debug HUD (#1559).
         // What they tell the player comes back through `PanelHost`.
-        // The panels are held out of the resources while they sync, and the
-        // particles lent in, so a panel finds its package's state by type
-        // (#1616: the Package API names no standard package)
+        // The panels are held out of the resources while they sync, so a
+        // panel finds its package's state there by type (#1616), the
+        // particles' among them (#1622)
         let panels = match self.hud.debug {
             Some(_) => self.core.resources.remove::<flint_package::DebugPanels>(),
             None => None,
@@ -132,22 +131,15 @@ impl PlayerApp {
                 particles_render: self.particles_render_enabled,
                 ..Default::default()
             };
-            let (world, camera) = (&mut self.core.world, &mut self.camera);
-            self.core.resources.lend(
-                &mut self.core.particles,
-                flint_particles::ParticleSystem::new,
-                |resources| {
-                    hud.sync(
-                        &mut panels,
-                        &mut flint_package::panels::PanelCtx {
-                            world,
-                            renderer: &mut *renderer,
-                            device: &context.device,
-                            camera,
-                            resources,
-                            host: &mut host,
-                        },
-                    )
+            hud.sync(
+                &mut panels,
+                &mut flint_package::panels::PanelCtx {
+                    world: &mut self.core.world,
+                    renderer: &mut *renderer,
+                    device: &context.device,
+                    camera: &mut self.camera,
+                    resources: &mut self.core.resources,
+                    host: &mut host,
                 },
             );
             self.core.resources.insert(panels);
@@ -321,7 +313,7 @@ impl PlayerApp {
                     let targets = super::frame_capture::Targets::of(context, &output.texture, info);
                     // The draws the frame was prepared with: the system was
                     // packed once this frame, so they are the same (#1615)
-                    let particle_draws = self.core.particles.sync.draw_data();
+                    let particle_draws = particle_draws(&self.core.resources);
                     let facts = super::frame_capture::FrameFacts {
                         world: &self.core.world,
                         particles: self
@@ -942,9 +934,12 @@ impl PlayerApp {
             }
         }
 
-        // Particles packed, camera-sorted, for the upload (ADR 0068)
+        // Particles packed, camera-sorted, for the upload (ADR 0068): the
+        // particles package's system, through the kernel's point (#1622)
         if self.particles_render_enabled && self.scene_renderer.is_some() {
-            self.core.particles.pack(Some(self.camera.position_array()));
+            if let Some(particles) = particles_mut(&mut self.core.resources) {
+                particles.pack(Some(self.camera.position_array()));
+            }
         }
         // The subsystems' and the frame's inputs (#739)
 
@@ -966,22 +961,11 @@ impl PlayerApp {
             _pad: 0.0,
         }];
         // A hull on a dynamic body foams with the velocity the solver gave
-        // it (#749); the rest have their drawn motion differenced
-        let contact_velocities: Vec<_> = self
-            .core
-            .world
-            .entities_with_component(flint_geometry::components::OCEAN_CONTACT)
-            .iter()
-            .filter_map(|&id| {
-                Some((
-                    id,
-                    physics_of_mut(&mut self.core.resources).dynamic_velocity(id)?,
-                ))
-            })
-            .collect();
+        // it (#749): the physics package's share of the inputs, below
+        // (#1617); the rest have their drawn motion differenced
         // Each emitter's draw, as the renderer takes it (#1615)
         let particle_draws = if self.particles_render_enabled {
-            self.core.particles.sync.draw_data()
+            particle_draws(&self.core.resources)
         } else {
             Vec::new()
         };
@@ -1003,7 +987,6 @@ impl PlayerApp {
             world_lines: &self.hud.world_lines,
             style_field: self.hud.style_field.shapes(),
             grass_benders: &benders,
-            contact_velocities: &contact_velocities,
             // The deprecated render mode's sea (#746): a frame behind its
             // drain, as the stamp that sets it lands after this
             ocean_tint: self.post.ocean_tint(),
@@ -1616,28 +1599,20 @@ impl super::game_core::FrameHost for PlayerApp {
     }
 
     fn bones_posed(&mut self) {
-        // Push skeletal bone matrices to GPU
-        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            flint_core::scope!("upload_bones", self.skeletal_entity_assets.len());
+        // The motion-hold clock, before the bones go up at `Stage::Pose`
+        // (the animation package uploads them there, #1620)
+        if let Some(renderer) = &mut self.scene_renderer {
             // The clock poses held on twos tick by (#405), before the bones
             // go up: the same seconds the post time reads, so a held pose
             // and a style's boil turn on the same frame
             renderer.set_motion_time(self.core.clock.total_time);
             // ...and the emitters held entities carry (#873), which step
             // right after this, on the same clock and whole-frame rate
-            let sync = &mut self.core.particles.sync;
-            sync.set_motion_time(self.core.clock.total_time);
-            sync.set_motion_hold(renderer.effective_post_process_config().motion_hold);
-            for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                if let Some(matrices) = self.core.animation.bone_matrices(entity_id) {
-                    renderer.update_bone_matrices(
-                        &context.device,
-                        &context.queue,
-                        *entity_id,
-                        asset_name,
-                        matrices,
-                    );
-                }
+            if let Some(particles) = particles_mut(&mut self.core.resources) {
+                particles.set_motion(
+                    self.core.clock.total_time,
+                    Some(renderer.effective_post_process_config().motion_hold),
+                );
             }
         }
     }
@@ -1895,6 +1870,26 @@ pub(crate) fn numbered_capture_path(base: &std::path::Path, n: u32) -> std::path
         .map(|e| e.to_string_lossy().into_owned())
         .unwrap_or_else(|| "png".to_string());
     base.with_file_name(format!("{stem}_{n:04}.{ext}"))
+}
+
+/// The run's particles, when the particles package is in it (#1622): the
+/// system its `run_resources` put in, reached through the kernel's point.
+pub(super) fn particles_mut(
+    resources: &mut flint_package::Resources,
+) -> Option<&mut dyn flint_render::ParticleSource> {
+    let point = crate::packages::registry().point::<flint_package::particles::Particles>()?;
+    (point.of_mut)(resources)
+}
+
+/// Each emitter's draw, as packed last; none without the package.
+pub(super) fn particle_draws(
+    resources: &flint_package::Resources,
+) -> Vec<flint_render::ParticleDraw<'_>> {
+    crate::packages::registry()
+        .point::<flint_package::particles::Particles>()
+        .and_then(|point| (point.of)(resources))
+        .map(|particles| particles.draw_data())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -509,7 +509,7 @@ mod tests {
         let found = scan(&root, &files, &engine_packages());
         assert_eq!(
             found.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["living", "procgen"]
+            ["living", "physics", "procgen"]
         );
         let living = &found["living"];
         assert!(living
@@ -523,10 +523,15 @@ mod tests {
         assert!(found["procgen"].required_by.contains("living"));
         assert_eq!(
             lines(&engine_packages(), &found),
-            ["procgen = \"*\"", "living = \"*\""]
+            ["physics = \"*\"", "procgen = \"*\"", "living = \"*\""]
         );
-        // Procgen is used, so nothing is named to leave out
-        assert!(left_out_lines(&engine_packages(), &found, None).is_empty());
+        // Procgen is used, so it isn't named to leave out; nothing scanned
+        // animates (#1620), emits (#1622) or poses (#1621), so animation,
+        // flipbook, particles and rig are, and the grove has no terrain (#1623)
+        assert_eq!(
+            left_out_lines(&engine_packages(), &found, None),
+            ["animation", "flipbook", "particles", "rig", "terrain"]
+        );
     }
 
     /// #1536: a scene that names no procgen spec gives `procgen = false`
@@ -538,7 +543,18 @@ mod tests {
         let files = vec!["pbr_test.scene.toml".to_string()];
         let found = scan(&root, &files, &packages);
         assert!(found.is_empty(), "{found:?}");
-        assert_eq!(left_out_lines(&packages, &found, None), ["procgen"]);
+        assert_eq!(
+            left_out_lines(&packages, &found, None),
+            [
+                "animation",
+                "flipbook",
+                "particles",
+                "physics",
+                "procgen",
+                "rig",
+                "terrain"
+            ]
+        );
         assert_eq!(
             left_out_line("procgen"),
             "procgen = false   # nothing scanned uses it"
@@ -548,7 +564,8 @@ mod tests {
         assert!(!seen_by_scan(debug_hud));
 
         // A line [packages] already has, or a listed package that needs
-        // procgen, keeps it from being named
+        // procgen, keeps it from being named; particles, which nothing
+        // there needs, is named still (#1622)
         let list = |lines: &[(&str, Wanted)]| PackageList {
             file: PathBuf::from("flint.toml"),
             entries: lines
@@ -566,15 +583,26 @@ mod tests {
             list(&[("ai", any())]),
             list(&[("living", any())]),
         ] {
+            // Procgen isn't named once listed, or needed by what is
             assert!(
-                left_out_lines(&packages, &found, Some(&listed)).is_empty(),
+                !left_out_lines(&packages, &found, Some(&listed))
+                    .iter()
+                    .any(|p| p == "procgen"),
                 "{listed:?}"
             );
         }
         // A listed package that needs nothing standard leaves it named
         assert_eq!(
             left_out_lines(&packages, &found, Some(&list(&[("music", any())]))),
-            ["procgen"]
+            [
+                "animation",
+                "flipbook",
+                "particles",
+                "physics",
+                "procgen",
+                "rig",
+                "terrain"
+            ]
         );
     }
 }

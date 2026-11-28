@@ -25,7 +25,7 @@ flint-pixels = { workspace = true }
 # No flint-terrain and no flint-particles (#1615, ADR 0138 decision 5): the
 # renderer draws the plain data they hand it (`particles::ParticleDraw`,
 # flint-geometry's `TerrainChunk` and `GrassConfig`), and the terrain package
-# builds a scene's terrain into it (`flint_terrain::scene`). A kernel crate
+# builds a scene's terrain into it (its scene binder, #1623). A kernel crate
 # depends on no package crate; `scripts/headless-check.sh` holds it.
 toml = { workspace = true }
 serde = { workspace = true }
@@ -46,8 +46,8 @@ web-time = { workspace = true }
 
 [dev-dependencies]
 flint-asset = { workspace = true }
-# The GPU tests that draw a scene's terrain build it as the hosts do
-# (`flint_terrain::scene::bind_terrain`, #1615). A test links what it tests:
+# The GPU tests that draw a scene's terrain build it as the terrain package's
+# binder does (`flint_terrain::scene::bind_terrain`). A test links what it tests:
 # the dependency rule holds normal and build edges only (ADR 0138).
 flint-terrain = { workspace = true, features = ["render"] }
 naga = { version = "30.0.2", features = ["wgsl-in", "wgsl-out"] }

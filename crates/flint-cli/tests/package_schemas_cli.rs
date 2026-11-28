@@ -231,8 +231,15 @@ fn a_bundle_packs_and_lists_the_packages_schemas() {
         bundle.manifest.schemas,
         [
             "engine/schemas",
+            "engine/packages/animation/schemas",
+            "engine/packages/flipbook/schemas",
             "engine/packages/living/schemas",
             "engine/packages/music/schemas",
+            "engine/packages/particles/schemas",
+            "engine/packages/physics/schemas",
+            "engine/packages/rig/schemas",
+            "engine/packages/terrain/schemas",
+            "engine/packages/vehicle/schemas",
             "schemas"
         ]
     );

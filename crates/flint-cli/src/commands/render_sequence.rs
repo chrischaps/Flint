@@ -10,9 +10,9 @@ pub(super) struct SequenceRig<'a> {
     pub(super) world: &'a mut flint_ecs::FlintWorld,
     pub(super) camera: Camera,
     pub(super) camera_path: Option<&'a crate::commands::frame_seq::CameraPath>,
-    pub(super) particles: Option<&'a mut flint_particles::ParticleSystem>,
+    pub(super) particles: Option<&'a mut dyn flint_render::ParticleSource>,
     /// `--anim-time` (#307): steps on a frame at a time from there
-    pub(super) animation: Option<&'a mut HeadlessAnimation>,
+    pub(super) animation: Option<&'a mut dyn CapturePose>,
     /// `--mesh` (#222): each frame shows the next file on each binding
     pub(super) meshes: &'a [crate::commands::mesh_seq::MeshBinding],
     pub(super) scene_name: &'a str,
@@ -250,7 +250,7 @@ pub(super) fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) 
         }
         // The frame's inputs, and the world read again: the draw lists hold
         // the poses and meshes they were built with (#739)
-        let particle_draws = particles.as_deref().map(|p| p.sync.draw_data());
+        let particle_draws = particles.as_deref().map(|p| p.draw_data());
         renderer.prepare(
             &ctx.device,
             &ctx.queue,

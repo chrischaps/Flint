@@ -1,6 +1,6 @@
 # Vehicles
 
-> **Package:** `vehicle`, a feature package: a game has `vehicle`, `vehicle_wheel`, `vehicle_input`, `vehicle_state` and the `vehicle` script module only when its `[packages]` lists `vehicle = "*"` ([Packages](packages.md)).
+> **Package:** `vehicle`, a feature package: a game has `vehicle`, `vehicle_wheel`, `vehicle_input`, `vehicle_state` and the `vehicle` script module only when its `[packages]` lists `vehicle = "*"` ([Packages](packages.md)). It requires the `physics` package, whose `rigidbody` and `collider` carry it.
 
 A vehicle is a body on wheels that physics carries. It is a dynamic `rigidbody` with a `collider` for its chassis, and its children with `vehicle_wheel` are its wheels. Once each fixed physics step, the `vehicle` package casts a ray down from every wheel, pushes the body up on a spring, and turns the tyres' friction into drive, braking and cornering, through Rapier's raycast vehicle. On top of that sit **assists**, forces that pull the body toward arcade handling: a turn rate it holds, sideways grip, staying upright. Each assist is a tuning field, and 0 turns it off. With every assist at 0 the vehicle is a plain raycast car.
 
@@ -84,13 +84,46 @@ The state comes from the body as the last fixed step began, so it is one step (1
 
 | Group | Fields |
 |---|---|
-| Drive | `top_speed`, `accel`, `brake`, `reverse` (a fraction of top speed and accel), `drag` (with `accel` it sets the top speed: 16.5 / 0.5 = 33 m/s), `overspeed_decay`, `mass`, `center_of_mass` |
+| Drive | `top_speed`, `accel`, `brake`, `reverse` (a fraction of top speed and accel), `drag` (with `accel` it sets the top speed: 16.5 / 0.5 = 33 m/s), `air_drag` (the share of `drag` kept with no wheel down: 1 by default; 0 for an arcade kart, whose hop or jump then costs no speed), `overspeed_decay`, `mass`, `center_of_mass` |
 | Steering | `turn_rate_low` and `turn_rate_high` (degrees a second, at standstill and at top speed), `min_turn_radius`, `steer_response` (full locks a second), `steer_curve` |
-| Assists | `grip` (sideways speed scrubbed a second), `yaw_assist` (how fast the yaw rate is pulled to the turn-rate curve), `upright`, `scrub` (speed lost to slip, 0 by default) |
+| Assists | `grip` (sideways speed scrubbed a second), `yaw_assist` (how fast the yaw rate is pulled to the turn-rate curve), `air_control` (the share of the yaw assist that still steers with fewer than two wheels down, about the world's up, and with no wheel down the travel turns with the nose by the same share, so a steered hop lands going where it points: 0 by default; 1 steers a hop as on the ground), `upright`, `scrub` (speed lost to slip, 0 by default) |
 | Tyres and springs | `tyre_grip`, `suspension_stiffness`, `suspension_damping`, `suspension_travel` |
 | Control | `driver`, `actions` |
 
 The steering geometry asks for the path the turn-rate curve would drive, and the yaw assist holds it there. FlintKart's `kart_physics` names carry over: `top_speed` is its `max_speed`, `accel` its `acceleration`, `brake` its `brake_decel`.
+
+A drift is a `slip_target` with a lower `grip_scale`. While a slip target is held, `grip_scale` also slides the tyres: their side friction takes the same scale, so the nose held off its travel isn't braked by four tyres gripping sideways. Without a slip target (sand, grass) the tyres grip as they always do.
+
+FlintKart drives every kart on the package (#1630): the drift, hop, boost, items, slipstream and surface are its own script on top, through the modifiers, with `air_control = 1` and `air_drag = 0` so its hop steers and keeps its speed as its arcade kart's did. Its chassis is a capsule laid along the kart over the tyres: a box flush against a wall can't turn without a corner going into it, and a chassis shorter than the tyres lets a front wheel's ray stand on the wall.
+
+## The Chase Camera: `chase_camera`
+
+A `chase_camera` on a vehicle makes it the one the game is played as, and the camera follows it from behind and above, looking a little ahead, with no camera script (#1631). The package places the kernel's eye at the frame's `View` stage, so the camera, the listener and the scripts' player (`on_interact`, `find_nearest_interactable`) follow it, and the controls line lists the vehicle's actions. With several, the first by name is chased.
+
+```toml
+[entities.kart]
+vehicle = { top_speed = 24.0 }
+vehicle_input = {}
+chase_camera = { distance = 7.0, height = 3.2 }
+```
+
+Its defaults are FlintKart's chase camera's: 8 m back and 4 m up, looking 4 m ahead at 1 m up, closing on that spot at 5 a second and aiming ahead by 0.7 of the trail that lag leaves. Speed pulls it 1.2 m further back and 0.5 m lower, and widens the field of view from 62 degrees by 16. It follows the direction of travel once moving forward (`travel`), so a drift's slide doesn't swing it out over the inside of the turn, and leans 0.012 rad against the steering at top speed. Holding `look_back` swings it round in front. A move further than `cut_distance` (6 m) in one step, past what the speed explains, is a respawn, and the camera cuts there.
+
+**It moves once a fixed step**, from the pose that step left, not once a frame. A vehicle's body is written back once a step, so a camera eased each frame slides on through the frames that have no step (most frames at 144 Hz) while the vehicle holds still, and the vehicle judders on the screen. Measured on the test track's lap at 1/144 s frames, the kart's frame-to-frame jitter on a 1280 x 720 screen was a median 4.3 px with the old script camera and 0.09 px with this one. The same drive ends on the same eye, to the bit, at 30, 60 and 144 frames a second.
+
+The rest of its fields are modifiers, like `vehicle_input`'s: the package puts them back to neutral after each frame's eye, so a game writes them in `on_update` every frame it wants them.
+
+| Field | What it does |
+|---|---|
+| `offset` | Metres added to where it wants to be, along the heading: x right, y up, z further back (a drift's swing out) |
+| `roll` | Radians added to the roll's target (a lean into a drift) |
+| `fov_bonus` | Degrees added to the field of view's target (a boost, a brake's narrowing) |
+| `fov_kick` | Degrees added on top, unsmoothed (a boost's punch) |
+| `shake` | A shake in the camera's own frame: x metres right, y metres up, z radians of roll |
+| `cut` | Cut to where it wants to be this frame |
+| `release` | Place no eye this frame: the scripts' camera has the shot and the listener, and the chase camera keeps following, ready to take over |
+
+FlintKart's `chase_camera.rhai` keeps only what is FlintKart's: the start-line flyover and the finish orbit (each frame it writes `release` and sets the camera itself), and the drift swing, boost kicks, impact shake, post-processing and fog through the modifiers.
 
 ## The `vehicle` Module
 
@@ -115,7 +148,7 @@ With the debug-hud package in the build, F3 has a Vehicles panel in a scene with
 
 ## The Test Track
 
-The package ships an example, `packages/vehicle/examples/test_track/`: one small lap that a playtest drives, and the regression test every change to the package runs. A start straight north, a hairpin, a back straight with a 12 degree ramp on it, a patch of sand, and a closing turn back over the line. Every piece is a static box, so the playtest needs no `--render`. The sand is the game's, not the package's: `scripts/surfaces.rhai` scales each vehicle's `grip_scale`, `speed_scale` and `accel_bonus` by the share of its wheels on it, every frame, which is how a game shapes the drive without forking it. A chase camera follows the kart in `flint play`.
+The package ships an example, `packages/vehicle/examples/test_track/`: one small lap that a playtest drives, and the regression test every change to the package runs. A start straight north, a hairpin, a back straight with a 12 degree ramp on it, a patch of sand, and a closing turn back over the line. Every piece is a static box, so the playtest needs no `--render`. The sand is the game's, not the package's: `scripts/surfaces.rhai` scales each vehicle's `grip_scale`, `speed_scale` and `accel_bonus` by the share of its wheels on it, every frame, which is how a game shapes the drive without forking it. The kart's `chase_camera` follows it in `flint play`, with no camera script.
 
 ![The kart halfway round the test track's hairpin, its front wheels steered](../images/vehicle-mid-corner.png)
 

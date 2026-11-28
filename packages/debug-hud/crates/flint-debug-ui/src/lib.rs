@@ -2,7 +2,6 @@ mod camera_panel;
 mod component_panel;
 mod grass_panel;
 mod ocean_panel;
-mod particles_panel;
 #[cfg(feature = "player")]
 pub mod player;
 mod script_errors;
@@ -12,9 +11,6 @@ pub use camera_panel::{CameraDebugPanel, CameraPanelConfig};
 pub use component_panel::ComponentPanel;
 pub use grass_panel::GrassDebugPanel;
 pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};
-pub use particles_panel::{
-    EmitterRow, ParticlePanelAction, ParticlesDebugPanel, PARTICLES_DEBUG_PANEL,
-};
 pub use script_errors::{grouped, paint_script_errors, ScriptErrorRow};
 pub use styles_panel::{styled_entity_rows, StyledEntityRow, StylesDebugPanel, STYLES_DEBUG_PANEL};
 

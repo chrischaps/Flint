@@ -996,7 +996,7 @@ impl SceneRenderer {
     /// then masks the terrain's chunks like any styled mesh. Hosts call it
     /// beside [`load_terrain`](Self::load_terrain); `None` leaves the
     /// terrain unmasked, as it was before. Public since #1615: the terrain
-    /// package builds the terrain (`flint_terrain::scene::bind_terrain`).
+    /// package builds the terrain (its scene binder, #1623).
     pub fn set_terrain_entity(&mut self, entity: Option<flint_core::EntityId>) {
         self.terrain.entity = entity;
     }

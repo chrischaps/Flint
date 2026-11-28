@@ -515,7 +515,7 @@ impl ExtensionGpu<'_> {
     /// nothing.
     pub fn set_grass_ground(
         &mut self,
-        config: &flint_terrain::GrassConfig,
+        config: &flint_render::GrassConfig,
         ground: &GrassGround,
     ) -> Result<(), String> {
         self.renderer
@@ -524,7 +524,7 @@ impl ExtensionGpu<'_> {
 
     /// Change the grass's look (colours, wind, density, reach) and keep its
     /// ground. The instance buffer grows on the next frame if it must.
-    pub fn set_grass_config(&mut self, config: flint_terrain::GrassConfig) {
+    pub fn set_grass_config(&mut self, config: flint_render::GrassConfig) {
         self.renderer.set_grass_config(config);
     }
 

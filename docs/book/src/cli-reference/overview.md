@@ -1133,7 +1133,7 @@ flint edit fx/fire.particles.toml              # Particle effect editor (created
 | `.procgen.toml` (other) | Procgen previewer | Live preview of generated mesh/texture |
 | `.terrain.toml` | Terrain editor | Heightmap terrain editing |
 | `.particles.toml` | Particle effect editor | Emitters, curves, forces, bursts; scrub timeline; headless `--render` |
-| `.glb`, `.gltf` | Model previewer | Orbit camera, animation playback |
+| `.glb`, `.gltf` | Model previewer (the `rig` package's) | Orbit camera, animation playback |
 
 ### One host, the same flags
 

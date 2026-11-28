@@ -20,14 +20,12 @@
 use super::perf::Phase;
 use super::style_commands::StyleApplied;
 use super::subsystem::{FixedCtx, Stage, StageCtx, Subsystems};
-use flint_animation::AnimationSystem;
 use flint_core::project::Project;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_particles::ParticleSystem;
-use flint_physics::PhysicsSystem;
+use flint_package::surfaces::MadeTriangles;
 use flint_render::{Camera, SceneRenderer};
-use flint_runtime::state::{ANIMATION, PARTICLES, PHYSICS, SCRIPTS};
+use flint_runtime::state::{PHYSICS, SCRIPTS};
 use flint_runtime::{
     EventBus, Eye, GameClock, GameEvent, GameStateMachine, InputState, PersistentStore, PlayerView,
     RuntimeSystem, StateConfig,
@@ -52,8 +50,7 @@ pub struct GameCore {
     /// own, and the frame drains them before scripts run. Physics' `clear`
     /// at a transition leaves it alone.
     pub(crate) events: EventBus,
-    pub animation: AnimationSystem,
-    pub particles: ParticleSystem,
+
     pub script: ScriptSystem,
     /// Game states and the persistent store survive scene transitions. The
     /// machine knows the built-in systems and every scene subsystem's
@@ -67,8 +64,6 @@ pub struct GameCore {
     pub styles: flint_render::stylize::StyleRegistry,
     /// Entity style tweens (#370), stepped with game time.
     pub(crate) style_tweens: super::style_commands::StyleTweens,
-    /// Scripts' `tween`s of component fields (#734), stepped with them.
-    pub(crate) field_tweens: flint_script::FieldTweens,
     /// The renderer's config generation the scripts' style reader was
     /// last made from (#372).
     pub(crate) style_reader_generation: Option<u64>,
@@ -82,9 +77,6 @@ pub struct GameCore {
     /// for their pose cache: [`Self::living_props`]); in the player with
     /// `debug-hud`, the F3/F4 panels (`flint_debug_ui::DebugPanels`).
     pub(crate) resources: flint_package::Resources,
-    /// The triangles of procgen and runtime meshes, for the `mesh` and
-    /// `convex` colliders that name them (#1222; `collider_meshes.rs`)
-    pub(crate) collider_sources: super::collider_meshes::ColliderSources,
     /// What scripts asked of the frame (#697): the camera, post-processing,
     /// distance levers, cursor and touch, held from the command that asked
     /// to the step of the frame that applies each.
@@ -118,9 +110,10 @@ impl GameCore {
         // Who the game is played as (ADR 0138), there from the start so
         // every reader finds one
         resources.insert(PlayerView::default());
-        // Physics' state is the run's resource (ADR 0138 decision 1,
-        // #1616): every context lends it, the fixed step's among them
-        resources.insert(PhysicsSystem::new());
+        // The triangles of the meshes the asset makers make, by name, for
+        // the colliders that name them (#1222): the physics package reads
+        // them, the kernel only keeps them (#1617)
+        resources.insert(MadeTriangles::default());
         Self {
             subsystems: Default::default(),
             world,
@@ -128,17 +121,14 @@ impl GameCore {
             project,
             clock: GameClock::new(),
             events: EventBus::new(),
-            animation: AnimationSystem::new(),
-            particles: ParticleSystem::new(),
+
             script: crate::script_system(),
             state_machine: super::subsystem::state_machine(),
             store: PersistentStore::new(),
             styles: Default::default(),
             style_tweens: Default::default(),
-            field_tweens: Default::default(),
             style_reader_generation: None,
             resources,
-            collider_sources: Default::default(),
             script_requests: Default::default(),
             commands_warned: Default::default(),
             fixed_steps: 0,
@@ -340,16 +330,14 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     host.window_for_scripts();
     {
         let (core, lent) = host.lend();
-        // The state guard sets raw state-machine / store / physics pointers
-        // for script access and clears them on drop. The physics steps
-        // below borrow physics mutably, so scripts get their own scope here
-        // and the later script calls (UI, sprite-anim-end callbacks)
-        // another below.
-        let _state_scope = core.script.state_scope(
-            &mut core.state_machine,
-            &mut core.store,
-            physics_of(&core.resources),
-        );
+        // The state guard sets raw state-machine / store / resources
+        // pointers for script access and clears them on drop. The physics
+        // steps below borrow the resources mutably, so scripts get their
+        // own scope here and the later script calls (UI, sprite-anim-end
+        // callbacks) another below.
+        let _state_scope =
+            core.script
+                .state_scope(&mut core.state_machine, &mut core.store, &core.resources);
         core.script
             .set_current_scene(&core.scene_path, &core.project);
         core.run_scripts(config, &game_events, lent);
@@ -357,24 +345,28 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     host.phase_done(Phase::Scripts);
     run_stage(host, Stage::Scripts, Some(config));
 
-    // Fixed-timestep physics + FPS camera/listener follow, against the
-    // poses and joint targets the scripts just wrote
+    // Fixed-timestep physics and the first-person eye, against the poses
+    // and joint targets the scripts just wrote
     let steps_physics = !host.capture();
+    // The physics package's frame share (its triangles, `begin_frame`, the
+    // character's look) is at `Stage::Scripts`, just above (#1617)
     {
         let (core, lent) = host.lend();
-        // Triangles that came since the last frame (a procgen model the
-        // queue finished, a mesh an extension uploaded), for the bodies
-        // whose `mesh` or `convex` collider names them (#1222)
-        if steps_physics {
-            core.collider_sources.refresh(
-                &core.world,
-                physics_of_mut(&mut core.resources),
-                lent.renderer.as_deref(),
-            );
-        }
+        core.tick_fixed_steps(config, steps_physics, lent.input);
+    }
+    // The eye a controller placed (ADR 0138's `View`): physics' built-in
+    // character until the first-person package takes it (#1618). A capture
+    // steps no physics, and its camera stays the scene's.
+    host.core()
+        .resources
+        .get_or_insert_with(PlayerView::default)
+        .new_frame();
+    run_stage(host, Stage::View, Some(config));
+    {
+        let (core, lent) = host.lend();
         // The listener's move is `PlayerView::listener`, which the audio
         // package reads at `Stage::Physics` (#1619)
-        core.tick_fixed_physics(config, steps_physics, lent.input, lent.camera);
+        core.follow_eye(lent.camera);
     }
     host.phase_done(Phase::Physics);
     run_stage(host, Stage::Physics, Some(config));
@@ -383,11 +375,8 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     // including the sprite-anim-end callbacks in the animation stage.
     let _state_scope = {
         let core = host.core();
-        core.script.state_scope(
-            &mut core.state_machine,
-            &mut core.store,
-            physics_of(&core.resources),
-        )
+        core.script
+            .state_scope(&mut core.state_machine, &mut core.store, &core.resources)
     };
 
     // Style tweens (#370) move on with game time, and pause with the
@@ -395,6 +384,9 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     // a tween asked for now starts moving next frame, and a
     // set_style_param this frame overrides (and stops) it.
     host.core().step_style_tweens();
+    // The field tweens (#734), the animation package's at its stage
+    // (#1620), between the entity styles' and the whole frame's
+    run_stage(host, Stage::Tweens, Some(config));
     // And whole-frame styles' (#406), on the renderer's config
     {
         let (core, lent) = host.lend();
@@ -430,21 +422,26 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     run_stage(host, Stage::ScriptUi, Some(config));
     host.late_models();
 
-    // Sound triggers (the audio package's `Stage::Sound`, #1619),
-    // animations + sprite-end callbacks, bone matrices, bone probes, IK,
-    // particles. A capture keeps its own animation, on a fixed step, in
-    // `bones_posed`
+    // Sound triggers (the audio package's `Stage::Sound`, #1619), the
+    // animation clock and its ends and cues to the scripts
+    // (`Stage::Animate`, the animation package's, #1620), the clock poses
+    // are held on, bone matrices, bone probes and IK (`Stage::Pose`), then
+    // particles (the particles package's, at `Stage::Animation`, #1622). A
+    // capture keeps its own animation, on a fixed step, in `bones_posed`,
+    // and runs neither of the animation stages
     let capture = host.capture();
     run_stage_on(host, Stage::Sound, config, &game_events);
     if !capture {
-        host.core().animate(config);
+        run_stage(host, Stage::Animate, Some(config));
     }
     host.bones_posed();
     if !capture {
-        host.core().after_animation(config);
+        run_stage(host, Stage::Pose, Some(config));
     }
-    host.phase_done(Phase::AnimFx);
+    // The particles package's step (#1622), timed with the animation as it
+    // was when the core stepped them
     run_stage(host, Stage::Animation, Some(config));
+    host.phase_done(Phase::AnimFx);
 
     // The asset makers' frame (procgen's budgeted queue); living props move
     // on after it, in what it left of the budget
@@ -552,6 +549,7 @@ impl GameCore {
                 quit,
                 resources: &mut self.resources,
                 events,
+                bus: &mut self.events,
             };
             f(&mut self.subsystems, &mut ctx)
         }
@@ -623,26 +621,14 @@ impl GameCore {
         }
     }
 
-    /// The fixed-timestep physics loop (skipped while paused, but still
-    /// consuming steps to avoid a spiral), then the eye a controller placed
-    /// (ADR 0138's `View`). Returns where the listener goes, when a
-    /// controller placed the eye (`PlayerView::listener`).
-    fn tick_fixed_physics(
-        &mut self,
-        config: &StateConfig,
-        steps: bool,
-        input: &InputState,
-        camera: &mut Camera,
-    ) -> Option<Eye> {
+    /// The fixed-timestep loop (ADR 0138 decision 2, #1617): each step that
+    /// steps walks the step stages (`StepStage::ALL`: the walk, physics'
+    /// sync-in, every subsystem's forces, Rapier's step) over the
+    /// subsystems. Skipped while the game state pauses physics, and in a
+    /// capture, but the steps are still consumed, to avoid a spiral.
+    fn tick_fixed_steps(&mut self, config: &StateConfig, steps: bool, input: &InputState) {
         flint_core::scope!("tick_fixed_physics");
-        physics_of_mut(&mut self.resources).begin_frame(self.clock.pending_fixed_ratio());
         self.fixed_steps = 0;
-        // Look and the jump press once a frame, however many steps run
-        // below: none on most frames above 60 Hz, two at 30 (#728). The
-        // character controller does nothing without its player.
-        if steps && config.runs(PHYSICS) {
-            physics_of_mut(&mut self.resources).character_frame_input(input, &self.world);
-        }
         // The steps this frame runs, for a subsystem's `FixedCtx::step`
         let frame_steps = self.clock.pending_fixed_steps() as u32;
         while self.clock.should_fixed_update() {
@@ -651,75 +637,43 @@ impl GameCore {
             if steps && config.runs(PHYSICS) {
                 let step = self.fixed_steps;
                 self.fixed_steps += 1;
-                physics_of_mut(&mut self.resources).update_character(input, &mut self.world, dt);
-                let stepped = if self.subsystems.is_empty() {
-                    physics_of_mut(&mut self.resources).fixed_update(
-                        &mut self.world,
-                        dt,
-                        &mut self.events,
-                    )
-                } else {
-                    // Each subsystem's step, between the sync-in and
-                    // Rapier's step (ADR 0137 section 3a, #1551), lent the
-                    // resources physics is in (#1616)
-                    let subsystems = &mut self.subsystems;
-                    PhysicsSystem::fixed_update_in(
-                        &mut self.resources,
-                        &mut self.world,
-                        dt,
-                        &mut self.events,
-                        |resources, world, events| {
-                            flint_core::scope!("subsystems", Stage::FixedStep.label());
-                            subsystems.fixed_update(&mut FixedCtx {
-                                world,
-                                dt,
-                                step: (step, frame_steps.max(step + 1)),
-                                input,
-                                events,
-                                policy: config,
-                                resources,
-                            });
-                        },
-                    )
+                let mut ctx = FixedCtx {
+                    world: &mut self.world,
+                    dt,
+                    step: (step, frame_steps.max(step + 1)),
+                    input,
+                    events: &mut self.events,
+                    policy: config,
+                    resources: &mut self.resources,
                 };
-                stepped.unwrap_or_else(|e| tracing::warn!("Physics error: {:?}", e));
+                for stage in flint_package::StepStage::ALL {
+                    flint_core::scope!("subsystems", stage.label());
+                    self.subsystems.step(stage, &mut ctx);
+                }
             }
 
             self.clock.consume_fixed_step();
         }
+    }
 
-        // The eye a controller placed (ADR 0138's `View`): physics' built-in
-        // character until the first-person package takes it (#1618). A
-        // capture steps no physics, and its camera stays the scene's.
-        self.resources
-            .get_or_insert_with(PlayerView::default)
-            .new_frame();
-        if steps {
-            if let Some((physics, view)) = self.resources.get_two_mut::<PhysicsSystem, PlayerView>()
-            {
-                physics.place_eye(&self.world, view);
-            }
-        }
+    /// The camera to the frame's eye, after `Stage::View` (ADR 0138
+    /// decision 2): whichever controller placed it, physics' first-person
+    /// eye or a package's camera (the vehicle's chase camera, #1631).
+    /// Returns where the listener goes (`PlayerView::listener`, which the
+    /// audio package reads), when an eye was placed; with none the camera stays where the scene and the scripts
+    /// put it.
+    fn follow_eye(&mut self, camera: &mut Camera) -> Option<Eye> {
         let view = self.resources.get_or_insert_with(PlayerView::default);
-        // The camera follows it, and the listener when the sound runs
         let eye = view.eye?;
         camera.update_first_person(eye.position, eye.yaw, eye.pitch);
         camera.target = eye.target;
+        if let Some(fov) = eye.fov {
+            camera.fov = fov;
+        }
         // The audio package moves its listener there at `Stage::Physics`,
         // when its policy runs (#1619)
         view.listener = Some(eye);
         view.listener
-    }
-
-    /// Physics' state: the run's resource since #1616 (ADR 0138 decision
-    /// 1), which `new` puts in and a transition replaces.
-    pub fn physics(&self) -> &PhysicsSystem {
-        physics_of(&self.resources)
-    }
-
-    /// [`physics`](Self::physics), to change.
-    pub fn physics_mut(&mut self) -> &mut PhysicsSystem {
-        physics_of_mut(&mut self.resources)
     }
 
     /// Who the game is played as, and where it is seen from (ADR 0138
@@ -734,15 +688,14 @@ impl GameCore {
         self.resources.get_or_insert_with(PlayerView::default)
     }
 
-    /// The scene's view at its entry, before its first frame (#1614's
-    /// risk: the cursor and the controls line read it there): reset, then
-    /// the physics controller says who its player is. Physics has read the
-    /// scene (`PhysicsSystem::initialize`) by now.
+    /// The scene's view at its entry, before its builders: reset, so a
+    /// controller's builder (physics' character controller, #1617) says
+    /// who its player is before the first frame (#1614's risk: the cursor
+    /// and the controls line read it at the end of the entry), and a scene
+    /// with none has no player.
     pub(crate) fn enter_player_view(&mut self) {
-        let mut view = PlayerView::default();
-        physics_of(&self.resources).enter_player_view(&mut view);
-        self.script.set_player(view.player);
-        self.resources.insert(view);
+        self.resources.insert(PlayerView::default());
+        self.script.set_player(None);
     }
 
     /// The view forgotten with its scene, at a teardown.
@@ -751,8 +704,9 @@ impl GameCore {
         self.script.set_player(None);
     }
 
-    /// Move the style tweens (#370) and the field tweens (#734) on by this
-    /// frame's game time, while scripts run.
+    /// Move the style tweens (#370) on by this frame's game time, while
+    /// scripts run (the field tweens are the animation package's, at
+    /// `Stage::Tweens` right after, #1620).
     fn step_style_tweens(&mut self) {
         if self.state_machine.active_config().runs(SCRIPTS) {
             flint_core::scope!("step_style_tweens");
@@ -763,11 +717,6 @@ impl GameCore {
             }
             for message in step.failures {
                 tracing::warn!(target: "script", "{message}");
-            }
-            if !self.field_tweens.is_empty() {
-                for event in self.field_tweens.step(&mut self.world, dt) {
-                    self.events.push(event);
-                }
             }
         }
     }
@@ -804,7 +753,16 @@ impl GameCore {
     /// where it is now. Returns the listener's move for a script-driven
     /// camera (chase cam etc.) that set a position.
     fn apply_script_camera(&mut self, camera: &mut Camera) -> Option<Eye> {
-        let cam = std::mem::take(&mut self.script_requests.camera);
+        let mut cam = std::mem::take(&mut self.script_requests.camera);
+        // An eye's roll (a chase camera's lean, #1631) where the scripts
+        // set none this frame: the overrides level the camera otherwise
+        if cam.roll.is_none() {
+            cam.roll = self
+                .player_view()
+                .eye
+                .map(|eye| eye.roll)
+                .filter(|roll| *roll != 0.0);
+        }
         super::script_commands::apply_camera_overrides(camera, &cam);
         self.script
             .set_camera(camera.position_array(), camera.forward_vector());
@@ -819,65 +777,6 @@ impl GameCore {
         let eye = Eye::looking(camera.position, camera.target);
         view.listener = Some(eye);
         Some(eye)
-    }
-
-    /// Animations, then the sprite animations' ends and sequence cues to
-    /// the scripts (skipped while the game state pauses animation).
-    fn animate(&mut self, config: &StateConfig) {
-        flint_core::scope!("animate");
-        if !config.runs(ANIMATION) {
-            return;
-        }
-        self.animation
-            .update(&mut self.world, self.clock.delta_time)
-            .ok();
-
-        // Deliver sprite animation end events to scripts
-        let sprite_events = self.animation.drain_sprite_events();
-        if !sprite_events.is_empty() {
-            self.script
-                .call_sprite_anim_ends(&mut self.world, &sprite_events);
-        }
-
-        // Deliver animation sequence cues to the owning entity's script
-        let cues = self.animation.drain_sequence_cues();
-        if !cues.is_empty() {
-            for cue in &cues {
-                // Each cue is the script's to say (`on_sequence_cue`);
-                // `RUST_LOG=script=debug` lists them (#716)
-                tracing::debug!(
-                    target: "script",
-                    "[sequence] {:?} '{}' cue '{}' at {:.2}s",
-                    cue.entity_id, cue.sequence, cue.cue, cue.time
-                );
-            }
-            self.script.call_sequence_cues(&mut self.world, &cues);
-        }
-    }
-
-    /// Bone probes, IK, then the particles.
-    fn after_animation(&mut self, config: &StateConfig) {
-        flint_core::scope!("after_animation");
-        // Publish bone_probe joints: model-local joint positions written
-        // into the component right after the pose computation, so scripts
-        // read this frame's pose (e.g. seat_camera following the eye).
-        {
-            flint_core::scope!("publish_bone_probes");
-            super::headless_animation::publish_bone_probes(&self.animation, &mut self.world);
-        }
-
-        // Two-bone IK (ADR 0070): pin chain tips to their targets now that
-        // scripts, physics and animation have all posed the world; the
-        // renderer reads world matrices on demand, so this is the last
-        // writer it sees.
-        self.animation.run_ik(&mut self.world);
-
-        // Advance particle simulation (skip when paused)
-        if config.runs(PARTICLES) {
-            self.particles
-                .update(&mut self.world, self.clock.delta_time)
-                .ok();
-        }
     }
 
     /// The scene's made assets, before the model loader (#32, #1557): each
@@ -899,7 +798,14 @@ impl GameCore {
         if say_unmade {
             self.say_unmade(registry);
         }
-        for maker in self.asset_makers() {
+        let makers = self.asset_makers();
+        if makers.is_empty() {
+            return;
+        }
+        // Where a made mesh's triangles go, out of the resources while a
+        // maker is lent them
+        let mut made = self.resources.remove::<MadeTriangles>().unwrap_or_default();
+        for maker in makers {
             maker.scene(&mut flint_package::assets::MakeCtx {
                 world: &mut self.world,
                 scene_path: &self.scene_path,
@@ -910,13 +816,14 @@ impl GameCore {
                     device: gpu.device,
                     queue: gpu.queue,
                 },
-                colliders: &mut self.collider_sources,
+                colliders: &mut made,
                 resources: &mut self.resources,
                 registry,
                 packages: self.packages.as_ref(),
                 mode,
             });
         }
+        self.resources.insert(made);
     }
 
     /// Say, once at the scene's load, what the scene's names a spec would
@@ -967,6 +874,7 @@ impl GameCore {
             }),
             _ => None,
         };
+        let mut made = self.resources.remove::<MadeTriangles>().unwrap_or_default();
         for maker in makers {
             maker.frame(&mut flint_package::assets::FrameMake {
                 resources: &mut self.resources,
@@ -978,9 +886,10 @@ impl GameCore {
                     device: g.device,
                     queue: g.queue,
                 }),
-                colliders: &mut self.collider_sources,
+                colliders: &mut made,
             });
         }
+        self.resources.insert(made);
     }
 }
 
@@ -1202,41 +1111,6 @@ impl ScriptHost for CoreCommands<'_> {
         self.core.events.push(GameEvent::Custom { name, data });
     }
 
-    fn emit_burst(&mut self, entity: EntityId, count: i64) {
-        self.core
-            .particles
-            .sync
-            .queue_burst(entity, count.max(0) as u32);
-    }
-
-    fn play_effect(&mut self, handle: u64, name: String, position: (f64, f64, f64)) {
-        let pos = [position.0 as f32, position.1 as f32, position.2 as f32];
-        let particles = &mut self.core.particles;
-        if !particles.sync.spawn_effect(handle, &name, pos) {
-            tracing::warn!(
-                target: "script",
-                "play_effect: {}",
-                particles.sync.missing_effect_report(&name)
-            );
-        }
-    }
-
-    fn stop_effect(&mut self, handle: u64) {
-        self.core.particles.sync.stop_effect(handle);
-    }
-
-    fn set_effect_param(&mut self, handle: u64, param: String, value: f64) {
-        let particles = &mut self.core.particles;
-        if !particles.sync.set_effect_param(handle, &param, value) {
-            tracing::warn!(
-                target: "script",
-                "set_effect_param: unknown handle {} or param '{}'",
-                handle,
-                param
-            );
-        }
-    }
-
     fn set_entity_style(&mut self, entity: EntityId, style: String) {
         let core = &mut *self.core;
         let applied =
@@ -1285,25 +1159,6 @@ impl ScriptHost for CoreCommands<'_> {
             )
         };
         self.style_applied(applied);
-    }
-
-    fn tween(
-        &mut self,
-        entity: EntityId,
-        path: String,
-        target: toml::Value,
-        seconds: f64,
-        easing: flint_core::tween::Easing,
-    ) {
-        let core = &mut *self.core;
-        let started =
-            (core.field_tweens).start(&mut core.world, entity, &path, &target, seconds, easing);
-        match started {
-            Ok(Some(done)) => core.events.push(done),
-            Ok(None) => {}
-            // The world changed between the call, which checked, and now
-            Err(message) => tracing::warn!(target: "script", "{message}"),
-        }
     }
 
     fn clear_entity_style(&mut self, entity: EntityId) {
@@ -1452,21 +1307,4 @@ impl ScriptHost for CoreCommands<'_> {
             tracing::warn!("Unknown state template: '{}'", name);
         }
     }
-
-    fn set_velocity_2d(&mut self, entity: EntityId, vx: f64, vy: f64) {
-        self.core
-            .physics_mut()
-            .set_velocity_2d(entity, vx as f32, vy as f32);
-    }
-}
-
-/// Physics' state in a core's resources, beside another field's borrow
-/// (#1616): [`GameCore::new`] puts it in, so it is always there.
-pub(crate) fn physics_of(resources: &flint_package::Resources) -> &PhysicsSystem {
-    flint_physics::of(resources).expect("GameCore::new puts physics in the run's resources")
-}
-
-/// [`physics_of`], to change.
-pub(crate) fn physics_of_mut(resources: &mut flint_package::Resources) -> &mut PhysicsSystem {
-    flint_physics::of_mut(resources).expect("GameCore::new puts physics in the run's resources")
 }

@@ -38,6 +38,9 @@ pub(super) struct StillRender<'a> {
     pub(super) wants_flips: bool,
     /// A reference grid scores frames by their glyphs: each grid is read.
     pub(super) reads_glyphs: bool,
+    /// The packages the project's `[packages]` lets in (#1623: a left-out
+    /// package's scene binder builds nothing).
+    pub(super) packages: Option<flint_core::package::InUse>,
 }
 
 /// A render with no clocks (#1145): the scene drawn as authored on one
@@ -70,6 +73,7 @@ pub(super) fn render_still(
         wants_text,
         wants_flips,
         reads_glyphs,
+        packages,
     } = still;
     // A still draws the scene as authored, before any script (#371): said, as
     // the clocked path says it, since a look a script sets is otherwise missing
@@ -161,7 +165,15 @@ pub(super) fn render_still(
     renderer.set_pass_knobs(args.measure.pass_knobs.knobs()?);
 
     // The scene bound, its levers set (#739), as every stage does
-    bind_capture_scene(args, ctx, &mut renderer, &world, &scene_file, &binding);
+    bind_capture_scene(
+        args,
+        ctx,
+        &mut renderer,
+        &world,
+        &scene_file,
+        binding,
+        packages.as_ref(),
+    );
 
     // Load models and textures from the scene
     let config = ModelLoadConfig::in_project(assets.project.clone(), &args.scene);
@@ -209,10 +221,10 @@ pub(super) fn render_still(
 
     // Animation (#307), which runs IK after each step; without it, two-bone IK
     // (ADR 0070) poses authored chains before the single frame.
-    let mut animation = pose_animation(args, &models, &config.project, &mut world, ANIM_DT, true);
+    let mut animation = pose_animation(args, &models, &config.project, &mut world, ANIM_DT, true)?;
     match &animation {
         Some(posed) => posed.upload(&mut renderer, &ctx.device, &ctx.queue),
-        None => flint_animation::IkPass::new().run(&mut world),
+        None => pose_still(&mut world),
     }
 
     if let Some(name) = &args.camera.select {
@@ -224,20 +236,20 @@ pub(super) fn render_still(
 
     // Particles (ADR 0068): fixed-step, fixed-seed simulation so a snapshot
     // at a given --particle-time is reproducible run to run.
-    let mut particle_sim = None;
-    if let Some(seconds) = args.clock.particle_time {
-        use flint_runtime::RuntimeSystem;
-        let mut particles = flint_particles::ParticleSystem::new();
+    // The particles package's system (#1622): `render` refused
+    // --particle-time already in a flint without it
+    let mut particle_sim: Option<Box<dyn flint_render::ParticleSource>> = None;
+    if let (Some(seconds), Some(point)) = (args.clock.particle_time, particles()) {
+        let mut particles = (point.new)();
         let project = &config.project;
-        flint_particles::load_particle_effects_from_world(project, &args.scene, &mut particles);
         particles
-            .initialize(&mut world)
+            .load(project, &args.scene, &world)
             .context("Failed to initialize particles")?;
         flint_render::load_scene_particle_textures(
             &mut renderer,
             &ctx.device,
             &ctx.queue,
-            &particles.sync.texture_names(),
+            &particles.texture_names(),
             project,
             Path::new(&args.scene).parent().unwrap_or(Path::new(".")),
         );
@@ -245,15 +257,15 @@ pub(super) fn render_still(
         particles.pack(Some(camera.position_array()));
         say!(
             "Particles: {} alive across {} emitter(s) at t = {:.2}s",
-            particles.sync.total_alive(),
-            particles.sync.emitter_count(),
+            particles.total_alive(),
+            particles.emitter_count(),
             seconds
         );
         particle_sim = Some(particles);
     }
 
     // The frame's inputs, and the world read into the draw lists (#739)
-    let particle_draws = particle_sim.as_ref().map(|p| p.sync.draw_data());
+    let particle_draws = particle_sim.as_ref().map(|p| p.draw_data());
     renderer.prepare(
         &ctx.device,
         &ctx.queue,
@@ -288,8 +300,8 @@ pub(super) fn render_still(
                 world: &mut world,
                 camera,
                 camera_path: camera_path.as_ref(),
-                particles: particle_sim.as_mut(),
-                animation: animation.as_mut(),
+                particles: particle_sim.as_deref_mut(),
+                animation: animation.as_deref_mut(),
                 meshes: &meshes,
                 scene_name: &scene_file.scene.name,
             },
@@ -360,7 +372,7 @@ pub(super) fn render_still(
                             },
                             &world,
                         ),
-                        particles: particle_sim.as_ref().map(|p| &p.sync),
+                        particles: particle_sim.as_deref(),
                     }),
                 )?;
                 for line in said {

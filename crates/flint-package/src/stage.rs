@@ -27,8 +27,19 @@ pub enum Stage {
     /// with a [`FixedCtx`](crate::FixedCtx), once a step, not through
     /// `update`; named here so the schedule is whole in one place.
     FixedStep,
-    /// After the physics steps and the first-person camera.
+    /// After the fixed steps, before the camera follows the player: where
+    /// a controller places the eye in the kernel's `PlayerView` (ADR 0138
+    /// decision 2; physics' character controller until the first-person
+    /// package takes it, #1618, and the vehicle package's chase camera,
+    /// #1631). The kernel clears the view's last eye just before, and
+    /// moves the camera and the listener to the eye straight after.
+    View,
+    /// After the camera followed the frame's eye.
     Physics,
+    /// After the style tweens move on with game time, before the frame's
+    /// script commands: where the animation package moves `tween`'s field
+    /// tweens (#734, #1620), while the game state lets scripts run.
+    Tweens,
     /// After script commands and camera overrides: the camera is final for
     /// the frame.
     PostPhysics,
@@ -40,6 +51,16 @@ pub enum Stage {
     /// and updates the scene's sources. A capture runs it too, with no
     /// sound to play.
     Sound,
+    /// After the frame's sound, before the bones go to the GPU: the clock
+    /// clips run on (the animation package's clips, layers, sequences and
+    /// the kinds other packages register, flipbooks among them), and one-shot
+    /// ends and sequence cues to the scripts (ADR 0139, #1620). A capture
+    /// keeps its own animation and doesn't run it.
+    Animate,
+    /// After the bones go to the GPU, before the particles: bone probes,
+    /// then two-bone IK, the last writers of transforms (ADR 0138's `Pose`).
+    /// A capture doesn't run it.
+    Pose,
     /// After audio triggers, animation and particles.
     Animation,
     /// After the asset makers' frame (`flint_package::assets`: the procgen
@@ -66,10 +87,14 @@ impl Stage {
             Stage::PreScripts => "pre_scripts",
             Stage::Scripts => "scripts",
             Stage::FixedStep => "fixed_step",
+            Stage::View => "view",
             Stage::Physics => "physics",
+            Stage::Tweens => "tweens",
             Stage::PostPhysics => "post_physics",
             Stage::ScriptUi => "script_ui",
             Stage::Sound => "sound",
+            Stage::Animate => "animate",
+            Stage::Pose => "pose",
             Stage::Animation => "animation",
             Stage::MadeAssets => "made_assets",
             Stage::Sync => "sync",
@@ -79,19 +104,65 @@ impl Stage {
 
     /// Every stage `update` hears in the player's frame, in order: the
     /// host's [`Stage::Clock`], then the core's.
-    pub const UPDATES: [Stage; 11] = [
+    pub const UPDATES: [Stage; 15] = [
         Stage::Clock,
         Stage::Input,
         Stage::PreScripts,
         Stage::Scripts,
+        Stage::View,
         Stage::Physics,
+        Stage::Tweens,
         Stage::PostPhysics,
         Stage::ScriptUi,
         Stage::Sound,
+        Stage::Animate,
+        Stage::Pose,
         Stage::Animation,
         Stage::MadeAssets,
         Stage::Sync,
     ];
+}
+
+/// Where in each fixed step a subsystem's work goes (ADR 0138 decision 2,
+/// #1617), heard through [`Subsystem::step`](crate::Subsystem::step) in
+/// this order, each stage over every subsystem before the next:
+///
+/// | Step stage | Who |
+/// |---|---|
+/// | `Control` | a controller's walk (physics' character controller, until the first-person package, #1618) |
+/// | `SyncIn` | physics: new bodies and joints, kinematic poses, colliders, joint targets |
+/// | `Forces` | every `fixed_update` (vehicle, a game's own) |
+/// | `Integrate` | physics: Rapier's step, then the step's contacts onto the bus |
+///
+/// A step runs only while the game state runs physics, and a capture runs
+/// none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum StepStage {
+    Control,
+    SyncIn,
+    Forces,
+    Integrate,
+}
+
+impl StepStage {
+    /// Every step stage, in the order a step runs them.
+    pub const ALL: [StepStage; 4] = [
+        StepStage::Control,
+        StepStage::SyncIn,
+        StepStage::Forces,
+        StepStage::Integrate,
+    ];
+
+    /// The stage's name, for a profiler scope's detail.
+    pub fn label(self) -> &'static str {
+        match self {
+            StepStage::Control => "control",
+            StepStage::SyncIn => "sync_in",
+            StepStage::Forces => "forces",
+            StepStage::Integrate => "integrate",
+        }
+    }
 }
 
 #[cfg(test)]

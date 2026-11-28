@@ -17,15 +17,13 @@ pub const PHYSICS: &str = "physics";
 /// Scripts' `on_update` and their events (`on_draw_ui` runs under any state),
 /// and style tweens.
 pub const SCRIPTS: &str = "scripts";
-/// Property, skeletal, node and sprite animation and sequences.
-pub const ANIMATION: &str = "animation";
-/// The particle simulation.
-pub const PARTICLES: &str = "particles";
 /// The systems every host that has a state machine runs, by the names a
-/// state's policy uses. Audio's is the audio package's since #1619 (ADR
-/// 0138 decision 7): registered with the package, and known in a build
-/// without it from its manifest's `[without] policies`.
-pub const BUILTIN_SYSTEMS: &[&str] = &[PHYSICS, SCRIPTS, ANIMATION, PARTICLES];
+/// state's policy uses. Animation's is the animation package's since #1620,
+/// particles' the particles package's since #1622 and audio's the audio
+/// package's since #1619 (ADR 0138 decision 7): each registered with its
+/// package, and known in a build without it from its manifest's
+/// `[without] policies`.
+pub const BUILTIN_SYSTEMS: &[&str] = &[PHYSICS, SCRIPTS];
 
 /// Whether a system runs under a state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -465,6 +463,6 @@ mod tests {
         sm.register_state("menu", config).unwrap();
         assert!(sm.push_state("menu"));
         assert!(!sm.active_config().runs("living"));
-        assert!(sm.active_config().runs(ANIMATION));
+        assert!(sm.active_config().runs("audio"));
     }
 }

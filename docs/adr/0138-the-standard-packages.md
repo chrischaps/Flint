@@ -290,7 +290,7 @@ pub struct Eye { pub position: Vec3, pub target: Vec3, pub yaw: f32, pub pitch: 
 | flint-script `is_near_player`: the first `character_controller` it finds | `player` |
 
 - **A `first-person` package** (standard, `[requires] physics`) takes
-  `crates/flint-physics/src/character.rs` and its camera. Its builder finds
+  `packages/physics/crates/flint-physics/src/character.rs` and its camera. Its builder finds
   the player as today (the first `character_controller` by name, ADR 0134
   decision 1) and sets `player`, `mouse_look = true` and `controls` before
   the scene's first frame, so the cursor and the controls line are right at
@@ -313,7 +313,14 @@ pub struct Eye { pub position: Vec3, pub target: Vec3, pub yaw: f32, pub pitch: 
   the eye at `Stage::View` in the vehicle package, an orbit camera (ADR 0134's
   deferred `camera_mode`) the same way. The camera kinds go in the package
   of the thing they follow: no `camera` package until two packages need
-  the same kind.
+  the same kind. *As built (#1631):* `Stage::View` came with the chase
+  camera, ahead of #1617: physics still places its eye inside
+  `tick_fixed_physics`, then `View` runs and `GameCore::follow_eye` moves
+  the camera. `Eye` gained `fov` (`None` for first-person) and `roll`
+  (applied as the frame's roll when no script set one). The chase camera
+  steps once a fixed step from the pose that step left, so the vehicle
+  holds still in the shot between steps; `chase_camera.release` hands a
+  frame to a script's camera, which then also moves the listener.
 - **This supersedes ADR 0134 decision 4.** All three of its reasons are gone.
   Packages have a fixed step (`fixed_update`, #1551). A Rust package costs
   nothing over a built-in. And the host reads the player from `PlayerView`,
@@ -643,3 +650,178 @@ ground-field modules #1617 and #1623 move; the API itself reaches neither.
   resources while the panels sync and lends `GameCore::particles` in as the
   `ParticleSystem` the Particles panel reads. #1622 makes it resident.
 - **Terrain** was already off the API's own list (#1615).
+
+## As built: particles as a package (#1622)
+
+Decision 1's particles row and the table's particles line, as they landed.
+`packages/particles/` holds `flint-particles`, the `particle_emitter` and
+`particle_effect` schemas, the `particle` module, the F3 Particles panel and
+the effect editor. With `particles = false` neither launcher's `cargo tree`
+has `flint-particles`, and flint-render, flint-package, flint-script,
+flint-viewer and flint-debug-ui name it in no build.
+
+- **The system is resident.** The package's `run_resources` puts one
+  `ParticleSystem` in for the run, where `GameCore::particles` was. Its
+  subsystem is built for every scene, since an effect needs no emitter in
+  the scene. It loads the scene's effects and finds the world's emitters
+  at the scene's build, right where the player loaded them, just before
+  the other builders. It steps at `Stage::Animation` under the `particles`
+  policy, and clears at `scene_unloading`. `Stage::Animation` now runs
+  before the frame's `AnimFx` phase mark, so the step stays timed with the
+  animation. The textures need a device at the build, so `SceneCtx` gains
+  `gpu` (the window's device and queue, `None` in a capture, a test and a
+  playtest, exactly where the player skipped them before).
+- **`frame_inputs` doesn't carry the draws; a kernel point does.**
+  `Subsystem::frame_inputs` lends `&'s self`, and the draws borrow the
+  system, which lives in the resources rather than the subsystem. So the
+  kernel declares `flint_render::ParticleSource` (load, step,
+  `simulate_to`, the motion stamp, pack, `draw_data`, counts) and
+  `flint_package::particles::Particles` (`new`, `of`, `of_mut`,
+  `set_drawn`, `emitter_problems`). The package fills the point on the
+  player's registry and on the command line. The player's frame stamps the
+  motion clock in `bones_posed`, packs before `prepare` and reads the draws
+  for `prepare` and for a frame capture through it, each call where the
+  frame made it on `GameCore::particles`. `flint render`'s stills,
+  sequences and stages, `flint check`'s `bad-emitter`, and the scene
+  viewer use the same point. A host without the point draws none, and
+  `--particle-time` names the package.
+- **Commands, as written.** `EmitBurst`, `PlayEffect`, `StopEffect` and
+  `SetEffectParam` became the package's `Particle` payload. The subsystem
+  takes them at the drain where the core took them before. A capture that
+  draws no particles drops them with the same one line. That line moved
+  from `HeadlessGame::refuses`, which named the four functions, into the
+  subsystem, which reads the capture's `CaptureDrawn` resource.
+- **The policy name is the package's.** It is registered with the package
+  and listed under `[without] policies`. `flint_runtime::state::PARTICLES`
+  is gone rather than kept as a constant, as decision 7 had it, because
+  `scripts/package-names-check.py` refuses a kernel literal that is a
+  package's name and nothing read the constant any more.
+- **The panel moved to the package.** It moved from debug-hud to the
+  kernel's `ScenePanels` point, as vehicle's panel did, so debug-hud needs
+  no `[with.particles]` part. Particles registers before every feature
+  package, so its panel keeps its place among the F3 panels, right after
+  Camera.
+- **The editor is a point too.** `flint edit <x>.particles.toml` asks
+  `flint_viewer::host::EffectEditors`, as a `.procgen.toml` asks
+  `SpecEditors`. Without it the router names the package from the
+  manifest that provides `particle_effect`, before the file is read.
+- **Three literals are excused.** These are the asset search's
+  `particles/` folder (flint-core's resolver and `flint check`'s
+  reference walk) and the load report's `particles` row. Each is the name
+  of a folder or a load stage, not the package.
+## As built: physics as a package (#1617)
+
+Decisions 1 to 3 for physics, as they landed. `packages/physics/` holds the
+crate (`crates/flint-physics`), the `collider`, `rigidbody` and `joint`
+schemas and a manifest (`tier = "standard"`, `[build] features =
+["physics"]`, `[without] policies = ["physics"]`). A project with `physics =
+false` builds a player and a CLI whose `cargo tree -e normal` has neither
+flint-physics nor Rapier: 28 crates fewer for the player (353 against
+381 with the other standard packages), 27 for the CLI (370 against 397).
+`flint check` and `flint play` name the package for a scene's `collider`
+there (`unlisted-package`), and the player says once that its bodies stand
+where they are written.
+
+- **The player names no physics.** `flint_physics::player::PACKAGE` puts the
+  `PhysicsSystem` in each run's resources, and its subsystem is built for
+  every scene. The builder does what `enter_scene` did by name, in the same
+  order: the host's surfaces, the layers and the mesh colliders' triangles,
+  `initialize`, then the player into `PlayerView`. The builders now run
+  after audio starts, and physics' after the animation and particles
+  packages' builders. None of those writes the world, so the bodies are
+  made from the same poses. `initialize` returned
+  only `Ok`, so a start no longer fails on it; it warns.
+- **Three kernel seams the record didn't name.** `Registry::scene_read` is a
+  package's look at the scene before the models load. A model of several
+  nodes takes its parent's `model`, so physics reads its mesh colliders'
+  model names there. `flint_package::surfaces` is plain data the renderer's
+  share of the entry leaves in the resources: the splines' swept triangles
+  (`Surfaces::meshes`) and each terrain's height grid (`grids`). The builder
+  takes it, so no package names flint-render's spline type or
+  flint-terrain. `MadeTriangles` is the asset makers' `MadeMeshes`, kept in
+  the resources; the player takes it out around a maker's call.
+  `ColliderMesh` is now the kernel's `flint_geometry::triangles::Triangles`,
+  so a made mesh's `Arc` reaches physics unconverted, and the same `Arc`
+  again is still a no-op. `Subsystem::chunk_loaded` / `chunk_unloading` and
+  `SceneCtx::model_config` carry a chunk's bodies and the mesh files'
+  search.
+- **The step, as written.** `StepStage` (`Control`, `SyncIn`, `Forces`,
+  `Integrate`) and `Subsystem::step`, whose default calls `fixed_update` at
+  `Forces`; the kernel's loop walks the four over the subsystems on each
+  step that steps. `Stage::View` comes between the steps and the camera,
+  with the view's eye cleared just before. Physics' frame share is at
+  `Stage::Scripts`: the triangles, `begin_frame` and the character's look.
+  The ocean hulls' velocities are read at `Stage::MadeAssets` and lent
+  through `frame_inputs`.
+- **Scripts read the resources** (decision 3): `ScriptCallContext::resources`
+  and `Call::resource::<T>()` replace the physics pointer, and
+  `ScriptSystem::state_scope` takes `&Resources`. `physics`, `physics_2d` and
+  `nav` are the package's `ScriptModule`s, enabled in every scene of a run
+  with it. `get_joint_position` moved from `entity` to `physics`: it asks the
+  simulation. `set_velocity_2d` is a module command the subsystem takes at
+  the same drain (`ScriptCommand::SetVelocity2D` is gone), and a capture
+  still refuses it by name.
+- **Not done here.** `contacts_of` (#1649) and `ModuleCommand::before_steps`
+  (#1648) stay open. A capture still runs no physics: its subsystem only
+  finds the player by the controller's rule and enables the modules. The
+  character controller and `character_controller` stay in this crate and the
+  kernel's schemas until #1618. Vehicle has `[requires] physics`, as its
+  manifest's note said it would, and stays a package of its own (ADR 0140).
+- **Measured, before and after** (debug builds, `main` at `eb4a7126`):
+  the walk template's playtest (walk, turn, sprint, strafe, two jumps, a ray
+  over the plinth every 15 frames) has the same report at 1/60, 1/30 and
+  1/144 s frames. The vehicle lap is 12.092, 12.104 and 12.094 s, identical
+  reports. A 30 s FlintKart race (`oval_plus`, five AI karts, rendered) has
+  the same 360 kart positions and the same 334,691 draw calls. A run with
+  FlintKart's old manifests, which don't know a `physics` package, left
+  physics out and differed. That run was the control. All three hold again
+  after merging `main` with #1620's animation package and #1622's
+  particles package, whose builders now run before physics' (the
+  registry's order by name): both only read the world.
+
+## As built: terrain is a package (#1623)
+
+Decision 5's terrain half as it landed. `flint-terrain` is
+`packages/terrain/crates/flint-terrain`, with the `terrain` component and
+archetype (`packages/terrain/schemas/`), the `terrain` script module and the
+terrain editor. A player and a `flint` built with every package but terrain
+have no flint-terrain in `cargo tree -e normal`, and flint-package and
+flint-script link none at all.
+
+- **`GroundField` and its height grid are flint-geometry's, as written**
+  (`ground`, `heightmap`), and so is `HeightGrid`. The grid there is plain
+  (`from_raw`, `sample`, `compute_normal`); reading and writing its PNG and
+  sampling it in a terrain's frame stay with the terrain, as the
+  `HeightmapFiles` trait, so flint-geometry gains no image codec.
+- **The scene's terrain is a scene binder, not an asset maker.** A maker
+  runs only where a host makes assets: the player always, `flint render`
+  only with living props or `--procgen`, the viewer never, and it is lent no
+  `BoundScene`, whose grass a terrain's yields to. `Registry::scene_binder`
+  (`flint_package::bind`: `BindCtx { gpu, world, bound }`, returning the
+  scene's ground) runs right after `bind_scene` in all three, and the hosts
+  name no package. A binder belongs to its package, so a project that
+  leaves terrain out builds none. The viewer has no player registry: flint-cli
+  puts the registry's binders in its points (`SceneBinders`), which the
+  viewer reads.
+- **"Publishes each terrain's `GroundField`" became the kernel's
+  `SceneGround`** (flint-geometry): the entity, the drawn vertex grid and
+  where it lies, the heightmap and its world size and scale. The player
+  pushes its grid into the kernel's `Surfaces` (#1617), which the physics
+  package makes a static heightfield of, and keeps the ground as a run
+  resource, which the terrain's subsystem hands `terrain_height` as module
+  state. It is not given to the projector: `screen_to_heightfield`
+  and `ground_height` still read only a game's own ground (ADR 0095), as
+  before; #1681 asks whether a terrain should be the default ground. Three
+  spellings of `"terrain"` stay in kernel source as scoped
+  `package-names-check.py` exceptions, which #1680 removes.
+- **`terrain_v1` is procgen's `[with.terrain]` part, not terrain's
+  `[with.procgen]`.** The generator is registered by
+  `GeneratorRegistry::with_built_ins`, which every host asks; as terrain's
+  part it would need every host to register it from outside, and terrain's
+  crate would depend on procgen's. As procgen's (`flint-procgen/terrain`),
+  the hosts stay as they were, and procgen without it says which package a
+  `.terrain.toml` needs.
+- **The editor is terrain's `cli` part**, on a kernel point
+  (`flint_viewer::host::TerrainEditors`) as procgen's spec editors are; the
+  kernel keeps `flint terrain-edit`'s arguments and names the package
+  without it, so `flint --help` is the same in every build.

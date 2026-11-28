@@ -2,11 +2,12 @@
 //! each kind is found from a scene two folders deep, and a miss says where
 //! it looked.
 
-use super::scene_loading::{
-    build_model_load_config, load_animations_from_world, load_sequences_from_world,
-    load_sprite_animations_from_world, say_makers_asked, visible_files,
-};
+use super::scene_loading::{build_model_load_config, say_makers_asked};
 use super::PlayerApp;
+// The animation package's loaders (#1620), on the same search
+use flint_animation::player::loading::{
+    load_animations_from_world, load_sequences_from_world, visible_files,
+};
 use flint_animation::AnimationSystem;
 use flint_core::project::{shown, AssetKind, Project};
 use flint_core::vfs::{self, MemorySource};
@@ -166,10 +167,9 @@ fn a_deep_scene_loads_the_projects_sequences_and_a_miss_lists_the_folders() {
         ] {
             assert_eq!(visible_files(project, kind, DEEP), [PathBuf::from(file)]);
         }
-        // The other two loaders read the same folders (the files here are
+        // The property loader reads the same folders (the files here are
         // empty, so they warn and register nothing; they must not panic).
         load_animations_from_world(project, DEEP, &mut animation);
-        load_sprite_animations_from_world(project, DEEP, &mut animation);
     });
 }
 

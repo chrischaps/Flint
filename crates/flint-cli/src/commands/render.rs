@@ -26,7 +26,8 @@ use anyhow::{anyhow, Context, Result};
 use flint_core::components as comp;
 use flint_core::load_report;
 use flint_core::Vec3;
-use flint_player::{ExpressionTimeline, HeadlessAnimation, HeadlessGame, ScriptLook};
+use flint_package::CapturePose;
+use flint_player::{ExpressionTimeline, HeadlessGame, ScriptLook};
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{
     Camera, DebugMode, FrameInputs, HeadlessContext, RendererConfig, SceneRenderer,
@@ -394,6 +395,14 @@ pub(super) fn render(
     drop(read);
     say!("Loaded scene: {}", scene_file.scene.name);
     say!("Entities: {}", world.entity_count());
+    // The particles are the particles package's (#1622): a flint without it
+    // can't step any, so a render that asks for them names the package
+    if args.clock.particle_time.is_some() && particles().is_none() {
+        return Err(super::absent::missing_component_owner(
+            "flint render --particle-time",
+            flint_core::components::PARTICLE_EMITTER,
+        ));
+    }
     // An echoes column with nothing to echo would draw the same picture
     // in every column (#531)
     if let Some(grid) = grid.as_ref().filter(|g| g.writes_tables()) {
@@ -504,6 +513,7 @@ pub(super) fn render(
             wants_text,
             wants_flips,
             reads_glyphs,
+            packages: registry.packages().cloned(),
         },
     )
 }
@@ -522,6 +532,12 @@ pub(super) fn stages() -> Option<&'static dyn flint_package::cli::render::StageP
     crate::points()
         .get::<flint_package::cli::Stages>()
         .map(|stages| stages.0)
+}
+
+/// The particles package's point (#1622): what a still, a sequence and a
+/// stage step a scene's particles through. `None` in a flint without it.
+pub(super) fn particles() -> Option<&'static flint_package::particles::Particles> {
+    crate::points().get::<flint_package::particles::Particles>()
 }
 
 /// A sweep of a key a package draws (a scene's field or tables), in a
@@ -610,7 +626,10 @@ const ANIM_DT: f64 = 1.0 / 60.0;
 /// `--anim-time` (#307): the scene's animation loaded as the player loads it and
 /// stepped to that time, `step` seconds at a time and landing on it exactly, IK
 /// after every step. `None` without the flag. With `tell`, says what it posed,
-/// or warns that nothing in the scene animates.
+/// or warns that nothing in the scene animates. The animation package makes it
+/// (the `CapturePoses` point, #1621), with the kinds the run's packages
+/// registered (the rig's, the flipbook's); without the package the flag is
+/// refused, naming it.
 fn pose_animation(
     args: &RenderArgs,
     models: &model_loader::ModelLoadResult,
@@ -618,9 +637,16 @@ fn pose_animation(
     world: &mut flint_ecs::FlintWorld,
     step: f64,
     tell: bool,
-) -> Option<HeadlessAnimation> {
-    let seconds = args.clock.anim_time?.max(0.0);
-    let mut posed = HeadlessAnimation::load(models, project, &args.scene);
+) -> Result<Option<Box<dyn CapturePose>>> {
+    let Some(seconds) = args.clock.anim_time.map(|s| s.max(0.0)) else {
+        return Ok(None);
+    };
+    let registry = flint_player::packages::registry();
+    let Some(flint_package::CapturePoses(make)) = registry.point::<flint_package::CapturePoses>()
+    else {
+        return Err(super::absent::missing_served("render --anim-time"));
+    };
+    let mut posed = make(models, project, &args.scene, registry);
     let (steps, rest) = render_plan::steps_within(seconds, step);
     if steps == 0 && rest == 0.0 {
         posed.settle(world);
@@ -632,9 +658,10 @@ fn pose_animation(
         posed.step(world, rest);
     }
     if !tell {
-        return Some(posed);
+        return Ok(Some(posed));
     }
-    let animated = posed.animated(world);
+    let report = posed.report(world);
+    let animated = report.animated;
     if animated.is_empty() {
         eprintln!(
             "warning: --anim-time: nothing in this scene animates (no animator, no skinned model)"
@@ -644,19 +671,30 @@ fn pose_animation(
             "Animation: {} at t = {:.3}s ({} skinned, {} step(s) of {:.6}s)",
             animated.join(", "),
             posed.time(),
-            posed.skinned_count(),
+            report.skinned,
             steps + u64::from(rest > 0.0),
             step
         );
     }
-    for name in posed.unposed(world) {
+    for name in report.unposed {
         eprintln!(
             "warning: --anim-time: {name} has an animator and a skinned model but no \
              `skeleton` component, so its clip doesn't play (in the player either); \
              add [entities.{name}.skeleton]"
         );
     }
-    Some(posed)
+    Ok(Some(posed))
+}
+
+/// A still that steps no animation: two-bone IK (ADR 0070) poses the
+/// authored chains once, through the rig package (the `StillPose` point,
+/// #1621). A build without it draws the chains as authored.
+fn pose_still(world: &mut flint_ecs::FlintWorld) {
+    if let Some(flint_package::StillPose(pose)) =
+        flint_player::packages::registry().point::<flint_package::StillPose>()
+    {
+        pose(world);
+    }
 }
 
 /// The renderer's share of a capture's scene, the same for the one-renderer
@@ -670,14 +708,26 @@ fn bind_capture_scene(
     world: &flint_ecs::FlintWorld,
     scene_file: &flint_scene::SceneFile,
     binding: &flint_render::SceneBinding,
+    packages: Option<&flint_core::package::InUse>,
 ) {
     let binding = binding
         .clone()
         .with_environment(scene_file.environment.as_ref());
     let mut bound = renderer.bind_scene(&ctx.device, &ctx.queue, world, &binding);
-    // The scene's terrain: the terrain package builds it after the bind (#1615)
-    let terrain =
-        flint_terrain::scene::bind_terrain(renderer, &ctx.device, &ctx.queue, world, &mut bound);
+    // The packages' share of the bind (#1615, #1623): the terrain's chunks
+    // and grass, from the scene binders the run's packages registered
+    let terrain = flint_player::packages::registry().bind_scene(
+        packages,
+        &mut flint_package::bind::BindCtx {
+            gpu: flint_package::assets::Gpu {
+                renderer: &mut *renderer,
+                device: &ctx.device,
+                queue: &ctx.queue,
+            },
+            world,
+            bound: &mut bound,
+        },
+    );
     if let Some(grass) = bound
         .grass
         .as_ref()
@@ -692,9 +742,9 @@ fn bind_capture_scene(
     if let Some(terrain) = &terrain {
         say!(
             "[terrain] Loaded terrain: {}x{} heightmap, {} chunks",
-            terrain.heightmap_size.0,
-            terrain.heightmap_size.1,
-            terrain.terrain.chunks.len()
+            terrain.heightmap.width,
+            terrain.heightmap.depth,
+            terrain.chunks
         );
     }
     if bound

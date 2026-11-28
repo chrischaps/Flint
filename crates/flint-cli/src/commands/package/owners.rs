@@ -584,11 +584,16 @@ fn the_inventory_sees_the_whole_tree() {
     // The script API is this build's player's: a package's modules are
     // there exactly when flint-cli was built with it (#1333). `music` is
     // flint-script's, declared in every build.
-    assert!(inv.script_modules.len() >= 38, "{:?}", inv.script_modules);
+    // 33 with no package at all, since particle (#1622), animation's two (#1620),
+    // physics' three (#1617) and terrain (#1623) moved out
+    assert!(inv.script_modules.len() >= 33, "{:?}", inv.script_modules);
     for (module, package) in [
         ("living", "living"),
         ("wooze", "living"),
         ("debug", "living"),
+        ("physics", "physics"),
+        ("physics_2d", "physics"),
+        ("nav", "physics"),
         ("conducted", "rhythm"),
         ("music", "engine"),
     ] {
@@ -905,8 +910,6 @@ fn flint_cli_has_each_packages_feature_and_forwards_it() {
                 let Some(dep) = deps.get(krate.as_str()) else {
                     continue;
                 };
-                // No exception since #1543, which made flint-procgen, the
-                // last crate linked in every build, optional too
                 let optional = dep.get("optional").and_then(|o| o.as_bool()) == Some(true);
                 assert!(
                     optional,

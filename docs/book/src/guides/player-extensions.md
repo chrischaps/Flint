@@ -229,7 +229,8 @@ Each frame the player ticks the clock, applies any input script, advances a scen
 | `Input` | The clock has ticked and scripted input is in; before a transition advances and before `pre_update` |
 | `PreScripts` | After `pre_update`, before the scripts' `on_update`: set what a module's functions read here |
 | `Scripts` | After `on_update`, before the fixed physics steps |
-| `Physics` | After the physics steps and the first-person camera |
+| `View` | After the physics steps, where a controller places the frame's eye (`PlayerView::eye`: the first-person one is in, the vehicle package's chase camera writes its own); the camera follows it straight after |
+| `Physics` | After the camera followed the frame's eye |
 | `PostPhysics` | After script commands and camera overrides: the camera is final for the frame |
 | `ScriptUi` | After `on_draw_ui` and the draw commands |
 | `Animation` | After audio triggers, animation and particles |

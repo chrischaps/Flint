@@ -15,15 +15,11 @@ members = [
     "crates/flint-viewer",
     "crates/flint-widgets",
     "crates/flint-runtime",
-    "crates/flint-physics",
     "crates/flint-package",
     "crates/flint-player",
     "packages/audio/crates/flint-audio",
     "packages/audio/crates/flint-audio-worklet",
-    "crates/flint-animation",
     "crates/flint-script",
-    "crates/flint-particles",
-    "crates/flint-terrain",
     "crates/flint-cli",
     "packages/*/crates/*",
     # A game's launcher, which `flint build` writes for a game package with
@@ -53,15 +49,11 @@ default-members = [
     "crates/flint-viewer",
     "crates/flint-widgets",
     "crates/flint-runtime",
-    "crates/flint-physics",
     "crates/flint-package",
     "crates/flint-player",
     "packages/audio/crates/flint-audio",
     "packages/audio/crates/flint-audio-worklet",
-    "crates/flint-animation",
     "crates/flint-script",
-    "crates/flint-particles",
-    "crates/flint-terrain",
     "crates/flint-cli",
     "packages/*/crates/*",
     "tools/arch-analyzer",
@@ -221,7 +213,8 @@ flint-pixels = { path = "crates/flint-pixels" }
 flint-viewer = { path = "crates/flint-viewer", default-features = false }
 flint-widgets = { path = "crates/flint-widgets" }
 flint-runtime = { path = "crates/flint-runtime" }
-flint-physics = { path = "crates/flint-physics" }
+# The physics package (#1617): its crate in its folder
+flint-physics = { path = "packages/physics/crates/flint-physics" }
 flint-package = { path = "crates/flint-package" }
 # The crates that open devices take default-features = false here, so a
 # dependent says which devices it wants (#221): `device` (sound) on
@@ -236,11 +229,21 @@ flint-input-capture = { path = "packages/rhythm/crates/flint-input-capture", def
 # The rhythm package's parts (#1556): `player`, the chart judge's
 # subsystem, and `cli`, `flint music calibrate|chart`
 flint-rhythm-game = { path = "packages/rhythm/crates/flint-rhythm-game", default-features = false }
-flint-animation = { path = "crates/flint-animation" }
+# The animation package's core (ADR 0139, #1620): its `player` feature is the
+# subsystem, the `animation` and `tween` modules and the clip-kind point
+flint-animation = { path = "packages/animation/crates/flint-animation", default-features = false }
+# The flipbook package (ADR 0139 section 6): sprite-sheet clips on its clock
+flint-flipbook = { path = "packages/flipbook/crates/flint-flipbook", default-features = false }
+# The rig package (ADR 0139, #1621): skeletons, node clips, blending and IK
+# as clip kinds; `player` registers them, `cli` is the model previewer
+flint-rig = { path = "packages/rig/crates/flint-rig", default-features = false }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "packages/ai/crates/flint-asset-gen" }
-flint-particles = { path = "crates/flint-particles" }
-flint-terrain = { path = "crates/flint-terrain" }
+flint-particles = { path = "packages/particles/crates/flint-particles" }
+# The terrain package (#1623): its `player` feature is the scene binder, the
+# subsystem and the `terrain` module; `cli` the terrain editor; `render` the
+# chunks built into a renderer, which both turn on
+flint-terrain = { path = "packages/terrain/crates/flint-terrain", default-features = false }
 # Its `living` feature (the [wooze] table's field and knob checks) is the
 # living package's to turn on (#1516)
 flint-procgen = { path = "packages/procgen/crates/flint-procgen", default-features = false }

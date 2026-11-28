@@ -109,18 +109,6 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             level: LogLevel::Info,
             message: s("a line"),
         },
-        C::EmitBurst { entity, count: 4 },
-        C::PlayEffect {
-            handle: 1,
-            name: s("sparks"),
-            position: (0.0, 0.0, 0.0),
-        },
-        C::StopEffect { handle: 1 },
-        C::SetEffectParam {
-            handle: 1,
-            param: s("scale"),
-            value: 2.0,
-        },
         C::SetEntityStyle {
             entity,
             style: s("ascii"),
@@ -136,13 +124,6 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             target: 20.0.into(),
             seconds: 1.0,
             easing: s("linear"),
-        },
-        C::Tween {
-            entity,
-            path: s("light.intensity"),
-            target: 2.0.into(),
-            seconds: 1.0,
-            easing: flint_core::tween::Easing::Linear,
         },
         C::ClearEntityStyle { entity },
         C::SetPostStyle {
@@ -247,11 +228,15 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
         C::PushState { name: s("paused") },
         C::PopState,
         C::ReplaceState { name: s("paused") },
-        C::SetVelocity2D {
-            entity,
-            vx: 1.0,
-            vy: 0.0,
-        },
+        // The physics package's command since #1617
+        ScriptCommand::Module(flint_script::ModuleCommand::new(
+            "set_velocity_2d",
+            flint_physics::player::Velocity2D {
+                entity,
+                vx: 1.0,
+                vy: 0.0,
+            },
+        )),
         C::LoadChunk {
             path: s("chunks/a.scene.toml"),
             offset_x: 0.0,
@@ -311,6 +296,23 @@ fn scene_folder(test: &str, scripts: &[(&str, &str)]) -> (PathBuf, String) {
 fn load(scene: &str, world: FlintWorld) -> HeadlessGame {
     let project = flint_core::project::Project::for_scene(std::path::Path::new(scene));
     let mut game = HeadlessGame::new(world, scene, project);
+    game.start_scripts(true, None, (320.0, 180.0), &PostProcessConfig::default());
+    game
+}
+
+/// [`load`] with the scene's subsystems built first, as `flint render
+/// --scripts` builds them: a package's module (the animation package's
+/// `tween`, #1620) runs only there.
+fn load_with_subsystems(scene: &str, world: FlintWorld) -> HeadlessGame {
+    let project = flint_core::project::Project::for_scene(std::path::Path::new(scene));
+    let mut game = HeadlessGame::new(world, scene, project);
+    game.start_subsystems(
+        toml::Table::new(),
+        CaptureStart {
+            moment: false,
+            scripts: true,
+        },
+    );
     game.start_scripts(true, None, (320.0, 180.0), &PostProcessConfig::default());
     game
 }
@@ -380,7 +382,6 @@ fn every_command_is_applied_headless_or_presentation_only() {
         "SetEntityStyle",
         "SetStyleParam",
         "TweenStyleParam",
-        "Tween",
         "ClearEntityStyle",
         "SetPostStyle",
         "SetLook",
@@ -498,7 +499,7 @@ fn a_capture_tweens_a_component_field_and_says_when_it_arrives() {
     seen.insert("done".into(), "".into());
     world.set_component(director, "seen", seen.into()).unwrap();
 
-    let mut run = load(&scene, world);
+    let mut run = load_with_subsystems(&scene, world);
     let mut camera = flint_render::Camera::new();
     let intensity =
         |world: &FlintWorld| world.get_component(lamp, "light").unwrap()["intensity"].clone();

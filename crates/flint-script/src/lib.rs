@@ -36,7 +36,6 @@ pub mod rig;
 pub mod style_reader;
 pub mod sync;
 pub mod testing;
-pub mod tween;
 pub mod ui;
 
 pub use context::MusicClock;
@@ -48,7 +47,7 @@ pub use context::{SoundPlay, SoundRef};
 pub use engine::output::FnTime;
 use engine::ScriptEngine;
 pub use errors::{ScriptError, ScriptErrors};
-use flint_core::Result;
+use flint_core::{EntityId, Result};
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, InputState, RuntimeSystem};
 pub use host::ScriptHost;
@@ -56,7 +55,6 @@ pub use module::{ModuleCommand, ScriptModule};
 pub use projector::{GroundField, Projector, ScreenPoint, View};
 pub use style_reader::{EntityStyle, StyleReader};
 use sync::ScriptSync;
-pub use tween::{FieldTweens, TWEEN_DONE};
 
 /// Top-level scripting system integrating engine, sync, and the game loop
 pub struct ScriptSystem {
@@ -297,15 +295,17 @@ impl ScriptSystem {
         self.pending_events = events.to_vec();
     }
 
-    /// Create an RAII guard that sets state_machine, persistent_store, and physics
-    /// pointers for the duration of a scope. All three are cleared on Drop.
+    /// Create an RAII guard that sets the state machine, the persistent
+    /// store and the run's resources (a package's module reads its state
+    /// there, physics' rays among them, #1617) for the duration of a scope.
+    /// All three are cleared on Drop.
     pub fn state_scope(
         &mut self,
         sm: &mut flint_runtime::GameStateMachine,
         store: &mut flint_runtime::PersistentStore,
-        physics: &flint_physics::PhysicsSystem,
+        resources: &flint_core::resources::Resources,
     ) -> StateScope {
-        StateScope::new(&self.engine.ctx, sm, store, physics)
+        StateScope::new(&self.engine.ctx, sm, store, resources)
     }
 
     /// Set transition state for script access
@@ -679,20 +679,19 @@ impl ScriptSystem {
         c.ui_system.generate_draw_commands(screen_w, screen_h)
     }
 
-    /// Call on_animation_end(clip_name) for entities whose sprite animation finished
-    pub fn call_sprite_anim_ends(
-        &mut self,
-        world: &mut FlintWorld,
-        events: &[flint_animation::sprite_sync::SpriteAnimEndEvent],
-    ) {
-        self.engine.call_sprite_anim_ends(world, events);
+    /// Call `on_animation_end(clip)` on each entity's script, for each
+    /// `(entity, clip)` one-shot that ended (the animation package's, of
+    /// any kind of clip; ADR 0139 section 8)
+    pub fn call_animation_ends(&mut self, world: &mut FlintWorld, ends: &[(EntityId, String)]) {
+        self.engine.call_animation_ends(world, ends);
     }
 
-    /// Call on_sequence_cue(sequence, cue) for cues animation sequences passed
+    /// Call `on_sequence_cue(sequence, cue)` on each entity's script, for
+    /// each `(entity, sequence, cue)` an animation sequence passed
     pub fn call_sequence_cues(
         &mut self,
         world: &mut FlintWorld,
-        cues: &[flint_animation::SequenceCueEvent],
+        cues: &[(EntityId, String, String)],
     ) {
         self.engine.call_sequence_cues(world, cues);
     }
@@ -749,6 +748,20 @@ impl ScriptSystem {
         self.engine.rhai_engine_mut()
     }
 
+    /// `f` with the engine and `world` lent to its calls, as a callback
+    /// batch lends it: what a package's tests evaluate its module's
+    /// functions under (physics' rays, #1617). Pair it with
+    /// [`state_scope`](Self::state_scope) for the run's resources.
+    #[doc(hidden)]
+    pub fn with_world<R>(
+        &mut self,
+        world: &mut FlintWorld,
+        f: impl FnOnce(&rhai::Engine) -> R,
+    ) -> R {
+        let _world = context::WorldScope::new(&self.engine.ctx, world);
+        f(self.engine.rhai_engine())
+    }
+
     /// Declare functions through the builder (ADR 0116): registered like
     /// [`Self::rhai_engine_mut`]'s, and listed with a doc and named
     /// parameters by [`Self::api_listing`] and `flint script api`.
@@ -790,12 +803,6 @@ impl ScriptSystem {
             callbacks: api::registry::CALLBACKS.to_vec(),
             gates: registry.gates().to_vec(),
         }
-    }
-
-    /// Set the terrain height sampling callback for scripts
-    pub fn set_terrain_height_fn(&mut self, f: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>) {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.terrain_height_fn = f;
     }
 
     /// Install (or clear) the host's real text measurer used by
