@@ -28,8 +28,8 @@ fn a_game_binary_without_a_listed_package_names_flint_build() {
     assert!(flint_player::packages::launch(&[]));
     let dir = std::env::temp_dir().join(format!("flint-game-binary-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    // living brings procgen; the debug HUD, standard, is left out
-    let listed = "[packages]\nliving = \"*\"\ndebug-hud = false";
+    // living brings procgen; the debug HUD and the sound, standard, are left out
+    let listed = "[packages]\nliving = \"*\"\ndebug-hud = false\naudio = false";
     let scene = project(&dir.join("listed"), listed);
 
     // The resolver's answer handed over, as cave_game does

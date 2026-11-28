@@ -650,6 +650,62 @@ mod tests {
         assert_eq!(problems.len(), 3, "max_distance is play_sound_at's");
     }
 
+    /// A placed sound's pitch, falloff distances and rolloff reach the
+    /// command; an empty map leaves the engine's defaults (moved from
+    /// flint-script's `test_play_sound_pitch_and_falloff`).
+    #[test]
+    fn play_sound_carries_its_pitch_and_falloff() {
+        let mut s = system();
+        s.rhai_engine_mut()
+            .run(
+                r#"
+                play_sound("click", 0.5, 1.2);
+                play_sound_at("bell", 1.0, 2.0, 3.0, #{ volume: 0.8, max_distance: 400, rolloff: 0.7 });
+                play_sound_at("tap", 0.0, 0.0, 0.0, #{});
+                "#,
+            )
+            .unwrap();
+        let commands = s.drain_commands();
+        assert_eq!(commands.len(), 3);
+        match &commands[0] {
+            ScriptCommand::PlaySound { play, .. } => {
+                assert!((play.volume - 0.5).abs() < 1e-10);
+                assert!((play.pitch - 1.2).abs() < 1e-6);
+            }
+            other => panic!("Expected PlaySound, got {other:?}"),
+        }
+        match &commands[1] {
+            ScriptCommand::PlaySoundAt {
+                name,
+                position,
+                play,
+                distances,
+                rolloff,
+                ..
+            } => {
+                assert_eq!(name, "bell");
+                assert_eq!(*position, (1.0, 2.0, 3.0));
+                assert!((play.volume - 0.8).abs() < 1e-6);
+                assert_eq!(*distances, Some((1.0, 400.0)));
+                assert_eq!(*rolloff, Some(0.7));
+            }
+            other => panic!("Expected PlaySoundAt, got {other:?}"),
+        }
+        match &commands[2] {
+            ScriptCommand::PlaySoundAt {
+                play,
+                distances,
+                rolloff,
+                ..
+            } => {
+                assert!((play.volume - 1.0).abs() < 1e-10);
+                assert_eq!(*distances, None);
+                assert_eq!(*rolloff, None);
+            }
+            other => panic!("Expected PlaySoundAt, got {other:?}"),
+        }
+    }
+
     /// The module's functions are the package's: a scene of a run without
     /// it (the module not enabled) refuses them by name.
     #[test]

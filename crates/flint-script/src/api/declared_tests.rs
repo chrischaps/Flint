@@ -133,7 +133,7 @@ fn the_ported_modules_take_ints_for_numbers_and_whole_floats_for_ints() {
         &mut world,
         &format!(
             "set_render_mode(1.0, 1); set_camera_fov(60); set_time_scale(2); \
-             set_fog_color(1, 0, 0); play_sound(\"blip\", 1, 2); \
+             set_fog_color(1, 0, 0); \
              set_anim_layer({id}, 1.0, \"wave\", 1); set_velocity_2d({id}, 3, 4)"
         ),
     )
@@ -345,7 +345,6 @@ fn every_function_taking_an_entity_warns_once_on_a_dead_id() {
         "set_anim_layer",
         "set_anim_layer_ex",
         "play_sequence",
-        "audio_position",
         "set_velocity_2d",
         "get_velocity_2d",
         "set_sprite_tint",

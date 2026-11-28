@@ -125,6 +125,22 @@ pub(crate) fn build_for_scene(ctx: &mut SceneCtx) -> Vec<Box<dyn Subsystem>> {
     built
 }
 
+/// The subsystems, and the script modules enabled with no subsystem of a
+/// scene's own, that every scene of a stock build has: the audio package's
+/// (its subsystem and the `audio` module) and the music package's `music`
+/// module (#1619). A test of a scene's own leaves them out.
+#[cfg(test)]
+pub(crate) const EVERY_SCENE: (&[&str], &[&str]) = (&["audio"], &["audio", "music"]);
+
+/// The enabled script modules less those [`EVERY_SCENE`] enables.
+#[cfg(test)]
+pub(crate) fn own_modules(modules: Vec<&'static str>) -> Vec<&'static str> {
+    modules
+        .into_iter()
+        .filter(|m| !EVERY_SCENE.1.contains(m))
+        .collect()
+}
+
 /// The player's subsystems, in the order they were added, torn down in the
 /// other order.
 #[derive(Default)]
@@ -147,6 +163,17 @@ impl Subsystems {
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {
         self.list.iter().map(|s| s.name()).collect()
+    }
+
+    /// [`Self::names`] less the subsystems every scene of a stock build has
+    /// (the standard packages', [`EVERY_SCENE`]): what a test of a scene's
+    /// own subsystems compares.
+    #[cfg(test)]
+    pub(crate) fn own_names(&self) -> Vec<&'static str> {
+        self.names()
+            .into_iter()
+            .filter(|n| !EVERY_SCENE.0.contains(n))
+            .collect()
     }
 
     /// Drop the scene's subsystems, last added first, keeping the run's.

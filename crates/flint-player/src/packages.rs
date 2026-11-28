@@ -695,6 +695,8 @@ mod tests {
         // so its subsystem runs and tears down in the same place
         let before = [
             "engine",
+            // Its own package since #1619: the standard tier, first by name
+            "audio",
             "debug-hud",
             "procgen",
             "living",
@@ -718,6 +720,7 @@ mod tests {
         // packages by name, rhythm after the music it requires; each in its
         // own folder when the build has it
         let expected: Vec<&str> = [
+            "audio",
             "debug-hud",
             "procgen",
             "living",
@@ -730,6 +733,7 @@ mod tests {
         .collect();
         assert_eq!(moved, expected);
         for name in [
+            "audio",
             "debug-hud",
             "procgen",
             "living",

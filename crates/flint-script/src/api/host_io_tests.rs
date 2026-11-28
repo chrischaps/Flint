@@ -1,5 +1,5 @@
 //! The modules that read from the host or ask it for something: input
-//! (keys, the wheel, touch and the safe area), audio commands, animation,
+//! (keys, the wheel, touch and the safe area), animation,
 //! the camera's requests, and persistence, states and physics with
 //! nothing lent.
 
@@ -156,37 +156,6 @@ fn test_input_api() {
     assert!(jumped);
 }
 
-#[test]
-fn test_play_sound_command() {
-    let mut engine = ScriptEngine::new();
-    let mut world = FlintWorld::new();
-    let id = world.spawn("snd_test").unwrap();
-
-    let ast = engine
-        .compile(
-            r#"
-        fn on_init() {
-            play_sound("bang.ogg");
-        }
-    "#,
-        )
-        .unwrap();
-
-    engine.add_script(id, ast, "test.rhai".into());
-    engine.call_inits(&mut world);
-
-    let commands = engine.drain_commands();
-    assert_eq!(commands.len(), 1);
-    match &commands[0] {
-        ScriptCommand::PlaySound { name, play, .. } => {
-            assert_eq!(name, "bang.ogg");
-            assert!((play.volume - 1.0).abs() < 1e-10);
-            assert!((play.pitch - 1.0).abs() < 1e-10);
-        }
-        _ => panic!("Expected PlaySound command"),
-    }
-}
-
 /// `rumble()` asks the host for a buzz, with no music session anywhere
 /// (#748): ints or floats, every pad or one, and a zero that stops.
 #[test]
@@ -221,69 +190,6 @@ fn rumble_queues_a_command_for_the_host() {
         })
         .collect();
     assert_eq!(rumbles, [(-1, 0.6, 0.25), (0, 1.0, 2.0), (-1, 0.0, 0.0)]);
-}
-
-#[test]
-fn test_play_sound_pitch_and_falloff() {
-    let mut engine = ScriptEngine::new();
-    let mut world = FlintWorld::new();
-    let id = world.spawn("snd_opts").unwrap();
-
-    let ast = engine
-        .compile(
-            r#"
-        fn on_init() {
-            play_sound("click", 0.5, 1.2);
-            play_sound_at("bell", 1.0, 2.0, 3.0, #{ volume: 0.8, max_distance: 400, rolloff: 0.7 });
-            play_sound_at("tap", 0.0, 0.0, 0.0, #{});
-        }
-    "#,
-        )
-        .unwrap();
-
-    engine.add_script(id, ast, "test.rhai".into());
-    engine.call_inits(&mut world);
-
-    let commands = engine.drain_commands();
-    assert_eq!(commands.len(), 3);
-    match &commands[0] {
-        ScriptCommand::PlaySound { play, .. } => {
-            assert!((play.volume - 0.5).abs() < 1e-10);
-            assert!((play.pitch - 1.2).abs() < 1e-6);
-        }
-        other => panic!("Expected PlaySound, got {other:?}"),
-    }
-    match &commands[1] {
-        ScriptCommand::PlaySoundAt {
-            name,
-            position,
-            play,
-            distances,
-            rolloff,
-            ..
-        } => {
-            assert_eq!(name, "bell");
-            assert_eq!(*position, (1.0, 2.0, 3.0));
-            assert!((play.volume - 0.8).abs() < 1e-6);
-            assert!((play.pitch - 1.0).abs() < 1e-10);
-            assert_eq!(*distances, Some((1.0, 400.0)));
-            assert_eq!(*rolloff, Some(0.7));
-        }
-        other => panic!("Expected PlaySoundAt, got {other:?}"),
-    }
-    match &commands[2] {
-        ScriptCommand::PlaySoundAt {
-            play,
-            distances,
-            rolloff,
-            ..
-        } => {
-            assert!((play.volume - 1.0).abs() < 1e-10);
-            assert_eq!(*distances, None);
-            assert_eq!(*rolloff, None);
-        }
-        other => panic!("Expected PlaySoundAt, got {other:?}"),
-    }
 }
 
 #[test]

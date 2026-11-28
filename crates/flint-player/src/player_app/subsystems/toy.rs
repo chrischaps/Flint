@@ -307,7 +307,10 @@ fn on_update() { set_field(self_entity(), "probe", "seen", toy_frames()); }
                 .and_then(|v| v.as_integer())
         };
         let mut app = app_in("toys/scenes/with.scene.toml");
-        assert_eq!(app.core.script.enabled_modules(), ["toy"]);
+        assert_eq!(
+            crate::player_app::subsystem::own_modules(app.core.script.enabled_modules()),
+            ["toy"]
+        );
         assert_eq!(probe(&app, "init"), Some(0), "on_init reached the module");
         app.tick();
         app.tick();
