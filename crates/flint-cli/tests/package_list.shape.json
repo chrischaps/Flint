@@ -32,6 +32,7 @@
     ["debug-hud", "standard"],
     ["flipbook", "standard"],
     ["particles", "standard"],
+    ["physics", "standard"],
     ["procgen", "standard"],
     ["terrain", "standard"],
     ["ai", "feature"],

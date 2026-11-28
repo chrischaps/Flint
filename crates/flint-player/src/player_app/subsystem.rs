@@ -128,12 +128,22 @@ pub(crate) fn build_for_scene(ctx: &mut SceneCtx) -> Vec<Box<dyn Subsystem>> {
 /// The subsystems, and the script modules they enable, that every scene of
 /// a stock build has: the animation package's (its clips and `tween`), the
 /// flipbook package's (#1620), the particles package's (#1622: an effect
-/// needs no emitter in the scene) and the terrain package's
-/// (`terrain_height`, #1623). A test of a scene's own leaves them out.
+/// needs no emitter in the scene), the physics package's (#1617) and the
+/// terrain package's (`terrain_height`, #1623). A test of a scene's own
+/// leaves them out.
 #[cfg(test)]
 pub(crate) const EVERY_SCENE: (&[&str], &[&str]) = (
-    &["animation", "flipbook", "particles", "terrain"],
-    &["animation", "tween", "flipbook", "particle", "terrain"],
+    &["animation", "flipbook", "particles", "physics", "terrain"],
+    &[
+        "animation",
+        "tween",
+        "flipbook",
+        "particle",
+        "physics",
+        "physics_2d",
+        "nav",
+        "terrain",
+    ],
 );
 
 /// The enabled script modules less those [`EVERY_SCENE`] enables.
@@ -245,10 +255,25 @@ impl Subsystems {
         }
     }
 
-    /// One fixed physics step, in the order they were added (#1551).
-    pub(crate) fn fixed_update(&mut self, ctx: &mut FixedCtx) {
+    /// One stage of a fixed step, in the order they were added (#1551,
+    /// #1617): the step runs each of `StepStage::ALL` over every one.
+    pub(crate) fn step(&mut self, stage: flint_package::StepStage, ctx: &mut FixedCtx) {
         for s in &mut self.list {
-            s.fixed_update(ctx);
+            s.step(stage, ctx);
+        }
+    }
+
+    /// A chunk's entities are in and their models loaded (#1617).
+    pub(crate) fn chunk_loaded(&mut self, spawned: &[flint_core::EntityId], ctx: &mut SceneCtx) {
+        for s in &mut self.list {
+            s.chunk_loaded(spawned, ctx);
+        }
+    }
+
+    /// A chunk's entities are about to go.
+    pub(crate) fn chunk_unloading(&mut self, ids: &[flint_core::EntityId], ctx: &mut SceneCtx) {
+        for s in self.list.iter_mut().rev() {
+            s.chunk_unloading(ids, ctx);
         }
     }
 
@@ -402,6 +427,7 @@ macro_rules! with_scene_ctx {
                     )),
                     capture: None,
                     packages: $app.core.packages.as_ref(),
+                    model_config: None,
                     models: None,
                     resources,
                     registry: $crate::packages::registry(),
@@ -442,10 +468,14 @@ impl super::PlayerApp {
                 }
             }
         }
-        // The scene's models as the loader made them (skeletons, clips),
-        // kept from the renderer's share of the entry for the builders
+        // Where the scene's models were found, for a package that reads a
+        // model's file itself (physics' mesh colliders, #1617), and the
+        // models as the loader made them (skeletons, clips), kept from the
+        // renderer's share of the entry for the builders (#1620)
+        let config = self.scene_model_config();
         let models = self.scene_models.take();
         let built = with_scene_ctx!(self, |ctx| {
+            ctx.model_config = Some(&config);
             ctx.models = models.as_ref();
             build_for_scene(&mut ctx)
         });
@@ -453,6 +483,56 @@ impl super::PlayerApp {
             self.core.subsystems.push(subsystem);
         }
         self.core.enable_script_modules();
+        // Who the scene is played as, as a controller's builder said it
+        // (ADR 0138, #1614): the scripts' `on_init` interactables
+        self.core.script.set_player(self.core.player_view().player);
+    }
+
+    /// A chunk's entities are in the world and their models loaded: each
+    /// subsystem takes them in (physics makes their bodies, #1617).
+    pub(super) fn subsystems_chunk_loaded(&mut self, spawned: &[flint_core::EntityId]) {
+        if self.core.subsystems.is_empty() {
+            return;
+        }
+        let config = self.scene_model_config();
+        with_scene_ctx!(self, |ctx| {
+            ctx.model_config = Some(&config);
+            self.core.subsystems.chunk_loaded(spawned, &mut ctx)
+        });
+    }
+
+    /// A chunk's entities are about to be despawned.
+    pub(super) fn subsystems_chunk_unloading(&mut self, ids: &[flint_core::EntityId]) {
+        if self.core.subsystems.is_empty() {
+            return;
+        }
+        with_scene_ctx!(self, |ctx| self
+            .core
+            .subsystems
+            .chunk_unloading(ids, &mut ctx));
+    }
+
+    /// What the kernel's packages see before a scene's (or chunk's) models
+    /// load (`Registry::scene_read`, #1617): a model of several nodes is
+    /// expanded and its parent loses its `model` after.
+    pub(super) fn read_scene_for_packages(&mut self, ids: Option<&[flint_core::EntityId]>) {
+        let packages = self.core.packages.as_ref();
+        for read in crate::packages::registry().scene_reads_in(packages) {
+            read(&self.core.world, ids, &mut self.core.resources);
+        }
+    }
+
+    /// The model loader's search for the current scene, with what it asks
+    /// first (the catalog, the asset makers).
+    fn scene_model_config(&mut self) -> flint_render::model_loader::ModelLoadConfig {
+        let mut config = super::scene_loading::build_model_load_config(
+            &self.core.project,
+            &self.core.scene_path,
+            &self.core.world,
+            self.assets.of(&self.core.project),
+        );
+        super::scene_loading::say_makers_asked(&mut config, !self.core.asset_makers().is_empty());
+        config
     }
 
     /// The scene is up: each subsystem hears `scene_loaded`, then each of

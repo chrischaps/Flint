@@ -9,7 +9,6 @@ use flint_core::project::{AssetKind, Project};
 use flint_core::vfs;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_physics::PhysicsSystem;
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
 use flint_script::ScriptSystem;
@@ -82,30 +81,24 @@ pub(super) struct LoadedGrassInfo {
     pub component: &'static str,
 }
 
-/// The static collider of the ground a scene binder made (the terrain
-/// package's, #1623): a heightfield of its drawn vertex grid where its
-/// transform puts it (#1219), the same surface as the chunks' triangles
-/// with no seams. Physics is the kernel's until #1617, so the kernel
-/// registers it and the terrain names no physics crate.
-pub(super) fn register_terrain_collider(
-    physics: &mut PhysicsSystem,
+/// The surface of the ground a scene binder made (the terrain package's,
+/// #1623): its drawn vertex grid where its transform puts it, which the
+/// physics package makes a heightfield collider of (#1219, #1617), the same
+/// surface as the chunks' triangles with no seams.
+pub(super) fn terrain_surface(
     ground: &flint_geometry::ground::SceneGround,
-) {
-    physics.register_static_heightfield(ground.entity, &terrain_heightfield(ground), 0.8, 0.1);
-}
-
-/// A ground's heights as physics takes them.
-fn terrain_heightfield(
-    ground: &flint_geometry::ground::SceneGround,
-) -> flint_physics::StaticHeightfield {
+) -> flint_package::surfaces::SurfaceGrid {
     let grid = &ground.grid;
-    flint_physics::StaticHeightfield {
+    flint_package::surfaces::SurfaceGrid {
+        entity: ground.entity,
         columns: grid.columns,
         rows: grid.rows,
         heights: grid.heights.clone(),
         width: grid.width,
         depth: grid.depth,
         origin: ground.origin,
+        friction: 0.8,
+        restitution: 0.1,
     }
 }
 

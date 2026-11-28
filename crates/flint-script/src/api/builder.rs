@@ -43,7 +43,6 @@ use super::registry::{ApiEntry, ApiParam};
 use crate::context::ScriptCallContext;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_physics::PhysicsSystem;
 use rhai::{
     Array, Dynamic, Engine, EvalAltResult, FnPtr, ImmutableString, Map, NativeCallContext, Position,
 };
@@ -494,9 +493,12 @@ impl<'c> Call<'c> {
         self.cx.try_world_mut().ok_or_else(|| no_world(func, pos))
     }
 
-    /// The physics system, when the host has one.
-    pub fn physics(&self) -> Option<&PhysicsSystem> {
-        self.cx.try_physics()
+    /// The run's resource of type `T`, when the host lent the resources for
+    /// this call and holds one (ADR 0138 decision 3, #1617): how a
+    /// package's module reads its own state, physics' `PhysicsSystem` for
+    /// its rays.
+    pub fn resource<T: std::any::Any>(&self) -> Option<&T> {
+        self.cx.try_resource::<T>()
     }
 
     /// Resolve an id the script handed over inside a map or array as an

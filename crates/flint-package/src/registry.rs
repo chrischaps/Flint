@@ -36,6 +36,12 @@ pub type LeftOutLine = fn(&SceneCtx) -> Option<String>;
 /// props), called for each run's core as it is made.
 pub type RunResources = fn(&mut Resources);
 
+/// A package's look at a scene as written, before its models load
+/// ([`Registry::scene_read`], #1617): the world, the entities a chunk just
+/// brought (`None`: the whole scene), and the run's resources, where what
+/// it read waits for the package's builder or chunk hook.
+pub type SceneRead = fn(&flint_ecs::FlintWorld, Option<&[flint_core::EntityId]>, &mut Resources);
+
 /// A package's settle of a scene file its tables are in (ADR 0137 section 4,
 /// #1558): check them and fill in what they name (living's `[wooze] preset`,
 /// which can set `[post_process]`'s boil too), right after the file loads
@@ -79,6 +85,7 @@ pub struct Registry {
     settles: Vec<(&'static str, SettleScene)>,
     makers: Vec<(&'static str, &'static dyn AssetMaker)>,
     binders: Vec<(&'static str, BindScene)>,
+    scene_reads: Vec<(&'static str, SceneRead)>,
     hud: Option<(&'static str, crate::hud::MakeHud)>,
     player_args: Vec<(&'static str, FlagGroup)>,
     /// Registration points, one value per Rust type (ADR 0137 section 4).
@@ -179,6 +186,17 @@ impl Registry {
     /// transition, `flint render` and the viewer alike.
     pub fn settle_scene(&mut self, settle: SettleScene) -> &mut Self {
         self.settles.push((self.current, settle));
+        self
+    }
+
+    /// A look at a scene as written, before the host loads its models
+    /// (#1617): the model loader expands a model of several nodes into
+    /// child entities and takes the parent's `model`, so what an entity
+    /// named is read here (physics' mesh colliders, #729). Asked at a
+    /// scene's entry (every entity) and a chunk's load (its entities), in
+    /// the player only, never in a capture.
+    pub fn scene_read(&mut self, read: SceneRead) -> &mut Self {
+        self.scene_reads.push((self.current, read));
         self
     }
 
@@ -343,6 +361,18 @@ impl Registry {
             settle(scene, path)?;
         }
         Ok(())
+    }
+
+    /// Every [`scene_read`](Registry::scene_read) of the packages
+    /// `packages` lets in, in the order registered.
+    pub fn scene_reads_in<'a>(
+        &'a self,
+        packages: Option<&'a InUse>,
+    ) -> impl Iterator<Item = SceneRead> + 'a {
+        self.scene_reads
+            .iter()
+            .filter(move |(package, _)| packages.is_none_or(|in_use| in_use.is_on(package)))
+            .map(|(_, read)| *read)
     }
 
     /// Every asset maker, in the order registered. None: every name a

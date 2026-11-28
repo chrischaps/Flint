@@ -68,8 +68,8 @@ default = ["audio", "gamepad", "dialogs", "packages"]
 # between the markers: add or delete a package folder and run the script.
 # package-sync:features
 packages = [
-    "ai", "animation", "debug-hud", "flipbook", "living", "music", "particles", "procgen",
-    "rhythm", "terrain", "vehicle",
+    "ai", "animation", "debug-hud", "flipbook", "living", "music", "particles", "physics",
+    "procgen", "rhythm", "terrain", "vehicle",
 ]
 packages-audio = []
 packages-dialogs = ["flint-procgen-cli?/dialogs"]
@@ -81,10 +81,11 @@ flipbook = ["animation", "flint-player/flipbook"]
 living = ["procgen", "flint-player/living", "dep:flint-living", "flint-living?/cli"]
 music = ["flint-player/music", "dep:flint-music", "flint-music?/cli"]
 particles = ["flint-player/particles", "dep:flint-particles", "flint-particles?/cli"]
+physics = ["flint-player/physics"]
 procgen = ["flint-player/procgen", "dep:flint-procgen-cli", "flint-procgen-cli?/cli"]
 rhythm = ["music", "flint-player/rhythm", "dep:flint-rhythm-game", "flint-rhythm-game?/cli"]
 terrain = ["flint-player/terrain", "dep:flint-terrain", "flint-terrain?/cli"]
-vehicle = ["flint-player/vehicle"]
+vehicle = ["physics", "flint-player/vehicle"]
 # package-sync:end
 audio = ["flint-player/audio", "packages-audio"]
 gamepad = ["flint-player/gamepad", "packages-gamepad"]
@@ -106,7 +107,6 @@ flint-import = { workspace = true }
 # (`scripts/package-names-check.py` lists the exception)
 flint-animation = { workspace = true, features = ["player"] }
 flint-runtime = { workspace = true }
-flint-physics = { workspace = true }
 flint-player = { workspace = true, features = ["frame-history"] }
 # `CliExtension` and the one output path (#1553): a package's commands
 # build against it, and `run_with` composes them

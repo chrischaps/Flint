@@ -1,0 +1,39 @@
+# Physics (ADR 0138, #1617, epic #1611): Rapier 3D bodies, colliders and
+# joints on the fixed step, and the scripts' rays, 2D velocities and paths.
+# A standard package: on unless a game writes `physics = false`, and then
+# its player and CLI link neither flint-physics nor Rapier.
+#
+# Its crate is in this folder: crates/flint-physics, whose `player` feature
+# (`flint_physics::player::PACKAGE`, named by `[rust]` below) is its share
+# of the player: the state as the run's resource, a subsystem every scene
+# has (the scene's bodies at its entry, the frame's step stages, the eye
+# its character controller places), and the `physics`, `physics_2d` and
+# `nav` script modules. The character controller and its
+# `character_controller` component stay in this crate until the
+# first-person package takes them (#1618); the component is the kernel's
+# schema until then.
+
+[package]
+name = "physics"
+version = "0.1.0"
+tier = "standard"
+summary = "Rapier bodies, colliders and joints on the fixed step; rays, 2D velocity and paths for scripts"
+engine = "^0.1"
+
+[build]
+features = ["physics"]
+
+[rust]
+player = "flint-physics"
+
+[provides]
+crates = ["flint-physics"]
+components = ["collider", "rigidbody", "joint"]
+script_modules = ["physics", "physics_2d", "nav"]
+
+# What a player built without it still knows (ADR 0137 decision 8): a
+# scene with the components above hears once that nothing falls, and a
+# game state that names `physics` still registers.
+[without]
+does = "stand where they are written: nothing falls, collides or is cast against"
+policies = ["physics"]

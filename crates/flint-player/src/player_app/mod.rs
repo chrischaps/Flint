@@ -13,7 +13,6 @@ mod camera_cut;
 mod catalog_root_tests;
 #[cfg(test)]
 mod collider_mesh_tests;
-mod collider_meshes;
 #[cfg(test)]
 mod made_collider_mesh_tests;
 // A spec's asset in a project whose `[packages]` leaves procgen out (#1578)

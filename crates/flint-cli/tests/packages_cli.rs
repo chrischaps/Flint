@@ -268,10 +268,11 @@ fn package_used_on_the_woozy_grove_reports_living_and_procgen() {
         .iter()
         .map(|p| p["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["procgen", "living"], "{doc:#}");
+    // Its bodies are the physics package's (#1617)
+    assert_eq!(names, ["physics", "procgen", "living"], "{doc:#}");
     assert_eq!(
         doc["lines"],
-        serde_json::json!(["procgen = \"*\"", "living = \"*\""])
+        serde_json::json!(["physics = \"*\"", "procgen = \"*\"", "living = \"*\""])
     );
     let text = stdout(&flint(&game, &["package", "used"]));
     assert!(
@@ -292,7 +293,7 @@ fn package_used_on_the_woozy_grove_reports_living_and_procgen() {
     assert!(o.status.success(), "{}", said(&o));
     let manifest = std::fs::read_to_string(game.join("flint.toml")).unwrap();
     assert!(
-        manifest.contains("[packages]\nprocgen = \"*\"\nliving = \"*\"\n"),
+        manifest.contains("[packages]\nphysics = \"*\"\nprocgen = \"*\"\nliving = \"*\"\n"),
         "{manifest}"
     );
     // init's comment above the table is kept
@@ -368,10 +369,15 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     let o = flint(&game, &["package", "used", "--json"]);
     assert!(o.status.success(), "{}", said(&o));
     let doc = json(&o);
-    assert_eq!(doc["lines"], serde_json::json!([]), "{doc:#}");
+    // Its ground is a body: physics is the one package used (#1617)
+    assert_eq!(
+        doc["lines"],
+        serde_json::json!(["physics = \"*\""]),
+        "{doc:#}"
+    );
     // The blank template animates nothing (#1620), has no emitters (#1622)
-    // and no terrain (#1623) either, so animation, flipbook, particles and
-    // terrain are named too
+    // and no terrain (#1623), so animation, flipbook, particles and terrain
+    // are named
     assert_eq!(
         doc["leave_out"],
         serde_json::json!([
@@ -385,10 +391,10 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     );
 
     let text = stdout(&flint(&game, &["package", "used"]));
-    assert!(text.contains("no package but the kernel is used"), "{text}");
     assert!(
-        text.contains("[packages]\nanimation = false   # nothing scanned uses it\n")
-            && text.contains("\nprocgen = false   # nothing scanned uses it\n"),
+        text.contains(
+            "[packages]\nphysics = \"*\"\nanimation = false   # nothing scanned uses it\n"
+        ) && text.contains("\nprocgen = false   # nothing scanned uses it\n"),
         "{text}"
     );
     assert!(!text.contains("debug-hud"), "{text}");
@@ -416,7 +422,8 @@ fn package_used_names_procgen_to_leave_out_where_no_file_names_a_spec() {
     assert!(o.status.success(), "{}", said(&o));
     assert!(
         stdout(&o).contains(
-            "left out  animation, flipbook, particles, procgen, terrain, ai, living, music, rhythm"
+            "left out  animation, flipbook, particles, procgen, terrain, ai, living, music, rhythm, \
+             vehicle"
         ),
         "{}",
         said(&o)
@@ -467,6 +474,7 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
             "debug-hud",
             "flipbook",
             "particles",
+            "physics",
             "procgen",
             "terrain"
         ],
@@ -483,6 +491,7 @@ fn build_dry_run_for_procgen_alone_leaves_the_feature_packages_out() {
             "debug-hud",
             "flipbook",
             "particles",
+            "physics",
             "procgen",
             "terrain"
         ]),
@@ -503,7 +512,7 @@ fn build_dry_run_names_a_launcher_holding_only_the_listed_package() {
     set_packages(
         &game,
         "procgen = \"*\"\ndebug-hud = false\nanimation = false\nflipbook = false\n\
-         particles = false\nterrain = false\n",
+         particles = false\nphysics = false\nterrain = false\n",
     );
     let o = flint(&game, &["build", "--dry-run"]);
     assert!(o.status.success(), "{}", said(&o));

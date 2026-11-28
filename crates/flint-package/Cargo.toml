@@ -18,7 +18,9 @@ gif = ["dep:gif", "dep:color_quant", "dep:miniz_oxide", "image/gif"]
 [dependencies]
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }
-# The ground a scene binder hands back (`bind::SceneGround`, #1623)
+# A made mesh's triangles and a scene's surfaces (`surfaces`, #1617), and
+# the ground a scene binder hands back (`bind::SceneGround`, #1623): plain
+# data the physics and terrain packages read
 flint-geometry = { workspace = true }
 flint-runtime = { workspace = true }
 flint-script = { workspace = true }

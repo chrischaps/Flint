@@ -2,14 +2,35 @@
 //! scene, over the floors its fixed colliders make, and an entity walked
 //! along one. The grid is `flint_physics::nav`; this module keeps one grid
 //! for each set of agent settings asked for, and where each walking entity
-//! is along its path, in the call context's module state.
+//! is along its path, in the call context's module state. The physics
+//! package's since #1617, as `physics` is.
 
-use super::builder::kind::{Array, Entity, Map as MapKind, Num};
-use super::builder::{Call, CallResult, ScriptApi};
-use crate::context::ScriptCallContext;
+use crate::{NavGrid, NavSettings, PhysicsSystem};
 use flint_core::{components as comp, EntityId};
-use flint_physics::{NavGrid, NavSettings};
+use flint_script::api::builder::kind::{Array, Entity, Map as MapKind, Num};
+use flint_script::api::{Call, CallResult, Module};
+use flint_script::context::ScriptCallContext;
+use flint_script::ScriptModule;
 use rhai::{Dynamic, Map};
+
+/// The module's name.
+pub const NAV: &str = "nav";
+
+/// The `nav` module.
+pub struct NavModule;
+pub static NAV_MODULE: NavModule = NavModule;
+
+impl ScriptModule for NavModule {
+    fn name(&self) -> &'static str {
+        NAV
+    }
+    fn enabled_when(&self) -> &'static str {
+        "the run has the physics package"
+    }
+    fn declare(&self, m: &mut Module<'_>) {
+        declare(m);
+    }
+}
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -129,11 +150,11 @@ fn find(
     opts: Option<&Map>,
 ) -> CallResult<rhai::Array> {
     let settings = read_settings(call, opts)?;
-    if call.physics().is_none() {
+    if call.resource::<PhysicsSystem>().is_none() {
         return Ok(rhai::Array::new());
     }
     let mut state = std::mem::take(call.ctx().module_state.get_mut::<NavState>());
-    let path = match call.physics() {
+    let path = match call.resource::<PhysicsSystem>() {
         Some(physics) => state.grid(settings).find_path(
             physics,
             [from.0 as f32, from.1 as f32, from.2 as f32],
@@ -282,9 +303,7 @@ fn w_store(c: &mut ScriptCallContext, id: EntityId, next: usize) {
     }
 }
 
-pub(crate) fn register(api: &mut ScriptApi) {
-    let mut m = api.module("nav");
-
+fn declare(m: &mut Module<'_>) {
     m.func(
         "find_path",
         "The way from one point to another over the floors the scene's fixed colliders make, for an agent 0.8 m across and 1.8 m tall that climbs 0.35 m steps and 45-degree slopes.",

@@ -4,13 +4,72 @@
 //! list of names from the project's `[project.physics] layers`. A
 //! collider's own layer and mask change with `set_collision_layer` and
 //! `set_collision_mask`, heard at the next step (#1221).
+//!
+//! The physics package's since #1617 (they were flint-script's): each reads
+//! the run's `PhysicsSystem` through [`Call::resource`], and
+//! `set_velocity_2d` is a module command the package's subsystem takes at
+//! the drain the core command was taken at. Enabled in every scene of a
+//! run with the package.
 
-use super::builder::kind::{Any, Array, Entity, Map as MapKind, Num, Str};
-use super::builder::{Call, CallResult, ScriptApi};
-use crate::context::ScriptCommand;
+use crate::{EntityRaycastHit, LayerMask, PhysicsSystem};
 use flint_core::components as comp;
-use flint_physics::{EntityRaycastHit, LayerMask, PhysicsSystem};
+use flint_script::api::builder::kind::{Any, Array, Entity, Map as MapKind, Num, Str};
+use flint_script::api::{Call, CallResult, Module};
+use flint_script::context::ScriptCommand;
+use flint_script::{ModuleCommand, ScriptModule};
 use rhai::{Dynamic, Map};
+
+/// The modules' names.
+pub const PHYSICS: &str = "physics";
+pub const PHYSICS_2D: &str = "physics_2d";
+
+/// When they are enabled, as `flint script api` says it.
+const ENABLED_WHEN: &str = "the run has the physics package";
+
+/// `set_velocity_2d(id, vx, vy)`: what the drain hands the subsystem.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Velocity2D {
+    pub entity: flint_core::EntityId,
+    pub vx: f64,
+    pub vy: f64,
+}
+
+/// The `physics` module.
+pub struct PhysicsModule;
+pub static PHYSICS_MODULE: PhysicsModule = PhysicsModule;
+
+/// The `physics_2d` module.
+pub struct Physics2dModule;
+pub static PHYSICS_2D_MODULE: Physics2dModule = Physics2dModule;
+
+impl ScriptModule for PhysicsModule {
+    fn name(&self) -> &'static str {
+        PHYSICS
+    }
+    fn enabled_when(&self) -> &'static str {
+        ENABLED_WHEN
+    }
+    fn declare(&self, m: &mut Module<'_>) {
+        declare_physics(m);
+    }
+}
+
+impl ScriptModule for Physics2dModule {
+    fn name(&self) -> &'static str {
+        PHYSICS_2D
+    }
+    fn enabled_when(&self) -> &'static str {
+        ENABLED_WHEN
+    }
+    fn declare(&self, m: &mut Module<'_>) {
+        declare_physics_2d(m);
+    }
+}
+
+/// The run's physics, when this call was lent the resources.
+fn physics<'c>(call: &'c Call) -> Option<&'c PhysicsSystem> {
+    call.resource::<PhysicsSystem>()
+}
 
 /// A mask argument: one layer's name or an array of names. An unknown
 /// name, or anything else, is a script error at the call.
@@ -102,7 +161,7 @@ fn cast_3d(
     mask: Option<&Dynamic>,
 ) -> CallResult<Dynamic> {
     let exclude = Some(call.ctx_ref().current_entity);
-    let Some(physics) = call.physics() else {
+    let Some(physics) = physics(call) else {
         return Ok(Dynamic::UNIT);
     };
     let mask = mask.map(|m| read_mask(call, physics, m)).transpose()?;
@@ -125,7 +184,7 @@ fn cast_2d(
     mask: Option<&Dynamic>,
 ) -> CallResult<Dynamic> {
     let exclude = Some(call.ctx_ref().current_entity);
-    let Some(physics) = call.physics() else {
+    let Some(physics) = physics(call) else {
         return Ok(Dynamic::UNIT);
     };
     let mask = mask.map(|m| read_mask(call, physics, m)).transpose()?;
@@ -152,7 +211,7 @@ fn move_by(
     mask: Option<&Dynamic>,
 ) -> CallResult<Dynamic> {
     let dt = call.ctx_ref().delta_time as f32;
-    let Some(physics) = call.physics() else {
+    let Some(physics) = physics(call) else {
         return Ok(Dynamic::UNIT);
     };
     let mask = mask.map(|m| read_mask(call, physics, m)).transpose()?;
@@ -183,9 +242,7 @@ fn move_by(
     )
 }
 
-pub(crate) fn register(api: &mut ScriptApi) {
-    let mut m = api.module("physics");
-
+fn declare_physics(m: &mut Module<'_>) {
     m.func(
         "raycast",
         "The nearest collider a ray meets, the calling entity's own excluded.",
@@ -224,7 +281,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
         "The collision layers colliders and masks may name: `default`, then the project's.",
     )
     .returns(Array, "their names, `default` first; empty with no physics")
-    .run(|call, ()| match call.physics() {
+    .run(|call, ()| match physics(call) {
         Some(p) => p
             .layers()
             .names()
@@ -240,7 +297,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("id", Entity)
     .arg("layer", Str)
     .run(|call, (id, layer)| {
-        if let Some(p) = call.physics() {
+        if let Some(p) = physics(call) {
             if p.layers().bit(&layer).is_none() {
                 return Err(call.error(p.layers().unknown(&layer)));
             }
@@ -256,15 +313,18 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("mask", Any)
     .run(|call, (id, mask)| {
         let names = mask_names(call, &mask)?;
-        if let Some(p) = call.physics() {
+        if let Some(p) = physics(call) {
             p.layer_mask(&names).map_err(|e| call.error(e))?;
         }
         let list = names.into_iter().map(toml::Value::String).collect();
         set_collider_field(call, id, "mask", toml::Value::Array(list))
     });
 
-    let mut m = api.module("physics_2d");
+    declare_moves(m);
+    declare_joints(m);
+}
 
+fn declare_physics_2d(m: &mut Module<'_>) {
     m.func(
         "overlap_rect",
         "Every entity whose 2D collider overlaps a rectangle on the sprite plane.",
@@ -274,7 +334,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("w", Num)
     .arg("h", Num)
     .returns(Array, "their ids, in name order; empty with no physics")
-    .run(|call, (x, y, w, h)| match call.physics() {
+    .run(|call, (x, y, w, h)| match physics(call) {
         Some(p) => {
             let hits = p.overlap_rect(x as f32, y as f32, w as f32, h as f32);
             // Rapier answers in its own order, which follows body insertion
@@ -327,7 +387,10 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .run(|call, (entity, vx, vy)| {
         call.ctx()
             .commands
-            .push(ScriptCommand::SetVelocity2D { entity, vx, vy });
+            .push(ScriptCommand::Module(ModuleCommand::new(
+                "set_velocity_2d",
+                Velocity2D { entity, vx, vy },
+            )));
     });
 
     m.func("get_velocity_2d", "A 2D body's velocity.")
@@ -337,7 +400,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
             "#{vx, vy}, or () when it has no 2D body or there is no physics",
         )
         .run(
-            |call, (id,)| match call.physics().and_then(|p| p.get_velocity_2d(id)) {
+            |call, (id,)| match physics(call).and_then(|p| p.get_velocity_2d(id)) {
                 Some(vel) => {
                     let mut map = Map::new();
                     map.insert("vx".into(), Dynamic::from(vel[0] as f64));
@@ -347,12 +410,12 @@ pub(crate) fn register(api: &mut ScriptApi) {
                 None => Dynamic::UNIT,
             },
         );
+}
 
-    // Back in `physics`: the character controller's move and collider
-    // shapes, declared after the 2D functions only because they were in
-    // the draw group before ADR 0116
-    let mut m = api.module("physics");
-
+/// The character controller's move and collider shapes, in `physics`
+/// after its rays (they were declared after the 2D functions, in the draw
+/// group, before ADR 0116).
+fn declare_moves(m: &mut Module<'_>) {
     const MOVED: &str =
         "#{x, y, z, grounded}: where it ended up; () with no physics, transform or character collider";
 
@@ -386,8 +449,8 @@ pub(crate) fn register(api: &mut ScriptApi) {
             "#{shape: \"box\", half_x, half_y, half_z}, #{shape: \"sphere\", radius}, #{shape: \"capsule\"|\"cylinder\", radius, half_height} or #{shape: \"mesh\"|\"convex\"|\"heightfield\", half_x, half_y, half_z, centre_x, centre_y, centre_z} (its box); () with no collider or no physics",
         )
         .run(|call, (id,)| {
-            use flint_physics::ColliderExtents as E;
-            let Some(extents) = call.physics().and_then(|p| p.get_entity_collider_extents(id)) else {
+            use crate::ColliderExtents as E;
+            let Some(extents) = physics(call).and_then(|p| p.get_entity_collider_extents(id)) else {
                 return Dynamic::UNIT;
             };
             let mut map = Map::new();
@@ -449,4 +512,24 @@ pub(crate) fn register(api: &mut ScriptApi) {
             map.insert("shape".into(), Dynamic::from(shape.to_string()));
             Dynamic::from(map)
         });
+}
+
+/// The simulated joints, in `physics` (it was the `entity` module's until
+/// #1617: it asks the simulation, which a run without physics hasn't).
+fn declare_joints(m: &mut Module<'_>) {
+    m.func(
+        "get_joint_position",
+        "The simulated joint coordinate from its rest pose: hinge degrees or prismatic metres.",
+    )
+    .arg("id", Entity)
+    .returns(
+        Num,
+        "the coordinate, or () when there is no physics or no such joint",
+    )
+    .run(
+        |call, (id,)| match physics(call).and_then(|p| p.joint_position(id)) {
+            Some(v) => Dynamic::from(v as f64),
+            None => Dynamic::UNIT,
+        },
+    );
 }
